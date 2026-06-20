@@ -50,6 +50,7 @@ export {
   DropPollOptionEntity,
   DropPollVoteEntity
 } from './IDropPoll';
+export { HelpBotCreditEventEntity } from './IHelpBotCreditEvent';
 export { HelpBotInteractionEntity } from './IHelpBotInteraction';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';

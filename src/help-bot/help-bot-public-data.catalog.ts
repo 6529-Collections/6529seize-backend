@@ -1,5 +1,5 @@
 export const HELP_BOT_PUBLIC_DATA_CATALOG = `
-Public 6529 data query catalog available for @6529help planning.
+Public 6529 data query catalog available for @help6529 planning.
 
 Rules:
 - Return strict JSON only with the semantic plan shape below.

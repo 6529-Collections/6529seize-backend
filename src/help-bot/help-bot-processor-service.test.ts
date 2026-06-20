@@ -56,6 +56,9 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
+    const creditsService = {
+      refundQuestionCredit: jest.fn()
+    };
     const answer = jest.fn().mockResolvedValue({
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: true
@@ -66,7 +69,8 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never
+      () => ({ answer }) as never,
+      creditsService as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -141,6 +145,9 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
+    const creditsService = {
+      refundQuestionCredit: jest.fn()
+    };
     const answer = jest.fn().mockResolvedValue({
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: false
@@ -151,7 +158,8 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never
+      () => ({ answer }) as never,
+      creditsService as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -203,6 +211,9 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
+    const creditsService = {
+      refundQuestionCredit: jest.fn()
+    };
     const answer = jest.fn().mockResolvedValue({
       type: 'ANSWER',
       answer: 'TDH stands for Total Days Held.'
@@ -213,7 +224,8 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never
+      () => ({ answer }) as never,
+      creditsService as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -271,6 +283,9 @@ describe('HelpBotProcessorService', () => {
     const profileResolver = {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
+    const creditsService = {
+      refundQuestionCredit: jest.fn()
+    };
     const answerError = new Error('db timeout');
     const answer = jest.fn().mockRejectedValue(answerError);
     const service = new HelpBotProcessorService(
@@ -279,7 +294,8 @@ describe('HelpBotProcessorService', () => {
       dropWriter as never,
       {} as never,
       profileResolver as never,
-      () => ({ answer }) as never
+      () => ({ answer }) as never,
+      creditsService as never
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -308,6 +324,13 @@ describe('HelpBotProcessorService', () => {
         dropId: 'question-drop',
         waveId: 'wave-1',
         reaction: HELP_BOT_FAILURE_REACTION
+      },
+      ctx
+    );
+    expect(creditsService.refundQuestionCredit).toHaveBeenCalledWith(
+      {
+        profileId: 'profile-1',
+        interactionId: 'interaction-1'
       },
       ctx
     );

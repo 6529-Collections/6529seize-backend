@@ -77,7 +77,7 @@ function createDrop({
 describe('detectHelpBotTrigger', () => {
   it('detects explicit raw text mentions and strips the bot handle', () => {
     const trigger = detectHelpBotTrigger({
-      request: createRequest('@6529help what is TDH?'),
+      request: createRequest('@help6529 what is TDH?'),
       createdDrop: createDrop({ id: 'drop-1' }),
       authorProfileId: 'user-profile',
       botProfileId: 'bot-profile'
@@ -96,7 +96,7 @@ describe('detectHelpBotTrigger', () => {
 
   it('detects bracketed markdown mentions and strips the bot handle', () => {
     const trigger = detectHelpBotTrigger({
-      request: createRequest('@[6529help] what is TDH?'),
+      request: createRequest('@[help6529] what is TDH?'),
       createdDrop: createDrop({ id: 'drop-1' }),
       authorProfileId: 'user-profile',
       botProfileId: 'bot-profile'
@@ -116,7 +116,7 @@ describe('detectHelpBotTrigger', () => {
   it('detects explicit payload mentions without raw text mention', () => {
     const trigger = detectHelpBotTrigger({
       request: createRequest('How do subscriptions work?', {
-        mentionedHandle: '6529help'
+        mentionedHandle: 'help6529'
       }),
       createdDrop: createDrop({ id: 'drop-2' }),
       authorProfileId: 'user-profile',
@@ -133,7 +133,7 @@ describe('detectHelpBotTrigger', () => {
       request: createRequest('How do subscriptions work?'),
       createdDrop: createDrop({
         id: 'drop-2',
-        mentionedHandle: '6529help'
+        mentionedHandle: 'help6529'
       }),
       authorProfileId: 'user-profile',
       botProfileId: 'bot-profile'
@@ -146,7 +146,7 @@ describe('detectHelpBotTrigger', () => {
 
   it('uses the parent drop as the question target when a reply only tags the bot', () => {
     const trigger = detectHelpBotTrigger({
-      request: createRequest('@6529help', {
+      request: createRequest('@help6529', {
         replyToDropId: 'original-question'
       }),
       createdDrop: createDrop({ id: 'summon-drop', authorId: 'summoner' }),
@@ -189,7 +189,7 @@ describe('detectHelpBotTrigger', () => {
   it('ignores bot authored drops and acknowledgement replies', () => {
     expect(
       detectHelpBotTrigger({
-        request: createRequest('@6529help what is TDH?'),
+        request: createRequest('@help6529 what is TDH?'),
         createdDrop: createDrop({ id: 'drop-4', authorId: 'bot-profile' }),
         authorProfileId: 'bot-profile',
         botProfileId: 'bot-profile'

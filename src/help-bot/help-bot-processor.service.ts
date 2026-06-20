@@ -37,6 +37,10 @@ import {
 } from './help-bot-profile-resolver';
 import { withHelpBotAuthentication } from './help-bot.auth';
 import { errorToMessage } from './help-bot.errors';
+import {
+  helpBotCreditsService,
+  HelpBotCreditsService
+} from './help-bot-credits.service';
 
 function buildRenderer(): HelpBotLlmRenderer & HelpBotPublicDataLlm {
   return new HelpBotBedrockRenderer(HELP_BOT_BEDROCK_MODEL_ID);
@@ -64,7 +68,8 @@ export class HelpBotProcessorService {
     private readonly dropWriter: HelpBotDropWriterService,
     private readonly dropsService: DropsApiService,
     private readonly profileResolver: HelpBotProfileResolver,
-    private readonly answererFactory: () => HelpBotAnswerer
+    private readonly answererFactory: () => HelpBotAnswerer,
+    private readonly creditsService: HelpBotCreditsService
   ) {}
 
   public async processInteraction(
@@ -230,6 +235,7 @@ export class HelpBotProcessorService {
       `Help bot failed to answer interaction ${interaction.id}`,
       error
     );
+    await this.tryRefundQuestionCredit(interaction, ctx);
     let replyDropId: string | null = null;
     try {
       const reply = await this.dropWriter.reply(
@@ -266,6 +272,26 @@ export class HelpBotProcessorService {
       },
       ctx
     );
+  }
+
+  private async tryRefundQuestionCredit(
+    interaction: HelpBotInteractionRow,
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      await this.creditsService.refundQuestionCredit(
+        {
+          profileId: interaction.author_id,
+          interactionId: interaction.id
+        },
+        ctx
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to refund help bot credit for interaction ${interaction.id}`,
+        error
+      );
+    }
   }
 
   private async trySetReaction(
@@ -314,5 +340,6 @@ export const helpBotProcessorService = new HelpBotProcessorService(
       undefined,
       new HelpBotPublicDataService(renderer)
     );
-  }
+  },
+  helpBotCreditsService
 );

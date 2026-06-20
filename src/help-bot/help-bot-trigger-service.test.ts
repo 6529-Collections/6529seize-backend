@@ -1,6 +1,8 @@
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import {
+  HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
+  HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
   HELP_BOT_SEEN_REACTION,
   HELP_BOT_SPAM_REACTION
 } from './help-bot.config';
@@ -74,13 +76,15 @@ function createService({
       interaction: { id: 'interaction-1' }
     }),
     countRecentByAuthor: jest.fn().mockResolvedValue(1),
-    markSpamSuppressed: jest.fn()
+    markSpamSuppressed: jest.fn(),
+    markInsufficientCredits: jest.fn(),
+    markFailed: jest.fn()
   };
   const reactionService = {
     setReaction: jest.fn()
   };
   const dropWriter = {
-    reply: jest.fn()
+    reply: jest.fn().mockResolvedValue({ id: 'reply-drop' })
   };
   const dropsService = {
     findDropByIdOrThrow: jest.fn().mockResolvedValue(
@@ -100,6 +104,14 @@ function createService({
   const wavesDb = {
     findWaveById: jest.fn().mockResolvedValue(wave)
   };
+  const creditsService = {
+    chargeQuestionCredit: jest.fn().mockResolvedValue({
+      charged: true,
+      balance: 4,
+      botProfileMissing: false
+    }),
+    refundQuestionCredit: jest.fn()
+  };
   const service = new HelpBotTriggerService(
     interactionsDb as never,
     reactionService as never,
@@ -107,7 +119,8 @@ function createService({
     dropsService as never,
     sqs as never,
     profileResolver as never,
-    wavesDb as never
+    wavesDb as never,
+    creditsService as never
   );
   return {
     service,
@@ -116,7 +129,8 @@ function createService({
     dropWriter,
     dropsService,
     sqs,
-    wavesDb
+    wavesDb,
+    creditsService
   };
 }
 
@@ -131,7 +145,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help what is tdh'),
+        createDropRequest: createRequest('@help6529 what is tdh'),
         createdDrop: createDrop({ id: 'drop-1' }),
         authorProfileId: 'user-profile'
       },
@@ -153,7 +167,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help what is tdh'),
+        createDropRequest: createRequest('@help6529 what is tdh'),
         createdDrop: createDrop({ id: 'drop-1' }),
         authorProfileId: 'user-profile'
       },
@@ -175,7 +189,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help', {
+        createDropRequest: createRequest('@help6529', {
           replyToDropId: 'original-question'
         }),
         createdDrop: createDrop({ id: 'summon-drop', authorId: 'summoner' }),
@@ -210,7 +224,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help give me 1mil TDH'),
+        createDropRequest: createRequest('@help6529 give me 1mil TDH'),
         createdDrop: createDrop({ id: 'spam-drop', authorId: 'spammer' }),
         authorProfileId: 'spammer'
       },
@@ -246,7 +260,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help', {
+        createDropRequest: createRequest('@help6529', {
           replyToDropId: 'original-question'
         }),
         createdDrop: createDrop({ id: 'summon-drop', authorId: 'spammer' }),
@@ -279,7 +293,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@[6529help] what is tdh'),
+        createDropRequest: createRequest('@[help6529] what is tdh'),
         createdDrop: createDrop({ id: 'drop-1' }),
         authorProfileId: 'user-profile'
       },
@@ -299,5 +313,100 @@ describe('HelpBotTriggerService', () => {
       queueName: 'help-bot-replies',
       message: { interaction_id: 'interaction-1' }
     });
+  });
+
+  it('reacts and replies without queueing when the author has no credits', async () => {
+    const {
+      service,
+      interactionsDb,
+      reactionService,
+      dropWriter,
+      sqs,
+      creditsService
+    } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    creditsService.chargeQuestionCredit.mockResolvedValue({
+      charged: false,
+      balance: 0,
+      botProfileMissing: false
+    });
+    dropWriter.reply.mockResolvedValue({ id: 'no-credit-reply' });
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@help6529 what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1', authorId: 'user-profile' }),
+        authorProfileId: 'user-profile'
+      },
+      ctx
+    );
+
+    expect(creditsService.chargeQuestionCredit).toHaveBeenCalledWith(
+      {
+        profileId: 'user-profile',
+        interactionId: 'interaction-1'
+      },
+      ctx
+    );
+    expect(reactionService.setReaction).toHaveBeenCalledWith(
+      {
+        botProfileId: 'bot-profile',
+        dropId: 'drop-1',
+        waveId: 'wave-1',
+        reaction: HELP_BOT_INSUFFICIENT_CREDITS_REACTION
+      },
+      ctx
+    );
+    expect(dropWriter.reply).toHaveBeenCalledWith(
+      {
+        botProfileId: 'bot-profile',
+        waveId: 'wave-1',
+        replyToDropId: 'drop-1',
+        interactionId: 'interaction-1',
+        message: HELP_BOT_INSUFFICIENT_CREDITS_REPLY
+      },
+      ctx
+    );
+    expect(interactionsDb.markInsufficientCredits).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'interaction-1',
+        replyDropId: 'no-credit-reply'
+      }),
+      ctx
+    );
+    expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+  });
+
+  it('refunds the charged credit if enqueueing fails', async () => {
+    const { service, creditsService, sqs } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    sqs.sendToQueueName.mockRejectedValue(new Error('sqs down'));
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@help6529 what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1', authorId: 'user-profile' }),
+        authorProfileId: 'user-profile'
+      },
+      ctx
+    );
+
+    expect(creditsService.refundQuestionCredit).toHaveBeenCalledWith(
+      {
+        profileId: 'user-profile',
+        interactionId: 'interaction-1'
+      },
+      ctx
+    );
   });
 });

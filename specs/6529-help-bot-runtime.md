@@ -24,7 +24,7 @@ from backend database rows than from static frontend docs.
 A user posts a wave message that mentions the bot handle, for example:
 
 ```text
-@6529help what is TDH?
+@help6529 what is TDH?
 ```
 
 Runtime behavior:
@@ -99,7 +99,7 @@ This branch is only for clear messing-around or bypass attempts. Genuine
 unsupported product questions should still use the no-reliable-source path
 above, including optional tech-team mentions when configured.
 
-The hardcoded `@6529help` handle is resolved to the current profile id at
+The hardcoded `@help6529` handle is resolved to the current profile id at
 runtime. Successful resolutions cache for five minutes; missing-profile lookups
 cache for 30 seconds so manual profile creation becomes active quickly.
 
@@ -224,7 +224,7 @@ technical-failure behavior. Deterministic fallback answers remain neutral.
 
 Future agents must treat the help bot corpus as part of the user-facing product
 surface. When a backend change adds or changes behavior that users may ask
-`@6529help` about, update the help bot materials in the same PR.
+`@help6529` about, update the help bot materials in the same PR.
 
 Backend-owned examples:
 
@@ -269,7 +269,7 @@ the next topic.
 
 ```text
 message_created
-  -> detect @6529help
+  -> detect @help6529
   -> create interaction row
   -> add 👀 reaction
   -> enqueue help job
@@ -279,7 +279,7 @@ message_created
   -> replace 👀 with ✅
 ```
 
-If a user replies to someone else's question with only `@6529help`, the bot uses
+If a user replies to someone else's question with only `@help6529`, the bot uses
 the parent drop text as the question and targets the parent drop for 👀, ⚠️/✅,
 and the bot reply. This only applies in public waves. The parent drop is fetched
 through the caller's normal visibility checks, and the summoning drop remains the
@@ -378,7 +378,7 @@ answer.
 User:
 
 ```text
-@6529help what is TDH?
+@help6529 what is TDH?
 ```
 
 Bot:
@@ -472,13 +472,13 @@ private user data beyond what is needed for debugging and abuse controls.
 
 - Draft frontend help index spec.
 - Draft backend runtime spec.
-- Agree on bot naming and hardcoded handle: `@6529help`.
+- Agree on bot naming and hardcoded handle: `@help6529`.
 
 ### Phase 2: V1 Help Bot Plumbing - Done In PR
 
 - Create bot identity.
-- Resolve the `@6529help` profile id from the hardcoded handle at runtime; profile existence is the activation gate, with no enable/profile/queue env var.
-- Detect explicit `@6529help` mentions.
+- Resolve the `@help6529` profile id from the hardcoded handle at runtime; profile existence is the activation gate, with no enable/profile/queue env var.
+- Detect explicit `@help6529` mentions.
 - Support mention-only replies to another user's question by answering the
   original question drop.
 - Add 👀, answer from cached frontend records, replace with ✅.

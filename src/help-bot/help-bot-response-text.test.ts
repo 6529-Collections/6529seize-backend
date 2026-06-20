@@ -6,11 +6,11 @@ import {
 
 describe('stripHelpBotSelfIntro', () => {
   it.each([
-    ['@6529help here! TDH stands for Total Days Held.'],
-    ['@6529help: TDH stands for Total Days Held.'],
-    ['6529help: TDH stands for Total Days Held.'],
-    ['6529help here - TDH stands for Total Days Held.'],
-    ['Hey, @6529help here! TDH stands for Total Days Held.']
+    ['@help6529 here! TDH stands for Total Days Held.'],
+    ['@help6529: TDH stands for Total Days Held.'],
+    ['help6529: TDH stands for Total Days Held.'],
+    ['help6529 here - TDH stands for Total Days Held.'],
+    ['Hey, @help6529 here! TDH stands for Total Days Held.']
   ])('removes help bot self-intro prefix from "%s"', (text) => {
     expect(stripHelpBotSelfIntro(text)).toBe('TDH stands for Total Days Held.');
   });

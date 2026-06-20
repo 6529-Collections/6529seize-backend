@@ -261,6 +261,29 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async markInsufficientCredits(
+    {
+      id,
+      replyDropId,
+      failureReason
+    }: {
+      readonly id: string;
+      readonly replyDropId: string | null;
+      readonly failureReason: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.markCompleted(
+      {
+        id,
+        status: HelpBotInteractionStatus.INSUFFICIENT_CREDITS,
+        replyDropId,
+        failureReason
+      },
+      ctx
+    );
+  }
+
   public async markFailed(
     {
       id,

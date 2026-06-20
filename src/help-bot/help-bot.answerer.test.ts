@@ -293,7 +293,7 @@ describe('HelpBotAnswerer', () => {
     const renderer: HelpBotLlmRenderer = {
       renderAnswer: jest
         .fn()
-        .mockResolvedValue('@6529help here! TDH is Total Days Held.')
+        .mockResolvedValue('@help6529 here! TDH is Total Days Held.')
     };
 
     const answer = await answerer(renderer).answer({

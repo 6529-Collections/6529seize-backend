@@ -1,4 +1,11 @@
-const HELP_BOT_HANDLE_PATTERN = '@?(?:\\[6529help\\]|6529help)';
+import { HELP_BOT_HANDLE } from './help-bot.config';
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const ESCAPED_HELP_BOT_HANDLE = escapeRegExp(HELP_BOT_HANDLE);
+const HELP_BOT_HANDLE_PATTERN = `@?(?:\\[${ESCAPED_HELP_BOT_HANDLE}\\]|${ESCAPED_HELP_BOT_HANDLE})`;
 
 const HELP_BOT_SELF_INTRO_PATTERNS = [
   new RegExp(
@@ -11,10 +18,6 @@ const HELP_BOT_SELF_INTRO_PATTERNS = [
   ),
   new RegExp(`^\\s*${HELP_BOT_HANDLE_PATTERN}\\s*[:：-]+\\s*`, 'i')
 ];
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function escapeMarkdownLinkLabel(label: string): string {
   return label.replace(/([\\[\]])/g, '\\$1');

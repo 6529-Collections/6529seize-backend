@@ -21,9 +21,18 @@ export interface HelpBotTriggerDetection {
   readonly parentBotDropId: string | null;
 }
 
-const HANDLE_MENTION_REGEX = /(^|[^a-z0-9_])@(?:6529help\b|\[6529help\])/i;
-const HANDLE_MENTION_REPLACE_REGEX =
-  /(^|[^a-z0-9_])@(?:6529help\b|\[6529help\])/gi;
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const ESCAPED_HELP_BOT_HANDLE = escapeRegExp(HELP_BOT_HANDLE);
+const HANDLE_MENTION_REGEX = new RegExp(
+  `(^|[^a-z0-9_])@(?:${ESCAPED_HELP_BOT_HANDLE}\\b|\\[${ESCAPED_HELP_BOT_HANDLE}\\])`,
+  'i'
+);
+const HANDLE_MENTION_REPLACE_REGEX = new RegExp(
+  `(^|[^a-z0-9_])@(?:${ESCAPED_HELP_BOT_HANDLE}\\b|\\[${ESCAPED_HELP_BOT_HANDLE}\\])`,
+  'gi'
+);
 
 const ACKNOWLEDGEMENTS = new Set([
   'thanks',

@@ -119,7 +119,7 @@ Keep `docs/architecture.md` up to date when changing the system shape. Update it
 
 ## 6529 Help Bot Knowledge Maintenance
 
-When changing backend-owned product behavior that users may ask `@6529help`
+When changing backend-owned product behavior that users may ask `@help6529`
 about, update the help bot knowledge in the same PR. This includes changes to
 subscriptions, eligibility rules, wave or drop permissions, posting limits,
 profile/business-rule terminology, and canonical backend-owned URLs.
