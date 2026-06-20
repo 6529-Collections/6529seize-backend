@@ -1,7 +1,15 @@
 import { env } from '@/env';
 
 export const HELP_BOT_HANDLE = '6529help';
-export const HELP_BOT_BASE_URL = 'https://6529.io';
+export function resolveHelpBotBaseUrl(
+  nodeEnv: string | undefined = process.env.NODE_ENV
+): string {
+  return nodeEnv === 'development'
+    ? 'https://staging.6529.io'
+    : 'https://6529.io';
+}
+
+export const HELP_BOT_BASE_URL = resolveHelpBotBaseUrl();
 export const HELP_BOT_INDEX_URL = `${HELP_BOT_BASE_URL}/help-index.json`;
 export const HELP_BOT_INDEX_FETCH_TIMEOUT_MS = 5000;
 export const HELP_BOT_INDEX_CACHE_TTL_MS = 300_000;

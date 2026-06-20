@@ -117,7 +117,8 @@ V1 answers from short frontend-owned records for common 6529 topics, routes, and
 UI affordances. The source of truth lives in the frontend repository at
 `ops/help/help-index.json`; the frontend build publishes
 `public/help-index.json`; the backend reads the deployed artifact at
-`https://6529.io/help-index.json`.
+the environment-matching frontend host: `https://staging.6529.io/help-index.json`
+when `NODE_ENV=development`, and `https://6529.io/help-index.json` otherwise.
 
 Initial curated topics include:
 

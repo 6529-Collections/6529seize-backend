@@ -2,7 +2,8 @@ import {
   HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY,
   HELP_BOT_TECH_TEAM_HANDLES_ENV,
   buildHelpBotNoReliableSourceReply,
-  getHelpBotTechTeamMentionHandles
+  getHelpBotTechTeamMentionHandles,
+  resolveHelpBotBaseUrl
 } from './help-bot.config';
 
 describe('help bot config', () => {
@@ -37,5 +38,16 @@ describe('help bot config', () => {
     expect(buildHelpBotNoReliableSourceReply()).toBe(
       `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} @Alice @bob @carol`
     );
+  });
+
+  it('uses the staging frontend help index base URL in development', () => {
+    expect(resolveHelpBotBaseUrl('development')).toBe(
+      'https://staging.6529.io'
+    );
+  });
+
+  it('uses the production frontend help index base URL in production and local', () => {
+    expect(resolveHelpBotBaseUrl('production')).toBe('https://6529.io');
+    expect(resolveHelpBotBaseUrl('local')).toBe('https://6529.io');
   });
 });
