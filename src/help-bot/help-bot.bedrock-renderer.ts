@@ -6,7 +6,10 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { TextDecoder } from 'node:util';
 import { HelpBotLlmRenderer } from './help-bot.answerer';
-import { HELP_BOT_BEDROCK_TIMEOUT_MS } from './help-bot.config';
+import {
+  HELP_BOT_BEDROCK_TIMEOUT_MS,
+  HELP_BOT_HANDLE
+} from './help-bot.config';
 import { HelpBotKnowledgeRecord } from './help-bot.knowledge';
 import { HelpBotPublicDataQueryPlan } from './help-bot-public-data.service';
 
@@ -21,8 +24,8 @@ interface AnthropicResponse {
 
 const TONE_GUIDANCE =
   'Mirror the user tone lightly: if the question is casual or playful, you may be a little warmer or more playful; if it is formal, stay formal. Keep it useful, accurate, and not overfamiliar.';
-const NO_SELF_INTRO_GUIDANCE =
-  'Start directly with the answer. Do not begin with @6529help, 6529help:, 6529help here, a greeting, or any self-introduction.';
+const HELP_BOT_MENTION = `@${HELP_BOT_HANDLE}`;
+const NO_SELF_INTRO_GUIDANCE = `Start directly with the answer. Do not begin with ${HELP_BOT_MENTION}, ${HELP_BOT_HANDLE}:, ${HELP_BOT_HANDLE} here, a greeting, or any self-introduction.`;
 const MARKDOWN_LINK_GUIDANCE =
   'When including the source URL, use a named Markdown link like [More info](https://example.com). Do not print a bare URL.';
 
@@ -39,7 +42,7 @@ function buildPrompt({
 }): string {
   const factLines = record.facts.map((fact) => `- ${fact}`).join('\n');
   return [
-    'You are @6529help, a concise helper bot for 6529.io.',
+    `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the provided facts.',
     'Do not invent details.',
     'Use one or two short paragraphs.',
@@ -69,7 +72,7 @@ function buildPublicDataPlanningPrompt({
   readonly catalog: string;
 }): string {
   return [
-    'You are @6529help public data planner for 6529.io.',
+    `You are ${HELP_BOT_MENTION} public data planner for 6529.io.`,
     'Return strict JSON only. Do not wrap in Markdown.',
     'If the question is not answerable from the catalog, return {"entity":null}.',
     'Choose one entity, operation, metric, and filter set from the catalog.',
@@ -99,7 +102,7 @@ function buildPublicDataAnswerPrompt({
   readonly canonicalUrl: string;
 }): string {
   return [
-    'You are @6529help, a concise helper bot for 6529.io.',
+    `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the public database result rows.',
     'Do not invent data.',
     'Use one or two short paragraphs.',

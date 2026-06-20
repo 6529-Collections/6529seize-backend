@@ -298,7 +298,7 @@ describe('HelpBotPublicDataService', () => {
       renderPublicDataAnswer: jest
         .fn()
         .mockResolvedValue(
-          '@6529help: SZN1 has 47 Meme Cards.\n\nMore info: https://6529.io/the-memes?szn=1'
+          '@help6529: SZN1 has 47 Meme Cards.\n\nMore info: https://6529.io/the-memes?szn=1'
         )
     };
     const db = new TestSqlExecutor();

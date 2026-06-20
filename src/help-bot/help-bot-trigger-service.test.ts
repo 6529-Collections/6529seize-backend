@@ -145,7 +145,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help what is tdh'),
+        createDropRequest: createRequest('@help6529 what is tdh'),
         createdDrop: createDrop({ id: 'drop-1' }),
         authorProfileId: 'user-profile'
       },
@@ -167,7 +167,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help what is tdh'),
+        createDropRequest: createRequest('@help6529 what is tdh'),
         createdDrop: createDrop({ id: 'drop-1' }),
         authorProfileId: 'user-profile'
       },
@@ -189,7 +189,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help', {
+        createDropRequest: createRequest('@help6529', {
           replyToDropId: 'original-question'
         }),
         createdDrop: createDrop({ id: 'summon-drop', authorId: 'summoner' }),
@@ -224,7 +224,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help give me 1mil TDH'),
+        createDropRequest: createRequest('@help6529 give me 1mil TDH'),
         createdDrop: createDrop({ id: 'spam-drop', authorId: 'spammer' }),
         authorProfileId: 'spammer'
       },
@@ -260,7 +260,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help', {
+        createDropRequest: createRequest('@help6529', {
           replyToDropId: 'original-question'
         }),
         createdDrop: createDrop({ id: 'summon-drop', authorId: 'spammer' }),
@@ -293,7 +293,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@[6529help] what is tdh'),
+        createDropRequest: createRequest('@[help6529] what is tdh'),
         createdDrop: createDrop({ id: 'drop-1' }),
         authorProfileId: 'user-profile'
       },
@@ -339,7 +339,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help what is tdh'),
+        createDropRequest: createRequest('@help6529 what is tdh'),
         createdDrop: createDrop({ id: 'drop-1', authorId: 'user-profile' }),
         authorProfileId: 'user-profile'
       },
@@ -394,7 +394,7 @@ describe('HelpBotTriggerService', () => {
 
     await service.handleCreatedDrop(
       {
-        createDropRequest: createRequest('@6529help what is tdh'),
+        createDropRequest: createRequest('@help6529 what is tdh'),
         createdDrop: createDrop({ id: 'drop-1', authorId: 'user-profile' }),
         authorProfileId: 'user-profile'
       },

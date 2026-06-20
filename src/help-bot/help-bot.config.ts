@@ -1,6 +1,6 @@
 import { env } from '@/env';
 
-export const HELP_BOT_HANDLE = '6529help';
+export const HELP_BOT_HANDLE = 'help6529';
 export function resolveHelpBotBaseUrl(
   nodeEnv: string | undefined = process.env.NODE_ENV,
   sentryEnvironment: string | undefined = process.env.SENTRY_ENVIRONMENT
@@ -31,7 +31,7 @@ export const HELP_BOT_INSUFFICIENT_CREDITS_REACTION = ':money_with_wings:';
 export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
 export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
-export const HELP_BOT_CREDIT_CATEGORY = '6529 Help Credits';
+export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
 export const HELP_BOT_SIGNUP_CREDIT_GRANT = 5;
 export const HELP_BOT_PROFILE_SETUP_CREDIT_GRANT = 5;
 export const HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT = 2;
@@ -43,7 +43,7 @@ export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
 export const HELP_BOT_OUT_OF_SCOPE_REPLY =
   'I can only help with 6529 product questions.';
 export const HELP_BOT_INSUFFICIENT_CREDITS_REPLY =
-  "You're out of 6529 Help Credits. Earn more by being active or receiving credits from others.";
+  "You're out of Help6529 Credits. Earn more by being active or receiving credits from others.";
 
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';
