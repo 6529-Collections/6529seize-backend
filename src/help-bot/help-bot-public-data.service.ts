@@ -128,6 +128,13 @@ const MEME_CARD_METRICS: Record<MemeCardMetric, MemeCardMetricDefinition> = {
 
 const MEME_CARD_FILTER_KEYS = ['meme', 'season'] as const;
 const TDH_GLOBAL_METRICS = ['total_tdh'] as const;
+const QUERY_PLAN_KEYS = [
+  'entity',
+  'operation',
+  'metric',
+  'filters',
+  'limit'
+] as const;
 
 const DATA_QUESTION_PATTERN =
   /\b(how many|count|highest|lowest|max|min|total|sum|average|avg|edition size|tdh rate|hodl rate|supply|szn|season|meme\s*#?\d+|current tdh)\b/i;
@@ -247,7 +254,22 @@ function readPositiveInteger(value: unknown, max: number): number | null {
 }
 
 function readLimit(value: unknown): number {
-  return readPositiveInteger(value, HELP_BOT_PUBLIC_DATA_MAX_ROWS) ?? 1;
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d+$/.test(value)
+        ? Number(value)
+        : null;
+  if (parsed === null || !Number.isInteger(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return Math.min(parsed, HELP_BOT_PUBLIC_DATA_MAX_ROWS);
+}
+
+function hasOnlyKnownPlanKeys(plan: HelpBotPublicDataQueryPlan): boolean {
+  return Object.keys(plan).every((key) =>
+    QUERY_PLAN_KEYS.includes(key as never)
+  );
 }
 
 function readMemeCardFilters(
@@ -527,6 +549,9 @@ function buildTdhGlobalQuery(
 export function buildHelpBotPublicDataQuery(
   plan: HelpBotPublicDataQueryPlan
 ): HelpBotPublicDataExecutableQuery | null {
+  if (!hasOnlyKnownPlanKeys(plan)) {
+    return null;
+  }
   const entity = readStringEnum(plan.entity, HELP_BOT_PUBLIC_DATA_ENTITIES);
   if (entity === 'meme_cards') {
     return buildMemeCardsQuery(plan);
