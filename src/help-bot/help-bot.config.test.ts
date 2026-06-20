@@ -1,0 +1,59 @@
+import {
+  HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY,
+  HELP_BOT_TECH_TEAM_HANDLES_ENV,
+  buildHelpBotNoReliableSourceReply,
+  getHelpBotTechTeamMentionHandles,
+  resolveHelpBotBaseUrl
+} from './help-bot.config';
+
+describe('help bot config', () => {
+  const previousTechTeamHandles = process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV];
+
+  afterEach(() => {
+    if (previousTechTeamHandles === undefined) {
+      delete process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV];
+      return;
+    }
+    process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] = previousTechTeamHandles;
+  });
+
+  it('omits tech team mentions when the env var is missing', () => {
+    delete process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV];
+
+    expect(getHelpBotTechTeamMentionHandles()).toEqual([]);
+    expect(buildHelpBotNoReliableSourceReply()).toBe(
+      HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY
+    );
+  });
+
+  it('normalizes, filters, and dedupes tech team handles', () => {
+    process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] =
+      ' @Alice ,bob,alice,bad handle,@carol ';
+
+    expect(getHelpBotTechTeamMentionHandles()).toEqual([
+      'Alice',
+      'bob',
+      'carol'
+    ]);
+    expect(buildHelpBotNoReliableSourceReply()).toBe(
+      `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} @Alice @bob @carol`
+    );
+  });
+
+  it('accepts semicolon-separated tech team handles for compatibility', () => {
+    process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] = 'dev-team;@support';
+
+    expect(getHelpBotTechTeamMentionHandles()).toEqual(['dev-team', 'support']);
+  });
+
+  it('uses the staging frontend help index base URL in development', () => {
+    expect(resolveHelpBotBaseUrl('development')).toBe(
+      'https://staging.6529.io'
+    );
+  });
+
+  it('uses the production frontend help index base URL in production and local', () => {
+    expect(resolveHelpBotBaseUrl('production')).toBe('https://6529.io');
+    expect(resolveHelpBotBaseUrl('local')).toBe('https://6529.io');
+  });
+});

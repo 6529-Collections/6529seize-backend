@@ -50,6 +50,7 @@ import { curationsApiService } from '@/api/curations/curations.api.service';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiDropCuration } from '@/api/generated/models/ApiDropCuration';
 import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
+import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
 
 const router = asyncRouter();
 
@@ -224,6 +225,14 @@ router.post(
         representativeId: authenticationContext.isAuthenticatedAsProxy()
           ? authenticationContext.roleProfileId!
           : authorProfileId
+      },
+      { timer, authenticationContext }
+    );
+    await helpBotTriggerService.handleCreatedDrop(
+      {
+        createDropRequest,
+        createdDrop,
+        authorProfileId
       },
       { timer, authenticationContext }
     );

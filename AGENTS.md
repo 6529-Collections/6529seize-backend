@@ -117,6 +117,22 @@ The test configuration uses:
 
 Keep `docs/architecture.md` up to date when changing the system shape. Update it in the same change whenever you add, remove, rename, or materially rewire a Lambda, API boundary, SQS/SNS queue or topic, EventBridge trigger, DB/runtime pattern, media/edge flow, deployable service, or major external integration. If a development touches those areas but does not require a docs update, say that explicitly in the final response.
 
+## 6529 Help Bot Knowledge Maintenance
+
+When changing backend-owned product behavior that users may ask `@6529help`
+about, update the help bot knowledge in the same PR. This includes changes to
+subscriptions, eligibility rules, wave or drop permissions, posting limits,
+profile/business-rule terminology, and canonical backend-owned URLs.
+
+For V1, frontend product knowledge is owned by the frontend repository in
+`ops/help/help-index.json` and published as `/help-index.json`. The backend help
+bot runtime should consume and cache that artifact instead of hardcoding
+frontend routes, controls, or product navigation. Keep
+`specs/6529-help-bot-runtime.md` aligned with any runtime, provider, source,
+failure-mode, or coverage change. If a backend behavior is user-visible but the
+frontend corpus is not updated in the same release set, state the gap in the PR
+or final handoff.
+
 ### Loop-Based Services (Backend)
 
 The backend consists of independent "loop" services that run as AWS Lambda functions or cron jobs. Each loop is self-contained in `src/*Loop/` directories:

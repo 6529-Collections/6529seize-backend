@@ -1,0 +1,109 @@
+service: helpBotReplyLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 120
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  helpBotReplyLoop:
+    handler: index.handler
+    name: helpBotReplyLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 2
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [HelpBotRepliesQueue, Arn]
+          batchSize: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'helpBotReplyLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    HelpBotReplyLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/helpBotReplyLoop
+        RetentionInDays: 60
+
+    HelpBotRepliesQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: help-bot-replies
+        VisibilityTimeout: 150
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [HelpBotRepliesDLQ, Arn]
+          maxReceiveCount: 5
+
+    HelpBotRepliesDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: help-bot-replies-dlq
+
+    HelpBotRepliesQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: HelpBotRepliesQueue
+        PolicyDocument:
+          Statement:
+            # seizeAPI is deployed outside this stack, but it uses the same
+            # lambda-vpc-role as this worker; the policy covers both enqueue
+            # and reply-loop access.
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:GetQueueUrl
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt HelpBotRepliesQueue.Arn
+
+    HelpBotReplyLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - HelpBotReplyLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: HelpBotReplyLoopLogGroup
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'helpBotReplyLoop_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    HelpBotReplyLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: HelpBotReplyLoopOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-helpBotReplyLoop-OOM'
+        AlarmDescription: !Sub 'Lambda helpBotReplyLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'helpBotReplyLoop_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

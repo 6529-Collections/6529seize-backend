@@ -38,6 +38,7 @@ on:
           - ethPriceLoop
           - externalCollectionLiveTailingLoop
           - externalCollectionSnapshottingLoop
+          - helpBotReplyLoop
           - marketStatsLoop
           - mediaResizerLoop
           - mintAnnouncementsLoop
