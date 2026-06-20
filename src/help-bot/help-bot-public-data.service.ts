@@ -343,10 +343,10 @@ function compactValue(value: unknown): string {
     try {
       return JSON.stringify(value);
     } catch {
-      return String(value);
+      return '[unserializable object]';
     }
   }
-  return `${value}`;
+  return String(value);
 }
 
 function compactRow(row: Record<string, unknown>): string {
@@ -546,6 +546,13 @@ function describeMemeCardsScope(filters: MemeCardFilterValues): string {
   return 'Meme Cards';
 }
 
+function describeMemeCardsSeasonScope(filters: MemeCardFilterValues): string {
+  if (filters.season === undefined) {
+    return '';
+  }
+  return ` in SZN${filters.season}`;
+}
+
 function titleCaseOperation(operation: HelpBotPublicDataOperation): string {
   switch (operation) {
     case 'max':
@@ -643,7 +650,7 @@ function buildMemeCardsSortedQuery(
   const from = buildMemeCardsFromSql(metric);
   const direction = operation === 'max' ? 'DESC' : 'ASC';
   const titlePrefix = titleCaseOperation(operation);
-  const scope = filters.season !== undefined ? ` in SZN${filters.season}` : '';
+  const scope = describeMemeCardsSeasonScope(filters);
   return {
     queryId: buildQueryId('meme_cards', operation, metricKey),
     compiledSql: sqlJoin([
@@ -676,7 +683,7 @@ function buildMemeCardsAggregateQuery(
   const from = buildMemeCardsFromSql(metric);
   const sqlOperation = operation === 'sum' ? 'SUM' : 'AVG';
   const titlePrefix = titleCaseOperation(operation);
-  const scope = filters.season !== undefined ? ` in SZN${filters.season}` : '';
+  const scope = describeMemeCardsSeasonScope(filters);
   return {
     queryId: buildQueryId('meme_cards', operation, metricKey),
     compiledSql: sqlJoin([
