@@ -118,6 +118,84 @@ describe('HelpBotAnswerer', () => {
     });
   });
 
+  it('asks for a topic when the user only asks for help', async () => {
+    const publicDataService = {
+      answer: jest.fn()
+    };
+
+    const answer = await answerer(undefined, publicDataService).answer({
+      question: 'help me',
+      baseUrl: BASE_URL
+    });
+
+    expect(publicDataService.answer).not.toHaveBeenCalled();
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.capabilities');
+      expect(answer.answer).toContain('What do you need help with?');
+      expect(answer.answer).toContain('Reply with a topic or question.');
+    }
+  });
+
+  it('answers capability prompts with the help prompt', async () => {
+    const answer = await answerer().answer({
+      question: 'what can you do',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.capabilities');
+      expect(answer.answer).toContain('public 6529 product questions');
+    }
+  });
+
+  it('does not treat product-specific help as the generic help prompt', async () => {
+    const answer = await answerer().answer({
+      question: 'help me with TDH',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('network.tdh');
+    }
+  });
+
+  it('falls back to help-index knowledge when public data planning declines', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockResolvedValue(null)
+    };
+
+    const answer = await answerer(undefined, publicDataService).answer({
+      question: 'what is TDH?',
+      baseUrl: BASE_URL
+    });
+
+    expect(publicDataService.answer).toHaveBeenCalledWith({
+      question: 'what is TDH?',
+      previousBotAnswer: undefined
+    });
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('network.tdh');
+      expect(answer.answer).toContain('https://6529.io/network/tdh');
+    }
+  });
+
+  it('propagates public data execution failures for technical-failure handling', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockRejectedValue(new Error('db timeout'))
+    };
+
+    await expect(
+      answerer(undefined, publicDataService).answer({
+        question: 'how many memes are in szn1?',
+        baseUrl: BASE_URL
+      })
+    ).rejects.toThrow('db timeout');
+  });
+
   it('answers obvious impossible privilege requests without tech-team fallback', async () => {
     const publicDataService = {
       answer: jest.fn().mockResolvedValue({
