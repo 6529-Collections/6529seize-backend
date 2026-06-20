@@ -13,6 +13,7 @@ import {
   HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS
 } from './help-bot.config';
 import { HELP_BOT_PUBLIC_DATA_CATALOG } from './help-bot-public-data.catalog';
+import { stripHelpBotSelfIntro } from './help-bot-response-text';
 
 export interface HelpBotPublicDataAnswerRequest {
   readonly question: string;
@@ -213,7 +214,7 @@ function normalizeRenderedDataAnswer(
   text: string,
   canonicalUrl: string
 ): string {
-  const compact = text.trim().replace(/\n{3,}/g, '\n\n');
+  const compact = stripHelpBotSelfIntro(text).replace(/\n{3,}/g, '\n\n');
   const withUrl = compact.includes(canonicalUrl)
     ? compact
     : `${compact}\n\nMore info: ${canonicalUrl}`;

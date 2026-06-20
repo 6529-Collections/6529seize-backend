@@ -264,6 +264,26 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('strips help bot self-intros from rendered answers', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue('@6529help here! TDH is Total Days Held.')
+    };
+
+    const answer = await answerer(renderer).answer({
+      question: 'what is TDH?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toBe(
+        'TDH is Total Days Held.\n\nMore info: https://6529.io/network/tdh'
+      );
+    }
+  });
+
   it('falls back to deterministic answers when the renderer fails', async () => {
     const renderer: HelpBotLlmRenderer = {
       renderAnswer: jest.fn().mockRejectedValue(new Error('bedrock down'))
