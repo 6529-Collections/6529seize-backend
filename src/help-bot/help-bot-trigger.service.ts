@@ -62,9 +62,15 @@ export class HelpBotTriggerService {
     try {
       const botProfileId = await this.profileResolver.resolveBotProfileId(ctx);
       if (!botProfileId) {
+        this.logger.info(
+          `Help bot trigger skipped for drop ${createdDrop.id}: bot profile not resolved`
+        );
         return;
       }
       if (!(await this.isPublicHelpBotWave(createdDrop.wave.id, ctx))) {
+        this.logger.info(
+          `Help bot trigger skipped for drop ${createdDrop.id}: non-public wave ${createdDrop.wave.id}`
+        );
         return;
       }
       const parentDrop = await this.findParentDrop(createDropRequest, ctx);
@@ -76,6 +82,9 @@ export class HelpBotTriggerService {
         parentDrop
       });
       if (!trigger) {
+        this.logger.info(
+          `Help bot trigger skipped for drop ${createdDrop.id}: no trigger detected`
+        );
         return;
       }
 
@@ -92,6 +101,9 @@ export class HelpBotTriggerService {
         ctx
       );
       if (!created) {
+        this.logger.info(
+          `Help bot trigger skipped for drop ${createdDrop.id}: interaction ${interaction.id} already exists`
+        );
         return;
       }
 
@@ -112,6 +124,9 @@ export class HelpBotTriggerService {
           },
           ctx
         );
+        this.logger.info(
+          `Help bot trigger spam-suppressed drop ${createdDrop.id} interaction ${interaction.id}`
+        );
         return;
       }
 
@@ -130,6 +145,9 @@ export class HelpBotTriggerService {
           queueName: HELP_BOT_REPLY_QUEUE_NAME,
           message: { interaction_id: interaction.id }
         });
+        this.logger.info(
+          `Help bot trigger queued drop ${createdDrop.id} interaction ${interaction.id}`
+        );
       } catch (error) {
         await this.handleEnqueueFailure({
           botProfileId,
