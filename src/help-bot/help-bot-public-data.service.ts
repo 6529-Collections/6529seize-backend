@@ -13,7 +13,10 @@ import {
   HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS
 } from './help-bot.config';
 import { HELP_BOT_PUBLIC_DATA_CATALOG } from './help-bot-public-data.catalog';
-import { stripHelpBotSelfIntro } from './help-bot-response-text';
+import {
+  ensureCanonicalMarkdownLink,
+  stripHelpBotSelfIntro
+} from './help-bot-response-text';
 
 export interface HelpBotPublicDataAnswerRequest {
   readonly question: string;
@@ -198,7 +201,11 @@ function buildDeterministicDataAnswer({
   readonly canonicalUrl: string;
 }): string {
   if (!rows.length) {
-    return `I found no matching public data for ${title}.\n\nMore info: ${canonicalUrl}`;
+    return ensureCanonicalMarkdownLink({
+      text: `I found no matching public data for ${title}.`,
+      canonicalUrl,
+      label: title
+    });
   }
   const firstRow = rows[0];
   const valueText =
@@ -207,17 +214,23 @@ function buildDeterministicDataAnswer({
         ? compactValue(Object.values(firstRow)[0])
         : compactRow(firstRow)
       : rows.map((row, index) => `${index + 1}. ${compactRow(row)}`).join('\n');
-  return `${title}: ${valueText}\n\nMore info: ${canonicalUrl}`;
+  return ensureCanonicalMarkdownLink({
+    text: `${title}: ${valueText}`,
+    canonicalUrl,
+    label: title
+  });
 }
 
 function normalizeRenderedDataAnswer(
   text: string,
-  canonicalUrl: string
+  canonicalUrl: string,
+  label: string
 ): string {
-  const compact = stripHelpBotSelfIntro(text).replace(/\n{3,}/g, '\n\n');
-  const withUrl = compact.includes(canonicalUrl)
-    ? compact
-    : `${compact}\n\nMore info: ${canonicalUrl}`;
+  const withUrl = ensureCanonicalMarkdownLink({
+    text: stripHelpBotSelfIntro(text),
+    canonicalUrl,
+    label
+  });
   return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
 }
 
@@ -636,7 +649,11 @@ export class HelpBotPublicDataService {
       );
       if (rendered.trim()) {
         return {
-          answer: normalizeRenderedDataAnswer(rendered, canonicalUrl),
+          answer: normalizeRenderedDataAnswer(
+            rendered,
+            canonicalUrl,
+            query.title
+          ),
           queryId: query.queryId
         };
       }
