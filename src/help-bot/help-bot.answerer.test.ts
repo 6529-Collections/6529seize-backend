@@ -118,6 +118,40 @@ describe('HelpBotAnswerer', () => {
     });
   });
 
+  it('falls back to help-index knowledge when public data planning declines', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockResolvedValue(null)
+    };
+
+    const answer = await answerer(undefined, publicDataService).answer({
+      question: 'what is TDH?',
+      baseUrl: BASE_URL
+    });
+
+    expect(publicDataService.answer).toHaveBeenCalledWith({
+      question: 'what is TDH?',
+      previousBotAnswer: undefined
+    });
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('network.tdh');
+      expect(answer.answer).toContain('https://6529.io/network/tdh');
+    }
+  });
+
+  it('propagates public data execution failures for technical-failure handling', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockRejectedValue(new Error('db timeout'))
+    };
+
+    await expect(
+      answerer(undefined, publicDataService).answer({
+        question: 'how many memes are in szn1?',
+        baseUrl: BASE_URL
+      })
+    ).rejects.toThrow('db timeout');
+  });
+
   it('answers obvious impossible privilege requests without tech-team fallback', async () => {
     const publicDataService = {
       answer: jest.fn().mockResolvedValue({
