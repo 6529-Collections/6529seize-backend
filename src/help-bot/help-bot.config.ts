@@ -45,7 +45,8 @@ function normalizeMentionHandle(handle: string): string | null {
 export function getHelpBotTechTeamMentionHandles(): string[] {
   const seen = new Set<string>();
   const handles: string[] = [];
-  for (const rawHandle of env.getStringArray(HELP_BOT_TECH_TEAM_HANDLES_ENV)) {
+  const rawHandles = env.getStringOrNull(HELP_BOT_TECH_TEAM_HANDLES_ENV);
+  for (const rawHandle of rawHandles?.split(/[;,]/) ?? []) {
     const handle = normalizeMentionHandle(rawHandle);
     if (!handle) {
       continue;

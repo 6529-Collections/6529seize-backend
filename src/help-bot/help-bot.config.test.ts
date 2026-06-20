@@ -28,7 +28,7 @@ describe('help bot config', () => {
 
   it('normalizes, filters, and dedupes tech team handles', () => {
     process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] =
-      ' @Alice ;bob;alice;bad handle;@carol ';
+      ' @Alice ,bob,alice,bad handle,@carol ';
 
     expect(getHelpBotTechTeamMentionHandles()).toEqual([
       'Alice',
@@ -38,6 +38,12 @@ describe('help bot config', () => {
     expect(buildHelpBotNoReliableSourceReply()).toBe(
       `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} @Alice @bob @carol`
     );
+  });
+
+  it('accepts semicolon-separated tech team handles for compatibility', () => {
+    process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] = 'dev-team;@support';
+
+    expect(getHelpBotTechTeamMentionHandles()).toEqual(['dev-team', 'support']);
   });
 
   it('uses the staging frontend help index base URL in development', () => {

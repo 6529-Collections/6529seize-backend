@@ -394,8 +394,9 @@ Bot:
 I don't have enough knowledge to help you here.
 ```
 
-When `HELP_BOT_TECH_TEAM_HANDLES` is configured as a semicolon-separated handle
-array, the bot appends those mentions, for example:
+When `HELP_BOT_TECH_TEAM_HANDLES` is configured as a comma-separated handle
+array, the bot appends those mentions. Semicolons are also accepted for
+compatibility. For example:
 
 ```text
 I don't have enough knowledge to help you here. @6529tech @support

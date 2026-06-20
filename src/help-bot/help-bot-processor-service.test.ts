@@ -18,7 +18,7 @@ describe('HelpBotProcessorService', () => {
   });
 
   it('replies to the target drop and mentions tech team handles when no reliable source exists', async () => {
-    process.env.HELP_BOT_TECH_TEAM_HANDLES = 'dev-team;@support';
+    process.env.HELP_BOT_TECH_TEAM_HANDLES = 'dev-team,@support';
     const ctx = {} as never;
     const interaction: HelpBotInteractionRow = {
       id: 'interaction-1',
