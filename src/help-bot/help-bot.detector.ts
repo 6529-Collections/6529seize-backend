@@ -22,15 +22,15 @@ export interface HelpBotTriggerDetection {
 }
 
 const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 const ESCAPED_HELP_BOT_HANDLE = escapeRegExp(HELP_BOT_HANDLE);
 const HANDLE_MENTION_REGEX = new RegExp(
-  `(^|[^a-z0-9_])@(?:${ESCAPED_HELP_BOT_HANDLE}\\b|\\[${ESCAPED_HELP_BOT_HANDLE}\\])`,
+  String.raw`(^|[^a-z0-9_])@(?:${ESCAPED_HELP_BOT_HANDLE}\b|\[${ESCAPED_HELP_BOT_HANDLE}\])`,
   'i'
 );
 const HANDLE_MENTION_REPLACE_REGEX = new RegExp(
-  `(^|[^a-z0-9_])@(?:${ESCAPED_HELP_BOT_HANDLE}\\b|\\[${ESCAPED_HELP_BOT_HANDLE}\\])`,
+  String.raw`(^|[^a-z0-9_])@(?:${ESCAPED_HELP_BOT_HANDLE}\b|\[${ESCAPED_HELP_BOT_HANDLE}\])`,
   'gi'
 );
 

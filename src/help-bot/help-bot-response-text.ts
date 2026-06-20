@@ -1,26 +1,26 @@
 import { HELP_BOT_HANDLE } from './help-bot.config';
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 const ESCAPED_HELP_BOT_HANDLE = escapeRegExp(HELP_BOT_HANDLE);
-const HELP_BOT_HANDLE_PATTERN = `@?(?:\\[${ESCAPED_HELP_BOT_HANDLE}\\]|${ESCAPED_HELP_BOT_HANDLE})`;
+const HELP_BOT_HANDLE_PATTERN = String.raw`@?(?:\[${ESCAPED_HELP_BOT_HANDLE}\]|${ESCAPED_HELP_BOT_HANDLE})`;
 
 const HELP_BOT_SELF_INTRO_PATTERNS = [
   new RegExp(
-    `^\\s*(?:hey|hi|hello|gm)[,\\s]+${HELP_BOT_HANDLE_PATTERN}\\s+(?:here(?:'s)?|is here)\\s*[!:.,-]*\\s*`,
+    String.raw`^\s*(?:hey|hi|hello|gm)[,\s]+${HELP_BOT_HANDLE_PATTERN}\s+(?:here(?:'s)?|is here)\s*[!:.,-]*\s*`,
     'i'
   ),
   new RegExp(
-    `^\\s*${HELP_BOT_HANDLE_PATTERN}\\s+(?:here(?:'s)?|is here)\\s*[!:.,-]*\\s*`,
+    String.raw`^\s*${HELP_BOT_HANDLE_PATTERN}\s+(?:here(?:'s)?|is here)\s*[!:.,-]*\s*`,
     'i'
   ),
-  new RegExp(`^\\s*${HELP_BOT_HANDLE_PATTERN}\\s*[:：-]+\\s*`, 'i')
+  new RegExp(String.raw`^\s*${HELP_BOT_HANDLE_PATTERN}\s*[:：-]+\s*`, 'i')
 ];
 
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replace(/([\\[\]])/g, '\\$1');
+  return label.replace(/([\\[\]])/g, String.raw`\$1`);
 }
 
 function isGenericLinkLabel(label: string): boolean {
@@ -52,7 +52,7 @@ export function ensureCanonicalMarkdownLink({
   const compact = text.replace(/\n{3,}/g, '\n\n');
   const markdownLink = formatHelpBotMarkdownLink({ label, url: canonicalUrl });
   const markdownLinkPattern = new RegExp(
-    `\\[([^\\]]+)\\]\\(${escapeRegExp(canonicalUrl)}\\)`,
+    String.raw`\[([^\]]+)\]\(${escapeRegExp(canonicalUrl)}\)`,
     'g'
   );
   let sawCanonicalMarkdownLink = false;

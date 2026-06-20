@@ -145,12 +145,63 @@ const QUERY_PLAN_KEYS = [
   'filters',
   'limit'
 ] as const;
+const MEME_CARD_FILTER_KEY_SET = new Set<string>(MEME_CARD_FILTER_KEYS);
+const QUERY_PLAN_KEY_SET = new Set<string>(QUERY_PLAN_KEYS);
 
-const DATA_QUESTION_PATTERN =
-  /\b(how many|count|highest|lowest|max|min|top|who has|which profile|which user|profile|profiles|user|users|identity|identities|total|sum|average|avg|edition size|tdh rate|hodl rate|supply|szn|season|meme\s*#?\d+|current tdh)\b/i;
+const DATA_QUESTION_PATTERNS = [
+  /\b(how many|count|highest|lowest|max|min|top|total|sum|average|avg)\b/i,
+  /\b(who has|which profile|which user|profile|profiles|user|users|identity|identities)\b/i,
+  /\b(edition size|tdh rate|hodl rate|current tdh|supply|szn|season)\b/i,
+  /\bmeme\s*#?\d+\b/i
+] as const;
+
+const PROFILE_TDH_HINT_TERMS = [
+  'profile',
+  'profiles',
+  'user',
+  'users',
+  'person',
+  'people',
+  'identity',
+  'identities',
+  'handle',
+  'handles',
+  'account',
+  'accounts',
+  'holder',
+  'holders'
+] as const;
+
+const PROFILE_TDH_RANKING_TERMS = [
+  'highest',
+  'top',
+  'most',
+  'leader',
+  'leaders',
+  'rank',
+  'ranking',
+  'currently',
+  'current',
+  'value',
+  'which',
+  'who'
+] as const;
+
+const MEME_CARD_HINT_TERMS = [
+  'meme',
+  'memes',
+  'card',
+  'cards',
+  'nft',
+  'nfts',
+  'edition',
+  'supply',
+  'hodl rate',
+  'tdh rate'
+] as const;
 
 function isPotentialPublicDataQuestion(question: string): boolean {
-  return DATA_QUESTION_PATTERN.test(question);
+  return DATA_QUESTION_PATTERNS.some((pattern) => pattern.test(question));
 }
 
 function applyStatementTimeoutHint(sql: string): string {
@@ -182,27 +233,44 @@ function normalizeIntentText(value: string | null | undefined): string {
     .replace(/\s+/g, ' ');
 }
 
+function containsNormalizedTerm(text: string, term: string): boolean {
+  return ` ${text} `.includes(` ${term} `);
+}
+
+function containsAnyNormalizedTerm(
+  text: string,
+  terms: readonly string[]
+): boolean {
+  return terms.some((term) => containsNormalizedTerm(text, term));
+}
+
 function isProfileTdhQuestion({
   question,
   previousBotAnswer
 }: HelpBotPublicDataAnswerRequest): boolean {
   const normalizedQuestion = normalizeIntentText(question);
   const normalizedPreviousAnswer = normalizeIntentText(previousBotAnswer);
-  const explicitProfileHint =
-    /\b(profile|profiles|user|users|person|people|identity|identities|handle|handles|account|accounts|holder|holders)\b/.test(
-      normalizedQuestion
-    );
-  const personQuestionHint = /\bwho has\b/.test(normalizedQuestion);
-  const rankingHint =
-    /\b(highest|top|most|leader|leaders|rank|ranking|currently|current|value|which|who)\b/.test(
-      normalizedQuestion
-    );
-  const questionMentionsTdh = /\btdh\b/.test(normalizedQuestion);
-  const previousAnswerMentionsTdh = /\btdh\b/.test(normalizedPreviousAnswer);
-  const memeCardHint =
-    /\b(meme|memes|card|cards|nft|nfts|edition|supply|hodl rate|tdh rate)\b/.test(
-      normalizedQuestion
-    );
+  const explicitProfileHint = containsAnyNormalizedTerm(
+    normalizedQuestion,
+    PROFILE_TDH_HINT_TERMS
+  );
+  const personQuestionHint = containsNormalizedTerm(
+    normalizedQuestion,
+    'who has'
+  );
+  const rankingHint = containsAnyNormalizedTerm(
+    normalizedQuestion,
+    PROFILE_TDH_RANKING_TERMS
+  );
+  const questionMentionsTdh = containsNormalizedTerm(normalizedQuestion, 'tdh');
+  const previousAnswerMentionsTdh = containsNormalizedTerm(
+    normalizedPreviousAnswer,
+    'tdh'
+  );
+  const memeCardHint = containsAnyNormalizedTerm(
+    normalizedQuestion,
+    MEME_CARD_HINT_TERMS
+  );
 
   if (memeCardHint && !explicitProfileHint) {
     return false;
@@ -240,6 +308,13 @@ function compactValue(value: unknown): string {
   if (value instanceof Date) {
     return value.toISOString().slice(0, 10);
   }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
   return `${value}`;
 }
 
@@ -269,18 +344,25 @@ function buildDeterministicDataAnswer({
       label: title
     });
   }
-  const firstRow = rows[0];
-  const valueText =
-    rows.length === 1
-      ? Object.entries(firstRow).length === 1
-        ? compactValue(Object.values(firstRow)[0])
-        : compactRow(firstRow)
-      : rows.map((row, index) => `${index + 1}. ${compactRow(row)}`).join('\n');
+  const valueText = compactRows(rows);
   return ensureCanonicalMarkdownLink({
     text: `${title}: ${valueText}`,
     canonicalUrl,
     label: title
   });
+}
+
+function compactRows(rows: readonly Record<string, unknown>[]): string {
+  if (rows.length !== 1) {
+    return rows
+      .map((row, index) => `${index + 1}. ${compactRow(row)}`)
+      .join('\n');
+  }
+  const entries = Object.entries(rows[0]);
+  if (entries.length === 1) {
+    return compactValue(entries[0][1]);
+  }
+  return compactRow(rows[0]);
 }
 
 function normalizeRenderedDataAnswer(
@@ -300,9 +382,10 @@ function readStringEnum<T extends string>(
   value: unknown,
   allowed: readonly T[]
 ): T | null {
-  return typeof value === 'string' && allowed.includes(value as T)
-    ? (value as T)
-    : null;
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return allowed.find((allowedValue) => allowedValue === value) ?? null;
 }
 
 function readPlanFilters(filters: unknown): Record<string, unknown> | null {
@@ -315,56 +398,51 @@ function readPlanFilters(filters: unknown): Record<string, unknown> | null {
 }
 
 function readPositiveInteger(value: unknown, max: number): number | null {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && /^\d+$/.test(value)
-        ? Number(value)
-        : null;
-  return parsed !== null &&
-    Number.isInteger(parsed) &&
-    parsed > 0 &&
-    parsed <= max
-    ? parsed
-    : null;
+  const parsed = readIntegerValue(value);
+  if (
+    parsed === null ||
+    !Number.isInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > max
+  ) {
+    return null;
+  }
+  return parsed;
 }
 
 function readLimit(value: unknown): number {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && /^\d+$/.test(value)
-        ? Number(value)
-        : null;
+  const parsed = readIntegerValue(value);
   if (parsed === null || !Number.isInteger(parsed) || parsed <= 0) {
     return 1;
   }
   return Math.min(parsed, HELP_BOT_PUBLIC_DATA_MAX_ROWS);
 }
 
+function readIntegerValue(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    return Number(value);
+  }
+  return null;
+}
+
 function hasOnlyKnownPlanKeys(plan: HelpBotPublicDataQueryPlan): boolean {
-  return Object.keys(plan).every((key) =>
-    QUERY_PLAN_KEYS.includes(key as never)
-  );
+  return Object.keys(plan).every((key) => QUERY_PLAN_KEY_SET.has(key));
 }
 
 function readMemeCardFilters(
   filters: Record<string, unknown>
 ): MemeCardFilterValues | null {
   const unknownKeys = Object.keys(filters).filter(
-    (key) => !MEME_CARD_FILTER_KEYS.includes(key as never)
+    (key) => !MEME_CARD_FILTER_KEY_SET.has(key)
   );
   if (unknownKeys.length) {
     return null;
   }
-  const meme =
-    filters.meme === undefined
-      ? undefined
-      : readPositiveInteger(filters.meme, 100_000);
-  const season =
-    filters.season === undefined
-      ? undefined
-      : readPositiveInteger(filters.season, 10_000);
+  const meme = readOptionalPositiveInteger(filters.meme, 100_000);
+  const season = readOptionalPositiveInteger(filters.season, 10_000);
   if (
     (filters.meme !== undefined && meme === null) ||
     (filters.season !== undefined && season === null)
@@ -372,6 +450,13 @@ function readMemeCardFilters(
     return null;
   }
   return { meme: meme ?? undefined, season: season ?? undefined };
+}
+
+function readOptionalPositiveInteger(
+  value: unknown,
+  max: number
+): number | null | undefined {
+  return value === undefined ? undefined : readPositiveInteger(value, max);
 }
 
 function buildMemeCardsWhere(filters: MemeCardFilterValues): {
@@ -446,15 +531,15 @@ function buildMemeCardsFromSql(metric?: MemeCardMetricDefinition): {
   readonly fromSql: string;
   readonly params: Record<string, unknown>;
 } {
-  if (!metric?.requiresNfts) {
+  if (metric?.requiresNfts) {
     return {
-      fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m`,
-      params: {}
+      fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m JOIN ${NFTS_TABLE} n ON n.id = m.id AND n.contract = :memesContract`,
+      params: { memesContract: MEMES_CONTRACT }
     };
   }
   return {
-    fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m JOIN ${NFTS_TABLE} n ON n.id = m.id AND n.contract = :memesContract`,
-    params: { memesContract: MEMES_CONTRACT }
+    fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m`,
+    params: {}
   };
 }
 
