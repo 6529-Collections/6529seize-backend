@@ -89,6 +89,10 @@ export class HelpBotDropWriterService {
               bypassChatLinkRestrictions: true,
               bypassChatSlowModeRestrictions: true
             });
+          await this.dropsDb.updateHideLinkPreview(
+            { drop_id, hide_link_preview: true },
+            { timer: ctx.timer, connection }
+          );
           const apiDrop = await this.dropsService.findDropByIdOrThrow(
             {
               dropId: drop_id,

@@ -309,7 +309,7 @@ describe('HelpBotPublicDataService', () => {
       service.answer({ question: 'how many memes are in szn1?' })
     ).resolves.toEqual({
       answer:
-        'SZN1 has 47 Meme Cards.\n\nMore info: https://6529.io/the-memes?szn=1',
+        'SZN1 has 47 Meme Cards.\n\nMore info: [Meme Cards in SZN1](https://6529.io/the-memes?szn=1)',
       queryId: 'meme_cards.count'
     });
     expect(db.execute).toHaveBeenCalledWith(
@@ -423,7 +423,7 @@ describe('HelpBotPublicDataService', () => {
       service.answer({ question: 'what is the highest tdh rate?' })
     ).resolves.toEqual({
       answer:
-        'The highest TDH rate is 99.\n\nMore info: https://6529.io/the-memes',
+        'The highest TDH rate is 99.\n\nMore info: [Highest Meme Card TDH Rate](https://6529.io/the-memes)',
       queryId: 'meme_cards.max.tdh_rate'
     });
     expect(db.execute).toHaveBeenCalledWith(
@@ -450,7 +450,8 @@ describe('HelpBotPublicDataService', () => {
     const service = new HelpBotPublicDataService(llm, () => db);
 
     await expect(service.answer({ question: 'total tdh?' })).resolves.toEqual({
-      answer: 'Total TDH is 123.\n\nMore info: https://6529.io/network/tdh',
+      answer:
+        'Total TDH is 123.\n\nMore info: [Total TDH](https://6529.io/network/tdh)',
       queryId: 'tdh_global.latest.total_tdh'
     });
     expect(db.execute).toHaveBeenCalledWith(
@@ -531,6 +532,8 @@ describe('HelpBotPublicDataService', () => {
     const answer = await service.answer({ question: 'total tdh?' });
 
     expect(answer?.answer).toContain('Total TDH: 123,456');
-    expect(answer?.answer).toContain('https://6529.io/network/tdh');
+    expect(answer?.answer).toContain(
+      '[Total TDH](https://6529.io/network/tdh)'
+    );
   });
 });

@@ -72,7 +72,7 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.answer).toContain('TDH stands for Total Days Held.');
-      expect(answer.answer).toContain('https://6529.io/network/tdh');
+      expect(answer.answer).toContain('[TDH](https://6529.io/network/tdh)');
       expect(answer.record.id).toBe('network.tdh');
     }
   });
@@ -179,7 +179,7 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('network.tdh');
-      expect(answer.answer).toContain('https://6529.io/network/tdh');
+      expect(answer.answer).toContain('[TDH](https://6529.io/network/tdh)');
     }
   });
 
@@ -259,7 +259,29 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.answer).toBe(
-        'TDH is Total Days Held.\n\nMore info: https://6529.io/network/tdh'
+        'TDH is Total Days Held.\n\nMore info: [TDH](https://6529.io/network/tdh)'
+      );
+    }
+  });
+
+  it('keeps renderer-provided markdown links to canonical URLs', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          'TDH is Total Days Held. See [the TDH page](https://6529.io/network/tdh).'
+        )
+    };
+
+    const answer = await answerer(renderer).answer({
+      question: 'what is TDH?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toBe(
+        'TDH is Total Days Held. See [the TDH page](https://6529.io/network/tdh).'
       );
     }
   });
@@ -279,7 +301,7 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.answer).toBe(
-        'TDH is Total Days Held.\n\nMore info: https://6529.io/network/tdh'
+        'TDH is Total Days Held.\n\nMore info: [TDH](https://6529.io/network/tdh)'
       );
     }
   });
@@ -297,7 +319,9 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('waves.create.entrypoint.sidebar');
-      expect(answer.answer).toContain('https://6529.io/waves/create');
+      expect(answer.answer).toContain(
+        '[Create a wave](https://6529.io/waves/create)'
+      );
     }
   });
 });

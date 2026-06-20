@@ -5,7 +5,10 @@ import {
   HelpBotKnowledgeRecord
 } from './help-bot.knowledge';
 import { HelpBotPublicDataService } from './help-bot-public-data.service';
-import { stripHelpBotSelfIntro } from './help-bot-response-text';
+import {
+  ensureCanonicalMarkdownLink,
+  stripHelpBotSelfIntro
+} from './help-bot-response-text';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -50,14 +53,23 @@ function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
   canonicalUrl: string
 ): string {
-  return `${record.facts.join(' ')}\n\nMore info: ${canonicalUrl}`;
+  return ensureCanonicalMarkdownLink({
+    text: record.facts.join(' '),
+    canonicalUrl,
+    label: record.title
+  });
 }
 
-function normalizeRenderedAnswer(text: string, canonicalUrl: string): string {
-  const compact = stripHelpBotSelfIntro(text).replace(/\n{3,}/g, '\n\n');
-  const withUrl = compact.includes(canonicalUrl)
-    ? compact
-    : `${compact}\n\nMore info: ${canonicalUrl}`;
+function normalizeRenderedAnswer(
+  text: string,
+  canonicalUrl: string,
+  label: string
+): string {
+  const withUrl = ensureCanonicalMarkdownLink({
+    text: stripHelpBotSelfIntro(text),
+    canonicalUrl,
+    label
+  });
   return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
 }
 
@@ -346,7 +358,11 @@ export class HelpBotAnswerer {
       if (rendered.trim()) {
         return {
           type: 'ANSWER',
-          answer: normalizeRenderedAnswer(rendered, canonicalUrl),
+          answer: normalizeRenderedAnswer(
+            rendered,
+            canonicalUrl,
+            match.record.title
+          ),
           record: match.record
         };
       }

@@ -23,6 +23,8 @@ const TONE_GUIDANCE =
   'Mirror the user tone lightly: if the question is casual or playful, you may be a little warmer or more playful; if it is formal, stay formal. Keep it useful, accurate, and not overfamiliar.';
 const NO_SELF_INTRO_GUIDANCE =
   'Start directly with the answer. Do not begin with @6529help, 6529help:, 6529help here, a greeting, or any self-introduction.';
+const MARKDOWN_LINK_GUIDANCE =
+  'When including the source URL, use a named Markdown link like [More info](https://example.com). Do not print a bare URL.';
 
 function buildPrompt({
   question,
@@ -43,7 +45,8 @@ function buildPrompt({
     'Use one or two short paragraphs.',
     TONE_GUIDANCE,
     NO_SELF_INTRO_GUIDANCE,
-    `Include this URL exactly once: ${canonicalUrl}`,
+    MARKDOWN_LINK_GUIDANCE,
+    `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
     previousBotAnswer
       ? `Previous bot answer for context:\n${previousBotAnswer}`
       : '',
@@ -101,7 +104,8 @@ function buildPublicDataAnswerPrompt({
     'Use one or two short paragraphs.',
     TONE_GUIDANCE,
     NO_SELF_INTRO_GUIDANCE,
-    `Include this URL exactly once: ${canonicalUrl}`,
+    MARKDOWN_LINK_GUIDANCE,
+    `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
     `User question:\n${question}`,
     `Answer title:\n${title}`,
     `Public database result rows:\n${JSON.stringify(rows).slice(0, 4000)}`

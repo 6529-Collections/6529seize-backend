@@ -75,6 +75,10 @@ describe('HelpBotBedrockRenderer', () => {
     expect(readPrompt(send)).toContain('Mirror the user tone lightly');
     expect(readPrompt(send)).toContain('Do not invent details');
     expect(readPrompt(send)).toContain('Do not begin with @6529help');
+    expect(readPrompt(send)).toContain('Do not print a bare URL');
+    expect(readPrompt(send)).toContain(
+      'Include this URL exactly once as a Markdown link target: https://6529.io/network/tdh'
+    );
   });
 
   it('aborts a slow Bedrock response', async () => {

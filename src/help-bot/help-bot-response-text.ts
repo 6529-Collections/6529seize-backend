@@ -12,6 +12,48 @@ const HELP_BOT_SELF_INTRO_PATTERNS = [
   new RegExp(`^\\s*${HELP_BOT_HANDLE_PATTERN}\\s*[:：-]+\\s*`, 'i')
 ];
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeMarkdownLinkLabel(label: string): string {
+  return label.replace(/([\\[\]])/g, '\\$1');
+}
+
+export function formatHelpBotMarkdownLink({
+  label,
+  url
+}: {
+  readonly label: string;
+  readonly url: string;
+}): string {
+  const safeLabel = escapeMarkdownLinkLabel(label.trim() || 'More info');
+  return `[${safeLabel}](${url})`;
+}
+
+export function ensureCanonicalMarkdownLink({
+  text,
+  canonicalUrl,
+  label
+}: {
+  readonly text: string;
+  readonly canonicalUrl: string;
+  readonly label: string;
+}): string {
+  const compact = text.replace(/\n{3,}/g, '\n\n');
+  const markdownLink = formatHelpBotMarkdownLink({ label, url: canonicalUrl });
+  const markdownLinkPattern = new RegExp(
+    `\\[[^\\]]+\\]\\(${escapeRegExp(canonicalUrl)}\\)`
+  );
+  if (markdownLinkPattern.test(compact)) {
+    return compact;
+  }
+  if (compact.includes(canonicalUrl)) {
+    return compact.split(canonicalUrl).join(markdownLink);
+  }
+  return `${compact}\n\nMore info: ${markdownLink}`;
+}
+
 export function stripHelpBotSelfIntro(text: string): string {
   let stripped = text.trim();
   for (const pattern of HELP_BOT_SELF_INTRO_PATTERNS) {
