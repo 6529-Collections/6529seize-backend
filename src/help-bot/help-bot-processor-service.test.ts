@@ -4,6 +4,7 @@ import {
 } from '@/entities/IHelpBotInteraction';
 import {
   HELP_BOT_FAILURE_REACTION,
+  HELP_BOT_SUCCESS_REACTION,
   HELP_BOT_TECHNICAL_FAILURE_REPLY
 } from './help-bot.config';
 import { HelpBotProcessorService } from './help-bot-processor.service';
@@ -163,6 +164,75 @@ describe('HelpBotProcessorService', () => {
         interactionId: 'interaction-1',
         message: 'I can only help with 6529 product questions.',
         mentionedHandles: []
+      },
+      ctx
+    );
+  });
+
+  it('does not post a technical-failure reply when the success reaction fails', async () => {
+    const ctx = {} as never;
+    const interaction: HelpBotInteractionRow = {
+      id: 'interaction-1',
+      trigger_drop_id: 'question-drop',
+      target_drop_id: null,
+      wave_id: 'wave-1',
+      author_id: 'profile-1',
+      trigger_type: HelpBotInteractionTriggerType.MENTION,
+      question: 'what is tdh',
+      parent_bot_drop_id: null,
+      bot_reply_drop_id: null,
+      status: HelpBotInteractionStatus.SEEN,
+      knowledge_version: 'test',
+      failure_reason: null,
+      created_at: 1,
+      updated_at: 1,
+      answer_started_at: null,
+      completed_at: null
+    };
+    const interactionsDb = {
+      claimForAnswering: jest.fn().mockResolvedValue(interaction),
+      markAnswered: jest.fn(),
+      markFailed: jest.fn()
+    };
+    const reactionService = {
+      setReaction: jest.fn().mockRejectedValue(new Error('reaction failed'))
+    };
+    const dropWriter = {
+      reply: jest.fn().mockResolvedValue({ id: 'bot-reply-drop' })
+    };
+    const profileResolver = {
+      resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
+    };
+    const answer = jest.fn().mockResolvedValue({
+      type: 'ANSWER',
+      answer: 'TDH stands for Total Days Held.'
+    });
+    const service = new HelpBotProcessorService(
+      interactionsDb as never,
+      reactionService as never,
+      dropWriter as never,
+      {} as never,
+      profileResolver as never,
+      () => ({ answer }) as never
+    );
+
+    await service.processInteraction('interaction-1', ctx);
+
+    expect(dropWriter.reply).toHaveBeenCalledTimes(1);
+    expect(interactionsDb.markAnswered).toHaveBeenCalledWith(
+      {
+        id: 'interaction-1',
+        replyDropId: 'bot-reply-drop'
+      },
+      ctx
+    );
+    expect(interactionsDb.markFailed).not.toHaveBeenCalled();
+    expect(reactionService.setReaction).toHaveBeenCalledWith(
+      {
+        botProfileId: 'bot-profile',
+        dropId: 'question-drop',
+        waveId: 'wave-1',
+        reaction: HELP_BOT_SUCCESS_REACTION
       },
       ctx
     );

@@ -83,6 +83,25 @@ describe('detectHelpBotTrigger', () => {
     });
   });
 
+  it('detects bracketed markdown mentions and strips the bot handle', () => {
+    const trigger = detectHelpBotTrigger({
+      request: createRequest('@[6529help] what is TDH?'),
+      createdDrop: createDrop({ id: 'drop-1' }),
+      authorProfileId: 'user-profile',
+      botProfileId: 'bot-profile'
+    });
+
+    expect(trigger).toEqual({
+      triggerDropId: 'drop-1',
+      targetDropId: 'drop-1',
+      waveId: 'wave-1',
+      authorProfileId: 'user-profile',
+      question: 'what is TDH?',
+      triggerType: HelpBotInteractionTriggerType.MENTION,
+      parentBotDropId: null
+    });
+  });
+
   it('detects explicit payload mentions without raw text mention', () => {
     const trigger = detectHelpBotTrigger({
       request: createRequest('How do subscriptions work?', {

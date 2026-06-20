@@ -2,9 +2,12 @@ import { env } from '@/env';
 
 export const HELP_BOT_HANDLE = '6529help';
 export function resolveHelpBotBaseUrl(
-  nodeEnv: string | undefined = process.env.NODE_ENV
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+  sentryEnvironment: string | undefined = process.env.SENTRY_ENVIRONMENT
 ): string {
-  return nodeEnv === 'development'
+  const normalizedSentryEnvironment = sentryEnvironment?.toLowerCase() ?? '';
+  return nodeEnv === 'development' ||
+    normalizedSentryEnvironment.includes('staging')
     ? 'https://staging.6529.io'
     : 'https://6529.io';
 }
@@ -20,10 +23,10 @@ export const HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS = 5000;
 export const HELP_BOT_PUBLIC_DATA_MAX_ROWS = 10;
 export const HELP_BOT_KNOWLEDGE_VERSION = 'frontend-help-index-v1';
 export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
-export const HELP_BOT_SEEN_REACTION = '👀';
-export const HELP_BOT_SUCCESS_REACTION = '✅';
-export const HELP_BOT_FAILURE_REACTION = '⚠️';
-export const HELP_BOT_SPAM_REACTION = '⛔️';
+export const HELP_BOT_SEEN_REACTION = ':eyes:';
+export const HELP_BOT_SUCCESS_REACTION = ':white_check_mark:';
+export const HELP_BOT_FAILURE_REACTION = ':warning:';
+export const HELP_BOT_SPAM_REACTION = ':no_entry:';
 export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
 export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
