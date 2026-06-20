@@ -60,11 +60,20 @@ The bot must fail visibly.
 If the bot cannot produce a reliable answer from indexed sources:
 
 1. Replace 👀 with ⚠️.
-2. Reply without hallucinating. If `HELP_BOT_TECH_TEAM_HANDLES` is configured,
-   append those handles as mentions.
+2. Reply without hallucinating. If the unanswered question appears to be about
+   the 6529 product and `HELP_BOT_TECH_TEAM_HANDLES` is configured, append
+   those handles as mentions.
 
 ```text
 I don't have enough knowledge to help you here.
+```
+
+If the question is outside the 6529 product scope, such as general history,
+news, trivia, or unrelated world knowledge, the bot should not answer the
+question and should not tag the tech team:
+
+```text
+I can only help with 6529 product questions.
 ```
 
 If the bot hits a technical issue, timeout, or provider error:
@@ -188,10 +197,11 @@ Initial public-data plan surface:
 Initial backend public tables:
 
 - `nfts`: Meme Card names, supply, TDH fields, and `hodl_rate` used as card TDH
-  rate.
+  rate. Owner, wallet, and identity columns are not exposed through the V1
+  catalog.
 - `memes_extended_data`: season, meme number/name, edition size, holder, burn,
   and uniqueness metrics.
-- `latest_tdh_global_history`: latest global TDH totals and wallet counts.
+- `latest_tdh_global_history`: latest global TDH total plus date/block context.
 
 Public-data queries execute through the shared `SqlExecutor` with the read pool
 forced, backend-applied hard row limits, and a MySQL `MAX_EXECUTION_TIME` hint
@@ -204,6 +214,11 @@ help-index path. If a compiled DB query returns no rows or only null aggregate
 values, the bot also declines that data mode instead of wording an empty result
 as a fact. If a compiled DB query times out or fails, the bot uses the
 technical-failure reply path.
+
+Natural wording may lightly mirror the user's tone. Casual questions can receive
+slightly warmer wording, and formal questions should stay formal, but tone never
+overrides the source facts, refusal boundaries, no-reliable-source behavior, or
+technical-failure behavior. Deterministic fallback answers remain neutral.
 
 ### 4.5 Agent maintenance contract
 

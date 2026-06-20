@@ -19,6 +19,9 @@ interface AnthropicResponse {
   readonly content?: AnthropicTextBlock[];
 }
 
+const TONE_GUIDANCE =
+  'Mirror the user tone lightly: if the question is casual or playful, you may be a little warmer or more playful; if it is formal, stay formal. Keep it useful, accurate, and not overfamiliar.';
+
 function buildPrompt({
   question,
   previousBotAnswer,
@@ -36,6 +39,7 @@ function buildPrompt({
     'Answer only from the provided facts.',
     'Do not invent details.',
     'Use one or two short paragraphs.',
+    TONE_GUIDANCE,
     `Include this URL exactly once: ${canonicalUrl}`,
     previousBotAnswer
       ? `Previous bot answer for context:\n${previousBotAnswer}`
@@ -92,6 +96,7 @@ function buildPublicDataAnswerPrompt({
     'Answer only from the public database result rows.',
     'Do not invent data.',
     'Use one or two short paragraphs.',
+    TONE_GUIDANCE,
     `Include this URL exactly once: ${canonicalUrl}`,
     `User question:\n${question}`,
     `Answer title:\n${title}`,

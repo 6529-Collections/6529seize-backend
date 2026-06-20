@@ -21,6 +21,7 @@ export interface HelpBotAnswerSuccess {
 
 export interface HelpBotNoReliableSource {
   readonly type: 'NO_RELIABLE_SOURCE';
+  readonly escalateToTechTeam: boolean;
 }
 
 export type HelpBotAnswerResult =
@@ -150,6 +151,66 @@ function isImpossiblePrivilegeRequest(normalizedQuestion: string): boolean {
   return asksBotToAct && hasControlledAssetTerm(normalizedQuestion);
 }
 
+const PRODUCT_CONTEXT_PATTERNS = [
+  /\b6529\b/,
+  /\bseize\b/,
+  /\btdh\b/,
+  /\bxtdh\b/,
+  /\brep\b/,
+  /\bcic\b/,
+  /\bnic\b/,
+  /\bwave(s)?\b/,
+  /\bdrop(s)?\b/,
+  /\bthe memes\b/,
+  /\bmeme card(s)?\b/,
+  /\bmeme lab\b/,
+  /\bnextgen\b/,
+  /\brememe(s)?\b/,
+  /\bdrop forge\b/,
+  /\bsubscription(s)?\b/,
+  /\beligibility\b/,
+  /\bprofile(s)?\b/,
+  /\bgroup(s)?\b/,
+  /\bdelegation(s)?\b/,
+  /\bopen data\b/,
+  /\bapi tool(s)?\b/,
+  /\b6529bot\b/,
+  /\bbadge(s)?\b/,
+  /\bnetwork\b/,
+  /\bgradients?\b/,
+  /\bmuseum\b/,
+  /\ballowlist\b/,
+  /\bmint(ing)?\b/,
+  /\bwallet connection\b/,
+  /\bconnect wallet\b/,
+  /\brank wave\b/,
+  /\bapprove wave\b/,
+  /\bchat wave\b/,
+  /\b6529\.io\b/
+];
+
+const CONTEXTUAL_FOLLOW_UP_PATTERN =
+  /\b(it|that|this|there|eligibility|rules|button|page|link|tab|menu|create|find|open|where|how)\b/;
+
+function isLikelyProductText(value: string | null | undefined): boolean {
+  const normalized = normalizeBoundaryText(value ?? '');
+  return PRODUCT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function isLikelyProductQuestion(
+  question: string,
+  previousBotAnswer?: string | null
+): boolean {
+  if (isLikelyProductText(question)) {
+    return true;
+  }
+  return (
+    !!previousBotAnswer &&
+    CONTEXTUAL_FOLLOW_UP_PATTERN.test(normalizeBoundaryText(question)) &&
+    isLikelyProductText(previousBotAnswer)
+  );
+}
+
 function buildBoundaryAnswer(question: string): string | null {
   const normalizedQuestion = normalizeBoundaryText(question);
   if (!normalizedQuestion) {
@@ -206,7 +267,13 @@ export class HelpBotAnswerer {
       : null;
     const match = directMatch ?? contextualMatch;
     if (!match) {
-      return { type: 'NO_RELIABLE_SOURCE' };
+      return {
+        type: 'NO_RELIABLE_SOURCE',
+        escalateToTechTeam: isLikelyProductQuestion(
+          request.question,
+          request.previousBotAnswer
+        )
+      };
     }
 
     const canonicalUrl = toCanonicalUrl(

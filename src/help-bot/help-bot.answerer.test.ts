@@ -94,13 +94,28 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
-  it('returns no reliable source for unindexed questions', async () => {
+  it('returns no reliable source without escalation for out-of-scope questions', async () => {
     await expect(
       answerer().answer({
-        question: 'what is the lunch menu today?',
+        question: 'when was the first moon landing?',
         baseUrl: BASE_URL
       })
-    ).resolves.toEqual({ type: 'NO_RELIABLE_SOURCE' });
+    ).resolves.toEqual({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: false
+    });
+  });
+
+  it('returns no reliable source with escalation for unindexed product questions', async () => {
+    await expect(
+      answerer().answer({
+        question: 'how do 6529 badge rules work?',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toEqual({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: true
+    });
   });
 
   it('answers obvious impossible privilege requests without tech-team fallback', async () => {

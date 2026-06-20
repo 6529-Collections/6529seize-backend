@@ -53,7 +53,8 @@ describe('HelpBotProcessorService', () => {
       resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
     };
     const answer = jest.fn().mockResolvedValue({
-      type: 'NO_RELIABLE_SOURCE'
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: true
     });
     const service = new HelpBotProcessorService(
       interactionsDb as never,
@@ -96,6 +97,69 @@ describe('HelpBotProcessorService', () => {
         dropId: 'original-question-drop',
         waveId: 'wave-1',
         reaction: HELP_BOT_FAILURE_REACTION
+      },
+      ctx
+    );
+  });
+
+  it('does not mention tech team handles for out-of-scope questions', async () => {
+    process.env.HELP_BOT_TECH_TEAM_HANDLES = 'dev-team,@support';
+    const ctx = {} as never;
+    const interaction: HelpBotInteractionRow = {
+      id: 'interaction-1',
+      trigger_drop_id: 'question-drop',
+      target_drop_id: null,
+      wave_id: 'wave-1',
+      author_id: 'profile-1',
+      trigger_type: HelpBotInteractionTriggerType.MENTION,
+      question: 'when was the first moon landing?',
+      parent_bot_drop_id: null,
+      bot_reply_drop_id: null,
+      status: HelpBotInteractionStatus.SEEN,
+      knowledge_version: 'test',
+      failure_reason: null,
+      created_at: 1,
+      updated_at: 1,
+      answer_started_at: null,
+      completed_at: null
+    };
+    const interactionsDb = {
+      claimForAnswering: jest.fn().mockResolvedValue(interaction),
+      markNoReliableSource: jest.fn(),
+      markFailed: jest.fn()
+    };
+    const reactionService = {
+      setReaction: jest.fn()
+    };
+    const dropWriter = {
+      reply: jest.fn().mockResolvedValue({ id: 'bot-reply-drop' })
+    };
+    const profileResolver = {
+      resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
+    };
+    const answer = jest.fn().mockResolvedValue({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: false
+    });
+    const service = new HelpBotProcessorService(
+      interactionsDb as never,
+      reactionService as never,
+      dropWriter as never,
+      {} as never,
+      profileResolver as never,
+      () => ({ answer }) as never
+    );
+
+    await service.processInteraction('interaction-1', ctx);
+
+    expect(dropWriter.reply).toHaveBeenCalledWith(
+      {
+        botProfileId: 'bot-profile',
+        waveId: 'wave-1',
+        replyToDropId: 'question-drop',
+        interactionId: 'interaction-1',
+        message: 'I can only help with 6529 product questions.',
+        mentionedHandles: []
       },
       ctx
     );
