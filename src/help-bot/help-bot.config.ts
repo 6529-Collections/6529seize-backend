@@ -30,6 +30,8 @@ export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
 
 export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
   "I don't have enough knowledge to help you here.";
+export const HELP_BOT_OUT_OF_SCOPE_REPLY =
+  'I can only help with 6529 product questions.';
 
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';

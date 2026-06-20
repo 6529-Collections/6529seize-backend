@@ -6,6 +6,7 @@ import {
   HELP_BOT_BASE_URL,
   HELP_BOT_BEDROCK_MODEL_ID,
   HELP_BOT_FAILURE_REACTION,
+  HELP_BOT_OUT_OF_SCOPE_REPLY,
   HELP_BOT_SUCCESS_REACTION,
   HELP_BOT_TECHNICAL_FAILURE_REPLY,
   buildHelpBotNoReliableSourceReply,
@@ -101,6 +102,7 @@ export class HelpBotProcessorService {
         await this.replyWithNoReliableSource({
           botProfileId,
           interaction,
+          escalateToTechTeam: answer.escalateToTechTeam,
           ctx
         });
         return;
@@ -171,20 +173,26 @@ export class HelpBotProcessorService {
   private async replyWithNoReliableSource({
     botProfileId,
     interaction,
+    escalateToTechTeam,
     ctx
   }: {
     readonly botProfileId: string;
     readonly interaction: HelpBotInteractionRow;
+    readonly escalateToTechTeam: boolean;
     readonly ctx: RequestContext;
   }): Promise<void> {
-    const mentionedHandles = getHelpBotTechTeamMentionHandles();
+    const mentionedHandles = escalateToTechTeam
+      ? getHelpBotTechTeamMentionHandles()
+      : [];
     const reply = await this.dropWriter.reply(
       {
         botProfileId,
         waveId: interaction.wave_id,
         replyToDropId: getInteractionTargetDropId(interaction),
         interactionId: interaction.id,
-        message: buildHelpBotNoReliableSourceReply(mentionedHandles),
+        message: escalateToTechTeam
+          ? buildHelpBotNoReliableSourceReply(mentionedHandles)
+          : HELP_BOT_OUT_OF_SCOPE_REPLY,
         mentionedHandles
       },
       ctx

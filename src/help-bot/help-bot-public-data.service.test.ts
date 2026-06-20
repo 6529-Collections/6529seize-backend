@@ -134,6 +134,96 @@ describe('buildHelpBotPublicDataQuery', () => {
       })
     ).toBeNull();
   });
+
+  it('declines comment-obfuscated and schema-qualified SQL-shaped plan values', () => {
+    const unsafePlans = [
+      {
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: '1 -- UNION SELECT owner FROM nft_owners' }
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: '1/* UNION SELECT address FROM profiles */' }
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: '#comment\n1' }
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'max',
+        metric: '`tdh_rate`',
+        filters: {}
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'max',
+        metric: 'prod.nfts.hodl_rate',
+        filters: {}
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: '(SELECT season FROM memes_extended_data)' }
+      },
+      {
+        entity: 'tdh_global',
+        operation: 'latest',
+        metric: 'total_tdh',
+        filters: { cte: 'WITH owners AS (SELECT address FROM nfts)' }
+      }
+    ];
+
+    for (const plan of unsafePlans) {
+      expect(buildHelpBotPublicDataQuery(plan)).toBeNull();
+    }
+  });
+
+  it('keeps compiled public-data SQL away from wallet and owner columns', () => {
+    const plans = [
+      {
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: 1 }
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'value',
+        metric: 'tdh_rate',
+        filters: { meme: 1 }
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'max',
+        metric: 'supply',
+        filters: {},
+        limit: 1
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'avg',
+        metric: 'edition_size',
+        filters: { season: 1 }
+      },
+      {
+        entity: 'tdh_global',
+        operation: 'latest',
+        metric: 'total_tdh',
+        filters: {}
+      }
+    ];
+
+    for (const plan of plans) {
+      const query = buildHelpBotPublicDataQuery(plan);
+      expect(query).not.toBeNull();
+      expect(query?.compiledSql).not.toMatch(
+        /\b(owner|address|wallet|nft_owners|profile|identity)\b/i
+      );
+    }
+  });
 });
 
 describe('HelpBotPublicDataService', () => {
