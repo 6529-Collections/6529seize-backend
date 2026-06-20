@@ -74,6 +74,7 @@ describe('HelpBotBedrockRenderer', () => {
 
     expect(readPrompt(send)).toContain('Mirror the user tone lightly');
     expect(readPrompt(send)).toContain('Do not invent details');
+    expect(readPrompt(send)).toContain('Do not begin with @6529help');
   });
 
   it('aborts a slow Bedrock response', async () => {

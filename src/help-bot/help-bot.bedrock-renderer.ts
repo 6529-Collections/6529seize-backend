@@ -21,6 +21,8 @@ interface AnthropicResponse {
 
 const TONE_GUIDANCE =
   'Mirror the user tone lightly: if the question is casual or playful, you may be a little warmer or more playful; if it is formal, stay formal. Keep it useful, accurate, and not overfamiliar.';
+const NO_SELF_INTRO_GUIDANCE =
+  'Start directly with the answer. Do not begin with @6529help, 6529help:, 6529help here, a greeting, or any self-introduction.';
 
 function buildPrompt({
   question,
@@ -40,6 +42,7 @@ function buildPrompt({
     'Do not invent details.',
     'Use one or two short paragraphs.',
     TONE_GUIDANCE,
+    NO_SELF_INTRO_GUIDANCE,
     `Include this URL exactly once: ${canonicalUrl}`,
     previousBotAnswer
       ? `Previous bot answer for context:\n${previousBotAnswer}`
@@ -97,6 +100,7 @@ function buildPublicDataAnswerPrompt({
     'Do not invent data.',
     'Use one or two short paragraphs.',
     TONE_GUIDANCE,
+    NO_SELF_INTRO_GUIDANCE,
     `Include this URL exactly once: ${canonicalUrl}`,
     `User question:\n${question}`,
     `Answer title:\n${title}`,

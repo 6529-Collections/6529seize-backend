@@ -5,6 +5,7 @@ import {
   HelpBotKnowledgeRecord
 } from './help-bot.knowledge';
 import { HelpBotPublicDataService } from './help-bot-public-data.service';
+import { stripHelpBotSelfIntro } from './help-bot-response-text';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -53,7 +54,7 @@ function buildDeterministicAnswer(
 }
 
 function normalizeRenderedAnswer(text: string, canonicalUrl: string): string {
-  const compact = text.trim().replace(/\n{3,}/g, '\n\n');
+  const compact = stripHelpBotSelfIntro(text).replace(/\n{3,}/g, '\n\n');
   const withUrl = compact.includes(canonicalUrl)
     ? compact
     : `${compact}\n\nMore info: ${canonicalUrl}`;
