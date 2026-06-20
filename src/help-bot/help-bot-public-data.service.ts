@@ -356,7 +356,7 @@ function compactValue(value: unknown): string {
     return value ? 'true' : 'false';
   }
   if (typeof value === 'bigint') {
-    return `${value}`;
+    return value.toString();
   }
   if (typeof value === 'symbol') {
     return value.description ?? '[symbol]';
