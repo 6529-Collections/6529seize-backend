@@ -32,6 +32,7 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'helpBotReplyLoop_${opt:stage, self:provider.stage}'
+      API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
 
 resources:
   Resources:
