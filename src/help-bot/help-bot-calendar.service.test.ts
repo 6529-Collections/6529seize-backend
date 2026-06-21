@@ -155,6 +155,39 @@ describe('HelpBotCalendarService', () => {
     );
   });
 
+  it('answers bare card dropping phrasing as a Meme Card request', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      fetchResponse(
+        mintResponse({
+          mint_number: 1234,
+          mint_date: '2031-01-31',
+          mint_start: '2031-01-31T15:40:00.000Z',
+          mint_end: '2031-02-01T15:00:00.000Z',
+          status: 'upcoming',
+          season: 34,
+          year: 9,
+          mint_path: '/the-memes/1234'
+        })
+      )
+    ) as unknown as typeof fetch;
+    const service = new HelpBotCalendarService(fetchImpl);
+
+    await expect(
+      service.answer({
+        question: 'when is card 1234 dropping',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toEqual({
+      answer:
+        'Meme Card #1234 opens 2031-01-31 15:40 UTC and closes 2031-02-01 15:00 UTC. It is in SZN 34, Year 9.\n\nLinks: [Meme #1234](https://6529.io/the-memes/1234) | [Memes Calendar](https://6529.io/meme-calendar)',
+      queryId: 'meme_calendar.mint.1234'
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://6529.io/api/meme-calendar/1234',
+      expect.any(Object)
+    );
+  });
+
   it('answers current-drop questions with the next mint when none is live', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(
       fetchResponse({

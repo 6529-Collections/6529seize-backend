@@ -47,7 +47,7 @@ const CALENDAR_LINK_LABEL = 'Memes Calendar';
 const CALENDAR_TIME_PATTERN =
   /\b(?:when|what\s+(?:time|date|day)|schedule|calendar|next|current|upcoming|live|past|minting\s+window|mint\s+window)\b/i;
 const CALENDAR_CONTEXT_PATTERN =
-  /\b(?:meme(?:s)?|meme\s+card(?:s)?|mint(?:ing)?|calendar|drop(?:s)?)\b/i;
+  /\b(?:meme(?:s)?|meme\s+card(?:s)?|card(?:s)?|mint(?:ing)?|calendar|drop(?:s|ped|ping)?)\b/i;
 const NEXT_DROP_PATTERN = /\bnext\s+drop\b/i;
 const CURRENT_DROP_PATTERN =
   /\b(?:current|live)\s+drop\b|\bnow\s+minting\b|\bminting\s+now\b/i;
