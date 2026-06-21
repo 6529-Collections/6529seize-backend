@@ -4,6 +4,7 @@ import {
   HelpBotKnowledgeSource,
   HelpBotKnowledgeRecord
 } from './help-bot.knowledge';
+import { HelpBotCalendarService } from './help-bot-calendar.service';
 import { HelpBotPublicDataService } from './help-bot-public-data.service';
 import {
   ensureCanonicalMarkdownLink,
@@ -21,6 +22,7 @@ export interface HelpBotAnswerSuccess {
   readonly answer: string;
   readonly record: HelpBotKnowledgeRecord;
   readonly publicDataQueryId?: string;
+  readonly calendarQueryId?: string;
 }
 
 export interface HelpBotNoReliableSource {
@@ -99,6 +101,22 @@ function buildPublicDataRecord(): HelpBotKnowledgeRecord {
     relatedPaths: ['/network/tdh', '/the-memes'],
     tags: ['public-data'],
     sourceRefs: ['backend public data query catalog']
+  };
+}
+
+function buildCalendarRecord(): HelpBotKnowledgeRecord {
+  return {
+    id: 'meme-calendar.query',
+    kind: 'public_data',
+    title: 'Memes minting calendar',
+    linkLabel: 'Memes Calendar',
+    canonicalPath: '/meme-calendar',
+    aliases: ['meme calendar', 'next drop', 'next mint'],
+    keywords: ['memes', 'calendar', 'mint', 'drop', 'schedule'],
+    facts: ['This answer was generated from the public Memes calendar API.'],
+    relatedPaths: ['/the-memes/mint'],
+    tags: ['memes', 'calendar'],
+    sourceRefs: ['frontend meme calendar API']
   };
 }
 
@@ -298,7 +316,8 @@ export class HelpBotAnswerer {
   constructor(
     private readonly renderer?: HelpBotLlmRenderer | null,
     private readonly knowledgeSource: HelpBotKnowledgeSource = frontendHelpBotKnowledgeSource,
-    private readonly publicDataService?: HelpBotPublicDataService | null
+    private readonly publicDataService?: HelpBotPublicDataService | null,
+    private readonly calendarService?: HelpBotCalendarService | null
   ) {}
 
   public async answer(
@@ -319,6 +338,20 @@ export class HelpBotAnswerer {
         type: 'ANSWER',
         answer: genericHelpAnswer,
         record: buildCapabilitiesRecord()
+      };
+    }
+
+    const calendarAnswer = await this.calendarService?.answer({
+      question: request.question,
+      previousBotAnswer: request.previousBotAnswer,
+      baseUrl: request.baseUrl
+    });
+    if (calendarAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: calendarAnswer.answer,
+        record: buildCalendarRecord(),
+        calendarQueryId: calendarAnswer.queryId
       };
     }
 

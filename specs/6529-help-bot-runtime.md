@@ -14,8 +14,9 @@ V1 ships without full RAG. It retrieves bounded product records from the
 frontend-published `/help-index.json`, caches the latest valid copy in the
 backend answer path, and uses a Bedrock renderer for natural wording with a
 deterministic fallback if the model call fails or times out. It also supports a
-bounded public-data query mode for aggregate questions that are better answered
-from backend database rows than from static frontend docs.
+frontend calendar API mode for Meme Card drop timing plus a bounded public-data
+query mode for aggregate questions that are better answered from backend
+database rows than from static frontend docs.
 
 ## 2. Product Behavior
 
@@ -115,8 +116,6 @@ cache for 30 seconds so manual profile creation becomes active quickly.
 - Do not let the LLM query arbitrary backend tables or execute unvalidated SQL.
 - Do not execute SQL text emitted by the LLM in the public-data path.
 - Do not replace human support or moderation.
-- Do not merge, deploy to staging, or activate production behavior in this
-  PR-ready/no-deploy pass.
 
 ## 4. Knowledge Architecture
 
@@ -179,6 +178,7 @@ frontend help index. Examples:
 - `what is the highest TDH rate`
 - `what is the highest edition size`
 - `what is total TDH`
+- `which profile has the highest TDH`
 
 For V1, Bedrock does not author SQL. Bedrock maps the user's question to a
 semantic public-data plan, for example
@@ -193,6 +193,8 @@ Initial public-data plan surface:
 - `meme_cards` metrics include `tdh_rate`, `edition_size`, and `supply`.
 - `meme_cards` filters include numeric `meme` and `season`.
 - `tdh_global` supports latest `total_tdh`.
+- `profiles` supports top-profile `tdh` lookups and links the returned handle,
+  not the generic query title.
 
 Initial backend public tables:
 
@@ -202,6 +204,8 @@ Initial backend public tables:
 - `memes_extended_data`: season, meme number/name, edition size, holder, burn,
   and uniqueness metrics.
 - `latest_tdh_global_history`: latest global TDH total plus date/block context.
+- `identities`: public profile handles and TDH values used for top-profile
+  answers. Wallet/private profile fields are not exposed through the V1 catalog.
 
 Public-data queries execute through the shared `SqlExecutor` with the read pool
 forced, backend-applied hard row limits, and a MySQL `MAX_EXECUTION_TIME` hint
@@ -220,7 +224,29 @@ slightly warmer wording, and formal questions should stay formal, but tone never
 overrides the source facts, refusal boundaries, no-reliable-source behavior, or
 technical-failure behavior. Deterministic fallback answers remain neutral.
 
-### 4.5 Agent maintenance contract
+### 4.5 Frontend-owned Memes calendar API mode
+
+Meme Card drop timing is frontend-owned because the Memes calendar helper owns
+the cadence, historic phases, skip/extra/reschedule overrides, and mint window
+logic. The backend answers drop timing questions by calling the
+environment-matching frontend API:
+
+- `/api/meme-calendar/next`
+- `/api/meme-calendar/current`
+- `/api/meme-calendar/{id}`
+
+The API responses include the mint number, UTC mint date, UTC mint start/end,
+`past`/`live`/`upcoming` status, SZN, Year, Epoch, Period, Era, Eon,
+`/meme-calendar`, and `/the-memes/{id}` paths. This mode answers schedule and
+overall mint-window questions for past, current, and future Meme Cards. Wallet
+eligibility and actual mint success remain outside this mode and are still
+enforced by the mint flow.
+
+The backend validates the response shape before wording an answer. Calendar API
+timeouts, non-2xx responses, or invalid response bodies use the technical-failure
+reply path instead of guessing from stale static knowledge.
+
+### 4.6 Agent maintenance contract
 
 Future agents must treat the help bot corpus as part of the user-facing product
 surface. When a backend change adds or changes behavior that users may ask
@@ -244,7 +270,7 @@ If a backend change is user-visible but intentionally should not be answerable
 by the bot yet, the PR should say why and whether a follow-up corpus update is
 needed.
 
-### 4.6 Retrieval model
+### 4.7 Retrieval model
 
 The bot should not depend on a predefined list of questions. It should retrieve
 records and chunks by:
@@ -258,7 +284,8 @@ The live answer prompt should receive only the top relevant snippets, not the
 entire corpus.
 
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
-Bedrock-planned public-data intents compiled to backend-owned SQL.
+frontend calendar API calls for drop timing and Bedrock-planned public-data
+intents compiled to backend-owned SQL.
 Direct follow-up questions first match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.
@@ -273,7 +300,7 @@ message_created
   -> create interaction row
   -> add 👀 reaction
   -> enqueue help job
-  -> worker retrieves context or validated public DB rows
+  -> worker retrieves context, calendar timing, or validated public DB rows
   -> worker calls LLM
   -> worker posts reply
   -> replace 👀 with ✅
@@ -294,7 +321,7 @@ message_created
   -> create interaction row
   -> add 👀 reaction
   -> enqueue help job with previous bot answer context
-  -> worker retrieves fresh context or validated public DB rows for current question
+  -> worker retrieves fresh context, calendar timing, or validated public DB rows for current question
   -> worker calls LLM
   -> worker posts reply
   -> replace 👀 with ✅
@@ -487,6 +514,7 @@ private user data beyond what is needed for debugging and abuse controls.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
+- Answer Meme Card drop timing through the frontend-owned calendar API.
 - Add bounded public-data query-intent mode for aggregate questions over the
   backend-owned public query compiler.
 

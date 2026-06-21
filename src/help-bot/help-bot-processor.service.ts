@@ -14,6 +14,7 @@ import {
 } from './help-bot.config';
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotBedrockRenderer } from './help-bot.bedrock-renderer';
+import { HelpBotCalendarService } from './help-bot-calendar.service';
 import {
   HelpBotPublicDataLlm,
   HelpBotPublicDataService
@@ -367,7 +368,8 @@ export const helpBotProcessorService = new HelpBotProcessorService(
     return new HelpBotAnswerer(
       renderer,
       undefined,
-      new HelpBotPublicDataService(renderer)
+      new HelpBotPublicDataService(renderer),
+      new HelpBotCalendarService()
     );
   },
   helpBotCreditsService,

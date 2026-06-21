@@ -307,6 +307,7 @@ flowchart TD
   DropRoute --> HelpBotSqs["SQS: help-bot-replies"]
   HelpBotSqs --> HelpBotWorker["helpBotReplyLoop"]
   HelpBotWorker --> FrontendIndex["cached frontend /help-index.json"]
+  HelpBotWorker --> FrontendCalendar["frontend meme calendar API"]
   HelpBotWorker --> PublicData["validated public DB query"]
   HelpBotWorker -. optional .-> Bedrock["Bedrock renderer"]
   HelpBotWorker --> BotReply["bot reply drop"]
@@ -322,6 +323,7 @@ Important details:
 - The API suppresses per-user help-bot spam before queueing: after more than 5 triggers in 60 seconds by the same author, it records the interaction as `SPAM_SUPPRESSED`, reacts `⛔️` to the triggering drop, and does not post a reply.
 - If a user replies to someone else's question with only `@help6529` in a public wave, the bot fetches the parent drop through the caller's normal visibility checks, uses the parent drop text as the question, and targets the parent drop for reactions and the reply.
 - V1 retrieval uses the environment-matching frontend-published `/help-index.json` artifact for product knowledge: staging backend reads `https://staging.6529.io/help-index.json`, and production backend reads `https://6529.io/help-index.json`.
+- Meme Card drop timing uses the environment-matching frontend Memes calendar API (`/api/meme-calendar/next`, `/current`, and `/{id}`), which owns cadence, overrides, and mint-window calculations.
 - V1 also has a bounded public-data query-intent mode for aggregate backend data questions.
 - Bedrock selects a semantic public-data plan from a hardcoded catalog; Bedrock output never contains executable SQL, table names, columns, joins, or expressions.
 - The backend public-data compiler validates the selected entity, operation, metric, numeric filters, and limit, then emits parameterized SQL through the shared `SqlExecutor` with the read pool forced, hard row limits, and a MySQL execution-time hint injected by backend code.

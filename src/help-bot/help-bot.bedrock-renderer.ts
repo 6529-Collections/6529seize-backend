@@ -94,12 +94,14 @@ function buildPublicDataAnswerPrompt({
   question,
   title,
   rows,
-  canonicalUrl
+  canonicalUrl,
+  canonicalLabel
 }: {
   readonly question: string;
   readonly title: string;
   readonly rows: readonly Record<string, unknown>[];
   readonly canonicalUrl: string;
+  readonly canonicalLabel: string;
 }): string {
   return [
     `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
@@ -110,7 +112,7 @@ function buildPublicDataAnswerPrompt({
     NO_SELF_INTRO_GUIDANCE,
     MARKDOWN_LINK_GUIDANCE,
     `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
-    `Use this exact Markdown link label for that URL: ${title}`,
+    `Use this exact Markdown link label for that URL: ${canonicalLabel}`,
     `User question:\n${question}`,
     `Answer title:\n${title}`,
     `Public database result rows:\n${JSON.stringify(rows).slice(0, 4000)}`
@@ -216,6 +218,7 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly title: string;
     readonly rows: readonly Record<string, unknown>[];
     readonly canonicalUrl: string;
+    readonly canonicalLabel: string;
   }): Promise<string> {
     return this.invokePrompt(buildPublicDataAnswerPrompt(input), 220);
   }

@@ -487,7 +487,7 @@ describe('HelpBotPublicDataService', () => {
       })
     ).resolves.toEqual({
       answer:
-        'punk6529 has the highest TDH with 123,456.\n\nMore info: [Highest Profile TDH](https://6529.io/punk6529)',
+        'punk6529 has the highest TDH with 123,456.\n\nMore info: [@punk6529](https://6529.io/punk6529)',
       queryId: 'profiles.max.tdh'
     });
     expect(llm.planPublicDataQuery).not.toHaveBeenCalled();
@@ -502,7 +502,8 @@ describe('HelpBotPublicDataService', () => {
       expect.objectContaining({
         title: 'Highest Profile TDH',
         rows: [{ handle: 'punk6529', tdh: 123456 }],
-        canonicalUrl: 'https://6529.io/punk6529'
+        canonicalUrl: 'https://6529.io/punk6529',
+        canonicalLabel: '@punk6529'
       })
     );
   });
@@ -526,7 +527,7 @@ describe('HelpBotPublicDataService', () => {
       })
     ).resolves.toEqual({
       answer:
-        'punk6529 has the highest profile TDH.\n\nMore info: [Highest Profile TDH](https://6529.io/punk6529)',
+        'punk6529 has the highest profile TDH.\n\nMore info: [@punk6529](https://6529.io/punk6529)',
       queryId: 'profiles.max.tdh'
     });
     expect(llm.planPublicDataQuery).not.toHaveBeenCalled();
