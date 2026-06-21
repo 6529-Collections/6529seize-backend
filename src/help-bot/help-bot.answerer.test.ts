@@ -151,6 +151,18 @@ describe('HelpBotAnswerer', () => {
     });
   });
 
+  it('treats bare card language as product context for unresolved questions', async () => {
+    await expect(
+      answerer().answer({
+        question: 'how do card release rules work?',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toEqual({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: true
+    });
+  });
+
   it('asks for a topic when the user only asks for help', async () => {
     const publicDataService = {
       answer: jest.fn()
