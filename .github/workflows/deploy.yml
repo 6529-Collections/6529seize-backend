@@ -145,6 +145,15 @@ jobs:
           fi
           DROP_MEDIA_INGEST_REGION="$DROP_MEDIA_INGEST_S3_REGION"
           DROP_MEDIA_SANITIZER_QUEUE="$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME"
+          API_GATEWAY_WS_ENDPOINT=""
+
+          if [ "${{ github.event.inputs.service }}" = "helpBotReplyLoop" ]; then
+            API_GATEWAY_WS_ENDPOINT="$(aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables.API_GATEWAY_WS_ENDPOINT' --output text --no-cli-pager 2>/dev/null || true)"
+            if [ -z "$API_GATEWAY_WS_ENDPOINT" ] || [ "$API_GATEWAY_WS_ENDPOINT" = "None" ]; then
+              echo "API_GATEWAY_WS_ENDPOINT could not be read from seizeAPI for ${{ github.event.inputs.environment }}"
+              exit 1
+            fi
+          fi
 
           if [ -z "$ATTACHMENTS_BUCKET" ]; then
             echo "ATTACHMENTS_INGEST_S3_BUCKET is not configured for ${{ github.event.inputs.environment }}"
@@ -176,6 +185,9 @@ jobs:
           echo "DROP_MEDIA_INGEST_S3_REGION=$DROP_MEDIA_INGEST_REGION" >> "$GITHUB_ENV"
           echo "DROP_MEDIA_INGEST_STAGE=${{ github.event.inputs.environment }}" >> "$GITHUB_ENV"
           echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE" >> "$GITHUB_ENV"
+          if [ -n "$API_GATEWAY_WS_ENDPOINT" ]; then
+            echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT" >> "$GITHUB_ENV"
+          fi
       - name: Deploy service
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
