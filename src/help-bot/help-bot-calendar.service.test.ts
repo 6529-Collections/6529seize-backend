@@ -91,6 +91,26 @@ describe('HelpBotCalendarService', () => {
     );
   });
 
+  it('answers explicit drop-number timing questions', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(
+        fetchResponse(mintResponse())
+      ) as unknown as typeof fetch;
+    const service = new HelpBotCalendarService(fetchImpl);
+
+    const answer = await service.answer({
+      question: 'when does drop #500 open?',
+      baseUrl: `${BASE_URL}/`
+    });
+
+    expect(answer?.queryId).toBe('meme_calendar.mint.500');
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://6529.io/api/meme-calendar/500',
+      expect.any(Object)
+    );
+  });
+
   it('answers current-drop questions with the next mint when none is live', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(
       fetchResponse({

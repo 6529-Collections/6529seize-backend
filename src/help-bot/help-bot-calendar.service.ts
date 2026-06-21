@@ -48,21 +48,75 @@ const CALENDAR_CONTEXT_PATTERN =
 const NEXT_DROP_PATTERN = /\bnext\s+drop\b/i;
 const CURRENT_DROP_PATTERN =
   /\b(?:current|live)\s+drop\b|\bnow\s+minting\b|\bminting\s+now\b/i;
-const MINT_NUMBER_PATTERN =
-  /\b(?:meme|card|drop|mint)\s*#?\s*([1-9]\d*)\b|#\s*([1-9]\d*)\b/i;
+const MINT_NUMBER_PREFIXES = new Set(['meme', 'card', 'drop', 'mint']);
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? '').trim();
 }
 
-function readMintNumber(question: string): number | null {
-  const match = MINT_NUMBER_PATTERN.exec(question);
-  const rawValue = match?.[1] ?? match?.[2];
-  if (!rawValue) {
+function tokenizeQuestion(text: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  const pushCurrent = () => {
+    if (current) {
+      tokens.push(current);
+      current = '';
+    }
+  };
+
+  for (const char of text.toLowerCase()) {
+    const isLowercaseLetter = char >= 'a' && char <= 'z';
+    const isDigit = char >= '0' && char <= '9';
+    if (char === '#') {
+      pushCurrent();
+      current = '#';
+      continue;
+    }
+    if (isLowercaseLetter || isDigit) {
+      current += char;
+      continue;
+    }
+    pushCurrent();
+  }
+  pushCurrent();
+
+  return tokens;
+}
+
+function parsePositiveIntegerToken(token: string): number | null {
+  const raw = token.startsWith('#') ? token.slice(1) : token;
+  if (!raw || raw[0] === '0') {
     return null;
   }
-  const parsed = Number(rawValue);
+  for (const char of raw) {
+    if (char < '0' || char > '9') {
+      return null;
+    }
+  }
+  const parsed = Number(raw);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function readMintNumber(question: string): number | null {
+  const tokens = tokenizeQuestion(question);
+  for (const token of tokens) {
+    if (token.startsWith('#')) {
+      const parsedHashToken = parsePositiveIntegerToken(token);
+      if (parsedHashToken !== null) {
+        return parsedHashToken;
+      }
+    }
+  }
+  for (let i = 0; i < tokens.length - 1; i++) {
+    if (!MINT_NUMBER_PREFIXES.has(tokens[i])) {
+      continue;
+    }
+    const parsedNextToken = parsePositiveIntegerToken(tokens[i + 1]);
+    if (parsedNextToken !== null) {
+      return parsedNextToken;
+    }
+  }
+  return null;
 }
 
 function isCalendarTimingQuestion(
@@ -100,7 +154,7 @@ function resolveCalendarEndpoint(
 }
 
 function buildUrl(baseUrl: string, endpoint: CalendarEndpoint): string {
-  const root = baseUrl.replace(/\/+$/, '');
+  const root = trimTrailingSlashes(baseUrl);
   if (endpoint.kind === 'mint') {
     return `${root}/api/meme-calendar/${endpoint.mintNumber}`;
   }
@@ -208,8 +262,16 @@ function formatUtcTimestamp(value: string): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${min} UTC`;
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end--;
+  }
+  return value.slice(0, end);
+}
+
 function calendarUrl(baseUrl: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/meme-calendar`;
+  return `${trimTrailingSlashes(baseUrl)}/meme-calendar`;
 }
 
 function withCalendarLink(text: string, baseUrl: string): string {
