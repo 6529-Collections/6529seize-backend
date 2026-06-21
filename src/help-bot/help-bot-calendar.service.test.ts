@@ -52,7 +52,7 @@ describe('HelpBotCalendarService', () => {
       service.answer({ question: 'when is the next drop?', baseUrl: BASE_URL })
     ).resolves.toEqual({
       answer:
-        'The next Meme Card drop is Meme #500. It opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC. It is in SZN 17, Year 4.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
+        'The next Meme Card drop is Meme #500. It opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC. It is in SZN 17, Year 4.\n\nLinks: [Meme #500](https://6529.io/the-memes/500) | [Memes Calendar](https://6529.io/meme-calendar)',
       queryId: 'meme_calendar.next'
     });
     expect(fetchImpl).toHaveBeenCalledWith(
@@ -88,6 +88,9 @@ describe('HelpBotCalendarService', () => {
     expect(answer?.answer).toContain(
       'It opened 2023-05-01 14:40 UTC and closed 2023-05-02 14:00 UTC.'
     );
+    expect(answer?.answer).toContain(
+      'Links: [Meme #100](https://6529.io/the-memes/100) | [Memes Calendar](https://6529.io/meme-calendar)'
+    );
     expect(answer?.answer).not.toContain('overall');
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://6529.io/api/meme-calendar/100',
@@ -119,6 +122,39 @@ describe('HelpBotCalendarService', () => {
     );
   });
 
+  it('answers card-number phrasing as a specific Meme Card request', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      fetchResponse(
+        mintResponse({
+          mint_number: 6529,
+          mint_date: '2064-11-28',
+          mint_start: '2064-11-28T15:40:00.000Z',
+          mint_end: '2064-11-29T15:00:00.000Z',
+          status: 'upcoming',
+          season: 169,
+          year: 42,
+          mint_path: '/the-memes/6529'
+        })
+      )
+    ) as unknown as typeof fetch;
+    const service = new HelpBotCalendarService(fetchImpl);
+
+    await expect(
+      service.answer({
+        question: 'when will card number 6529 drop',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toEqual({
+      answer:
+        'Meme Card #6529 opens 2064-11-28 15:40 UTC and closes 2064-11-29 15:00 UTC. It is in SZN 169, Year 42.\n\nLinks: [Meme #6529](https://6529.io/the-memes/6529) | [Memes Calendar](https://6529.io/meme-calendar)',
+      queryId: 'meme_calendar.mint.6529'
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://6529.io/api/meme-calendar/6529',
+      expect.any(Object)
+    );
+  });
+
   it('answers current-drop questions with the next mint when none is live', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(
       fetchResponse({
@@ -133,7 +169,7 @@ describe('HelpBotCalendarService', () => {
       service.answer({ question: 'what is minting now?', baseUrl: BASE_URL })
     ).resolves.toEqual({
       answer:
-        'Nothing is minting right now. The next Meme Card drop is Meme #500, which opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
+        'Nothing is minting right now. The next Meme Card drop is Meme #500, which opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC.\n\nLinks: [Meme #500](https://6529.io/the-memes/500) | [Memes Calendar](https://6529.io/meme-calendar)',
       queryId: 'meme_calendar.current'
     });
   });

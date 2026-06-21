@@ -1,5 +1,8 @@
 import { HELP_BOT_CALENDAR_FETCH_TIMEOUT_MS } from './help-bot.config';
-import { ensureCanonicalMarkdownLink } from './help-bot-response-text';
+import {
+  ensureCanonicalMarkdownLink,
+  formatHelpBotMarkdownLink
+} from './help-bot-response-text';
 
 export interface HelpBotCalendarAnswerRequest {
   readonly question: string;
@@ -49,6 +52,14 @@ const NEXT_DROP_PATTERN = /\bnext\s+drop\b/i;
 const CURRENT_DROP_PATTERN =
   /\b(?:current|live)\s+drop\b|\bnow\s+minting\b|\bminting\s+now\b/i;
 const MINT_NUMBER_PREFIXES = new Set(['meme', 'card', 'drop', 'mint']);
+const MINT_NUMBER_FILLER_TOKENS = new Set([
+  'id',
+  'no',
+  'num',
+  'number',
+  'numbered',
+  'with'
+]);
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? '').trim();
@@ -111,9 +122,14 @@ function readMintNumber(question: string): number | null {
     if (!MINT_NUMBER_PREFIXES.has(tokens[i])) {
       continue;
     }
-    const parsedNextToken = parsePositiveIntegerToken(tokens[i + 1]);
-    if (parsedNextToken !== null) {
-      return parsedNextToken;
+    for (let j = i + 1; j < Math.min(tokens.length, i + 4); j++) {
+      const parsedToken = parsePositiveIntegerToken(tokens[j]);
+      if (parsedToken !== null) {
+        return parsedToken;
+      }
+      if (!MINT_NUMBER_FILLER_TOKENS.has(tokens[j])) {
+        break;
+      }
     }
   }
   return null;
@@ -274,12 +290,41 @@ function calendarUrl(baseUrl: string): string {
   return `${trimTrailingSlashes(baseUrl)}/meme-calendar`;
 }
 
+function absoluteSiteUrl(baseUrl: string, path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${trimTrailingSlashes(baseUrl)}${normalizedPath}`;
+}
+
+function withLinks(
+  text: string,
+  links: ReadonlyArray<{ readonly label: string; readonly url: string }>
+): string {
+  const renderedLinks = links.map((link) =>
+    formatHelpBotMarkdownLink({ label: link.label, url: link.url })
+  );
+  return `${text}\n\nLinks: ${renderedLinks.join(' | ')}`;
+}
+
 function withCalendarLink(text: string, baseUrl: string): string {
   return ensureCanonicalMarkdownLink({
     text,
     canonicalUrl: calendarUrl(baseUrl),
     label: CALENDAR_LINK_LABEL
   });
+}
+
+function withMintAndCalendarLinks(
+  text: string,
+  mint: MemeCalendarMintResponse,
+  baseUrl: string
+): string {
+  return withLinks(text, [
+    {
+      label: `Meme #${mint.mint_number}`,
+      url: absoluteSiteUrl(baseUrl, mint.mint_path)
+    },
+    { label: CALENDAR_LINK_LABEL, url: calendarUrl(baseUrl) }
+  ]);
 }
 
 function divisionText(mint: MemeCalendarMintResponse): string {
@@ -303,27 +348,30 @@ function buildMintAnswer(
   const window = mintOpenCloseText(mint, 'opens', 'closes');
   const division = divisionText(mint);
   if (mint.status === 'live') {
-    return withCalendarLink(
+    return withMintAndCalendarLinks(
       `Meme Card #${mint.mint_number} is minting now. It ${mintOpenCloseText(
         mint,
         'opened',
         'closes'
       )}. It is in ${division}.`,
+      mint,
       baseUrl
     );
   }
   if (mint.status === 'past') {
-    return withCalendarLink(
+    return withMintAndCalendarLinks(
       `Meme Card #${mint.mint_number} minted on ${mint.mint_date}. It ${mintOpenCloseText(
         mint,
         'opened',
         'closed'
       )}. It is in ${division}.`,
+      mint,
       baseUrl
     );
   }
-  return withCalendarLink(
+  return withMintAndCalendarLinks(
     `Meme Card #${mint.mint_number} ${window}. It is in ${division}.`,
+    mint,
     baseUrl
   );
 }
@@ -332,12 +380,13 @@ function buildNextAnswer(
   mint: MemeCalendarMintResponse,
   baseUrl: string
 ): string {
-  return withCalendarLink(
+  return withMintAndCalendarLinks(
     `The next Meme Card drop is Meme #${mint.mint_number}. It ${mintOpenCloseText(
       mint,
       'opens',
       'closes'
     )}. It is in ${divisionText(mint)}.`,
+    mint,
     baseUrl
   );
 }
@@ -353,10 +402,11 @@ function buildCurrentAnswer(
   if (!next) {
     return withCalendarLink('Nothing is minting right now.', baseUrl);
   }
-  return withCalendarLink(
+  return withMintAndCalendarLinks(
     `Nothing is minting right now. The next Meme Card drop is Meme #${
       next.mint_number
     }, which ${mintOpenCloseText(next, 'opens', 'closes')}.`,
+    next,
     baseUrl
   );
 }
