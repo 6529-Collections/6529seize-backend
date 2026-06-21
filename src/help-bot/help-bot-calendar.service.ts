@@ -85,7 +85,7 @@ function tokenizeQuestion(text: string): string[] {
 
 function parsePositiveIntegerToken(token: string): number | null {
   const raw = token.startsWith('#') ? token.slice(1) : token;
-  if (!raw || raw[0] === '0') {
+  if (!raw || raw.startsWith('0')) {
     return null;
   }
   for (const char of raw) {
@@ -264,7 +264,7 @@ function formatUtcTimestamp(value: string): string {
 
 function trimTrailingSlashes(value: string): string {
   let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+  while (end > 0 && value.codePointAt(end - 1) === 47) {
     end--;
   }
   return value.slice(0, end);
