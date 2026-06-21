@@ -52,7 +52,7 @@ describe('HelpBotCalendarService', () => {
       service.answer({ question: 'when is the next drop?', baseUrl: BASE_URL })
     ).resolves.toEqual({
       answer:
-        'The next Meme Card drop is Meme #500, scheduled for 2026-10-19 14:40 UTC. The overall mint window runs 2026-10-19 14:40 UTC to 2026-10-20 14:00 UTC. It is in SZN 17, Year 4.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
+        'The next Meme Card drop is Meme #500. It opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC. It is in SZN 17, Year 4.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
       queryId: 'meme_calendar.next'
     });
     expect(fetchImpl).toHaveBeenCalledWith(
@@ -85,6 +85,10 @@ describe('HelpBotCalendarService', () => {
 
     expect(answer?.queryId).toBe('meme_calendar.mint.100');
     expect(answer?.answer).toContain('Meme Card #100 minted on 2023-05-01.');
+    expect(answer?.answer).toContain(
+      'It opened 2023-05-01 14:40 UTC and closed 2023-05-02 14:00 UTC.'
+    );
+    expect(answer?.answer).not.toContain('overall');
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://6529.io/api/meme-calendar/100',
       expect.any(Object)
@@ -105,6 +109,10 @@ describe('HelpBotCalendarService', () => {
     });
 
     expect(answer?.queryId).toBe('meme_calendar.mint.500');
+    expect(answer?.answer).toContain(
+      'Meme Card #500 opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC.'
+    );
+    expect(answer?.answer).not.toContain('overall');
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://6529.io/api/meme-calendar/500',
       expect.any(Object)
@@ -125,7 +133,7 @@ describe('HelpBotCalendarService', () => {
       service.answer({ question: 'what is minting now?', baseUrl: BASE_URL })
     ).resolves.toEqual({
       answer:
-        'Nothing is minting right now. The next Meme Card drop is Meme #500, scheduled for 2026-10-19 14:40 UTC.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
+        'Nothing is minting right now. The next Meme Card drop is Meme #500, which opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
       queryId: 'meme_calendar.current'
     });
   });

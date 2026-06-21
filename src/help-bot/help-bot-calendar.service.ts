@@ -286,34 +286,44 @@ function divisionText(mint: MemeCalendarMintResponse): string {
   return `SZN ${mint.season}, Year ${mint.year}`;
 }
 
-function mintWindowText(mint: MemeCalendarMintResponse): string {
-  return `${formatUtcTimestamp(mint.mint_start)} to ${formatUtcTimestamp(
-    mint.mint_end
-  )}`;
+function mintOpenCloseText(
+  mint: MemeCalendarMintResponse,
+  openVerb: 'opens' | 'opened',
+  closeVerb: 'closes' | 'closed'
+): string {
+  return `${openVerb} ${formatUtcTimestamp(
+    mint.mint_start
+  )} and ${closeVerb} ${formatUtcTimestamp(mint.mint_end)}`;
 }
 
 function buildMintAnswer(
   mint: MemeCalendarMintResponse,
   baseUrl: string
 ): string {
-  const window = mintWindowText(mint);
+  const window = mintOpenCloseText(mint, 'opens', 'closes');
   const division = divisionText(mint);
   if (mint.status === 'live') {
     return withCalendarLink(
-      `Meme Card #${mint.mint_number} is minting now. The overall mint window runs ${window}. It is in ${division}.`,
+      `Meme Card #${mint.mint_number} is minting now. It ${mintOpenCloseText(
+        mint,
+        'opened',
+        'closes'
+      )}. It is in ${division}.`,
       baseUrl
     );
   }
   if (mint.status === 'past') {
     return withCalendarLink(
-      `Meme Card #${mint.mint_number} minted on ${mint.mint_date}. The overall mint window was ${window}. It is in ${division}.`,
+      `Meme Card #${mint.mint_number} minted on ${mint.mint_date}. It ${mintOpenCloseText(
+        mint,
+        'opened',
+        'closed'
+      )}. It is in ${division}.`,
       baseUrl
     );
   }
   return withCalendarLink(
-    `Meme Card #${mint.mint_number} is scheduled for ${formatUtcTimestamp(
-      mint.mint_start
-    )}. The overall mint window runs ${window}. It is in ${division}.`,
+    `Meme Card #${mint.mint_number} ${window}. It is in ${division}.`,
     baseUrl
   );
 }
@@ -323,11 +333,11 @@ function buildNextAnswer(
   baseUrl: string
 ): string {
   return withCalendarLink(
-    `The next Meme Card drop is Meme #${mint.mint_number}, scheduled for ${formatUtcTimestamp(
-      mint.mint_start
-    )}. The overall mint window runs ${mintWindowText(mint)}. It is in ${divisionText(
-      mint
-    )}.`,
+    `The next Meme Card drop is Meme #${mint.mint_number}. It ${mintOpenCloseText(
+      mint,
+      'opens',
+      'closes'
+    )}. It is in ${divisionText(mint)}.`,
     baseUrl
   );
 }
@@ -344,9 +354,9 @@ function buildCurrentAnswer(
     return withCalendarLink('Nothing is minting right now.', baseUrl);
   }
   return withCalendarLink(
-    `Nothing is minting right now. The next Meme Card drop is Meme #${next.mint_number}, scheduled for ${formatUtcTimestamp(
-      next.mint_start
-    )}.`,
+    `Nothing is minting right now. The next Meme Card drop is Meme #${
+      next.mint_number
+    }, which ${mintOpenCloseText(next, 'opens', 'closes')}.`,
     baseUrl
   );
 }
