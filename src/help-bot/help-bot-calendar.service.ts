@@ -46,8 +46,15 @@ const CALENDAR_LINK_LABEL = 'Memes Calendar';
 
 const CALENDAR_TIME_PATTERN =
   /\b(?:when|what\s+(?:time|date|day)|schedule|calendar|next|current|upcoming|live|past|minting\s+window|mint\s+window)\b/i;
-const CALENDAR_CONTEXT_PATTERN =
-  /\b(?:meme(?:s)?|meme\s+card(?:s)?|card(?:s)?|mint(?:ing)?|calendar|drop(?:s|ped|ping)?)\b/i;
+const CALENDAR_CONTEXT_PATTERNS = [
+  /\bmemes?\b/i,
+  /\bcards?\b/i,
+  /\bmint(?:ing)?\b/i,
+  /\bcalendar\b/i,
+  /\bdrops?\b/i,
+  /\bdropped\b/i,
+  /\bdropping\b/i
+];
 const NEXT_DROP_PATTERN = /\bnext\s+drop\b/i;
 const CURRENT_DROP_PATTERN =
   /\b(?:current|live)\s+drop\b|\bnow\s+minting\b|\bminting\s+now\b/i;
@@ -108,31 +115,56 @@ function parsePositiveIntegerToken(token: string): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function readMintNumber(question: string): number | null {
-  const tokens = tokenizeQuestion(question);
+function readHashMintNumber(tokens: ReadonlyArray<string>): number | null {
   for (const token of tokens) {
-    if (token.startsWith('#')) {
-      const parsedHashToken = parsePositiveIntegerToken(token);
-      if (parsedHashToken !== null) {
-        return parsedHashToken;
-      }
+    if (!token.startsWith('#')) {
+      continue;
+    }
+    const parsedHashToken = parsePositiveIntegerToken(token);
+    if (parsedHashToken !== null) {
+      return parsedHashToken;
     }
   }
+  return null;
+}
+
+function readMintNumberAfterPrefix(
+  tokens: ReadonlyArray<string>,
+  prefixIndex: number
+): number | null {
+  const end = Math.min(tokens.length, prefixIndex + 4);
+  for (let tokenIndex = prefixIndex + 1; tokenIndex < end; tokenIndex++) {
+    const parsedToken = parsePositiveIntegerToken(tokens[tokenIndex]);
+    if (parsedToken !== null) {
+      return parsedToken;
+    }
+    if (!MINT_NUMBER_FILLER_TOKENS.has(tokens[tokenIndex])) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function readPrefixedMintNumber(tokens: ReadonlyArray<string>): number | null {
   for (let i = 0; i < tokens.length - 1; i++) {
     if (!MINT_NUMBER_PREFIXES.has(tokens[i])) {
       continue;
     }
-    for (let j = i + 1; j < Math.min(tokens.length, i + 4); j++) {
-      const parsedToken = parsePositiveIntegerToken(tokens[j]);
-      if (parsedToken !== null) {
-        return parsedToken;
-      }
-      if (!MINT_NUMBER_FILLER_TOKENS.has(tokens[j])) {
-        break;
-      }
+    const parsedMintNumber = readMintNumberAfterPrefix(tokens, i);
+    if (parsedMintNumber !== null) {
+      return parsedMintNumber;
     }
   }
   return null;
+}
+
+function readMintNumber(question: string): number | null {
+  const tokens = tokenizeQuestion(question);
+  return readHashMintNumber(tokens) ?? readPrefixedMintNumber(tokens);
+}
+
+function hasCalendarContext(value: string): boolean {
+  return CALENDAR_CONTEXT_PATTERNS.some((pattern) => pattern.test(value));
 }
 
 function isCalendarTimingQuestion(
@@ -147,7 +179,7 @@ function isCalendarTimingQuestion(
     return false;
   }
   return (
-    CALENDAR_CONTEXT_PATTERN.test(contextText) ||
+    hasCalendarContext(contextText) ||
     NEXT_DROP_PATTERN.test(text) ||
     hasCurrentIntent
   );
