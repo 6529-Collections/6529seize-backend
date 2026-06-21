@@ -16,6 +16,7 @@ export const HELP_BOT_BASE_URL = resolveHelpBotBaseUrl();
 export const HELP_BOT_INDEX_URL = `${HELP_BOT_BASE_URL}/help-index.json`;
 export const HELP_BOT_INDEX_FETCH_TIMEOUT_MS = 5000;
 export const HELP_BOT_INDEX_CACHE_TTL_MS = 300_000;
+export const HELP_BOT_CALENDAR_FETCH_TIMEOUT_MS = 5000;
 export const HELP_BOT_BEDROCK_MODEL_ID =
   'anthropic.claude-3-sonnet-20240229-v1:0';
 export const HELP_BOT_BEDROCK_TIMEOUT_MS = 4000;

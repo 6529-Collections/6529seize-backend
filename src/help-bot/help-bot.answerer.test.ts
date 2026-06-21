@@ -1,4 +1,5 @@
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
+import { HelpBotCalendarService } from './help-bot-calendar.service';
 import { HelpBotPublicDataService } from './help-bot-public-data.service';
 import {
   HelpBotKnowledgeIndex,
@@ -69,12 +70,14 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
 
 function answerer(
   renderer?: HelpBotLlmRenderer,
-  publicDataService?: Pick<HelpBotPublicDataService, 'answer'>
+  publicDataService?: Pick<HelpBotPublicDataService, 'answer'>,
+  calendarService?: Pick<HelpBotCalendarService, 'answer'>
 ): HelpBotAnswerer {
   return new HelpBotAnswerer(
     renderer,
     new StaticHelpBotKnowledgeSource(TEST_INDEX),
-    publicDataService as HelpBotPublicDataService | undefined
+    publicDataService as HelpBotPublicDataService | undefined,
+    calendarService as HelpBotCalendarService | undefined
   );
 }
 
@@ -211,6 +214,36 @@ describe('HelpBotAnswerer', () => {
       expect(answer.record.id).toBe('network.tdh');
       expect(answer.answer).toContain('[TDH](https://6529.io/network/tdh)');
     }
+  });
+
+  it('answers calendar timing questions before no-source fallback', async () => {
+    const calendarService = {
+      answer: jest.fn().mockResolvedValue({
+        answer:
+          'The next Meme Card drop is Meme #500.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
+        queryId: 'meme_calendar.next'
+      })
+    };
+
+    const answer = await answerer(undefined, undefined, calendarService).answer(
+      {
+        question: 'when is the next drop?',
+        baseUrl: BASE_URL
+      }
+    );
+
+    expect(calendarService.answer).toHaveBeenCalledWith({
+      question: 'when is the next drop?',
+      previousBotAnswer: undefined,
+      baseUrl: BASE_URL
+    });
+    expect(answer).toEqual({
+      type: 'ANSWER',
+      answer:
+        'The next Meme Card drop is Meme #500.\n\nMore info: [Memes Calendar](https://6529.io/meme-calendar)',
+      record: expect.objectContaining({ id: 'meme-calendar.query' }),
+      calendarQueryId: 'meme_calendar.next'
+    });
   });
 
   it('propagates public data execution failures for technical-failure handling', async () => {

@@ -73,6 +73,7 @@ export interface HelpBotPublicDataLlm {
     readonly title: string;
     readonly rows: readonly Record<string, unknown>[];
     readonly canonicalUrl: string;
+    readonly canonicalLabel: string;
   }): Promise<string>;
 }
 
@@ -88,6 +89,9 @@ interface HelpBotPublicDataExecutableQuery {
   readonly title: string;
   readonly canonicalPath: string;
   readonly canonicalPathFromRows?: (
+    rows: readonly Record<string, unknown>[]
+  ) => string | null;
+  readonly canonicalLabelFromRows?: (
     rows: readonly Record<string, unknown>[]
   ) => string | null;
 }
@@ -377,24 +381,26 @@ function sqlJoin(parts: readonly string[]): string {
 function buildDeterministicDataAnswer({
   title,
   rows,
-  canonicalUrl
+  canonicalUrl,
+  canonicalLabel
 }: {
   readonly title: string;
   readonly rows: readonly Record<string, unknown>[];
   readonly canonicalUrl: string;
+  readonly canonicalLabel: string;
 }): string {
   if (!rows.length) {
     return ensureCanonicalMarkdownLink({
       text: `I found no matching public data for ${title}.`,
       canonicalUrl,
-      label: title
+      label: canonicalLabel
     });
   }
   const valueText = compactRows(rows);
   return ensureCanonicalMarkdownLink({
     text: `${title}: ${valueText}`,
     canonicalUrl,
-    label: title
+    label: canonicalLabel
   });
 }
 
@@ -805,6 +811,20 @@ function canonicalProfilePathFromRows(
   return routeHandle ? `/${encodeURIComponent(routeHandle)}` : null;
 }
 
+function canonicalProfileLabelFromRows(
+  rows: readonly Record<string, unknown>[]
+): string | null {
+  if (rows.length !== 1) {
+    return null;
+  }
+  const handle = rows[0]?.handle;
+  if (typeof handle !== 'string') {
+    return null;
+  }
+  const normalizedHandle = handle.trim().replace(/^@+/, '');
+  return normalizedHandle ? `@${normalizedHandle}` : null;
+}
+
 function buildProfilesQuery(
   plan: HelpBotPublicDataQueryPlan
 ): HelpBotPublicDataExecutableQuery | null {
@@ -828,7 +848,8 @@ function buildProfilesQuery(
     ]),
     title: 'Highest Profile TDH',
     canonicalPath: '/network/tdh',
-    canonicalPathFromRows: canonicalProfilePathFromRows
+    canonicalPathFromRows: canonicalProfilePathFromRows,
+    canonicalLabelFromRows: canonicalProfileLabelFromRows
   };
 }
 
@@ -912,6 +933,7 @@ export class HelpBotPublicDataService {
     const canonicalUrl = toCanonicalUrl(
       query.canonicalPathFromRows?.(rows) ?? query.canonicalPath
     );
+    const canonicalLabel = query.canonicalLabelFromRows?.(rows) ?? query.title;
 
     try {
       const rendered = await withTimeout(
@@ -919,7 +941,8 @@ export class HelpBotPublicDataService {
           question: request.question,
           title: query.title,
           rows,
-          canonicalUrl
+          canonicalUrl,
+          canonicalLabel
         }),
         HELP_BOT_BEDROCK_TIMEOUT_MS,
         'Help bot public data rendering'
@@ -929,7 +952,7 @@ export class HelpBotPublicDataService {
           answer: normalizeRenderedDataAnswer(
             rendered,
             canonicalUrl,
-            query.title
+            canonicalLabel
           ),
           queryId: query.queryId
         };
@@ -942,7 +965,8 @@ export class HelpBotPublicDataService {
       answer: buildDeterministicDataAnswer({
         title: query.title,
         rows,
-        canonicalUrl
+        canonicalUrl,
+        canonicalLabel
       }),
       queryId: query.queryId
     };
