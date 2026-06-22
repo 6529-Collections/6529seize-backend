@@ -167,7 +167,7 @@ function hasCalendarContext(value: string): boolean {
   return CALENDAR_CONTEXT_PATTERNS.some((pattern) => pattern.test(value));
 }
 
-function isCalendarTimingQuestion(
+export function isCalendarTimingQuestion(
   question: string,
   previousBotAnswer?: string | null
 ): boolean {

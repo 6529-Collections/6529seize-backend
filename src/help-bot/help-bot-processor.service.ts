@@ -119,13 +119,19 @@ export class HelpBotProcessorService {
         return;
       }
 
+      const reviewedAnswer = await this.buildReviewedAnswer({
+        answer: answer.answer,
+        escalateToTechTeam: answer.escalateToTechTeam ?? false,
+        ctx
+      });
       const reply = await this.dropWriter.reply(
         {
           botProfileId,
           waveId: interaction.wave_id,
           replyToDropId: getInteractionTargetDropId(interaction),
           interactionId: interaction.id,
-          message: answer.answer
+          message: reviewedAnswer.message,
+          mentionedHandles: reviewedAnswer.mentionedHandles
         },
         ctx
       );
@@ -224,6 +230,34 @@ export class HelpBotProcessorService {
       },
       ctx
     );
+  }
+
+  private async buildReviewedAnswer({
+    answer,
+    escalateToTechTeam,
+    ctx
+  }: {
+    readonly answer: string;
+    readonly escalateToTechTeam: boolean;
+    readonly ctx: RequestContext;
+  }): Promise<{
+    readonly message: string;
+    readonly mentionedHandles: string[];
+  }> {
+    if (!escalateToTechTeam) {
+      return { message: answer, mentionedHandles: [] };
+    }
+    const mentionedHandles = await this.resolveTechTeamMentionHandles(ctx);
+    if (!mentionedHandles.length) {
+      return { message: answer, mentionedHandles: [] };
+    }
+    const reviewLine = `I'm flagging this so the tech team can double-check: ${mentionedHandles
+      .map((handle) => `@[${handle}]`)
+      .join(' ')}`;
+    return {
+      message: `${answer}\n\n${reviewLine}`,
+      mentionedHandles
+    };
   }
 
   private async resolveTechTeamMentionHandles(

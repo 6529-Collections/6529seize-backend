@@ -38,7 +38,7 @@ describe('HelpBotDropWriterService', () => {
           replyToDropId: 'source-drop',
           interactionId: 'interaction-1',
           message:
-            "I don't have enough knowledge to help you here. I'm referring this to the tech team: @[current-dev] @[support]",
+            "I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @[current-dev] @[support]",
           mentionedHandles: ['current-dev', 'support']
         },
         {}
@@ -63,7 +63,7 @@ describe('HelpBotDropWriterService', () => {
     );
     const model = createOrUpdateDrop.execute.mock.calls[0]?.[0];
     expect(model.parts[0].content).toBe(
-      "I don't have enough knowledge to help you here. I'm referring this to the tech team: @[current-dev] @[support]"
+      "I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @[current-dev] @[support]"
     );
     expect(model.mentioned_users).toEqual([
       { handle: 'current-dev' },
