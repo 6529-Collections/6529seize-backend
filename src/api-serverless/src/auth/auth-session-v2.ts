@@ -125,14 +125,23 @@ export function parseWalletSessionCookieHeader(
 }
 
 export function clearWalletSessionCookie(): string {
-  return [
-    `${WALLET_SESSION_COOKIE_NAME}=`,
-    'Max-Age=0',
-    'Path=/api/auth',
-    'HttpOnly',
-    'Secure',
-    'SameSite=Lax'
-  ].join('; ');
+  return clearWalletSessionCookieForOrigin({
+    clientOrigin: null,
+    apiHost: null
+  });
+}
+
+export function clearWalletSessionCookieForOrigin({
+  clientOrigin,
+  apiHost
+}: {
+  readonly clientOrigin: string | null;
+  readonly apiHost: unknown;
+}): string {
+  return serializeCookieAttributes({
+    maxAge: 0,
+    sameSite: getSessionCookieSameSite(clientOrigin, apiHost)
+  });
 }
 
 export async function createWebSession({
@@ -140,13 +149,15 @@ export async function createWebSession({
   role,
   userAgent,
   signatureDomain,
-  clientOrigin
+  clientOrigin,
+  apiHost
 }: {
   readonly address: string;
   readonly role: string | null;
   readonly userAgent: string | null;
   readonly signatureDomain: string;
   readonly clientOrigin: string;
+  readonly apiHost: unknown;
 }): Promise<CreatedWebSession> {
   const sessionId = randomUUID();
   const secret = createOpaqueSecret();
@@ -167,7 +178,13 @@ export async function createWebSession({
   const accessToken = issueAccessToken(session.address, session.role);
   return {
     response: toWebSessionResponse(session.address, session.role, accessToken),
-    setCookie: serializeSessionCookie(sessionId, secret, expiresAt)
+    setCookie: serializeSessionCookie({
+      sessionId,
+      secret,
+      expiresAt,
+      clientOrigin,
+      apiHost
+    })
   };
 }
 
@@ -190,10 +207,12 @@ export async function createNativeSession({
 
 export async function refreshWebSession({
   cookie,
-  requestOrigin
+  requestOrigin,
+  apiHost
 }: {
   readonly cookie: ParsedSessionCookie;
   readonly requestOrigin: string | null;
+  readonly apiHost: unknown;
 }): Promise<CreatedWebSession | null> {
   if (!cookie) {
     return null;
@@ -225,7 +244,13 @@ export async function refreshWebSession({
   const accessToken = issueAccessToken(rotated.address, rotated.role);
   return {
     response: toWebSessionResponse(rotated.address, rotated.role, accessToken),
-    setCookie: serializeSessionCookie(rotated.id, nextSecret, expiresAt)
+    setCookie: serializeSessionCookie({
+      sessionId: rotated.id,
+      secret: nextSecret,
+      expiresAt,
+      clientOrigin: existing.client_origin,
+      apiHost
+    })
   };
 }
 
@@ -301,14 +326,19 @@ export async function refreshNativeSession({
 export async function logoutWebSession({
   cookie,
   allSessions,
-  requestOrigin
+  requestOrigin,
+  apiHost
 }: {
   readonly cookie: ParsedSessionCookie;
   readonly allSessions: boolean;
   readonly requestOrigin: string | null;
+  readonly apiHost: unknown;
 }): Promise<string> {
   if (!cookie) {
-    return clearWalletSessionCookie();
+    return clearWalletSessionCookieForOrigin({
+      clientOrigin: requestOrigin,
+      apiHost
+    });
   }
   const now = new Date();
   const existing = await authDb.getActiveWebSessionBySecretHash(
@@ -320,14 +350,20 @@ export async function logoutWebSession({
     existing &&
     !isMatchingSessionOrigin(existing.client_origin, requestOrigin)
   ) {
-    return clearWalletSessionCookie();
+    return clearWalletSessionCookieForOrigin({
+      clientOrigin: requestOrigin,
+      apiHost
+    });
   }
   if (allSessions && existing) {
     await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
   } else if (existing) {
     await authDb.revokeWalletAuthSession(existing.id, now);
   }
-  return clearWalletSessionCookie();
+  return clearWalletSessionCookieForOrigin({
+    clientOrigin: existing?.client_origin ?? requestOrigin,
+    apiHost
+  });
 }
 
 export async function logoutNativeSession({
@@ -512,11 +548,19 @@ async function createNativeSessionRecord(
   };
 }
 
-function serializeSessionCookie(
-  sessionId: string,
-  secret: string,
-  expiresAt: Date
-): string {
+function serializeSessionCookie({
+  sessionId,
+  secret,
+  expiresAt,
+  clientOrigin,
+  apiHost
+}: {
+  readonly sessionId: string;
+  readonly secret: string;
+  readonly expiresAt: Date;
+  readonly clientOrigin: string | null;
+  readonly apiHost: unknown;
+}): string {
   const maxAgeSeconds = Math.max(
     0,
     Math.floor((expiresAt.getTime() - Date.now()) / 1000)
@@ -526,11 +570,79 @@ function serializeSessionCookie(
       `${sessionId}.${secret}`
     )}`,
     `Max-Age=${maxAgeSeconds}`,
-    'Path=/api/auth',
-    'HttpOnly',
-    'Secure',
-    'SameSite=Lax'
+    ...getBaseCookieAttributes(getSessionCookieSameSite(clientOrigin, apiHost))
   ].join('; ');
+}
+
+function serializeCookieAttributes({
+  maxAge,
+  sameSite
+}: {
+  readonly maxAge: number;
+  readonly sameSite: 'Lax' | 'None';
+}): string {
+  return [
+    `${WALLET_SESSION_COOKIE_NAME}=`,
+    `Max-Age=${maxAge}`,
+    ...getBaseCookieAttributes(sameSite)
+  ].join('; ');
+}
+
+function getBaseCookieAttributes(sameSite: 'Lax' | 'None'): string[] {
+  return ['Path=/api/auth', 'HttpOnly', 'Secure', `SameSite=${sameSite}`];
+}
+
+function getSessionCookieSameSite(
+  clientOrigin: string | null,
+  apiHost: unknown
+): 'Lax' | 'None' {
+  if (!clientOrigin || !isCrossSiteOrigin(clientOrigin, apiHost)) {
+    return 'Lax';
+  }
+  return 'None';
+}
+
+function isCrossSiteOrigin(clientOrigin: string, apiHost: unknown): boolean {
+  const clientSite = getSiteKeyFromOrigin(clientOrigin);
+  const apiSite = getSiteKeyFromApiHost(apiHost);
+  return !!clientSite && !!apiSite && clientSite !== apiSite;
+}
+
+function getSiteKeyFromOrigin(origin: string): string | null {
+  try {
+    const parsed = new URL(origin);
+    return `${parsed.protocol}//${getApproximateRegistrableDomain(
+      parsed.hostname
+    )}`;
+  } catch {
+    return null;
+  }
+}
+
+function getSiteKeyFromApiHost(apiHost: unknown): string | null {
+  if (typeof apiHost !== 'string' || !apiHost.trim()) {
+    return null;
+  }
+  try {
+    const rawHost = apiHost.trim().toLowerCase();
+    const parsed = new URL(
+      rawHost.includes('://') ? rawHost : `https://${rawHost}`
+    );
+    return `${parsed.protocol}//${getApproximateRegistrableDomain(
+      parsed.hostname
+    )}`;
+  } catch {
+    return null;
+  }
+}
+
+function getApproximateRegistrableDomain(hostname: string): string {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return host;
+  }
+  const parts = host.split('.');
+  return parts.length >= 2 ? parts.slice(-2).join('.') : host;
 }
 
 function isMatchingSessionOrigin(
