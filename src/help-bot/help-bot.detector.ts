@@ -107,6 +107,29 @@ function isMeaningfulQuestion(text: string): boolean {
   return normalized.length > 2 && !ACKNOWLEDGEMENTS.has(normalized);
 }
 
+function isContextDependentQuestion(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  return [
+    /^(is|was|are|were) (this|that|it|these|those) (right|correct|true|accurate)$/,
+    /^(is|was|are|were) (this|that|it|these|those) (wrong|incorrect|false)$/,
+    /^(does|did) (this|that|it) (look|sound|seem) (right|correct|true|accurate)$/,
+    /^can you (check|confirm|verify) (this|that|it)$/,
+    /^is this$/,
+    /^is that$/
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function buildQuestionWithParentContext(
+  question: string,
+  parentQuestion: string
+): string {
+  return `${question}\n\nContext from the replied-to drop: ${parentQuestion}`;
+}
+
 export function detectHelpBotTrigger(
   input: HelpBotTriggerDetectionInput
 ): HelpBotTriggerDetection | null {
@@ -118,6 +141,26 @@ export function detectHelpBotTrigger(
   const question = stripBotMention(text);
 
   if (hasExplicitMention(input, text)) {
+    const parentDrop = input.parentDrop;
+    const parentQuestion = stripBotMention(extractDropText(parentDrop));
+    if (
+      isMeaningfulQuestion(question) &&
+      isContextDependentQuestion(question) &&
+      parentDrop &&
+      parentDrop.author.id !== input.botProfileId &&
+      isMeaningfulQuestion(parentQuestion)
+    ) {
+      return {
+        triggerDropId: input.createdDrop.id,
+        targetDropId: input.createdDrop.id,
+        waveId: input.createdDrop.wave.id,
+        authorProfileId: input.authorProfileId,
+        question: buildQuestionWithParentContext(question, parentQuestion),
+        triggerType: HelpBotInteractionTriggerType.MENTION,
+        parentBotDropId: null
+      };
+    }
+
     if (isMeaningfulQuestion(question)) {
       return {
         triggerDropId: input.createdDrop.id,
@@ -130,8 +173,6 @@ export function detectHelpBotTrigger(
       };
     }
 
-    const parentDrop = input.parentDrop;
-    const parentQuestion = stripBotMention(extractDropText(parentDrop));
     if (
       parentDrop &&
       parentDrop.author.id !== input.botProfileId &&
