@@ -40,6 +40,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
 import {
+  clearWalletSessionCookieForAddressAndOrigin,
   clearWalletSessionCookieForOrigin,
   createConnectionShare,
   createNativeSession,
@@ -49,10 +50,9 @@ import {
   issueAccessToken,
   logoutNativeSession,
   logoutWebSession,
-  parseWalletSessionCookieHeader,
   redeemConnectionShare,
   refreshNativeSession,
-  refreshWebSession
+  refreshWebSessionForAddress
 } from './auth-session-v2';
 import {
   buildStructuredWalletSignatureMessage,
@@ -298,24 +298,32 @@ router.post(
       res.status(201).send(refreshed.response);
       return;
     }
-    getValidatedByJoiOrThrow(
+    const refreshRequest = getValidatedByJoiOrThrow(
       { ...body, client_type: 'web' },
       SessionRefreshWebRequestSchema
     );
     assertWebSessionRequestOriginAllowed(req);
-    const cookie = parseWalletSessionCookieHeader(req.headers.cookie);
-    const refreshed = await refreshWebSession({
-      cookie,
-      requestOrigin: getNormalizedRequestOrigin(req),
+    const requestOrigin = getNormalizedRequestOrigin(req);
+    const refreshed = await refreshWebSessionForAddress({
+      cookieHeader: req.headers.cookie,
+      address: refreshRequest.client_address ?? null,
+      requestOrigin,
       apiHost: req.headers.host
     });
     if (!refreshed) {
       res.setHeader(
         'Set-Cookie',
-        clearWalletSessionCookieForOrigin({
-          clientOrigin: getNormalizedRequestOrigin(req),
-          apiHost: req.headers.host
-        })
+        refreshRequest.client_address
+          ? clearWalletSessionCookieForAddressAndOrigin({
+              address: refreshRequest.client_address,
+              clientOrigin: requestOrigin,
+              apiHost: req.headers.host,
+              includeCompatibilityCookie: false
+            })
+          : clearWalletSessionCookieForOrigin({
+              clientOrigin: requestOrigin,
+              apiHost: req.headers.host
+            })
       );
       throw new UnauthorisedException('Invalid session');
     }
@@ -357,7 +365,8 @@ router.post(
     );
     assertWebSessionRequestOriginAllowed(req);
     const setCookie = await logoutWebSession({
-      cookie: parseWalletSessionCookieHeader(req.headers.cookie),
+      cookieHeader: req.headers.cookie,
+      address: logoutRequest.client_address ?? null,
       allSessions: logoutRequest.all_sessions ?? false,
       requestOrigin: getNormalizedRequestOrigin(req),
       apiHost: req.headers.host
@@ -834,7 +843,8 @@ const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
 
 const SessionRefreshWebRequestSchema: Joi.ObjectSchema<ApiSessionRefreshWebRequest> =
   Joi.object<ApiSessionRefreshWebRequest>({
-    client_type: Joi.string().valid('web').required()
+    client_type: Joi.string().valid('web').required(),
+    client_address: Joi.string().optional().allow(null)
   }).unknown(false);
 
 const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativeRequest> =
@@ -847,6 +857,7 @@ const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativ
 const SessionLogoutWebRequestSchema: Joi.ObjectSchema<ApiSessionLogoutWebRequest> =
   Joi.object<ApiSessionLogoutWebRequest>({
     client_type: Joi.string().valid('web').required(),
+    client_address: Joi.string().optional().allow(null),
     all_sessions: Joi.boolean().optional().default(false)
   }).unknown(false);
 

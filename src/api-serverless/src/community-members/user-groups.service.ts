@@ -76,6 +76,7 @@ import { xTdhRepository } from '@/xtdh/xtdh.repository';
 import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
+import { Logger } from '@/logging';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -103,6 +104,7 @@ const ELIGIBLE_GROUPS_REDIS_LOCK_TTL_MS = 10_000;
 const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES = 4;
 const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS = 75;
 const eligibleGroupsPromisesByProfileId = new Map<string, Promise<string[]>>();
+const logger = Logger.get('USER_GROUPS_SERVICE');
 
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
@@ -781,7 +783,7 @@ export class UserGroupsService {
     const timerKey = 'getGroupsUserIsEligibleFor';
     return this.timeAsync(timer, timerKey, async () => {
       const existingPromise = eligibleGroupsPromisesByProfileId.get(profileId);
-      if (existingPromise) {
+      if (existingPromise !== undefined) {
         return await this.timeAsync(
           timer,
           `${timerKey}->localInFlightWait`,
@@ -810,7 +812,6 @@ export class UserGroupsService {
   ): Promise<string[]> {
     const timerKey = 'getGroupsUserIsEligibleFor';
     const ttlSec = this.getEligibleGroupsCacheTtlSec();
-    const computedAtMillis = Time.currentMillis();
     const [latestProfileGroupChangeMillis, waveGroupsVersion] =
       await Promise.all([
         this.timeAsync(
@@ -872,6 +873,21 @@ export class UserGroupsService {
     }
 
     const results = await this.computeGroupsUserIsEligibleFor(profileId, timer);
+    const computedAtMillis = Time.currentMillis();
+    const latestProfileGroupChangeMillisAfterCompute = await this.timeAsync(
+      timer,
+      `${timerKey}->getLatestProfileGroupChangeMillisAfterCompute`,
+      () => this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId)
+    );
+    if (
+      this.hasProfileGroupChangeAdvanced(
+        latestProfileGroupChangeMillis,
+        latestProfileGroupChangeMillisAfterCompute
+      )
+    ) {
+      return results;
+    }
+
     const cacheEntry: EligibleGroupsCacheEntry = {
       eligibleGroupIds: results,
       computedAtMillis,
@@ -885,6 +901,19 @@ export class UserGroupsService {
       timer
     );
     return results;
+  }
+
+  private hasProfileGroupChangeAdvanced(
+    beforeMillis: number | null,
+    afterMillis: number | null
+  ): boolean {
+    if (afterMillis === null) {
+      return false;
+    }
+    if (beforeMillis === null) {
+      return true;
+    }
+    return afterMillis > beforeMillis;
   }
 
   private async computeGroupsUserIsEligibleFor(
@@ -1019,7 +1048,10 @@ export class UserGroupsService {
             PX: ELIGIBLE_GROUPS_REDIS_LOCK_TTL_MS,
             NX: true
           })
-          .catch(() => 'OK');
+          .catch((err) => {
+            logger.warn('Failed to acquire eligible groups Redis lock', err);
+            return null;
+          });
         return response === 'OK';
       }
     );
@@ -1036,7 +1068,7 @@ export class UserGroupsService {
     latestProfileGroupChangeMillis: number | null;
     waveGroupsVersion: number;
     ttlSec: number;
-    timer?: Timer | undefined;
+    timer?: Timer;
   }): Promise<EligibleGroupsCacheEntry | null> {
     for (let i = 0; i < ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES; i++) {
       await Time.millis(ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS).sleep();
