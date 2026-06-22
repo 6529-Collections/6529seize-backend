@@ -838,8 +838,9 @@ function serializeSessionCookie({
     0,
     Math.floor((expiresAt.getTime() - Date.now()) / 1000)
   );
+  const encodedSessionValue = encodeURIComponent(`${sessionId}.${secret}`);
   return [
-    `${cookieName}=${encodeURIComponent(`${sessionId}.${secret}`)}`,
+    `${cookieName}=${encodedSessionValue}`,
     `Max-Age=${maxAgeSeconds}`,
     ...getBaseCookieAttributes(getSessionCookieSameSite(clientOrigin, apiHost))
   ].join('; ');
