@@ -781,7 +781,7 @@ export class UserGroupsService {
     const timerKey = 'getGroupsUserIsEligibleFor';
     return this.timeAsync(timer, timerKey, async () => {
       const existingPromise = eligibleGroupsPromisesByProfileId.get(profileId);
-      if (existingPromise) {
+      if (existingPromise !== undefined) {
         return await this.timeAsync(
           timer,
           `${timerKey}->localInFlightWait`,
