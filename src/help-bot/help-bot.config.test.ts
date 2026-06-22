@@ -45,7 +45,7 @@ describe('help bot config', () => {
       'carol'
     ]);
     expect(buildHelpBotNoReliableSourceReply()).toBe(
-      `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm referring this to the tech team: @[Alice] @[bob] @[carol]`
+      `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm flagging this so the tech team can double-check: @[Alice] @[bob] @[carol]`
     );
   });
 

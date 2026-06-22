@@ -32,7 +32,7 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
       title: 'Create a wave',
       linkLabel: 'Create a wave',
       canonicalPath: '/waves/create',
-      aliases: ['create wave', 'make a wave', 'new wave'],
+      aliases: ['create wave', 'create a wave', 'make a wave', 'new wave'],
       keywords: ['create', 'wave', 'waves', 'plus'],
       facts: ['Use the plus button in the Waves left sidebar.'],
       relatedPaths: [],
@@ -64,6 +64,32 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
       relatedPaths: ['/network'],
       tags: ['profiles'],
       sourceRefs: []
+    },
+    {
+      id: 'waves.drop.quote-link-cards',
+      kind: 'ui_affordance',
+      title: 'Wave quote link cards',
+      linkLabel: 'Waves',
+      canonicalPath: '/waves',
+      aliases: [],
+      keywords: ['drop', 'card'],
+      facts: ['Wave drops can render quote link cards.'],
+      relatedPaths: [],
+      tags: ['waves'],
+      sourceRefs: []
+    },
+    {
+      id: 'waves.weak-match-example',
+      kind: 'ui_affordance',
+      title: 'Weak match example',
+      linkLabel: 'Weak Match',
+      canonicalPath: '/waves',
+      aliases: ['weakbot'],
+      keywords: [],
+      facts: ['This is a weakly scored fallback example.'],
+      relatedPaths: [],
+      tags: ['waves'],
+      sourceRefs: []
     }
   ]
 };
@@ -71,11 +97,12 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
 function answerer(
   renderer?: HelpBotLlmRenderer,
   publicDataService?: Pick<HelpBotPublicDataService, 'answer'>,
-  calendarService?: Pick<HelpBotCalendarService, 'answer'>
+  calendarService?: Pick<HelpBotCalendarService, 'answer'>,
+  index: HelpBotKnowledgeIndex = TEST_INDEX
 ): HelpBotAnswerer {
   return new HelpBotAnswerer(
     renderer,
-    new StaticHelpBotKnowledgeSource(TEST_INDEX),
+    new StaticHelpBotKnowledgeSource(index),
     publicDataService as HelpBotPublicDataService | undefined,
     calendarService as HelpBotCalendarService | undefined
   );
@@ -93,6 +120,24 @@ describe('HelpBotAnswerer', () => {
       expect(answer.answer).toContain('TDH stands for Total Days Held.');
       expect(answer.answer).toContain('[TDH](https://6529.io/network/tdh)');
       expect(answer.record.id).toBe('network.tdh');
+      expect(answer.escalateToTechTeam).toBeUndefined();
+    }
+  });
+
+  it('adds a weak-match caveat and review flag when the match score is uncertain', async () => {
+    const answer = await answerer(undefined, undefined, undefined).answer({
+      question: 'weakbot card',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('waves.weak-match-example');
+      expect(answer.escalateToTechTeam).toBe(true);
+      expect(answer.answer).toContain(
+        "I might not be fully sure on this one, so here's my best answer."
+      );
+      expect(answer.answer).toContain('[Weak Match](https://6529.io/waves)');
     }
   });
 
@@ -258,7 +303,7 @@ describe('HelpBotAnswerer', () => {
     });
   });
 
-  it('propagates public data execution failures for technical-failure handling', async () => {
+  it('does not fall back to generic knowledge when public data execution fails', async () => {
     const publicDataService = {
       answer: jest.fn().mockRejectedValue(new Error('db timeout'))
     };
@@ -268,7 +313,42 @@ describe('HelpBotAnswerer', () => {
         question: 'how many memes are in szn1?',
         baseUrl: BASE_URL
       })
-    ).rejects.toThrow('db timeout');
+    ).resolves.toEqual({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: true
+    });
+  });
+
+  it('does not fall back to TDH glossary for unanswered leaderboard questions', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockResolvedValue(null)
+    };
+
+    await expect(
+      answerer(undefined, publicDataService).answer({
+        question: 'who has the highest tdh currently?',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toEqual({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: true
+    });
+  });
+
+  it('does not fall back to generic drop knowledge for unanswered calendar questions', async () => {
+    const calendarService = {
+      answer: jest.fn().mockResolvedValue(null)
+    };
+
+    await expect(
+      answerer(undefined, undefined, calendarService).answer({
+        question: 'when will card number 6529 drop?',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toEqual({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: true
+    });
   });
 
   it('answers obvious impossible privilege requests without tech-team fallback', async () => {

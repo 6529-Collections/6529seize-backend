@@ -2,9 +2,13 @@ import { Logger } from '@/logging';
 import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
-  HelpBotKnowledgeRecord
+  HelpBotKnowledgeRecord,
+  HelpBotKnowledgeMatch
 } from './help-bot.knowledge';
-import { HelpBotCalendarService } from './help-bot-calendar.service';
+import {
+  HelpBotCalendarService,
+  isCalendarTimingQuestion
+} from './help-bot-calendar.service';
 import { HelpBotPublicDataService } from './help-bot-public-data.service';
 import {
   ensureCanonicalMarkdownLink,
@@ -23,6 +27,7 @@ export interface HelpBotAnswerSuccess {
   readonly record: HelpBotKnowledgeRecord;
   readonly publicDataQueryId?: string;
   readonly calendarQueryId?: string;
+  readonly escalateToTechTeam?: boolean;
 }
 
 export interface HelpBotNoReliableSource {
@@ -272,6 +277,18 @@ const PRODUCT_CONTEXT_PATTERNS = [
 const CONTEXTUAL_FOLLOW_UP_PATTERN =
   /\b(it|that|this|there|eligibility|rules|button|page|link|tab|menu|create|find|open|where|how)\b/;
 
+const WEAK_MATCH_SCORE_MAX = 4;
+const WEAK_MATCH_PREFIX =
+  "I might not be fully sure on this one, so here's my best answer.";
+
+function isWeakKnowledgeMatch(match: HelpBotKnowledgeMatch): boolean {
+  return match.score <= WEAK_MATCH_SCORE_MAX;
+}
+
+function appendWeakMatchPrefix(answer: string): string {
+  return `${WEAK_MATCH_PREFIX}\n\n${answer}`;
+}
+
 function isLikelyProductText(value: string | null | undefined): boolean {
   const normalized = normalizeBoundaryText(value ?? '');
   return PRODUCT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized));
@@ -289,6 +306,53 @@ function isLikelyProductQuestion(
     CONTEXTUAL_FOLLOW_UP_PATTERN.test(normalizeBoundaryText(question)) &&
     isLikelyProductText(previousBotAnswer)
   );
+}
+
+function isLikelyDynamicPublicDataQuestion(
+  question: string,
+  previousBotAnswer?: string | null
+): boolean {
+  const normalizedQuestion = normalizeBoundaryText(question);
+  const normalizedContext = normalizeBoundaryText(
+    `${question} ${previousBotAnswer ?? ''}`
+  );
+  const hasDataIntent = [
+    /\bhow many\b/,
+    /\bcount\b/,
+    /\bhighest\b/,
+    /\blowest\b/,
+    /\btop\b/,
+    /\bmost\b/,
+    /\btotal\b/,
+    /\bsum\b/,
+    /\baverage\b/,
+    /\bavg\b/,
+    /\bwho has\b/,
+    /\bwhich (profile|user|identity)\b/,
+    /\bcurrent tdh\b/,
+    /\btdh rate\b/,
+    /\bhodl rate\b/,
+    /\bedition size\b/,
+    /\bsupply\b/,
+    /\bszn\b/,
+    /\bseason\b/
+  ].some((pattern) => pattern.test(normalizedQuestion));
+  if (!hasDataIntent) {
+    return false;
+  }
+  return [
+    /\btdh\b/,
+    /\bmeme(s)?\b/,
+    /\bcard(s)?\b/,
+    /\bnft(s)?\b/,
+    /\bprofile(s)?\b/,
+    /\buser(s)?\b/,
+    /\bidentit(y|ies)\b/,
+    /\bszn\b/,
+    /\bseason\b/,
+    /\bedition\b/,
+    /\bsupply\b/
+  ].some((pattern) => pattern.test(normalizedContext));
 }
 
 function buildBoundaryAnswer(question: string): string | null {
@@ -344,11 +408,14 @@ export class HelpBotAnswerer {
       };
     }
 
-    const calendarAnswer = await this.calendarService?.answer({
-      question: request.question,
-      previousBotAnswer: request.previousBotAnswer,
-      baseUrl: request.baseUrl
-    });
+    const expectsCalendarAnswer = isCalendarTimingQuestion(
+      request.question,
+      request.previousBotAnswer
+    );
+    const calendarAnswer = await this.answerFromCalendar(
+      request,
+      expectsCalendarAnswer
+    );
     if (calendarAnswer) {
       return {
         type: 'ANSWER',
@@ -357,11 +424,21 @@ export class HelpBotAnswerer {
         calendarQueryId: calendarAnswer.queryId
       };
     }
+    if (expectsCalendarAnswer) {
+      return {
+        type: 'NO_RELIABLE_SOURCE',
+        escalateToTechTeam: true
+      };
+    }
 
-    const publicDataAnswer = await this.publicDataService?.answer({
-      question: request.question,
-      previousBotAnswer: request.previousBotAnswer
-    });
+    const expectsPublicDataAnswer = isLikelyDynamicPublicDataQuestion(
+      request.question,
+      request.previousBotAnswer
+    );
+    const publicDataAnswer = await this.answerFromPublicData(
+      request,
+      expectsPublicDataAnswer
+    );
     if (publicDataAnswer) {
       return {
         type: 'ANSWER',
@@ -370,14 +447,14 @@ export class HelpBotAnswerer {
         publicDataQueryId: publicDataAnswer.queryId
       };
     }
+    if (expectsPublicDataAnswer) {
+      return {
+        type: 'NO_RELIABLE_SOURCE',
+        escalateToTechTeam: true
+      };
+    }
 
-    const directMatch = await this.knowledgeSource.findMatch(request.question);
-    const contextualMatch = request.previousBotAnswer
-      ? await this.knowledgeSource.findMatch(
-          [request.question, request.previousBotAnswer].join('\n')
-        )
-      : null;
-    const match = directMatch ?? contextualMatch;
+    const match = await this.findKnowledgeMatch(request);
     if (!match) {
       return {
         type: 'NO_RELIABLE_SOURCE',
@@ -388,15 +465,26 @@ export class HelpBotAnswerer {
       };
     }
 
+    const escalateToTechTeam =
+      isWeakKnowledgeMatch(match) &&
+      isLikelyProductQuestion(request.question, request.previousBotAnswer);
+
     const canonicalUrl = toCanonicalUrl(
       request.baseUrl,
       safeCanonicalPath(match.record)
     );
+
+    const maybeWithWeakCaveat = (answer: string) =>
+      escalateToTechTeam ? appendWeakMatchPrefix(answer) : answer;
+
     if (!this.renderer) {
       return {
         type: 'ANSWER',
-        answer: buildDeterministicAnswer(match.record, canonicalUrl),
-        record: match.record
+        answer: maybeWithWeakCaveat(
+          buildDeterministicAnswer(match.record, canonicalUrl)
+        ),
+        record: match.record,
+        escalateToTechTeam
       };
     }
 
@@ -410,12 +498,15 @@ export class HelpBotAnswerer {
       if (rendered.trim()) {
         return {
           type: 'ANSWER',
-          answer: normalizeRenderedAnswer(
-            rendered,
-            canonicalUrl,
-            match.record.linkLabel
+          answer: maybeWithWeakCaveat(
+            normalizeRenderedAnswer(
+              rendered,
+              canonicalUrl,
+              match.record.linkLabel
+            )
           ),
-          record: match.record
+          record: match.record,
+          escalateToTechTeam
         };
       }
     } catch (error) {
@@ -427,8 +518,71 @@ export class HelpBotAnswerer {
 
     return {
       type: 'ANSWER',
-      answer: buildDeterministicAnswer(match.record, canonicalUrl),
-      record: match.record
+      answer: maybeWithWeakCaveat(
+        buildDeterministicAnswer(match.record, canonicalUrl)
+      ),
+      record: match.record,
+      escalateToTechTeam
     };
+  }
+
+  private async answerFromCalendar(
+    request: HelpBotAnswerRequest,
+    expectsCalendarAnswer: boolean
+  ) {
+    try {
+      return (
+        (await this.calendarService?.answer({
+          question: request.question,
+          previousBotAnswer: request.previousBotAnswer,
+          baseUrl: request.baseUrl
+        })) ?? null
+      );
+    } catch (error) {
+      if (expectsCalendarAnswer) {
+        this.logger.warn('Help bot calendar answer failed', error);
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async answerFromPublicData(
+    request: HelpBotAnswerRequest,
+    expectsPublicDataAnswer: boolean
+  ) {
+    try {
+      return (
+        (await this.publicDataService?.answer({
+          question: request.question,
+          previousBotAnswer: request.previousBotAnswer
+        })) ?? null
+      );
+    } catch (error) {
+      if (expectsPublicDataAnswer) {
+        this.logger.warn('Help bot public data answer failed', error);
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async findKnowledgeMatch(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotKnowledgeMatch | null> {
+    try {
+      const directMatch = await this.knowledgeSource.findMatch(
+        request.question
+      );
+      const contextualMatch = request.previousBotAnswer
+        ? await this.knowledgeSource.findMatch(
+            [request.question, request.previousBotAnswer].join('\n')
+          )
+        : null;
+      return directMatch ?? contextualMatch;
+    } catch (error) {
+      this.logger.warn('Help bot knowledge source failed', error);
+      return null;
+    }
   }
 }
