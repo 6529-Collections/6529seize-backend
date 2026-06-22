@@ -5,6 +5,9 @@ import { Time } from './time';
 
 let redis: Redis;
 
+export const WAVE_GROUPS_CACHE_KEY = 'cache_6529_wave_groups';
+export const WAVE_GROUPS_VERSION_CACHE_KEY = 'cache_6529_wave_groups_version';
+
 export async function redisGet<T>(key: string): Promise<T | null> {
   if (!redis) {
     return null;
@@ -211,7 +214,13 @@ export async function initRedis() {
 }
 
 export async function clearWaveGroupsCache() {
-  await evictKeyFromRedisCache('cache_6529_wave_groups');
+  if (!redis) {
+    return;
+  }
+  await Promise.all([
+    redis.del(WAVE_GROUPS_CACHE_KEY),
+    redis.incr(WAVE_GROUPS_VERSION_CACHE_KEY)
+  ]);
 }
 
 export function getRedisClient(): Redis | null {
