@@ -385,8 +385,7 @@ router.post(
       requestOrigin: getNormalizedRequestOrigin(req)
     });
     if (
-      !activeWebSession ||
-      activeWebSession.address !== authenticatedWallet ||
+      activeWebSession?.address !== authenticatedWallet ||
       activeWebSession.role !== authRole
     ) {
       throw new UnauthorisedException(
