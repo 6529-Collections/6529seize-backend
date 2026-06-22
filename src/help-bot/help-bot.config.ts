@@ -35,9 +35,9 @@ export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
 export const HELP_BOT_SIGNUP_CREDIT_GRANT = 5;
 export const HELP_BOT_PROFILE_SETUP_CREDIT_GRANT = 5;
-export const HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT = 2;
+export const HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT = 5;
 export const HELP_BOT_QUESTION_CREDIT_COST = 1;
-export const HELP_BOT_AUTO_CREDIT_CAP = 50;
+export const HELP_BOT_AUTO_CREDIT_CAP = 100;
 
 export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
   "I don't have enough knowledge to help you here.";
