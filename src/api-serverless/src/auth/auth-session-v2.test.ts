@@ -5,10 +5,13 @@ import {
   createConnectionShare,
   createWebSession,
   getActiveWebSession,
+  getWalletSessionCookieNameForAddress,
+  hasActiveWebSessionForAddressAndRole,
   isAuthConnectionSharingEnabled,
   logoutNativeSession,
   logoutWebSession,
   parseWalletSessionCookieHeader,
+  parseWalletSessionCookieHeaderForAddress,
   redeemConnectionShare,
   refreshWebSession,
   refreshNativeSession,
@@ -35,6 +38,10 @@ jest.mock('./auth.db', () => ({
 }));
 
 const authDbMock = authDb as jest.Mocked<typeof authDb>;
+
+function toCookieRequestHeader(setCookies: readonly string[]): string {
+  return setCookies.map((cookie) => cookie.split(';')[0]).join('; ');
+}
 
 describe('auth-session-v2', () => {
   beforeEach(() => {
@@ -94,17 +101,32 @@ describe('auth-session-v2', () => {
       client_type: 'web'
     });
     expect(result.response).not.toHaveProperty('refresh_token');
-    expect(result.setCookie).toContain(`${WALLET_SESSION_COOKIE_NAME}=`);
-    expect(result.setCookie).toContain('HttpOnly');
-    expect(result.setCookie).toContain('Secure');
-    expect(result.setCookie).toContain('SameSite=Lax');
-    expect(result.setCookie).toContain('Path=/api/auth');
+    expect(result.setCookie).toHaveLength(2);
+    const setCookieHeader = result.setCookie.join('\n');
+    const cookieRequestHeader = toCookieRequestHeader(result.setCookie);
+    expect(setCookieHeader).toContain(`${WALLET_SESSION_COOKIE_NAME}=`);
+    expect(setCookieHeader).toContain(
+      `${getWalletSessionCookieNameForAddress('0xABCDEF')}=`
+    );
+    expect(setCookieHeader).toContain('HttpOnly');
+    expect(setCookieHeader).toContain('Secure');
+    expect(setCookieHeader).toContain('SameSite=Lax');
+    expect(setCookieHeader).toContain('Path=/api/auth');
 
-    const cookie = parseWalletSessionCookieHeader(result.setCookie);
+    const legacyCookieHeader = result.setCookie.find((cookie) =>
+      cookie.startsWith(`${WALLET_SESSION_COOKIE_NAME}=`)
+    );
+    const cookie = parseWalletSessionCookieHeader(legacyCookieHeader);
     expect(cookie).toEqual({
       sessionId: expect.any(String),
       secret: expect.any(String)
     });
+    expect(
+      parseWalletSessionCookieHeaderForAddress(
+        cookieRequestHeader,
+        '0xABCDEF'
+      )[0]
+    ).toEqual(cookie);
 
     const [storedSession] = authDbMock.createWalletAuthSession.mock.calls[0];
     expect(storedSession.address).toBe('0xabcdef');
@@ -165,9 +187,10 @@ describe('auth-session-v2', () => {
       apiHost: 'api.staging.6529.io'
     });
 
-    expect(result.setCookie).toContain('Secure');
-    expect(result.setCookie).toContain('SameSite=None');
-    expect(result.setCookie).not.toContain('SameSite=Lax');
+    const setCookieHeader = result.setCookie.join('\n');
+    expect(setCookieHeader).toContain('Secure');
+    expect(setCookieHeader).toContain('SameSite=None');
+    expect(setCookieHeader).not.toContain('SameSite=Lax');
   });
 
   it('keeps SameSite=Lax for staging web sessions that are same-site with the staging API', async () => {
@@ -196,8 +219,9 @@ describe('auth-session-v2', () => {
       apiHost: 'api.staging.6529.io'
     });
 
-    expect(result.setCookie).toContain('SameSite=Lax');
-    expect(result.setCookie).not.toContain('SameSite=None');
+    const setCookieHeader = result.setCookie.join('\n');
+    expect(setCookieHeader).toContain('SameSite=Lax');
+    expect(setCookieHeader).not.toContain('SameSite=None');
   });
 
   it('loads active web sessions from the session-v2 cookie without trusting URL role metadata', async () => {
@@ -231,6 +255,104 @@ describe('auth-session-v2', () => {
     expect(sessionId).toBe('session-1');
     expect(secretHash).toMatch(/^[a-f0-9]{64}$/);
     expect(secretHash).not.toBe('cookie-secret');
+  });
+
+  it('finds the address-scoped web session cookie when another account owns the compatibility cookie', async () => {
+    const addressScopedCookieName =
+      getWalletSessionCookieNameForAddress('0xAAA');
+    const cookieHeader = [
+      `${addressScopedCookieName}=${encodeURIComponent('session-a.secret-a')}`,
+      `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent('session-b.secret-b')}`
+    ].join('; ');
+
+    authDbMock.getActiveWebSessionBySecretHash.mockImplementation(
+      async (sessionId) => {
+        if (sessionId === 'session-a') {
+          return {
+            id: 'session-a',
+            address: '0xAAA',
+            role: 'profile-a',
+            client_type: 'web',
+            secret_hash: 'stored-secret-hash-a',
+            refresh_token_hash: null,
+            user_agent_hash: null,
+            signature_domain: '6529.io',
+            client_origin: 'https://6529.io',
+            created_at: new Date(),
+            last_used_at: new Date(),
+            expires_at: new Date(Date.now() + 60_000),
+            revoked_at: null
+          };
+        }
+        if (sessionId === 'session-b') {
+          return {
+            id: 'session-b',
+            address: '0xBBB',
+            role: 'profile-b',
+            client_type: 'web',
+            secret_hash: 'stored-secret-hash-b',
+            refresh_token_hash: null,
+            user_agent_hash: null,
+            signature_domain: '6529.io',
+            client_origin: 'https://6529.io',
+            created_at: new Date(),
+            last_used_at: new Date(),
+            expires_at: new Date(Date.now() + 60_000),
+            revoked_at: null
+          };
+        }
+        return null;
+      }
+    );
+
+    await expect(
+      hasActiveWebSessionForAddressAndRole({
+        cookieHeader,
+        address: '0xaaa',
+        role: 'profile-a',
+        requestOrigin: 'https://6529.io'
+      })
+    ).resolves.toBe(true);
+
+    expect(authDbMock.getActiveWebSessionBySecretHash).toHaveBeenCalledTimes(1);
+    expect(authDbMock.getActiveWebSessionBySecretHash).toHaveBeenCalledWith(
+      'session-a',
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      expect.any(Date)
+    );
+  });
+
+  it('rejects address-scoped web session cookies with the wrong role', async () => {
+    const addressScopedCookieName =
+      getWalletSessionCookieNameForAddress('0xAAA');
+    const cookieHeader = `${addressScopedCookieName}=${encodeURIComponent(
+      'session-a.secret-a'
+    )}`;
+
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue({
+      id: 'session-a',
+      address: '0xAAA',
+      role: 'profile-a',
+      client_type: 'web',
+      secret_hash: 'stored-secret-hash-a',
+      refresh_token_hash: null,
+      user_agent_hash: null,
+      signature_domain: '6529.io',
+      client_origin: 'https://6529.io',
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: null
+    });
+
+    await expect(
+      hasActiveWebSessionForAddressAndRole({
+        cookieHeader,
+        address: '0xaaa',
+        role: 'profile-b',
+        requestOrigin: 'https://6529.io'
+      })
+    ).resolves.toBe(false);
   });
 
   it('requires native refresh-token ownership before revoking all sessions', async () => {
@@ -391,6 +513,10 @@ describe('auth-session-v2', () => {
       role: 'profile-1',
       client_type: 'web'
     });
+    expect(refreshed?.setCookie).toHaveLength(2);
+    expect(refreshed?.setCookie.join('\n')).toContain(
+      `${getWalletSessionCookieNameForAddress('0xabc')}=`
+    );
     expect(authDbMock.rotateWebSessionSecret).toHaveBeenCalledTimes(1);
   });
 

@@ -44,7 +44,7 @@ import {
   createConnectionShare,
   createNativeSession,
   createWebSession,
-  getActiveWebSession,
+  hasActiveWebSessionForAddressAndRole,
   isAuthConnectionSharingEnabled,
   issueAccessToken,
   logoutNativeSession,
@@ -389,14 +389,14 @@ router.post(
         'Share role must match authenticated session role'
       );
     }
-    const activeWebSession = await getActiveWebSession({
-      cookie: parseWalletSessionCookieHeader(req.headers.cookie),
-      requestOrigin: getNormalizedRequestOrigin(req)
-    });
-    if (
-      activeWebSession?.address !== authenticatedWallet ||
-      activeWebSession.role !== authRole
-    ) {
+    const hasActiveMatchingWebSession =
+      await hasActiveWebSessionForAddressAndRole({
+        cookieHeader: req.headers.cookie,
+        address: authenticatedWallet,
+        role: authRole,
+        requestOrigin: getNormalizedRequestOrigin(req)
+      });
+    if (!hasActiveMatchingWebSession) {
       throw new UnauthorisedException(
         'Connection sharing requires an active session-v2 web session'
       );
