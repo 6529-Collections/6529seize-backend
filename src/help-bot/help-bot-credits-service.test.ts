@@ -84,10 +84,10 @@ describe('HelpBotCreditsService', () => {
     jest.clearAllMocks();
   });
 
-  it('caps automatic grants at the configured system balance cap', async () => {
+  it('grants daily activity credits above the former balance cap', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 95 }]
+      oneOrNullResults: [{ rating: 100 }]
     });
 
     const result = await service.grantDailyActivityCredits(
@@ -97,7 +97,7 @@ describe('HelpBotCreditsService', () => {
 
     expect(result).toEqual({
       amountGranted: 5,
-      balance: 100,
+      balance: 105,
       alreadyGranted: false,
       botProfileMissing: false
     });
@@ -114,8 +114,8 @@ describe('HelpBotCreditsService', () => {
         additional_data_1: 'REP',
         additional_data_2: 'Help6529 Credits',
         contents: JSON.stringify({
-          old_rating: 95,
-          new_rating: 100,
+          old_rating: 100,
+          new_rating: 105,
           rating_matter: 'REP',
           rating_category: 'Help6529 Credits',
           change_reason: 'HELP_BOT_AUTOMATIC_GRANT'
@@ -150,7 +150,7 @@ describe('HelpBotCreditsService', () => {
     );
   });
 
-  it('does not auto-grant above the current category balance cap', async () => {
+  it('continues auto-granting above 100 credits', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],
       oneOrNullResults: [{ rating: 100 }]
@@ -162,14 +162,14 @@ describe('HelpBotCreditsService', () => {
     );
 
     expect(result).toEqual({
-      amountGranted: 0,
-      balance: 100,
+      amountGranted: 5,
+      balance: 105,
       alreadyGranted: false,
       botProfileMissing: false
     });
-    expect(executor.execute).not.toHaveBeenCalledWith(
+    expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE ratings'),
-      expect.anything(),
+      expect.objectContaining({ delta: 5 }),
       expect.anything()
     );
   });

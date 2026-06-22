@@ -18,7 +18,6 @@ import {
 import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
 import {
-  HELP_BOT_AUTO_CREDIT_CAP,
   HELP_BOT_CREDIT_CATEGORY,
   HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
   HELP_BOT_PROFILE_SETUP_CREDIT_GRANT,
@@ -314,10 +313,7 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
         { botProfileId, profileId: request.profileId },
         connection
       );
-      const amountGranted = Math.max(
-        0,
-        Math.min(request.amount, HELP_BOT_AUTO_CREDIT_CAP - currentBalance)
-      );
+      const amountGranted = request.amount;
       if (amountGranted > 0) {
         await this.applyBotRatingDelta(
           {
