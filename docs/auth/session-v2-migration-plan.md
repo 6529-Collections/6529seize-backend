@@ -29,7 +29,10 @@ Required:
 
 - `AUTH_SESSION_HASH_SECRET`: set on the backend API service to a dedicated
   high-entropy secret. The code can fall back to `JWT_SECRET`, but production
-  should use a separate value.
+  should use a separate value. Set this before any v2 sessions are created;
+  rotating it later invalidates existing v2 web cookies, native refresh tokens,
+  and unredeemed connection-share codes because those values are stored as
+  keyed hashes.
 
 Recommended, not required when the default domains match:
 
@@ -90,6 +93,9 @@ Backend env for this phase:
 
 Backend checks after deploy:
 
+- Confirm `dbMigrationsLoop` completed successfully and the production schema
+  has `wallet_auth_sessions`, `wallet_connection_shares`, and nullable
+  `refresh_tokens.role` before serving v2 auth traffic from `api`.
 - `/api/settings` returns `auth.structured_signatures_required=false`.
 - `/api/settings` returns `auth.session_v2_migration_deadline=null`.
 - `POST /api/auth/redeem-refresh-token` still works for valid legacy refresh
@@ -97,9 +103,11 @@ Backend checks after deploy:
 - V2 web auth routes return exact credentialed CORS for the real web origin and
   reject unrelated browser origins.
 
-## Phase 2: Frontend Silent Release
+## Phase 2: Frontend And Native Silent Release
 
-Deploy the frontend after the backend silent release.
+Deploy the web frontend after the backend silent release. If the native app is
+packaged or released through a separate pipeline, publish the corresponding
+native client build before any cutoff phases.
 
 Frontend env:
 
@@ -113,11 +121,16 @@ Frontend targets:
 
 - Production web: `https://6529.io` Elastic Beanstalk app.
 - Staging web: `https://staging.6529.io` EC2/pm2 app.
+- Native app clients: iOS and Android builds that include session-v2 native
+  refresh storage and connection-share redemption.
 
 Checks after deploy:
 
 - New web login creates a v2 session.
 - Web refresh and logout work through the API domain.
+- Native login, refresh, logout, and connection-share redeem work on current
+  iOS and Android builds, or on the native release candidates that will be
+  available before cutoff.
 - Existing v1 web sessions are not immediately logged out.
 - Connection sharing create/redeem works from an active session-v2 web session.
   Legacy-authenticated web users should be prompted to update authentication
@@ -141,7 +154,7 @@ Use a future timestamp that leaves enough grace for:
 ## Phase 4: Strict Structured Signatures
 
 After web, native, and known external clients are verified with structured
-signatures, set:
+signatures, and after native release candidates are available to users, set:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED=true`.
 
@@ -152,8 +165,8 @@ is set.
 
 ## Phase 5: Legacy Refresh Shutdown
 
-After the grace period, support monitoring, and external-client communication
-are complete, set:
+After the grace period, support monitoring, native client availability, and
+external-client communication are complete, set:
 
 - `AUTH_LEGACY_REFRESH_DISABLED=true`.
 
