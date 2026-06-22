@@ -19,7 +19,7 @@ export class ApiSessionNonceQuery {
     'signer_address': string;
     'client_type'?: ApiSessionNonceQueryClientTypeEnum;
     /**
-    * Chain id embedded in the structured session signature.
+    * Backward-compatible request field. Session challenges are issued for the backend-configured auth chain, not this client-supplied value.
     */
     'chain_id'?: number;
 
