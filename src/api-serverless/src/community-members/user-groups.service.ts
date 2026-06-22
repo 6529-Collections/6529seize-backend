@@ -1068,7 +1068,7 @@ export class UserGroupsService {
     latestProfileGroupChangeMillis: number | null;
     waveGroupsVersion: number;
     ttlSec: number;
-    timer?: Timer | undefined;
+    timer?: Timer;
   }): Promise<EligibleGroupsCacheEntry | null> {
     for (let i = 0; i < ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES; i++) {
       await Time.millis(ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS).sleep();
