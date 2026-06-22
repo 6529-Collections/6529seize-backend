@@ -75,7 +75,7 @@ describe('HelpBotCreditsService', () => {
   it('caps automatic grants at the configured system balance cap', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 49 }, { balance: 49 }]
+      oneOrNullResults: [{ rating: 95 }, { balance: 95 }]
     });
 
     const result = await service.grantDailyActivityCredits(
@@ -84,14 +84,14 @@ describe('HelpBotCreditsService', () => {
     );
 
     expect(result).toEqual({
-      amountGranted: 1,
-      balance: 50,
+      amountGranted: 5,
+      balance: 100,
       alreadyGranted: false,
       botProfileMissing: false
     });
     expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE ratings'),
-      expect.objectContaining({ delta: 1 }),
+      expect.objectContaining({ delta: 5 }),
       expect.anything()
     );
   });
@@ -124,7 +124,7 @@ describe('HelpBotCreditsService', () => {
   it('does not auto-grant above the current category balance cap', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 0 }, { balance: 50 }]
+      oneOrNullResults: [{ rating: 0 }, { balance: 100 }]
     });
 
     const result = await service.grantDailyActivityCredits(
@@ -134,7 +134,7 @@ describe('HelpBotCreditsService', () => {
 
     expect(result).toEqual({
       amountGranted: 0,
-      balance: 50,
+      balance: 100,
       alreadyGranted: false,
       botProfileMissing: false
     });
