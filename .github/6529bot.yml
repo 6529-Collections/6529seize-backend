@@ -2,8 +2,8 @@ version: 1
 enabled: true
 
 reviewKinds:
-  allowed: [general, followup, wcag, i18n, security, glm-swarm]
-  initial: [general, security]
+  allowed: [general, followup, wcag, i18n, security, deploy-actions, auth-api, db-lambda, media-external, glm-swarm]
+  initial: [general, security, deploy-actions, auth-api, db-lambda, media-external, glm-swarm]
   followup: [followup]
 
 commands:
@@ -14,7 +14,7 @@ lanes:
     model: claude-opus-4-8
 
 limits:
-  maxJobsPerDelivery: 4
+  maxJobsPerDelivery: 7
 
 admission:
   publicRepoMode: trusted
