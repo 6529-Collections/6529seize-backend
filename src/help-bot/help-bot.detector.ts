@@ -2,6 +2,10 @@ import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropReques
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { HELP_BOT_HANDLE } from './help-bot.config';
 import { HelpBotInteractionTriggerType } from '@/entities/IHelpBotInteraction';
+import {
+  HELP_BOT_REPLIED_DROP_CONTEXT_PREFIX,
+  isHelpBotContextVerificationQuestion
+} from './help-bot-question-context';
 
 export interface HelpBotTriggerDetectionInput {
   readonly request: ApiCreateDropRequest;
@@ -108,26 +112,14 @@ function isMeaningfulQuestion(text: string): boolean {
 }
 
 function isContextDependentQuestion(text: string): boolean {
-  const normalized = text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-  return [
-    /^(is|was|are|were) (this|that|it|these|those) (right|correct|true|accurate)$/,
-    /^(is|was|are|were) (this|that|it|these|those) (wrong|incorrect|false)$/,
-    /^(does|did) (this|that|it) (look|sound|seem) (right|correct|true|accurate)$/,
-    /^can you (check|confirm|verify) (this|that|it)$/,
-    /^is this$/,
-    /^is that$/
-  ].some((pattern) => pattern.test(normalized));
+  return isHelpBotContextVerificationQuestion(text);
 }
 
 function buildQuestionWithParentContext(
   question: string,
   parentQuestion: string
 ): string {
-  return `${question}\n\nContext from the replied-to drop: ${parentQuestion}`;
+  return `${question}\n\n${HELP_BOT_REPLIED_DROP_CONTEXT_PREFIX} ${parentQuestion}`;
 }
 
 export function detectHelpBotTrigger(

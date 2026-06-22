@@ -14,6 +14,10 @@ import {
   ensureCanonicalMarkdownLink,
   stripHelpBotSelfIntro
 } from './help-bot-response-text';
+import {
+  isHelpBotContextVerificationQuestion,
+  parseHelpBotQuestionContext
+} from './help-bot-question-context';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -371,13 +375,29 @@ function isLikelyProductQuestion(
   );
 }
 
+function shouldSkipPublicDataMode(question: string): boolean {
+  const parsedQuestion = parseHelpBotQuestionContext(question);
+  return (
+    !!parsedQuestion.repliedToDropContext &&
+    isHelpBotContextVerificationQuestion(parsedQuestion.primaryQuestion)
+  );
+}
+
 function isLikelyDynamicPublicDataQuestion(
   question: string,
   previousBotAnswer?: string | null
 ): boolean {
-  const normalizedQuestion = normalizeBoundaryText(question);
+  if (shouldSkipPublicDataMode(question)) {
+    return false;
+  }
+  const parsedQuestion = parseHelpBotQuestionContext(question);
+  const normalizedQuestion = normalizeBoundaryText(
+    parsedQuestion.primaryQuestion
+  );
   const normalizedContext = normalizeBoundaryText(
-    `${question} ${previousBotAnswer ?? ''}`
+    `${parsedQuestion.primaryQuestion} ${
+      parsedQuestion.repliedToDropContext ?? ''
+    } ${previousBotAnswer ?? ''}`
   );
   const hasDataIntent = [
     /\bhow many\b/,
@@ -498,10 +518,9 @@ export class HelpBotAnswerer {
       request.question,
       request.previousBotAnswer
     );
-    const publicDataAnswer = await this.answerFromPublicData(
-      request,
-      expectsPublicDataAnswer
-    );
+    const publicDataAnswer = shouldSkipPublicDataMode(request.question)
+      ? null
+      : await this.answerFromPublicData(request, expectsPublicDataAnswer);
     if (publicDataAnswer) {
       return {
         type: 'ANSWER',
