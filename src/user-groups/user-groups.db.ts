@@ -858,16 +858,31 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   }
 
   async profileHasRecentGroupChanges(profileId: string, interval: Time) {
+    const latestChangeMillis =
+      await this.getLatestProfileGroupChangeMillis(profileId);
+    return (
+      latestChangeMillis !== null &&
+      latestChangeMillis > Time.now().minus(interval).toMillis()
+    );
+  }
+
+  async getLatestProfileGroupChangeMillis(
+    profileId: string
+  ): Promise<number | null> {
     return await this.db
       .oneOrNull<{
-        profile_id: string;
+        chg_time: number | string | null;
       }>(
-        `select profile_id from ${PROFILE_GROUP_CHANGES} where profile_id = :profileId and chg_time > :limit limit 1`,
-        { limit: Time.now().minus(interval).toMillis(), profileId },
+        `select max(chg_time) as chg_time from ${PROFILE_GROUP_CHANGES} where profile_id = :profileId`,
+        { profileId },
         { forcePool: DbPoolName.WRITE }
       )
       .then((it) => {
-        return !!it?.profile_id;
+        if (it?.chg_time === null || it?.chg_time === undefined) {
+          return null;
+        }
+        const parsed = Number(it.chg_time);
+        return Number.isFinite(parsed) ? parsed : null;
       });
   }
 
