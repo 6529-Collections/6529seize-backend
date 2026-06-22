@@ -40,7 +40,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
 import {
-  clearWalletSessionCookie,
+  clearWalletSessionCookieForOrigin,
   createConnectionShare,
   createNativeSession,
   createWebSession,
@@ -258,7 +258,8 @@ router.post(
         role: chosenRole,
         userAgent: getUserAgent(req),
         signatureDomain: parsedMessage.domain,
-        clientOrigin: parsedMessage.clientOrigin
+        clientOrigin: parsedMessage.clientOrigin,
+        apiHost: req.headers.host
       });
       res.setHeader('Set-Cookie', created.setCookie);
       res.status(201).send(created.response);
@@ -305,10 +306,17 @@ router.post(
     const cookie = parseWalletSessionCookieHeader(req.headers.cookie);
     const refreshed = await refreshWebSession({
       cookie,
-      requestOrigin: getNormalizedRequestOrigin(req)
+      requestOrigin: getNormalizedRequestOrigin(req),
+      apiHost: req.headers.host
     });
     if (!refreshed) {
-      res.setHeader('Set-Cookie', clearWalletSessionCookie());
+      res.setHeader(
+        'Set-Cookie',
+        clearWalletSessionCookieForOrigin({
+          clientOrigin: getNormalizedRequestOrigin(req),
+          apiHost: req.headers.host
+        })
+      );
       throw new UnauthorisedException('Invalid session');
     }
     res.setHeader('Set-Cookie', refreshed.setCookie);
@@ -351,7 +359,8 @@ router.post(
     const setCookie = await logoutWebSession({
       cookie: parseWalletSessionCookieHeader(req.headers.cookie),
       allSessions: logoutRequest.all_sessions ?? false,
-      requestOrigin: getNormalizedRequestOrigin(req)
+      requestOrigin: getNormalizedRequestOrigin(req),
+      apiHost: req.headers.host
     });
     res.setHeader('Set-Cookie', setCookie);
     res.status(204).send();

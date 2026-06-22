@@ -1,6 +1,7 @@
 import { authDb } from './auth.db';
 import {
   clearWalletSessionCookie,
+  clearWalletSessionCookieForOrigin,
   createConnectionShare,
   createWebSession,
   getActiveWebSession,
@@ -83,7 +84,8 @@ describe('auth-session-v2', () => {
       role: 'profile-1',
       userAgent: 'Mozilla/5.0',
       signatureDomain: '6529.io',
-      clientOrigin: 'https://6529.io'
+      clientOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
     });
 
     expect(result.response).toMatchObject({
@@ -127,6 +129,75 @@ describe('auth-session-v2', () => {
     expect(clearWalletSessionCookie()).toBe(
       `${WALLET_SESSION_COOKIE_NAME}=; Max-Age=0; Path=/api/auth; HttpOnly; Secure; SameSite=Lax`
     );
+    expect(
+      clearWalletSessionCookieForOrigin({
+        clientOrigin: 'http://localhost:3001',
+        apiHost: 'api.staging.6529.io'
+      })
+    ).toBe(
+      `${WALLET_SESSION_COOKIE_NAME}=; Max-Age=0; Path=/api/auth; HttpOnly; Secure; SameSite=None`
+    );
+  });
+
+  it('uses SameSite=None for allowed cross-site localhost web sessions', async () => {
+    authDbMock.createWalletAuthSession.mockImplementation(async (params) => ({
+      id: params.id,
+      address: params.address,
+      role: params.role,
+      client_type: params.clientType,
+      secret_hash: params.secretHash,
+      refresh_token_hash: params.refreshTokenHash,
+      user_agent_hash: params.userAgentHash,
+      signature_domain: params.signatureDomain,
+      client_origin: params.clientOrigin,
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: params.expiresAt,
+      revoked_at: null
+    }));
+
+    const result = await createWebSession({
+      address: '0xABCDEF',
+      role: null,
+      userAgent: 'Mozilla/5.0',
+      signatureDomain: 'localhost:3001',
+      clientOrigin: 'http://localhost:3001',
+      apiHost: 'api.staging.6529.io'
+    });
+
+    expect(result.setCookie).toContain('Secure');
+    expect(result.setCookie).toContain('SameSite=None');
+    expect(result.setCookie).not.toContain('SameSite=Lax');
+  });
+
+  it('keeps SameSite=Lax for staging web sessions that are same-site with the staging API', async () => {
+    authDbMock.createWalletAuthSession.mockImplementation(async (params) => ({
+      id: params.id,
+      address: params.address,
+      role: params.role,
+      client_type: params.clientType,
+      secret_hash: params.secretHash,
+      refresh_token_hash: params.refreshTokenHash,
+      user_agent_hash: params.userAgentHash,
+      signature_domain: params.signatureDomain,
+      client_origin: params.clientOrigin,
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: params.expiresAt,
+      revoked_at: null
+    }));
+
+    const result = await createWebSession({
+      address: '0xABCDEF',
+      role: null,
+      userAgent: 'Mozilla/5.0',
+      signatureDomain: 'staging.6529.io',
+      clientOrigin: 'https://staging.6529.io',
+      apiHost: 'api.staging.6529.io'
+    });
+
+    expect(result.setCookie).toContain('SameSite=Lax');
+    expect(result.setCookie).not.toContain('SameSite=None');
   });
 
   it('loads active web sessions from the session-v2 cookie without trusting URL role metadata', async () => {
@@ -217,7 +288,8 @@ describe('auth-session-v2', () => {
         secret: 'wrong-secret'
       },
       allSessions: false,
-      requestOrigin: 'https://6529.io'
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
     });
 
     expect(authDbMock.getActiveWebSessionBySecretHash).toHaveBeenCalledWith(
@@ -250,7 +322,8 @@ describe('auth-session-v2', () => {
         secret: 'valid-secret'
       },
       allSessions: false,
-      requestOrigin: 'https://6529.io'
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
     });
 
     expect(authDbMock.revokeWalletAuthSession).toHaveBeenCalledWith(
@@ -282,7 +355,8 @@ describe('auth-session-v2', () => {
           sessionId: 'session-1',
           secret: 'valid-secret'
         },
-        requestOrigin: 'https://evil.example'
+        requestOrigin: 'https://evil.example',
+        apiHost: 'api.6529.io'
       })
     ).resolves.toBeNull();
     expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalled();
@@ -308,7 +382,8 @@ describe('auth-session-v2', () => {
         sessionId: 'session-1',
         secret: 'valid-secret'
       },
-      requestOrigin: 'https://6529.io'
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
     });
 
     expect(refreshed?.response).toMatchObject({
