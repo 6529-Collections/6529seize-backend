@@ -47,7 +47,7 @@ type HelpBotIndexFetcher = (
   timeoutMs: number
 ) => Promise<HelpBotIndexResponse>;
 
-const MINIMUM_MATCH_SCORE = 2;
+const MINIMUM_MATCH_SCORE = 3;
 const DEFAULT_COMMIT_SHA = 'unknown';
 const logger = Logger.get('HelpBotKnowledge');
 
@@ -190,9 +190,20 @@ function tokenize(value: string): Set<string> {
   );
 }
 
+function containsNormalizedPhrase(
+  normalizedQuestion: string,
+  phrase: string
+): boolean {
+  const normalizedPhrase = normalizeText(phrase);
+  if (!normalizedPhrase) {
+    return false;
+  }
+  return ` ${normalizedQuestion} `.includes(` ${normalizedPhrase} `);
+}
+
 function phraseScore(question: string, record: HelpBotKnowledgeRecord): number {
   return record.aliases.reduce((score, alias) => {
-    return question.includes(normalizeText(alias)) ? score + 3 : score;
+    return containsNormalizedPhrase(question, alias) ? score + 3 : score;
   }, 0);
 }
 

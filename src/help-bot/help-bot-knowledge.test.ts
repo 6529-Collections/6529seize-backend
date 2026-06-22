@@ -1,6 +1,8 @@
 import {
   FrontendHelpBotKnowledgeSource,
-  HelpBotKnowledgeUnavailableError
+  HelpBotKnowledgeIndex,
+  HelpBotKnowledgeUnavailableError,
+  StaticHelpBotKnowledgeSource
 } from './help-bot.knowledge';
 
 function response(body: unknown, ok = true, status = 200) {
@@ -59,5 +61,52 @@ describe('FrontendHelpBotKnowledgeSource', () => {
       HelpBotKnowledgeUnavailableError
     );
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('StaticHelpBotKnowledgeSource', () => {
+  const index: HelpBotKnowledgeIndex = {
+    schemaVersion: 1,
+    generatedAt: '2026-06-19T00:00:00.000Z',
+    commitSha: 'test',
+    baseUrl: 'https://6529.io',
+    records: [
+      {
+        id: 'rep.cic',
+        kind: 'glossary',
+        title: 'REP and CIC',
+        linkLabel: 'REP',
+        canonicalPath: '/rep/categories',
+        aliases: ['rep'],
+        keywords: ['rep', 'cic'],
+        facts: ['REP is peer-given reputation.'],
+        relatedPaths: [],
+        tags: ['rep'],
+        sourceRefs: []
+      },
+      {
+        id: 'realtime.live-updates',
+        kind: 'troubleshooting',
+        title: 'Authenticated live updates',
+        linkLabel: 'Realtime Connectivity',
+        canonicalPath: '/waves',
+        aliases: ['reply notification but no chat message'],
+        keywords: ['reply', 'notification', 'chat'],
+        facts: ['Live wave updates use websocket events.'],
+        relatedPaths: [],
+        tags: ['realtime'],
+        sourceRefs: []
+      }
+    ]
+  };
+
+  it('does not match aliases inside larger words', async () => {
+    const source = new StaticHelpBotKnowledgeSource(index);
+
+    const match = await source.findMatch(
+      'why did i get a reply notification but not see the chat message'
+    );
+
+    expect(match?.record.id).toBe('realtime.live-updates');
   });
 });
