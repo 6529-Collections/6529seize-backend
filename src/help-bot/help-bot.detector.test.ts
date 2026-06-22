@@ -170,6 +170,33 @@ describe('detectHelpBotTrigger', () => {
     });
   });
 
+  it('adds parent context for explicit validation prompts in reply threads', () => {
+    const trigger = detectHelpBotTrigger({
+      request: createRequest('@help6529 is this right', {
+        replyToDropId: 'claim-drop'
+      }),
+      createdDrop: createDrop({ id: 'summon-drop', authorId: 'summoner' }),
+      parentDrop: createDrop({
+        id: 'claim-drop',
+        authorId: 'claim-author',
+        content: 'TDH stands for Total Dynamic Head'
+      }),
+      authorProfileId: 'summoner',
+      botProfileId: 'bot-profile'
+    });
+
+    expect(trigger).toEqual({
+      triggerDropId: 'summon-drop',
+      targetDropId: 'summon-drop',
+      waveId: 'wave-1',
+      authorProfileId: 'summoner',
+      question:
+        'is this right\n\nContext from the replied-to drop: TDH stands for Total Dynamic Head',
+      triggerType: HelpBotInteractionTriggerType.MENTION,
+      parentBotDropId: null
+    });
+  });
+
   it('detects direct replies to bot drops without requiring a mention', () => {
     const trigger = detectHelpBotTrigger({
       request: createRequest('What defines eligibility?', {
