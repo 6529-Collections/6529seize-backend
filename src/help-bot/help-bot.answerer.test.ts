@@ -320,6 +320,28 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('uses reply-thread context for knowledge without treating it as public data intent', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockResolvedValue({
+        answer: 'Meme Cards in SZN1: 47',
+        queryId: 'meme_cards.count'
+      })
+    };
+
+    const answer = await answerer(undefined, publicDataService).answer({
+      question:
+        'is this right\n\nContext from the replied-to drop: TDH stands for Total Dynamic Head',
+      baseUrl: BASE_URL
+    });
+
+    expect(publicDataService.answer).not.toHaveBeenCalled();
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('network.tdh');
+      expect(answer.answer).toContain('TDH stands for Total Days Held.');
+    }
+  });
+
   it('answers calendar timing questions before no-source fallback', async () => {
     const calendarService = {
       answer: jest.fn().mockResolvedValue({

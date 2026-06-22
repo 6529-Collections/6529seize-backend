@@ -18,6 +18,10 @@ import {
   ensureCanonicalMarkdownLink,
   stripHelpBotSelfIntro
 } from './help-bot-response-text';
+import {
+  isHelpBotContextVerificationQuestion,
+  parseHelpBotQuestionContext
+} from './help-bot-question-context';
 
 export interface HelpBotPublicDataAnswerRequest {
   readonly question: string;
@@ -905,7 +909,13 @@ export class HelpBotPublicDataService {
     request: HelpBotPublicDataAnswerRequest
   ): Promise<HelpBotPublicDataAnswer | null> {
     const llm = this.llm;
-    if (!llm || !isPotentialPublicDataQuestion(request.question)) {
+    const parsedQuestion = parseHelpBotQuestionContext(request.question);
+    if (
+      !llm ||
+      (parsedQuestion.repliedToDropContext &&
+        isHelpBotContextVerificationQuestion(parsedQuestion.primaryQuestion)) ||
+      !isPotentialPublicDataQuestion(parsedQuestion.primaryQuestion)
+    ) {
       return null;
     }
 

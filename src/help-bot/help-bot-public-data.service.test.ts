@@ -373,6 +373,25 @@ describe('HelpBotPublicDataService', () => {
     expect(llm.planPublicDataQuery).not.toHaveBeenCalled();
   });
 
+  it('does not call the planner for reply-thread validation context', async () => {
+    const llm: HelpBotPublicDataLlm = {
+      planPublicDataQuery: jest.fn(),
+      renderPublicDataAnswer: jest.fn()
+    };
+    const service = new HelpBotPublicDataService(
+      llm,
+      () => new TestSqlExecutor()
+    );
+
+    await expect(
+      service.answer({
+        question:
+          'is this right\n\nContext from the replied-to drop: TDH stands for Total Dynamic Head'
+      })
+    ).resolves.toBeNull();
+    expect(llm.planPublicDataQuery).not.toHaveBeenCalled();
+  });
+
   it('declines unsafe planner output without executing SQL', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
