@@ -135,7 +135,7 @@ Initial curated topics include:
 - subscriptions and subscription eligibility
 - profile subscriptions tab
 - REP/CIC and Levels
-- delegation
+- delegation and consolidation
 - The Memes
 - NextGen
 

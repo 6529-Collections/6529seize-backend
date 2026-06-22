@@ -257,6 +257,9 @@ const PRODUCT_CONTEXT_PATTERNS = [
   /\bprofile(s)?\b/,
   /\bgroup(s)?\b/,
   /\bdelegation(s)?\b/,
+  /\bdelegation manager(s)?\b/,
+  /\bconsolidat(e|ed|es|ing|ion|ions)\b/,
+  /\bprimary address\b/,
   /\bopen data\b/,
   /\bapi tool(s)?\b/,
   /\b6529bot\b/,
@@ -434,7 +437,7 @@ function buildGenericHelpAnswer(question: string): string | null {
   if (!isGenericHelpRequest(normalizedQuestion)) {
     return null;
   }
-  return 'What do you need help with? I can answer public 6529 product questions about TDH, Waves, subscriptions, drops, profiles, The Memes, public data, and where to find things on 6529.io. Reply with a topic or question.';
+  return 'What do you need help with? I can answer public 6529 product questions about TDH, Waves, delegation, consolidations, subscriptions, drops, profiles, The Memes, public data, and where to find things on 6529.io. Reply with a topic or question.';
 }
 
 export class HelpBotAnswerer {
