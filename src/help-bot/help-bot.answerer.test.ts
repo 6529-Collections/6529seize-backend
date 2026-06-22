@@ -136,7 +136,7 @@ describe('HelpBotAnswerer', () => {
       expect(answer.answer).toContain('TDH stands for Total Days Held.');
       expect(answer.answer).toContain('[TDH](https://6529.io/network/tdh)');
       expect(answer.record.id).toBe('network.tdh');
-      expect(answer.escalateToTechTeam).toBeUndefined();
+      expect(answer.escalateToTechTeam).toBe(false);
     }
   });
 

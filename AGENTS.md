@@ -133,6 +133,11 @@ failure-mode, or coverage change. If a backend behavior is user-visible but the
 frontend corpus is not updated in the same release set, state the gap in the PR
 or final handoff.
 
+Backend public-data answers are backend-owned. When changing table names,
+columns, query semantics, or whitelisted public-data surfaces used by
+`src/help-bot/help-bot-public-data.catalog.ts`, update the catalog and its
+validator/query tests in the same PR.
+
 ### Loop-Based Services (Backend)
 
 The backend consists of independent "loop" services that run as AWS Lambda functions or cron jobs. Each loop is self-contained in `src/*Loop/` directories:

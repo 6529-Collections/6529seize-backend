@@ -4,8 +4,10 @@ import {
   RATINGS_TABLE
 } from '@/constants';
 import { HelpBotCreditEventType } from '@/entities/IHelpBotCreditEvent';
+import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 import { RateMatter } from '@/entities/IRating';
 import { revokeRepBasedDropOverVotes } from '@/drops/participation-drops-over-vote-revocation';
+import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
@@ -148,8 +150,10 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
 
     return await this.withConnection(ctx, async (connection) => {
       await this.ensureBotRatingRow({ botProfileId, profileId }, connection);
-      await this.getBotRatingForUpdate({ botProfileId, profileId }, connection);
-      const balance = await this.getCategoryBalance(profileId, connection);
+      const balance = await this.getBotRatingForUpdate(
+        { botProfileId, profileId },
+        connection
+      );
       if (balance < HELP_BOT_QUESTION_CREDIT_COST) {
         return {
           charged: false,
@@ -180,7 +184,9 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
         {
           botProfileId,
           profileId,
-          delta: -HELP_BOT_QUESTION_CREDIT_COST
+          delta: -HELP_BOT_QUESTION_CREDIT_COST,
+          oldRating: balance,
+          changeReason: 'HELP_BOT_QUESTION_SPEND'
         },
         connection
       );
@@ -245,9 +251,18 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       }
 
       await this.ensureBotRatingRow({ botProfileId, profileId }, connection);
-      await this.getBotRatingForUpdate({ botProfileId, profileId }, connection);
+      const currentRating = await this.getBotRatingForUpdate(
+        { botProfileId, profileId },
+        connection
+      );
       await this.applyBotRatingDelta(
-        { botProfileId, profileId, delta: refundAmount },
+        {
+          botProfileId,
+          profileId,
+          delta: refundAmount,
+          oldRating: currentRating,
+          changeReason: 'HELP_BOT_QUESTION_REFUND'
+        },
         connection
       );
       return true;
@@ -282,7 +297,10 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       if (!inserted) {
         return {
           amountGranted: 0,
-          balance: await this.getCategoryBalance(request.profileId, connection),
+          balance: await this.getBotCreditBalance(
+            { botProfileId, profileId: request.profileId },
+            connection
+          ),
           alreadyGranted: true,
           botProfileMissing: false
         };
@@ -292,12 +310,8 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
         { botProfileId, profileId: request.profileId },
         connection
       );
-      await this.getBotRatingForUpdate(
+      const currentBalance = await this.getBotRatingForUpdate(
         { botProfileId, profileId: request.profileId },
-        connection
-      );
-      const currentBalance = await this.getCategoryBalance(
-        request.profileId,
         connection
       );
       const amountGranted = Math.max(
@@ -309,7 +323,9 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
           {
             botProfileId,
             profileId: request.profileId,
-            delta: amountGranted
+            delta: amountGranted,
+            oldRating: currentBalance,
+            changeReason: 'HELP_BOT_AUTOMATIC_GRANT'
           },
           connection
         );
@@ -477,19 +493,27 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     return Number(row?.rating ?? 0);
   }
 
-  private async getCategoryBalance(
-    profileId: string,
+  private async getBotCreditBalance(
+    {
+      botProfileId,
+      profileId
+    }: {
+      readonly botProfileId: string;
+      readonly profileId: string;
+    },
     connection: ConnectionWrapper<any>
   ): Promise<number> {
     const row = await this.db.oneOrNull<{ readonly balance: number }>(
       `
-        SELECT COALESCE(SUM(rating), 0) AS balance
+        SELECT COALESCE(rating, 0) AS balance
         FROM ${RATINGS_TABLE}
-        WHERE matter_target_id = :profileId
+        WHERE rater_profile_id = :botProfileId
+          AND matter_target_id = :profileId
           AND matter = :matter
           AND matter_category = :category
       `,
       {
+        botProfileId,
         profileId,
         matter: RateMatter.REP,
         category: HELP_BOT_CREDIT_CATEGORY
@@ -503,11 +527,15 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     {
       botProfileId,
       profileId,
-      delta
+      delta,
+      oldRating,
+      changeReason
     }: {
       readonly botProfileId: string;
       readonly profileId: string;
       readonly delta: number;
+      readonly oldRating: number;
+      readonly changeReason: string;
     },
     connection: ConnectionWrapper<any>
   ): Promise<void> {
@@ -545,6 +573,24 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
         delta
       },
       { wrappedConnection: connection }
+    );
+    await profileActivityLogsDb.insert(
+      {
+        profile_id: botProfileId,
+        target_id: profileId,
+        type: ProfileActivityLogType.RATING_EDIT,
+        contents: JSON.stringify({
+          old_rating: oldRating,
+          new_rating: oldRating + delta,
+          rating_matter: RateMatter.REP,
+          rating_category: HELP_BOT_CREDIT_CATEGORY,
+          change_reason: changeReason
+        }),
+        proxy_id: null,
+        additional_data_1: RateMatter.REP,
+        additional_data_2: HELP_BOT_CREDIT_CATEGORY
+      },
+      connection
     );
     if (delta < 0) {
       await revokeRepBasedDropOverVotes(
