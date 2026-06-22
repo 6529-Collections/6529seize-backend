@@ -151,6 +151,7 @@ router.get(
     const audience =
       getStructuredWalletSignatureAudienceForHost(req.headers.host) ??
       getDefaultStructuredWalletSignatureAudience();
+    const authWalletChainId = getAuthWalletChainId();
     const signableMessage = buildStructuredWalletSignatureMessage({
       kind: 'authentication',
       audience,
@@ -158,7 +159,7 @@ router.get(
       clientOrigin: nonceContext.clientOrigin,
       sessionType: nonceContext.sessionType,
       wallet: signerAddress,
-      chainId: nonceRequest.chain_id,
+      chainId: authWalletChainId,
       nonce: randomUUID(),
       action: 'login',
       purpose: 'Sign this message to authenticate with 6529.'
