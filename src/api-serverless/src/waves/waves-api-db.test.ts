@@ -804,10 +804,42 @@ describeWithSeed(
     }
   ],
   () => {
-    it('excludes subwaves from top-level search results', async () => {
+    it('includes visible subwaves in search results', async () => {
       const waves = await repo.searchWaves(
         {
           limit: 10,
+          name: 'Subwave',
+          direct_message: false
+        },
+        [],
+        ctx
+      );
+
+      expect(waves.map((wave) => wave.id)).toEqual([
+        betaSubwave.id,
+        alphaSubwave.id
+      ]);
+    });
+
+    it('hides search results for subwaves whose parent is not visible', async () => {
+      const waves = await repo.searchWaves(
+        {
+          limit: 10,
+          name: 'Visible Child',
+          direct_message: false
+        },
+        [],
+        ctx
+      );
+
+      expect(waves.map((wave) => wave.id)).toEqual([]);
+    });
+
+    it('returns subwaves of hidden parents when the parent is visible to the user', async () => {
+      const waves = await repo.searchWaves(
+        {
+          limit: 10,
+          name: 'Visible Child',
           direct_message: false
         },
         ['hidden-parent-group'],
@@ -815,8 +847,7 @@ describeWithSeed(
       );
 
       expect(waves.map((wave) => wave.id)).toEqual([
-        hiddenParentWave.id,
-        parentWave.id
+        publicSubwaveOfHiddenParent.id
       ]);
     });
 
