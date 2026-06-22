@@ -281,6 +281,33 @@ const WEAK_MATCH_SCORE_MAX = 4;
 const WEAK_MATCH_PREFIX =
   "I might not be fully sure on this one, so here's my best answer.";
 
+function stripDefinitionQuestionWords(value: string): string {
+  return value
+    .replace(
+      /^(what is|what are|what does|what do|what's|whats|define|explain|describe|tell me about)\s+/,
+      ''
+    )
+    .replace(/\s+(mean|means|stand for|stands for)$/g, '')
+    .trim();
+}
+
+function isExactDefinitionMatch(
+  question: string,
+  record: HelpBotKnowledgeRecord
+): boolean {
+  const normalizedQuestion = stripDefinitionQuestionWords(
+    normalizeBoundaryText(question)
+  );
+  if (!normalizedQuestion) {
+    return false;
+  }
+  const exactTerms = [record.title, ...record.aliases, ...record.keywords].map(
+    (term) => normalizeBoundaryText(term)
+  );
+
+  return exactTerms.some((term) => term === normalizedQuestion);
+}
+
 function isWeakKnowledgeMatch(match: HelpBotKnowledgeMatch): boolean {
   return match.score <= WEAK_MATCH_SCORE_MAX;
 }
@@ -465,8 +492,13 @@ export class HelpBotAnswerer {
       };
     }
 
+    const exactDefinitionMatch = isExactDefinitionMatch(
+      request.question,
+      match.record
+    );
     const escalateToTechTeam =
       isWeakKnowledgeMatch(match) &&
+      !exactDefinitionMatch &&
       isLikelyProductQuestion(request.question, request.previousBotAnswer);
 
     const canonicalUrl = toCanonicalUrl(

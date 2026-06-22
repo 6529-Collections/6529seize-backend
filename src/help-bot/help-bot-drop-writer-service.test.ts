@@ -93,5 +93,16 @@ describe('HelpBotDropWriterService', () => {
         connection
       })
     );
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+      apiDrop,
+      expect.objectContaining({
+        authenticationContext: expect.anything()
+      })
+    );
+    expect(
+      dropsService.findDropByIdOrThrow.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      wsListenersNotifier.notifyAboutDropUpdate.mock.invocationCallOrder[0]
+    );
   });
 });
