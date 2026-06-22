@@ -895,6 +895,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const offset = searchParams.offset ?? 0;
     const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
+           left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
 	         join ${
              UserGroupsService.GENERATED_VIEW
            } cm on cm.profile_id = w.created_by
@@ -904,11 +905,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            searchParams.direct_message !== undefined
              ? ` w.is_direct_message = :direct_message and `
              : ``
-         }(${
-           groupsUserIsEligibleFor.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
-             : ``
-         } w.visibility_group_id is null) and w.parent_wave_id is null and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
+         }${this.getWaveAndParentVisibilityFilter(
+           'w',
+           'parent',
+           groupsUserIsEligibleFor,
+           'groupsUserIsEligibleFor'
+         )} and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
            searchParams.limit
          } offset :offset`;
     const params: Record<string, any> = {
