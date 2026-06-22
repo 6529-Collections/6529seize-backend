@@ -338,7 +338,11 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('network.tdh');
+      expect(answer.escalateToTechTeam).toBe(false);
       expect(answer.answer).toContain('TDH stands for Total Days Held.');
+      expect(answer.answer).not.toContain(
+        'I might not be fully sure on this one'
+      );
     }
   });
 

@@ -9,6 +9,7 @@ import { Time } from '@/time';
 import * as mcache from 'memory-cache';
 import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
+import fc from 'fast-check';
 
 jest.mock('@/redis', () => ({
   ...jest.requireActual('@/redis'),
@@ -24,6 +25,7 @@ type RedisMock = {
 const PROFILE_ID = 'profile-1';
 const GROUP_ID = 'group-1';
 const ELIGIBLE_GROUPS_CACHE_KEY = `cache_6529_eligible_groups:${PROFILE_ID}`;
+const ELIGIBLE_GROUPS_LOCK_KEY = `cache_6529_eligible_groups_lock:${PROFILE_ID}`;
 
 function buildRedisMock(): RedisMock {
   return {
@@ -95,6 +97,15 @@ function buildService(userGroupsDb = buildUserGroupsDbMock()) {
     {} as unknown as AbusivenessCheckService,
     {} as unknown as MetricsRecorder
   );
+}
+
+function isInvalidJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 describe('UserGroupsService eligibility cache', () => {
@@ -174,6 +185,41 @@ describe('UserGroupsService eligibility cache', () => {
     );
   });
 
+  it('does not cache computed results when profile groups change during computation', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(3_000);
+    const redis = buildRedisMock();
+    redis.get.mockImplementation((key: string) => {
+      if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
+        return Promise.resolve('7');
+      }
+      if (key === ELIGIBLE_GROUPS_CACHE_KEY) {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+    const userGroupsDb = buildUserGroupsDbMock();
+    userGroupsDb.getLatestProfileGroupChangeMillis
+      .mockResolvedValueOnce(1_000)
+      .mockResolvedValueOnce(2_500);
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+    expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
+    expect(redis.set).toHaveBeenCalledWith(ELIGIBLE_GROUPS_LOCK_KEY, '1', {
+      PX: 10_000,
+      NX: true
+    });
+    expect(redis.set).not.toHaveBeenCalledWith(
+      ELIGIBLE_GROUPS_CACHE_KEY,
+      expect.any(String),
+      expect.anything()
+    );
+  });
+
   it('ignores Redis profile cache when wave groups version differs', async () => {
     const redis = buildRedisMock();
     redis.get.mockImplementation((key: string) => {
@@ -202,17 +248,29 @@ describe('UserGroupsService eligibility cache', () => {
     expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to computation when Redis profile cache is malformed', async () => {
+  it('uses Redis profile cache produced by peer when lock is already held', async () => {
     const redis = buildRedisMock();
+    let eligibleGroupsCacheReads = 0;
     redis.get.mockImplementation((key: string) => {
       if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
         return Promise.resolve('7');
       }
       if (key === ELIGIBLE_GROUPS_CACHE_KEY) {
-        return Promise.resolve('{');
+        eligibleGroupsCacheReads++;
+        if (eligibleGroupsCacheReads === 1) {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(
+          JSON.stringify({
+            eligibleGroupIds: [GROUP_ID],
+            computedAtMillis: 3_000,
+            waveGroupsVersion: 7
+          })
+        );
       }
       return Promise.resolve(null);
     });
+    redis.set.mockResolvedValueOnce(null);
     (getRedisClient as jest.Mock).mockReturnValue(redis);
 
     const userGroupsDb = buildUserGroupsDbMock();
@@ -221,7 +279,63 @@ describe('UserGroupsService eligibility cache', () => {
     await expect(
       service.getGroupsUserIsEligibleFor(PROFILE_ID)
     ).resolves.toEqual([GROUP_ID]);
-    expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
+    expect(userGroupsDb.getAllWaveRelatedGroups).not.toHaveBeenCalled();
+    expect(redis.set).toHaveBeenCalledWith(ELIGIBLE_GROUPS_LOCK_KEY, '1', {
+      PX: 10_000,
+      NX: true
+    });
+  });
+
+  it('falls back to computation when Redis profile cache is malformed', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.oneof(
+          fc.string().filter(isInvalidJson),
+          fc.constantFrom(
+            JSON.stringify(null),
+            JSON.stringify([]),
+            JSON.stringify({
+              eligibleGroupIds: GROUP_ID,
+              computedAtMillis: 1_000,
+              waveGroupsVersion: 7
+            }),
+            JSON.stringify({
+              eligibleGroupIds: [GROUP_ID],
+              computedAtMillis: '1_000',
+              waveGroupsVersion: 7
+            }),
+            JSON.stringify({
+              eligibleGroupIds: [GROUP_ID],
+              computedAtMillis: 1_000,
+              waveGroupsVersion: '7'
+            })
+          )
+        ),
+        async (malformedPayload) => {
+          mcache.clear();
+          const redis = buildRedisMock();
+          redis.get.mockImplementation((key: string) => {
+            if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
+              return Promise.resolve('7');
+            }
+            if (key === ELIGIBLE_GROUPS_CACHE_KEY) {
+              return Promise.resolve(malformedPayload);
+            }
+            return Promise.resolve(null);
+          });
+          (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+          const userGroupsDb = buildUserGroupsDbMock();
+          const service = buildService(userGroupsDb);
+
+          await expect(
+            service.getGroupsUserIsEligibleFor(PROFILE_ID)
+          ).resolves.toEqual([GROUP_ID]);
+          expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
+        }
+      ),
+      { numRuns: 25 }
+    );
   });
 
   it('collapses concurrent same-profile computations inside one process', async () => {

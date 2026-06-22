@@ -281,6 +281,9 @@ const PRODUCT_CONTEXT_PATTERNS = [
   /\b6529\.io\b/
 ];
 
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+
 const CONTEXTUAL_FOLLOW_UP_PATTERN =
   /\b(it|that|this|there|eligibility|rules|button|page|link|tab|menu|create|find|open|where|how)\b/;
 
@@ -346,6 +349,36 @@ function isExactDefinitionMatch(
   );
 
   return exactTerms.some((term) => term === normalizedQuestion);
+}
+
+function containsExactKnowledgeTerm(
+  text: string,
+  record: HelpBotKnowledgeRecord
+): boolean {
+  const normalizedText = normalizeBoundaryText(text);
+  const exactTerms = [record.title, ...record.aliases].map((term) =>
+    normalizeBoundaryText(term)
+  );
+  return exactTerms.some((term) => {
+    if (!term) {
+      return false;
+    }
+    return new RegExp(`(^|\\s)${escapeRegExp(term)}(\\s|$)`).test(
+      normalizedText
+    );
+  });
+}
+
+function isStrongContextVerificationMatch(
+  question: string,
+  record: HelpBotKnowledgeRecord
+): boolean {
+  const parsedQuestion = parseHelpBotQuestionContext(question);
+  return (
+    !!parsedQuestion.repliedToDropContext &&
+    isHelpBotContextVerificationQuestion(parsedQuestion.primaryQuestion) &&
+    containsExactKnowledgeTerm(parsedQuestion.repliedToDropContext, record)
+  );
 }
 
 function isWeakKnowledgeMatch(match: HelpBotKnowledgeMatch): boolean {
@@ -551,9 +584,14 @@ export class HelpBotAnswerer {
       request.question,
       match.record
     );
+    const strongContextVerificationMatch = isStrongContextVerificationMatch(
+      request.question,
+      match.record
+    );
     const escalateToTechTeam =
       isWeakKnowledgeMatch(match) &&
       !exactDefinitionMatch &&
+      !strongContextVerificationMatch &&
       isLikelyProductQuestion(request.question, request.previousBotAnswer);
 
     const canonicalUrl = toCanonicalUrl(
