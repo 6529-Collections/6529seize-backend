@@ -1,4 +1,5 @@
 import {
+  HELP_BOT_HANDLE,
   HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
   HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
   HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY,
@@ -17,6 +18,10 @@ describe('help bot config', () => {
       return;
     }
     process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] = previousTechTeamHandles;
+  });
+
+  it('uses the canonical help6529 trigger handle', () => {
+    expect(HELP_BOT_HANDLE).toBe('help6529');
   });
 
   it('omits tech team mentions when the env var is missing', () => {
