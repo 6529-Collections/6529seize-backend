@@ -918,6 +918,8 @@ export class HelpBotPublicDataService {
     if (!query) {
       return null;
     }
+    // Public-data execution accepts only backend-compiled SQL from a semantic
+    // plan, and always uses the read pool for defense in depth.
     const rows = await withTimeout(
       this.db().execute<Record<string, unknown>>(
         applyStatementTimeoutHint(query.compiledSql),
