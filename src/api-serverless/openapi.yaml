@@ -17268,6 +17268,13 @@ components:
           type: string
           enum:
             - web
+        client_address:
+          type: string
+          nullable: true
+          description: >-
+            Optional active wallet address. Web clients should include it so
+            multi-account logout targets the matching address-scoped cookie
+            instead of the compatibility cookie.
         all_sessions:
           type: boolean
     ApiSessionNativeResponse:
@@ -17356,6 +17363,13 @@ components:
           type: string
           enum:
             - web
+        client_address:
+          type: string
+          nullable: true
+          description: >-
+            Optional active wallet address. Web clients should include it so
+            multi-account sessions refresh the matching address-scoped cookie
+            instead of the compatibility cookie.
     ApiSessionWebResponse:
       type: object
       required:

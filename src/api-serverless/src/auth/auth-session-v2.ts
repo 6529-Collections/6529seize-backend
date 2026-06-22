@@ -2,7 +2,10 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import * as jwt from 'jsonwebtoken';
 import { env } from '@/env';
 import { BadRequestException } from '@/exceptions';
-import { WalletAuthClientType } from '@/entities/IWalletAuthSession';
+import {
+  WalletAuthClientType,
+  WalletAuthSessionEntity
+} from '@/entities/IWalletAuthSession';
 import { ConnectionWrapper } from '@/sql-executor';
 import { Time } from '@/time';
 import { getJwtExpiry, getJwtSecret } from './auth';
@@ -180,9 +183,40 @@ export function clearWalletSessionCookieForOrigin({
   readonly apiHost: unknown;
 }): string {
   return serializeCookieAttributes({
+    cookieName: WALLET_SESSION_COOKIE_NAME,
     maxAge: 0,
     sameSite: getSessionCookieSameSite(clientOrigin, apiHost)
   });
+}
+
+export function clearWalletSessionCookieForAddressAndOrigin({
+  address,
+  clientOrigin,
+  apiHost,
+  includeCompatibilityCookie
+}: {
+  readonly address: string;
+  readonly clientOrigin: string | null;
+  readonly apiHost: unknown;
+  readonly includeCompatibilityCookie: boolean;
+}): string[] {
+  const sameSite = getSessionCookieSameSite(clientOrigin, apiHost);
+  const scopedCookie = serializeCookieAttributes({
+    cookieName: getWalletSessionCookieNameForAddress(address),
+    maxAge: 0,
+    sameSite
+  });
+  if (!includeCompatibilityCookie) {
+    return [scopedCookie];
+  }
+  return [
+    serializeCookieAttributes({
+      cookieName: WALLET_SESSION_COOKIE_NAME,
+      maxAge: 0,
+      sameSite
+    }),
+    scopedCookie
+  ];
 }
 
 export async function createWebSession({
@@ -249,10 +283,12 @@ export async function createNativeSession({
 
 export async function refreshWebSession({
   cookie,
+  expectedAddress,
   requestOrigin,
   apiHost
 }: {
   readonly cookie: ParsedSessionCookie;
+  readonly expectedAddress?: string | null;
   readonly requestOrigin: string | null;
   readonly apiHost: unknown;
 }): Promise<CreatedWebSession | null> {
@@ -260,15 +296,13 @@ export async function refreshWebSession({
     return null;
   }
   const now = new Date();
-  const existing = await authDb.getActiveWebSessionBySecretHash(
-    cookie.sessionId,
-    hashSecret(cookie.secret),
+  const existing = await getActiveWebSessionRecord({
+    cookie,
+    requestOrigin,
+    expectedAddress,
     now
-  );
+  });
   if (!existing) {
-    return null;
-  }
-  if (!isMatchingSessionOrigin(existing.client_origin, requestOrigin)) {
     return null;
   }
   const nextSecret = createOpaqueSecret();
@@ -304,18 +338,11 @@ export async function getActiveWebSession({
   readonly cookie: ParsedSessionCookie;
   readonly requestOrigin: string | null;
 }): Promise<ActiveWebSession | null> {
-  if (!cookie) {
-    return null;
-  }
-  const existing = await authDb.getActiveWebSessionBySecretHash(
-    cookie.sessionId,
-    hashSecret(cookie.secret),
-    new Date()
-  );
+  const existing = await getActiveWebSessionRecord({
+    cookie,
+    requestOrigin
+  });
   if (!existing) {
-    return null;
-  }
-  if (!isMatchingSessionOrigin(existing.client_origin, requestOrigin)) {
     return null;
   }
   return {
@@ -354,6 +381,139 @@ export async function hasActiveWebSessionForAddressAndRole({
   }
 
   return false;
+}
+
+export async function refreshWebSessionForAddress({
+  cookieHeader,
+  address,
+  requestOrigin,
+  apiHost
+}: {
+  readonly cookieHeader: string | undefined;
+  readonly address: string | null;
+  readonly requestOrigin: string | null;
+  readonly apiHost: unknown;
+}): Promise<CreatedWebSession | null> {
+  const candidates = getWebSessionCookieCandidates(cookieHeader, address);
+  for (const { cookie } of candidates) {
+    const refreshed = await refreshWebSession({
+      cookie,
+      expectedAddress: address,
+      requestOrigin,
+      apiHost
+    });
+    if (refreshed) {
+      return refreshed;
+    }
+  }
+  return null;
+}
+
+async function getActiveWebSessionRecord({
+  cookie,
+  requestOrigin,
+  expectedAddress,
+  now = new Date()
+}: {
+  readonly cookie: ParsedSessionCookie;
+  readonly requestOrigin: string | null;
+  readonly expectedAddress?: string | null;
+  readonly now?: Date;
+}): Promise<WalletAuthSessionEntity | null> {
+  if (!cookie) {
+    return null;
+  }
+  const existing = await authDb.getActiveWebSessionBySecretHash(
+    cookie.sessionId,
+    hashSecret(cookie.secret),
+    now
+  );
+  if (!existing) {
+    return null;
+  }
+  if (!isMatchingSessionOrigin(existing.client_origin, requestOrigin)) {
+    return null;
+  }
+  if (
+    expectedAddress &&
+    existing.address.toLowerCase() !== expectedAddress.toLowerCase()
+  ) {
+    return null;
+  }
+  return existing;
+}
+
+function getWebSessionCookieCandidates(
+  cookieHeader: string | undefined,
+  address: string | null
+): readonly {
+  readonly cookie: NonNullable<ParsedSessionCookie>;
+  readonly isCompatibilityCookie: boolean;
+}[] {
+  const candidates = address
+    ? [
+        {
+          cookie: parseNamedWalletSessionCookieHeader(
+            cookieHeader,
+            getWalletSessionCookieNameForAddress(address)
+          ),
+          isCompatibilityCookie: false
+        },
+        {
+          cookie: parseWalletSessionCookieHeader(cookieHeader),
+          isCompatibilityCookie: true
+        }
+      ]
+    : [
+        {
+          cookie: parseWalletSessionCookieHeader(cookieHeader),
+          isCompatibilityCookie: true
+        }
+      ];
+  const dedupe = new Set<string>();
+  return candidates.filter(
+    (
+      candidate
+    ): candidate is {
+      readonly cookie: NonNullable<ParsedSessionCookie>;
+      readonly isCompatibilityCookie: boolean;
+    } => {
+      if (!candidate.cookie) {
+        return false;
+      }
+      const key = `${candidate.cookie.sessionId}.${candidate.cookie.secret}`;
+      if (dedupe.has(key)) {
+        return false;
+      }
+      dedupe.add(key);
+      return true;
+    }
+  );
+}
+
+function getWebSessionClearCookieHeader({
+  address,
+  requestOrigin,
+  apiHost,
+  includeCompatibilityCookie = false
+}: {
+  readonly address: string | null;
+  readonly requestOrigin: string | null;
+  readonly apiHost: unknown;
+  readonly includeCompatibilityCookie?: boolean;
+}): string | string[] {
+  if (!address) {
+    return clearWalletSessionCookieForOrigin({
+      clientOrigin: requestOrigin,
+      apiHost
+    });
+  }
+  return clearWalletSessionCookieForAddressAndOrigin({
+    address,
+    clientOrigin: requestOrigin,
+    apiHost,
+    includeCompatibilityCookie
+  });
 }
 
 export async function refreshNativeSession({
@@ -399,44 +559,46 @@ export async function refreshNativeSession({
 }
 
 export async function logoutWebSession({
-  cookie,
+  cookieHeader,
+  address,
   allSessions,
   requestOrigin,
   apiHost
 }: {
-  readonly cookie: ParsedSessionCookie;
+  readonly cookieHeader: string | undefined;
+  readonly address: string | null;
   readonly allSessions: boolean;
   readonly requestOrigin: string | null;
   readonly apiHost: unknown;
-}): Promise<string> {
-  if (!cookie) {
-    return clearWalletSessionCookieForOrigin({
-      clientOrigin: requestOrigin,
-      apiHost
-    });
-  }
+}): Promise<string | string[]> {
+  const candidates = getWebSessionCookieCandidates(cookieHeader, address);
   const now = new Date();
-  const existing = await authDb.getActiveWebSessionBySecretHash(
-    cookie.sessionId,
-    hashSecret(cookie.secret),
-    now
-  );
-  if (
-    existing &&
-    !isMatchingSessionOrigin(existing.client_origin, requestOrigin)
-  ) {
-    return clearWalletSessionCookieForOrigin({
-      clientOrigin: requestOrigin,
-      apiHost
+  for (const { cookie, isCompatibilityCookie } of candidates) {
+    const existing = await getActiveWebSessionRecord({
+      cookie,
+      requestOrigin,
+      expectedAddress: address,
+      now
+    });
+    if (!existing) {
+      continue;
+    }
+    if (allSessions) {
+      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+    } else {
+      await authDb.revokeWalletAuthSession(existing.id, now);
+    }
+    return getWebSessionClearCookieHeader({
+      address: existing.address,
+      requestOrigin: existing.client_origin,
+      apiHost,
+      includeCompatibilityCookie: !address || isCompatibilityCookie
     });
   }
-  if (allSessions && existing) {
-    await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
-  } else if (existing) {
-    await authDb.revokeWalletAuthSession(existing.id, now);
-  }
-  return clearWalletSessionCookieForOrigin({
-    clientOrigin: existing?.client_origin ?? requestOrigin,
+
+  return getWebSessionClearCookieHeader({
+    address,
+    requestOrigin,
     apiHost
   });
 }
@@ -684,14 +846,16 @@ function serializeSessionCookie({
 }
 
 function serializeCookieAttributes({
+  cookieName,
   maxAge,
   sameSite
 }: {
+  readonly cookieName: string;
   readonly maxAge: number;
   readonly sameSite: 'Lax' | 'None';
 }): string {
   return [
-    `${WALLET_SESSION_COOKIE_NAME}=`,
+    `${cookieName}=`,
     `Max-Age=${maxAge}`,
     ...getBaseCookieAttributes(sameSite)
   ].join('; ');

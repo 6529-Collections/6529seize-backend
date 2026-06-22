@@ -1,6 +1,7 @@
 import { authDb } from './auth.db';
 import {
   clearWalletSessionCookie,
+  clearWalletSessionCookieForAddressAndOrigin,
   clearWalletSessionCookieForOrigin,
   createConnectionShare,
   createWebSession,
@@ -14,6 +15,7 @@ import {
   parseWalletSessionCookieHeaderForAddress,
   redeemConnectionShare,
   refreshWebSession,
+  refreshWebSessionForAddress,
   refreshNativeSession,
   WALLET_SESSION_COOKIE_NAME
 } from './auth-session-v2';
@@ -41,6 +43,34 @@ const authDbMock = authDb as jest.Mocked<typeof authDb>;
 
 function toCookieRequestHeader(setCookies: readonly string[]): string {
   return setCookies.map((cookie) => cookie.split(';')[0]).join('; ');
+}
+
+function webSession({
+  id,
+  address,
+  role = null,
+  clientOrigin = 'https://6529.io'
+}: {
+  readonly id: string;
+  readonly address: string;
+  readonly role?: string | null;
+  readonly clientOrigin?: string;
+}) {
+  return {
+    id,
+    address,
+    role,
+    client_type: 'web' as const,
+    secret_hash: `${id}-secret-hash`,
+    refresh_token_hash: null,
+    user_agent_hash: null,
+    signature_domain: '6529.io',
+    client_origin: clientOrigin,
+    created_at: new Date(),
+    last_used_at: new Date(),
+    expires_at: new Date(Date.now() + 60_000),
+    revoked_at: null
+  };
 }
 
 describe('auth-session-v2', () => {
@@ -355,6 +385,150 @@ describe('auth-session-v2', () => {
     ).resolves.toBe(false);
   });
 
+  it('refreshes the address-scoped web session when the compatibility cookie belongs to another account', async () => {
+    const addressScopedCookieName =
+      getWalletSessionCookieNameForAddress('0xAAA');
+    const cookieHeader = [
+      `${addressScopedCookieName}=${encodeURIComponent('session-a.secret-a')}`,
+      `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent('session-b.secret-b')}`
+    ].join('; ');
+
+    authDbMock.getActiveWebSessionBySecretHash.mockImplementation(
+      async (sessionId) => {
+        if (sessionId === 'session-a') {
+          return webSession({
+            id: 'session-a',
+            address: '0xaaa',
+            role: 'profile-a'
+          });
+        }
+        return webSession({
+          id: 'session-b',
+          address: '0xbbb',
+          role: 'profile-b'
+        });
+      }
+    );
+    authDbMock.rotateWebSessionSecret.mockImplementation(async (params) =>
+      webSession({
+        id: params.sessionId,
+        address: '0xaaa',
+        role: 'profile-a'
+      })
+    );
+
+    const refreshed = await refreshWebSessionForAddress({
+      cookieHeader,
+      address: '0xaaa',
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
+    });
+
+    expect(refreshed?.response).toMatchObject({
+      address: '0xaaa',
+      role: 'profile-a',
+      client_type: 'web'
+    });
+    expect(authDbMock.rotateWebSessionSecret).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-a' })
+    );
+    expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-b' })
+    );
+  });
+
+  it('does not refresh another account from the compatibility cookie when the requested scoped session is missing', async () => {
+    const cookieHeader = `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent(
+      'session-b.secret-b'
+    )}`;
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue(
+      webSession({
+        id: 'session-b',
+        address: '0xbbb',
+        role: 'profile-b'
+      })
+    );
+
+    await expect(
+      refreshWebSessionForAddress({
+        cookieHeader,
+        address: '0xaaa',
+        requestOrigin: 'https://6529.io',
+        apiHost: 'api.6529.io'
+      })
+    ).resolves.toBeNull();
+
+    expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalled();
+  });
+
+  it('logs out the requested address-scoped web session without revoking another account', async () => {
+    const addressScopedCookieName =
+      getWalletSessionCookieNameForAddress('0xAAA');
+    const cookieHeader = [
+      `${addressScopedCookieName}=${encodeURIComponent('session-a.secret-a')}`,
+      `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent('session-b.secret-b')}`
+    ].join('; ');
+    authDbMock.getActiveWebSessionBySecretHash.mockImplementation(
+      async (sessionId) =>
+        sessionId === 'session-a'
+          ? webSession({ id: 'session-a', address: '0xaaa' })
+          : webSession({ id: 'session-b', address: '0xbbb' })
+    );
+
+    const clearedCookies = await logoutWebSession({
+      cookieHeader,
+      address: '0xaaa',
+      allSessions: false,
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
+    });
+
+    expect(authDbMock.revokeWalletAuthSession).toHaveBeenCalledWith(
+      'session-a',
+      expect.any(Date)
+    );
+    expect(authDbMock.revokeWalletAuthSession).not.toHaveBeenCalledWith(
+      'session-b',
+      expect.any(Date)
+    );
+    expect(clearedCookies).toEqual(
+      clearWalletSessionCookieForAddressAndOrigin({
+        address: '0xaaa',
+        clientOrigin: 'https://6529.io',
+        apiHost: 'api.6529.io',
+        includeCompatibilityCookie: false
+      })
+    );
+  });
+
+  it('revokes all sessions only for the requested web address', async () => {
+    const addressScopedCookieName =
+      getWalletSessionCookieNameForAddress('0xAAA');
+    const cookieHeader = [
+      `${addressScopedCookieName}=${encodeURIComponent('session-a.secret-a')}`,
+      `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent('session-b.secret-b')}`
+    ].join('; ');
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue(
+      webSession({ id: 'session-a', address: '0xaaa' })
+    );
+
+    await logoutWebSession({
+      cookieHeader,
+      address: '0xaaa',
+      allSessions: true,
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
+    });
+
+    expect(authDbMock.revokeWalletAuthSessionsForAddress).toHaveBeenCalledWith(
+      '0xaaa',
+      expect.any(Date)
+    );
+    expect(
+      authDbMock.revokeWalletAuthSessionsForAddress
+    ).not.toHaveBeenCalledWith('0xbbb', expect.any(Date));
+  });
+
   it('requires native refresh-token ownership before revoking all sessions', async () => {
     authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValueOnce(null);
 
@@ -405,10 +579,8 @@ describe('auth-session-v2', () => {
     authDbMock.getActiveWebSessionBySecretHash.mockResolvedValueOnce(null);
 
     const clearedCookie = await logoutWebSession({
-      cookie: {
-        sessionId: 'session-1',
-        secret: 'wrong-secret'
-      },
+      cookieHeader: `${WALLET_SESSION_COOKIE_NAME}=session-1.wrong-secret`,
+      address: null,
       allSessions: false,
       requestOrigin: 'https://6529.io',
       apiHost: 'api.6529.io'
@@ -439,10 +611,8 @@ describe('auth-session-v2', () => {
     });
 
     await logoutWebSession({
-      cookie: {
-        sessionId: 'session-1',
-        secret: 'valid-secret'
-      },
+      cookieHeader: `${WALLET_SESSION_COOKIE_NAME}=session-1.valid-secret`,
+      address: null,
       allSessions: false,
       requestOrigin: 'https://6529.io',
       apiHost: 'api.6529.io'

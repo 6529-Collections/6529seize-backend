@@ -13,7 +13,11 @@ connection sharing from an already-v2 session.
   `https://6529.io`.
 - Staging web keeps calling `https://api.staging.6529.io` directly from
   `https://staging.6529.io`.
-- Web session v2 uses the backend-owned HttpOnly `6529_session` cookie.
+- Web session v2 uses backend-owned HttpOnly cookies: a compatibility
+  `6529_session` cookie plus address-scoped `6529_session_<address-hash>`
+  cookies. Current web clients send `client_address` on refresh/logout so
+  multi-account sessions target the active wallet instead of whichever account
+  last wrote the compatibility cookie.
 - Native session v2 uses the native refresh token in secure storage.
 - External API clients are not blocked by browser CORS allowlists. Browser
   credentialed CORS remains narrow only on cookie-backed web auth routes.
@@ -102,6 +106,12 @@ Backend checks after deploy:
   tokens.
 - V2 web auth routes return exact credentialed CORS for the real web origin and
   reject unrelated browser origins.
+- Multi-account web refresh/logout preserve account isolation: sign A and B into
+  v2, let the compatibility cookie point at B, then refresh/logout A by
+  `client_address` without rotating or revoking B.
+- If this scoped-cookie behavior is deployed over earlier session-v2 web
+  sessions, each already-signed account may need one fresh v2 sign-in to seed
+  its address-scoped cookie.
 
 ## Phase 2: Frontend And Native Silent Release
 
@@ -127,7 +137,8 @@ Frontend targets:
 Checks after deploy:
 
 - New web login creates a v2 session.
-- Web refresh and logout work through the API domain.
+- Web refresh and logout work through the API domain for one account and for
+  A/B/A multi-account switching after the active JWT has expired.
 - Native login, refresh, logout, and connection-share redeem work on current
   iOS and Android builds, or on the native release candidates that will be
   available before cutoff.
@@ -135,6 +146,10 @@ Checks after deploy:
 - Connection sharing create/redeem works from an active session-v2 web session.
   Legacy-authenticated web users should be prompted to update authentication
   before they can create a share.
+- A connection-share QR is an end-to-end test only when the receiver is a native
+  client or native release candidate with the session-v2 accept flow. A staging
+  web build without the frontend session-v2 changes is not a valid receiver
+  test for connection-share redemption.
 
 ## Phase 3: Start Migration Prompt
 

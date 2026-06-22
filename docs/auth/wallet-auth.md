@@ -72,7 +72,11 @@ For web sessions:
 - The server creates a row in `wallet_auth_sessions` with `client_type=web`.
 - The stored session includes the signed domain and normalized client origin.
 - The refresh secret is stored only as a server-side hash.
-- The browser receives an HttpOnly `6529_session` cookie scoped to `/api/auth`.
+- The browser receives an HttpOnly compatibility `6529_session` cookie and an
+  HttpOnly address-scoped `6529_session_<address-hash>` cookie scoped to
+  `/api/auth`. The compatibility cookie preserves older web-client behavior;
+  the scoped cookie lets multi-account web sessions refresh, logout, and create
+  connection shares for the intended active wallet.
 
 For native sessions:
 
@@ -89,18 +93,29 @@ Both web and native session login return a JWT access token and access-token exp
 
 For web sessions:
 
-- The request uses the `6529_session` cookie.
+- Current web clients send `client_address`. The backend checks the matching
+  address-scoped cookie first and falls back to the compatibility `6529_session`
+  cookie only when that cookie belongs to the same requested address.
+- Older web clients without `client_address` keep using the compatibility
+  `6529_session` cookie.
 - The request `Origin` must match the `client_origin` stored on the session.
 - The request `Origin` must be allowed for credentialed web auth CORS.
 - The cookie secret is rotated on every successful refresh.
-- On invalid or mismatched sessions, the response clears the session cookie.
+- On invalid or mismatched address-scoped sessions, the response clears the
+  scoped cookie for the requested address without clearing another account's
+  compatibility cookie.
 
 For native sessions:
 
 - The request supplies `client_address` and `native_refresh_token`.
 - The native refresh token is rotated on every successful refresh.
 
-`POST /api/auth/session-logout` revokes the current session by default. When `all_sessions=true`, it revokes all wallet auth sessions for the address. Web logout also checks the request `Origin` against the stored session origin before revoking an existing session.
+`POST /api/auth/session-logout` revokes the current session by default. Current
+web clients send `client_address` so logout targets the matching address-scoped
+cookie and does not revoke whichever account last wrote the compatibility
+cookie. When `all_sessions=true`, it revokes all wallet auth sessions for the
+verified target address. Web logout also checks the request `Origin` against the
+stored session origin before revoking an existing session.
 
 ## Connection Sharing
 

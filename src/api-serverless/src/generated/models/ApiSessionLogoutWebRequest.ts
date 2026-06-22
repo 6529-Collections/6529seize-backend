@@ -14,6 +14,10 @@ import { HttpFile } from '../http/http';
 
 export class ApiSessionLogoutWebRequest {
     'client_type': ApiSessionLogoutWebRequestClientTypeEnum;
+    /**
+    * Optional active wallet address. Web clients should include it so multi-account logout targets the matching address-scoped cookie instead of the compatibility cookie.
+    */
+    'client_address'?: string | null;
     'all_sessions'?: boolean;
 
     static readonly discriminator: string | undefined = undefined;
@@ -25,6 +29,12 @@ export class ApiSessionLogoutWebRequest {
             "name": "client_type",
             "baseName": "client_type",
             "type": "ApiSessionLogoutWebRequestClientTypeEnum",
+            "format": ""
+        },
+        {
+            "name": "client_address",
+            "baseName": "client_address",
+            "type": "string",
             "format": ""
         },
         {

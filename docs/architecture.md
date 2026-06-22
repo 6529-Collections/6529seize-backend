@@ -291,11 +291,14 @@ live. Request-side asset/contract exclusions are applied in the API service and
 reported in the response for generator auditability.
 
 Wallet auth session v2 state is stored in `wallet_auth_sessions` and one-time
-connection share state is stored in `wallet_connection_shares`. Web
-sessions persist the signed domain and normalized client origin so refresh and
-logout requests can be bound to the same browser origin that created the
-session; native sessions store refresh-token hashes instead of browser-origin
-metadata.
+connection share state is stored in `wallet_connection_shares`. Web sessions
+persist the signed domain and normalized client origin so refresh and logout
+requests can be bound to the same browser origin that created the session. Web
+clients receive a compatibility `6529_session` cookie plus address-scoped
+session cookies so multi-account refresh/logout and connection sharing can bind
+to the requested active wallet instead of the last wallet that wrote the
+compatibility cookie. Native sessions store refresh-token hashes instead of
+browser-origin metadata.
 
 ## Async Processing
 
