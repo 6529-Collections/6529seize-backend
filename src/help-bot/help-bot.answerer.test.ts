@@ -90,6 +90,22 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
       relatedPaths: [],
       tags: ['waves'],
       sourceRefs: []
+    },
+    {
+      id: 'profiles.identity-tab',
+      kind: 'route',
+      title: 'Profile Identity tab',
+      linkLabel: 'Profile Identity',
+      canonicalPath: '/{user}/identity',
+      aliases: ['identity tab', 'profile identity', 'nic'],
+      keywords: ['profile', 'identity', 'nic', 'statements'],
+      facts: [
+        'NIC stands for Network Identity Credits.',
+        'NIC is the trust signal identities give each other in the 6529 network.'
+      ],
+      relatedPaths: ['/network'],
+      tags: ['profiles', 'identity'],
+      sourceRefs: []
     }
   ]
 };
@@ -138,6 +154,25 @@ describe('HelpBotAnswerer', () => {
         "I might not be fully sure on this one, so here's my best answer."
       );
       expect(answer.answer).toContain('[Weak Match](https://6529.io/waves)');
+    }
+  });
+
+  it('treats exact glossary-style acronym questions as strong matches', async () => {
+    const answer = await answerer().answer({
+      question: 'what is NIC',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('profiles.identity-tab');
+      expect(answer.escalateToTechTeam).toBe(false);
+      expect(answer.answer).toContain(
+        'NIC stands for Network Identity Credits.'
+      );
+      expect(answer.answer).not.toContain(
+        'I might not be fully sure on this one'
+      );
     }
   });
 
