@@ -62,7 +62,12 @@ import { identitiesDb } from '@/identities/identities.db';
 import { enums } from '@/enums';
 import { ids } from '@/ids';
 import { collections } from '@/collections';
-import { clearWaveGroupsCache, getRedisClient } from '@/redis';
+import {
+  clearWaveGroupsCache,
+  getRedisClient,
+  WAVE_GROUPS_CACHE_KEY,
+  WAVE_GROUPS_VERSION_CACHE_KEY
+} from '@/redis';
 import { env } from '@/env';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 import { assertUnreachable } from '@/assertions';
@@ -83,6 +88,21 @@ type GClean = Omit<
   | 'excluded_identity_group_identities_count'
   | 'is_beneficiary_of_grant'
 >;
+
+type EligibleGroupsCacheEntry = {
+  readonly eligibleGroupIds: string[];
+  readonly computedAtMillis: number;
+  readonly waveGroupsVersion: number;
+};
+
+const DEFAULT_ELIGIBLE_GROUPS_CACHE_TTL_SEC = 60;
+const ELIGIBLE_GROUPS_MEMORY_CACHE_PREFIX = 'eligible-groups-v2';
+const ELIGIBLE_GROUPS_REDIS_CACHE_PREFIX = 'cache_6529_eligible_groups';
+const ELIGIBLE_GROUPS_REDIS_LOCK_PREFIX = 'cache_6529_eligible_groups_lock';
+const ELIGIBLE_GROUPS_REDIS_LOCK_TTL_MS = 10_000;
+const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES = 4;
+const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS = 75;
+const eligibleGroupsPromisesByProfileId = new Map<string, Promise<string[]>>();
 
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
@@ -368,7 +388,6 @@ export class UserGroupsService {
   ): Promise<UserGroupEntity[]> {
     const timerPrefix =
       'whichOfGivenGroupsIsUserEligibleFor->getGivenGroupEntities';
-    const cacheKey = 'cache_6529_wave_groups';
     const ttlSec = env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ?? 60;
     const redisClient = getRedisClient();
     if (!redisClient) {
@@ -385,7 +404,7 @@ export class UserGroupsService {
     const cachedValue = await this.timeAsync(
       timer,
       `${timerPrefix}->redisGet`,
-      () => redisClient.get(cacheKey)
+      () => redisClient.get(WAVE_GROUPS_CACHE_KEY)
     );
     if (cachedValue) {
       return this.timeSync(timer, `${timerPrefix}->redisJsonParse`, () =>
@@ -407,7 +426,7 @@ export class UserGroupsService {
       () => JSON.stringify(value)
     );
     await this.timeAsync(timer, `${timerPrefix}->redisSet`, () =>
-      redisClient.set(cacheKey, payload, {
+      redisClient.set(WAVE_GROUPS_CACHE_KEY, payload, {
         EX: Time.seconds(ttlSec).toSeconds()
       })
     );
@@ -741,8 +760,15 @@ export class UserGroupsService {
   }
 
   public async invalidateGroupsUserIsEligibleFor(profileId: string) {
-    const key = `eligible-groups-${profileId}`;
-    mcache.del(key);
+    mcache.del(this.getEligibleGroupsMemoryCacheKey(profileId));
+    eligibleGroupsPromisesByProfileId.delete(profileId);
+    const redisClient = getRedisClient();
+    if (!redisClient) {
+      return;
+    }
+    await redisClient
+      .del(this.getEligibleGroupsRedisCacheKey(profileId))
+      .catch(() => undefined);
   }
 
   public async getGroupsUserIsEligibleFor(
@@ -754,40 +780,330 @@ export class UserGroupsService {
     }
     const timerKey = 'getGroupsUserIsEligibleFor';
     return this.timeAsync(timer, timerKey, async () => {
-      const key = `eligible-groups-${profileId}`;
-      const ignoreCache = await this.timeAsync(
-        timer,
-        `${timerKey}->profileHasRecentGroupChanges`,
-        () =>
-          this.userGroupsDb.profileHasRecentGroupChanges(
-            profileId,
-            Time.minutes(1)
-          )
-      );
-      if (!ignoreCache) {
-        const cachedGroupsUserIsEligibleFor = this.timeSync(
+      const existingPromise = eligibleGroupsPromisesByProfileId.get(profileId);
+      if (existingPromise) {
+        return await this.timeAsync(
           timer,
-          `${timerKey}->memoryCacheLookup`,
-          () => mcache.get(key) as string[] | null
+          `${timerKey}->localInFlightWait`,
+          () => existingPromise
         );
-        if (cachedGroupsUserIsEligibleFor) {
-          return cachedGroupsUserIsEligibleFor;
-        }
       }
-      const groups = await this.timeAsync(
-        timer,
-        `${timerKey}->getAllWaveRelatedGroups`,
-        () => this.userGroupsDb.getAllWaveRelatedGroups({ timer })
-      );
-      const results = await this.whichOfGivenGroupsIsUserEligibleFor(
-        { profileId, givenGroups: groups, allWaveGroups: true },
+
+      const promise = this.getGroupsUserIsEligibleForWithCache(
+        profileId,
         timer
       );
-      this.timeSync(timer, `${timerKey}->memoryCachePut`, () =>
-        mcache.put(key, results, Time.minutes(1).toMillis())
-      );
-      return results;
+      eligibleGroupsPromisesByProfileId.set(profileId, promise);
+      try {
+        return await promise;
+      } finally {
+        if (eligibleGroupsPromisesByProfileId.get(profileId) === promise) {
+          eligibleGroupsPromisesByProfileId.delete(profileId);
+        }
+      }
     });
+  }
+
+  private async getGroupsUserIsEligibleForWithCache(
+    profileId: string,
+    timer?: Timer | undefined
+  ): Promise<string[]> {
+    const timerKey = 'getGroupsUserIsEligibleFor';
+    const ttlSec = this.getEligibleGroupsCacheTtlSec();
+    const computedAtMillis = Time.currentMillis();
+    const [latestProfileGroupChangeMillis, waveGroupsVersion] =
+      await Promise.all([
+        this.timeAsync(
+          timer,
+          `${timerKey}->getLatestProfileGroupChangeMillis`,
+          () => this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId)
+        ),
+        this.getWaveGroupsCacheVersion(timer)
+      ]);
+
+    const memoryCacheEntry = this.timeSync(
+      timer,
+      `${timerKey}->memoryCacheLookup`,
+      () =>
+        mcache.get(
+          this.getEligibleGroupsMemoryCacheKey(profileId)
+        ) as EligibleGroupsCacheEntry | null
+    );
+    if (
+      this.isEligibleGroupsCacheEntryValid(
+        memoryCacheEntry,
+        latestProfileGroupChangeMillis,
+        waveGroupsVersion
+      )
+    ) {
+      return memoryCacheEntry.eligibleGroupIds;
+    }
+
+    const redisCacheEntry = await this.getEligibleGroupsRedisCacheEntry(
+      profileId,
+      timer
+    );
+    if (
+      this.isEligibleGroupsCacheEntryValid(
+        redisCacheEntry,
+        latestProfileGroupChangeMillis,
+        waveGroupsVersion
+      )
+    ) {
+      this.putEligibleGroupsMemoryCache(profileId, redisCacheEntry, ttlSec);
+      return redisCacheEntry.eligibleGroupIds;
+    }
+
+    const acquiredRedisLock = await this.tryAcquireEligibleGroupsRedisLock(
+      profileId,
+      timer
+    );
+    if (!acquiredRedisLock) {
+      const waitedCacheEntry = await this.waitForEligibleGroupsRedisCacheEntry({
+        profileId,
+        latestProfileGroupChangeMillis,
+        waveGroupsVersion,
+        ttlSec,
+        timer
+      });
+      if (waitedCacheEntry) {
+        return waitedCacheEntry.eligibleGroupIds;
+      }
+    }
+
+    const results = await this.computeGroupsUserIsEligibleFor(profileId, timer);
+    const cacheEntry: EligibleGroupsCacheEntry = {
+      eligibleGroupIds: results,
+      computedAtMillis,
+      waveGroupsVersion
+    };
+    this.putEligibleGroupsMemoryCache(profileId, cacheEntry, ttlSec);
+    await this.putEligibleGroupsRedisCache(
+      profileId,
+      cacheEntry,
+      ttlSec,
+      timer
+    );
+    return results;
+  }
+
+  private async computeGroupsUserIsEligibleFor(
+    profileId: string,
+    timer?: Timer | undefined
+  ): Promise<string[]> {
+    const timerKey = 'getGroupsUserIsEligibleFor';
+    const groups = await this.timeAsync(
+      timer,
+      `${timerKey}->getAllWaveRelatedGroups`,
+      () => this.userGroupsDb.getAllWaveRelatedGroups({ timer })
+    );
+    return await this.whichOfGivenGroupsIsUserEligibleFor(
+      { profileId, givenGroups: groups, allWaveGroups: true },
+      timer
+    );
+  }
+
+  private getEligibleGroupsCacheTtlSec(): number {
+    return Math.max(
+      1,
+      env.getIntOrNull('USER_GROUPS_ELIGIBILITY_CACHE_TTL_SEC') ??
+        DEFAULT_ELIGIBLE_GROUPS_CACHE_TTL_SEC
+    );
+  }
+
+  private getEligibleGroupsMemoryCacheKey(profileId: string): string {
+    return `${ELIGIBLE_GROUPS_MEMORY_CACHE_PREFIX}-${profileId}`;
+  }
+
+  private getEligibleGroupsRedisCacheKey(profileId: string): string {
+    return `${ELIGIBLE_GROUPS_REDIS_CACHE_PREFIX}:${profileId}`;
+  }
+
+  private getEligibleGroupsRedisLockKey(profileId: string): string {
+    return `${ELIGIBLE_GROUPS_REDIS_LOCK_PREFIX}:${profileId}`;
+  }
+
+  private putEligibleGroupsMemoryCache(
+    profileId: string,
+    cacheEntry: EligibleGroupsCacheEntry,
+    ttlSec: number
+  ) {
+    this.timeSync(undefined, 'getGroupsUserIsEligibleFor->memoryCachePut', () =>
+      mcache.put(
+        this.getEligibleGroupsMemoryCacheKey(profileId),
+        cacheEntry,
+        Time.seconds(ttlSec).toMillis()
+      )
+    );
+  }
+
+  private async getWaveGroupsCacheVersion(
+    timer?: Timer | undefined
+  ): Promise<number> {
+    const redisClient = getRedisClient();
+    if (!redisClient) {
+      return 0;
+    }
+    return await this.timeAsync(
+      timer,
+      'getGroupsUserIsEligibleFor->waveGroupsVersionRedisGet',
+      async () => {
+        const cachedVersion = await redisClient
+          .get(WAVE_GROUPS_VERSION_CACHE_KEY)
+          .catch(() => null);
+        const parsed = Number(cachedVersion);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+    );
+  }
+
+  private async getEligibleGroupsRedisCacheEntry(
+    profileId: string,
+    timer?: Timer | undefined
+  ): Promise<EligibleGroupsCacheEntry | null> {
+    const redisClient = getRedisClient();
+    if (!redisClient) {
+      return null;
+    }
+    return await this.timeAsync(
+      timer,
+      'getGroupsUserIsEligibleFor->redisCacheGet',
+      async () => {
+        const cachedValue = await redisClient
+          .get(this.getEligibleGroupsRedisCacheKey(profileId))
+          .catch(() => null);
+        return this.parseEligibleGroupsCacheEntry(cachedValue);
+      }
+    );
+  }
+
+  private async putEligibleGroupsRedisCache(
+    profileId: string,
+    cacheEntry: EligibleGroupsCacheEntry,
+    ttlSec: number,
+    timer?: Timer | undefined
+  ) {
+    const redisClient = getRedisClient();
+    if (!redisClient) {
+      return;
+    }
+    await this.timeAsync(
+      timer,
+      'getGroupsUserIsEligibleFor->redisCacheSet',
+      async () => {
+        await redisClient
+          .set(
+            this.getEligibleGroupsRedisCacheKey(profileId),
+            JSON.stringify(cacheEntry),
+            { EX: ttlSec }
+          )
+          .catch(() => undefined);
+      }
+    );
+  }
+
+  private async tryAcquireEligibleGroupsRedisLock(
+    profileId: string,
+    timer?: Timer | undefined
+  ): Promise<boolean> {
+    const redisClient = getRedisClient();
+    if (!redisClient) {
+      return true;
+    }
+    return await this.timeAsync(
+      timer,
+      'getGroupsUserIsEligibleFor->redisLockSet',
+      async () => {
+        const response = await redisClient
+          .set(this.getEligibleGroupsRedisLockKey(profileId), '1', {
+            PX: ELIGIBLE_GROUPS_REDIS_LOCK_TTL_MS,
+            NX: true
+          })
+          .catch(() => 'OK');
+        return response === 'OK';
+      }
+    );
+  }
+
+  private async waitForEligibleGroupsRedisCacheEntry({
+    profileId,
+    latestProfileGroupChangeMillis,
+    waveGroupsVersion,
+    ttlSec,
+    timer
+  }: {
+    profileId: string;
+    latestProfileGroupChangeMillis: number | null;
+    waveGroupsVersion: number;
+    ttlSec: number;
+    timer?: Timer | undefined;
+  }): Promise<EligibleGroupsCacheEntry | null> {
+    for (let i = 0; i < ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES; i++) {
+      await Time.millis(ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS).sleep();
+      const cacheEntry = await this.getEligibleGroupsRedisCacheEntry(
+        profileId,
+        timer
+      );
+      if (
+        this.isEligibleGroupsCacheEntryValid(
+          cacheEntry,
+          latestProfileGroupChangeMillis,
+          waveGroupsVersion
+        )
+      ) {
+        this.putEligibleGroupsMemoryCache(profileId, cacheEntry, ttlSec);
+        return cacheEntry;
+      }
+    }
+    return null;
+  }
+
+  private parseEligibleGroupsCacheEntry(
+    cachedValue: string | null
+  ): EligibleGroupsCacheEntry | null {
+    if (!cachedValue) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(
+        cachedValue
+      ) as Partial<EligibleGroupsCacheEntry>;
+      if (
+        parsed &&
+        Array.isArray(parsed.eligibleGroupIds) &&
+        parsed.eligibleGroupIds.every((it) => typeof it === 'string') &&
+        typeof parsed.computedAtMillis === 'number' &&
+        Number.isFinite(parsed.computedAtMillis) &&
+        typeof parsed.waveGroupsVersion === 'number' &&
+        Number.isFinite(parsed.waveGroupsVersion)
+      ) {
+        return {
+          eligibleGroupIds: parsed.eligibleGroupIds,
+          computedAtMillis: parsed.computedAtMillis,
+          waveGroupsVersion: parsed.waveGroupsVersion
+        };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private isEligibleGroupsCacheEntryValid(
+    cacheEntry: EligibleGroupsCacheEntry | null,
+    latestProfileGroupChangeMillis: number | null,
+    waveGroupsVersion: number
+  ): cacheEntry is EligibleGroupsCacheEntry {
+    if (!cacheEntry) {
+      return false;
+    }
+    if (cacheEntry.waveGroupsVersion !== waveGroupsVersion) {
+      return false;
+    }
+    return (
+      latestProfileGroupChangeMillis === null ||
+      cacheEntry.computedAtMillis > latestProfileGroupChangeMillis
+    );
   }
 
   async changeVisibility(
