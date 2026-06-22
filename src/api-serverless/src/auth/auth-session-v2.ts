@@ -22,6 +22,7 @@ import {
 } from '../generated/models/ApiSessionWebResponse';
 
 export const WALLET_SESSION_COOKIE_NAME = '6529_session';
+const WALLET_SESSION_ADDRESS_COOKIE_PREFIX = `${WALLET_SESSION_COOKIE_NAME}_`;
 
 const DEFAULT_SESSION_REFRESH_DAYS = 30;
 const DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS = 5 * 60;
@@ -37,7 +38,7 @@ export type SessionV2NativeResponse = ApiSessionNativeResponse;
 
 export interface CreatedWebSession {
   readonly response: SessionV2WebResponse;
-  readonly setCookie: string;
+  readonly setCookie: string[];
 }
 
 export interface CreatedNativeSession {
@@ -93,6 +94,46 @@ export function isLegacyWsQueryTokenEnabled(): boolean {
 export function parseWalletSessionCookieHeader(
   cookieHeader: string | undefined
 ): ParsedSessionCookie {
+  return parseNamedWalletSessionCookieHeader(
+    cookieHeader,
+    WALLET_SESSION_COOKIE_NAME
+  );
+}
+
+export function parseWalletSessionCookieHeaderForAddress(
+  cookieHeader: string | undefined,
+  address: string
+): readonly ParsedSessionCookie[] {
+  const cookies = [
+    parseNamedWalletSessionCookieHeader(
+      cookieHeader,
+      getWalletSessionCookieNameForAddress(address)
+    ),
+    parseWalletSessionCookieHeader(cookieHeader)
+  ];
+  const dedupe = new Set<string>();
+  return cookies.filter((cookie): cookie is NonNullable<typeof cookie> => {
+    if (!cookie) {
+      return false;
+    }
+    const key = `${cookie.sessionId}.${cookie.secret}`;
+    if (dedupe.has(key)) {
+      return false;
+    }
+    dedupe.add(key);
+    return true;
+  });
+}
+
+export function getWalletSessionCookieNameForAddress(address: string): string {
+  const addressKey = hashPublicValue(address.toLowerCase()).slice(0, 24);
+  return `${WALLET_SESSION_ADDRESS_COOKIE_PREFIX}${addressKey}`;
+}
+
+function parseNamedWalletSessionCookieHeader(
+  cookieHeader: string | undefined,
+  cookieName: string
+): ParsedSessionCookie {
   if (!cookieHeader) {
     return null;
   }
@@ -100,7 +141,7 @@ export function parseWalletSessionCookieHeader(
   for (const cookie of cookies) {
     const [rawName, ...rawValueParts] = cookie.split('=');
     const name = rawName?.trim();
-    if (name !== WALLET_SESSION_COOKIE_NAME) {
+    if (name !== cookieName) {
       continue;
     }
     const rawValue = rawValueParts.join('=').trim();
@@ -178,7 +219,8 @@ export async function createWebSession({
   const accessToken = issueAccessToken(session.address, session.role);
   return {
     response: toWebSessionResponse(session.address, session.role, accessToken),
-    setCookie: serializeSessionCookie({
+    setCookie: serializeSessionCookies({
+      address: session.address,
       sessionId,
       secret,
       expiresAt,
@@ -244,7 +286,8 @@ export async function refreshWebSession({
   const accessToken = issueAccessToken(rotated.address, rotated.role);
   return {
     response: toWebSessionResponse(rotated.address, rotated.role, accessToken),
-    setCookie: serializeSessionCookie({
+    setCookie: serializeSessionCookies({
+      address: rotated.address,
       sessionId: rotated.id,
       secret: nextSecret,
       expiresAt,
@@ -279,6 +322,38 @@ export async function getActiveWebSession({
     address: existing.address.toLowerCase(),
     role: existing.role ?? null
   };
+}
+
+export async function hasActiveWebSessionForAddressAndRole({
+  cookieHeader,
+  address,
+  role,
+  requestOrigin
+}: {
+  readonly cookieHeader: string | undefined;
+  readonly address: string;
+  readonly role: string | null;
+  readonly requestOrigin: string | null;
+}): Promise<boolean> {
+  const sessionCookies = parseWalletSessionCookieHeaderForAddress(
+    cookieHeader,
+    address
+  );
+
+  for (const cookie of sessionCookies) {
+    const activeWebSession = await getActiveWebSession({
+      cookie,
+      requestOrigin
+    });
+    if (
+      activeWebSession?.address === address.toLowerCase() &&
+      activeWebSession.role === role
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export async function refreshNativeSession({
@@ -548,13 +623,49 @@ async function createNativeSessionRecord(
   };
 }
 
-function serializeSessionCookie({
+function serializeSessionCookies({
+  address,
   sessionId,
   secret,
   expiresAt,
   clientOrigin,
   apiHost
 }: {
+  readonly address: string;
+  readonly sessionId: string;
+  readonly secret: string;
+  readonly expiresAt: Date;
+  readonly clientOrigin: string | null;
+  readonly apiHost: unknown;
+}): string[] {
+  const commonParams = {
+    sessionId,
+    secret,
+    expiresAt,
+    clientOrigin,
+    apiHost
+  };
+  return [
+    serializeSessionCookie({
+      cookieName: WALLET_SESSION_COOKIE_NAME,
+      ...commonParams
+    }),
+    serializeSessionCookie({
+      cookieName: getWalletSessionCookieNameForAddress(address),
+      ...commonParams
+    })
+  ];
+}
+
+function serializeSessionCookie({
+  cookieName,
+  sessionId,
+  secret,
+  expiresAt,
+  clientOrigin,
+  apiHost
+}: {
+  readonly cookieName: string;
   readonly sessionId: string;
   readonly secret: string;
   readonly expiresAt: Date;
@@ -566,9 +677,7 @@ function serializeSessionCookie({
     Math.floor((expiresAt.getTime() - Date.now()) / 1000)
   );
   return [
-    `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent(
-      `${sessionId}.${secret}`
-    )}`,
+    `${cookieName}=${encodeURIComponent(`${sessionId}.${secret}`)}`,
     `Max-Age=${maxAgeSeconds}`,
     ...getBaseCookieAttributes(getSessionCookieSameSite(clientOrigin, apiHost))
   ].join('; ');
