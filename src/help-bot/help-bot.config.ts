@@ -44,7 +44,7 @@ export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
 export const HELP_BOT_OUT_OF_SCOPE_REPLY =
   'I can only help with 6529 product questions.';
 export const HELP_BOT_INSUFFICIENT_CREDITS_REPLY =
-  'You need at least 1 Help6529 Credit REP to ask a question. It is REP in the `Help6529 Credits` category, earned through activity or given by other profiles.';
+  'You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the `Help6529 Credits` category granted by help6529 for signup, profile setup, and daily activity; ratings from other profiles in that category do not count for bot questions.';
 
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';

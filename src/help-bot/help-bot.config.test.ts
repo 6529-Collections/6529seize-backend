@@ -31,7 +31,7 @@ describe('help bot config', () => {
   it('uses low-battery insufficient-credit reaction and REP-category copy', () => {
     expect(HELP_BOT_INSUFFICIENT_CREDITS_REACTION).toBe(':low_battery:');
     expect(HELP_BOT_INSUFFICIENT_CREDITS_REPLY).toBe(
-      'You need at least 1 Help6529 Credit REP to ask a question. It is REP in the `Help6529 Credits` category, earned through activity or given by other profiles.'
+      'You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the `Help6529 Credits` category granted by help6529 for signup, profile setup, and daily activity; ratings from other profiles in that category do not count for bot questions.'
     );
   });
 
