@@ -281,14 +281,47 @@ const WEAK_MATCH_SCORE_MAX = 4;
 const WEAK_MATCH_PREFIX =
   "I might not be fully sure on this one, so here's my best answer.";
 
+const DEFINITION_QUESTION_PREFIXES = [
+  'what is',
+  'what are',
+  'what does',
+  'what do',
+  'what s',
+  'whats',
+  'define',
+  'explain',
+  'describe',
+  'tell me about'
+];
+
+const DEFINITION_QUESTION_SUFFIXES = [
+  'stand for',
+  'stands for',
+  'mean',
+  'means'
+];
+
 function stripDefinitionQuestionWords(value: string): string {
-  return value
-    .replace(
-      /^(what is|what are|what does|what do|what's|whats|define|explain|describe|tell me about)\s+/,
-      ''
-    )
-    .replace(/\s+(mean|means|stand for|stands for)$/g, '')
-    .trim();
+  let stripped = value.trim();
+  for (const prefix of DEFINITION_QUESTION_PREFIXES) {
+    if (stripped === prefix) {
+      return '';
+    }
+    if (stripped.startsWith(`${prefix} `)) {
+      stripped = stripped.slice(prefix.length + 1).trim();
+      break;
+    }
+  }
+  for (const suffix of DEFINITION_QUESTION_SUFFIXES) {
+    if (stripped === suffix) {
+      return '';
+    }
+    if (stripped.endsWith(` ${suffix}`)) {
+      stripped = stripped.slice(0, -(suffix.length + 1)).trim();
+      break;
+    }
+  }
+  return stripped;
 }
 
 function isExactDefinitionMatch(

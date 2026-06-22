@@ -1,10 +1,18 @@
 import { HelpBotCreditEventType } from '@/entities/IHelpBotCreditEvent';
+import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 import { RequestContext } from '@/request.context';
 import { HelpBotCreditsService } from './help-bot-credits.service';
 
 jest.mock('@/drops/participation-drops-over-vote-revocation', () => ({
   revokeRepBasedDropOverVotes: jest.fn()
 }));
+jest.mock('@/profileActivityLogs/profile-activity-logs.db', () => ({
+  profileActivityLogsDb: {
+    insert: jest.fn()
+  }
+}));
+
+import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 
 function createSqlExecutor({
   executeResults = [],
@@ -72,10 +80,14 @@ function createService({
 describe('HelpBotCreditsService', () => {
   const ctx = {} as RequestContext;
 
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('caps automatic grants at the configured system balance cap', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 95 }, { balance: 95 }]
+      oneOrNullResults: [{ rating: 95 }]
     });
 
     const result = await service.grantDailyActivityCredits(
@@ -94,12 +106,29 @@ describe('HelpBotCreditsService', () => {
       expect.objectContaining({ delta: 5 }),
       expect.anything()
     );
+    expect(profileActivityLogsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile_id: 'bot-profile',
+        target_id: 'profile-1',
+        type: ProfileActivityLogType.RATING_EDIT,
+        additional_data_1: 'REP',
+        additional_data_2: 'Help6529 Credits',
+        contents: JSON.stringify({
+          old_rating: 95,
+          new_rating: 100,
+          rating_matter: 'REP',
+          rating_category: 'Help6529 Credits',
+          change_reason: 'HELP_BOT_AUTOMATIC_GRANT'
+        })
+      }),
+      expect.anything()
+    );
   });
 
   it('scopes daily automatic grant dedupe to the current credit category', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 0 }, { balance: 0 }]
+      oneOrNullResults: [{ rating: 0 }]
     });
 
     await service.grantDailyActivityCredits(
@@ -124,7 +153,7 @@ describe('HelpBotCreditsService', () => {
   it('does not auto-grant above the current category balance cap', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 0 }, { balance: 100 }]
+      oneOrNullResults: [{ rating: 100 }]
     });
 
     const result = await service.grantDailyActivityCredits(
@@ -167,7 +196,7 @@ describe('HelpBotCreditsService', () => {
 
   it('declines a question charge when the category balance is too low', async () => {
     const { service, executor } = createService({
-      oneOrNullResults: [{ rating: 0 }, { balance: 0 }]
+      oneOrNullResults: [{ rating: 0 }]
     });
 
     const result = await service.chargeQuestionCredit(
@@ -183,10 +212,35 @@ describe('HelpBotCreditsService', () => {
     expect(executor.execute).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores non-bot Help6529 Credits ratings when checking spendable balance', async () => {
+    const { service, executor } = createService({
+      oneOrNullResults: [{ rating: 4 }]
+    });
+
+    const result = await service.chargeQuestionCredit(
+      { profileId: 'profile-1', interactionId: 'interaction-1' },
+      ctx
+    );
+
+    expect(result).toEqual({
+      charged: true,
+      balance: 3,
+      botProfileMissing: false
+    });
+    expect(executor.oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining('rater_profile_id = :botProfileId'),
+      expect.objectContaining({
+        botProfileId: 'bot-profile',
+        profileId: 'profile-1'
+      }),
+      expect.anything()
+    );
+  });
+
   it('spends one credit for a chargeable question', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }, { affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 0 }, { balance: 3 }]
+      oneOrNullResults: [{ rating: 3 }]
     });
 
     const result = await service.chargeQuestionCredit(
@@ -210,6 +264,21 @@ describe('HelpBotCreditsService', () => {
     expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE ratings'),
       expect.objectContaining({ delta: -1 }),
+      expect.anything()
+    );
+    expect(profileActivityLogsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile_id: 'bot-profile',
+        target_id: 'profile-1',
+        type: ProfileActivityLogType.RATING_EDIT,
+        contents: JSON.stringify({
+          old_rating: 3,
+          new_rating: 2,
+          rating_matter: 'REP',
+          rating_category: 'Help6529 Credits',
+          change_reason: 'HELP_BOT_QUESTION_SPEND'
+        })
+      }),
       expect.anything()
     );
   });
@@ -238,6 +307,21 @@ describe('HelpBotCreditsService', () => {
     expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE ratings'),
       expect.objectContaining({ delta: 1 }),
+      expect.anything()
+    );
+    expect(profileActivityLogsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile_id: 'bot-profile',
+        target_id: 'profile-1',
+        type: ProfileActivityLogType.RATING_EDIT,
+        contents: JSON.stringify({
+          old_rating: -1,
+          new_rating: 0,
+          rating_matter: 'REP',
+          rating_category: 'Help6529 Credits',
+          change_reason: 'HELP_BOT_QUESTION_REFUND'
+        })
+      }),
       expect.anything()
     );
   });
