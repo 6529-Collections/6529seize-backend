@@ -1,0 +1,75 @@
+service: dropMediaSanitizer
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 2048
+  timeout: 900
+  architecture: x86_64
+  logRetentionInDays: 60
+
+functions:
+  dropMediaSanitizer:
+    handler: index.handler
+    name: dropMediaSanitizer
+    description: ${env:VERSION_DESCRIPTION, ''}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 2
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [DropMediaSanitizerQueue, Arn]
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN, ''}
+      SENTRY_ENVIRONMENT: 'dropMediaSanitizer_${opt:stage, self:provider.stage}'
+      DROP_MEDIA_INGEST_S3_BUCKET: !Sub '6529-drop-media-ingest-${AWS::AccountId}'
+      DROP_MEDIA_INGEST_S3_REGION: eu-west-1
+
+resources:
+  Resources:
+    DropMediaSanitizerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/dropMediaSanitizer
+        RetentionInDays: 60
+
+    DropMediaSanitizerQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: drop-media-sanitizer
+        VisibilityTimeout: 930
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [DropMediaSanitizerDLQ, Arn]
+          maxReceiveCount: 5
+
+    DropMediaSanitizerDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: drop-media-sanitizer-dlq
+
+    DropMediaSanitizerQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: DropMediaSanitizerQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt DropMediaSanitizerQueue.Arn

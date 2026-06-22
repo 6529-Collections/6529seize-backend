@@ -17,6 +17,7 @@ import {
   DROPS_TABLE
 } from '@/constants';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 
 export enum DropType {
   CHAT = 'CHAT',
@@ -178,6 +179,11 @@ export class DropMediaEntity {
   readonly url!: string;
   @Column({ type: 'varchar', length: 100 })
   readonly mime_type!: string;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly media_upload_id!: string | null;
+  readonly media_status?: DropMediaUploadStatus | null;
+  readonly media_error?: string | null;
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;

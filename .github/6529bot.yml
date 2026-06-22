@@ -2,8 +2,8 @@ version: 1
 enabled: true
 
 reviewKinds:
-  allowed: [general, followup, wcag, i18n, security]
-  initial: [general, security]
+  allowed: [general, followup, wcag, i18n, security, deploy-actions, auth-api, db-lambda, media-external, glm-swarm]
+  initial: [deploy-actions, auth-api, db-lambda, media-external]
   followup: [followup]
 
 commands:
