@@ -30,6 +30,7 @@ import {
   apiWaveOverviewMapper as defaultApiWaveOverviewMapper,
   ApiWaveOverviewMapper
 } from '@/api/waves/api-wave-overview.mapper';
+import { invalidateWaveUnreadCacheForReaderWave } from '@/api/waves/wave-unread-cache';
 import {
   userGroupsService,
   UserGroupsService
@@ -146,6 +147,10 @@ export class NotificationsApiService {
       identityId,
       ctx
     );
+    await invalidateWaveUnreadCacheForReaderWave({
+      identityId,
+      waveId
+    });
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
   }
 

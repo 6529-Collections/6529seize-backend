@@ -95,6 +95,10 @@ import { equalIgnoreCase } from './strings';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
 import { recalculateXTdhUseCase } from './xtdh/recalculate-xtdh.use-case';
+import {
+  invalidateWaveUnreadCache,
+  type WaveUnreadCacheInvalidations
+} from '@/api/waves/wave-unread-cache';
 
 const mysql = require('mysql');
 
@@ -990,6 +994,10 @@ export async function persistConsolidatedTDH(
   wallets?: string[]
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
+  let unreadCacheInvalidations: WaveUnreadCacheInvalidations = {
+    waveIds: [],
+    readerWaves: []
+  };
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -1044,15 +1052,17 @@ export async function persistConsolidatedTDH(
     }
 
     await updateBoostedTdhRates(qrHolder);
-    await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
-      qrHolder
-    );
+    unreadCacheInvalidations =
+      await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
+        qrHolder
+      );
     await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
 
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
   });
 
+  await invalidateWaveUnreadCache(unreadCacheInvalidations);
   await recalculateXTdhUseCase.activateLoop({});
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
