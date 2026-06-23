@@ -23,6 +23,20 @@ export interface WaveUnreadCacheInvalidations {
   readonly readerWaves: WaveUnreadReaderWave[];
 }
 
+export function distinctWaveUnreadReaderWaves(
+  readerWaves: WaveUnreadReaderWave[]
+): WaveUnreadReaderWave[] {
+  const seen = new Set<string>();
+  return readerWaves.filter(({ identityId, waveId }) => {
+    const key = `${identityId}:${waveId}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
 const logger = Logger.get('WAVE_UNREAD_CACHE');
 const CACHE_TTL = Time.seconds(30);
 const CACHE_KEY_PREFIX = 'cache_6529_wave_unread_summary_v1';
@@ -221,17 +235,10 @@ export async function invalidateWaveUnreadCacheForReaderWave({
 export async function invalidateWaveUnreadCacheForReaderWaves(
   readerWaves: WaveUnreadReaderWave[]
 ): Promise<void> {
-  const seen = new Set<string>();
-  const uniqueReaderWaves = readerWaves.filter(({ identityId, waveId }) => {
-    const key = `${identityId}:${waveId}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
   await Promise.allSettled(
-    uniqueReaderWaves.map(invalidateWaveUnreadCacheForReaderWave)
+    distinctWaveUnreadReaderWaves(readerWaves).map(
+      invalidateWaveUnreadCacheForReaderWave
+    )
   );
 }
 

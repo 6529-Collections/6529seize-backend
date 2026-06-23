@@ -34,9 +34,10 @@ import {
   WaveSubmissionType
 } from '@/entities/IWave';
 import { wavesApiDb } from '@/api-serverless/src/waves/waves.api.db';
-import type {
-  WaveUnreadCacheInvalidations,
-  WaveUnreadReaderWave
+import {
+  distinctWaveUnreadReaderWaves,
+  type WaveUnreadCacheInvalidations,
+  type WaveUnreadReaderWave
 } from '@/api/waves/wave-unread-cache';
 
 const logger = Logger.get('IDENTITIES');
@@ -59,20 +60,6 @@ type IdentitySubmissionCleanupWave = Pick<WaveEntity, 'id'> & {
   readonly identity_submission_strategy: WaveIdentitySubmissionStrategy;
   readonly identity_submission_duplicates: WaveIdentitySubmissionDuplicates;
 };
-
-function distinctReaderWaves(
-  readerWaves: WaveUnreadReaderWave[]
-): WaveUnreadReaderWave[] {
-  const seen = new Set<string>();
-  return readerWaves.filter(({ identityId, waveId }) => {
-    const key = `${identityId}:${waveId}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
 
 export type ProfileRetentionCandidate = {
   consolidationKey: string;
@@ -939,7 +926,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       { identityIds },
       { wrappedConnection: connection }
     );
-    return distinctReaderWaves(
+    return distinctWaveUnreadReaderWaves(
       rows.map((row) => ({
         identityId: row.reader_id,
         waveId: row.wave_id
@@ -1221,7 +1208,9 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     logger.info(`Syncing identities with tdh_consolidations done!`);
     return {
       waveIds: collections.distinct(affectedWaveIdsForUnreadCache),
-      readerWaves: distinctReaderWaves(affectedReaderWavesForUnreadCache)
+      readerWaves: distinctWaveUnreadReaderWaves(
+        affectedReaderWavesForUnreadCache
+      )
     };
   }
 
