@@ -47,9 +47,10 @@ const ACKNOWLEDGEMENTS = new Set([
   'got it',
   'great',
   'cool',
-  'nice',
-  'gm'
+  'nice'
 ]);
+
+const SHORT_SOCIAL_QUERIES = new Set(['gm', 'gn', 'hi', 'yo']);
 
 function normalizeHandle(handle: string | null | undefined): string {
   return handle?.replace(/^@/, '').trim().toLowerCase() ?? '';
@@ -108,7 +109,10 @@ function isMeaningfulQuestion(text: string): boolean {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
-  return normalized.length > 2 && !ACKNOWLEDGEMENTS.has(normalized);
+  return (
+    (normalized.length > 2 || SHORT_SOCIAL_QUERIES.has(normalized)) &&
+    !ACKNOWLEDGEMENTS.has(normalized)
+  );
 }
 
 function isContextDependentQuestion(text: string): boolean {

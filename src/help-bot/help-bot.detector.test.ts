@@ -128,6 +128,25 @@ describe('detectHelpBotTrigger', () => {
     expect(trigger?.question).toBe('How do subscriptions work?');
   });
 
+  it('detects short social mentions like gm', () => {
+    const trigger = detectHelpBotTrigger({
+      request: createRequest('@help6529 gm'),
+      createdDrop: createDrop({ id: 'drop-gm' }),
+      authorProfileId: 'user-profile',
+      botProfileId: 'bot-profile'
+    });
+
+    expect(trigger).toEqual({
+      triggerDropId: 'drop-gm',
+      targetDropId: 'drop-gm',
+      waveId: 'wave-1',
+      authorProfileId: 'user-profile',
+      question: 'gm',
+      triggerType: HelpBotInteractionTriggerType.MENTION,
+      parentBotDropId: null
+    });
+  });
+
   it('detects persisted mentions on the created drop', () => {
     const trigger = detectHelpBotTrigger({
       request: createRequest('How do subscriptions work?'),
