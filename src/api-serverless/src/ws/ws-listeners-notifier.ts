@@ -28,6 +28,49 @@ import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 
+const HELP_BOT_DEBUG_HANDLE = 'help6529';
+const HELP_BOT_INTERACTION_METADATA_KEY = 'help_bot_interaction_id';
+
+function normalizeHandle(handle: string | null | undefined): string {
+  return (handle ?? '').trim().toLowerCase();
+}
+
+function isHelpBotRelevantDrop(drop: ApiDrop): boolean {
+  const authorHandle = normalizeHandle(drop.author?.handle);
+  if (authorHandle === HELP_BOT_DEBUG_HANDLE) {
+    return true;
+  }
+
+  const hasHelpBotInteractionMetadata = (drop.metadata ?? []).some(
+    (metadata) => metadata.data_key === HELP_BOT_INTERACTION_METADATA_KEY
+  );
+  if (hasHelpBotInteractionMetadata) {
+    return true;
+  }
+
+  const mentionsHelpBot = (drop.mentioned_users ?? []).some(
+    (user) =>
+      normalizeHandle(user.handle_in_content) === HELP_BOT_DEBUG_HANDLE ||
+      normalizeHandle(user.current_handle) === HELP_BOT_DEBUG_HANDLE
+  );
+  if (mentionsHelpBot) {
+    return true;
+  }
+
+  return (drop.reactions ?? []).some((reaction) =>
+    (reaction.profiles ?? []).some(
+      (profile) => normalizeHandle(profile.handle) === HELP_BOT_DEBUG_HANDLE
+    )
+  );
+}
+
+function getPromiseRejectionReason(result: PromiseRejectedResult): string {
+  if (result.reason instanceof Error) {
+    return result.reason.message;
+  }
+  return JSON.stringify(result.reason);
+}
+
 export class WsListenersNotifier {
   private readonly logger: Logger = Logger.get(this.constructor.name);
 
@@ -66,22 +109,55 @@ export class WsListenersNotifier {
         onlineProfiles,
         inputDrop
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              dropUpdateMessage(
-                this.removeDropsAuthRequestContext(
-                  inputDrop,
-                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-                ),
-                reason
-              )
+      const shouldLogHelpBotDebug = isHelpBotRelevantDrop(inputDrop);
+      if (shouldLogHelpBotDebug) {
+        // TODO: remove after debugging helpbot reply websocket delivery.
+        this.logger.info('Help bot DROP_UPDATE websocket audience resolved', {
+          dropId: inputDrop.id,
+          serialNo: inputDrop.serial_no,
+          waveId: inputDrop.wave.id,
+          visibilityGroupId: inputDrop.wave.visibility_group_id,
+          reason,
+          useSystemBroadcastAudience,
+          connectionCount: onlineProfiles.length,
+          profiledConnectionCount: onlineProfiles.filter(
+            ({ profileId }) => profileId !== null
+          ).length
+        });
+      }
+
+      const sendTasks = onlineProfiles.map(({ connectionId, profileId }) =>
+        this.appWebSockets.send({
+          connectionId,
+          message: JSON.stringify(
+            dropUpdateMessage(
+              this.removeDropsAuthRequestContext(
+                inputDrop,
+                profileId === null ? 0 : (creditLefts[profileId] ?? 0)
+              ),
+              reason
             )
-          })
-        )
+          )
+        })
       );
+      if (shouldLogHelpBotDebug) {
+        const results = await Promise.allSettled(sendTasks);
+        const failures = results.filter(
+          (result): result is PromiseRejectedResult =>
+            result.status === 'rejected'
+        );
+        // TODO: remove after debugging helpbot reply websocket delivery.
+        this.logger.info('Help bot DROP_UPDATE websocket sends settled', {
+          dropId: inputDrop.id,
+          serialNo: inputDrop.serial_no,
+          waveId: inputDrop.wave.id,
+          successCount: results.length - failures.length,
+          failureCount: failures.length,
+          failureReasons: failures.slice(0, 3).map(getPromiseRejectionReason)
+        });
+      } else {
+        await Promise.all(sendTasks);
+      }
     } catch (e) {
       this.logger.error(
         `Sending data to websockets failed. Params: ${JSON.stringify(
@@ -155,21 +231,58 @@ export class WsListenersNotifier {
         onlineProfiles,
         drop
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              dropReactionUpdateMessage(
-                this.removeDropsAuthRequestContext(
-                  drop,
-                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-                )
+      const shouldLogHelpBotDebug = isHelpBotRelevantDrop(drop);
+      if (shouldLogHelpBotDebug) {
+        // TODO: remove after debugging helpbot reply websocket delivery.
+        this.logger.info(
+          'Help bot DROP_REACTION_UPDATE websocket audience resolved',
+          {
+            dropId: drop.id,
+            serialNo: drop.serial_no,
+            waveId: drop.wave.id,
+            visibilityGroupId: drop.wave.visibility_group_id,
+            connectionCount: onlineProfiles.length,
+            profiledConnectionCount: onlineProfiles.filter(
+              ({ profileId }) => profileId !== null
+            ).length
+          }
+        );
+      }
+
+      const sendTasks = onlineProfiles.map(({ connectionId, profileId }) =>
+        this.appWebSockets.send({
+          connectionId,
+          message: JSON.stringify(
+            dropReactionUpdateMessage(
+              this.removeDropsAuthRequestContext(
+                drop,
+                profileId === null ? 0 : (creditLefts[profileId] ?? 0)
               )
             )
-          })
-        )
+          )
+        })
       );
+      if (shouldLogHelpBotDebug) {
+        const results = await Promise.allSettled(sendTasks);
+        const failures = results.filter(
+          (result): result is PromiseRejectedResult =>
+            result.status === 'rejected'
+        );
+        // TODO: remove after debugging helpbot reply websocket delivery.
+        this.logger.info(
+          'Help bot DROP_REACTION_UPDATE websocket sends settled',
+          {
+            dropId: drop.id,
+            serialNo: drop.serial_no,
+            waveId: drop.wave.id,
+            successCount: results.length - failures.length,
+            failureCount: failures.length,
+            failureReasons: failures.slice(0, 3).map(getPromiseRejectionReason)
+          }
+        );
+      } else {
+        await Promise.all(sendTasks);
+      }
     } catch (e) {
       this.logger.error(
         `Sending data to websockets failed. Params: ${JSON.stringify(
