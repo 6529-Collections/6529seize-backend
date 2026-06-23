@@ -34,6 +34,15 @@ const author = anIdentity(
     handle: 'wave-author'
   }
 );
+const unreadReader = anIdentity(
+  {},
+  {
+    consolidation_key: 'identity-unread-reader',
+    profile_id: 'profile-unread-reader',
+    primary_address: 'wallet-unread-reader',
+    handle: 'unread-reader'
+  }
+);
 
 const publicWave = aWave(
   {
@@ -887,6 +896,153 @@ describeWithSeed(
       ).resolves.toEqual([
         expect.objectContaining({ id: publicSubwaveOfHiddenParent.id })
       ]);
+    });
+  }
+);
+
+const unreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-unread-summary', serial_no: 30, name: 'Unread Summary Wave' }
+);
+const noUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-no-unread-summary',
+    serial_no: 31,
+    name: 'No Unread Summary Wave'
+  }
+);
+const mutedUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-muted-unread-summary',
+    serial_no: 32,
+    name: 'Muted Unread Summary Wave'
+  }
+);
+
+describeWithSeed(
+  'WavesApiDb unread summaries',
+  [
+    withIdentities([author, unreadReader]),
+    withWaves([unreadSummaryWave, noUnreadSummaryWave, mutedUnreadSummaryWave]),
+    {
+      table: WAVE_READER_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: unreadSummaryWave.id,
+          reader_id: unreadReader.profile_id!,
+          latest_read_timestamp: 1000,
+          muted: false
+        },
+        {
+          wave_id: mutedUnreadSummaryWave.id,
+          reader_id: unreadReader.profile_id!,
+          latest_read_timestamp: 1000,
+          muted: true
+        }
+      ]
+    },
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          serial_no: 21,
+          id: 'read-drop-before-timestamp',
+          wave_id: unreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 900,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 22,
+          id: 'first-unread-summary-drop',
+          wave_id: unreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1100,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 23,
+          id: 'second-unread-summary-drop',
+          wave_id: unreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1200,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 24,
+          id: 'muted-unread-summary-drop',
+          wave_id: mutedUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1200,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        }
+      ]
+    }
+  ],
+  () => {
+    it('returns unread counts and first unread serials from one summary read', async () => {
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [
+              unreadSummaryWave.id,
+              noUnreadSummaryWave.id,
+              mutedUnreadSummaryWave.id
+            ]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [unreadSummaryWave.id]: {
+          unread_drops_count: 2,
+          first_unread_drop_serial_no: 22
+        },
+        [noUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        },
+        [mutedUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        }
+      });
     });
   }
 );
