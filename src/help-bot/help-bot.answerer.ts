@@ -363,7 +363,7 @@ function containsExactKnowledgeTerm(
     if (!term) {
       return false;
     }
-    return new RegExp(`(^|\\s)${escapeRegExp(term)}(\\s|$)`).test(
+    return new RegExp(String.raw`(^|\s)${escapeRegExp(term)}(\s|$)`).test(
       normalizedText
     );
   });
