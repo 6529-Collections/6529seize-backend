@@ -12,7 +12,8 @@ import { Logger } from './logging';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
-  RATINGS_TABLE
+  RATINGS_TABLE,
+  WAVE_READER_METRICS_TABLE
 } from '@/constants';
 import { randomUUID } from 'node:crypto';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
@@ -33,6 +34,10 @@ import {
   WaveSubmissionType
 } from '@/entities/IWave';
 import { wavesApiDb } from '@/api-serverless/src/waves/waves.api.db';
+import type {
+  WaveUnreadCacheInvalidations,
+  WaveUnreadReaderWave
+} from '@/api/waves/wave-unread-cache';
 
 const logger = Logger.get('IDENTITIES');
 
@@ -54,6 +59,20 @@ type IdentitySubmissionCleanupWave = Pick<WaveEntity, 'id'> & {
   readonly identity_submission_strategy: WaveIdentitySubmissionStrategy;
   readonly identity_submission_duplicates: WaveIdentitySubmissionDuplicates;
 };
+
+function distinctReaderWaves(
+  readerWaves: WaveUnreadReaderWave[]
+): WaveUnreadReaderWave[] {
+  const seen = new Set<string>();
+  return readerWaves.filter(({ identityId, waveId }) => {
+    const key = `${identityId}:${waveId}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
 
 export type ProfileRetentionCandidate = {
   consolidationKey: string;
@@ -895,11 +914,45 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     return `kept drop ${keptNomination.drop_id} because it won the deterministic drop_id tie-break (${keptNomination.drop_id} < ${deletedNomination.drop_id})`;
   }
 
+  private async findWaveUnreadReaderWavesForMergeTargets(
+    identitiesToMerge: IdentityMergeTarget[],
+    connection: ConnectionWrapper<any>
+  ): Promise<WaveUnreadReaderWave[]> {
+    const identityIds = collections.distinct(
+      identitiesToMerge
+        .flatMap((mergeTarget) => [
+          mergeTarget.targetIdentity.profile_id,
+          ...mergeTarget.sourceIdentities.map((identity) => identity.profile_id)
+        ])
+        .filter((profileId): profileId is string => !!profileId)
+    );
+    if (!identityIds.length) {
+      return [];
+    }
+    const rows = await this.db.execute<{
+      readonly reader_id: string;
+      readonly wave_id: string;
+    }>(
+      `select reader_id, wave_id
+       from ${WAVE_READER_METRICS_TABLE}
+       where reader_id in (:identityIds)`,
+      { identityIds },
+      { wrappedConnection: connection }
+    );
+    return distinctReaderWaves(
+      rows.map((row) => ({
+        identityId: row.reader_id,
+        waveId: row.wave_id
+      }))
+    );
+  }
+
   public async syncIdentitiesWithTdhConsolidations(
     connection: ConnectionWrapper<any>
-  ): Promise<string[]> {
+  ): Promise<WaveUnreadCacheInvalidations> {
     logger.info(`Syncing identities with tdh_consolidations`);
     const affectedWaveIdsForUnreadCache: string[] = [];
+    const affectedReaderWavesForUnreadCache: WaveUnreadReaderWave[] = [];
     const newConsolidations =
       await this.getUnsynchronisedConsolidationKeysWithTdhs(connection);
 
@@ -1059,6 +1112,12 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         });
       }
       await this.applyExplicitProfileRetention(identitiesToMerge);
+      affectedReaderWavesForUnreadCache.push(
+        ...(await this.findWaveUnreadReaderWavesForMergeTargets(
+          identitiesToMerge,
+          connection
+        ))
+      );
       const allOldWallets = collections.distinct(
         Object.values(oldDataByWallets)
           .map((it) => it.identity.consolidation_key.split('-'))
@@ -1160,7 +1219,10 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       );
     }
     logger.info(`Syncing identities with tdh_consolidations done!`);
-    return collections.distinct(affectedWaveIdsForUnreadCache);
+    return {
+      waveIds: collections.distinct(affectedWaveIdsForUnreadCache),
+      readerWaves: distinctReaderWaves(affectedReaderWavesForUnreadCache)
+    };
   }
 
   public async syncIdentitiesMetrics(connection: ConnectionWrapper<any>) {

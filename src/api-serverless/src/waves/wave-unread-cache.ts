@@ -13,6 +13,16 @@ export interface WaveUnreadSummaryCacheReadResult {
   readonly cacheKeysByWaveId: Record<string, string>;
 }
 
+export interface WaveUnreadReaderWave {
+  readonly identityId: string;
+  readonly waveId: string;
+}
+
+export interface WaveUnreadCacheInvalidations {
+  readonly waveIds: string[];
+  readonly readerWaves: WaveUnreadReaderWave[];
+}
+
 const logger = Logger.get('WAVE_UNREAD_CACHE');
 const CACHE_TTL = Time.seconds(30);
 const CACHE_KEY_PREFIX = 'cache_6529_wave_unread_summary_v1';
@@ -181,7 +191,9 @@ export async function invalidateWaveUnreadCacheForWave(
 export async function invalidateWaveUnreadCacheForWaves(
   waveIds: string[]
 ): Promise<void> {
-  await Promise.all(distinct(waveIds).map(invalidateWaveUnreadCacheForWave));
+  await Promise.allSettled(
+    distinct(waveIds).map(invalidateWaveUnreadCacheForWave)
+  );
 }
 
 export async function invalidateWaveUnreadCacheForReaderWave({
@@ -204,4 +216,31 @@ export async function invalidateWaveUnreadCacheForReaderWave({
       error
     });
   }
+}
+
+export async function invalidateWaveUnreadCacheForReaderWaves(
+  readerWaves: WaveUnreadReaderWave[]
+): Promise<void> {
+  const seen = new Set<string>();
+  const uniqueReaderWaves = readerWaves.filter(({ identityId, waveId }) => {
+    const key = `${identityId}:${waveId}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+  await Promise.allSettled(
+    uniqueReaderWaves.map(invalidateWaveUnreadCacheForReaderWave)
+  );
+}
+
+export async function invalidateWaveUnreadCache({
+  waveIds,
+  readerWaves
+}: WaveUnreadCacheInvalidations): Promise<void> {
+  await Promise.all([
+    invalidateWaveUnreadCacheForWaves(waveIds),
+    invalidateWaveUnreadCacheForReaderWaves(readerWaves)
+  ]);
 }
