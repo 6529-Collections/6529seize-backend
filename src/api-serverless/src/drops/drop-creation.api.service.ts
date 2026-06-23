@@ -40,6 +40,7 @@ import {
   DropPollsApiService
 } from '@/api/drops/drop-polls.api.service';
 import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
+import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -101,6 +102,7 @@ export class DropCreationApiService {
           );
         }
       );
+    await invalidateWaveUnreadCacheForWave(model.wave_id);
     void this.sendPendingPushNotifications({
       dropId: drop.id,
       pendingPushNotificationIds
@@ -188,6 +190,7 @@ export class DropCreationApiService {
       }
     );
     if (deleteResponse) {
+      await invalidateWaveUnreadCacheForWave(deleteResponse.wave_id);
       await this.wsListenersNotifier.notifyAboutDropDelete(
         {
           drop_id: deleteResponse.id,
@@ -313,6 +316,7 @@ export class DropCreationApiService {
           };
         }
       );
+    await invalidateWaveUnreadCacheForWave(model.wave_id);
     void this.sendPendingPushNotifications({
       dropId: apiDrop.id,
       pendingPushNotificationIds
