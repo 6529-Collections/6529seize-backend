@@ -3,9 +3,9 @@
 Revision: June 2026
 
 This is the deploy runbook for wallet auth session v2. The rollout keeps v1
-refresh available during a grace period so existing users are not logged out,
-but new v2 sessions are created only by a v2 structured signature or by
-connection sharing from an already-v2 session.
+refresh available until the backend migration deadline so existing users are not
+logged out by deploy alone, but new v2 sessions are created only by a v2
+structured signature or by connection sharing from an already-v2 session.
 
 ## Target Shape
 
@@ -21,9 +21,9 @@ connection sharing from an already-v2 session.
 - Native session v2 uses the native refresh token in secure storage.
 - External API clients are not blocked by browser CORS allowlists. Browser
   credentialed CORS remains narrow only on cookie-backed web auth routes.
-- Legacy refresh remains a temporary grace-period bridge. It preserves the role
-  bound to the legacy refresh token instead of trusting a new client-supplied
-  role.
+- Legacy refresh remains a temporary bridge until the configured migration
+  deadline and final shutdown. It preserves the role bound to the legacy refresh
+  token instead of trusting a new client-supplied role.
 - 6529 Desktop remains on legacy auth during this rollout. Desktop connection
   sharing uses the legacy refresh-token handoff until a separate desktop v2 auth
   release is available.
@@ -90,11 +90,11 @@ Backend env for this phase:
 - `AUTH_CONNECTION_SHARING_DISABLED`: unset or `false`; connection sharing is
   enabled by default.
 - `AUTH_LEGACY_REFRESH_DISABLED`: unset or `false`; legacy refresh must remain
-  available during the grace period.
+  available during the migration-deadline rollout window.
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: unset or `false`; legacy signatures
   must remain accepted until clients are verified.
-- `SESSION_V2_MIGRATION_DEADLINE`: unset; this keeps FE migration prompts
-  silent.
+- `SESSION_V2_MIGRATION_DEADLINE`: unset; this keeps FE migration prompts and
+  cutoff behavior silent.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: unset or `true` until websocket clients
   have moved off query-token auth.
 
@@ -173,7 +173,7 @@ After backend and frontend are both deployed and basic v2 auth is verified, set:
 This is a backend API env change only. It updates `/api/settings.auth` so the FE
 can prompt and later enforce v2 migration without another FE release.
 
-Use a future timestamp that leaves enough grace for:
+Use a future timestamp that leaves enough time for:
 
 - active web users to sign a v2 auth message;
 - native users to establish native v2 sessions;
@@ -193,9 +193,10 @@ is set.
 
 ## Phase 5: Legacy Refresh Shutdown
 
-After the grace period, support monitoring, native client availability, and
-external-client communication are complete, and after 6529 Desktop has shipped
-session-v2 auth or no longer needs legacy connection sharing, set:
+After the migration deadline has passed, support monitoring, native client
+availability, and external-client communication are complete, and after 6529
+Desktop has shipped session-v2 auth or no longer needs legacy connection
+sharing, set:
 
 - `AUTH_LEGACY_REFRESH_DISABLED=true`.
 
