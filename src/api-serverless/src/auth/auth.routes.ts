@@ -873,13 +873,13 @@ const CreateConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateConnectionSh
   Joi.object<ApiCreateConnectionShareRequest>({
     target_client_type: Joi.string().valid('native').required(),
     role: Joi.string().optional().allow(null)
-  });
+  }).unknown(false);
 
 const RedeemConnectionShareRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionShareRequest> =
   Joi.object<ApiRedeemConnectionShareRequest>({
     connection_share_code: Joi.string().hex().length(64).required(),
     target_client_type: Joi.string().valid('native').required()
-  });
+  }).unknown(false);
 
 interface ApiLoginResponse {
   readonly token: string;
