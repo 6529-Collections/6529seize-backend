@@ -216,12 +216,66 @@ function isSocialCheckIn(normalizedQuestion: string): boolean {
   const withoutBotHandle = normalizedQuestion
     .replace(/^@?help6529\s+/, '')
     .trim();
-  return [
-    /^(how are you|how are you doing|how are you feeling)( today)?$/,
-    /^(how s it going|hows it going|how is it going)$/,
-    /^(gm|gn|hi|hey|hello)( help6529)?$/,
-    /^(thanks|thank you|ty)( help6529)?$/
-  ].some((pattern) => pattern.test(withoutBotHandle));
+  if (
+    !withoutBotHandle ||
+    withoutBotHandle.length > 80 ||
+    isLikelyProductText(withoutBotHandle)
+  ) {
+    return false;
+  }
+
+  const tokens = withoutBotHandle.split(/\s+/);
+  const tokenSet = new Set(tokens);
+
+  if (
+    tokens.length <= 3 &&
+    ['gm', 'gn', 'hi', 'hey', 'hello', 'yo', 'howdy', 'sup', 'wassup'].some(
+      (term) => tokenSet.has(term)
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    tokens.length <= 4 &&
+    (withoutBotHandle === 'thanks' ||
+      withoutBotHandle === 'thank you' ||
+      withoutBotHandle === 'ty')
+  ) {
+    return true;
+  }
+
+  if (
+    tokens.length <= 7 &&
+    tokenSet.has('you') &&
+    (tokenSet.has('how') || tokenSet.has('hows')) &&
+    ['are', 'doing', 'feeling', 'going'].some((term) => tokenSet.has(term))
+  ) {
+    return true;
+  }
+
+  if (
+    tokens.length <= 5 &&
+    (withoutBotHandle.startsWith('what s ') ||
+      withoutBotHandle.startsWith('whats ') ||
+      withoutBotHandle.startsWith('what is ')) &&
+    ['up', 'good', 'new', 'happening'].some((term) => tokenSet.has(term))
+  ) {
+    return true;
+  }
+
+  return (
+    tokens.length <= 6 &&
+    [
+      'how s it going',
+      'hows it going',
+      'how is it going',
+      'what are you up to',
+      'what you up to',
+      'you good',
+      'wyd'
+    ].includes(withoutBotHandle)
+  );
 }
 
 function isInformationalHelpQuestion(normalizedQuestion: string): boolean {
