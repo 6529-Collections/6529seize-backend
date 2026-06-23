@@ -30,6 +30,7 @@ import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { wavesApiDb } from '../waves/waves.api.db';
+import { invalidateWaveUnreadCacheForReaderWave } from '../waves/wave-unread-cache';
 import { dropCheeringService } from './drop-cheering.service';
 import { dropCreationService } from './drop-creation.api.service';
 import { dropSignatureVerifier } from './drop-signature-verifier';
@@ -647,20 +648,21 @@ router.post(
       newTimestamp,
       { timer }
     );
+    await invalidateWaveUnreadCacheForReaderWave({
+      identityId,
+      waveId
+    });
     const ctx = { timer };
-    const [unreadCounts, firstUnreadSerials] = await Promise.all([
-      wavesApiDb.findIdentityUnreadDropsCountByWaveId(
+    const unreadSummaries =
+      await wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(
         { identityId, waveIds: [waveId] },
         ctx
-      ),
-      wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
-        { identityId, waveIds: [waveId] },
-        ctx
-      )
-    ]);
+      );
+    const unreadSummary = unreadSummaries[waveId];
     res.send({
-      your_unread_drops_count: unreadCounts[waveId] ?? 0,
-      first_unread_drop_serial_no: firstUnreadSerials[waveId] ?? null
+      your_unread_drops_count: unreadSummary?.unread_drops_count ?? 0,
+      first_unread_drop_serial_no:
+        unreadSummary?.first_unread_drop_serial_no ?? null
     });
   }
 );

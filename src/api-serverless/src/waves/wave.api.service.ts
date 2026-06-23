@@ -104,6 +104,10 @@ import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 import { dropPollsDb } from '@/api/drops/drop-polls.db';
 import { RateMatter } from '@/entities/IRating';
 import { ratingsDb } from '@/rates/ratings.db';
+import {
+  invalidateWaveUnreadCacheForReaderWave,
+  invalidateWaveUnreadCacheForWave
+} from '@/api/waves/wave-unread-cache';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -564,6 +568,7 @@ export class WaveApiService {
           };
         }
       );
+    await invalidateWaveUnreadCacheForWave(createdWave.id);
     await giveReadReplicaTimeToCatchUp();
     await clearWaveGroupsCache();
     await sendIdentityPushNotifications(pendingPushNotificationIds);
@@ -2148,6 +2153,7 @@ export class WaveApiService {
   }
 
   async muteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    let readerId: string | null = null;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
@@ -2159,6 +2165,7 @@ export class WaveApiService {
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
         }
+        readerId = actingAsId;
         await this.wavesApiDb.setWaveMuted(
           {
             waveId,
@@ -2175,9 +2182,16 @@ export class WaveApiService {
         }
       }
     );
+    if (readerId) {
+      await invalidateWaveUnreadCacheForReaderWave({
+        identityId: readerId,
+        waveId
+      });
+    }
   }
 
   async unmuteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    let readerId: string | null = null;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
@@ -2189,6 +2203,7 @@ export class WaveApiService {
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
         }
+        readerId = actingAsId;
         await this.wavesApiDb.setWaveMuted(
           {
             waveId,
@@ -2205,6 +2220,12 @@ export class WaveApiService {
         }
       }
     );
+    if (readerId) {
+      await invalidateWaveUnreadCacheForReaderWave({
+        identityId: readerId,
+        waveId
+      });
+    }
   }
 
   private async assertWaveExistsForAuthenticatedUser(

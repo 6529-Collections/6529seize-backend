@@ -47,6 +47,7 @@ import {
   mapWaveRepSummary,
   mapWaveScore
 } from '@/api/waves/wave-score.api-mapper';
+import { WaveUnreadSummary } from '@/api/waves/wave-unread-cache';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
 
 export function createUnknownWaveCreatorProfile({
@@ -145,8 +146,7 @@ export class ApiWaveOverviewMapper {
         subscribedActionsByWaveId,
         pinnedWaveIds,
         readerMetricsByWaveId,
-        unreadDropsCountByWaveId,
-        firstUnreadDropSerialNoByWaveId,
+        unreadSummariesByWaveId,
         chatDropCooldownsByWaveId,
         waveIdsWithVisibleSubwaves,
         followedSubwaveContextsByParentWaveId,
@@ -193,23 +193,14 @@ export class ApiWaveOverviewMapper {
             )
           : Promise.resolve({} as Record<string, WaveReaderMetricEntity>),
         contextProfileId
-          ? this.wavesApiDb.findIdentityUnreadDropsCountByWaveId(
+          ? this.wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(
               {
                 identityId: contextProfileId,
                 waveIds
               },
               ctx
             )
-          : Promise.resolve({} as Record<string, number>),
-        contextProfileId
-          ? this.wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
-              {
-                identityId: contextProfileId,
-                waveIds
-              },
-              ctx
-            )
-          : Promise.resolve({} as Record<string, number | null>),
+          : Promise.resolve({} as Record<string, WaveUnreadSummary>),
         contextProfileId
           ? this.wavesApiDb.findWaveChatDropCooldownsByWaveIds(
               {
@@ -254,9 +245,11 @@ export class ApiWaveOverviewMapper {
             subscribedActions: subscribedActionsByWaveId[wave.id] ?? [],
             pinnedWaveIds,
             readerMetric: readerMetricsByWaveId[wave.id],
-            unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0,
+            unreadDropsCount:
+              unreadSummariesByWaveId[wave.id]?.unread_drops_count ?? 0,
             firstUnreadDropSerialNo:
-              firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined,
+              unreadSummariesByWaveId[wave.id]?.first_unread_drop_serial_no ??
+              undefined,
             followedSubwaveContext:
               followedSubwaveContextsByParentWaveId[wave.id],
             nextDropTimestamp:
