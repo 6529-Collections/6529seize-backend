@@ -24,6 +24,7 @@ New clients should use the session-v2 endpoints:
 Connection sharing is a separate optional flow:
 
 - `POST /api/auth/connection-share`
+- `POST /api/auth/connection-share/legacy-desktop`
 - `POST /api/auth/connection-share/redeem`
 
 ## Legacy Flow
@@ -119,9 +120,9 @@ stored session origin before revoking an existing session.
 
 ## Connection Sharing
 
-Connection sharing is not a replacement for refresh-token redemption. It creates an additional authenticated native session from an already authenticated session.
+Connection sharing is not a replacement for refresh-token redemption. It creates an additional authenticated session from an already authenticated session.
 
-The flow is:
+The session-v2 mobile/native flow is:
 
 1. An authenticated client calls `POST /api/auth/connection-share`.
 2. The server creates a short-lived one-time `connection_share_code`.
@@ -132,6 +133,20 @@ The flow is:
 The original client remains connected. This is connection sharing, not moving or revoking the original connection.
 
 Connection share state is stored in `wallet_connection_shares`. Share codes are stored only as server-side hashes and expire after a short TTL.
+
+The desktop compatibility flow intentionally remains on the legacy refresh-token
+handoff while 6529 Desktop is still a legacy client:
+
+1. A session-v2 web client calls `POST /api/auth/connection-share/legacy-desktop`.
+2. The server requires bearer JWT auth plus an active matching session-v2 web
+   cookie for the authenticated wallet and role.
+3. The server returns a legacy refresh token and an
+   `/accept-connection-sharing?token=...&address=...` deep-link path.
+4. 6529 Desktop redeems that token through `POST /api/auth/redeem-refresh-token`
+   and continues using the legacy refresh flow.
+
+This bridge does not add a new origin allowlist for Desktop. It is available
+only while both connection sharing and legacy refresh redemption are enabled.
 
 ## Configuration
 
@@ -149,8 +164,8 @@ The revised auth flow uses these relevant flags/config values:
 - `AUTH_WALLET_CHAIN_ID`: chain id accepted for structured login authentication. Defaults to Ethereum mainnet (`1`) when unset.
 - `AUTH_SESSION_HASH_SECRET`: secret used for hashing session cookies, native refresh tokens, connection share codes, and public user-agent values. Defaults to the JWT secret if unset.
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.
-- `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share` and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
-- `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the v2 migration grace period to make `/auth/redeem-refresh-token` return `410 Gone` without removing the endpoint.
+- `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share`, `/auth/connection-share/legacy-desktop`, and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
+- `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the v2 migration grace period to make `/auth/redeem-refresh-token` and the legacy desktop connection-sharing bridge unavailable without removing the endpoints.
 - `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 

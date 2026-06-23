@@ -24,6 +24,8 @@ import { ApiRedeemRefreshTokenRequest } from '../generated/models/ApiRedeemRefre
 import { ApiRedeemRefreshTokenResponse } from '../generated/models/ApiRedeemRefreshTokenResponse';
 import { ApiCreateConnectionShareRequest } from '../generated/models/ApiCreateConnectionShareRequest';
 import { ApiCreateConnectionShareResponse } from '../generated/models/ApiCreateConnectionShareResponse';
+import { ApiCreateLegacyDesktopConnectionShareRequest } from '../generated/models/ApiCreateLegacyDesktopConnectionShareRequest';
+import { ApiCreateLegacyDesktopConnectionShareResponse } from '../generated/models/ApiCreateLegacyDesktopConnectionShareResponse';
 import { ApiRedeemConnectionShareRequest } from '../generated/models/ApiRedeemConnectionShareRequest';
 import { ApiRedeemConnectionShareResponse } from '../generated/models/ApiRedeemConnectionShareResponse';
 import { ApiSessionLoginRequest } from '../generated/models/ApiSessionLoginRequest';
@@ -388,34 +390,58 @@ router.post(
       req.body,
       CreateConnectionShareRequestSchema
     );
-    const authenticatedWallet = getAuthenticatedWalletOrNull(req);
-    if (!authenticatedWallet) {
-      throw new UnauthorisedException('Authentication required');
-    }
-    const authRole = ((req.user as any)?.role ?? null) as string | null;
-    if (shareRequest.role && shareRequest.role !== authRole) {
-      throw new BadRequestException(
-        'Share role must match authenticated session role'
-      );
-    }
-    const hasActiveMatchingWebSession =
-      await hasActiveWebSessionForAddressAndRole({
-        cookieHeader: req.headers.cookie,
-        address: authenticatedWallet,
-        role: authRole,
-        requestOrigin: getNormalizedRequestOrigin(req)
-      });
-    if (!hasActiveMatchingWebSession) {
-      throw new UnauthorisedException(
-        'Connection sharing requires an active session-v2 web session'
-      );
-    }
+    const { authenticatedWallet, authRole } =
+      await getAuthenticatedConnectionShareContext(req, shareRequest.role);
     const created = await createConnectionShare({
       address: authenticatedWallet,
       role: authRole,
       targetClientType: shareRequest.target_client_type
     });
     res.status(201).send(created);
+  }
+);
+
+router.post(
+  '/connection-share/legacy-desktop',
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      any,
+      any,
+      ApiCreateLegacyDesktopConnectionShareRequest | undefined,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiCreateLegacyDesktopConnectionShareResponse>>
+  ) {
+    assertConnectionSharingEnabled();
+    assertLegacyRefreshEnabled();
+    const legacyShareRequest = getValidatedByJoiOrThrow(
+      req.body ?? {},
+      CreateLegacyDesktopConnectionShareRequestSchema
+    );
+    const { authenticatedWallet, authRole } =
+      await getAuthenticatedConnectionShareContext(
+        req,
+        legacyShareRequest.role
+      );
+    const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
+      authenticatedWallet,
+      authRole
+    );
+    const queryParams = new URLSearchParams({
+      token: refreshToken,
+      address: authenticatedWallet
+    });
+    if (authRole) {
+      queryParams.set('role', authRole);
+    }
+    res.status(201).send({
+      refresh_token: refreshToken,
+      address: authenticatedWallet,
+      role: authRole,
+      deep_link_path: `/accept-connection-sharing?${queryParams.toString()}`
+    });
   }
 );
 
@@ -799,6 +825,38 @@ function assertWebAuthCredentialOriginAllowed(
   }
 }
 
+async function getAuthenticatedConnectionShareContext(
+  req: Request<any, any, any, any, any>,
+  requestedRole: string | null | undefined
+): Promise<{
+  readonly authenticatedWallet: string;
+  readonly authRole: string | null;
+}> {
+  const authenticatedWallet = getAuthenticatedWalletOrNull(req)?.toLowerCase();
+  if (!authenticatedWallet) {
+    throw new UnauthorisedException('Authentication required');
+  }
+  const authRole = ((req.user as any)?.role ?? null) as string | null;
+  if (requestedRole && requestedRole !== authRole) {
+    throw new BadRequestException(
+      'Share role must match authenticated session role'
+    );
+  }
+  const hasActiveMatchingWebSession =
+    await hasActiveWebSessionForAddressAndRole({
+      cookieHeader: req.headers.cookie,
+      address: authenticatedWallet,
+      role: authRole,
+      requestOrigin: getNormalizedRequestOrigin(req)
+    });
+  if (!hasActiveMatchingWebSession) {
+    throw new UnauthorisedException(
+      'Connection sharing requires an active session-v2 web session'
+    );
+  }
+  return { authenticatedWallet, authRole };
+}
+
 const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
   Joi.object<ApiLoginRequest>({
     server_signature: Joi.string().required(),
@@ -873,6 +931,11 @@ const CreateConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateConnectionSh
   Joi.object<ApiCreateConnectionShareRequest>({
     target_client_type: Joi.string().valid('native').required(),
     role: Joi.string().optional().allow(null)
+  }).unknown(false);
+
+const CreateLegacyDesktopConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateLegacyDesktopConnectionShareRequest> =
+  Joi.object<ApiCreateLegacyDesktopConnectionShareRequest>({
+    role: Joi.string().optional().allow(null).default(null)
   }).unknown(false);
 
 const RedeemConnectionShareRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionShareRequest> =

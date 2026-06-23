@@ -24,6 +24,9 @@ connection sharing from an already-v2 session.
 - Legacy refresh remains a temporary grace-period bridge. It preserves the role
   bound to the legacy refresh token instead of trusting a new client-supplied
   role.
+- 6529 Desktop remains on legacy auth during this rollout. Desktop connection
+  sharing uses the legacy refresh-token handoff until a separate desktop v2 auth
+  release is available.
 
 ## Phase 0: Pre-Deploy Config
 
@@ -104,6 +107,9 @@ Backend checks after deploy:
 - `/api/settings` returns `auth.session_v2_migration_deadline=null`.
 - `POST /api/auth/redeem-refresh-token` still works for valid legacy refresh
   tokens.
+- `POST /api/auth/connection-share/legacy-desktop` works only from an
+  authenticated session-v2 web session and returns a legacy desktop
+  `/accept-connection-sharing?token=...&address=...` path.
 - V2 web auth routes return exact credentialed CORS for the real web origin and
   reject unrelated browser origins.
 - Multi-account web refresh/logout preserve account isolation: sign A and B into
@@ -117,7 +123,8 @@ Backend checks after deploy:
 
 Deploy the web frontend after the backend silent release. If the native app is
 packaged or released through a separate pipeline, publish the corresponding
-native client build before any cutoff phases.
+native client build before any cutoff phases. 6529 Desktop is not part of this
+phase and remains on the existing legacy auth build.
 
 Frontend env:
 
@@ -133,6 +140,9 @@ Frontend targets:
 - Staging web: `https://staging.6529.io` EC2/pm2 app.
 - Native app clients: iOS and Android builds that include session-v2 native
   refresh storage and connection-share redemption.
+- 6529 Desktop app: unchanged legacy build. It must continue to receive
+  connection-share links with `token`, `address`, and optional `role` query
+  parameters.
 
 Checks after deploy:
 
@@ -146,6 +156,9 @@ Checks after deploy:
 - Connection sharing create/redeem works from an active session-v2 web session.
   Legacy-authenticated web users should be prompted to update authentication
   before they can create a share.
+- Desktop connection sharing from a v2 web session creates a legacy desktop
+  link and the current Desktop app can accept it through legacy refresh-token
+  redemption.
 - A connection-share QR is an end-to-end test only when the receiver is a native
   client or native release candidate with the session-v2 accept flow. A staging
   web build without the frontend session-v2 changes is not a valid receiver
@@ -181,13 +194,15 @@ is set.
 ## Phase 5: Legacy Refresh Shutdown
 
 After the grace period, support monitoring, native client availability, and
-external-client communication are complete, set:
+external-client communication are complete, and after 6529 Desktop has shipped
+session-v2 auth or no longer needs legacy connection sharing, set:
 
 - `AUTH_LEGACY_REFRESH_DISABLED=true`.
 
 This makes `/auth/redeem-refresh-token` return a deliberate `410 Gone` response
-without removing the route. At this point v1 refresh clients must sign into v2
-or use a supported v2 flow.
+without removing the route. It also disables the legacy desktop connection-share
+bridge. At this point v1 refresh clients must sign into v2 or use a supported
+v2 flow.
 
 Remove the v1 refresh endpoint/code in a later cleanup only after traffic is
 zero and rollback is no longer needed.
@@ -207,7 +222,8 @@ zero and rollback is no longer needed.
 - `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: leave unset for the default short
   TTL, or set a positive integer such as `300`.
 - `AUTH_CONNECTION_SHARING_DISABLED=true`: emergency kill switch for
-  connection sharing only. Missing/false means connection sharing is enabled.
+  mobile/native connection sharing and the legacy desktop bridge. Missing/false
+  means connection sharing is enabled.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED=false`: final websocket query-token
   cleanup after web/mobile clients no longer require it.
 
@@ -224,6 +240,10 @@ signature or by a v2-authenticated connection-sharing flow.
 Connection-share URLs carry the one-time code and address only; the server
 stores and returns the role associated with the share.
 
+Desktop connection-share URLs are the temporary exception while Desktop remains
+legacy: they carry a legacy refresh `token`, `address`, and optional `role`, and
+are redeemed by the existing Desktop legacy auth flow.
+
 ## Rollback
 
 - If web v2 cookie refresh fails, unset `SESSION_V2_MIGRATION_DEADLINE` and keep
@@ -233,11 +253,13 @@ stores and returns the role associated with the share.
   required as long as `API_ENDPOINT` points at the intended API.
 - If connection sharing causes issues, set
   `AUTH_CONNECTION_SHARING_DISABLED=true`; normal v2 login/refresh remains
-  available.
+  available. This disables both mobile/native connection sharing and the legacy
+  desktop bridge.
 - If strict signatures are enabled too early, set
   `AUTH_STRUCTURED_SIGNATURES_REQUIRED=false`.
 - If legacy refresh is disabled too early, set
   `AUTH_LEGACY_REFRESH_DISABLED=false` or unset it to restore
-  `/auth/redeem-refresh-token` without a code deploy.
+  `/auth/redeem-refresh-token` and legacy desktop connection sharing without a
+  code deploy.
 - If v2 auth must be paused after FE deploy, v1 refresh remains available while
   strict mode is off and `AUTH_LEGACY_REFRESH_DISABLED` is not true.
