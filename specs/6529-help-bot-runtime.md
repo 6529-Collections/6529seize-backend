@@ -252,7 +252,7 @@ Future agents must treat the help bot corpus as part of the user-facing product
 surface. When a backend change adds or changes behavior that users may ask
 `@help6529` about, update the help bot materials in the same PR. The canonical
 runtime handle is `help6529` (`@help6529` in wave text), matching
-`HELP_BOT_HANDLE`; `6529help` / `@6529help` is not the V1 handle.
+`HELP_BOT_HANDLE`. Do not replace it with any alternate spelling.
 
 Backend-owned examples:
 

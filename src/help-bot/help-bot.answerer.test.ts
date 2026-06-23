@@ -295,6 +295,42 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('answers casual whats-up prompts as social check-ins', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockResolvedValue({
+        answer: 'public data should not run',
+        queryId: 'test'
+      })
+    };
+
+    const answer = await answerer(undefined, publicDataService).answer({
+      question: "@help6529 what's up",
+      baseUrl: BASE_URL
+    });
+
+    expect(publicDataService.answer).not.toHaveBeenCalled();
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.social');
+      expect(answer.escalateToTechTeam).toBeUndefined();
+      expect(answer.answer).toContain('Feeling useful');
+      expect(answer.answer).not.toContain('@');
+    }
+  });
+
+  it('keeps product whats-up prompts in the knowledge path', async () => {
+    const answer = await answerer().answer({
+      question: "@help6529 what's up with TDH?",
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('network.tdh');
+      expect(answer.answer).toContain('TDH stands for Total Days Held.');
+    }
+  });
+
   it('returns no reliable source with escalation for unindexed product questions', async () => {
     await expect(
       answerer().answer({
