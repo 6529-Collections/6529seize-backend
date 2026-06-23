@@ -40,6 +40,7 @@ import {
   DropPollsApiService
 } from '@/api/drops/drop-polls.api.service';
 import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
+import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -101,6 +102,7 @@ export class DropCreationApiService {
           );
         }
       );
+    await invalidateWaveUnreadCacheForWave(model.wave_id);
     void this.sendPendingPushNotifications({
       dropId: drop.id,
       pendingPushNotificationIds
@@ -188,6 +190,7 @@ export class DropCreationApiService {
       }
     );
     if (deleteResponse) {
+      await invalidateWaveUnreadCacheForWave(deleteResponse.wave_id);
       await this.wsListenersNotifier.notifyAboutDropDelete(
         {
           drop_id: deleteResponse.id,
@@ -202,7 +205,7 @@ export class DropCreationApiService {
   }
 
   async toggleHideLinkPreview(
-    { dropId }: { dropId: string },
+    { dropId, hideLinkPreview }: { dropId: string; hideLinkPreview?: boolean },
     ctx: RequestContext
   ): Promise<ApiDrop> {
     ctx.timer?.start('dropCreationApiService->toggleHideLinkPreview');
@@ -224,8 +227,8 @@ export class DropCreationApiService {
         `Only the author can toggle hide link preview`
       );
     }
-    const newValue = !drop.hide_link_preview;
-    await this.dropsDb.updateHideLinkPreview(
+    const newValue = hideLinkPreview ?? !drop.hide_link_preview;
+    const changed = await this.dropsDb.updateHideLinkPreview(
       { drop_id: dropId, hide_link_preview: newValue },
       ctx
     );
@@ -233,7 +236,9 @@ export class DropCreationApiService {
       { dropId, skipEligibilityCheck: true },
       ctx
     );
-    await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
+    if (changed) {
+      await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
+    }
     ctx.timer?.stop('dropCreationApiService->toggleHideLinkPreview');
     return apiDrop;
   }
@@ -311,6 +316,7 @@ export class DropCreationApiService {
           };
         }
       );
+    await invalidateWaveUnreadCacheForWave(model.wave_id);
     void this.sendPendingPushNotifications({
       dropId: apiDrop.id,
       pendingPushNotificationIds

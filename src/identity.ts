@@ -12,7 +12,8 @@ import { Logger } from './logging';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
-  RATINGS_TABLE
+  RATINGS_TABLE,
+  WAVE_READER_METRICS_TABLE
 } from '@/constants';
 import { randomUUID } from 'node:crypto';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
@@ -33,6 +34,11 @@ import {
   WaveSubmissionType
 } from '@/entities/IWave';
 import { wavesApiDb } from '@/api-serverless/src/waves/waves.api.db';
+import {
+  distinctWaveUnreadReaderWaves,
+  type WaveUnreadCacheInvalidations,
+  type WaveUnreadReaderWave
+} from '@/api/waves/wave-unread-cache';
 
 const logger = Logger.get('IDENTITIES');
 
@@ -377,7 +383,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       }
     }
 
-    await this.syncIdentityNominationsFromMergedProfiles(
+    return await this.syncIdentityNominationsFromMergedProfiles(
       identitiesToMerge,
       connection
     );
@@ -386,7 +392,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
   private async syncIdentityNominationsFromMergedProfiles(
     identitiesToMerge: IdentityMergeTarget[],
     connection: ConnectionWrapper<any>
-  ) {
+  ): Promise<string[]> {
+    const affectedWaveIdsForUnreadCache: string[] = [];
     for (const mergeTarget of identitiesToMerge) {
       const targetProfileId = mergeTarget.targetIdentity.profile_id;
       const consolidatedProfileIds = collections.distinct(
@@ -469,15 +476,18 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
             note: 'only non-winning participatory nominations in identity-submission waves are rewritten'
           });
         }
-        await this.cleanupConsolidatedIdentityNominations(
-          {
-            wave: wave as IdentitySubmissionCleanupWave,
-            consolidatedProfileIds
-          },
-          connection
+        affectedWaveIdsForUnreadCache.push(
+          ...(await this.cleanupConsolidatedIdentityNominations(
+            {
+              wave: wave as IdentitySubmissionCleanupWave,
+              consolidatedProfileIds
+            },
+            connection
+          ))
         );
       }
     }
+    return collections.distinct(affectedWaveIdsForUnreadCache);
   }
 
   private async cleanupConsolidatedIdentityNominations(
@@ -489,7 +499,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       consolidatedProfileIds: string[];
     },
     connection: ConnectionWrapper<any>
-  ) {
+  ): Promise<string[]> {
+    const affectedWaveIdsForUnreadCache: string[] = [];
     let nominations =
       await this.getIdentityNominationsForConsolidatedProfilesInWave(
         {
@@ -515,7 +526,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         identity_submission_strategy: wave.identity_submission_strategy,
         identity_submission_duplicates: wave.identity_submission_duplicates
       });
-      return;
+      return [];
     }
 
     if (
@@ -545,17 +556,19 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
             .map((it) => this.nominationLog(it))
         });
       }
-      await this.deleteIdentityNominations(
-        selfNominations,
-        {
-          waveId: wave.id,
-          consolidatedProfileIds,
-          reason:
-            'ONLY_OTHERS cleanup removed a participatory self-nomination created by consolidation',
-          duplicatesPolicy: wave.identity_submission_duplicates,
-          strategy: wave.identity_submission_strategy
-        },
-        connection
+      affectedWaveIdsForUnreadCache.push(
+        ...(await this.deleteIdentityNominations(
+          selfNominations,
+          {
+            waveId: wave.id,
+            consolidatedProfileIds,
+            reason:
+              'ONLY_OTHERS cleanup removed a participatory self-nomination created by consolidation',
+            duplicatesPolicy: wave.identity_submission_duplicates,
+            strategy: wave.identity_submission_strategy
+          },
+          connection
+        ))
       );
       const deletedDropIds = new Set(selfNominations.map((it) => it.drop_id));
       nominations = nominations.filter((it) => !deletedDropIds.has(it.drop_id));
@@ -576,7 +589,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
             'duplicates policy ALWAYS_ALLOW keeps all surviving nominations',
           nominations: nominations.map((it) => this.nominationLog(it))
         });
-        return;
+        return collections.distinct(affectedWaveIdsForUnreadCache);
       case WaveIdentitySubmissionDuplicates.ALLOW_AFTER_WIN:
         if (participatoryNominations.length < 2) {
           logger.info({
@@ -592,21 +605,23 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
               this.nominationLog(it)
             )
           });
-          return;
+          return collections.distinct(affectedWaveIdsForUnreadCache);
         }
-        await this.deleteIdentityNominationDuplicates(
-          participatoryNominations,
-          {
-            waveId: wave.id,
-            consolidatedProfileIds,
-            reason:
-              'duplicates policy ALLOW_AFTER_WIN keeps the highest-tally active participatory nomination while preserving winners',
-            duplicatesPolicy: wave.identity_submission_duplicates,
-            strategy: wave.identity_submission_strategy
-          },
-          connection
+        affectedWaveIdsForUnreadCache.push(
+          ...(await this.deleteIdentityNominationDuplicates(
+            participatoryNominations,
+            {
+              waveId: wave.id,
+              consolidatedProfileIds,
+              reason:
+                'duplicates policy ALLOW_AFTER_WIN keeps the highest-tally active participatory nomination while preserving winners',
+              duplicatesPolicy: wave.identity_submission_duplicates,
+              strategy: wave.identity_submission_strategy
+            },
+            connection
+          ))
         );
-        return;
+        return collections.distinct(affectedWaveIdsForUnreadCache);
       case WaveIdentitySubmissionDuplicates.NEVER_ALLOW:
         if (winningNominations.length > 0) {
           logger.info({
@@ -623,33 +638,37 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
               (it) => this.nominationLog(it)
             )
           });
-          await this.deleteIdentityNominations(
+          affectedWaveIdsForUnreadCache.push(
+            ...(await this.deleteIdentityNominations(
+              participatoryNominations,
+              {
+                waveId: wave.id,
+                consolidatedProfileIds,
+                reason:
+                  'duplicates policy NEVER_ALLOW removed a participatory nomination because a winner already exists',
+                duplicatesPolicy: wave.identity_submission_duplicates,
+                strategy: wave.identity_submission_strategy
+              },
+              connection
+            ))
+          );
+          return collections.distinct(affectedWaveIdsForUnreadCache);
+        }
+        affectedWaveIdsForUnreadCache.push(
+          ...(await this.deleteIdentityNominationDuplicates(
             participatoryNominations,
             {
               waveId: wave.id,
               consolidatedProfileIds,
               reason:
-                'duplicates policy NEVER_ALLOW removed a participatory nomination because a winner already exists',
+                'duplicates policy NEVER_ALLOW keeps only the highest-tally participatory nomination because no winner exists',
               duplicatesPolicy: wave.identity_submission_duplicates,
               strategy: wave.identity_submission_strategy
             },
             connection
-          );
-          return;
-        }
-        await this.deleteIdentityNominationDuplicates(
-          participatoryNominations,
-          {
-            waveId: wave.id,
-            consolidatedProfileIds,
-            reason:
-              'duplicates policy NEVER_ALLOW keeps only the highest-tally participatory nomination because no winner exists',
-            duplicatesPolicy: wave.identity_submission_duplicates,
-            strategy: wave.identity_submission_strategy
-          },
-          connection
+          ))
         );
-        return;
+        return collections.distinct(affectedWaveIdsForUnreadCache);
     }
   }
 
@@ -696,7 +715,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       strategy: WaveIdentitySubmissionStrategy;
     },
     connection: ConnectionWrapper<any>
-  ): Promise<void> {
+  ): Promise<string[]> {
     const duplicateResolution = await this.getIdentityNominationDuplicates(
       nominations,
       connection
@@ -710,7 +729,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
           'fewer than two participatory nominations remained after cleanup',
         nominations: nominations.map((it) => this.nominationLog(it))
       });
-      return;
+      return [];
     }
 
     logger.info({
@@ -739,7 +758,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       )
     });
 
-    await this.deleteIdentityNominations(
+    return await this.deleteIdentityNominations(
       duplicateResolution.duplicateNominations,
       {
         ...logContext,
@@ -804,7 +823,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       talliesByDropId?: DropTalliesById;
     },
     connection: ConnectionWrapper<any>
-  ): Promise<void> {
+  ): Promise<string[]> {
+    const affectedWaveIdsForUnreadCache: string[] = [];
     for (const nomination of nominations) {
       logger.info({
         event: 'identity_consolidation_nomination_deleted',
@@ -830,14 +850,18 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
             )
           : null
       });
-      await deleteDrop.execute(
+      const deleteResponse = await deleteDrop.execute(
         {
           drop_id: nomination.drop_id,
           deletion_purpose: 'SYSTEM_DELETE'
         },
         { connection }
       );
+      if (deleteResponse) {
+        affectedWaveIdsForUnreadCache.push(deleteResponse.wave_id);
+      }
     }
+    return collections.distinct(affectedWaveIdsForUnreadCache);
   }
 
   private nominationLog(
@@ -877,10 +901,45 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     return `kept drop ${keptNomination.drop_id} because it won the deterministic drop_id tie-break (${keptNomination.drop_id} < ${deletedNomination.drop_id})`;
   }
 
+  private async findWaveUnreadReaderWavesForMergeTargets(
+    identitiesToMerge: IdentityMergeTarget[],
+    connection: ConnectionWrapper<any>
+  ): Promise<WaveUnreadReaderWave[]> {
+    const identityIds = collections.distinct(
+      identitiesToMerge
+        .flatMap((mergeTarget) => [
+          mergeTarget.targetIdentity.profile_id,
+          ...mergeTarget.sourceIdentities.map((identity) => identity.profile_id)
+        ])
+        .filter((profileId): profileId is string => !!profileId)
+    );
+    if (!identityIds.length) {
+      return [];
+    }
+    const rows = await this.db.execute<{
+      readonly reader_id: string;
+      readonly wave_id: string;
+    }>(
+      `select reader_id, wave_id
+       from ${WAVE_READER_METRICS_TABLE}
+       where reader_id in (:identityIds)`,
+      { identityIds },
+      { wrappedConnection: connection }
+    );
+    return distinctWaveUnreadReaderWaves(
+      rows.map((row) => ({
+        identityId: row.reader_id,
+        waveId: row.wave_id
+      }))
+    );
+  }
+
   public async syncIdentitiesWithTdhConsolidations(
     connection: ConnectionWrapper<any>
-  ) {
+  ): Promise<WaveUnreadCacheInvalidations> {
     logger.info(`Syncing identities with tdh_consolidations`);
+    const affectedWaveIdsForUnreadCache: string[] = [];
+    const affectedReaderWavesForUnreadCache: WaveUnreadReaderWave[] = [];
     const newConsolidations =
       await this.getUnsynchronisedConsolidationKeysWithTdhs(connection);
 
@@ -1040,6 +1099,12 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         });
       }
       await this.applyExplicitProfileRetention(identitiesToMerge);
+      affectedReaderWavesForUnreadCache.push(
+        ...(await this.findWaveUnreadReaderWavesForMergeTargets(
+          identitiesToMerge,
+          connection
+        ))
+      );
       const allOldWallets = collections.distinct(
         Object.values(oldDataByWallets)
           .map((it) => it.identity.consolidation_key.split('-'))
@@ -1125,9 +1190,11 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
           connection
         );
       }
-      await this.syncIdentityMetadataFromMergedProfiles(
-        identitiesToMerge,
-        connection
+      affectedWaveIdsForUnreadCache.push(
+        ...(await this.syncIdentityMetadataFromMergedProfiles(
+          identitiesToMerge,
+          connection
+        ))
       );
       if (identitiesToMerge.length > 0) {
         await identitySubscriptionsDb.resyncWaveSubscriptionsMetrics(
@@ -1139,6 +1206,12 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       );
     }
     logger.info(`Syncing identities with tdh_consolidations done!`);
+    return {
+      waveIds: collections.distinct(affectedWaveIdsForUnreadCache),
+      readerWaves: distinctWaveUnreadReaderWaves(
+        affectedReaderWavesForUnreadCache
+      )
+    };
   }
 
   public async syncIdentitiesMetrics(connection: ConnectionWrapper<any>) {

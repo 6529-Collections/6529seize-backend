@@ -6,7 +6,8 @@ import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
-  PROFILES_TABLE
+  PROFILES_TABLE,
+  WAVE_READER_METRICS_TABLE
 } from '@/constants';
 import { IdentityEntity } from '@/entities/IIdentity';
 import {
@@ -351,10 +352,29 @@ describeWithSeed(
       );
     });
     it('does correct merges', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp, muted)
+         values ('wave-1', 'bobPID', 100, false),
+                ('wave-2', 'maryPID', 200, false)`
+      );
+      let unreadCacheInvalidations:
+        | Awaited<
+            ReturnType<
+              IdentityConsolidationEffects['syncIdentitiesWithTdhConsolidations']
+            >
+          >
+        | undefined;
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
-          await service.syncIdentitiesWithTdhConsolidations(connection);
+          unreadCacheInvalidations =
+            await service.syncIdentitiesWithTdhConsolidations(connection);
         }
+      );
+      expect(unreadCacheInvalidations?.readerWaves).toEqual(
+        expect.arrayContaining([
+          { identityId: 'bobPID', waveId: 'wave-1' },
+          { identityId: 'maryPID', waveId: 'wave-2' }
+        ])
       );
 
       const identities = await sqlExecutor.execute<IdentityEntity>(

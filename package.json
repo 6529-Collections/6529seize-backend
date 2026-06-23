@@ -20,6 +20,8 @@
     "tsc": "./node_modules/typescript/bin/tsc",
     "pretest": "npm run generate:deploy-config",
     "test": "jest",
+    "drop-media:backfill:dry-run": "ts-node -r tsconfig-paths/register src/dropMediaSanitizer/backfill-existing-drop-media.ts",
+    "drop-media:backfill:live": "ts-node -r tsconfig-paths/register src/dropMediaSanitizer/backfill-existing-drop-media.ts --live",
     "check": "npm run format && npm run lint && npm run build",
     "check:changed": "node scripts/check-changed.mjs",
     "format": "prettier --write \"src/**/*.ts\"",
@@ -123,7 +125,8 @@
     "sharp": "^0.34.5",
     "short-uuid": "^6.0.0",
     "slugify": "^1.6.6",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "zod": "^3.25.76"
   },
   "overrides": {
     "serverless": {

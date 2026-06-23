@@ -1,0 +1,12 @@
+{
+  "name": "dropmediaingeststorage",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist",
+    "sls-deploy:staging": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1",
+    "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1"
+  },
+  "author": "",
+  "license": "ISC"
+}

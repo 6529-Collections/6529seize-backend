@@ -37,7 +37,8 @@ const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
   [ApiProfileProxyActionType.CreateDropToWave]:
     ProfileProxyActionType.CREATE_DROP_TO_WAVE,
   [ApiProfileProxyActionType.RateWaveDrop]:
-    ProfileProxyActionType.RATE_WAVE_DROP
+    ProfileProxyActionType.RATE_WAVE_DROP,
+  [ApiProfileProxyActionType.PublishCms]: ProfileProxyActionType.PUBLISH_CMS
 };
 
 const ACTION_HAVE_CREDIT: Record<ProfileProxyActionType, boolean> = {
@@ -46,7 +47,8 @@ const ACTION_HAVE_CREDIT: Record<ProfileProxyActionType, boolean> = {
   [ProfileProxyActionType.CREATE_WAVE]: false,
   [ProfileProxyActionType.READ_WAVE]: false,
   [ProfileProxyActionType.CREATE_DROP_TO_WAVE]: false,
-  [ProfileProxyActionType.RATE_WAVE_DROP]: false
+  [ProfileProxyActionType.RATE_WAVE_DROP]: false,
+  [ProfileProxyActionType.PUBLISH_CMS]: false
 };
 
 interface CanDoAcceptancePayload {

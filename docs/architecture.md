@@ -26,7 +26,8 @@ flowchart TD
   ReadPool --> MySQL["MySQL / RDS"]
   WritePool --> MySQL
   SeizeAPI --> Redis["Redis"]
-  SeizeAPI --> S3["S3"]
+  SeizeAPI --> S3["public S3 media bucket"]
+  SeizeAPI --> DropMediaIngestS3["private drop media ingest S3 bucket"]
   SeizeAPI --> MediaResolver["Decentralized media resolver<br/>native URI + gateway URL mapping"]
   SeizeAPI --> AiRpc["AI / RPC / webhooks"]
 
@@ -73,6 +74,7 @@ flowchart TD
     NftsLoop --> S3UploaderQueue["SQS: s3-uploader-jobs"] --> S3Uploader["s3Uploader"]
     SeizeAPI --> AttachOrchestrationQueue["SQS: attachments-orchestration"] --> AttachmentsOrchestrator["attachmentsOrchestrator"]
     AttachmentsOrchestrator --> AttachProcessingQueue["SQS: attachments-processing"] --> AttachmentsProcessor["attachmentsProcessor"]
+    SeizeAPI --> DropMediaSanitizerQueue["SQS: drop-media-sanitizer"] --> DropMediaSanitizer["dropMediaSanitizer"]
     SeizeAPI --> NftLinkRefreshQueue["SQS: nft-link-refreshes"] --> NftLinkRefresherLoop["nftLinkRefresherLoop"]
     NftLinkRefresherLoop --> NftLinkPreviewQueue["SQS: nft-link-media-previews"] --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop"]
     SeizeAPI --> PushQueue["SQS: firebase-push-notifications"] --> PushNotificationsHandler["pushNotificationsHandler"]
@@ -102,6 +104,8 @@ flowchart TD
 
   S3Uploader --> S3
   AttachmentsProcessor --> S3
+  DropMediaSanitizer --> DropMediaIngestS3
+  DropMediaSanitizer --> S3
   NftLinkMediaPreviewLoop --> S3
   ClaimsMediaArweaveUploader --> Arweave["Arweave"]
   PushNotificationsHandler --> Firebase["Firebase"]
@@ -156,6 +160,7 @@ flowchart TD
 | `s3Uploader` | SQS `s3-uploader-jobs` | Mirror, compress, and upload NFT media. |
 | `attachmentsOrchestrator` | SQS `attachments-orchestration` and S3 object-created event | Find uploaded attachment objects, retry, and enqueue processing. |
 | `attachmentsProcessor` | SQS `attachments-processing` | Scan/process attachments. |
+| `dropMediaSanitizer` | SQS `drop-media-sanitizer` | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals. |
 | `nftLinkRefresherLoop` | SQS `nft-link-refreshes` | Resolve external NFT links. |
 | `nftLinkMediaPreviewLoop` | SQS `nft-link-media-previews` | Generate media previews for NFT links. |
 | `pushNotificationsHandler` | SQS `firebase-push-notifications` | Deliver Firebase push notifications. |
@@ -191,7 +196,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, and Firebase push notifications.
-6. S3 and CloudFront serve media. Some paths have specialized Lambda behavior: on-demand resizing, video conversion, and NextGen metadata placeholder interception.
+6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
 ## API Boundary
@@ -202,13 +207,32 @@ Important API responsibilities:
 
 - Authentication and refresh-token flows.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
+- Public profile-native CMS primary package lookup under
+  `/profile-cms/{handle}/primary`, returning the published production-safe CMS
+  V1 package envelope used by `/{handle}/index.html`; draft, failed, fixture,
+  and missing primary packages return 404.
+- Authenticated profile-native CMS publish hardening under `/profile-cms`,
+  including EIP-712 publish intent verification, canonical IPFS/Arweave receipt
+  checks, rollback/archive endpoints, and package export data for future
+  standalone renderers and mirrors.
+- Authenticated profile-native CMS wallet gallery snapshots under
+  `/profile-cms/wallet-gallery/snapshot`, gated by
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  and normalized media from MySQL for deterministic gallery generation.
+- Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
+  `/profile-cms/packages/{id}/agent`, including a public schema bundle,
+  read-only source packets that separate facts, author copy, derived metadata,
+  and validation diagnostics, and authenticated draft patch validation that
+  dry-runs agent proposals without applying changes or bypassing publish
+  signing/storage authority.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
   external fallback URLs. This v1 API does not proxy media bytes.
-- Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, minting claims, and push settings.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
+- Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. When `DROP_MEDIA_SANITIZE_IMAGES=true`, drop/wave image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
@@ -232,6 +256,30 @@ There are two DB access modes:
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
+
+Profile-native CMS packages are stored in `profile_cms_packages`. The table
+keeps the complete CMS V1 package JSON, indexed profile/package/version/hash
+fields, publication state, primary-package flags, validation results, and
+storage receipt indexes for IPFS, Arweave, S3, and fixture receipts. The API
+publish path validates CMS V1 semantics, enforces the submitted payload and
+package hashes, rejects fixture signatures/storage for production publish,
+verifies EIP-712 publish intent, requires one canonical IPFS or Arweave receipt,
+consumes the verified typed-data hash to prevent publish-intent replay, and
+supersedes the previous primary package in one transaction.
+
+Profile CMS pointer history is stored in `profile_cms_pointer_events`. Publish,
+set-primary, supersede, rollback, and archive events keep package hashes,
+previous-primary links, actor profile ids, signature metadata, and canonical
+storage receipts. `event_sequence` preserves logical ordering for events written
+in the same millisecond so the primary pointer history can be reconstructed and
+exported for future mirrors. Consumed publish intent hashes are stored in
+`profile_cms_publish_signatures`.
+
+Profile CMS wallet gallery snapshots are read-only API projections over
+`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not
+create schema, run migrations, enqueue indexers, or fetch chain/metadata data
+live. Request-side asset/contract exclusions are applied in the API service and
+reported in the response for generator auditability.
 
 ## Async Processing
 
@@ -281,7 +329,7 @@ Important details:
 
 Deployment is service-by-service through the generated GitHub Actions workflow. The workflow exposes `api` and each Lambda service as a deploy choice.
 
-Most Lambdas deploy through each service's `serverless.yaml`. The API is packaged from `src/api-serverless` and deployed by direct AWS Lambda update commands as `seizeAPI`. `mediaResizerLoop` also has a direct Lambda update path. `nextgenMediaProxyInterceptor` deploys as a Lambda@Edge version and updates CloudFront associations through its shell script.
+Most Lambdas deploy through each service's `serverless.yaml`. The API is packaged from `src/api-serverless` and deployed by direct AWS Lambda update commands as `seizeAPI`. `mediaResizerLoop` also has a direct Lambda update path. `nextgenMediaProxyInterceptor` deploys as a Lambda@Edge version and updates CloudFront associations through its shell script. `dropMediaIngestStorage` is a resources-only Serverless service that owns the shared private ingest bucket from the staging-region stack; it does not attach to the public media bucket or CloudFront.
 
 Typical deployment order when schema or generated API contracts change:
 

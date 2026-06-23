@@ -142,7 +142,8 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
     .items(
       Joi.object({
         mime_type: Joi.string().required(),
-        url: Joi.string().required()
+        url: Joi.string().required(),
+        media_upload_id: Joi.string().optional().allow(null).default(null)
       })
     )
     .default([]),

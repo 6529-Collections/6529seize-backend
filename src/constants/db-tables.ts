@@ -122,6 +122,10 @@ export const PROFILE_PROXIES_TABLE = 'profile_proxies';
 export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
 export const PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE =
   'profile_proxy_rating_credit_balances';
+export const PROFILE_CMS_PACKAGES_TABLE = 'profile_cms_packages';
+export const PROFILE_CMS_POINTER_EVENTS_TABLE = 'profile_cms_pointer_events';
+export const PROFILE_CMS_PUBLISH_SIGNATURES_TABLE =
+  'profile_cms_publish_signatures';
 export const WAVES_TABLE = 'waves';
 export const WAVES_METADATA_TABLE = 'waves_metadatas';
 export const OFFICIAL_WAVES_TABLE = 'official_waves';
@@ -156,6 +160,7 @@ export const DROP_MENTIONED_WAVES_TABLE = 'drop_mentioned_waves';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
+export const DROP_MEDIA_UPLOADS_TABLE = 'drop_media_uploads';
 export const DROP_BOOSTS_TABLE = 'drop_boosts';
 export const DROP_CURATIONS_TABLE = 'drop_curations';
 export const DROP_BOOKMARKS_TABLE = 'drop_bookmarks';
