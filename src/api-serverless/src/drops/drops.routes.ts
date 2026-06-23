@@ -648,19 +648,16 @@ router.post(
       { timer }
     );
     const ctx = { timer };
-    const [unreadCounts, firstUnreadSerials] = await Promise.all([
-      wavesApiDb.findIdentityUnreadDropsCountByWaveId(
+    const unreadSummaries =
+      await wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(
         { identityId, waveIds: [waveId] },
         ctx
-      ),
-      wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
-        { identityId, waveIds: [waveId] },
-        ctx
-      )
-    ]);
+      );
+    const unreadSummary = unreadSummaries[waveId];
     res.send({
-      your_unread_drops_count: unreadCounts[waveId] ?? 0,
-      first_unread_drop_serial_no: firstUnreadSerials[waveId] ?? null
+      your_unread_drops_count: unreadSummary?.unread_drops_count ?? 0,
+      first_unread_drop_serial_no:
+        unreadSummary?.first_unread_drop_serial_no ?? null
     });
   }
 );
