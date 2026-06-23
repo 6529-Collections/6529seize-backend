@@ -1,4 +1,4 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { AttachmentsProcessingService } from './attachments-processing.service';
 import { AttachmentKind } from '@/entities/IAttachment';
 
@@ -42,6 +42,28 @@ describe('AttachmentsProcessingService PDF validation', () => {
     const fileBuffer = await createPdf(1);
 
     await expect(validatePdf(fileBuffer)).resolves.toBe(fileBuffer);
+  });
+
+  it('accepts and normalizes parseable PDFs with object streams', async () => {
+    const document = await PDFDocument.create();
+    const page = document.addPage([200, 120]);
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    page.drawText('object stream smoke', {
+      x: 20,
+      y: 70,
+      size: 12,
+      font,
+      color: rgb(0, 0, 0)
+    });
+    const fileBuffer = Buffer.from(await document.save());
+
+    expect(fileBuffer.toString('latin1').toLowerCase()).toContain('/objstm');
+
+    const validated = await validatePdf(fileBuffer);
+
+    expect(validated).not.toBe(fileBuffer);
+    expect(validated.toString('latin1').toLowerCase()).not.toContain('/objstm');
+    await expect(PDFDocument.load(validated)).resolves.toBeDefined();
   });
 
   it('rejects malformed PDFs even when the signature is present', async () => {

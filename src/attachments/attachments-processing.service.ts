@@ -47,9 +47,9 @@ const PDF_BLOCKLIST_MARKERS = [
   '/EmbeddedFile',
   '/RichMedia',
   '/XFA',
-  '/Encrypt',
-  '/ObjStm'
+  '/Encrypt'
 ];
+const PDF_OBJECT_STREAM_MARKER = '/ObjStm';
 
 function formatByteLimit(byteLimit: number): string {
   return byteLimit.toLocaleString();
@@ -253,21 +253,32 @@ export class AttachmentsProcessingService {
         `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
       );
     }
-    const text = this.normalizePdfText(fileBuffer);
-    for (const marker of PDF_BLOCKLIST_MARKERS) {
-      if (text.includes(marker.toLowerCase())) {
-        throw new ContentViolationError(
-          `PDF contains blocked feature ${marker}`
-        );
-      }
-    }
-    const pageCount = await this.getPdfPageCount(fileBuffer);
+
+    const hasObjectStreams = this.pdfContainsMarker(
+      fileBuffer,
+      PDF_OBJECT_STREAM_MARKER
+    );
+    this.assertPdfDoesNotContainBlockedMarkers(fileBuffer);
+
+    const { pageCount, normalizedBuffer } = await this.loadPdfForValidation(
+      fileBuffer,
+      { normalizeObjectStreams: hasObjectStreams }
+    );
     if (pageCount > MAX_PDF_PAGES) {
       throw new ContentViolationError(
         `PDF exceeds the ${MAX_PDF_PAGES} page limit`
       );
     }
-    return fileBuffer;
+    if (!normalizedBuffer) {
+      return fileBuffer;
+    }
+    if (normalizedBuffer.byteLength > MAX_PDF_BYTES) {
+      throw new ContentViolationError(
+        `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
+      );
+    }
+    this.assertPdfDoesNotContainBlockedMarkers(normalizedBuffer);
+    return normalizedBuffer;
   }
 
   private async createSafeCsv(fileBuffer: Buffer): Promise<Buffer> {
@@ -401,7 +412,25 @@ export class AttachmentsProcessingService {
       .toLowerCase();
   }
 
-  private async getPdfPageCount(fileBuffer: Buffer): Promise<number> {
+  private pdfContainsMarker(fileBuffer: Buffer, marker: string): boolean {
+    return this.normalizePdfText(fileBuffer).includes(marker.toLowerCase());
+  }
+
+  private assertPdfDoesNotContainBlockedMarkers(fileBuffer: Buffer): void {
+    const text = this.normalizePdfText(fileBuffer);
+    for (const marker of PDF_BLOCKLIST_MARKERS) {
+      if (text.includes(marker.toLowerCase())) {
+        throw new ContentViolationError(
+          `PDF contains blocked feature ${marker}`
+        );
+      }
+    }
+  }
+
+  private async loadPdfForValidation(
+    fileBuffer: Buffer,
+    { normalizeObjectStreams }: { normalizeObjectStreams: boolean }
+  ): Promise<{ pageCount: number; normalizedBuffer: Buffer | null }> {
     try {
       const pdfDocument = await PDFDocument.load(fileBuffer, {
         ignoreEncryption: false,
@@ -411,7 +440,10 @@ export class AttachmentsProcessingService {
       if (pageCount === 0) {
         throw new ContentViolationError('PDF must contain at least one page');
       }
-      return pageCount;
+      const normalizedBuffer = normalizeObjectStreams
+        ? Buffer.from(await pdfDocument.save({ useObjectStreams: false }))
+        : null;
+      return { pageCount, normalizedBuffer };
     } catch (error) {
       if (this.isContentViolationError(error)) {
         throw error;
