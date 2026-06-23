@@ -63,7 +63,6 @@ import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
 import {
-  invalidateWaveUnreadCacheForReaderWave,
   readWaveUnreadSummaryCache,
   WaveUnreadSummary,
   writeWaveUnreadSummaryCache
@@ -2814,10 +2813,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { waveId, readerId, now },
       { wrappedConnection: ctx.connection }
     );
-    await invalidateWaveUnreadCacheForReaderWave({
-      identityId: readerId,
-      waveId
-    });
     ctx.timer?.stop(
       `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
     );
@@ -2839,10 +2834,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { waveId, readerId, timestamp },
       { wrappedConnection: ctx.connection }
     );
-    await invalidateWaveUnreadCacheForReaderWave({
-      identityId: readerId,
-      waveId
-    });
     ctx.timer?.stop(
       `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
     );
@@ -2860,10 +2851,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       param,
       { wrappedConnection: ctx.connection }
     );
-    await invalidateWaveUnreadCacheForReaderWave({
-      identityId: param.readerId,
-      waveId: param.waveId
-    });
     ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
   }
 

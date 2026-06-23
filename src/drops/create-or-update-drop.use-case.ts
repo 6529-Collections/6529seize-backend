@@ -64,7 +64,6 @@ import {
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
-import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import {
   DropNftLinkInsertModel,
   dropNftLinksDb,
@@ -1582,7 +1581,6 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       )
     ]);
-    await invalidateWaveUnreadCacheForWave(wave.id);
     await this.dropMediaUploadsDb.attachUploadsToDrop({
       mediaUploadIds: parts
         .flatMap((part) => part.media.map((media) => media.media_upload_id))

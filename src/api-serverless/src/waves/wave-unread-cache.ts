@@ -178,6 +178,12 @@ export async function invalidateWaveUnreadCacheForWave(
   }
 }
 
+export async function invalidateWaveUnreadCacheForWaves(
+  waveIds: string[]
+): Promise<void> {
+  await Promise.all(distinct(waveIds).map(invalidateWaveUnreadCacheForWave));
+}
+
 export async function invalidateWaveUnreadCacheForReaderWave({
   identityId,
   waveId

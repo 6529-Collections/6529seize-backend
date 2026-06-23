@@ -30,6 +30,7 @@ import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { wavesApiDb } from '../waves/waves.api.db';
+import { invalidateWaveUnreadCacheForReaderWave } from '../waves/wave-unread-cache';
 import { dropCheeringService } from './drop-cheering.service';
 import { dropCreationService } from './drop-creation.api.service';
 import { dropSignatureVerifier } from './drop-signature-verifier';
@@ -647,6 +648,10 @@ router.post(
       newTimestamp,
       { timer }
     );
+    await invalidateWaveUnreadCacheForReaderWave({
+      identityId,
+      waveId
+    });
     const ctx = { timer };
     const unreadSummaries =
       await wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(

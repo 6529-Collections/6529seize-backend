@@ -37,7 +37,6 @@ import {
   DropPollsDb
 } from '@/api-serverless/src/drops/drop-polls.db';
 import { waveScoreService } from '@/api/waves/wave-score.service';
-import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -155,7 +154,6 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
         this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
       ]);
-      await invalidateWaveUnreadCacheForWave(waveId);
       if (isPermanentDelete) {
         await this.dropsDb.resyncDropCountsForWaves([drop.wave_id], {
           timer,
