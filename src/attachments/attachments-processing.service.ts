@@ -254,11 +254,12 @@ export class AttachmentsProcessingService {
       );
     }
 
-    const hasObjectStreams = this.pdfContainsMarker(
-      fileBuffer,
+    const pdfText = this.normalizePdfText(fileBuffer);
+    const hasObjectStreams = this.pdfTextContainsMarker(
+      pdfText,
       PDF_OBJECT_STREAM_MARKER
     );
-    this.assertPdfDoesNotContainBlockedMarkers(fileBuffer);
+    this.assertPdfTextDoesNotContainBlockedMarkers(pdfText);
 
     const { pageCount, normalizedBuffer } = await this.loadPdfForValidation(
       fileBuffer,
@@ -277,7 +278,15 @@ export class AttachmentsProcessingService {
         `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
       );
     }
-    this.assertPdfDoesNotContainBlockedMarkers(normalizedBuffer);
+    const normalizedPdfText = this.normalizePdfText(normalizedBuffer);
+    if (
+      this.pdfTextContainsMarker(normalizedPdfText, PDF_OBJECT_STREAM_MARKER)
+    ) {
+      throw new ContentViolationError(
+        'PDF object streams could not be normalized safely'
+      );
+    }
+    this.assertPdfTextDoesNotContainBlockedMarkers(normalizedPdfText);
     return normalizedBuffer;
   }
 
@@ -412,14 +421,13 @@ export class AttachmentsProcessingService {
       .toLowerCase();
   }
 
-  private pdfContainsMarker(fileBuffer: Buffer, marker: string): boolean {
-    return this.normalizePdfText(fileBuffer).includes(marker.toLowerCase());
+  private pdfTextContainsMarker(pdfText: string, marker: string): boolean {
+    return pdfText.includes(marker.toLowerCase());
   }
 
-  private assertPdfDoesNotContainBlockedMarkers(fileBuffer: Buffer): void {
-    const text = this.normalizePdfText(fileBuffer);
+  private assertPdfTextDoesNotContainBlockedMarkers(pdfText: string): void {
     for (const marker of PDF_BLOCKLIST_MARKERS) {
-      if (text.includes(marker.toLowerCase())) {
+      if (this.pdfTextContainsMarker(pdfText, marker)) {
         throw new ContentViolationError(
           `PDF contains blocked feature ${marker}`
         );
@@ -431,28 +439,41 @@ export class AttachmentsProcessingService {
     fileBuffer: Buffer,
     { normalizeObjectStreams }: { normalizeObjectStreams: boolean }
   ): Promise<{ pageCount: number; normalizedBuffer: Buffer | null }> {
+    let pdfDocument: PDFDocument;
     try {
-      const pdfDocument = await PDFDocument.load(fileBuffer, {
+      pdfDocument = await PDFDocument.load(fileBuffer, {
         ignoreEncryption: false,
         updateMetadata: false
       });
-      const pageCount = pdfDocument.getPageCount();
-      if (pageCount === 0) {
-        throw new ContentViolationError('PDF must contain at least one page');
-      }
-      const normalizedBuffer = normalizeObjectStreams
-        ? Buffer.from(await pdfDocument.save({ useObjectStreams: false }))
-        : null;
-      return { pageCount, normalizedBuffer };
     } catch (error) {
-      if (this.isContentViolationError(error)) {
-        throw error;
-      }
       if (this.isEncryptedPdfError(error)) {
         throw new ContentViolationError('Encrypted PDFs are not supported');
       }
       throw new ContentViolationError('PDF could not be parsed safely');
     }
+    let pageCount: number;
+    try {
+      pageCount = pdfDocument.getPageCount();
+    } catch {
+      throw new ContentViolationError('PDF could not be parsed safely');
+    }
+    if (pageCount === 0) {
+      throw new ContentViolationError('PDF must contain at least one page');
+    }
+    if (!normalizeObjectStreams) {
+      return { pageCount, normalizedBuffer: null };
+    }
+    let normalizedBuffer: Buffer;
+    try {
+      normalizedBuffer = Buffer.from(
+        await pdfDocument.save({ useObjectStreams: false })
+      );
+    } catch {
+      throw new ContentViolationError(
+        'PDF object streams could not be normalized safely'
+      );
+    }
+    return { pageCount, normalizedBuffer };
   }
 
   private isEncryptedPdfError(error: unknown): boolean {

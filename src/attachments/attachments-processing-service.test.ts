@@ -28,6 +28,20 @@ describe('AttachmentsProcessingService PDF validation', () => {
     return Buffer.from(await document.save({ useObjectStreams: false }));
   }
 
+  async function createPdfWithObjectStreams(): Promise<Buffer> {
+    const document = await PDFDocument.create();
+    const page = document.addPage([200, 120]);
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    page.drawText('object stream smoke', {
+      x: 20,
+      y: 70,
+      size: 12,
+      font,
+      color: rgb(0, 0, 0)
+    });
+    return Buffer.from(await document.save());
+  }
+
   async function validatePdf(fileBuffer: Buffer): Promise<Buffer> {
     return await validatePdfMethod.call(service, fileBuffer);
   }
@@ -45,18 +59,9 @@ describe('AttachmentsProcessingService PDF validation', () => {
   });
 
   it('accepts and normalizes parseable PDFs with object streams', async () => {
-    const document = await PDFDocument.create();
-    const page = document.addPage([200, 120]);
-    const font = await document.embedFont(StandardFonts.Helvetica);
-    page.drawText('object stream smoke', {
-      x: 20,
-      y: 70,
-      size: 12,
-      font,
-      color: rgb(0, 0, 0)
-    });
-    const fileBuffer = Buffer.from(await document.save());
-
+    const fileBuffer = await createPdfWithObjectStreams();
+    // pdf-lib currently emits object streams by default for this document shape;
+    // that mirrors the staging compatibility failure this test guards.
     expect(fileBuffer.toString('latin1').toLowerCase()).toContain('/objstm');
 
     const validated = await validatePdf(fileBuffer);
@@ -64,6 +69,36 @@ describe('AttachmentsProcessingService PDF validation', () => {
     expect(validated).not.toBe(fileBuffer);
     expect(validated.toString('latin1').toLowerCase()).not.toContain('/objstm');
     await expect(PDFDocument.load(validated)).resolves.toBeDefined();
+  });
+
+  it('rejects when object stream normalization fails', async () => {
+    const fileBuffer = await createPdfWithObjectStreams();
+    const saveSpy = jest
+      .spyOn(PDFDocument.prototype, 'save')
+      .mockRejectedValueOnce(new Error('save failed'));
+
+    try {
+      await expect(validatePdf(fileBuffer)).rejects.toThrow(
+        'PDF object streams could not be normalized safely'
+      );
+    } finally {
+      saveSpy.mockRestore();
+    }
+  });
+
+  it('rejects when object streams survive normalization', async () => {
+    const fileBuffer = await createPdfWithObjectStreams();
+    const saveSpy = jest
+      .spyOn(PDFDocument.prototype, 'save')
+      .mockResolvedValueOnce(fileBuffer);
+
+    try {
+      await expect(validatePdf(fileBuffer)).rejects.toThrow(
+        'PDF object streams could not be normalized safely'
+      );
+    } finally {
+      saveSpy.mockRestore();
+    }
   });
 
   it('rejects malformed PDFs even when the signature is present', async () => {
