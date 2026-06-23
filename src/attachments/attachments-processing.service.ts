@@ -47,9 +47,9 @@ const PDF_BLOCKLIST_MARKERS = [
   '/EmbeddedFile',
   '/RichMedia',
   '/XFA',
-  '/Encrypt',
-  '/ObjStm'
+  '/Encrypt'
 ];
+const PDF_OBJECT_STREAM_MARKER = '/ObjStm';
 
 function formatByteLimit(byteLimit: number): string {
   return byteLimit.toLocaleString();
@@ -253,21 +253,41 @@ export class AttachmentsProcessingService {
         `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
       );
     }
-    const text = this.normalizePdfText(fileBuffer);
-    for (const marker of PDF_BLOCKLIST_MARKERS) {
-      if (text.includes(marker.toLowerCase())) {
-        throw new ContentViolationError(
-          `PDF contains blocked feature ${marker}`
-        );
-      }
-    }
-    const pageCount = await this.getPdfPageCount(fileBuffer);
+
+    const pdfText = this.normalizePdfText(fileBuffer);
+    const hasObjectStreams = this.pdfTextContainsMarker(
+      pdfText,
+      PDF_OBJECT_STREAM_MARKER
+    );
+    this.assertPdfTextDoesNotContainBlockedMarkers(pdfText);
+
+    const { pageCount, normalizedBuffer } = await this.loadPdfForValidation(
+      fileBuffer,
+      { normalizeObjectStreams: hasObjectStreams }
+    );
     if (pageCount > MAX_PDF_PAGES) {
       throw new ContentViolationError(
         `PDF exceeds the ${MAX_PDF_PAGES} page limit`
       );
     }
-    return fileBuffer;
+    if (!normalizedBuffer) {
+      return fileBuffer;
+    }
+    if (normalizedBuffer.byteLength > MAX_PDF_BYTES) {
+      throw new ContentViolationError(
+        `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
+      );
+    }
+    const normalizedPdfText = this.normalizePdfText(normalizedBuffer);
+    if (
+      this.pdfTextContainsMarker(normalizedPdfText, PDF_OBJECT_STREAM_MARKER)
+    ) {
+      throw new ContentViolationError(
+        'PDF object streams could not be normalized safely'
+      );
+    }
+    this.assertPdfTextDoesNotContainBlockedMarkers(normalizedPdfText);
+    return normalizedBuffer;
   }
 
   private async createSafeCsv(fileBuffer: Buffer): Promise<Buffer> {
@@ -401,26 +421,59 @@ export class AttachmentsProcessingService {
       .toLowerCase();
   }
 
-  private async getPdfPageCount(fileBuffer: Buffer): Promise<number> {
+  private pdfTextContainsMarker(pdfText: string, marker: string): boolean {
+    return pdfText.includes(marker.toLowerCase());
+  }
+
+  private assertPdfTextDoesNotContainBlockedMarkers(pdfText: string): void {
+    for (const marker of PDF_BLOCKLIST_MARKERS) {
+      if (this.pdfTextContainsMarker(pdfText, marker)) {
+        throw new ContentViolationError(
+          `PDF contains blocked feature ${marker}`
+        );
+      }
+    }
+  }
+
+  private async loadPdfForValidation(
+    fileBuffer: Buffer,
+    { normalizeObjectStreams }: { normalizeObjectStreams: boolean }
+  ): Promise<{ pageCount: number; normalizedBuffer: Buffer | null }> {
+    let pdfDocument: PDFDocument;
     try {
-      const pdfDocument = await PDFDocument.load(fileBuffer, {
+      pdfDocument = await PDFDocument.load(fileBuffer, {
         ignoreEncryption: false,
         updateMetadata: false
       });
-      const pageCount = pdfDocument.getPageCount();
-      if (pageCount === 0) {
-        throw new ContentViolationError('PDF must contain at least one page');
-      }
-      return pageCount;
     } catch (error) {
-      if (this.isContentViolationError(error)) {
-        throw error;
-      }
       if (this.isEncryptedPdfError(error)) {
         throw new ContentViolationError('Encrypted PDFs are not supported');
       }
       throw new ContentViolationError('PDF could not be parsed safely');
     }
+    let pageCount: number;
+    try {
+      pageCount = pdfDocument.getPageCount();
+    } catch {
+      throw new ContentViolationError('PDF could not be parsed safely');
+    }
+    if (pageCount === 0) {
+      throw new ContentViolationError('PDF must contain at least one page');
+    }
+    if (!normalizeObjectStreams) {
+      return { pageCount, normalizedBuffer: null };
+    }
+    let normalizedBuffer: Buffer;
+    try {
+      normalizedBuffer = Buffer.from(
+        await pdfDocument.save({ useObjectStreams: false })
+      );
+    } catch {
+      throw new ContentViolationError(
+        'PDF object streams could not be normalized safely'
+      );
+    }
+    return { pageCount, normalizedBuffer };
   }
 
   private isEncryptedPdfError(error: unknown): boolean {
