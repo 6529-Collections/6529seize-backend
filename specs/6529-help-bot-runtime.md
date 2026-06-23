@@ -250,7 +250,9 @@ reply path instead of guessing from stale static knowledge.
 
 Future agents must treat the help bot corpus as part of the user-facing product
 surface. When a backend change adds or changes behavior that users may ask
-`@help6529` about, update the help bot materials in the same PR.
+`@help6529` about, update the help bot materials in the same PR. The canonical
+runtime handle is `help6529` (`@help6529` in wave text), matching
+`HELP_BOT_HANDLE`; `6529help` / `@6529help` is not the V1 handle.
 
 Backend-owned examples:
 
@@ -499,7 +501,8 @@ private user data beyond what is needed for debugging and abuse controls.
 
 - Draft frontend help index spec.
 - Draft backend runtime spec.
-- Agree on bot naming and hardcoded handle: `@help6529`.
+- Agree on bot naming and hardcoded handle: `@help6529` (`HELP_BOT_HANDLE =
+  'help6529'`).
 
 ### Phase 2: V1 Help Bot Plumbing - Done In PR
 

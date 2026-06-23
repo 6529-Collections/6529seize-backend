@@ -120,7 +120,10 @@ Keep `docs/architecture.md` up to date when changing the system shape. Update it
 ## 6529 Help Bot Knowledge Maintenance
 
 When changing backend-owned product behavior that users may ask `@help6529`
-about, update the help bot knowledge in the same PR. This includes changes to
+about, update the help bot knowledge in the same PR. The canonical bot handle is
+`help6529` (`@help6529` in user-facing wave text), matching
+`HELP_BOT_HANDLE` in `src/help-bot/help-bot.config.ts`; do not replace it with
+`6529help` / `@6529help`. This includes changes to
 subscriptions, eligibility rules, wave or drop permissions, posting limits,
 profile/business-rule terminology, and canonical backend-owned URLs.
 
