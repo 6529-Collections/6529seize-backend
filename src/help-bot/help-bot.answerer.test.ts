@@ -106,6 +106,36 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
       relatedPaths: ['/network'],
       tags: ['profiles', 'identity'],
       sourceRefs: []
+    },
+    {
+      id: 'delegation.overview',
+      kind: 'workflow',
+      title: 'Delegation center',
+      linkLabel: 'Delegation center',
+      canonicalPath: '/delegation/delegation-center',
+      aliases: [
+        'delegation',
+        'delegate',
+        'delegations',
+        'delegation center',
+        'delegation manager'
+      ],
+      keywords: [
+        'delegation',
+        'delegate',
+        'wallet',
+        'vault',
+        'airdrop',
+        'mapping',
+        'checker'
+      ],
+      facts: [
+        'Delegation lets one wallet authorize another wallet for supported 6529 uses.',
+        'The delegation center provides wallet checking, action flows, collection management, and section navigation.'
+      ],
+      relatedPaths: ['/delegation/wallet-checker'],
+      tags: ['delegation', 'wallet'],
+      sourceRefs: []
     }
   ]
 };
@@ -176,6 +206,28 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('treats basic delegation workflow questions as confident matches', async () => {
+    const answer = await answerer().answer({
+      question: 'how do i register a delegation',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('delegation.overview');
+      expect(answer.escalateToTechTeam).toBe(false);
+      expect(answer.answer).toContain(
+        'Delegation lets one wallet authorize another wallet'
+      );
+      expect(answer.answer).toContain(
+        '[Delegation center](https://6529.io/delegation/delegation-center)'
+      );
+      expect(answer.answer).not.toContain(
+        'I might not be fully sure on this one'
+      );
+    }
+  });
+
   it('uses previous bot answer as context for follow-up questions', async () => {
     const answer = await answerer().answer({
       question: 'what about eligibility?',
@@ -217,6 +269,30 @@ describe('HelpBotAnswerer', () => {
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: false
     });
+  });
+
+  it('answers light social check-ins without tech-team escalation', async () => {
+    const publicDataService = {
+      answer: jest.fn().mockResolvedValue({
+        answer: 'public data should not run',
+        queryId: 'test'
+      })
+    };
+
+    const answer = await answerer(undefined, publicDataService).answer({
+      question: '@help6529 how are you feeling today',
+      baseUrl: BASE_URL
+    });
+
+    expect(publicDataService.answer).not.toHaveBeenCalled();
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.social');
+      expect(answer.escalateToTechTeam).toBeUndefined();
+      expect(answer.answer).toContain('Feeling useful');
+      expect(answer.answer).toContain('6529 question');
+      expect(answer.answer).not.toContain('@');
+    }
   });
 
   it('returns no reliable source with escalation for unindexed product questions', async () => {

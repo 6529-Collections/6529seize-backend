@@ -165,6 +165,24 @@ function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
   };
 }
 
+function buildSocialRecord(): HelpBotKnowledgeRecord {
+  return {
+    id: 'help-bot.social',
+    kind: 'guardrail',
+    title: 'Help bot social reply',
+    linkLabel: 'Waves',
+    canonicalPath: '/waves',
+    aliases: ['how are you', 'gm', 'hello'],
+    keywords: ['help', 'bot', 'social'],
+    facts: [
+      'The help bot can answer light social check-ins briefly while staying oriented toward 6529 product help.'
+    ],
+    relatedPaths: [],
+    tags: ['help-bot', 'social'],
+    sourceRefs: ['backend help bot social classifier']
+  };
+}
+
 function normalizeBoundaryText(value: string): string {
   return value
     .toLowerCase()
@@ -192,6 +210,18 @@ function isGenericHelpRequest(normalizedQuestion: string): boolean {
     /^what questions can i ask( you)?$/,
     /^(show me )?(help|options|commands|menu)$/
   ].some((pattern) => pattern.test(normalizedQuestion));
+}
+
+function isSocialCheckIn(normalizedQuestion: string): boolean {
+  const withoutBotHandle = normalizedQuestion
+    .replace(/^@?help6529\s+/, '')
+    .trim();
+  return [
+    /^(how are you|how are you doing|how are you feeling)( today)?$/,
+    /^(how s it going|hows it going|how is it going)$/,
+    /^(gm|gn|hi|hey|hello)( help6529)?$/,
+    /^(thanks|thank you|ty)( help6529)?$/
+  ].some((pattern) => pattern.test(withoutBotHandle));
 }
 
 function isInformationalHelpQuestion(normalizedQuestion: string): boolean {
@@ -287,7 +317,7 @@ const escapeRegExp = (value: string): string =>
 const CONTEXTUAL_FOLLOW_UP_PATTERN =
   /\b(it|that|this|there|eligibility|rules|button|page|link|tab|menu|create|find|open|where|how)\b/;
 
-const WEAK_MATCH_SCORE_MAX = 4;
+const WEAK_MATCH_SCORE_MAX = 3;
 const WEAK_MATCH_PREFIX =
   "I might not be fully sure on this one, so here's my best answer.";
 
@@ -493,6 +523,17 @@ function buildGenericHelpAnswer(question: string): string | null {
   return 'What do you need help with? I can answer public 6529 product questions about TDH, Waves, delegation, consolidations, subscriptions, drops, profiles, The Memes, public data, and where to find things on 6529.io. Reply with a topic or question.';
 }
 
+function buildSocialAnswer(question: string): string | null {
+  const normalizedQuestion = normalizeBoundaryText(question);
+  if (!isSocialCheckIn(normalizedQuestion)) {
+    return null;
+  }
+  if (/^(@?help6529 )?(thanks|thank you|ty)\b/.test(normalizedQuestion)) {
+    return "Anytime. I'm here and warmed up for the next 6529 question.";
+  }
+  return "Feeling useful and slightly green. I'm here, watching the Wave, and ready for whatever 6529 question you want to throw at me.";
+}
+
 export class HelpBotAnswerer {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -521,6 +562,15 @@ export class HelpBotAnswerer {
         type: 'ANSWER',
         answer: genericHelpAnswer,
         record: buildCapabilitiesRecord()
+      };
+    }
+
+    const socialAnswer = buildSocialAnswer(request.question);
+    if (socialAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: socialAnswer,
+        record: buildSocialRecord()
       };
     }
 
