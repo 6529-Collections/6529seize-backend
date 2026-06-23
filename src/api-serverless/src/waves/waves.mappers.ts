@@ -78,6 +78,7 @@ import {
   mapWaveRepSummary,
   mapWaveScore
 } from '@/api/waves/wave-score.api-mapper';
+import { WaveUnreadSummary } from '@/api/waves/wave-unread-cache';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -605,8 +606,7 @@ export class WavesMappers {
       creationDropsByDropId,
       subscribedActions,
       yourParticipationDropsCountByWaveId,
-      yourUnreadDropsCountByWaveId,
-      firstUnreadDropSerialNoByWaveId,
+      yourUnreadSummariesByWaveId,
       wavePauses,
       decisionsDoneByWaveId,
       votingCreditNftsByWaveId,
@@ -689,23 +689,14 @@ export class WavesMappers {
           )
         : Promise.resolve({} as Record<string, number>),
       authenticatedUserId
-        ? this.wavesApiDb.findIdentityUnreadDropsCountByWaveId(
+        ? this.wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(
             {
               identityId: authenticatedUserId,
               waveIds
             },
             ctx
           )
-        : Promise.resolve({} as Record<string, number>),
-      authenticatedUserId
-        ? this.wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
-            {
-              identityId: authenticatedUserId,
-              waveIds
-            },
-            ctx
-          )
-        : Promise.resolve({} as Record<string, number | null>),
+        : Promise.resolve({} as Record<string, WaveUnreadSummary>),
       this.wavesApiDb.getWavesPauses(waveIds, ctx),
       this.wavesApiDb.countWaveDecisionsByWaveIds(waveIds, ctx),
       this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(
@@ -737,6 +728,24 @@ export class WavesMappers {
     const profileMins = await this.identityFetcher.getOverviewsByIds(
       profileIds,
       ctx
+    );
+    const yourUnreadDropsCountByWaveId = Object.entries(
+      yourUnreadSummariesByWaveId
+    ).reduce(
+      (acc, [waveId, summary]) => {
+        acc[waveId] = summary.unread_drops_count;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+    const firstUnreadDropSerialNoByWaveId = Object.entries(
+      yourUnreadSummariesByWaveId
+    ).reduce(
+      (acc, [waveId, summary]) => {
+        acc[waveId] = summary.first_unread_drop_serial_no;
+        return acc;
+      },
+      {} as Record<string, number | null>
     );
     const displayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(

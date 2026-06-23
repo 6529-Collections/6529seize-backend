@@ -62,6 +62,11 @@ import {
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
+import {
+  readWaveUnreadSummaryCache,
+  WaveUnreadSummary,
+  writeWaveUnreadSummaryCache
+} from './wave-unread-cache';
 
 type RawWaveEntity = Omit<
   WaveEntity,
@@ -107,6 +112,12 @@ type HiddenFollowedSubwaveUnreadRow = {
   parent_wave_id: string;
   hidden_followed_subwave_unread_drops: number | string;
   first_hidden_followed_subwave_unread_drop_serial_no: number | string | null;
+};
+
+type WaveUnreadSummaryRow = {
+  wave_id: string;
+  unread_drops_count: number | string;
+  first_unread_drop_serial_no: number | string | null;
 };
 
 export interface FollowedSubwaveOverviewContext {
@@ -2843,23 +2854,31 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
   }
 
-  async findIdentityUnreadDropsCountByWaveId(
+  async findIdentityUnreadDropsSummaryByWaveId(
     param: {
       identityId: string;
       waveIds: string[];
     },
     ctx: RequestContext
-  ): Promise<Record<string, number>> {
+  ): Promise<Record<string, WaveUnreadSummary>> {
     if (!param.waveIds.length) {
       return {};
     }
 
-    const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsCountByWaveId`;
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsSummaryByWaveId`;
     ctx.timer?.start(timerLabel);
+    const { cachedByWaveId, uncachedWaveIds, cacheKeysByWaveId } =
+      await readWaveUnreadSummaryCache(param.identityId, param.waveIds);
+    if (!uncachedWaveIds.length) {
+      ctx.timer?.stop(timerLabel);
+      return cachedByWaveId;
+    }
 
-    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+    const dbresult = await this.db.execute<WaveUnreadSummaryRow>(
       `
-        SELECT r.wave_id AS wave_id, COUNT(d.id) AS cnt
+        SELECT r.wave_id AS wave_id,
+               COUNT(d.id) AS unread_drops_count,
+               MIN(d.serial_no) AS first_unread_drop_serial_no
         FROM ${WAVE_READER_METRICS_TABLE} r
         INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
           ON d.wave_id = r.wave_id
@@ -2870,21 +2889,57 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           AND COALESCE(r.muted, false) = false
         GROUP BY r.wave_id
     `,
-      param,
+      { identityId: param.identityId, waveIds: uncachedWaveIds },
       { wrappedConnection: ctx.connection }
     );
 
-    const result = dbresult.reduce(
-      (acc, row) => {
-        acc[row.wave_id] = row.cnt;
+    const uncachedSummariesByWaveId = uncachedWaveIds.reduce(
+      (acc, waveId) => {
+        acc[waveId] = {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        };
+        return acc;
+      },
+      {} as Record<string, WaveUnreadSummary>
+    );
+    const dbSummariesByWaveId = dbresult.reduce((acc, row) => {
+      acc[row.wave_id] = {
+        unread_drops_count: Number(row.unread_drops_count),
+        first_unread_drop_serial_no: this.toNullableNumber(
+          row.first_unread_drop_serial_no
+        )
+      };
+      return acc;
+    }, uncachedSummariesByWaveId);
+    await writeWaveUnreadSummaryCache({
+      summariesByWaveId: dbSummariesByWaveId,
+      cacheKeysByWaveId
+    });
+
+    ctx.timer?.stop(timerLabel);
+
+    return { ...cachedByWaveId, ...dbSummariesByWaveId };
+  }
+
+  async findIdentityUnreadDropsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    const summaries = await this.findIdentityUnreadDropsSummaryByWaveId(
+      param,
+      ctx
+    );
+    return Object.entries(summaries).reduce(
+      (acc, [waveId, summary]) => {
+        acc[waveId] = summary.unread_drops_count;
         return acc;
       },
       {} as Record<string, number>
     );
-
-    ctx.timer?.stop(timerLabel);
-
-    return result;
   }
 
   async findFirstUnreadDropSerialNoByWaveId(
@@ -2894,44 +2949,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<Record<string, number | null>> {
-    if (!param.waveIds.length) {
-      return {};
-    }
-
-    const timerLabel = `${this.constructor.name}->findFirstUnreadDropSerialNoByWaveId`;
-    ctx.timer?.start(timerLabel);
-
-    const dbresult = await this.db.execute<{
-      wave_id: string;
-      serial_no: number;
-    }>(
-      `
-        SELECT r.wave_id, MIN(d.serial_no) AS serial_no
-        FROM ${WAVE_READER_METRICS_TABLE} r
-        INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
-          ON d.wave_id = r.wave_id
-          AND d.created_at > r.latest_read_timestamp
-        WHERE r.reader_id = :identityId
-          AND r.wave_id IN (:waveIds)
-          AND r.latest_read_timestamp IS NOT NULL
-          AND COALESCE(r.muted, false) = false
-        GROUP BY r.wave_id
-    `,
+    const summaries = await this.findIdentityUnreadDropsSummaryByWaveId(
       param,
-      { wrappedConnection: ctx.connection }
+      ctx
     );
-
-    const result = dbresult.reduce(
-      (acc, row) => {
-        acc[row.wave_id] = row.serial_no;
+    return Object.entries(summaries).reduce(
+      (acc, [waveId, summary]) => {
+        acc[waveId] = summary.first_unread_drop_serial_no;
         return acc;
       },
       {} as Record<string, number | null>
     );
-
-    ctx.timer?.stop(timerLabel);
-
-    return result;
   }
 
   async deleteBoosts(waveId: string, ctx: RequestContext) {
