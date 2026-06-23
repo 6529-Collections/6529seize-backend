@@ -237,8 +237,8 @@ through one of these paths:
 
 This keeps the v2 session model clean: every v2 session is created by a v2
 signature or by a v2-authenticated connection-sharing flow.
-Connection-share URLs carry the one-time code and address only; the server
-stores and returns the role associated with the share.
+Mobile/native connection-share URLs carry the one-time code and address only;
+the server stores and returns the role associated with the share.
 
 Desktop connection-share URLs are the temporary exception while Desktop remains
 legacy: they carry a legacy refresh `token`, `address`, and optional `role`, and
