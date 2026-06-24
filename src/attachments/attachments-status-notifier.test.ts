@@ -8,6 +8,7 @@ import {
   AttachmentStatus
 } from '@/entities/IAttachment';
 import { ApiAttachmentKind } from '@/api/generated/models/ApiAttachmentKind';
+import { ApiAttachmentSafetyStatus } from '@/api/generated/models/ApiAttachmentSafetyStatus';
 import { ApiAttachmentStatus } from '@/api/generated/models/ApiAttachmentStatus';
 
 describe('AttachmentsStatusNotifier', () => {
@@ -74,7 +75,14 @@ describe('AttachmentsStatusNotifier', () => {
           kind: ApiAttachmentKind.Pdf,
           status: ApiAttachmentStatus.Processing,
           url: null,
-          error_reason: null
+          error_reason: null,
+          safety: {
+            status: ApiAttachmentSafetyStatus.Pending,
+            scanner: null,
+            validation: null,
+            size_bytes: null,
+            sha256: null
+          }
         },
         ownerProfileId: baseAttachment.owner_profile_id,
         waveIds: ['wave-1', 'wave-2']
@@ -99,7 +107,11 @@ describe('AttachmentsStatusNotifier', () => {
         attachment: expect.objectContaining({
           status: ApiAttachmentStatus.Bad,
           error_reason: 'PDF contains blocked feature /JS',
-          url: 'https://ipfs/foo.pdf'
+          url: 'https://ipfs/foo.pdf',
+          safety: expect.objectContaining({
+            status: ApiAttachmentSafetyStatus.Blocked,
+            scanner: null
+          })
         }),
         ownerProfileId: baseAttachment.owner_profile_id,
         waveIds: []
