@@ -41,6 +41,19 @@ describe('api CORS constants', () => {
     });
   });
 
+  it('uses exact credentialed CORS for the legacy desktop connection-share bridge', () => {
+    expect(
+      getCorsOptionsForRequest(
+        '/api/auth/connection-share/legacy-desktop',
+        'https://6529.io',
+        'api.6529.io'
+      )
+    ).toMatchObject({
+      origin: 'https://6529.io',
+      credentials: true
+    });
+  });
+
   it('matches default API hosts when the Host header includes a port', () => {
     expect(
       getCorsOptionsForRequest(
