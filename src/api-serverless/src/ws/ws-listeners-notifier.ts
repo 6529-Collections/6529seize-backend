@@ -111,7 +111,7 @@ export class WsListenersNotifier {
       );
       const shouldLogHelpBotDebug = isHelpBotRelevantDrop(inputDrop);
       if (shouldLogHelpBotDebug) {
-        // TODO: remove after debugging helpbot reply websocket delivery.
+        // Temporary debug logging for helpbot reply websocket delivery.
         this.logger.info('Help bot DROP_UPDATE websocket audience resolved', {
           dropId: inputDrop.id,
           serialNo: inputDrop.serial_no,
@@ -146,7 +146,7 @@ export class WsListenersNotifier {
           (result): result is PromiseRejectedResult =>
             result.status === 'rejected'
         );
-        // TODO: remove after debugging helpbot reply websocket delivery.
+        // Temporary debug logging for helpbot reply websocket delivery.
         this.logger.info('Help bot DROP_UPDATE websocket sends settled', {
           dropId: inputDrop.id,
           serialNo: inputDrop.serial_no,
@@ -233,7 +233,7 @@ export class WsListenersNotifier {
       );
       const shouldLogHelpBotDebug = isHelpBotRelevantDrop(drop);
       if (shouldLogHelpBotDebug) {
-        // TODO: remove after debugging helpbot reply websocket delivery.
+        // Temporary debug logging for helpbot reply websocket delivery.
         this.logger.info(
           'Help bot DROP_REACTION_UPDATE websocket audience resolved',
           {
@@ -268,7 +268,7 @@ export class WsListenersNotifier {
           (result): result is PromiseRejectedResult =>
             result.status === 'rejected'
         );
-        // TODO: remove after debugging helpbot reply websocket delivery.
+        // Temporary debug logging for helpbot reply websocket delivery.
         this.logger.info(
           'Help bot DROP_REACTION_UPDATE websocket sends settled',
           {

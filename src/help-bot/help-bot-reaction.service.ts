@@ -50,7 +50,7 @@ export class HelpBotReactionService {
       },
       botCtx
     );
-    // TODO: remove after debugging helpbot reply websocket delivery.
+    // Temporary debug logging for helpbot reply websocket delivery.
     this.logger.info('Help bot reaction websocket notify starting', {
       dropId: drop.id,
       serialNo: drop.serial_no,
@@ -58,7 +58,7 @@ export class HelpBotReactionService {
       reaction
     });
     await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, botCtx);
-    // TODO: remove after debugging helpbot reply websocket delivery.
+    // Temporary debug logging for helpbot reply websocket delivery.
     this.logger.info('Help bot reaction websocket notify finished', {
       dropId: drop.id,
       serialNo: drop.serial_no,
