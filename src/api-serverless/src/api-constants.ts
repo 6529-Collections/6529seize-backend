@@ -38,6 +38,7 @@ const WEB_AUTH_CREDENTIAL_ROUTE_PATHS = new Set([
   '/api/auth/session-refresh',
   '/api/auth/session-logout',
   '/api/auth/connection-share',
+  '/api/auth/connection-share/legacy-desktop',
   '/api/auth/connection-share/redeem'
 ]);
 
