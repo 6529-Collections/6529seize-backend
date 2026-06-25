@@ -8,9 +8,7 @@ import {
 
 const mockHttpHandler = jest.fn();
 
-jest.mock('serverless-http', () => jest.fn(() => mockHttpHandler), {
-  virtual: true
-});
+jest.mock('serverless-http', () => jest.fn(() => mockHttpHandler));
 
 jest.mock('../../sentry.context', () => ({
   wrapLambdaHandler: jest.fn((fn) => fn)
@@ -133,6 +131,69 @@ describe('handler http responses', () => {
     mockHttpHandler.mockReset();
   });
 
+  it('returns responses without Set-Cookie unchanged', async () => {
+    const httpResponse = {
+      statusCode: 200,
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: '{}',
+      isBase64Encoded: false
+    };
+    mockHttpHandler.mockResolvedValue(httpResponse);
+
+    const result = await handler(
+      {
+        httpMethod: 'GET',
+        path: '/api/settings',
+        requestContext: {
+          requestId: 'request-1'
+        }
+      } as unknown as APIGatewayEvent,
+      {
+        awsRequestId: 'lambda-request-1'
+      } as Context,
+      jest.fn()
+    );
+
+    expect(result).toBe(httpResponse);
+  });
+
+  it('normalizes a single Set-Cookie header into repeated-cookie fields', async () => {
+    const compatibilityCookie = '6529_session=session-a.secret; Path=/api/auth';
+    mockHttpHandler.mockResolvedValue({
+      statusCode: 201,
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': compatibilityCookie
+      },
+      body: '{}',
+      isBase64Encoded: false
+    });
+
+    const result = (await handler(
+      {
+        httpMethod: 'POST',
+        path: '/api/auth/session-login',
+        requestContext: {
+          requestId: 'request-2'
+        }
+      } as unknown as APIGatewayEvent,
+      {
+        awsRequestId: 'lambda-request-2'
+      } as Context,
+      jest.fn()
+    )) as HttpHandlerResult;
+
+    expect(result.headers).toEqual({
+      'content-type': 'application/json'
+    });
+    expect(result.multiValueHeaders).toEqual({
+      'Set-Cookie': [compatibilityCookie]
+    });
+    expect(result.cookies).toEqual([compatibilityCookie]);
+  });
+
   it('preserves repeated Set-Cookie headers for API Gateway REST responses', async () => {
     const compatibilityCookie = '6529_session=session-a.secret; Path=/api/auth';
     const scopedCookie = '6529_session_scoped=session-a.secret; Path=/api/auth';
@@ -154,11 +215,11 @@ describe('handler http responses', () => {
         httpMethod: 'POST',
         path: '/api/auth/session-login',
         requestContext: {
-          requestId: 'request-1'
+          requestId: 'request-3'
         }
       } as unknown as APIGatewayEvent,
       {
-        awsRequestId: 'lambda-request-1'
+        awsRequestId: 'lambda-request-3'
       } as Context,
       jest.fn()
     )) as HttpHandlerResult;
@@ -172,7 +233,7 @@ describe('handler http responses', () => {
     expect(result.cookies).toEqual([compatibilityCookie, scopedCookie]);
   });
 
-  it('copies HTTP API cookie arrays into multi-value headers', async () => {
+  it('copies normalized cookie arrays into multi-value headers', async () => {
     const compatibilityCookie = '6529_session=session-b.secret; Path=/api/auth';
     const scopedCookie = '6529_session_scoped=session-b.secret; Path=/api/auth';
     mockHttpHandler.mockResolvedValue({
@@ -190,11 +251,11 @@ describe('handler http responses', () => {
         httpMethod: 'POST',
         path: '/api/auth/session-refresh',
         requestContext: {
-          requestId: 'request-2'
+          requestId: 'request-4'
         }
       } as unknown as APIGatewayEvent,
       {
-        awsRequestId: 'lambda-request-2'
+        awsRequestId: 'lambda-request-4'
       } as Context,
       jest.fn()
     )) as HttpHandlerResult;
@@ -203,5 +264,47 @@ describe('handler http responses', () => {
       'Set-Cookie': [compatibilityCookie, scopedCookie]
     });
     expect(result.cookies).toEqual([compatibilityCookie, scopedCookie]);
+  });
+
+  it('uses the last cookie for the same name, path, and domain', async () => {
+    const staleCompatibilityCookie =
+      '6529_session=stale.secret; Max-Age=0; Path=/api/auth';
+    const freshCompatibilityCookie =
+      '6529_session=fresh.secret; Max-Age=60; Path=/api/auth';
+    const differentPathCookie =
+      '6529_session=other.secret; Max-Age=60; Path=/api/other';
+    mockHttpHandler.mockResolvedValue({
+      statusCode: 201,
+      headers: {
+        'set-cookie': staleCompatibilityCookie
+      },
+      multiValueHeaders: {
+        'set-cookie': [freshCompatibilityCookie, differentPathCookie]
+      },
+      body: '{}',
+      isBase64Encoded: false
+    });
+
+    const result = (await handler(
+      {
+        httpMethod: 'POST',
+        path: '/api/auth/session-refresh',
+        requestContext: {
+          requestId: 'request-5'
+        }
+      } as unknown as APIGatewayEvent,
+      {
+        awsRequestId: 'lambda-request-5'
+      } as Context,
+      jest.fn()
+    )) as HttpHandlerResult;
+
+    expect(result.multiValueHeaders).toEqual({
+      'Set-Cookie': [freshCompatibilityCookie, differentPathCookie]
+    });
+    expect(result.cookies).toEqual([
+      freshCompatibilityCookie,
+      differentPathCookie
+    ]);
   });
 });

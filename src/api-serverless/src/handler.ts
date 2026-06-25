@@ -19,11 +19,18 @@ import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
 const SET_COOKIE_HEADER = 'set-cookie';
+const COOKIE_PATH_ATTRIBUTE = 'path';
+const COOKIE_DOMAIN_ATTRIBUTE = 'domain';
 
 type LambdaHttpResponse = APIGatewayProxyResult & {
   readonly cookies?: string[];
 };
 type HeaderMap = Record<string, unknown>;
+type SetCookieIdentity = {
+  readonly name: string;
+  readonly path: string;
+  readonly domain: string;
+};
 
 const httpHandler = serverlessHttp(app);
 export const handler = sentryContext.wrapLambdaHandler(
@@ -66,6 +73,8 @@ function normalizeSetCookieResponse(
   return {
     ...response,
     headers: removeSetCookieHeaders(response.headers),
+    // API Gateway REST reads multiValueHeaders; HTTP API v2 reads cookies.
+    // Emitting both keeps the response valid across either integration shape.
     multiValueHeaders: {
       ...removeSetCookieHeaders(response.multiValueHeaders),
       'Set-Cookie': setCookieValues
@@ -76,11 +85,11 @@ function normalizeSetCookieResponse(
 
 function getSetCookieValues(response: LambdaHttpResponse): string[] {
   const values = [
-    ...getHeaderValues(response.multiValueHeaders),
     ...getHeaderValues(response.headers),
+    ...getHeaderValues(response.multiValueHeaders),
     ...(response.cookies ?? [])
   ];
-  return Array.from(new Set(values));
+  return dedupeSetCookiesByIdentity(values);
 }
 
 function getHeaderValues(headers: HeaderMap | undefined): string[] {
@@ -100,6 +109,51 @@ function getStringValues(value: unknown): string[] {
     return [value.toString()];
   }
   return [];
+}
+
+function dedupeSetCookiesByIdentity(values: string[]): string[] {
+  const indexesByIdentity = new Map<string, number>();
+  const dedupedValues: string[] = [];
+  values.forEach((value) => {
+    const identity = serializeSetCookieIdentity(getSetCookieIdentity(value));
+    const existingIndex = indexesByIdentity.get(identity);
+    if (existingIndex === undefined) {
+      indexesByIdentity.set(identity, dedupedValues.length);
+      dedupedValues.push(value);
+      return;
+    }
+    dedupedValues[existingIndex] = value;
+  });
+  return dedupedValues;
+}
+
+function serializeSetCookieIdentity(identity: SetCookieIdentity): string {
+  return `${identity.name};domain=${identity.domain};path=${identity.path}`;
+}
+
+function getSetCookieIdentity(value: string): SetCookieIdentity {
+  const [nameValue = '', ...attributes] = value.split(';');
+  const [name = ''] = nameValue.split('=');
+  return attributes.reduce<SetCookieIdentity>(
+    (identity, attribute) => {
+      const [rawAttributeName = '', ...rawAttributeValueParts] =
+        attribute.split('=');
+      const attributeName = rawAttributeName.trim().toLowerCase();
+      const attributeValue = rawAttributeValueParts.join('=').trim();
+      if (attributeName === COOKIE_PATH_ATTRIBUTE) {
+        return { ...identity, path: attributeValue };
+      }
+      if (attributeName === COOKIE_DOMAIN_ATTRIBUTE) {
+        return { ...identity, domain: attributeValue.toLowerCase() };
+      }
+      return identity;
+    },
+    {
+      name: name.trim(),
+      path: '',
+      domain: ''
+    }
+  );
 }
 
 function removeSetCookieHeaders<T extends HeaderMap | undefined>(
