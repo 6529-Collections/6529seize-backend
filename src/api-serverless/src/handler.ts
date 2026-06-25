@@ -57,12 +57,16 @@ export const handler = sentryContext.wrapLambdaHandler(
     if (event.requestContext && event.requestContext.routeKey) {
       return wsHandler(event);
     } else {
-      return normalizeSetCookieResponse(await httpHandler(event, context));
+      return normalizeSetCookieResponse(
+        event,
+        await httpHandler(event, context)
+      );
     }
   }
 );
 
 function normalizeSetCookieResponse(
+  event: APIGatewayEvent,
   response: LambdaHttpResponse
 ): LambdaHttpResponse {
   const setCookieValues = getSetCookieValues(response);
@@ -70,17 +74,28 @@ function normalizeSetCookieResponse(
     return response;
   }
 
+  const { cookies, headers, multiValueHeaders, ...rest } = response;
+  const normalizedHeaders = removeSetCookieHeaders(headers);
+  if (isHttpApiV2Event(event)) {
+    return {
+      ...rest,
+      headers: normalizedHeaders,
+      cookies: setCookieValues
+    };
+  }
+
   return {
-    ...response,
-    headers: removeSetCookieHeaders(response.headers),
-    // API Gateway REST reads multiValueHeaders; HTTP API v2 reads cookies.
-    // Emitting both keeps the response valid across either integration shape.
+    ...rest,
+    headers: normalizedHeaders,
     multiValueHeaders: {
-      ...removeSetCookieHeaders(response.multiValueHeaders),
+      ...removeSetCookieHeaders(multiValueHeaders),
       'Set-Cookie': setCookieValues
-    },
-    cookies: setCookieValues
+    }
   };
+}
+
+function isHttpApiV2Event(event: APIGatewayEvent): boolean {
+  return (event as { readonly version?: string }).version === '2.0';
 }
 
 function getSetCookieValues(response: LambdaHttpResponse): string[] {
