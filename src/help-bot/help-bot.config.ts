@@ -33,6 +33,8 @@ export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
 export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
+export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE =
+  'Help6529 Credits is a reserved REP category managed by help6529.';
 export const HELP_BOT_SIGNUP_CREDIT_GRANT = 5;
 export const HELP_BOT_PROFILE_SETUP_CREDIT_GRANT = 5;
 export const HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT = 5;
@@ -43,7 +45,7 @@ export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
 export const HELP_BOT_OUT_OF_SCOPE_REPLY =
   'I can only help with 6529 product questions.';
 export const HELP_BOT_INSUFFICIENT_CREDITS_REPLY =
-  'You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the `Help6529 Credits` category granted by help6529 for signup, profile setup, and daily activity; ratings from other profiles in that category do not count for bot questions.';
+  'You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the `Help6529 Credits` category managed by help6529 for signup, profile setup, and daily activity.';
 
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';
@@ -54,6 +56,14 @@ function normalizeMentionHandle(handle: string): string | null {
     return null;
   }
   return normalized;
+}
+
+export function isHelpBotCreditCategory(
+  category: string | null | undefined
+): boolean {
+  return (
+    category?.trim().toLowerCase() === HELP_BOT_CREDIT_CATEGORY.toLowerCase()
+  );
 }
 
 export function getHelpBotTechTeamMentionHandles(): string[] {

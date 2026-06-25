@@ -6,6 +6,7 @@ import {
   HELP_BOT_TECH_TEAM_HANDLES_ENV,
   buildHelpBotNoReliableSourceReply,
   getHelpBotTechTeamMentionHandles,
+  isHelpBotCreditCategory,
   resolveHelpBotBaseUrl
 } from './help-bot.config';
 
@@ -36,8 +37,14 @@ describe('help bot config', () => {
   it('uses low-battery insufficient-credit reaction and REP-category copy', () => {
     expect(HELP_BOT_INSUFFICIENT_CREDITS_REACTION).toBe(':low_battery:');
     expect(HELP_BOT_INSUFFICIENT_CREDITS_REPLY).toBe(
-      'You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the `Help6529 Credits` category granted by help6529 for signup, profile setup, and daily activity; ratings from other profiles in that category do not count for bot questions.'
+      'You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the `Help6529 Credits` category managed by help6529 for signup, profile setup, and daily activity.'
     );
+  });
+
+  it('matches the reserved credit category case-insensitively', () => {
+    expect(isHelpBotCreditCategory('Help6529 Credits')).toBe(true);
+    expect(isHelpBotCreditCategory(' help6529 credits ')).toBe(true);
+    expect(isHelpBotCreditCategory('General')).toBe(false);
   });
 
   it('normalizes, filters, and dedupes tech team handles', () => {
