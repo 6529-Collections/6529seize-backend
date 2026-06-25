@@ -149,8 +149,8 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
 
     return await this.withConnection(ctx, async (connection) => {
       await this.ensureBotRatingRow({ botProfileId, profileId }, connection);
-      const balance = await this.getBotRatingForUpdate(
-        { botProfileId, profileId },
+      const balance = await this.getCreditCategoryBalanceForUpdate(
+        { profileId },
         connection
       );
       if (balance < HELP_BOT_QUESTION_CREDIT_COST) {
@@ -297,7 +297,7 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
         return {
           amountGranted: 0,
           balance: await this.getBotCreditBalance(
-            { botProfileId, profileId: request.profileId },
+            { profileId: request.profileId },
             connection
           ),
           alreadyGranted: true,
@@ -489,27 +489,50 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     return Number(row?.rating ?? 0);
   }
 
-  private async getBotCreditBalance(
+  private async getCreditCategoryBalanceForUpdate(
     {
-      botProfileId,
       profileId
     }: {
-      readonly botProfileId: string;
+      readonly profileId: string;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<number> {
+    const rows = await this.db.execute<{ readonly rating: number }>(
+      `
+        SELECT rating
+        FROM ${RATINGS_TABLE}
+        WHERE matter_target_id = :profileId
+          AND matter = :matter
+          AND matter_category = :category
+        FOR UPDATE
+      `,
+      {
+        profileId,
+        matter: RateMatter.REP,
+        category: HELP_BOT_CREDIT_CATEGORY
+      },
+      { wrappedConnection: connection }
+    );
+    return (rows ?? []).reduce((acc, row) => acc + Number(row.rating), 0);
+  }
+
+  private async getBotCreditBalance(
+    {
+      profileId
+    }: {
       readonly profileId: string;
     },
     connection: ConnectionWrapper<any>
   ): Promise<number> {
     const row = await this.db.oneOrNull<{ readonly balance: number }>(
       `
-        SELECT COALESCE(rating, 0) AS balance
+        SELECT COALESCE(SUM(rating), 0) AS balance
         FROM ${RATINGS_TABLE}
-        WHERE rater_profile_id = :botProfileId
-          AND matter_target_id = :profileId
+        WHERE matter_target_id = :profileId
           AND matter = :matter
           AND matter_category = :category
       `,
       {
-        botProfileId,
         profileId,
         matter: RateMatter.REP,
         category: HELP_BOT_CREDIT_CATEGORY

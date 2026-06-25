@@ -16,18 +16,24 @@ import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-lo
 
 function createSqlExecutor({
   executeResults = [],
-  oneOrNullResults = []
+  oneOrNullResults = [],
+  executeQueryResults = []
 }: {
   readonly executeResults?: unknown[];
   readonly oneOrNullResults?: unknown[];
+  readonly executeQueryResults?: unknown[][];
 }) {
   const mutableExecuteResults = [...executeResults];
   const mutableOneOrNullResults = [...oneOrNullResults];
+  const mutableExecuteQueryResults = [...executeQueryResults];
   const connection = { connection: {} };
   return {
     connection,
     executor: {
-      execute: jest.fn(async () => {
+      execute: jest.fn(async (sql: string) => {
+        if (sql.includes('SELECT rating') && sql.includes('FOR UPDATE')) {
+          return mutableExecuteQueryResults.shift() ?? [];
+        }
         return mutableExecuteResults.shift() ?? { affectedRows: 1 };
       }),
       oneOrNull: jest.fn(async () => {
@@ -52,15 +58,18 @@ function createSqlExecutor({
 
 function createService({
   executeResults,
+  executeQueryResults,
   oneOrNullResults,
   botProfileId = 'bot-profile'
 }: {
   readonly executeResults?: unknown[];
+  readonly executeQueryResults?: unknown[][];
   readonly oneOrNullResults?: unknown[];
   readonly botProfileId?: string | null;
 }) {
   const { executor, connection } = createSqlExecutor({
     executeResults,
+    executeQueryResults,
     oneOrNullResults
   });
   const profileResolver = {
@@ -196,7 +205,7 @@ describe('HelpBotCreditsService', () => {
 
   it('declines a question charge when the category balance is too low', async () => {
     const { service, executor } = createService({
-      oneOrNullResults: [{ rating: 0 }]
+      executeQueryResults: [[{ rating: 0 }]]
     });
 
     const result = await service.chargeQuestionCredit(
@@ -209,12 +218,12 @@ describe('HelpBotCreditsService', () => {
       balance: 0,
       botProfileMissing: false
     });
-    expect(executor.execute).toHaveBeenCalledTimes(1);
+    expect(executor.execute).toHaveBeenCalledTimes(2);
   });
 
-  it('ignores non-bot Help6529 Credits ratings when checking spendable balance', async () => {
+  it('uses the reserved credit category balance when checking spendable balance', async () => {
     const { service, executor } = createService({
-      oneOrNullResults: [{ rating: 4 }]
+      executeQueryResults: [[{ rating: 4 }, { rating: 2 }]]
     });
 
     const result = await service.chargeQuestionCredit(
@@ -224,15 +233,12 @@ describe('HelpBotCreditsService', () => {
 
     expect(result).toEqual({
       charged: true,
-      balance: 3,
+      balance: 5,
       botProfileMissing: false
     });
-    expect(executor.oneOrNull).toHaveBeenCalledWith(
-      expect.stringContaining('rater_profile_id = :botProfileId'),
-      expect.objectContaining({
-        botProfileId: 'bot-profile',
-        profileId: 'profile-1'
-      }),
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.not.stringContaining('rater_profile_id = :botProfileId'),
+      expect.objectContaining({ profileId: 'profile-1' }),
       expect.anything()
     );
   });
@@ -240,7 +246,7 @@ describe('HelpBotCreditsService', () => {
   it('spends one credit for a chargeable question', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }, { affectedRows: 1 }],
-      oneOrNullResults: [{ rating: 3 }]
+      executeQueryResults: [[{ rating: 3 }]]
     });
 
     const result = await service.chargeQuestionCredit(

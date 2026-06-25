@@ -26,6 +26,10 @@ import { ApiBulkRateRequest } from '../generated/models/ApiBulkRateRequest';
 import { ApiAvailableRatingCredit } from '../generated/models/ApiAvailableRatingCredit';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
+import {
+  HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
+  isHelpBotCreditCategory
+} from '../../../help-bot/help-bot.config';
 
 const router = asyncRouter();
 
@@ -41,6 +45,11 @@ router.post(
     if (apiRequest.matter === ApiRateMatter.Rep) {
       const proposedCategory = apiRequest.category?.trim() ?? '';
       if (proposedCategory !== '') {
+        if (isHelpBotCreditCategory(proposedCategory)) {
+          throw new BadRequestException(
+            HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE
+          );
+        }
         const abusivenessDetectionResult =
           await abusivenessCheckService.checkRepPhrase(proposedCategory);
         if (abusivenessDetectionResult.status === 'DISALLOWED') {
