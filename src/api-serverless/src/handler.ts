@@ -18,6 +18,12 @@ import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
+const SET_COOKIE_HEADER = 'set-cookie';
+
+type LambdaHttpResponse = APIGatewayProxyResult & {
+  readonly cookies?: string[];
+};
+type HeaderMap = Record<string, unknown>;
 
 const httpHandler = serverlessHttp(app);
 export const handler = sentryContext.wrapLambdaHandler(
@@ -44,10 +50,74 @@ export const handler = sentryContext.wrapLambdaHandler(
     if (event.requestContext && event.requestContext.routeKey) {
       return wsHandler(event);
     } else {
-      return httpHandler(event, context);
+      return normalizeSetCookieResponse(await httpHandler(event, context));
     }
   }
 );
+
+function normalizeSetCookieResponse(
+  response: LambdaHttpResponse
+): LambdaHttpResponse {
+  const setCookieValues = getSetCookieValues(response);
+  if (!setCookieValues.length) {
+    return response;
+  }
+
+  return {
+    ...response,
+    headers: removeSetCookieHeaders(response.headers),
+    multiValueHeaders: {
+      ...removeSetCookieHeaders(response.multiValueHeaders),
+      'Set-Cookie': setCookieValues
+    },
+    cookies: setCookieValues
+  };
+}
+
+function getSetCookieValues(response: LambdaHttpResponse): string[] {
+  const values = [
+    ...getHeaderValues(response.multiValueHeaders),
+    ...getHeaderValues(response.headers),
+    ...(response.cookies ?? [])
+  ];
+  return Array.from(new Set(values));
+}
+
+function getHeaderValues(headers: HeaderMap | undefined): string[] {
+  return Object.entries(headers ?? {}).flatMap(([key, value]) =>
+    key.toLowerCase() === SET_COOKIE_HEADER ? getStringValues(value) : []
+  );
+}
+
+function getStringValues(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(getStringValues);
+  }
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return [value.toString()];
+  }
+  return [];
+}
+
+function removeSetCookieHeaders<T extends HeaderMap | undefined>(
+  headers: T
+): T {
+  if (!headers) {
+    return headers;
+  }
+  return Object.entries(headers).reduce<Record<string, unknown>>(
+    (acc, [key, value]) => {
+      if (key.toLowerCase() !== SET_COOKIE_HEADER) {
+        acc[key] = value;
+      }
+      return acc;
+    },
+    {}
+  ) as T;
+}
 
 async function wsHandler(
   event: APIGatewayEvent

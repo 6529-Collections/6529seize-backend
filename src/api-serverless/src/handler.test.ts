@@ -1,5 +1,4 @@
 import type { APIGatewayEvent, Context } from 'aws-lambda';
-import { handler } from './handler';
 import { WsMessageType } from './ws/ws-message';
 import {
   appWebSockets,
@@ -9,7 +8,9 @@ import {
 
 const mockHttpHandler = jest.fn();
 
-jest.mock('serverless-http', () => jest.fn(() => mockHttpHandler));
+jest.mock('serverless-http', () => jest.fn(() => mockHttpHandler), {
+  virtual: true
+});
 
 jest.mock('../../sentry.context', () => ({
   wrapLambdaHandler: jest.fn((fn) => fn)
@@ -53,6 +54,7 @@ jest.mock('./ws/ws-log-redaction', () => ({
   redactWebSocketMessageForLog: jest.fn((message) => message)
 }));
 
+const { handler } = require('./handler') as typeof import('./handler');
 const appWebSocketsMock = appWebSockets as jest.Mocked<typeof appWebSockets>;
 const authenticateWebSocketJwtOrGetByConnectionIdMock =
   authenticateWebSocketJwtOrGetByConnectionId as jest.MockedFunction<
@@ -62,10 +64,16 @@ const authenticateWebSocketTokenMock =
   authenticateWebSocketToken as jest.MockedFunction<
     typeof authenticateWebSocketToken
   >;
+type HttpHandlerResult = {
+  readonly headers?: Record<string, unknown>;
+  readonly multiValueHeaders?: Record<string, string[]>;
+  readonly cookies?: string[];
+};
 
 describe('handler websocket auth', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockHttpHandler.mockReset();
     authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
       identityId: 'stale-identity',
       jwtExpiry: 100
@@ -116,5 +124,84 @@ describe('handler websocket auth', () => {
       }),
       skipStaleConnectionCheck: true
     });
+  });
+});
+
+describe('handler http responses', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockHttpHandler.mockReset();
+  });
+
+  it('preserves repeated Set-Cookie headers for API Gateway REST responses', async () => {
+    const compatibilityCookie = '6529_session=session-a.secret; Path=/api/auth';
+    const scopedCookie = '6529_session_scoped=session-a.secret; Path=/api/auth';
+    mockHttpHandler.mockResolvedValue({
+      statusCode: 201,
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': compatibilityCookie
+      },
+      multiValueHeaders: {
+        'set-cookie': [compatibilityCookie, scopedCookie]
+      },
+      body: '{}',
+      isBase64Encoded: false
+    });
+
+    const result = (await handler(
+      {
+        httpMethod: 'POST',
+        path: '/api/auth/session-login',
+        requestContext: {
+          requestId: 'request-1'
+        }
+      } as unknown as APIGatewayEvent,
+      {
+        awsRequestId: 'lambda-request-1'
+      } as Context,
+      jest.fn()
+    )) as HttpHandlerResult;
+
+    expect(result.headers).toEqual({
+      'content-type': 'application/json'
+    });
+    expect(result.multiValueHeaders).toEqual({
+      'Set-Cookie': [compatibilityCookie, scopedCookie]
+    });
+    expect(result.cookies).toEqual([compatibilityCookie, scopedCookie]);
+  });
+
+  it('copies HTTP API cookie arrays into multi-value headers', async () => {
+    const compatibilityCookie = '6529_session=session-b.secret; Path=/api/auth';
+    const scopedCookie = '6529_session_scoped=session-b.secret; Path=/api/auth';
+    mockHttpHandler.mockResolvedValue({
+      statusCode: 201,
+      headers: {
+        'content-type': 'application/json'
+      },
+      cookies: [compatibilityCookie, scopedCookie],
+      body: '{}',
+      isBase64Encoded: false
+    });
+
+    const result = (await handler(
+      {
+        httpMethod: 'POST',
+        path: '/api/auth/session-refresh',
+        requestContext: {
+          requestId: 'request-2'
+        }
+      } as unknown as APIGatewayEvent,
+      {
+        awsRequestId: 'lambda-request-2'
+      } as Context,
+      jest.fn()
+    )) as HttpHandlerResult;
+
+    expect(result.multiValueHeaders).toEqual({
+      'Set-Cookie': [compatibilityCookie, scopedCookie]
+    });
+    expect(result.cookies).toEqual([compatibilityCookie, scopedCookie]);
   });
 });
