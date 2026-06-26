@@ -2,7 +2,7 @@ import { createReadStream } from 'fs';
 import { doInDbContext } from '../secrets';
 import { Rememe, RememeSource, RememeUpload } from '../entities/IRememe';
 import { Alchemy } from '@/alchemy-sdk';
-import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '@/constants';
+import { ALCHEMY_SETTINGS } from '@/constants';
 import {
   deleteRememes,
   fetchMissingS3Rememes,
@@ -15,7 +15,6 @@ import { persistRememesS3 } from '../s3_rememes';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { equalIgnoreCase } from '../strings';
-import { mediaChecker } from '../media-checker';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -29,6 +28,18 @@ interface CSVData {
   id: string;
   memes: number[];
 }
+
+type RememeS3RefreshFields = Pick<
+  Rememe,
+  | 's3_image_original'
+  | 's3_image_scaled'
+  | 's3_image_thumbnail'
+  | 's3_image_icon'
+  | 's3_image_processing_status'
+  | 's3_image_processing_error'
+  | 's3_image_last_attempt_at'
+  | 's3_image_processing_attempts'
+>;
 
 const myarweave = Arweave.init({
   host: 'arweave.net',
@@ -162,7 +173,7 @@ async function refreshRememes(rememes: Rememe[]) {
   await Promise.all(
     rememes.map(async (d) => {
       try {
-        const r = await buildRememe(d.contract, d.id, d.meme_references);
+        const r = await buildRememe(d.contract, d.id, d.meme_references, d);
         if (r) {
           updateRememesList.push(r);
         }
@@ -178,7 +189,7 @@ async function refreshRememes(rememes: Rememe[]) {
   await Promise.all(
     retryRememesList.map(async (d) => {
       try {
-        const r = await buildRememe(d.contract, d.id, d.meme_references);
+        const r = await buildRememe(d.contract, d.id, d.meme_references, d);
         if (r) {
           updateRememesList.push(r);
         }
@@ -195,7 +206,12 @@ async function refreshRememes(rememes: Rememe[]) {
   logger.info(`[REFRESH COMPLETE] [REFRESHED ${updateRememesList.length}]`);
 }
 
-async function buildRememe(contract: string, id: string, memes: number[]) {
+async function buildRememe(
+  contract: string,
+  id: string,
+  memes: number[],
+  existing?: Rememe
+) {
   const nftMeta = await alchemy.nft.getNftMetadata(contract, id, {
     refreshCache: true
   });
@@ -223,19 +239,7 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
           : ''
       : '';
 
-    const originalFormat = await mediaChecker.getContentType(image);
-
-    let s3Original: string | null = null;
-    let s3Scaled: string | null = null;
-    let s3Thumbnail: string | null = null;
-    let s3Icon: string | null = null;
-
-    if (originalFormat) {
-      s3Original = `${CLOUDFRONT_LINK}/rememes/images/original/${contract}-${id}.${originalFormat}`;
-      s3Scaled = `${CLOUDFRONT_LINK}/rememes/images/scaled/${contract}-${id}.${originalFormat}`;
-      s3Thumbnail = `${CLOUDFRONT_LINK}/rememes/images/thumbnail/${contract}-${id}.${originalFormat}`;
-      s3Icon = `${CLOUDFRONT_LINK}/rememes/images/icon/${contract}-${id}.${originalFormat}`;
-    }
+    const s3Fields = rememeS3FieldsForRefresh(existing, image, media);
 
     const r: Rememe = {
       contract: contract,
@@ -249,10 +253,7 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
       animation,
       contract_opensea_data: contractOpenseaData,
       media: media,
-      s3_image_original: s3Original,
-      s3_image_scaled: s3Scaled,
-      s3_image_thumbnail: s3Thumbnail,
-      s3_image_icon: s3Icon,
+      ...s3Fields,
       source: RememeSource.FILE
     };
     return r;
@@ -262,6 +263,39 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
     );
     return undefined;
   }
+}
+
+function rememeS3FieldsForRefresh(
+  existing: Rememe | undefined,
+  image: string,
+  media: any
+): RememeS3RefreshFields {
+  const sourceMediaUnchanged =
+    existing?.image === image && existing?.media?.gateway === media?.gateway;
+
+  if (existing && sourceMediaUnchanged) {
+    return {
+      s3_image_original: existing.s3_image_original ?? null,
+      s3_image_scaled: existing.s3_image_scaled ?? null,
+      s3_image_thumbnail: existing.s3_image_thumbnail ?? null,
+      s3_image_icon: existing.s3_image_icon ?? null,
+      s3_image_processing_status: existing.s3_image_processing_status ?? null,
+      s3_image_processing_error: existing.s3_image_processing_error ?? null,
+      s3_image_last_attempt_at: existing.s3_image_last_attempt_at ?? null,
+      s3_image_processing_attempts: existing.s3_image_processing_attempts ?? 0
+    };
+  }
+
+  return {
+    s3_image_original: null,
+    s3_image_scaled: null,
+    s3_image_thumbnail: null,
+    s3_image_icon: null,
+    s3_image_processing_status: null,
+    s3_image_processing_error: null,
+    s3_image_last_attempt_at: null,
+    s3_image_processing_attempts: 0
+  };
 }
 
 async function upload(rememes: Rememe[]) {
