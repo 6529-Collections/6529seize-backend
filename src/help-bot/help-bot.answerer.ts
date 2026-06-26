@@ -183,7 +183,7 @@ function buildCreditSystemRecord(): HelpBotKnowledgeRecord {
     facts: [
       `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP to meter bot questions.`,
       `Each Help6529 question costs ${HELP_BOT_QUESTION_CREDIT_COST} Help6529 Credit REP.`,
-      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by help6529; normal users cannot grant REP in this category.`,
+      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}; normal users cannot grant REP in this category.`,
       `Signup, profile setup, and daily activity grants use the ${HELP_BOT_CREDIT_GRANT_ENV} configured amount.`
     ],
     relatedPaths: ['/waves'],
@@ -648,6 +648,7 @@ function isHelpBotCreditQuestion(normalizedQuestion: string): boolean {
     /\bhelp\s*bot\s+credit(s)?\b/,
     /\bhelpbot\s+credit(s)?\b/,
     /\byour\s+credit(s)?\b/,
+    /\b(?:this\s+)?credit(s)?\s+system\b/,
     /\bcredit\s+rep\b/,
     /\bout of\s+help\s*6529\s+credit(s)?\b/,
     /\blow\s+battery\b/,
@@ -669,7 +670,7 @@ function buildCreditSystemAnswer(
     text: [
       `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP as a lightweight question meter.`,
       `Each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit.`,
-      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by help6529, so normal users cannot grant it to each other.`,
+      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}, so normal users cannot grant it to each other.`,
       `Signup, profile setup, and daily activity grants all use the ${HELP_BOT_CREDIT_GRANT_ENV} configured amount.`
     ].join(' '),
     canonicalUrl: toCanonicalUrl(baseUrl, '/rep/categories'),
