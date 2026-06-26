@@ -9,11 +9,27 @@ import { globalRepCategoryApiService } from '../rep-categories/global-rep-catego
 import { getAuthenticationContext } from '../auth/auth';
 import { Timer } from '../../../time';
 import {
+  HELP_BOT_CREDIT_CATEGORY,
   HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
   isHelpBotCreditCategory
 } from '../../../help-bot/help-bot.config';
 
 const router = asyncRouter();
+
+function maybeIncludeHelpBotCreditCategory(
+  categories: string[],
+  searchParam: string
+): string[] {
+  if (
+    !HELP_BOT_CREDIT_CATEGORY.toLowerCase().includes(
+      searchParam.toLowerCase()
+    ) ||
+    categories.some((category) => isHelpBotCreditCategory(category))
+  ) {
+    return categories;
+  }
+  return [HELP_BOT_CREDIT_CATEGORY, ...categories];
+}
 
 router.get(
   `/top`,
@@ -53,9 +69,7 @@ router.get(
         text: searchParam,
         limit: 10
       });
-      res.send(
-        categories.filter((category) => !isHelpBotCreditCategory(category))
-      );
+      res.send(maybeIncludeHelpBotCreditCategory(categories, searchParam));
     }
   }
 );
