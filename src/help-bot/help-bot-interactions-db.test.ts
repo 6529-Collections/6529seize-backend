@@ -9,9 +9,13 @@ import {
 } from './help-bot-interactions.db';
 import { Time } from '@/time';
 import { HELP_BOT_ANSWERING_LEASE_MS } from './help-bot.config';
+import { ConnectionWrapper } from '@/sql-executor';
 
 describe('HelpBotInteractionsDb', () => {
   const ctx = {} as RequestContext;
+  const transactionConnection: ConnectionWrapper<string> = {
+    connection: 'transaction-connection'
+  };
 
   afterEach(() => {
     jest.restoreAllMocks();
@@ -50,6 +54,11 @@ describe('HelpBotInteractionsDb', () => {
   }) {
     return {
       execute: jest.fn().mockResolvedValue(executeResult),
+      executeNativeQueriesInTransaction: jest.fn(
+        async <T>(
+          executable: (connection: ConnectionWrapper<any>) => Promise<T>
+        ) => executable(transactionConnection)
+      ),
       oneOrNull: jest.fn().mockResolvedValue(row),
       getAffectedRows: jest.fn((result: unknown) => {
         if (
@@ -89,6 +98,38 @@ describe('HelpBotInteractionsDb', () => {
 
     expect(result.created).toBe(true);
     expect(sqlExecutor.getAffectedRows).toHaveBeenCalledWith([0, 1]);
+  });
+
+  it('inserts and reads back seen interactions on one transactional connection', async () => {
+    const sqlExecutor = createSqlExecutor({ executeResult: [0, 1] });
+    const db = createDb(sqlExecutor);
+
+    await db.insertSeen(
+      {
+        triggerDropId: 'trigger-drop',
+        targetDropId: 'trigger-drop',
+        waveId: 'wave-1',
+        authorProfileId: 'author-1',
+        triggerType: HelpBotInteractionTriggerType.MENTION,
+        question: 'what is tdh',
+        parentBotDropId: null
+      },
+      ctx
+    );
+
+    expect(sqlExecutor.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(
+      1
+    );
+    expect(sqlExecutor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT IGNORE INTO help_bot_interactions'),
+      expect.anything(),
+      { wrappedConnection: transactionConnection }
+    );
+    expect(sqlExecutor.oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE trigger_drop_id = :triggerDropId'),
+      { triggerDropId: 'trigger-drop' },
+      { wrappedConnection: transactionConnection }
+    );
   });
 
   it('treats API mysql insert metadata arrays without affected rows as duplicates', async () => {

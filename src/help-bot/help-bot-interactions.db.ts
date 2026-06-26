@@ -56,6 +56,12 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
     request: InsertHelpBotInteractionRequest,
     ctx: RequestContext
   ): Promise<InsertHelpBotInteractionResult> {
+    if (!ctx.connection) {
+      return await this.executeNativeQueriesInTransaction((connection) =>
+        this.insertSeen(request, { ...ctx, connection })
+      );
+    }
+
     const now = Time.currentMillis();
     const id = randomUUID();
     const result = await this.db.execute(
