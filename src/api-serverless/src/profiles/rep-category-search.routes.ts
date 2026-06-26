@@ -12,18 +12,18 @@ import {
   HELP_BOT_CREDIT_CATEGORY,
   HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
   isHelpBotCreditCategory
-} from '../../../help-bot/help-bot.config';
+} from '@/help-bot/help-bot.config';
 
 const router = asyncRouter();
 
-function maybeIncludeHelpBotCreditCategory(
+export function maybeIncludeHelpBotCreditCategory(
   categories: string[],
   searchParam: string
 ): string[] {
+  const normalizedSearchParam = searchParam.trim().toLowerCase();
   if (
-    !HELP_BOT_CREDIT_CATEGORY.toLowerCase().includes(
-      searchParam.toLowerCase()
-    ) ||
+    normalizedSearchParam.length === 0 ||
+    !HELP_BOT_CREDIT_CATEGORY.toLowerCase().includes(normalizedSearchParam) ||
     categories.some((category) => isHelpBotCreditCategory(category))
   ) {
     return categories;
