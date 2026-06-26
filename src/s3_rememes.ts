@@ -14,8 +14,8 @@ import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { persistRememes } from './db';
 import { Logger } from './logging';
-import { ipfs } from './ipfs';
 import { mediaChecker } from './media-checker';
+import { resolveRememeFetchImageUrl } from './rememe-media-source';
 import pLimit from 'p-limit';
 
 const logger = Logger.get('S3_REMEMES');
@@ -148,21 +148,7 @@ async function processRememeS3Unsafe(r: Rememe) {
 }
 
 function resolveRememeImageUrl(r: Rememe): string | undefined {
-  const metadataImage = ipfs
-    .ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(r.image)
-    .trim();
-  if (isFetchableUrl(metadataImage)) {
-    return metadataImage;
-  }
-
-  const gateway = r.media?.gateway?.trim();
-  const resolved = gateway?.length ? gateway : metadataImage;
-  const trimmed = resolved.trim();
-  return trimmed.length ? trimmed : undefined;
-}
-
-function isFetchableUrl(url: string): boolean {
-  return /^https?:\/\//i.test(url);
+  return resolveRememeFetchImageUrl(r);
 }
 
 async function persistUnsupportedOriginal(

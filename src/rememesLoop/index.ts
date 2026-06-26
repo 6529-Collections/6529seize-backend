@@ -15,6 +15,10 @@ import { persistRememesS3 } from '../s3_rememes';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { equalIgnoreCase } from '../strings';
+import {
+  resolveRememeFetchImageUrl,
+  resolveRememeFetchImageUrlFromParts
+} from '../rememe-media-source';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -239,7 +243,7 @@ async function buildRememe(
           : ''
       : '';
 
-    const s3Fields = rememeS3FieldsForRefresh(existing, image);
+    const s3Fields = rememeS3FieldsForRefresh(existing, image, media);
 
     const r: Rememe = {
       contract: contract,
@@ -267,10 +271,13 @@ async function buildRememe(
 
 export function rememeS3FieldsForRefresh(
   existing: Rememe | undefined,
-  image: string
+  image: string,
+  media?: Rememe['media']
 ): RememeS3RefreshFields {
-  // Alchemy gateway URLs can be absent or volatile; the metadata image URL is the stable source key.
-  const sourceMediaUnchanged = existing?.image === image;
+  const sourceMediaUnchanged =
+    !!existing &&
+    resolveRememeFetchImageUrl(existing) ===
+      resolveRememeFetchImageUrlFromParts(image, media?.gateway);
 
   if (existing && sourceMediaUnchanged) {
     return {
