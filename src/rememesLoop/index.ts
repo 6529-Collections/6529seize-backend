@@ -239,7 +239,7 @@ async function buildRememe(
           : ''
       : '';
 
-    const s3Fields = rememeS3FieldsForRefresh(existing, image, media);
+    const s3Fields = rememeS3FieldsForRefresh(existing, image);
 
     const r: Rememe = {
       contract: contract,
@@ -265,13 +265,12 @@ async function buildRememe(
   }
 }
 
-function rememeS3FieldsForRefresh(
+export function rememeS3FieldsForRefresh(
   existing: Rememe | undefined,
-  image: string,
-  media: any
+  image: string
 ): RememeS3RefreshFields {
-  const sourceMediaUnchanged =
-    existing?.image === image && existing?.media?.gateway === media?.gateway;
+  // Alchemy gateway URLs can be absent or volatile; the metadata image URL is the stable source key.
+  const sourceMediaUnchanged = existing?.image === image;
 
   if (existing && sourceMediaUnchanged) {
     return {
@@ -282,7 +281,8 @@ function rememeS3FieldsForRefresh(
       s3_image_processing_status: existing.s3_image_processing_status ?? null,
       s3_image_processing_error: existing.s3_image_processing_error ?? null,
       s3_image_last_attempt_at: existing.s3_image_last_attempt_at ?? null,
-      s3_image_processing_attempts: existing.s3_image_processing_attempts ?? 0
+      s3_image_processing_attempts:
+        existing.s3_image_processing_attempts ?? null
     };
   }
 
