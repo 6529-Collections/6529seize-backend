@@ -439,6 +439,7 @@ async function readResponseBufferWithLimit(
     return Buffer.from(blob);
   }
 
+  // node-fetch v2 response.body is a Node Readable: async-iterable and destroyable.
   const stream = response.body as unknown as AsyncIterable<unknown>;
   const destroyableStream = response.body as unknown as {
     destroy?: () => void;
@@ -501,7 +502,10 @@ function assetUrl(key: string | null): string | null {
 
 function nextAttemptCount(r: Rememe, status: RememeS3ProcessingStatus): number {
   const currentAttempts = r.s3_image_processing_attempts ?? 0;
-  if (status === RememeS3ProcessingStatus.COMPLETE) {
+  if (
+    status === RememeS3ProcessingStatus.COMPLETE ||
+    status === RememeS3ProcessingStatus.UNSUPPORTED
+  ) {
     return currentAttempts;
   }
   return currentAttempts + 1;

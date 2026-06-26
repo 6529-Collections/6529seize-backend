@@ -96,14 +96,18 @@ describe('persistRememesS3', () => {
     ]);
   });
 
-  it('persists unsupported video originals without trying to resize them', async () => {
+  it('persists unsupported video originals without trying to resize them or incrementing attempts', async () => {
     mockS3Objects({
       [`rememes/images/original/${BASE_KEY}`]: [
         `rememes/images/original/${BASE_KEY}mp4`
       ]
     });
 
-    await persistRememesS3([buildRememe()]);
+    await persistRememesS3([
+      buildRememe({
+        s3_image_processing_attempts: 2
+      })
+    ]);
 
     expect(mediaChecker.getContentType).not.toHaveBeenCalled();
     expect(withArweaveFallback).not.toHaveBeenCalled();
@@ -116,7 +120,7 @@ describe('persistRememesS3', () => {
         s3_image_thumbnail: null,
         s3_image_icon: null,
         s3_image_processing_status: RememeS3ProcessingStatus.UNSUPPORTED,
-        s3_image_processing_attempts: 1,
+        s3_image_processing_attempts: 2,
         s3_image_processing_error: 'Unsupported rememe media format: mp4'
       })
     ]);
