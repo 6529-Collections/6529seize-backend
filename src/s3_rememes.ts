@@ -102,7 +102,7 @@ async function processRememeS3(r: Rememe) {
 }
 
 async function processRememeS3Unsafe(r: Rememe) {
-  const image = resolveRememeImageUrl(r);
+  const image = resolveRememeFetchImageUrl(r);
   if (!image?.length) {
     logger.warn(
       `[REMEME IMAGE URL MISSING] [CONTRACT ${r.contract}] [ID ${r.id}]`
@@ -145,10 +145,6 @@ async function processRememeS3Unsafe(r: Rememe) {
   }
 
   await persistRasterRememe(r, image, originalFormat, existingAssets);
-}
-
-function resolveRememeImageUrl(r: Rememe): string | undefined {
-  return resolveRememeFetchImageUrl(r);
 }
 
 async function persistUnsupportedOriginal(

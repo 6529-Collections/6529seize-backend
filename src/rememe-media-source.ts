@@ -41,6 +41,8 @@ export function isRememeFetchSourceUnchanged(
   }
 
   const nextGateway = gatewayFromMedia(media);
+  // Missing gateway on refresh is not a new source signal. Alchemy gateway URLs
+  // can be absent transiently, so preserve S3 state when the metadata image is unchanged.
   if (!nextGateway && existing.image === image) {
     return true;
   }
