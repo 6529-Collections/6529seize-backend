@@ -148,17 +148,21 @@ async function processRememeS3Unsafe(r: Rememe) {
 }
 
 function resolveRememeImageUrl(r: Rememe): string | undefined {
-  const metadataImage = ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(
-    r.image
-  );
-  const resolved = metadataImage.trim().length
-    ? metadataImage
-    : r.media?.gateway;
-  if (!resolved) {
-    return undefined;
+  const metadataImage = ipfs
+    .ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(r.image)
+    .trim();
+  if (isFetchableUrl(metadataImage)) {
+    return metadataImage;
   }
+
+  const gateway = r.media?.gateway?.trim();
+  const resolved = gateway?.length ? gateway : metadataImage;
   const trimmed = resolved.trim();
   return trimmed.length ? trimmed : undefined;
+}
+
+function isFetchableUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
 }
 
 async function persistUnsupportedOriginal(

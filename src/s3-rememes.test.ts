@@ -221,6 +221,44 @@ describe('persistRememesS3', () => {
     ]);
   });
 
+  it('falls back to the media gateway when metadata image is not fetchable', async () => {
+    mockS3Objects({});
+    jest.mocked(mediaChecker.getContentType).mockResolvedValue('image/png');
+    jest.mocked(withArweaveFallback).mockResolvedValue(
+      buildFetchResponse({
+        body: Buffer.from('image-bytes'),
+        contentLength: '11',
+        contentType: 'image/png'
+      })
+    );
+    jest
+      .mocked(resizeImageBufferToHeight)
+      .mockResolvedValue(Buffer.from('resized-image'));
+
+    await persistRememesS3([
+      buildRememe({
+        image: 'ar://raw-rememe-image',
+        media: {
+          gateway: 'https://gateway.example.test/rememe.png'
+        }
+      })
+    ]);
+
+    expect(mediaChecker.getContentType).toHaveBeenCalledWith(
+      'https://gateway.example.test/rememe.png'
+    );
+    expect(withArweaveFallback).toHaveBeenCalledWith(
+      'https://gateway.example.test/rememe.png',
+      expect.any(Function)
+    );
+    expect(PutObjectCommand).toHaveBeenCalledTimes(4);
+    expect(persistRememes).toHaveBeenCalledWith([
+      expect.objectContaining({
+        s3_image_processing_status: RememeS3ProcessingStatus.COMPLETE
+      })
+    ]);
+  });
+
   it('does not buffer oversized remote media responses', async () => {
     const arrayBuffer = jest.fn();
     mockS3Objects({});
