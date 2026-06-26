@@ -36,9 +36,24 @@ export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
 export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE =
   'Help6529 Credits is a reserved REP category managed by help6529.';
-export const HELP_BOT_SIGNUP_CREDIT_GRANT = 5;
-export const HELP_BOT_PROFILE_SETUP_CREDIT_GRANT = 5;
-export const HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT = 5;
+export const HELP_BOT_CREDIT_GRANT_ENV = 'HELP_BOT_CREDIT_GRANT';
+export const HELP_BOT_DEFAULT_CREDIT_GRANT = 10;
+export function getHelpBotCreditGrantAmount(): number {
+  const rawAmount = env.getStringOrNull(HELP_BOT_CREDIT_GRANT_ENV);
+  if (!rawAmount?.trim()) {
+    return HELP_BOT_DEFAULT_CREDIT_GRANT;
+  }
+  const amount = Number(rawAmount.trim());
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error(`${HELP_BOT_CREDIT_GRANT_ENV} must be a positive integer`);
+  }
+  return amount;
+}
+
+const HELP_BOT_CREDIT_GRANT = getHelpBotCreditGrantAmount();
+export const HELP_BOT_SIGNUP_CREDIT_GRANT = HELP_BOT_CREDIT_GRANT;
+export const HELP_BOT_PROFILE_SETUP_CREDIT_GRANT = HELP_BOT_CREDIT_GRANT;
+export const HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT = HELP_BOT_CREDIT_GRANT;
 export const HELP_BOT_QUESTION_CREDIT_COST = 1;
 
 export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =

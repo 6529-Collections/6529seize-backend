@@ -2,6 +2,7 @@ import { HelpBotCreditEventType } from '@/entities/IHelpBotCreditEvent';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 import { RequestContext } from '@/request.context';
 import { HelpBotCreditsService } from './help-bot-credits.service';
+import { HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT } from './help-bot.config';
 
 jest.mock('@/drops/participation-drops-over-vote-revocation', () => ({
   revokeRepBasedDropOverVotes: jest.fn()
@@ -105,14 +106,14 @@ describe('HelpBotCreditsService', () => {
     );
 
     expect(result).toEqual({
-      amountGranted: 5,
-      balance: 105,
+      amountGranted: HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
+      balance: 100 + HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
       alreadyGranted: false,
       botProfileMissing: false
     });
     expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE ratings'),
-      expect.objectContaining({ delta: 5 }),
+      expect.objectContaining({ delta: HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT }),
       expect.anything()
     );
     expect(profileActivityLogsDb.insert).toHaveBeenCalledWith(
@@ -124,7 +125,7 @@ describe('HelpBotCreditsService', () => {
         additional_data_2: 'Help6529 Credits',
         contents: JSON.stringify({
           old_rating: 100,
-          new_rating: 105,
+          new_rating: 100 + HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
           rating_matter: 'REP',
           rating_category: 'Help6529 Credits',
           change_reason: 'HELP_BOT_AUTOMATIC_GRANT'
@@ -171,14 +172,14 @@ describe('HelpBotCreditsService', () => {
     );
 
     expect(result).toEqual({
-      amountGranted: 5,
-      balance: 105,
+      amountGranted: HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
+      balance: 100 + HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
       alreadyGranted: false,
       botProfileMissing: false
     });
     expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE ratings'),
-      expect.objectContaining({ delta: 5 }),
+      expect.objectContaining({ delta: HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT }),
       expect.anything()
     );
   });

@@ -1,28 +1,65 @@
 import {
+  HELP_BOT_CREDIT_GRANT_ENV,
+  HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
+  HELP_BOT_DEFAULT_CREDIT_GRANT,
   HELP_BOT_HANDLE,
   HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
   HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
   HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY,
+  HELP_BOT_PROFILE_SETUP_CREDIT_GRANT,
+  HELP_BOT_QUESTION_CREDIT_COST,
+  HELP_BOT_SIGNUP_CREDIT_GRANT,
   HELP_BOT_TECH_TEAM_HANDLES_ENV,
   buildHelpBotNoReliableSourceReply,
+  getHelpBotCreditGrantAmount,
   getHelpBotTechTeamMentionHandles,
   isHelpBotCreditCategory,
   resolveHelpBotBaseUrl
 } from './help-bot.config';
 
 describe('help bot config', () => {
-  const previousTechTeamHandles = process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV];
+  const previousEnv = {
+    creditGrant: process.env[HELP_BOT_CREDIT_GRANT_ENV],
+    techTeamHandles: process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV]
+  };
 
   afterEach(() => {
-    if (previousTechTeamHandles === undefined) {
-      delete process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV];
-      return;
-    }
-    process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] = previousTechTeamHandles;
+    restoreEnv(HELP_BOT_CREDIT_GRANT_ENV, previousEnv.creditGrant);
+    restoreEnv(HELP_BOT_TECH_TEAM_HANDLES_ENV, previousEnv.techTeamHandles);
   });
 
   it('uses the canonical help6529 trigger handle', () => {
     expect(HELP_BOT_HANDLE).toBe('help6529');
+  });
+
+  it('uses one configured amount for automatic credit grants', () => {
+    expect(HELP_BOT_SIGNUP_CREDIT_GRANT).toBe(
+      HELP_BOT_PROFILE_SETUP_CREDIT_GRANT
+    );
+    expect(HELP_BOT_PROFILE_SETUP_CREDIT_GRANT).toBe(
+      HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT
+    );
+    expect(HELP_BOT_QUESTION_CREDIT_COST).toBe(1);
+  });
+
+  it('defaults the shared automatic credit grant amount to ten credits', () => {
+    delete process.env[HELP_BOT_CREDIT_GRANT_ENV];
+
+    expect(getHelpBotCreditGrantAmount()).toBe(HELP_BOT_DEFAULT_CREDIT_GRANT);
+  });
+
+  it('reads the shared automatic credit grant amount from env', () => {
+    process.env[HELP_BOT_CREDIT_GRANT_ENV] = '12';
+
+    expect(getHelpBotCreditGrantAmount()).toBe(12);
+  });
+
+  it('rejects invalid shared automatic credit grant amounts', () => {
+    process.env[HELP_BOT_CREDIT_GRANT_ENV] = '1.5';
+
+    expect(() => getHelpBotCreditGrantAmount()).toThrow(
+      `${HELP_BOT_CREDIT_GRANT_ENV} must be a positive integer`
+    );
   });
 
   it('omits tech team mentions when the env var is missing', () => {
@@ -84,3 +121,11 @@ describe('help bot config', () => {
     expect(resolveHelpBotBaseUrl('local')).toBe('https://6529.io');
   });
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}

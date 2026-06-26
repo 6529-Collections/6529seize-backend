@@ -205,6 +205,7 @@ function isGenericHelpRequest(normalizedQuestion: string): boolean {
     /^(help|help me|i need help|need help|help please|please help)$/,
     /^(can|could|would) you help( me)?$/,
     /^what (can|could) you (do|help with|answer)$/,
+    /^what (can|could) you help me with$/,
     /^what do you do$/,
     /^how (can|could|do) you help( me)?$/,
     /^what should i ask( you)?$/,

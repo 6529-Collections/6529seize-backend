@@ -35,18 +35,19 @@ function normalizeHandle(handle: string | null | undefined): string {
   return (handle ?? '').trim().toLowerCase();
 }
 
-function isHelpBotRelevantDrop(drop: ApiDrop): boolean {
+function getHelpBotRelevanceReasons(drop: ApiDrop): string[] {
+  const reasons: string[] = [];
   const authorHandle = normalizeHandle(drop.author?.handle);
   const helpBotHandle = normalizeHandle(HELP_BOT_HANDLE);
   if (authorHandle === helpBotHandle) {
-    return true;
+    reasons.push('author');
   }
 
   const hasHelpBotInteractionMetadata = (drop.metadata ?? []).some(
     (metadata) => metadata.data_key === HELP_BOT_INTERACTION_METADATA_KEY
   );
   if (hasHelpBotInteractionMetadata) {
-    return true;
+    reasons.push('metadata');
   }
 
   const mentionsHelpBot = (drop.mentioned_users ?? []).some(
@@ -55,14 +56,22 @@ function isHelpBotRelevantDrop(drop: ApiDrop): boolean {
       normalizeHandle(user.current_handle) === helpBotHandle
   );
   if (mentionsHelpBot) {
-    return true;
+    reasons.push('mention');
   }
 
-  return (drop.reactions ?? []).some((reaction) =>
+  const hasHelpBotReaction = (drop.reactions ?? []).some((reaction) =>
     (reaction.profiles ?? []).some(
       (profile) => normalizeHandle(profile.handle) === helpBotHandle
     )
   );
+  if (hasHelpBotReaction) {
+    reasons.push('reaction');
+  }
+  return reasons;
+}
+
+function isHelpBotRelevantDrop(drop: ApiDrop): boolean {
+  return getHelpBotRelevanceReasons(drop).length > 0;
 }
 
 function getPromiseRejectionReason(result: PromiseRejectedResult): string {
@@ -110,14 +119,16 @@ export class WsListenersNotifier {
         onlineProfiles,
         inputDrop
       );
-      const shouldLogHelpBotDebug = isHelpBotRelevantDrop(inputDrop);
+      const helpBotRelevanceReasons = getHelpBotRelevanceReasons(inputDrop);
+      const shouldLogHelpBotDebug = helpBotRelevanceReasons.length > 0;
       if (shouldLogHelpBotDebug) {
-        // Temporary debug logging for helpbot reply websocket delivery.
+        // TODO: remove after debugging helpbot reply websocket delivery.
         this.logger.info('Help bot DROP_UPDATE websocket audience resolved', {
           dropId: inputDrop.id,
           serialNo: inputDrop.serial_no,
           waveId: inputDrop.wave.id,
           visibilityGroupId: inputDrop.wave.visibility_group_id,
+          relevanceReasons: helpBotRelevanceReasons,
           reason,
           useSystemBroadcastAudience,
           connectionCount: onlineProfiles.length,
@@ -151,7 +162,7 @@ export class WsListenersNotifier {
           failures.length > 0
             ? this.logger.error.bind(this.logger)
             : this.logger.info.bind(this.logger);
-        // Temporary debug logging for helpbot reply websocket delivery.
+        // TODO: remove after debugging helpbot reply websocket delivery.
         logSettledSends('Help bot DROP_UPDATE websocket sends settled', {
           dropId: inputDrop.id,
           serialNo: inputDrop.serial_no,
@@ -238,7 +249,7 @@ export class WsListenersNotifier {
       );
       const shouldLogHelpBotDebug = isHelpBotRelevantDrop(drop);
       if (shouldLogHelpBotDebug) {
-        // Temporary debug logging for helpbot reply websocket delivery.
+        // TODO: remove after debugging helpbot reply websocket delivery.
         this.logger.info(
           'Help bot DROP_REACTION_UPDATE websocket audience resolved',
           {
@@ -246,6 +257,7 @@ export class WsListenersNotifier {
             serialNo: drop.serial_no,
             waveId: drop.wave.id,
             visibilityGroupId: drop.wave.visibility_group_id,
+            relevanceReasons: getHelpBotRelevanceReasons(drop),
             connectionCount: onlineProfiles.length,
             profiledConnectionCount: onlineProfiles.filter(
               ({ profileId }) => profileId !== null
@@ -277,7 +289,7 @@ export class WsListenersNotifier {
           failures.length > 0
             ? this.logger.error.bind(this.logger)
             : this.logger.info.bind(this.logger);
-        // Temporary debug logging for helpbot reply websocket delivery.
+        // TODO: remove after debugging helpbot reply websocket delivery.
         logSettledSends(
           'Help bot DROP_REACTION_UPDATE websocket sends settled',
           {
