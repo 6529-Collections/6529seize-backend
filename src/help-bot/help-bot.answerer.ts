@@ -252,12 +252,106 @@ function normalizeBoundaryText(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
+function containsNormalizedPhrase(value: string, phrase: string): boolean {
+  return new RegExp(String.raw`(^|\s)${escapeRegExp(phrase)}(\s|$)`).test(
+    value
+  );
+}
+
+function containsAnyNormalizedPhrase(
+  value: string,
+  phrases: readonly string[]
+): boolean {
+  return phrases.some((phrase) => containsNormalizedPhrase(value, phrase));
+}
+
 function isPromptExtractionRequest(normalizedQuestion: string): boolean {
-  return [
-    /\b(ignore|forget|bypass|override)\b.*\b(instruction|instructions|prompt|rules|guardrail|policy)\b/,
-    /^(your\s+)?(system|developer|hidden|internal)\s+(base\s+)?(prompt|instruction|instructions|message)\??$/,
-    /\b(show|reveal|read|dump|leak|expose|send|give|tell me|what is|what's)\b.*\b(your|internal|hidden|system|developer|exact)\s+(base\s+)?(prompt|instruction|instructions|message)\b/
-  ].some((pattern) => pattern.test(normalizedQuestion));
+  const overrideRequest =
+    containsAnyNormalizedPhrase(normalizedQuestion, [
+      'ignore',
+      'forget',
+      'bypass',
+      'override'
+    ]) &&
+    containsAnyNormalizedPhrase(normalizedQuestion, [
+      'instruction',
+      'instructions',
+      'prompt',
+      'rules',
+      'guardrail',
+      'policy'
+    ]);
+
+  const protectedPromptReference = containsAnyNormalizedPhrase(
+    normalizedQuestion,
+    [
+      'your prompt',
+      'your base prompt',
+      'your instruction',
+      'your instructions',
+      'your message',
+      'system prompt',
+      'system instruction',
+      'system instructions',
+      'system message',
+      'developer prompt',
+      'developer instruction',
+      'developer instructions',
+      'developer message',
+      'hidden prompt',
+      'hidden instruction',
+      'hidden instructions',
+      'hidden message',
+      'internal prompt',
+      'internal instruction',
+      'internal instructions',
+      'internal message',
+      'exact prompt',
+      'exact instruction',
+      'exact instructions',
+      'exact message'
+    ]
+  );
+
+  const exactProtectedPromptRequest =
+    protectedPromptReference === true &&
+    normalizedQuestion.split(' ').length <= 4;
+  const negatedDisclosureRequest = containsAnyNormalizedPhrase(
+    normalizedQuestion,
+    [
+      'don t share',
+      'dont share',
+      'do not share',
+      'not share',
+      'without sharing',
+      'no need to share'
+    ]
+  );
+  const disclosureRequest =
+    !negatedDisclosureRequest &&
+    containsAnyNormalizedPhrase(normalizedQuestion, [
+      'show',
+      'reveal',
+      'read',
+      'dump',
+      'leak',
+      'expose',
+      'share',
+      'sharing',
+      'send',
+      'give me your',
+      'give me the',
+      'tell me',
+      'what is',
+      'what s',
+      'whats'
+    ]);
+
+  return (
+    overrideRequest ||
+    exactProtectedPromptRequest ||
+    (disclosureRequest && protectedPromptReference)
+  );
 }
 
 function isPromptOrPrivateDataRequest(normalizedQuestion: string): boolean {
