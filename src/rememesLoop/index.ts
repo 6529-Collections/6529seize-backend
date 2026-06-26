@@ -290,6 +290,9 @@ export function rememeS3FieldsForRefresh(
     };
   }
 
+  // A changed fetch source invalidates every derived S3 URL and queues the row
+  // for regeneration; unchanged metadata images are preserved above to avoid
+  // churn from volatile gateway URLs.
   return {
     s3_image_original: null,
     s3_image_scaled: null,
