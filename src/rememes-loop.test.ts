@@ -93,6 +93,36 @@ describe('rememeS3FieldsForRefresh', () => {
     });
   });
 
+  it('preserves S3 state when a non-fetchable metadata image temporarily loses gateway', () => {
+    const existing = {
+      image: 'ar://raw-rememe-image',
+      media: {
+        gateway: 'https://gateway.old.test/rememe.png'
+      },
+      s3_image_original: 'https://cdn.test/original.webp',
+      s3_image_scaled: 'https://cdn.test/scaled.webp',
+      s3_image_thumbnail: 'https://cdn.test/thumbnail.webp',
+      s3_image_icon: 'https://cdn.test/icon.webp',
+      s3_image_processing_status: RememeS3ProcessingStatus.COMPLETE,
+      s3_image_processing_error: null,
+      s3_image_last_attempt_at: null,
+      s3_image_processing_attempts: 2
+    } as Rememe;
+
+    expect(
+      rememeS3FieldsForRefresh(existing, 'ar://raw-rememe-image', {})
+    ).toEqual({
+      s3_image_original: 'https://cdn.test/original.webp',
+      s3_image_scaled: 'https://cdn.test/scaled.webp',
+      s3_image_thumbnail: 'https://cdn.test/thumbnail.webp',
+      s3_image_icon: 'https://cdn.test/icon.webp',
+      s3_image_processing_status: RememeS3ProcessingStatus.COMPLETE,
+      s3_image_processing_error: null,
+      s3_image_last_attempt_at: null,
+      s3_image_processing_attempts: 2
+    });
+  });
+
   it('resets S3 state when the metadata image URL changes', () => {
     const existing = {
       image: 'ipfs://old',
