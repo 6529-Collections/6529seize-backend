@@ -153,6 +153,31 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
         { profileId },
         connection
       );
+      const existingSpend = await this.db.oneOrNull<{
+        readonly amount: number;
+      }>(
+        `
+          SELECT amount
+          FROM ${HELP_BOT_CREDIT_EVENTS_TABLE}
+          WHERE profile_id = :profileId
+            AND event_type = :spendEventType
+            AND source_id = :interactionId
+          FOR UPDATE
+        `,
+        {
+          profileId,
+          spendEventType: HelpBotCreditEventType.QUESTION_SPEND,
+          interactionId
+        },
+        { wrappedConnection: connection }
+      );
+      if (existingSpend && Number(existingSpend.amount) < 0) {
+        return {
+          charged: true,
+          balance,
+          botProfileMissing: false
+        };
+      }
       if (balance < HELP_BOT_QUESTION_CREDIT_COST) {
         return {
           charged: false,

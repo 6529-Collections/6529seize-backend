@@ -120,6 +120,32 @@ describe('HelpBotInteractionsDb', () => {
     );
   });
 
+  it('allows stale answering interactions to be reclaimed', async () => {
+    const claimedRow = createInteraction({
+      answer_started_at: 100,
+      status: HelpBotInteractionStatus.ANSWERING
+    });
+    const sqlExecutor = createSqlExecutor({
+      executeResult: [0, 1],
+      row: claimedRow
+    });
+    const db = createDb(sqlExecutor);
+
+    await expect(db.claimForAnswering('interaction-1', ctx)).resolves.toBe(
+      claimedRow
+    );
+
+    expect(sqlExecutor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('answer_started_at < :leaseStartedBefore'),
+      expect.objectContaining({
+        answeringStatus: HelpBotInteractionStatus.ANSWERING,
+        seenStatus: HelpBotInteractionStatus.SEEN,
+        leaseStartedBefore: expect.any(Number)
+      }),
+      expect.anything()
+    );
+  });
+
   it('does not claim interactions when API mysql update metadata has no affected rows', async () => {
     const sqlExecutor = createSqlExecutor({ executeResult: [0, 0] });
     const db = createDb(sqlExecutor);

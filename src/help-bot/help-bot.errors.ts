@@ -6,7 +6,7 @@ export function errorToMessage(error: unknown): string {
     return error;
   }
   try {
-    return JSON.stringify(error);
+    return JSON.stringify(error) ?? 'Unknown error';
   } catch {
     return 'Unknown error';
   }

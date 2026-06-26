@@ -243,14 +243,21 @@ router.post(
         error
       );
     }
-    await helpBotTriggerService.handleCreatedDrop(
-      {
-        createDropRequest,
-        createdDrop,
-        authorProfileId
-      },
-      { timer, authenticationContext }
-    );
+    try {
+      await helpBotTriggerService.handleCreatedDrop(
+        {
+          createDropRequest,
+          createdDrop,
+          authorProfileId
+        },
+        { timer, authenticationContext }
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to handle help bot trigger for drop ${createdDrop.id}`,
+        error
+      );
+    }
     res.send(createdDrop);
   }
 );

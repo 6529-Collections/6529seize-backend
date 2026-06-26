@@ -135,6 +135,10 @@ export function detectHelpBotTrigger(
 
   const text = extractText(input.request);
   const question = stripBotMention(text);
+  const parentBotDropId =
+    input.parentDrop?.author.id === input.botProfileId
+      ? input.parentDrop.id
+      : null;
 
   if (hasExplicitMention(input, text)) {
     const parentDrop = input.parentDrop;
@@ -164,8 +168,10 @@ export function detectHelpBotTrigger(
         waveId: input.createdDrop.wave.id,
         authorProfileId: input.authorProfileId,
         question,
-        triggerType: HelpBotInteractionTriggerType.MENTION,
-        parentBotDropId: null
+        triggerType: parentBotDropId
+          ? HelpBotInteractionTriggerType.BOT_REPLY
+          : HelpBotInteractionTriggerType.MENTION,
+        parentBotDropId
       };
     }
 
@@ -191,11 +197,6 @@ export function detectHelpBotTrigger(
   if (!isMeaningfulQuestion(question)) {
     return null;
   }
-
-  const parentBotDropId =
-    input.parentDrop?.author.id === input.botProfileId
-      ? input.parentDrop.id
-      : null;
 
   if (parentBotDropId) {
     return {

@@ -409,4 +409,34 @@ describe('HelpBotTriggerService', () => {
       ctx
     );
   });
+
+  it('marks the interaction failed when enqueueing and fallback reply both fail', async () => {
+    const { service, interactionsDb, dropWriter, sqs } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    sqs.sendToQueueName.mockRejectedValue(new Error('sqs down'));
+    dropWriter.reply.mockRejectedValue(new Error('reply down'));
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@help6529 what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1', authorId: 'user-profile' }),
+        authorProfileId: 'user-profile'
+      },
+      ctx
+    );
+
+    expect(interactionsDb.markFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'interaction-1',
+        replyDropId: null,
+        failureReason: 'Failed to enqueue help bot answer: sqs down'
+      }),
+      ctx
+    );
+  });
 });

@@ -421,6 +421,7 @@ export class HelpBotTriggerService {
         refundError
       );
     }
+    let replyDropId: string | null = null;
     try {
       const reply = await this.dropWriter.reply(
         {
@@ -432,22 +433,23 @@ export class HelpBotTriggerService {
         },
         ctx
       );
-      await this.interactionsDb.markFailed(
-        {
-          id: interactionId,
-          replyDropId: reply.id,
-          failureReason: `Failed to enqueue help bot answer: ${errorToMessage(
-            error
-          )}`
-        },
-        ctx
-      );
+      replyDropId = reply.id;
     } catch (failureReplyError) {
       this.logger.error(
         `Failed to post help bot enqueue-failure reply for interaction ${interactionId}`,
         failureReplyError
       );
     }
+    await this.interactionsDb.markFailed(
+      {
+        id: interactionId,
+        replyDropId,
+        failureReason: `Failed to enqueue help bot answer: ${errorToMessage(
+          error
+        )}`
+      },
+      ctx
+    );
   }
 }
 
