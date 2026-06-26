@@ -18,6 +18,19 @@ import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
+const SET_COOKIE_HEADER = 'set-cookie';
+const COOKIE_PATH_ATTRIBUTE = 'path';
+const COOKIE_DOMAIN_ATTRIBUTE = 'domain';
+
+type LambdaHttpResponse = APIGatewayProxyResult & {
+  readonly cookies?: string[];
+};
+type HeaderMap = Record<string, unknown>;
+type SetCookieIdentity = {
+  readonly name: string;
+  readonly path: string;
+  readonly domain: string;
+};
 
 const httpHandler = serverlessHttp(app);
 export const handler = sentryContext.wrapLambdaHandler(
@@ -44,10 +57,136 @@ export const handler = sentryContext.wrapLambdaHandler(
     if (event.requestContext && event.requestContext.routeKey) {
       return wsHandler(event);
     } else {
-      return httpHandler(event, context);
+      return normalizeSetCookieResponse(
+        event,
+        await httpHandler(event, context)
+      );
     }
   }
 );
+
+function normalizeSetCookieResponse(
+  event: APIGatewayEvent,
+  response: LambdaHttpResponse
+): LambdaHttpResponse {
+  const setCookieValues = getSetCookieValues(response);
+  if (!setCookieValues.length) {
+    return response;
+  }
+
+  const { cookies, headers, multiValueHeaders, ...rest } = response;
+  const normalizedHeaders = removeSetCookieHeaders(headers);
+  if (isHttpApiV2Event(event)) {
+    return {
+      ...rest,
+      headers: normalizedHeaders,
+      cookies: setCookieValues
+    };
+  }
+
+  return {
+    ...rest,
+    headers: normalizedHeaders,
+    multiValueHeaders: {
+      ...removeSetCookieHeaders(multiValueHeaders),
+      'Set-Cookie': setCookieValues
+    }
+  };
+}
+
+function isHttpApiV2Event(event: APIGatewayEvent): boolean {
+  return (event as { readonly version?: string }).version === '2.0';
+}
+
+function getSetCookieValues(response: LambdaHttpResponse): string[] {
+  const values = [
+    ...getHeaderValues(response.headers),
+    ...getHeaderValues(response.multiValueHeaders),
+    ...(response.cookies ?? [])
+  ];
+  return dedupeSetCookiesByIdentity(values);
+}
+
+function getHeaderValues(headers: HeaderMap | undefined): string[] {
+  return Object.entries(headers ?? {}).flatMap(([key, value]) =>
+    key.toLowerCase() === SET_COOKIE_HEADER ? getStringValues(value) : []
+  );
+}
+
+function getStringValues(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(getStringValues);
+  }
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return [value.toString()];
+  }
+  return [];
+}
+
+function dedupeSetCookiesByIdentity(values: string[]): string[] {
+  const indexesByIdentity = new Map<string, number>();
+  const dedupedValues: string[] = [];
+  values.forEach((value) => {
+    const identity = serializeSetCookieIdentity(getSetCookieIdentity(value));
+    const existingIndex = indexesByIdentity.get(identity);
+    if (existingIndex === undefined) {
+      indexesByIdentity.set(identity, dedupedValues.length);
+      dedupedValues.push(value);
+      return;
+    }
+    dedupedValues[existingIndex] = value;
+  });
+  return dedupedValues;
+}
+
+function serializeSetCookieIdentity(identity: SetCookieIdentity): string {
+  return `${identity.name};domain=${identity.domain};path=${identity.path}`;
+}
+
+function getSetCookieIdentity(value: string): SetCookieIdentity {
+  const [nameValue = '', ...attributes] = value.split(';');
+  const [name = ''] = nameValue.split('=');
+  return attributes.reduce<SetCookieIdentity>(
+    (identity, attribute) => {
+      const [rawAttributeName = '', ...rawAttributeValueParts] =
+        attribute.split('=');
+      const attributeName = rawAttributeName.trim().toLowerCase();
+      const attributeValue = rawAttributeValueParts.join('=').trim();
+      if (attributeName === COOKIE_PATH_ATTRIBUTE) {
+        return { ...identity, path: attributeValue };
+      }
+      if (attributeName === COOKIE_DOMAIN_ATTRIBUTE) {
+        return { ...identity, domain: attributeValue.toLowerCase() };
+      }
+      return identity;
+    },
+    {
+      name: name.trim(),
+      path: '',
+      domain: ''
+    }
+  );
+}
+
+function removeSetCookieHeaders<T extends HeaderMap | undefined>(
+  headers: T
+): T {
+  if (!headers) {
+    return headers;
+  }
+  return Object.entries(headers).reduce<Record<string, unknown>>(
+    (acc, [key, value]) => {
+      if (key.toLowerCase() !== SET_COOKIE_HEADER) {
+        acc[key] = value;
+      }
+      return acc;
+    },
+    {}
+  ) as T;
+}
 
 async function wsHandler(
   event: APIGatewayEvent
