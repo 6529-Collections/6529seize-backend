@@ -470,6 +470,20 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('answers credit-system follow-up prompts', async () => {
+    const answer = await answerer().answer({
+      question: 'tell me more about this credit system',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.credits');
+      expect(answer.answer).toContain('Help6529 Credits');
+      expect(answer.answer).toContain('Each question costs 1 credit.');
+    }
+  });
+
   it('does not treat product-specific help as the generic help prompt', async () => {
     const answer = await answerer().answer({
       question: 'help me with TDH',

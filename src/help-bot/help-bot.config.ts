@@ -34,8 +34,7 @@ export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
 export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
-export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE =
-  'Help6529 Credits is a reserved REP category managed by help6529.';
+export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE = `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}.`;
 export const HELP_BOT_CREDIT_GRANT_ENV = 'HELP_BOT_CREDIT_GRANT';
 export const HELP_BOT_DEFAULT_CREDIT_GRANT = 10;
 export function getHelpBotCreditGrantAmount(): number {
@@ -60,8 +59,7 @@ export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
   "I don't have enough knowledge to help you here.";
 export const HELP_BOT_OUT_OF_SCOPE_REPLY =
   'I can only help with 6529 product questions.';
-export const HELP_BOT_INSUFFICIENT_CREDITS_REPLY =
-  'You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the `Help6529 Credits` category managed by help6529 for signup, profile setup, and daily activity.';
+export const HELP_BOT_INSUFFICIENT_CREDITS_REPLY = `You need at least 1 Help6529 Credit REP to ask a question. Help6529 Credits are REP in the \`${HELP_BOT_CREDIT_CATEGORY}\` category managed by ${HELP_BOT_HANDLE} for signup, profile setup, and daily activity.`;
 
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';
