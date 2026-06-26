@@ -14,7 +14,7 @@ describe('rememeS3FieldsForRefresh', () => {
       s3_image_processing_status: RememeS3ProcessingStatus.TRANSIENT_ERROR,
       s3_image_processing_error: 'temporary failure',
       s3_image_last_attempt_at: lastAttempt,
-      s3_image_processing_attempts: null
+      s3_image_processing_attempts: undefined
     } as Rememe;
 
     expect(rememeS3FieldsForRefresh(existing, 'ipfs://unchanged')).toEqual({
@@ -25,7 +25,7 @@ describe('rememeS3FieldsForRefresh', () => {
       s3_image_processing_status: RememeS3ProcessingStatus.TRANSIENT_ERROR,
       s3_image_processing_error: 'temporary failure',
       s3_image_last_attempt_at: lastAttempt,
-      s3_image_processing_attempts: null
+      s3_image_processing_attempts: 0
     });
   });
 

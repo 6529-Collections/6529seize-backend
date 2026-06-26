@@ -166,8 +166,21 @@ describe('persistRememesS3', () => {
       .mocked(resizeImageBufferToHeight)
       .mockResolvedValue(Buffer.from('resized-image'));
 
-    await persistRememesS3([buildRememe()]);
+    await persistRememesS3([
+      buildRememe({
+        media: {
+          gateway: 'https://gateway.example.test/different-rememe.png'
+        }
+      })
+    ]);
 
+    expect(mediaChecker.getContentType).toHaveBeenCalledWith(
+      'https://example.test/rememe.png'
+    );
+    expect(withArweaveFallback).toHaveBeenCalledWith(
+      'https://example.test/rememe.png',
+      expect.any(Function)
+    );
     expect(PutObjectCommand).toHaveBeenCalledTimes(4);
     expect(PutObjectCommand).toHaveBeenNthCalledWith(
       1,

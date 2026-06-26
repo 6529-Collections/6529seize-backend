@@ -281,8 +281,7 @@ export function rememeS3FieldsForRefresh(
       s3_image_processing_status: existing.s3_image_processing_status ?? null,
       s3_image_processing_error: existing.s3_image_processing_error ?? null,
       s3_image_last_attempt_at: existing.s3_image_last_attempt_at ?? null,
-      s3_image_processing_attempts:
-        existing.s3_image_processing_attempts ?? null
+      s3_image_processing_attempts: existing.s3_image_processing_attempts ?? 0
     };
   }
 

@@ -148,9 +148,12 @@ async function processRememeS3Unsafe(r: Rememe) {
 }
 
 function resolveRememeImageUrl(r: Rememe): string | undefined {
-  const resolved = r.media?.gateway
-    ? r.media.gateway
-    : ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(r.image);
+  const metadataImage = ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(
+    r.image
+  );
+  const resolved = metadataImage.trim().length
+    ? metadataImage
+    : r.media?.gateway;
   if (!resolved) {
     return undefined;
   }
