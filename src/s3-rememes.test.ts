@@ -147,6 +147,87 @@ describe('persistRememesS3', () => {
       })
     ]);
   });
+
+  it('normalizes MIME content types and stores allow-listed S3 content types', async () => {
+    mockS3Objects({});
+    jest.mocked(mediaChecker.getContentType).mockResolvedValue('image/png');
+    jest.mocked(withArweaveFallback).mockResolvedValue(
+      buildFetchResponse({
+        body: Buffer.from('image-bytes'),
+        contentLength: '11',
+        contentType: 'text/html'
+      })
+    );
+    jest
+      .mocked(resizeImageBufferToHeight)
+      .mockResolvedValue(Buffer.from('resized-image'));
+
+    await persistRememesS3([buildRememe()]);
+
+    expect(PutObjectCommand).toHaveBeenCalledTimes(4);
+    expect(PutObjectCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        Key: `rememes/images/original/${BASE_KEY}png`,
+        ContentType: 'image/png'
+      })
+    );
+    expect(PutObjectCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        Key: `rememes/images/scaled/${BASE_KEY}webp`,
+        ContentType: 'image/webp'
+      })
+    );
+    expect(PutObjectCommand).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        Key: `rememes/images/thumbnail/${BASE_KEY}webp`,
+        ContentType: 'image/webp'
+      })
+    );
+    expect(PutObjectCommand).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        Key: `rememes/images/icon/${BASE_KEY}webp`,
+        ContentType: 'image/webp'
+      })
+    );
+    expect(persistRememes).toHaveBeenCalledWith([
+      expect.objectContaining({
+        s3_image_original: `${CLOUDFRONT_LINK}/rememes/images/original/${BASE_KEY}png`,
+        s3_image_scaled: `${CLOUDFRONT_LINK}/rememes/images/scaled/${BASE_KEY}webp`,
+        s3_image_thumbnail: `${CLOUDFRONT_LINK}/rememes/images/thumbnail/${BASE_KEY}webp`,
+        s3_image_icon: `${CLOUDFRONT_LINK}/rememes/images/icon/${BASE_KEY}webp`,
+        s3_image_processing_status: RememeS3ProcessingStatus.COMPLETE
+      })
+    ]);
+  });
+
+  it('does not buffer oversized remote media responses', async () => {
+    const arrayBuffer = jest.fn();
+    mockS3Objects({});
+    jest.mocked(mediaChecker.getContentType).mockResolvedValue('png');
+    jest.mocked(withArweaveFallback).mockResolvedValue(
+      buildFetchResponse({
+        arrayBuffer,
+        contentLength: '200000000'
+      })
+    );
+
+    await persistRememesS3([buildRememe()]);
+
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(PutObjectCommand).not.toHaveBeenCalled();
+    expect(persistRememes).toHaveBeenCalledWith([
+      expect.objectContaining({
+        s3_image_original: null,
+        s3_image_processing_status: RememeS3ProcessingStatus.TRANSIENT_ERROR,
+        s3_image_processing_attempts: 1,
+        s3_image_processing_error: expect.stringContaining('too large')
+      })
+    ]);
+  });
 });
 
 function buildRememe(overrides: Partial<Rememe> = {}): Rememe {
@@ -175,13 +256,20 @@ function buildRememe(overrides: Partial<Rememe> = {}): Rememe {
 }
 
 function mockS3Objects(objectsByPrefix: Record<string, string[]>) {
+  const storedKeys = new Set(
+    Object.values(objectsByPrefix).flatMap((keys) => keys)
+  );
   sendMock.mockImplementation(async (command) => {
     if (command.commandName === 'ListObjectsV2Command') {
       return {
-        Contents: (objectsByPrefix[command.input.Prefix] ?? []).map((Key) => ({
-          Key
-        }))
+        Contents: Array.from(storedKeys)
+          .filter((Key) => Key.startsWith(command.input.Prefix))
+          .map((Key) => ({ Key }))
       };
+    }
+
+    if (command.commandName === 'PutObjectCommand') {
+      storedKeys.add(command.input.Key);
     }
 
     return {
@@ -190,4 +278,42 @@ function mockS3Objects(objectsByPrefix: Record<string, string[]>) {
       }
     };
   });
+}
+
+function buildFetchResponse({
+  arrayBuffer,
+  body,
+  contentLength,
+  contentType
+}: {
+  arrayBuffer?: jest.Mock;
+  body?: Buffer;
+  contentLength?: string;
+  contentType?: string;
+}) {
+  const responseBody = body ?? Buffer.alloc(0);
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: {
+      get: (name: string) => {
+        if (name === 'content-length') {
+          return contentLength ?? responseBody.byteLength.toString();
+        }
+        if (name === 'content-type') {
+          return contentType ?? null;
+        }
+        return null;
+      }
+    },
+    arrayBuffer:
+      arrayBuffer ??
+      jest.fn(async () =>
+        responseBody.buffer.slice(
+          responseBody.byteOffset,
+          responseBody.byteOffset + responseBody.byteLength
+        )
+      )
+  };
 }

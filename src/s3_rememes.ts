@@ -29,9 +29,11 @@ const SCALED_HEIGHT = 1000;
 const REMEME_CONCURRENCY = 5;
 const FETCH_TIMEOUT_MS = 30_000;
 const LIST_OBJECTS_MAX_KEYS = 25;
+const MAX_REMEME_MEDIA_BYTES = 100 * 1024 * 1024;
 const PROCESSING_ERROR_MAX_LENGTH = 1000;
 
 const RASTER_IMAGE_FORMATS = new Set(['gif', 'jpeg', 'jpg', 'png', 'webp']);
+const UPLOADABLE_UNSUPPORTED_FORMATS = new Set(['mov', 'mp4', 'webm']);
 const EXTENSION_PRIORITY = [
   'webp',
   'png',
@@ -59,11 +61,6 @@ type RememeDesiredKeys = {
   scaled: string;
   thumbnail: string;
   icon: string;
-};
-
-type FetchedMedia = {
-  buffer: Buffer;
-  contentType: string;
 };
 
 export const persistRememesS3 = async (rememes: Rememe[]) => {
@@ -173,12 +170,20 @@ async function persistUnsupportedOriginal(
 
   const assets = { ...existingAssets };
   if (!assets.original) {
+    if (!UPLOADABLE_UNSUPPORTED_FORMATS.has(originalFormat)) {
+      await persistRememeS3Result(r, assets, {
+        status: RememeS3ProcessingStatus.UNSUPPORTED,
+        error: `Unsupported rememe media format: ${originalFormat}`
+      });
+      return;
+    }
+
     const desiredOriginalKey = getOriginalKey(r, originalFormat);
     const media = await fetchRememeMedia(imageUrl, originalFormat);
     await handleObjectUpload(
       desiredOriginalKey,
-      contentTypeForFormat(originalFormat, media.contentType),
-      media.buffer
+      contentTypeForFormat(originalFormat),
+      media
     );
     assets.original = desiredOriginalKey;
   }
@@ -213,15 +218,15 @@ async function persistRasterRememe(
       if (!assets.original) {
         await handleObjectUpload(
           desiredKeys.original,
-          contentTypeForFormat(originalFormat, media.contentType),
-          media.buffer
+          contentTypeForFormat(originalFormat),
+          media
         );
         assets.original = desiredKeys.original;
       }
 
       await uploadMissingRememeDerivatives(
         r,
-        media.buffer,
+        media,
         derivativeFormat,
         desiredKeys,
         assets
@@ -397,7 +402,7 @@ function mergeAssetKeys(
 async function fetchRememeMedia(
   imageUrl: string,
   expectedFormat: string
-): Promise<FetchedMedia> {
+): Promise<Buffer> {
   const response: Response = await withArweaveFallback(imageUrl, (u) =>
     fetch(u, { timeout: FETCH_TIMEOUT_MS })
   );
@@ -407,12 +412,65 @@ async function fetchRememeMedia(
     );
   }
 
-  const blob = await response.arrayBuffer();
-  const contentType = response.headers.get('content-type') ?? '';
-  return {
-    buffer: Buffer.from(blob),
-    contentType: contentTypeForFormat(expectedFormat, contentType)
+  return await readResponseBufferWithLimit(response, expectedFormat);
+}
+
+async function readResponseBufferWithLimit(
+  response: Response,
+  expectedFormat: string
+): Promise<Buffer> {
+  const contentLength = response.headers.get('content-length');
+  if (contentLength) {
+    const parsed = Number(contentLength);
+    if (Number.isFinite(parsed) && parsed > MAX_REMEME_MEDIA_BYTES) {
+      throw new Error(
+        `Rememe ${expectedFormat} media too large (${parsed} bytes > ${MAX_REMEME_MEDIA_BYTES})`
+      );
+    }
+  }
+
+  if (!response.body) {
+    const blob = await response.arrayBuffer();
+    if (blob.byteLength > MAX_REMEME_MEDIA_BYTES) {
+      throw new Error(
+        `Rememe ${expectedFormat} media exceeded max size of ${MAX_REMEME_MEDIA_BYTES} bytes`
+      );
+    }
+    return Buffer.from(blob);
+  }
+
+  const stream = response.body as unknown as AsyncIterable<unknown>;
+  const destroyableStream = response.body as unknown as {
+    destroy?: () => void;
   };
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    const buffer = chunkToBuffer(chunk);
+    total += buffer.byteLength;
+    if (total > MAX_REMEME_MEDIA_BYTES) {
+      destroyableStream.destroy?.();
+      throw new Error(
+        `Rememe ${expectedFormat} media exceeded max size of ${MAX_REMEME_MEDIA_BYTES} bytes`
+      );
+    }
+    chunks.push(buffer);
+  }
+
+  return Buffer.concat(chunks, total);
+}
+
+function chunkToBuffer(chunk: unknown): Buffer {
+  if (Buffer.isBuffer(chunk)) {
+    return chunk;
+  }
+  if (chunk instanceof Uint8Array) {
+    return Buffer.from(chunk);
+  }
+  if (chunk instanceof ArrayBuffer) {
+    return Buffer.from(chunk);
+  }
+  return Buffer.from(String(chunk), 'utf8');
 }
 
 async function persistRememeS3Result(
@@ -438,7 +496,7 @@ async function persistRememeS3Result(
 }
 
 function assetUrl(key: string | null): string | null {
-  return key ? `${CLOUDFRONT_LINK}/${key}` : null;
+  return key ? `${cloudfrontPrefix()}${key}` : null;
 }
 
 function nextAttemptCount(r: Rememe, status: RememeS3ProcessingStatus): number {
@@ -466,10 +524,17 @@ function emptyAssetKeysFromRememe(r: Rememe): RememeAssetKeys {
 }
 
 function keyFromAssetUrl(assetUrlValue?: string | null): string | null {
-  if (!assetUrlValue?.startsWith(`${CLOUDFRONT_LINK}/`)) {
+  const prefix = cloudfrontPrefix();
+  if (!assetUrlValue?.startsWith(prefix)) {
     return null;
   }
-  return assetUrlValue.slice(CLOUDFRONT_LINK.length + 1);
+  return assetUrlValue.slice(prefix.length);
+}
+
+function cloudfrontPrefix(): string {
+  return CLOUDFRONT_LINK.endsWith('/')
+    ? CLOUDFRONT_LINK
+    : `${CLOUDFRONT_LINK}/`;
 }
 
 async function handleObjectUpload(
@@ -521,10 +586,16 @@ function normalizeFormat(format?: string | null): string | null {
   if (!normalized) {
     return null;
   }
-  if (normalized === 'svg+xml') {
+  const subtype = normalized.includes('/')
+    ? normalized.split('/').pop()?.trim()
+    : normalized;
+  if (!subtype) {
+    return null;
+  }
+  if (subtype === 'svg+xml') {
     return 'svg';
   }
-  return normalized;
+  return subtype;
 }
 
 function getFormatFromKey(key?: string | null): string | null {
@@ -544,15 +615,9 @@ function isRasterImageFormat(format: string): boolean {
   return RASTER_IMAGE_FORMATS.has(format);
 }
 
-function contentTypeForFormat(format: string, fallbackContentType?: string) {
-  if (fallbackContentType?.includes('/')) {
-    return fallbackContentType.split(';')[0]?.trim() ?? fallbackContentType;
-  }
+function contentTypeForFormat(format: string) {
   if (format === 'jpg' || format === 'jpeg') {
     return 'image/jpeg';
-  }
-  if (format === 'svg') {
-    return 'image/svg+xml';
   }
   if (format === 'mp4') {
     return 'video/mp4';

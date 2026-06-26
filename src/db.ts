@@ -1532,15 +1532,27 @@ export async function fetchRememes() {
 }
 
 export async function fetchMissingS3Rememes() {
+  const retryBefore = Time.hoursAgo(6).toDate();
+
   return await AppDataSource.getRepository(Rememe)
     .createQueryBuilder('rememe')
-    .where('rememe.s3_image_original IS NULL')
+    .where(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_original IS NULL')
+          .orWhere('rememe.s3_image_scaled IS NULL')
+          .orWhere('rememe.s3_image_thumbnail IS NULL')
+          .orWhere('rememe.s3_image_icon IS NULL');
+      })
+    )
     .andWhere(
       new Brackets((qb) => {
         qb.where('rememe.s3_image_processing_status IS NULL').orWhere(
-          'rememe.s3_image_processing_status = :retryableStatus',
+          'rememe.s3_image_processing_status IN (:...retryableStatuses)',
           {
-            retryableStatus: RememeS3ProcessingStatus.TRANSIENT_ERROR
+            retryableStatuses: [
+              RememeS3ProcessingStatus.TRANSIENT_ERROR,
+              RememeS3ProcessingStatus.PARTIAL
+            ]
           }
         );
       })
@@ -1550,6 +1562,14 @@ export async function fetchMissingS3Rememes() {
         qb.where('rememe.s3_image_processing_attempts IS NULL').orWhere(
           'rememe.s3_image_processing_attempts < :maxAttempts',
           { maxAttempts: REMEME_S3_MAX_PROCESSING_ATTEMPTS }
+        );
+      })
+    )
+    .andWhere(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_last_attempt_at IS NULL').orWhere(
+          'rememe.s3_image_last_attempt_at < :retryBefore',
+          { retryBefore }
         );
       })
     )
