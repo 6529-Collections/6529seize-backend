@@ -70,6 +70,7 @@ export interface HelpBotPublicDataLlm {
     readonly question: string;
     readonly previousBotAnswer?: string | null;
     readonly catalog: string;
+    readonly signal?: AbortSignal;
   }): Promise<HelpBotPublicDataQueryPlan | null>;
 
   renderPublicDataAnswer(input: {
@@ -78,6 +79,7 @@ export interface HelpBotPublicDataLlm {
     readonly rows: readonly Record<string, unknown>[];
     readonly canonicalUrl: string;
     readonly canonicalLabel: string;
+    readonly signal?: AbortSignal;
   }): Promise<string>;
 }
 
@@ -322,6 +324,10 @@ function isProfileTdhQuestion({
 function inferDeterministicPublicDataPlan(
   request: HelpBotPublicDataAnswerRequest
 ): HelpBotPublicDataQueryPlan | null {
+  const normalizedQuestion = normalizeIntentText(request.question);
+  if (/\btop\s+\d+\b/.test(normalizedQuestion)) {
+    return null;
+  }
   if (!isProfileTdhQuestion(request)) {
     return null;
   }
@@ -448,7 +454,7 @@ function readStringEnum<T extends string>(
 }
 
 function readPlanFilters(filters: unknown): Record<string, unknown> | null {
-  if (!filters) {
+  if (filters === null || filters === undefined) {
     return {};
   }
   return typeof filters === 'object' && !Array.isArray(filters)
@@ -877,19 +883,20 @@ export function buildHelpBotPublicDataQuery(
 }
 
 async function withTimeout<T>(
-  promise: Promise<T>,
+  executable: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   label: string
 ): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
+  const controller = new AbortController();
   try {
     return await Promise.race([
-      promise,
+      executable(controller.signal),
       new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
-          timeoutMs
-        );
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
       })
     ]);
   } finally {
@@ -931,11 +938,12 @@ export class HelpBotPublicDataService {
     // Public-data execution accepts only backend-compiled SQL from a semantic
     // plan, and always uses the read pool for defense in depth.
     const rows = await withTimeout(
-      this.db().execute<Record<string, unknown>>(
-        applyStatementTimeoutHint(query.compiledSql),
-        query.params,
-        { forcePool: DbPoolName.READ }
-      ),
+      () =>
+        this.db().execute<Record<string, unknown>>(
+          applyStatementTimeoutHint(query.compiledSql),
+          query.params,
+          { forcePool: DbPoolName.READ }
+        ),
       HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS,
       'Help bot public data query'
     );
@@ -949,13 +957,15 @@ export class HelpBotPublicDataService {
 
     try {
       const rendered = await withTimeout(
-        llm.renderPublicDataAnswer({
-          question: request.question,
-          title: query.title,
-          rows,
-          canonicalUrl,
-          canonicalLabel
-        }),
+        (signal) =>
+          llm.renderPublicDataAnswer({
+            question: request.question,
+            title: query.title,
+            rows,
+            canonicalUrl,
+            canonicalLabel,
+            signal
+          }),
         HELP_BOT_BEDROCK_TIMEOUT_MS,
         'Help bot public data rendering'
       );
@@ -994,11 +1004,13 @@ export class HelpBotPublicDataService {
     }
     try {
       return await withTimeout(
-        llm.planPublicDataQuery({
-          question: request.question,
-          previousBotAnswer: request.previousBotAnswer,
-          catalog: HELP_BOT_PUBLIC_DATA_CATALOG
-        }),
+        (signal) =>
+          llm.planPublicDataQuery({
+            question: request.question,
+            previousBotAnswer: request.previousBotAnswer,
+            catalog: HELP_BOT_PUBLIC_DATA_CATALOG,
+            signal
+          }),
         HELP_BOT_BEDROCK_TIMEOUT_MS,
         'Help bot public data planning'
       );

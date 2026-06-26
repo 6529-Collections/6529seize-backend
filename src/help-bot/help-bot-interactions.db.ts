@@ -7,7 +7,10 @@ import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
-import { HELP_BOT_KNOWLEDGE_VERSION } from './help-bot.config';
+import {
+  HELP_BOT_ANSWERING_LEASE_MS,
+  HELP_BOT_KNOWLEDGE_VERSION
+} from './help-bot.config';
 
 export interface HelpBotInteractionRow {
   readonly id: string;
@@ -154,6 +157,7 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<HelpBotInteractionRow | null> {
     const now = Time.currentMillis();
+    const leaseStartedBefore = now - HELP_BOT_ANSWERING_LEASE_MS;
     const result = await this.db.execute(
       `
         UPDATE ${HELP_BOT_INTERACTIONS_TABLE}
@@ -162,12 +166,20 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
           answer_started_at = :now,
           updated_at = :now
         WHERE id = :id
-          AND status = :seenStatus
+          AND (
+            status = :seenStatus
+            OR (
+              status = :answeringStatus
+              AND answer_started_at IS NOT NULL
+              AND answer_started_at < :leaseStartedBefore
+            )
+          )
       `,
       {
         id,
         answeringStatus: HelpBotInteractionStatus.ANSWERING,
         seenStatus: HelpBotInteractionStatus.SEEN,
+        leaseStartedBefore,
         now
       },
       { wrappedConnection: ctx.connection }

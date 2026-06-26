@@ -221,6 +221,29 @@ describe('HelpBotCreditsService', () => {
     expect(executor.execute).toHaveBeenCalledTimes(2);
   });
 
+  it('treats duplicate question charges as idempotent before checking balance', async () => {
+    const { service, executor } = createService({
+      executeQueryResults: [[{ rating: 0 }]],
+      oneOrNullResults: [{ amount: -1 }]
+    });
+
+    const result = await service.chargeQuestionCredit(
+      { profileId: 'profile-1', interactionId: 'interaction-1' },
+      ctx
+    );
+
+    expect(result).toEqual({
+      charged: true,
+      balance: 0,
+      botProfileMissing: false
+    });
+    expect(executor.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT IGNORE INTO help_bot_credit_events'),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
   it('uses the reserved credit category balance when checking spendable balance', async () => {
     const { service, executor } = createService({
       executeQueryResults: [[{ rating: 4 }, { rating: 2 }]]

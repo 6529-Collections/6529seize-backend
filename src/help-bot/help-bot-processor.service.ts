@@ -135,22 +135,29 @@ export class HelpBotProcessorService {
         },
         ctx
       );
-      await this.interactionsDb.markAnswered(
-        {
-          id: interaction.id,
-          replyDropId: reply.id
-        },
-        ctx
-      );
-      await this.trySetReaction(
-        {
-          botProfileId,
-          dropId: getInteractionTargetDropId(interaction),
-          waveId: interaction.wave_id,
-          reaction: HELP_BOT_SUCCESS_REACTION
-        },
-        ctx
-      );
+      try {
+        await this.interactionsDb.markAnswered(
+          {
+            id: interaction.id,
+            replyDropId: reply.id
+          },
+          ctx
+        );
+        await this.trySetReaction(
+          {
+            botProfileId,
+            dropId: getInteractionTargetDropId(interaction),
+            waveId: interaction.wave_id,
+            reaction: HELP_BOT_SUCCESS_REACTION
+          },
+          ctx
+        );
+      } catch (postReplyError) {
+        this.logger.error(
+          `Help bot posted reply ${reply.id} but failed to reconcile interaction ${interaction.id}`,
+          postReplyError
+        );
+      }
     } catch (error) {
       await this.replyWithTechnicalFailure({
         botProfileId,
@@ -214,22 +221,29 @@ export class HelpBotProcessorService {
       },
       ctx
     );
-    await this.interactionsDb.markNoReliableSource(
-      {
-        id: interaction.id,
-        replyDropId: reply.id
-      },
-      ctx
-    );
-    await this.trySetReaction(
-      {
-        botProfileId,
-        dropId: getInteractionTargetDropId(interaction),
-        waveId: interaction.wave_id,
-        reaction: HELP_BOT_FAILURE_REACTION
-      },
-      ctx
-    );
+    try {
+      await this.interactionsDb.markNoReliableSource(
+        {
+          id: interaction.id,
+          replyDropId: reply.id
+        },
+        ctx
+      );
+      await this.trySetReaction(
+        {
+          botProfileId,
+          dropId: getInteractionTargetDropId(interaction),
+          waveId: interaction.wave_id,
+          reaction: HELP_BOT_FAILURE_REACTION
+        },
+        ctx
+      );
+    } catch (postReplyError) {
+      this.logger.error(
+        `Help bot posted no-reliable-source reply ${reply.id} but failed to reconcile interaction ${interaction.id}`,
+        postReplyError
+      );
+    }
   }
 
   private async buildReviewedAnswer({
@@ -328,14 +342,21 @@ export class HelpBotProcessorService {
         replyError
       );
     }
-    await this.interactionsDb.markFailed(
-      {
-        id: interaction.id,
-        replyDropId,
-        failureReason: errorToMessage(error)
-      },
-      ctx
-    );
+    try {
+      await this.interactionsDb.markFailed(
+        {
+          id: interaction.id,
+          replyDropId,
+          failureReason: errorToMessage(error)
+        },
+        ctx
+      );
+    } catch (markFailedError) {
+      this.logger.error(
+        `Help bot failed to mark interaction ${interaction.id} as failed`,
+        markFailedError
+      );
+    }
   }
 
   private async tryRefundQuestionCredit(

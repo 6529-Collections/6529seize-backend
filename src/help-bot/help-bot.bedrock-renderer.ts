@@ -207,9 +207,14 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly question: string;
     readonly previousBotAnswer?: string | null;
     readonly catalog: string;
+    readonly signal?: AbortSignal;
   }): Promise<HelpBotPublicDataQueryPlan | null> {
     return parsePublicDataQueryPlan(
-      await this.invokePrompt(buildPublicDataPlanningPrompt(input), 320)
+      await this.invokePrompt(
+        buildPublicDataPlanningPrompt(input),
+        320,
+        input.signal
+      )
     );
   }
 
@@ -219,16 +224,30 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly rows: readonly Record<string, unknown>[];
     readonly canonicalUrl: string;
     readonly canonicalLabel: string;
+    readonly signal?: AbortSignal;
   }): Promise<string> {
-    return this.invokePrompt(buildPublicDataAnswerPrompt(input), 220);
+    return this.invokePrompt(
+      buildPublicDataAnswerPrompt(input),
+      220,
+      input.signal
+    );
   }
 
   private async invokePrompt(
     prompt: string,
-    maxTokens: number
+    maxTokens: number,
+    externalSignal?: AbortSignal
   ): Promise<string> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const abortFromExternalSignal = () => controller.abort();
+    if (externalSignal?.aborted) {
+      controller.abort();
+    } else {
+      externalSignal?.addEventListener('abort', abortFromExternalSignal, {
+        once: true
+      });
+    }
     const command = new InvokeModelCommand(
       buildInvokeModelInput(this.modelId, prompt, maxTokens)
     );
@@ -242,6 +261,7 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
       return parseAnthropicResponse(new TextDecoder().decode(response.body));
     } finally {
       clearTimeout(timeout);
+      externalSignal?.removeEventListener('abort', abortFromExternalSignal);
     }
   }
 }

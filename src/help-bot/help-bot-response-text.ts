@@ -66,8 +66,15 @@ export function ensureCanonicalMarkdownLink({
   if (sawCanonicalMarkdownLink) {
     return withPreferredLinkLabels;
   }
-  if (withPreferredLinkLabels.includes(canonicalUrl)) {
-    return withPreferredLinkLabels.split(canonicalUrl).join(markdownLink);
+  const bareCanonicalUrlPattern = new RegExp(
+    String.raw`(^|[\s(>])${escapeRegExp(canonicalUrl)}(?=$|[\s).,!?:;<])`,
+    'g'
+  );
+  if (bareCanonicalUrlPattern.test(withPreferredLinkLabels)) {
+    return withPreferredLinkLabels.replace(
+      bareCanonicalUrlPattern,
+      (_match, prefix: string) => `${prefix}${markdownLink}`
+    );
   }
   return `${withPreferredLinkLabels}\n\nMore info: ${markdownLink}`;
 }

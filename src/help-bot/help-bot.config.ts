@@ -24,6 +24,7 @@ export const HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS = 5000;
 export const HELP_BOT_PUBLIC_DATA_MAX_ROWS = 10;
 export const HELP_BOT_KNOWLEDGE_VERSION = 'frontend-help-index-v1';
 export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
+export const HELP_BOT_ANSWERING_LEASE_MS = 180_000;
 export const HELP_BOT_SEEN_REACTION = ':eyes:';
 export const HELP_BOT_SUCCESS_REACTION = ':white_check_mark:';
 export const HELP_BOT_FAILURE_REACTION = ':warning:';

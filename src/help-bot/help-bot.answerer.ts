@@ -18,6 +18,7 @@ import {
   isHelpBotContextVerificationQuestion,
   parseHelpBotQuestionContext
 } from './help-bot-question-context';
+import { HELP_BOT_HANDLE } from './help-bot.config';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -214,7 +215,7 @@ function isGenericHelpRequest(normalizedQuestion: string): boolean {
 
 function isSocialCheckIn(normalizedQuestion: string): boolean {
   const withoutBotHandle = normalizedQuestion
-    .replace(/^@?help6529\s+/, '')
+    .replace(new RegExp(String.raw`^@?${escapeRegExp(HELP_BOT_HANDLE)}\s+`), '')
     .trim();
   if (
     !withoutBotHandle ||
@@ -365,8 +366,9 @@ const PRODUCT_CONTEXT_PATTERNS = [
   /\b6529\.io\b/
 ];
 
-const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
 
 const CONTEXTUAL_FOLLOW_UP_PATTERN =
   /\b(it|that|this|there|eligibility|rules|button|page|link|tab|menu|create|find|open|where|how)\b/;
@@ -582,7 +584,14 @@ function buildSocialAnswer(question: string): string | null {
   if (!isSocialCheckIn(normalizedQuestion)) {
     return null;
   }
-  if (/^(@?help6529 )?(thanks|thank you|ty)\b/.test(normalizedQuestion)) {
+  const optionalBotHandlePattern = String.raw`(?:@?${escapeRegExp(
+    HELP_BOT_HANDLE
+  )}\s+)?`;
+  if (
+    new RegExp(
+      String.raw`^${optionalBotHandlePattern}(thanks|thank you|ty)\b`
+    ).test(normalizedQuestion)
+  ) {
     return "Anytime. I'm here and warmed up for the next 6529 question.";
   }
   return "Feeling useful and slightly green. I'm here, watching the Wave, and ready for whatever 6529 question you want to throw at me.";

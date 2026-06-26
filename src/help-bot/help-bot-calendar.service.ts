@@ -291,6 +291,9 @@ function parseCurrentResponse(
     return current ? { status: 'live', current } : null;
   }
   if (value.status === 'none') {
+    if (value.next === undefined || value.next === null) {
+      return { status: 'none', current: null };
+    }
     const next = parseMintResponse(value.next);
     return next ? { status: 'none', current: null, next } : null;
   }

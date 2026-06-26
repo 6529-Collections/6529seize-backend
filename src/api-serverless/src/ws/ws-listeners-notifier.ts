@@ -27,8 +27,8 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import { HELP_BOT_HANDLE } from '@/help-bot/help-bot.config';
 
-const HELP_BOT_DEBUG_HANDLE = 'help6529';
 const HELP_BOT_INTERACTION_METADATA_KEY = 'help_bot_interaction_id';
 
 function normalizeHandle(handle: string | null | undefined): string {
@@ -37,7 +37,8 @@ function normalizeHandle(handle: string | null | undefined): string {
 
 function isHelpBotRelevantDrop(drop: ApiDrop): boolean {
   const authorHandle = normalizeHandle(drop.author?.handle);
-  if (authorHandle === HELP_BOT_DEBUG_HANDLE) {
+  const helpBotHandle = normalizeHandle(HELP_BOT_HANDLE);
+  if (authorHandle === helpBotHandle) {
     return true;
   }
 
@@ -50,8 +51,8 @@ function isHelpBotRelevantDrop(drop: ApiDrop): boolean {
 
   const mentionsHelpBot = (drop.mentioned_users ?? []).some(
     (user) =>
-      normalizeHandle(user.handle_in_content) === HELP_BOT_DEBUG_HANDLE ||
-      normalizeHandle(user.current_handle) === HELP_BOT_DEBUG_HANDLE
+      normalizeHandle(user.handle_in_content) === helpBotHandle ||
+      normalizeHandle(user.current_handle) === helpBotHandle
   );
   if (mentionsHelpBot) {
     return true;
@@ -59,7 +60,7 @@ function isHelpBotRelevantDrop(drop: ApiDrop): boolean {
 
   return (drop.reactions ?? []).some((reaction) =>
     (reaction.profiles ?? []).some(
-      (profile) => normalizeHandle(profile.handle) === HELP_BOT_DEBUG_HANDLE
+      (profile) => normalizeHandle(profile.handle) === helpBotHandle
     )
   );
 }
@@ -68,7 +69,7 @@ function getPromiseRejectionReason(result: PromiseRejectedResult): string {
   if (result.reason instanceof Error) {
     return result.reason.message;
   }
-  return JSON.stringify(result.reason);
+  return JSON.stringify(result.reason) ?? 'Unknown rejection';
 }
 
 export class WsListenersNotifier {
@@ -146,8 +147,12 @@ export class WsListenersNotifier {
           (result): result is PromiseRejectedResult =>
             result.status === 'rejected'
         );
+        const logSettledSends =
+          failures.length > 0
+            ? this.logger.error.bind(this.logger)
+            : this.logger.info.bind(this.logger);
         // Temporary debug logging for helpbot reply websocket delivery.
-        this.logger.info('Help bot DROP_UPDATE websocket sends settled', {
+        logSettledSends('Help bot DROP_UPDATE websocket sends settled', {
           dropId: inputDrop.id,
           serialNo: inputDrop.serial_no,
           waveId: inputDrop.wave.id,
@@ -268,8 +273,12 @@ export class WsListenersNotifier {
           (result): result is PromiseRejectedResult =>
             result.status === 'rejected'
         );
+        const logSettledSends =
+          failures.length > 0
+            ? this.logger.error.bind(this.logger)
+            : this.logger.info.bind(this.logger);
         // Temporary debug logging for helpbot reply websocket delivery.
-        this.logger.info(
+        logSettledSends(
           'Help bot DROP_REACTION_UPDATE websocket sends settled',
           {
             dropId: drop.id,
