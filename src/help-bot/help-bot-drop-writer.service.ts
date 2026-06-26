@@ -115,7 +115,7 @@ export class HelpBotDropWriterService {
       dropId: drop.id,
       pendingPushNotificationIds
     });
-    // Temporary debug logging for helpbot reply websocket delivery.
+    // TODO: remove after debugging helpbot reply websocket delivery.
     this.logger.info('Help bot reply websocket notify starting', {
       dropId: drop.id,
       serialNo: drop.serial_no,
@@ -127,7 +127,7 @@ export class HelpBotDropWriterService {
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, {
       ...botCtx
     });
-    // Temporary debug logging for helpbot reply websocket delivery.
+    // TODO: remove after debugging helpbot reply websocket delivery.
     this.logger.info('Help bot reply websocket notify finished', {
       dropId: drop.id,
       serialNo: drop.serial_no,

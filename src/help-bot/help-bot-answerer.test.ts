@@ -399,6 +399,20 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('answers help-me capability prompts with the help prompt', async () => {
+    const answer = await answerer().answer({
+      question: 'what can you help me with',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.capabilities');
+      expect(answer.answer).toContain('TDH');
+      expect(answer.answer).toContain('Reply with a topic or question.');
+    }
+  });
+
   it('does not treat product-specific help as the generic help prompt', async () => {
     const answer = await answerer().answer({
       question: 'help me with TDH',

@@ -126,6 +126,94 @@ function buildQuestionWithParentContext(
   return `${question}\n\n${HELP_BOT_REPLIED_DROP_CONTEXT_PREFIX} ${parentQuestion}`;
 }
 
+function getParentBotDropId(
+  input: HelpBotTriggerDetectionInput
+): string | null {
+  return input.parentDrop?.author.id === input.botProfileId
+    ? input.parentDrop.id
+    : null;
+}
+
+function createDetection(
+  input: HelpBotTriggerDetectionInput,
+  {
+    question,
+    triggerType,
+    parentBotDropId,
+    targetDropId = input.createdDrop.id
+  }: {
+    readonly question: string;
+    readonly triggerType: HelpBotInteractionTriggerType;
+    readonly parentBotDropId: string | null;
+    readonly targetDropId?: string;
+  }
+): HelpBotTriggerDetection {
+  return {
+    triggerDropId: input.createdDrop.id,
+    targetDropId,
+    waveId: input.createdDrop.wave.id,
+    authorProfileId: input.authorProfileId,
+    question,
+    triggerType,
+    parentBotDropId
+  };
+}
+
+function canUseParentQuestion(
+  input: HelpBotTriggerDetectionInput,
+  parentQuestion: string
+): input is HelpBotTriggerDetectionInput & { parentDrop: ApiDrop } {
+  return (
+    !!input.parentDrop &&
+    input.parentDrop.author.id !== input.botProfileId &&
+    isMeaningfulQuestion(parentQuestion)
+  );
+}
+
+function detectExplicitMentionTrigger({
+  input,
+  question,
+  parentBotDropId
+}: {
+  readonly input: HelpBotTriggerDetectionInput;
+  readonly question: string;
+  readonly parentBotDropId: string | null;
+}): HelpBotTriggerDetection | null {
+  const parentQuestion = stripBotMention(extractDropText(input.parentDrop));
+  if (
+    isMeaningfulQuestion(question) &&
+    isContextDependentQuestion(question) &&
+    canUseParentQuestion(input, parentQuestion)
+  ) {
+    return createDetection(input, {
+      question: buildQuestionWithParentContext(question, parentQuestion),
+      triggerType: HelpBotInteractionTriggerType.MENTION,
+      parentBotDropId: null
+    });
+  }
+
+  if (isMeaningfulQuestion(question)) {
+    return createDetection(input, {
+      question,
+      triggerType: parentBotDropId
+        ? HelpBotInteractionTriggerType.BOT_REPLY
+        : HelpBotInteractionTriggerType.MENTION,
+      parentBotDropId
+    });
+  }
+
+  if (canUseParentQuestion(input, parentQuestion)) {
+    return createDetection(input, {
+      targetDropId: input.parentDrop.id,
+      question: parentQuestion,
+      triggerType: HelpBotInteractionTriggerType.MENTION,
+      parentBotDropId: null
+    });
+  }
+
+  return null;
+}
+
 export function detectHelpBotTrigger(
   input: HelpBotTriggerDetectionInput
 ): HelpBotTriggerDetection | null {
@@ -135,63 +223,10 @@ export function detectHelpBotTrigger(
 
   const text = extractText(input.request);
   const question = stripBotMention(text);
-  const parentBotDropId =
-    input.parentDrop?.author.id === input.botProfileId
-      ? input.parentDrop.id
-      : null;
+  const parentBotDropId = getParentBotDropId(input);
 
   if (hasExplicitMention(input, text)) {
-    const parentDrop = input.parentDrop;
-    const parentQuestion = stripBotMention(extractDropText(parentDrop));
-    if (
-      isMeaningfulQuestion(question) &&
-      isContextDependentQuestion(question) &&
-      parentDrop &&
-      parentDrop.author.id !== input.botProfileId &&
-      isMeaningfulQuestion(parentQuestion)
-    ) {
-      return {
-        triggerDropId: input.createdDrop.id,
-        targetDropId: input.createdDrop.id,
-        waveId: input.createdDrop.wave.id,
-        authorProfileId: input.authorProfileId,
-        question: buildQuestionWithParentContext(question, parentQuestion),
-        triggerType: HelpBotInteractionTriggerType.MENTION,
-        parentBotDropId: null
-      };
-    }
-
-    if (isMeaningfulQuestion(question)) {
-      return {
-        triggerDropId: input.createdDrop.id,
-        targetDropId: input.createdDrop.id,
-        waveId: input.createdDrop.wave.id,
-        authorProfileId: input.authorProfileId,
-        question,
-        triggerType: parentBotDropId
-          ? HelpBotInteractionTriggerType.BOT_REPLY
-          : HelpBotInteractionTriggerType.MENTION,
-        parentBotDropId
-      };
-    }
-
-    if (
-      parentDrop &&
-      parentDrop.author.id !== input.botProfileId &&
-      isMeaningfulQuestion(parentQuestion)
-    ) {
-      return {
-        triggerDropId: input.createdDrop.id,
-        targetDropId: parentDrop.id,
-        waveId: input.createdDrop.wave.id,
-        authorProfileId: input.authorProfileId,
-        question: parentQuestion,
-        triggerType: HelpBotInteractionTriggerType.MENTION,
-        parentBotDropId: null
-      };
-    }
-
-    return null;
+    return detectExplicitMentionTrigger({ input, question, parentBotDropId });
   }
 
   if (!isMeaningfulQuestion(question)) {
@@ -199,15 +234,11 @@ export function detectHelpBotTrigger(
   }
 
   if (parentBotDropId) {
-    return {
-      triggerDropId: input.createdDrop.id,
-      targetDropId: input.createdDrop.id,
-      waveId: input.createdDrop.wave.id,
-      authorProfileId: input.authorProfileId,
+    return createDetection(input, {
       question,
       triggerType: HelpBotInteractionTriggerType.BOT_REPLY,
       parentBotDropId
-    };
+    });
   }
 
   return null;
