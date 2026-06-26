@@ -8,7 +8,9 @@ const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(__dirname, '..');
 const sourcePath = path.join(repoRoot, 'src', 'config', 'deploy-services.json');
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'deploy.yml');
-const { validateDeployConfig } = require('../src/config/deploy-config.validation.js');
+const {
+  validateDeployConfig
+} = require('../src/config/deploy-config.validation.js');
 
 function indent(lines, prefix = '          ') {
   return lines.map((line) => `${prefix}${line}`).join('\n');
@@ -37,16 +39,12 @@ function buildWorkflowYaml(config) {
 
   const prodCondition = prodOnlyServices.length
     ? `(${prodOnlyServices
-        .map(
-          (service) => `github.event.inputs.service == '${service}'`
-        )
+        .map((service) => `github.event.inputs.service == '${service}'`)
         .join(' || ')}) && github.event.inputs.environment != 'prod'`
     : 'false';
   const stagingCondition = stagingOnlyServices.length
     ? `(${stagingOnlyServices
-        .map(
-          (service) => `github.event.inputs.service == '${service}'`
-        )
+        .map((service) => `github.event.inputs.service == '${service}'`)
         .join(' || ')}) && github.event.inputs.environment != 'staging'`
     : 'false';
 
@@ -83,6 +81,8 @@ env:
   DROP_MEDIA_INGEST_S3_BUCKET_STAGING: \${{ vars.DROP_MEDIA_INGEST_S3_BUCKET_STAGING }}
   DROP_MEDIA_INGEST_S3_REGION: \${{ vars.DROP_MEDIA_INGEST_S3_REGION }}
   DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: \${{ vars.DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME }}
+  API_GATEWAY_WS_ENDPOINT_PROD: https://ws.6529.io
+  API_GATEWAY_WS_ENDPOINT_STAGING: https://ws.staging.6529.io
 
 run-name: Deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
 
@@ -136,16 +136,23 @@ jobs:
             ATTACHMENTS_BUCKET="$ATTACHMENTS_INGEST_S3_BUCKET_PROD"
             DROP_MEDIA_SANITIZE_IMAGES_VALUE="\${DROP_MEDIA_SANITIZE_IMAGES_PROD:-false}"
             DROP_MEDIA_INGEST_BUCKET="$DROP_MEDIA_INGEST_S3_BUCKET_PROD"
+            API_GATEWAY_WS_ENDPOINT="$API_GATEWAY_WS_ENDPOINT_PROD"
           else
             ATTACHMENTS_BUCKET="$ATTACHMENTS_INGEST_S3_BUCKET_STAGING"
             DROP_MEDIA_SANITIZE_IMAGES_VALUE="\${DROP_MEDIA_SANITIZE_IMAGES_STAGING:-false}"
             DROP_MEDIA_INGEST_BUCKET="$DROP_MEDIA_INGEST_S3_BUCKET_STAGING"
+            API_GATEWAY_WS_ENDPOINT="$API_GATEWAY_WS_ENDPOINT_STAGING"
           fi
           DROP_MEDIA_INGEST_REGION="$DROP_MEDIA_INGEST_S3_REGION"
           DROP_MEDIA_SANITIZER_QUEUE="$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME"
 
           if [ -z "$ATTACHMENTS_BUCKET" ]; then
             echo "ATTACHMENTS_INGEST_S3_BUCKET is not configured for \${{ github.event.inputs.environment }}"
+            exit 1
+          fi
+
+          if [ -z "$API_GATEWAY_WS_ENDPOINT" ]; then
+            echo "API_GATEWAY_WS_ENDPOINT is not configured for \${{ github.event.inputs.environment }}"
             exit 1
           fi
 
@@ -174,6 +181,7 @@ jobs:
           echo "DROP_MEDIA_INGEST_S3_REGION=$DROP_MEDIA_INGEST_REGION" >> "$GITHUB_ENV"
           echo "DROP_MEDIA_INGEST_STAGE=\${{ github.event.inputs.environment }}" >> "$GITHUB_ENV"
           echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE" >> "$GITHUB_ENV"
+          echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT" >> "$GITHUB_ENV"
       - name: Deploy service
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
@@ -192,7 +200,7 @@ jobs:
           aws lambda update-function-code --function-name seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip --no-cli-pager > /dev/null 2>&1
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
-          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
+          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
           rm -f /tmp/current_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop

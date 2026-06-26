@@ -38,8 +38,11 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { enums } from '../../../enums';
 import { profileWavesApiService } from '@/api/profiles/profile-waves.api.service';
+import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
+import { Logger } from '@/logging';
 
 const router = asyncRouter();
+const logger = Logger.get('ProfilesRoutes');
 
 router.get(
   `/:identity`,
@@ -177,6 +180,19 @@ router.post(
     };
     const profile =
       await profilesService.createOrUpdateProfile(createProfileCommand);
+    if (profile.id) {
+      try {
+        await helpBotCreditsService.grantProfileSetupCredits(
+          { profileId: profile.id },
+          { authenticationContext: await getAuthenticationContext(req) }
+        );
+      } catch (error) {
+        logger.error(
+          `Failed to grant profile setup help bot credits for profile ${profile.id}`,
+          error
+        );
+      }
+    }
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(profile);
   }

@@ -51,8 +51,12 @@ import { curationsApiService } from '@/api/curations/curations.api.service';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiDropCuration } from '@/api/generated/models/ApiDropCuration';
 import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
+import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
+import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
+import { Logger } from '@/logging';
 
 const router = asyncRouter();
+const logger = Logger.get('DropsRoutes');
 
 const LatestDropsSerialNosQuerySchema: Joi.ObjectSchema<{
   serial_nos: number[] | null;
@@ -228,6 +232,32 @@ router.post(
       },
       { timer, authenticationContext }
     );
+    try {
+      await helpBotCreditsService.grantDailyActivityCredits(
+        { profileId: authorProfileId },
+        { timer, authenticationContext }
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to grant daily help bot activity credits for profile ${authorProfileId}`,
+        error
+      );
+    }
+    try {
+      await helpBotTriggerService.handleCreatedDrop(
+        {
+          createDropRequest,
+          createdDrop,
+          authorProfileId
+        },
+        { timer, authenticationContext }
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to handle help bot trigger for drop ${createdDrop.id}`,
+        error
+      );
+    }
     res.send(createdDrop);
   }
 );
