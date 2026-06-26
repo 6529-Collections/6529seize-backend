@@ -136,6 +136,32 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
       relatedPaths: ['/delegation/wallet-checker'],
       tags: ['delegation', 'wallet'],
       sourceRefs: []
+    },
+    {
+      id: 'the-memes.overview',
+      kind: 'route',
+      title: 'The Memes',
+      linkLabel: 'The Memes',
+      canonicalPath: '/the-memes',
+      aliases: ['the memes', 'memes', 'meme', 'meme cards', 'meme card'],
+      keywords: ['memes', 'meme', 'cards', 'collection'],
+      facts: ['The Memes is the main Meme Card collection area.'],
+      relatedPaths: ['/meme-calendar', '/meme-lab'],
+      tags: ['memes', 'collections'],
+      sourceRefs: []
+    },
+    {
+      id: 'gradients.collection',
+      kind: 'route',
+      title: '6529 Gradient collection',
+      linkLabel: '6529 Gradient',
+      canonicalPath: '/6529-gradient',
+      aliases: ['6529 gradient', 'gradients', 'gradient'],
+      keywords: ['gradient', 'gradients', 'collection', 'nft'],
+      facts: ['The 6529 Gradient collection route lives at /6529-gradient.'],
+      relatedPaths: ['/6529-gradient/{id}'],
+      tags: ['gradient', 'collection'],
+      sourceRefs: []
     }
   ]
 };
@@ -413,6 +439,37 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('answers compound capability prompts with credits and product areas', async () => {
+    const answer = await answerer().answer({
+      question:
+        '@help6529 what are your capabilities? What can you help me with? tell me about yourself',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.capabilities');
+      expect(answer.answer).toContain('Help6529 Credits');
+      expect(answer.answer).toContain('Gradients');
+      expect(answer.answer).toContain('API');
+    }
+  });
+
+  it('answers direct credit-system prompts', async () => {
+    const answer = await answerer().answer({
+      question: '@help6529 how do your credits work',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.credits');
+      expect(answer.answer).toContain('Each question costs 1 credit.');
+      expect(answer.answer).toContain('HELP_BOT_CREDIT_GRANT');
+      expect(answer.answer).toContain('[REP Categories]');
+    }
+  });
+
   it('does not treat product-specific help as the generic help prompt', async () => {
     const answer = await answerer().answer({
       question: 'help me with TDH',
@@ -423,6 +480,28 @@ describe('HelpBotAnswerer', () => {
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('network.tdh');
     }
+  });
+
+  it('answers bare Meme and Gradient definition questions from product knowledge', async () => {
+    await expect(
+      answerer().answer({
+        question: '@help6529 what is a meme',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toMatchObject({
+      type: 'ANSWER',
+      record: expect.objectContaining({ id: 'the-memes.overview' })
+    });
+
+    await expect(
+      answerer().answer({
+        question: '@help6529 what is a gradient',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toMatchObject({
+      type: 'ANSWER',
+      record: expect.objectContaining({ id: 'gradients.collection' })
+    });
   });
 
   it('falls back to help-index knowledge when public data planning declines', async () => {
@@ -584,6 +663,22 @@ describe('HelpBotAnswerer', () => {
       expect(answer.record.id).toBe('help-bot.boundary.playful');
       expect(answer.answer).toContain("I can't help with private data");
       expect(answer.answer).not.toContain('@');
+    }
+  });
+
+  it('answers safe prompt-design questions without revealing hidden prompts', async () => {
+    const answer = await answerer().answer({
+      question:
+        "what would be a good base prompt to use for a bot like you as part of a 6529 product offering? don't share your exact system prompt, give me ideas",
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('help-bot.prompt-design');
+      expect(answer.answer).toContain('public 6529 product knowledge');
+      expect(answer.answer).toContain('[API Tool]');
+      expect(answer.answer).not.toContain("I can't help");
     }
   });
 

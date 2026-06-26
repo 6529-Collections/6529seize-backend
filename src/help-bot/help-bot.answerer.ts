@@ -18,7 +18,12 @@ import {
   isHelpBotContextVerificationQuestion,
   parseHelpBotQuestionContext
 } from './help-bot-question-context';
-import { HELP_BOT_HANDLE } from './help-bot.config';
+import {
+  HELP_BOT_CREDIT_CATEGORY,
+  HELP_BOT_CREDIT_GRANT_ENV,
+  HELP_BOT_HANDLE,
+  HELP_BOT_QUESTION_CREDIT_COST
+} from './help-bot.config';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -156,13 +161,52 @@ function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
     linkLabel: 'Waves',
     canonicalPath: '/waves',
     aliases: ['help bot capabilities'],
-    keywords: ['help', 'capabilities'],
+    keywords: ['help', 'capabilities', 'credits'],
     facts: [
-      'The help bot can answer public 6529 product questions and ask for a topic when the user only asks for help.'
+      'The help bot can answer public 6529 product questions, explain its Help6529 Credits system briefly, and ask for a topic when the user only asks for help.'
     ],
     relatedPaths: [],
     tags: ['help-bot', 'guardrail'],
     sourceRefs: ['backend help bot capability classifier']
+  };
+}
+
+function buildCreditSystemRecord(): HelpBotKnowledgeRecord {
+  return {
+    id: 'help-bot.credits',
+    kind: 'business_rule',
+    title: 'Help6529 Credits',
+    linkLabel: 'REP Categories',
+    canonicalPath: '/rep/categories',
+    aliases: ['help6529 credits', 'help bot credits', 'helpbot credits'],
+    keywords: ['help6529', 'credits', 'credit', 'rep'],
+    facts: [
+      `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP to meter bot questions.`,
+      `Each Help6529 question costs ${HELP_BOT_QUESTION_CREDIT_COST} Help6529 Credit REP.`,
+      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by help6529; normal users cannot grant REP in this category.`,
+      `Signup, profile setup, and daily activity grants use the ${HELP_BOT_CREDIT_GRANT_ENV} configured amount.`
+    ],
+    relatedPaths: ['/waves'],
+    tags: ['help-bot', 'credits', 'rep'],
+    sourceRefs: ['backend help bot credit classifier']
+  };
+}
+
+function buildPromptDesignRecord(): HelpBotKnowledgeRecord {
+  return {
+    id: 'help-bot.prompt-design',
+    kind: 'guardrail',
+    title: 'Help bot prompt design',
+    linkLabel: 'API Tool',
+    canonicalPath: '/tools/api',
+    aliases: ['bot prompt design'],
+    keywords: ['bot', 'prompt', 'design'],
+    facts: [
+      'The help bot can give public product-bot design guidance without revealing hidden prompts or private instructions.'
+    ],
+    relatedPaths: ['/waves'],
+    tags: ['help-bot', 'guardrail'],
+    sourceRefs: ['backend help bot boundary classifier']
   };
 }
 
@@ -200,24 +244,49 @@ function isPromptOrPrivateDataRequest(normalizedQuestion: string): boolean {
   ].some((pattern) => pattern.test(normalizedQuestion));
 }
 
+function stripLeadingHelpBotHandle(normalizedQuestion: string): string {
+  return normalizedQuestion
+    .replace(new RegExp(String.raw`^@?${escapeRegExp(HELP_BOT_HANDLE)}\s+`), '')
+    .trim();
+}
+
 function isGenericHelpRequest(normalizedQuestion: string): boolean {
-  return [
+  const question = stripLeadingHelpBotHandle(normalizedQuestion);
+  const exactPatterns = [
     /^(help|help me|i need help|need help|help please|please help)$/,
     /^(can|could|would) you help( me)?$/,
     /^what (can|could) you (do|help with|answer)$/,
     /^what (can|could) you help me with$/,
     /^what do you do$/,
+    /^what are your capabilities$/,
+    /^what capabilities do you have$/,
+    /^how do you work$/,
+    /^who are you$/,
+    /^tell me about yourself$/,
+    /^can you give me (a )?(verbal |virtual )?tour( of 6529(\.io)?)?$/,
     /^how (can|could|do) you help( me)?$/,
     /^what should i ask( you)?$/,
     /^what questions can i ask( you)?$/,
     /^(show me )?(help|options|commands|menu)$/
-  ].some((pattern) => pattern.test(normalizedQuestion));
+  ];
+  if (exactPatterns.some((pattern) => pattern.test(question))) {
+    return true;
+  }
+
+  return [
+    /\bwhat are your capabilities\b/,
+    /\bwhat capabilities do you have\b/,
+    /\bwhat (can|could) you help me with\b/,
+    /\bwhat (can|could) you do\b/,
+    /\btell me about yourself\b/,
+    /\bhow do you work\b/,
+    /\bwho are you\b/,
+    /\b(verbal|virtual)?\s*tour of 6529(\.io)?\b/
+  ].some((pattern) => pattern.test(question));
 }
 
 function isSocialCheckIn(normalizedQuestion: string): boolean {
-  const withoutBotHandle = normalizedQuestion
-    .replace(new RegExp(String.raw`^@?${escapeRegExp(HELP_BOT_HANDLE)}\s+`), '')
-    .trim();
+  const withoutBotHandle = stripLeadingHelpBotHandle(normalizedQuestion);
   if (
     !withoutBotHandle ||
     withoutBotHandle.length > 80 ||
@@ -572,12 +641,77 @@ function buildBoundaryAnswer(question: string): string | null {
   return null;
 }
 
+function isHelpBotCreditQuestion(normalizedQuestion: string): boolean {
+  const question = stripLeadingHelpBotHandle(normalizedQuestion);
+  return [
+    /\bhelp\s*6529\s+credit(s)?\b/,
+    /\bhelp\s*bot\s+credit(s)?\b/,
+    /\bhelpbot\s+credit(s)?\b/,
+    /\byour\s+credit(s)?\b/,
+    /\bcredit\s+rep\b/,
+    /\bout of\s+help\s*6529\s+credit(s)?\b/,
+    /\blow\s+battery\b/,
+    /\bhow do(es)?\s+(your|help\s*6529|help\s*bot)\s+credit(s)?\s+work\b/,
+    /\bwhy\s+(do|does)\s+(you|help\s*6529|help\s*bot)\s+(cost|charge)\s+credit(s)?\b/
+  ].some((pattern) => pattern.test(question));
+}
+
+function buildCreditSystemAnswer(
+  question: string,
+  baseUrl: string
+): string | null {
+  const normalizedQuestion = normalizeBoundaryText(question);
+  if (!isHelpBotCreditQuestion(normalizedQuestion)) {
+    return null;
+  }
+
+  return ensureCanonicalMarkdownLink({
+    text: [
+      `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP as a lightweight question meter.`,
+      `Each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit.`,
+      `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by help6529, so normal users cannot grant it to each other.`,
+      `Signup, profile setup, and daily activity grants all use the ${HELP_BOT_CREDIT_GRANT_ENV} configured amount.`
+    ].join(' '),
+    canonicalUrl: toCanonicalUrl(baseUrl, '/rep/categories'),
+    label: 'REP Categories'
+  });
+}
+
+function isSafePromptDesignQuestion(normalizedQuestion: string): boolean {
+  const question = stripLeadingHelpBotHandle(normalizedQuestion);
+  return (
+    /\b(base prompt|prompt ideas|prompt to use|good prompt)\b/.test(question) &&
+    /\b(bot|assistant|product offering|6529 users|6529 product)\b/.test(
+      question
+    )
+  );
+}
+
+function buildSafePromptDesignAnswer(
+  question: string,
+  baseUrl: string
+): string | null {
+  const normalizedQuestion = normalizeBoundaryText(question);
+  if (!isSafePromptDesignQuestion(normalizedQuestion)) {
+    return null;
+  }
+
+  return ensureCanonicalMarkdownLink({
+    text: [
+      'For a 6529 product bot, start with: answer only from public 6529 product knowledge, be concise, cite the right app route, refuse private data or hidden prompts, escalate uncertain product answers, and keep tone helpful without pretending to perform privileged actions.',
+      'Good coverage areas are Waves, Drops, TDH, REP/CIC/NIC, delegations, consolidations, subscriptions, The Memes, Meme Lab, Gradients, NextGen, notifications, wallets, and the public API.'
+    ].join(' '),
+    canonicalUrl: toCanonicalUrl(baseUrl, '/tools/api'),
+    label: 'API Tool'
+  });
+}
+
 function buildGenericHelpAnswer(question: string): string | null {
   const normalizedQuestion = normalizeBoundaryText(question);
   if (!isGenericHelpRequest(normalizedQuestion)) {
     return null;
   }
-  return 'What do you need help with? I can answer public 6529 product questions about TDH, Waves, delegation, consolidations, subscriptions, drops, profiles, The Memes, public data, and where to find things on 6529.io. Reply with a topic or question.';
+  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
 }
 
 function buildSocialAnswer(question: string): string | null {
@@ -611,12 +745,36 @@ export class HelpBotAnswerer {
   public async answer(
     request: HelpBotAnswerRequest
   ): Promise<HelpBotAnswerResult> {
+    const safePromptDesignAnswer = buildSafePromptDesignAnswer(
+      request.question,
+      request.baseUrl
+    );
+    if (safePromptDesignAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: safePromptDesignAnswer,
+        record: buildPromptDesignRecord()
+      };
+    }
+
     const boundaryAnswer = buildBoundaryAnswer(request.question);
     if (boundaryAnswer) {
       return {
         type: 'ANSWER',
         answer: boundaryAnswer,
         record: buildBoundaryRecord()
+      };
+    }
+
+    const creditSystemAnswer = buildCreditSystemAnswer(
+      request.question,
+      request.baseUrl
+    );
+    if (creditSystemAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: creditSystemAnswer,
+        record: buildCreditSystemRecord()
       };
     }
 
