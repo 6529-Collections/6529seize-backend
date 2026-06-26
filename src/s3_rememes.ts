@@ -1,10 +1,14 @@
 import {
-  HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client
 } from '@aws-sdk/client-s3';
-import { RequestInfo, RequestInit } from 'node-fetch';
-import { Rememe } from './entities/IRememe';
+import { RequestInfo, RequestInit, Response } from 'node-fetch';
+import {
+  REMEME_S3_MAX_PROCESSING_ATTEMPTS,
+  Rememe,
+  RememeS3ProcessingStatus
+} from './entities/IRememe';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
@@ -23,16 +27,54 @@ const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 const REMEME_CONCURRENCY = 5;
+const FETCH_TIMEOUT_MS = 30_000;
+const LIST_OBJECTS_MAX_KEYS = 25;
+const PROCESSING_ERROR_MAX_LENGTH = 1000;
+
+const RASTER_IMAGE_FORMATS = new Set(['gif', 'jpeg', 'jpg', 'png', 'webp']);
+const EXTENSION_PRIORITY = [
+  'webp',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'mp4',
+  'webm',
+  'mov',
+  'svg'
+];
 
 let s3: S3Client;
 let myBucket: string;
 
+type RememeAssetKeys = {
+  original: string | null;
+  scaled: string | null;
+  thumbnail: string | null;
+  icon: string | null;
+};
+
+type RememeDesiredKeys = {
+  original: string;
+  scaled: string;
+  thumbnail: string;
+  icon: string;
+};
+
+type FetchedMedia = {
+  buffer: Buffer;
+  contentType: string;
+};
+
 export const persistRememesS3 = async (rememes: Rememe[]) => {
   s3 = new S3Client({ region: 'eu-west-1' });
+  myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
+
+  if (!myBucket) {
+    throw new Error('AWS_6529_IMAGES_BUCKET_NAME is required');
+  }
 
   logger.info(`[PROCESSING ASSETS FOR ${rememes.length} REMEMES]`);
-
-  myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
   const limit = pLimit(REMEME_CONCURRENCY);
   const results = await Promise.allSettled(
@@ -42,63 +84,70 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
   const failures = results.filter(
     (result): result is PromiseRejectedResult => result.status === 'rejected'
   );
-  if (!failures.length) {
-    return;
-  }
-
   failures.forEach((failure) =>
     logger.error(`[REMEME PROCESSING FAILED]`, failure.reason)
-  );
-  throw new Error(
-    `Failed processing ${failures.length} of ${rememes.length} rememes`
   );
 };
 
 async function processRememeS3(r: Rememe) {
+  try {
+    await processRememeS3Unsafe(r);
+  } catch (error) {
+    logger.error(
+      `[REMEME PROCESSING ERROR] [CONTRACT ${r.contract}] [ID ${r.id}]`,
+      error
+    );
+    await persistRememeS3Result(r, emptyAssetKeysFromRememe(r), {
+      status: retryStatusFor(r),
+      error
+    });
+  }
+}
+
+async function processRememeS3Unsafe(r: Rememe) {
   const image = resolveRememeImageUrl(r);
   if (!image?.length) {
     logger.warn(
       `[REMEME IMAGE URL MISSING] [CONTRACT ${r.contract}] [ID ${r.id}]`
     );
+    await persistRememeS3Result(r, emptyAssetKeysFromRememe(r), {
+      status: RememeS3ProcessingStatus.PERMANENT_ERROR,
+      error: 'Missing image URL'
+    });
     return;
   }
 
-  const format = await mediaChecker.getContentType(image);
-  if (!format) {
-    logger.error(`[ERROR ${r.contract} #${r.id}] [INVALID FORMAT ${image}]`);
+  const existingAssets = await findExistingRememeAssets(r);
+  if (hasCompleteRasterAssetSet(existingAssets)) {
+    logger.info(`[EXISTS ${r.contract} #${r.id}] [PERSISTING S3 URLS]`);
+    await persistRememeS3Result(r, existingAssets, {
+      status: RememeS3ProcessingStatus.COMPLETE
+    });
     return;
   }
 
-  const scaledToWebp = format.toLowerCase() !== 'gif';
-  const derivativeFormat = scaledToWebp ? 'webp' : format;
-  const keys = getRememeImageKeys(r, format, derivativeFormat);
-  const initialPresence = await getRememeAssetPresence(keys);
-
-  if (initialPresence.allPresent) {
-    logger.info(`[EXISTS ${r.contract} #${r.id}] [SKIPPING UPLOAD]`);
-  } else {
-    logger.info(
-      `[PARTIAL OR MISSING REMEME S3 ASSETS] [CONTRACT ${r.contract}] [ID ${r.id}] [original=${initialPresence.original}] [scaled=${initialPresence.scaled}] [thumbnail=${initialPresence.thumbnail}] [icon=${initialPresence.icon}]`
+  const originalFormat =
+    getFormatFromKey(existingAssets.original) ??
+    normalizeFormat(await mediaChecker.getContentType(image));
+  if (!originalFormat) {
+    logger.error(
+      `[ERROR ${r.contract} #${r.id}] [UNRESOLVED MEDIA FORMAT] [URL ${redactUrlForLog(
+        image
+      )}]`
     );
-    await uploadMissingRememeAssets(
-      r,
-      image,
-      format,
-      derivativeFormat,
-      keys,
-      initialPresence
-    );
-  }
-
-  const assetPresence = await getRememeAssetPresence(keys);
-  if (!assetPresence.allPresent) {
-    logger.warn(
-      `[INCOMPLETE REMEME S3 ASSETS] [CONTRACT ${r.contract}] [ID ${r.id}] [original=${assetPresence.original}] [scaled=${assetPresence.scaled}] [thumbnail=${assetPresence.thumbnail}] [icon=${assetPresence.icon}] [SKIPPING DB URL PERSIST]`
-    );
+    await persistRememeS3Result(r, existingAssets, {
+      status: retryStatusFor(r),
+      error: 'Could not resolve rememe media format'
+    });
     return;
   }
 
-  await persistRememeS3Links(r, keys);
+  if (!isRasterImageFormat(originalFormat)) {
+    await persistUnsupportedOriginal(r, image, originalFormat, existingAssets);
+    return;
+  }
+
+  await persistRasterRememe(r, image, originalFormat, existingAssets);
 }
 
 function resolveRememeImageUrl(r: Rememe): string | undefined {
@@ -112,157 +161,332 @@ function resolveRememeImageUrl(r: Rememe): string | undefined {
   return trimmed.length ? trimmed : undefined;
 }
 
-type RememeImageKeys = {
-  originalKey: string;
-  scaledKey: string;
-  thumbnailKey: string;
-  iconKey: string;
-};
-
-type RememeAssetPresence = {
-  original: boolean;
-  scaled: boolean;
-  thumbnail: boolean;
-  icon: boolean;
-  allPresent: boolean;
-};
-
-function getRememeImageKeys(
-  r: Rememe,
-  originalFormat: string,
-  derivativeFormat: string
-): RememeImageKeys {
-  return {
-    originalKey: `rememes/images/original/${r.contract}-${r.id}.${originalFormat.toLowerCase()}`,
-    scaledKey: `rememes/images/scaled/${r.contract}-${r.id}.${derivativeFormat.toLowerCase()}`,
-    thumbnailKey: `rememes/images/thumbnail/${r.contract}-${r.id}.${derivativeFormat.toLowerCase()}`,
-    iconKey: `rememes/images/icon/${r.contract}-${r.id}.${derivativeFormat.toLowerCase()}`
-  };
-}
-
-async function uploadMissingRememeAssets(
+async function persistUnsupportedOriginal(
   r: Rememe,
   imageUrl: string,
   originalFormat: string,
-  derivativeFormat: string,
-  keys: RememeImageKeys,
-  existingPresence: RememeAssetPresence
+  existingAssets: RememeAssetKeys
 ) {
-  logger.info(`[MISSING IMAGE] [CONTRACT ${r.contract}] [ID ${r.id}]`);
+  logger.warn(
+    `[UNSUPPORTED REMEME MEDIA FORMAT] [CONTRACT ${r.contract}] [ID ${r.id}] [FORMAT ${originalFormat}]`
+  );
 
-  const res = await withArweaveFallback(imageUrl, (u) => fetch(u));
-  if (!res.ok) {
-    throw new Error(
-      `Failed to fetch rememe image ${imageUrl}: ${res.status} ${res.statusText}`
+  const assets = { ...existingAssets };
+  if (!assets.original) {
+    const desiredOriginalKey = getOriginalKey(r, originalFormat);
+    const media = await fetchRememeMedia(imageUrl, originalFormat);
+    await handleObjectUpload(
+      desiredOriginalKey,
+      contentTypeForFormat(originalFormat, media.contentType),
+      media.buffer
     );
-  }
-  const blob = await res.arrayBuffer();
-  const blobBuffer = Buffer.from(blob);
-
-  if (!existingPresence.original) {
-    await handleImageUpload(keys.originalKey, originalFormat, blob);
+    assets.original = desiredOriginalKey;
   }
 
-  if (!existingPresence.scaled) {
+  await persistRememeS3Result(r, assets, {
+    status: RememeS3ProcessingStatus.UNSUPPORTED,
+    error: `Unsupported rememe media format: ${originalFormat}`
+  });
+}
+
+async function persistRasterRememe(
+  r: Rememe,
+  imageUrl: string,
+  originalFormat: string,
+  existingAssets: RememeAssetKeys
+) {
+  const derivativeFormat = originalFormat === 'gif' ? 'gif' : 'webp';
+  const desiredKeys = getRememeDesiredKeys(r, originalFormat, derivativeFormat);
+  const assets = { ...existingAssets };
+
+  if (!hasCompleteRasterAssetSet(assets)) {
+    logger.info(
+      `[PARTIAL OR MISSING REMEME S3 ASSETS] [CONTRACT ${r.contract}] [ID ${r.id}] [original=${Boolean(
+        assets.original
+      )}] [scaled=${Boolean(assets.scaled)}] [thumbnail=${Boolean(
+        assets.thumbnail
+      )}] [icon=${Boolean(assets.icon)}]`
+    );
+
+    try {
+      const media = await fetchRememeMedia(imageUrl, originalFormat);
+      if (!assets.original) {
+        await handleObjectUpload(
+          desiredKeys.original,
+          contentTypeForFormat(originalFormat, media.contentType),
+          media.buffer
+        );
+        assets.original = desiredKeys.original;
+      }
+
+      await uploadMissingRememeDerivatives(
+        r,
+        media.buffer,
+        derivativeFormat,
+        desiredKeys,
+        assets
+      );
+    } catch (error) {
+      const status = assets.original
+        ? RememeS3ProcessingStatus.PARTIAL
+        : retryStatusFor(r);
+      await persistRememeS3Result(r, assets, {
+        status,
+        error
+      });
+      return;
+    }
+  }
+
+  const currentAssets = await findExistingRememeAssets(r);
+  const mergedAssets = mergeAssetKeys(assets, currentAssets);
+  const status = hasCompleteRasterAssetSet(mergedAssets)
+    ? RememeS3ProcessingStatus.COMPLETE
+    : RememeS3ProcessingStatus.PARTIAL;
+  const error =
+    status === RememeS3ProcessingStatus.PARTIAL
+      ? 'Rememe has an original image but one or more resized derivatives are missing'
+      : undefined;
+
+  await persistRememeS3Result(r, mergedAssets, {
+    status,
+    error
+  });
+}
+
+async function uploadMissingRememeDerivatives(
+  r: Rememe,
+  sourceBuffer: Buffer,
+  derivativeFormat: string,
+  desiredKeys: RememeDesiredKeys,
+  assets: RememeAssetKeys
+) {
+  if (!assets.scaled) {
     const scaledBuffer = await resizeImage(
       r,
-      derivativeFormat.toLowerCase() === 'webp',
-      blobBuffer,
+      derivativeFormat === 'webp',
+      sourceBuffer,
       SCALED_HEIGHT
     );
     if (scaledBuffer) {
-      await handleImageUpload(keys.scaledKey, derivativeFormat, scaledBuffer);
+      await handleObjectUpload(
+        desiredKeys.scaled,
+        contentTypeForFormat(derivativeFormat),
+        scaledBuffer
+      );
+      assets.scaled = desiredKeys.scaled;
     }
   }
 
-  if (!existingPresence.thumbnail) {
+  if (!assets.thumbnail) {
     const thumbnailBuffer = await resizeImage(
       r,
-      derivativeFormat.toLowerCase() === 'webp',
-      blobBuffer,
+      derivativeFormat === 'webp',
+      sourceBuffer,
       THUMBNAIL_HEIGHT
     );
     if (thumbnailBuffer) {
-      await handleImageUpload(
-        keys.thumbnailKey,
-        derivativeFormat,
+      await handleObjectUpload(
+        desiredKeys.thumbnail,
+        contentTypeForFormat(derivativeFormat),
         thumbnailBuffer
       );
+      assets.thumbnail = desiredKeys.thumbnail;
     }
   }
 
-  if (!existingPresence.icon) {
+  if (!assets.icon) {
     const iconBuffer = await resizeImage(
       r,
-      derivativeFormat.toLowerCase() === 'webp',
-      blobBuffer,
+      derivativeFormat === 'webp',
+      sourceBuffer,
       ICON_HEIGHT
     );
     if (iconBuffer) {
-      await handleImageUpload(keys.iconKey, derivativeFormat, iconBuffer);
+      await handleObjectUpload(
+        desiredKeys.icon,
+        contentTypeForFormat(derivativeFormat),
+        iconBuffer
+      );
+      assets.icon = desiredKeys.icon;
     }
   }
 }
 
-async function getRememeAssetPresence(
-  keys: RememeImageKeys
-): Promise<RememeAssetPresence> {
-  const [original, scaled, thumbnail, icon] = await Promise.all([
-    objectExists(myBucket, keys.originalKey),
-    objectExists(myBucket, keys.scaledKey),
-    objectExists(myBucket, keys.thumbnailKey),
-    objectExists(myBucket, keys.iconKey)
-  ]);
-
+function getRememeDesiredKeys(
+  r: Rememe,
+  originalFormat: string,
+  derivativeFormat: string
+): RememeDesiredKeys {
   return {
-    original,
-    scaled,
-    thumbnail,
-    icon,
-    allPresent: original && scaled && thumbnail && icon
+    original: getOriginalKey(r, originalFormat),
+    scaled: `rememes/images/scaled/${r.contract}-${r.id}.${derivativeFormat}`,
+    thumbnail: `rememes/images/thumbnail/${r.contract}-${r.id}.${derivativeFormat}`,
+    icon: `rememes/images/icon/${r.contract}-${r.id}.${derivativeFormat}`
   };
 }
 
-async function persistRememeS3Links(r: Rememe, keys: RememeImageKeys) {
-  r.s3_image_original = `${CLOUDFRONT_LINK}/${keys.originalKey}`;
-  r.s3_image_scaled = `${CLOUDFRONT_LINK}/${keys.scaledKey}`;
-  r.s3_image_thumbnail = `${CLOUDFRONT_LINK}/${keys.thumbnailKey}`;
-  r.s3_image_icon = `${CLOUDFRONT_LINK}/${keys.iconKey}`;
+function getOriginalKey(r: Rememe, originalFormat: string) {
+  return `rememes/images/original/${r.contract}-${r.id}.${originalFormat}`;
+}
+
+async function findExistingRememeAssets(r: Rememe): Promise<RememeAssetKeys> {
+  const baseKey = `${r.contract}-${r.id}.`;
+  const [original, scaled, thumbnail, icon] = await Promise.all([
+    findExistingObjectKey(`rememes/images/original/${baseKey}`),
+    findExistingObjectKey(`rememes/images/scaled/${baseKey}`),
+    findExistingObjectKey(`rememes/images/thumbnail/${baseKey}`),
+    findExistingObjectKey(`rememes/images/icon/${baseKey}`)
+  ]);
+
+  return { original, scaled, thumbnail, icon };
+}
+
+async function findExistingObjectKey(prefix: string): Promise<string | null> {
+  const response = await s3.send(
+    new ListObjectsV2Command({
+      Bucket: myBucket,
+      Prefix: prefix,
+      MaxKeys: LIST_OBJECTS_MAX_KEYS
+    })
+  );
+  const keys =
+    response.Contents?.map((object) => object.Key)
+      .filter((key): key is string => Boolean(key))
+      .map(stripTemporarySuffix) ?? [];
+
+  return pickPreferredObjectKey(Array.from(new Set(keys)));
+}
+
+function pickPreferredObjectKey(keys: string[]): string | null {
+  const sortedKeys = [...keys].sort((a, b) => {
+    const extensionDiff =
+      extensionRank(getFormatFromKey(a)) - extensionRank(getFormatFromKey(b));
+    return extensionDiff === 0 ? a.localeCompare(b) : extensionDiff;
+  });
+  return sortedKeys[0] ?? null;
+}
+
+function extensionRank(format: string | null): number {
+  const index = format ? EXTENSION_PRIORITY.indexOf(format) : -1;
+  return index >= 0 ? index : EXTENSION_PRIORITY.length;
+}
+
+function stripTemporarySuffix(key: string) {
+  return key.endsWith('__temp') ? key.slice(0, -'__temp'.length) : key;
+}
+
+function hasCompleteRasterAssetSet(assets: RememeAssetKeys) {
+  return Boolean(
+    assets.original && assets.scaled && assets.thumbnail && assets.icon
+  );
+}
+
+function mergeAssetKeys(
+  preferred: RememeAssetKeys,
+  fallback: RememeAssetKeys
+): RememeAssetKeys {
+  return {
+    original: preferred.original ?? fallback.original,
+    scaled: preferred.scaled ?? fallback.scaled,
+    thumbnail: preferred.thumbnail ?? fallback.thumbnail,
+    icon: preferred.icon ?? fallback.icon
+  };
+}
+
+async function fetchRememeMedia(
+  imageUrl: string,
+  expectedFormat: string
+): Promise<FetchedMedia> {
+  const response: Response = await withArweaveFallback(imageUrl, (u) =>
+    fetch(u, { timeout: FETCH_TIMEOUT_MS })
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch rememe media: ${response.status} ${response.statusText}`
+    );
+  }
+
+  const blob = await response.arrayBuffer();
+  const contentType = response.headers.get('content-type') ?? '';
+  return {
+    buffer: Buffer.from(blob),
+    contentType: contentTypeForFormat(expectedFormat, contentType)
+  };
+}
+
+async function persistRememeS3Result(
+  r: Rememe,
+  assets: RememeAssetKeys,
+  result: {
+    status: RememeS3ProcessingStatus;
+    error?: unknown;
+  }
+) {
+  r.s3_image_original = assetUrl(assets.original);
+  r.s3_image_scaled = assetUrl(assets.scaled);
+  r.s3_image_thumbnail = assetUrl(assets.thumbnail);
+  r.s3_image_icon = assetUrl(assets.icon);
+  r.s3_image_processing_status = result.status;
+  r.s3_image_processing_error = result.error
+    ? truncateProcessingError(toErrorMessage(result.error))
+    : null;
+  r.s3_image_last_attempt_at = new Date();
+  r.s3_image_processing_attempts = nextAttemptCount(r, result.status);
+
   await persistRememes([r]);
 }
 
-async function handleImageUpload(
+function assetUrl(key: string | null): string | null {
+  return key ? `${CLOUDFRONT_LINK}/${key}` : null;
+}
+
+function nextAttemptCount(r: Rememe, status: RememeS3ProcessingStatus): number {
+  const currentAttempts = r.s3_image_processing_attempts ?? 0;
+  if (status === RememeS3ProcessingStatus.COMPLETE) {
+    return currentAttempts;
+  }
+  return currentAttempts + 1;
+}
+
+function retryStatusFor(r: Rememe): RememeS3ProcessingStatus {
+  const nextAttempt = (r.s3_image_processing_attempts ?? 0) + 1;
+  return nextAttempt >= REMEME_S3_MAX_PROCESSING_ATTEMPTS
+    ? RememeS3ProcessingStatus.PERMANENT_ERROR
+    : RememeS3ProcessingStatus.TRANSIENT_ERROR;
+}
+
+function emptyAssetKeysFromRememe(r: Rememe): RememeAssetKeys {
+  return {
+    original: keyFromAssetUrl(r.s3_image_original),
+    scaled: keyFromAssetUrl(r.s3_image_scaled),
+    thumbnail: keyFromAssetUrl(r.s3_image_thumbnail),
+    icon: keyFromAssetUrl(r.s3_image_icon)
+  };
+}
+
+function keyFromAssetUrl(assetUrlValue?: string | null): string | null {
+  if (!assetUrlValue?.startsWith(`${CLOUDFRONT_LINK}/`)) {
+    return null;
+  }
+  return assetUrlValue.slice(CLOUDFRONT_LINK.length + 1);
+}
+
+async function handleObjectUpload(
   key: string,
-  format: string,
-  blob: ArrayBuffer | Buffer
+  contentType: string,
+  blob: Buffer
 ) {
-  const body = Buffer.isBuffer(blob) ? blob : Buffer.from(blob);
   const put = await s3.send(
     new PutObjectCommand({
       Bucket: myBucket,
       Key: key,
-      Body: body,
-      ContentType: `image/${format}`
+      Body: blob,
+      ContentType: contentType
     })
   );
 
   logger.info(`[UPLOADED ${key}] [STATUS ${put.$metadata.httpStatusCode}]`);
-}
-
-async function objectExists(myBucket: any, key: any): Promise<boolean> {
-  try {
-    await s3.send(new HeadObjectCommand({ Bucket: myBucket, Key: key }));
-    return true;
-  } catch (error1: any) {
-    try {
-      await s3.send(
-        new HeadObjectCommand({ Bucket: myBucket, Key: `${key}__temp` })
-      );
-      return true;
-    } catch (error2: any) {
-      return false;
-    }
-  }
 }
 
 async function resizeImage(
@@ -281,10 +505,80 @@ async function resizeImage(
       height,
       toWebp: toWEBP
     });
-  } catch (err: any) {
+  } catch (err) {
     logger.error(
       `[RESIZING FOR ${rememe.contract} #${rememe.id}] [TO TARGET HEIGHT ${height}] [FAILED!]`,
       err
     );
   }
+}
+
+function normalizeFormat(format?: string | null): string | null {
+  if (!format) {
+    return null;
+  }
+  const normalized = format.toLowerCase().split(';')[0]?.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === 'svg+xml') {
+    return 'svg';
+  }
+  return normalized;
+}
+
+function getFormatFromKey(key?: string | null): string | null {
+  if (!key) {
+    return null;
+  }
+  const stripped = stripTemporarySuffix(key);
+  const fileName = stripped.slice(stripped.lastIndexOf('/') + 1);
+  const dotIndex = fileName.lastIndexOf('.');
+  if (dotIndex < 0 || dotIndex === fileName.length - 1) {
+    return null;
+  }
+  return normalizeFormat(fileName.slice(dotIndex + 1));
+}
+
+function isRasterImageFormat(format: string): boolean {
+  return RASTER_IMAGE_FORMATS.has(format);
+}
+
+function contentTypeForFormat(format: string, fallbackContentType?: string) {
+  if (fallbackContentType?.includes('/')) {
+    return fallbackContentType.split(';')[0]?.trim() ?? fallbackContentType;
+  }
+  if (format === 'jpg' || format === 'jpeg') {
+    return 'image/jpeg';
+  }
+  if (format === 'svg') {
+    return 'image/svg+xml';
+  }
+  if (format === 'mp4') {
+    return 'video/mp4';
+  }
+  if (format === 'webm') {
+    return 'video/webm';
+  }
+  if (format === 'mov') {
+    return 'video/quicktime';
+  }
+  return `image/${format}`;
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function truncateProcessingError(error: string): string {
+  return error.length > PROCESSING_ERROR_MAX_LENGTH
+    ? error.slice(0, PROCESSING_ERROR_MAX_LENGTH)
+    : error;
+}
+
+function redactUrlForLog(url: string): string {
+  if (url.length <= 160) {
+    return url;
+  }
+  return `${url.slice(0, 157)}...`;
 }

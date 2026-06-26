@@ -5,6 +5,7 @@ import {
   IsNull,
   LessThan,
   MoreThanOrEqual,
+  Brackets,
   QueryRunner
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
@@ -54,7 +55,12 @@ import {
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Profile } from './entities/IProfile';
-import { Rememe, RememeUpload } from './entities/IRememe';
+import {
+  REMEME_S3_MAX_PROCESSING_ATTEMPTS,
+  Rememe,
+  RememeS3ProcessingStatus,
+  RememeUpload
+} from './entities/IRememe';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 import { MemesSeason } from './entities/ISeason';
 import {
@@ -1526,11 +1532,30 @@ export async function fetchRememes() {
 }
 
 export async function fetchMissingS3Rememes() {
-  return await AppDataSource.getRepository(Rememe).find({
-    where: {
-      s3_image_original: IsNull()
-    }
-  });
+  return await AppDataSource.getRepository(Rememe)
+    .createQueryBuilder('rememe')
+    .where('rememe.s3_image_original IS NULL')
+    .andWhere(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_processing_status IS NULL').orWhere(
+          'rememe.s3_image_processing_status = :retryableStatus',
+          {
+            retryableStatus: RememeS3ProcessingStatus.TRANSIENT_ERROR
+          }
+        );
+      })
+    )
+    .andWhere(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_processing_attempts IS NULL').orWhere(
+          'rememe.s3_image_processing_attempts < :maxAttempts',
+          { maxAttempts: REMEME_S3_MAX_PROCESSING_ATTEMPTS }
+        );
+      })
+    )
+    .orderBy('rememe.updated_at', 'ASC')
+    .take(50)
+    .getMany();
 }
 
 export async function persistTDHHistory(date: Date, tdhHistory: TDHHistory[]) {

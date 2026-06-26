@@ -12,6 +12,16 @@ export enum RememeSource {
   SEIZE = 'seize'
 }
 
+export enum RememeS3ProcessingStatus {
+  COMPLETE = 'complete',
+  PARTIAL = 'partial',
+  UNSUPPORTED = 'unsupported',
+  TRANSIENT_ERROR = 'transient_error',
+  PERMANENT_ERROR = 'permanent_error'
+}
+
+export const REMEME_S3_MAX_PROCESSING_ATTEMPTS = 3;
+
 @Entity(REMEMES_TABLE)
 export class Rememe {
   @CreateDateColumn()
@@ -64,6 +74,18 @@ export class Rememe {
 
   @Column({ type: 'text', nullable: true, default: null })
   s3_image_icon!: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  s3_image_processing_status?: RememeS3ProcessingStatus | null;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  s3_image_processing_error?: string | null;
+
+  @Column({ type: 'datetime', nullable: true, default: null })
+  s3_image_last_attempt_at?: Date | null;
+
+  @Column({ type: 'int', nullable: true, default: 0 })
+  s3_image_processing_attempts?: number | null;
 
   @Column({
     type: 'enum',
