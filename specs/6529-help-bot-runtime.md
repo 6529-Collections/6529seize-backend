@@ -104,6 +104,14 @@ The hardcoded `@help6529` handle is resolved to the current profile id at
 runtime. Successful resolutions cache for five minutes; missing-profile lookups
 cache for 30 seconds so manual profile creation becomes active quickly.
 
+### 2.4 Help6529 Credits
+
+The bot uses the reserved `Help6529 Credits` REP category to gate questions.
+Automatic signup, profile setup, and daily activity grants all use the same
+grant amount from `HELP_BOT_CREDIT_GRANT`. When the env var is missing, the
+default grant is 10 credits. `HELP_BOT_QUESTION_CREDIT_COST` remains a fixed
+hardcoded cost of 1 credit per question.
+
 ## 3. Non-Goals
 
 - Do not answer without a user trigger.
