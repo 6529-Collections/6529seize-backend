@@ -20,9 +20,11 @@ import {
 } from './help-bot-question-context';
 import {
   HELP_BOT_CREDIT_CATEGORY,
-  HELP_BOT_CREDIT_GRANT_ENV,
+  HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT,
   HELP_BOT_HANDLE,
-  HELP_BOT_QUESTION_CREDIT_COST
+  HELP_BOT_PROFILE_SETUP_CREDIT_GRANT,
+  HELP_BOT_QUESTION_CREDIT_COST,
+  HELP_BOT_SIGNUP_CREDIT_GRANT
 } from './help-bot.config';
 
 export interface HelpBotAnswerRequest {
@@ -64,6 +66,20 @@ function toCanonicalUrl(baseUrl: string, path: string): string {
   }
   const normalizedPath = path.startsWith('/') ? path : '/' + path;
   return `${baseUrl}${normalizedPath}`;
+}
+
+const HELP_BOT_CREDIT_CATEGORY_PATH = `/rep/categories/${encodeURIComponent(
+  HELP_BOT_CREDIT_CATEGORY
+)}`;
+
+function getHelpBotCreditGrantText(): string {
+  if (
+    HELP_BOT_SIGNUP_CREDIT_GRANT === HELP_BOT_PROFILE_SETUP_CREDIT_GRANT &&
+    HELP_BOT_PROFILE_SETUP_CREDIT_GRANT === HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT
+  ) {
+    return `Signup, profile setup, and daily activity each currently grant ${HELP_BOT_SIGNUP_CREDIT_GRANT} Help6529 Credit REP.`;
+  }
+  return `Signup currently grants ${HELP_BOT_SIGNUP_CREDIT_GRANT} Help6529 Credit REP, profile setup grants ${HELP_BOT_PROFILE_SETUP_CREDIT_GRANT}, and daily activity grants ${HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT}.`;
 }
 
 function hasRoutePlaceholder(path: string): boolean {
@@ -176,15 +192,15 @@ function buildCreditSystemRecord(): HelpBotKnowledgeRecord {
     id: 'help-bot.credits',
     kind: 'business_rule',
     title: 'Help6529 Credits',
-    linkLabel: 'REP Categories',
-    canonicalPath: '/rep/categories',
+    linkLabel: HELP_BOT_CREDIT_CATEGORY,
+    canonicalPath: HELP_BOT_CREDIT_CATEGORY_PATH,
     aliases: ['help6529 credits', 'help bot credits', 'helpbot credits'],
     keywords: ['help6529', 'credits', 'credit', 'rep'],
     facts: [
       `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP to meter bot questions.`,
       `Each Help6529 question costs ${HELP_BOT_QUESTION_CREDIT_COST} Help6529 Credit REP.`,
       `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}; normal users cannot grant REP in this category.`,
-      `Signup, profile setup, and daily activity grants use the ${HELP_BOT_CREDIT_GRANT_ENV} configured amount.`
+      getHelpBotCreditGrantText()
     ],
     relatedPaths: ['/waves'],
     tags: ['help-bot', 'credits', 'rep'],
@@ -236,12 +252,21 @@ function normalizeBoundaryText(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
-function isPromptOrPrivateDataRequest(normalizedQuestion: string): boolean {
+function isPromptExtractionRequest(normalizedQuestion: string): boolean {
   return [
     /\b(ignore|forget|bypass|override)\b.*\b(instruction|instructions|prompt|rules|guardrail|policy)\b/,
-    /\b(system|developer|hidden)\s+(prompt|instruction|instructions|message)\b/,
-    /\b(show|reveal|read|dump|leak|expose|send|give|tell me|what did)\b.*\b(private|dm|dms|secret|token|password|api key|private key)\b/
+    /^(your\s+)?(system|developer|hidden|internal)\s+(base\s+)?(prompt|instruction|instructions|message)\??$/,
+    /\b(show|reveal|read|dump|leak|expose|send|give|tell me|what is|what's)\b.*\b(your|internal|hidden|system|developer|exact)\s+(base\s+)?(prompt|instruction|instructions|message)\b/
   ].some((pattern) => pattern.test(normalizedQuestion));
+}
+
+function isPromptOrPrivateDataRequest(normalizedQuestion: string): boolean {
+  return (
+    isPromptExtractionRequest(normalizedQuestion) ||
+    /\b(show|reveal|read|dump|leak|expose|send|give|tell me|what did)\b.*\b(private|dm|dms|secret|token|password|api key|private key)\b/.test(
+      normalizedQuestion
+    )
+  );
 }
 
 function stripLeadingHelpBotHandle(normalizedQuestion: string): string {
@@ -261,6 +286,8 @@ function isGenericHelpRequest(normalizedQuestion: string): boolean {
     /^what are your capabilities$/,
     /^what capabilities do you have$/,
     /^how do you work$/,
+    /^how do you function$/,
+    /^how do you operate$/,
     /^who are you$/,
     /^tell me about yourself$/,
     /^can you give me (a )?(verbal |virtual )?tour( of 6529(\.io)?)?$/,
@@ -279,7 +306,7 @@ function isGenericHelpRequest(normalizedQuestion: string): boolean {
     /\bwhat (can|could) you help me with\b/,
     /\bwhat (can|could) you do\b/,
     /\btell me about yourself\b/,
-    /\bhow do you work\b/,
+    /\bhow do you (work|function|operate)\b/,
     /\bwho are you\b/,
     /\b(verbal|virtual)?\s*tour of 6529(\.io)?\b/
   ].some((pattern) => pattern.test(question));
@@ -671,16 +698,17 @@ function buildCreditSystemAnswer(
       `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP as a lightweight question meter.`,
       `Each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit.`,
       `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}, so normal users cannot grant it to each other.`,
-      `Signup, profile setup, and daily activity grants all use the ${HELP_BOT_CREDIT_GRANT_ENV} configured amount.`
+      getHelpBotCreditGrantText()
     ].join(' '),
-    canonicalUrl: toCanonicalUrl(baseUrl, '/rep/categories'),
-    label: 'REP Categories'
+    canonicalUrl: toCanonicalUrl(baseUrl, HELP_BOT_CREDIT_CATEGORY_PATH),
+    label: HELP_BOT_CREDIT_CATEGORY
   });
 }
 
 function isSafePromptDesignQuestion(normalizedQuestion: string): boolean {
   const question = stripLeadingHelpBotHandle(normalizedQuestion);
   return (
+    !isPromptExtractionRequest(question) &&
     /\b(base prompt|prompt ideas|prompt to use|good prompt)\b/.test(question) &&
     /\b(bot|assistant|product offering|6529 users|6529 product)\b/.test(
       question
@@ -746,6 +774,15 @@ export class HelpBotAnswerer {
   public async answer(
     request: HelpBotAnswerRequest
   ): Promise<HelpBotAnswerResult> {
+    const boundaryAnswer = buildBoundaryAnswer(request.question);
+    if (boundaryAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: boundaryAnswer,
+        record: buildBoundaryRecord()
+      };
+    }
+
     const safePromptDesignAnswer = buildSafePromptDesignAnswer(
       request.question,
       request.baseUrl
@@ -755,15 +792,6 @@ export class HelpBotAnswerer {
         type: 'ANSWER',
         answer: safePromptDesignAnswer,
         record: buildPromptDesignRecord()
-      };
-    }
-
-    const boundaryAnswer = buildBoundaryAnswer(request.question);
-    if (boundaryAnswer) {
-      return {
-        type: 'ANSWER',
-        answer: boundaryAnswer,
-        record: buildBoundaryRecord()
       };
     }
 
@@ -972,12 +1000,12 @@ export class HelpBotAnswerer {
       const directMatch = await this.knowledgeSource.findMatch(
         request.question
       );
-      const contextualMatch = request.previousBotAnswer
-        ? await this.knowledgeSource.findMatch(
-            [request.question, request.previousBotAnswer].join('\n')
-          )
-        : null;
-      return directMatch ?? contextualMatch;
+      if (directMatch || !request.previousBotAnswer) {
+        return directMatch;
+      }
+      return await this.knowledgeSource.findMatch(
+        [request.question, request.previousBotAnswer].join('\n')
+      );
     } catch (error) {
       this.logger.warn('Help bot knowledge source failed', error);
       return null;
