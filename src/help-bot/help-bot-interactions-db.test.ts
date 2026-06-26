@@ -7,9 +7,15 @@ import {
   HelpBotInteractionRow,
   HelpBotInteractionsDb
 } from './help-bot-interactions.db';
+import { Time } from '@/time';
+import { HELP_BOT_ANSWERING_LEASE_MS } from './help-bot.config';
 
 describe('HelpBotInteractionsDb', () => {
   const ctx = {} as RequestContext;
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   function createInteraction(
     overrides: Partial<HelpBotInteractionRow> = {}
@@ -121,6 +127,8 @@ describe('HelpBotInteractionsDb', () => {
   });
 
   it('allows stale answering interactions to be reclaimed', async () => {
+    const now = 1_000_000;
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(now);
     const claimedRow = createInteraction({
       answer_started_at: 100,
       status: HelpBotInteractionStatus.ANSWERING
@@ -140,7 +148,8 @@ describe('HelpBotInteractionsDb', () => {
       expect.objectContaining({
         answeringStatus: HelpBotInteractionStatus.ANSWERING,
         seenStatus: HelpBotInteractionStatus.SEEN,
-        leaseStartedBefore: expect.any(Number)
+        leaseStartedBefore: now - HELP_BOT_ANSWERING_LEASE_MS,
+        now
       }),
       expect.anything()
     );
