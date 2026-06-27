@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import {
   BEDROCK_ANTHROPIC_MODEL_ID_ENV,
   DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID,
@@ -20,10 +21,13 @@ describe('bedrock config', () => {
     restoreEnv(POSITIVE_INT_ENV, previousEnv.positiveInt);
   });
 
-  it('defaults to the shared Claude 3.5 Sonnet Bedrock model', () => {
+  it('defaults to the shared Claude Sonnet 4.5 Bedrock inference profile', () => {
     delete process.env[BEDROCK_ANTHROPIC_MODEL_ID_ENV];
     delete process.env[SERVICE_MODEL_ENV];
 
+    expect(DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID).toBe(
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+    );
     expect(getConfiguredBedrockAnthropicModelId(SERVICE_MODEL_ENV)).toBe(
       DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID
     );
@@ -51,6 +55,34 @@ describe('bedrock config', () => {
 
     expect(() => getPositiveIntEnvOrDefault(POSITIVE_INT_ENV, 10)).toThrow(
       `${POSITIVE_INT_ENV} must be a positive integer`
+    );
+  });
+
+  it('round-trips plain decimal positive integer env values', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 1_000_000 }), (value) => {
+        process.env[POSITIVE_INT_ENV] = value.toString();
+
+        expect(getPositiveIntEnvOrDefault(POSITIVE_INT_ENV, 10)).toBe(value);
+      })
+    );
+  });
+
+  it('rejects non-decimal and non-positive integer env values', () => {
+    fc.assert(
+      fc.property(
+        fc.string().filter((value) => {
+          const trimmed = value.trim();
+          return !!trimmed && (!/^\d+$/.test(trimmed) || Number(trimmed) <= 0);
+        }),
+        (value) => {
+          process.env[POSITIVE_INT_ENV] = value;
+
+          expect(() =>
+            getPositiveIntEnvOrDefault(POSITIVE_INT_ENV, 10)
+          ).toThrow(`${POSITIVE_INT_ENV} must be a positive integer`);
+        }
+      )
     );
   });
 });

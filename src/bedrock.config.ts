@@ -2,11 +2,10 @@ import { env } from './env';
 
 export const BEDROCK_ANTHROPIC_MODEL_ID_ENV = 'BEDROCK_ANTHROPIC_MODEL_ID';
 export const DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID =
-  'anthropic.claude-3-5-sonnet-20241022-v2:0';
+  'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
 
 function readTrimmedEnv(name: string): string | null {
-  const value = env.getStringOrNull(name)?.trim();
-  return value ? value : null;
+  return env.getStringOrNull(name)?.trim() || null;
 }
 
 export function getConfiguredBedrockAnthropicModelId(
@@ -27,7 +26,11 @@ export function getPositiveIntEnvOrDefault(
   if (!rawValue?.trim()) {
     return defaultValue;
   }
-  const value = Number(rawValue.trim());
+  const trimmedValue = rawValue.trim();
+  if (!/^\d+$/.test(trimmedValue)) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  const value = Number(trimmedValue);
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error(`${name} must be a positive integer`);
   }

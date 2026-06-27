@@ -392,9 +392,14 @@ V1 should use a managed LLM provider rather than self-hosting.
 V1 provider:
 
 - Amazon Bedrock with a shared Anthropic Claude model default. The default is
-  `anthropic.claude-3-5-sonnet-20241022-v2:0`, `BEDROCK_ANTHROPIC_MODEL_ID`
-  overrides that shared default, and service-specific env vars such as
-  `HELP_BOT_BEDROCK_MODEL_ID` can override one runtime.
+  the Claude Sonnet 4.5 US geo inference profile
+  `us.anthropic.claude-sonnet-4-5-20250929-v1:0`.
+  `BEDROCK_ANTHROPIC_MODEL_ID` overrides that shared default, and
+  service-specific env vars such as `HELP_BOT_BEDROCK_MODEL_ID` can override
+  one runtime. These values are loaded from process environment at startup, so
+  deployments must restart the affected Lambda runtime to pick up changes.
+- Bedrock answer rendering uses `HELP_BOT_BEDROCK_TIMEOUT_MS`, defaulting to
+  10 seconds.
 
 The backend should isolate provider calls behind an internal service boundary so
 the model can change later.
@@ -551,5 +556,6 @@ private user data beyond what is needed for debugging and abuse controls.
 ## 13. Open Questions
 
 - Should successful answers keep ✅ forever, or should status reactions expire?
-- Which newer Bedrock model should replace Claude 3.5 Sonnet v2 once production
-  model access and latency are verified?
+- Should the default Bedrock model move from the US geo inference profile to a
+  global or region-specific profile once production access, residency, and
+  latency are verified?

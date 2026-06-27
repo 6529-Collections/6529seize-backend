@@ -569,6 +569,7 @@ const WEAK_MATCH_PREFIX =
   "I might not be fully sure on this one, so here's my best answer.";
 const MAX_KNOWLEDGE_CONTEXT_MATCHES = 3;
 const MAX_RELATED_RECORD_FACTS = 3;
+const MAX_MERGED_KNOWLEDGE_FACTS = 8;
 
 const DEFINITION_QUESTION_PREFIXES = [
   'what is',
@@ -682,6 +683,31 @@ function uniqueStrings(values: readonly string[]): string[] {
   return unique;
 }
 
+function mergeStringField(
+  primary: readonly string[],
+  relatedRecords: readonly HelpBotKnowledgeRecord[],
+  pick: (record: HelpBotKnowledgeRecord) => readonly string[]
+): string[] {
+  return uniqueStrings(
+    primary.concat(relatedRecords.flatMap((record) => [...pick(record)]))
+  );
+}
+
+function mergeKnowledgeFacts(
+  primary: readonly string[],
+  relatedRecords: readonly HelpBotKnowledgeRecord[]
+): string[] {
+  return uniqueStrings(
+    primary.concat(
+      relatedRecords.flatMap((record) =>
+        record.facts
+          .slice(0, MAX_RELATED_RECORD_FACTS)
+          .map((fact) => `${record.title}: ${fact}`)
+      )
+    )
+  ).slice(0, MAX_MERGED_KNOWLEDGE_FACTS);
+}
+
 function mergeKnowledgeMatches(
   matches: readonly HelpBotKnowledgeMatch[]
 ): HelpBotKnowledgeMatch | null {
@@ -705,42 +731,23 @@ function mergeKnowledgeMatches(
     score: primary.score,
     record: {
       ...primary.record,
-      facts: uniqueStrings(
-        primary.record.facts.concat(
-          relatedRecords.flatMap((record) =>
-            record.facts
-              .slice(0, MAX_RELATED_RECORD_FACTS)
-              .map((fact) => `${record.title}: ${fact}`)
-          )
-        )
+      facts: mergeKnowledgeFacts(primary.record.facts, relatedRecords),
+      aliases: primary.record.aliases,
+      keywords: primary.record.keywords,
+      relatedPaths: mergeStringField(
+        primary.record.relatedPaths,
+        relatedRecords,
+        (record) => [record.canonicalPath, ...record.relatedPaths]
       ),
-      aliases: uniqueStrings(
-        primary.record.aliases.concat(
-          relatedRecords.flatMap((record) => record.aliases)
-        )
+      tags: mergeStringField(
+        primary.record.tags,
+        relatedRecords,
+        (record) => record.tags
       ),
-      keywords: uniqueStrings(
-        primary.record.keywords.concat(
-          relatedRecords.flatMap((record) => record.keywords)
-        )
-      ),
-      relatedPaths: uniqueStrings(
-        primary.record.relatedPaths.concat(
-          relatedRecords.flatMap((record) => [
-            record.canonicalPath,
-            ...record.relatedPaths
-          ])
-        )
-      ),
-      tags: uniqueStrings(
-        primary.record.tags.concat(
-          relatedRecords.flatMap((record) => record.tags)
-        )
-      ),
-      sourceRefs: uniqueStrings(
-        primary.record.sourceRefs.concat(
-          relatedRecords.flatMap((record) => record.sourceRefs)
-        )
+      sourceRefs: mergeStringField(
+        primary.record.sourceRefs,
+        relatedRecords,
+        (record) => record.sourceRefs
       )
     }
   };

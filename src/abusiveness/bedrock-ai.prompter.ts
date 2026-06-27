@@ -1,6 +1,6 @@
 import { AiPrompter } from './ai-prompter';
-import { getBedrockClient } from '../bedrock';
-import { getConfiguredBedrockAnthropicModelId } from '../bedrock.config';
+import { getBedrockClient } from '@/bedrock';
+import { getConfiguredBedrockAnthropicModelId } from '@/bedrock.config';
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -43,12 +43,17 @@ class BedrockAiPrompter implements AiPrompter {
 
     const jsonString = new TextDecoder().decode(rawRes);
 
-    const parsedResponse = JSON.parse(jsonString);
     try {
-      const output = parsedResponse.content[0].text;
-      return output ?? '';
+      const parsedResponse = JSON.parse(jsonString) as {
+        readonly content?: ReadonlyArray<{ readonly text?: unknown }>;
+      };
+      const output = parsedResponse.content?.[0]?.text;
+      if (typeof output !== 'string') {
+        throw new Error('Missing text content');
+      }
+      return output;
     } catch (e) {
-      throw new Error(`Unexpexted response from Bedrock: ${jsonString}`);
+      throw new Error(`Unexpected response from Bedrock: ${jsonString}`);
     }
   }
 }

@@ -209,7 +209,14 @@ describe('HelpBotAnswerer', () => {
           canonicalPath: '/delegation/wallet-architecture',
           aliases: ['wallet architecture', '4 wallet architecture'],
           keywords: ['wallet', 'architecture', 'vault'],
-          facts: ['Separate vault, transaction, and minting wallets.'],
+          facts: [
+            'Separate vault, transaction, and minting wallets.',
+            'Keep the vault wallet cold.',
+            'Use a transaction wallet for active actions.',
+            'Use a minting wallet for mint-specific flows.',
+            'Use delegation to connect the wallets.',
+            'Review wallet architecture before changing roles.'
+          ],
           relatedPaths: [],
           tags: ['delegation'],
           sourceRefs: []
@@ -222,7 +229,11 @@ describe('HelpBotAnswerer', () => {
           canonicalPath: '/delegation/delegation-faq',
           aliases: ['delegation docs'],
           keywords: ['delegation', 'docs', 'wallet'],
-          facts: ['The Delegation FAQ has setup guides.'],
+          facts: [
+            'The Delegation FAQ has setup guides.',
+            'The Delegation FAQ covers consolidation registration.',
+            'The Delegation FAQ covers delegation manager flows.'
+          ],
           relatedPaths: [],
           tags: ['delegation'],
           sourceRefs: []
@@ -250,8 +261,20 @@ describe('HelpBotAnswerer', () => {
         'Delegation FAQ: The Delegation FAQ has setup guides.'
       );
       expect(answer.answer).toContain(
+        'Delegation FAQ: The Delegation FAQ covers consolidation registration.'
+      );
+      expect(answer.answer).not.toContain(
+        'Delegation FAQ: The Delegation FAQ covers delegation manager flows.'
+      );
+      expect(answer.record.facts).toHaveLength(8);
+      expect(answer.answer).toContain(
         '[Wallet Architecture](https://6529.io/delegation/wallet-architecture)'
       );
+      expect(answer.record.aliases).toEqual([
+        'wallet architecture',
+        '4 wallet architecture'
+      ]);
+      expect(answer.record.aliases).not.toContain('delegation docs');
     }
   });
 
