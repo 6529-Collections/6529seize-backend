@@ -49,7 +49,7 @@ class BedrockAiPrompter implements AiPrompter {
       };
       const output = parsedResponse.content?.[0]?.text;
       if (typeof output !== 'string') {
-        throw new Error('Missing text content');
+        throw new TypeError('Missing text content');
       }
       return output;
     } catch (e) {
