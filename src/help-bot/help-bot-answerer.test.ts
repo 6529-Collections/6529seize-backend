@@ -197,6 +197,64 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('includes related help-index matches in deterministic knowledge answers', async () => {
+    const index: HelpBotKnowledgeIndex = {
+      ...TEST_INDEX,
+      records: [
+        {
+          id: 'delegation.wallet-architecture',
+          kind: 'workflow',
+          title: 'Wallet Architecture',
+          linkLabel: 'Wallet Architecture',
+          canonicalPath: '/delegation/wallet-architecture',
+          aliases: ['wallet architecture', '4 wallet architecture'],
+          keywords: ['wallet', 'architecture', 'vault'],
+          facts: ['Separate vault, transaction, and minting wallets.'],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        },
+        {
+          id: 'delegation.faq',
+          kind: 'route',
+          title: 'Delegation FAQ',
+          linkLabel: 'Delegation FAQ',
+          canonicalPath: '/delegation/delegation-faq',
+          aliases: ['delegation docs'],
+          keywords: ['delegation', 'docs', 'wallet'],
+          facts: ['The Delegation FAQ has setup guides.'],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        }
+      ]
+    };
+
+    const answer = await answerer(
+      undefined,
+      undefined,
+      undefined,
+      index
+    ).answer({
+      question: 'how do i set up a 4 wallet architecture with delegation docs',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('delegation.wallet-architecture');
+      expect(answer.answer).toContain(
+        'Separate vault, transaction, and minting wallets.'
+      );
+      expect(answer.answer).toContain(
+        'Delegation FAQ: The Delegation FAQ has setup guides.'
+      );
+      expect(answer.answer).toContain(
+        '[Wallet Architecture](https://6529.io/delegation/wallet-architecture)'
+      );
+    }
+  });
+
   it('adds a weak-match caveat and review flag when the match score is uncertain', async () => {
     const answer = await answerer(undefined, undefined, undefined).answer({
       question: 'weakbot card',

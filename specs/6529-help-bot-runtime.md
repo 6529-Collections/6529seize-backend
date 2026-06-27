@@ -150,9 +150,11 @@ Initial curated topics include:
 The backend does not inspect GitHub, frontend source files, or live rendered
 pages while users wait for answers. It fetches the generated index, validates a
 usable record set, caches successful loads for five minutes,
-and keeps the previous valid cache if a refresh fails. Fetches use
-the hardcoded five-second timeout so a slow index endpoint fails into the
-technical-failure reply path instead of stalling the worker.
+and keeps the previous valid cache if a refresh fails. The runtime retrieves a
+bounded set of top matching records and passes the primary record plus related
+facts into the answer context. Fetches use the hardcoded five-second timeout so
+a slow index endpoint fails into the technical-failure reply path instead of
+stalling the worker.
 
 ### 4.2 Future docs chunking and RAG
 
@@ -389,7 +391,10 @@ V1 should use a managed LLM provider rather than self-hosting.
 
 V1 provider:
 
-- Amazon Bedrock with the hardcoded Claude model selected in backend code.
+- Amazon Bedrock with a shared Anthropic Claude model default. The default is
+  `anthropic.claude-3-5-sonnet-20241022-v2:0`, `BEDROCK_ANTHROPIC_MODEL_ID`
+  overrides that shared default, and service-specific env vars such as
+  `HELP_BOT_BEDROCK_MODEL_ID` can override one runtime.
 
 The backend should isolate provider calls behind an internal service boundary so
 the model can change later.
@@ -525,6 +530,8 @@ private user data beyond what is needed for debugging and abuse controls.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
+- Retrieve a bounded set of top help-index matches so related docs can enrich
+  the answer without full vector search.
 - Answer Meme Card drop timing through the frontend-owned calendar API.
 - Add bounded public-data query-intent mode for aggregate questions over the
   backend-owned public query compiler.
@@ -544,4 +551,5 @@ private user data beyond what is needed for debugging and abuse controls.
 ## 13. Open Questions
 
 - Should successful answers keep ✅ forever, or should status reactions expire?
-- Which Bedrock model should be approved for initial production use?
+- Which newer Bedrock model should replace Claude 3.5 Sonnet v2 once production
+  model access and latency are verified?

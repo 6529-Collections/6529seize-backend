@@ -109,4 +109,48 @@ describe('StaticHelpBotKnowledgeSource', () => {
 
     expect(match?.record.id).toBe('realtime.live-updates');
   });
+
+  it('returns bounded sorted matches for richer answer context', async () => {
+    const source = new StaticHelpBotKnowledgeSource({
+      ...index,
+      records: index.records.concat([
+        {
+          id: 'delegation.wallet-architecture',
+          kind: 'workflow',
+          title: 'Wallet Architecture',
+          linkLabel: 'Wallet Architecture',
+          canonicalPath: '/delegation/wallet-architecture',
+          aliases: ['wallet architecture', '4 wallet architecture'],
+          keywords: ['wallet', 'architecture', 'vault'],
+          facts: ['Separate vault, transaction, and minting wallets.'],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        },
+        {
+          id: 'delegation.faq',
+          kind: 'route',
+          title: 'Delegation FAQ',
+          linkLabel: 'Delegation FAQ',
+          canonicalPath: '/delegation/delegation-faq',
+          aliases: ['delegation faq'],
+          keywords: ['delegation', 'wallet', 'architecture'],
+          facts: ['The Delegation FAQ has setup guides.'],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        }
+      ])
+    });
+
+    const matches = await source.findMatches!(
+      'how do i set up a 4 wallet architecture with delegation docs',
+      2
+    );
+
+    expect(matches.map((match) => match.record.id)).toEqual([
+      'delegation.wallet-architecture',
+      'delegation.faq'
+    ]);
+  });
 });
