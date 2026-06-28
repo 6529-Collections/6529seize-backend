@@ -89,7 +89,7 @@ export class HelpBotTriggerService {
         parentDrop
       });
       if (!trigger) {
-        this.logger.info(
+        this.logger.debug(
           `Help bot trigger skipped for drop ${createdDrop.id}: no trigger detected`
         );
         return;
