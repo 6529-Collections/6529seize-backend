@@ -75,7 +75,7 @@ export class HelpBotTriggerService {
         return;
       }
       if (!(await this.isPublicHelpBotWave(createdDrop.wave.id, ctx))) {
-        this.logger.info(
+        this.logger.debug(
           `Help bot trigger skipped for drop ${createdDrop.id}: non-public wave ${createdDrop.wave.id}`
         );
         return;
