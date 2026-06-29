@@ -305,6 +305,35 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toEqual([DropGroupMention.ALL]);
   });
 
+  it('keeps ALL group mention metadata when @all is in a later part', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'first part'
+          },
+          {
+            content: 'second part with @all'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('keeps ALL group mention metadata for case-insensitive @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'Heads up @ALL'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
   it('does not treat embedded @all text as an ALL group mention', () => {
     expect(
       normalizeDropGroupMentions({
@@ -312,6 +341,45 @@ describe('CreateOrUpdateDropUseCase', () => {
         parts: [
           {
             content: 'email@example.com @alliance hello@all @all_again'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('preserves non-ALL group mention metadata without @all content', () => {
+    const specificGroup = 'specific-group' as DropGroupMention;
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [specificGroup, DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'no all mention here'
+          }
+        ]
+      })
+    ).toEqual([specificGroup]);
+  });
+
+  it('treats missing group mention metadata as empty', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: undefined,
+        parts: [
+          {
+            content: '@all'
+          }
+        ]
+      })
+    ).toEqual([]);
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: null,
+        parts: [
+          {
+            content: '@all'
           }
         ]
       })
