@@ -194,12 +194,38 @@ describe('ReactionsService', () => {
   });
 
   it('surfaces bad request validation failures from inside the transaction', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue(null);
+    const callOrder: string[] = [];
+    (
+      reactionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (callback) => {
+      callOrder.push('transaction:start');
+      try {
+        return await callback(connection);
+      } finally {
+        callOrder.push('transaction:end');
+      }
+    });
+    (wavesDb.findById as jest.Mock).mockImplementation(async () => {
+      callOrder.push('validate');
+      return null;
+    });
+    (dropsDb.findDropByIdWithEligibilityCheck as jest.Mock).mockImplementation(
+      async () => {
+        callOrder.push('eligibility');
+        return dropEntity;
+      }
+    );
 
     await expect(
       service.addReaction(dropEntity.id, 'profile-1', ':+1:', ctx as any)
     ).rejects.toBeInstanceOf(BadRequestException);
 
+    expect(callOrder).toEqual([
+      'transaction:start',
+      'eligibility',
+      'validate',
+      'transaction:end'
+    ]);
     expect(reactionsDb.executeNativeQueriesInTransaction).toHaveBeenCalled();
     expect(reactionsDb.addReaction).not.toHaveBeenCalled();
     expect(profileActivityLogsDb.insertLogEntry).not.toHaveBeenCalled();
@@ -267,16 +293,42 @@ describe('ReactionsService', () => {
   });
 
   it('surfaces forbidden validation failures from inside the transaction', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      id: dropEntity.wave_id,
-      chat_enabled: false,
-      visibility_group_id: 'group-1'
+    const callOrder: string[] = [];
+    (
+      reactionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (callback) => {
+      callOrder.push('transaction:start');
+      try {
+        return await callback(connection);
+      } finally {
+        callOrder.push('transaction:end');
+      }
     });
+    (wavesDb.findById as jest.Mock).mockImplementation(async () => {
+      callOrder.push('validate');
+      return {
+        id: dropEntity.wave_id,
+        chat_enabled: false,
+        visibility_group_id: 'group-1'
+      };
+    });
+    (dropsDb.findDropByIdWithEligibilityCheck as jest.Mock).mockImplementation(
+      async () => {
+        callOrder.push('eligibility');
+        return dropEntity;
+      }
+    );
 
     await expect(
       service.removeReaction(dropEntity.id, 'profile-1', ctx as any)
     ).rejects.toBeInstanceOf(ForbiddenException);
 
+    expect(callOrder).toEqual([
+      'transaction:start',
+      'eligibility',
+      'validate',
+      'transaction:end'
+    ]);
     expect(reactionsDb.executeNativeQueriesInTransaction).toHaveBeenCalled();
     expect(reactionsDb.removeReaction).not.toHaveBeenCalled();
     expect(profileActivityLogsDb.insertLogEntry).not.toHaveBeenCalled();
@@ -298,6 +350,50 @@ describe('ReactionsService', () => {
 
     expect(result).toBe(drop);
     expect(profileActivityLogsDb.insertLogEntry).toHaveBeenCalled();
+    expect(profileActivityLogsDb.touchLatestActivity).toHaveBeenCalled();
+    expect(userNotifier.notifyOfDropReaction).toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropReactionUpdate
+    ).toHaveBeenCalledWith(drop, ctx);
+  });
+
+  it('does not fail a committed add reaction when active identity metrics fail', async () => {
+    (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+    (metricsRecorder.recordActiveIdentity as jest.Mock).mockRejectedValue(
+      new Error('metrics unavailable')
+    );
+
+    const result = await service.addReaction(
+      dropEntity.id,
+      'profile-1',
+      ':+1:',
+      ctx as any
+    );
+
+    expect(result).toBe(drop);
+    expect(metricsRecorder.recordActiveIdentity).toHaveBeenCalled();
+    expect(profileActivityLogsDb.touchLatestActivity).toHaveBeenCalled();
+    expect(userNotifier.notifyOfDropReaction).toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropReactionUpdate
+    ).toHaveBeenCalledWith(drop, ctx);
+  });
+
+  it('does not fail a committed add reaction when notification enqueue fails', async () => {
+    (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+    (userNotifier.notifyOfDropReaction as jest.Mock).mockRejectedValue(
+      new Error('notification unavailable')
+    );
+
+    const result = await service.addReaction(
+      dropEntity.id,
+      'profile-1',
+      ':+1:',
+      ctx as any
+    );
+
+    expect(result).toBe(drop);
+    expect(metricsRecorder.recordActiveIdentity).toHaveBeenCalled();
     expect(profileActivityLogsDb.touchLatestActivity).toHaveBeenCalled();
     expect(userNotifier.notifyOfDropReaction).toHaveBeenCalled();
     expect(
