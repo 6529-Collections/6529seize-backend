@@ -1736,8 +1736,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   public async deleteDropFeedItems(dropId: string, ctx: RequestContext) {
     ctx.timer?.start('dropsDb->deleteDropFeedItems');
     await this.db.execute(
-      `delete from ${ACTIVITY_EVENTS_TABLE} where target_id = :dropId or data like :likeDropId`,
-      { dropId, likeDropId: `%"${dropId}"%` },
+      `delete from ${ACTIVITY_EVENTS_TABLE} where drop_id = :dropId or (target_type = 'DROP' and target_id = :dropId)`,
+      { dropId },
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->deleteDropFeedItems');
