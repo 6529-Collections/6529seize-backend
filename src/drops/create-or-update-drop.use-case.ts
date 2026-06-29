@@ -98,20 +98,20 @@ import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
-const ALL_GROUP_MENTION_REGEX = /(^|[^A-Za-z0-9_@])@all(?![A-Za-z0-9_@])/i;
+const ALL_GROUP_MENTION_REGEX = /(^|[^a-z0-9_@])@all(?![a-z0-9_@])/i;
 
 export function normalizeDropGroupMentions({
   mentionedGroups,
   parts
 }: {
-  mentionedGroups: readonly DropGroupMention[];
+  mentionedGroups?: readonly DropGroupMention[] | null;
   parts: readonly Pick<CreateOrUpdateDropPartModel, 'content'>[];
 }): DropGroupMention[] {
   const hasAllMentionInContent = parts.some((part) =>
     ALL_GROUP_MENTION_REGEX.test(part.content ?? '')
   );
   return collections
-    .distinct([...mentionedGroups])
+    .distinct([...(mentionedGroups ?? [])])
     .filter(
       (mentionedGroup) =>
         mentionedGroup !== DropGroupMention.ALL || hasAllMentionInContent
@@ -1421,6 +1421,8 @@ export class CreateOrUpdateDropUseCase {
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ): Promise<number[]> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+    // Keep this guard at the persistence boundary too; this method can be
+    // reused independently of execute() and the normalization is idempotent.
     const model = this.normalizeMentionedGroups(inputModel);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
