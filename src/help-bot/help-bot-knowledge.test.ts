@@ -95,6 +95,88 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     ]);
   });
 
+  it('matches pluralized product terms against singular aliases', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'network.definitions',
+            title: 'Network Definitions',
+            canonical_path: '/network/definitions',
+            aliases: ['genesis set'],
+            keywords: ['genesis', 'set'],
+            facts: ['Genesis Set is a TDH boost definition.']
+          }
+        ]
+      })
+    );
+
+    const match = await source.findMatch('what are Genesis Sets?');
+
+    expect(match?.record.id).toBe('network.definitions');
+  });
+
+  it('routes wallet consolidation questions to consolidation records', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.wallet-architecture',
+            title: 'Wallet Architecture',
+            canonical_path: '/delegation/wallet-architecture',
+            aliases: ['wallet architecture'],
+            keywords: ['wallet', 'architecture', 'vault'],
+            facts: ['Separate vault, transaction, and minting wallets.']
+          },
+          {
+            id: 'delegation.register-consolidation-doc',
+            title: 'Register Consolidation Guide',
+            canonical_path: '/delegation/delegation-faq/register-consolidation',
+            aliases: ['register consolidation guide'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Register Consolidation connects wallets you control.']
+          },
+          {
+            id: 'delegation.register-consolidation',
+            title: 'Register Consolidation',
+            canonical_path: '/delegation/register-consolidation',
+            aliases: ['register consolidation'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Use the Register Consolidation form.']
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            title: 'Consolidation Use Cases',
+            canonical_path: '/delegation/consolidation-use-cases',
+            aliases: ['consolidation use cases'],
+            keywords: ['consolidation', 'wallet'],
+            facts: ['Consolidation covers multi-wallet patterns.']
+          }
+        ]
+      })
+    );
+
+    const matches = await source.findMatches(
+      "i have four wallets i'd like to consolidate. how do i do that?",
+      4
+    );
+
+    expect(matches.map((match) => match.record.id)).toEqual([
+      'delegation.register-consolidation-doc',
+      'delegation.register-consolidation',
+      'delegation.wallet-architecture',
+      'delegation.consolidation-use-cases'
+    ]);
+  });
+
   it('throws and negative-caches when the frontend help index cannot be loaded', async () => {
     const fetcher = jest
       .fn()

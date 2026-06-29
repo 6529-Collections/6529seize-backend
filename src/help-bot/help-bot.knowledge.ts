@@ -55,6 +55,60 @@ const MINIMUM_MATCH_SCORE = 3;
 const DEFAULT_COMMIT_SHA = 'unknown';
 const logger = Logger.get('HelpBotKnowledge');
 
+const WALLET_CONTEXT_PATTERNS = [
+  /\bwallets?\b/,
+  /\baddresses?\b/,
+  /\bvault\b/,
+  /\bhot wallet\b/,
+  /\bcold wallet\b/,
+  /\bminting wallet\b/,
+  /\btransaction wallet\b/
+] as const;
+
+const ARCHITECTURE_CONTEXT_PATTERNS = [
+  /\barchitecture\b/,
+  /\barchitectures\b/,
+  /\btap\b/,
+  /\bthree address\b/,
+  /\bfour address\b/,
+  /\b3 address\b/,
+  /\b4 address\b/,
+  /\bthree wallets?\b/,
+  /\bfour wallets?\b/,
+  /\b3 wallets?\b/,
+  /\b4 wallets?\b/,
+  /\bmultiple wallets?\b/,
+  /\bseveral wallets?\b/,
+  /\bvault\b/,
+  /\bminting\b/,
+  /\btransaction\b/
+] as const;
+
+const CONSOLIDATION_CONTEXT_PATTERNS = [
+  /\bconsolidat(?:e|es|ed|ing|ion|ions)\b/,
+  /\bcount(?:ed)? together\b/,
+  /\btreat(?:ed)? together\b/,
+  /\bconnect(?:ed|ing)? (?:my )?(?:wallets?|addresses?)\b/,
+  /\bcombine(?:d|s|ing)? (?:my )?(?:wallets?|addresses?)\b/
+] as const;
+
+const WALLET_CHECK_CONTEXT_PATTERNS = [
+  /\bcheck\b/,
+  /\bview\b/,
+  /\breview\b/,
+  /\bverify\b/,
+  /\binspect\b/,
+  /\bsee\b/,
+  /\bshow\b/
+] as const;
+
+const WALLET_ARCHITECTURE_RECORD_ID = 'delegation.wallet-architecture';
+const WALLET_CHECKER_RECORD_ID = 'delegation.wallet-checker';
+const CONSOLIDATION_USE_CASES_RECORD_ID = 'delegation.consolidation-use-cases';
+const REGISTER_CONSOLIDATION_RECORD_ID = 'delegation.register-consolidation';
+const REGISTER_CONSOLIDATION_DOC_RECORD_ID =
+  'delegation.register-consolidation-doc';
+
 export class HelpBotKnowledgeUnavailableError extends Error {
   constructor(
     message: string,
@@ -187,11 +241,31 @@ function normalizeText(value: string): string {
 }
 
 function tokenize(value: string): Set<string> {
-  return new Set(
-    normalizeText(value)
-      .split(' ')
-      .filter((token) => token.length > 1 || token === '+')
-  );
+  const tokens = new Set<string>();
+  normalizeText(value)
+    .split(' ')
+    .filter((token) => token.length > 1 || token === '+')
+    .forEach((token) => {
+      tokenVariants(token).forEach((variant) => tokens.add(variant));
+    });
+  return tokens;
+}
+
+function tokenVariants(token: string): string[] {
+  const variants = [token];
+  if (token.length > 4 && token.endsWith('ies')) {
+    variants.push(`${token.slice(0, -3)}y`);
+  }
+  if (token.length > 3 && token.endsWith('s') && !token.endsWith('ss')) {
+    variants.push(token.slice(0, -1));
+  }
+  return variants;
+}
+
+function normalizedPhraseTokens(value: string): string[] {
+  return normalizeText(value)
+    .split(' ')
+    .filter((token) => token.length > 0);
 }
 
 function containsNormalizedPhrase(
@@ -202,7 +276,78 @@ function containsNormalizedPhrase(
   if (!normalizedPhrase) {
     return false;
   }
-  return ` ${normalizedQuestion} `.includes(` ${normalizedPhrase} `);
+  if (` ${normalizedQuestion} `.includes(` ${normalizedPhrase} `)) {
+    return true;
+  }
+  const questionTokens = normalizedPhraseTokens(normalizedQuestion);
+  const phraseTokens = normalizedPhraseTokens(phrase);
+  if (!phraseTokens.length || phraseTokens.length > questionTokens.length) {
+    return false;
+  }
+  return questionTokens.some((_token, index) => {
+    const candidate = questionTokens.slice(index, index + phraseTokens.length);
+    return (
+      candidate.length === phraseTokens.length &&
+      phraseTokens.every((phraseToken, phraseIndex) =>
+        tokenVariants(candidate[phraseIndex]).includes(phraseToken)
+      )
+    );
+  });
+}
+
+function matchesAny(
+  normalizedQuestion: string,
+  patterns: readonly RegExp[]
+): boolean {
+  return patterns.some((pattern) => pattern.test(normalizedQuestion));
+}
+
+function addRoutedScore(
+  scores: Map<string, number>,
+  recordId: string,
+  score: number
+): void {
+  scores.set(recordId, Math.max(scores.get(recordId) ?? 0, score));
+}
+
+function routedRecordScores(
+  normalizedQuestion: string
+): ReadonlyMap<string, number> {
+  const hasWalletContext = matchesAny(
+    normalizedQuestion,
+    WALLET_CONTEXT_PATTERNS
+  );
+  const hasArchitectureContext = matchesAny(
+    normalizedQuestion,
+    ARCHITECTURE_CONTEXT_PATTERNS
+  );
+  const hasConsolidationContext = matchesAny(
+    normalizedQuestion,
+    CONSOLIDATION_CONTEXT_PATTERNS
+  );
+  const hasWalletCheckContext = matchesAny(
+    normalizedQuestion,
+    WALLET_CHECK_CONTEXT_PATTERNS
+  );
+  const scores = new Map<string, number>();
+
+  if (hasArchitectureContext && (hasWalletContext || hasWalletCheckContext)) {
+    addRoutedScore(scores, WALLET_ARCHITECTURE_RECORD_ID, 6);
+    addRoutedScore(
+      scores,
+      WALLET_CHECKER_RECORD_ID,
+      hasWalletCheckContext ? 8 : 4
+    );
+  }
+
+  if (hasConsolidationContext && (hasWalletContext || hasArchitectureContext)) {
+    addRoutedScore(scores, REGISTER_CONSOLIDATION_DOC_RECORD_ID, 8);
+    addRoutedScore(scores, REGISTER_CONSOLIDATION_RECORD_ID, 7);
+    addRoutedScore(scores, CONSOLIDATION_USE_CASES_RECORD_ID, 5);
+    addRoutedScore(scores, WALLET_ARCHITECTURE_RECORD_ID, 5);
+  }
+
+  return scores;
 }
 
 function phraseScore(question: string, record: HelpBotKnowledgeRecord): number {
@@ -230,12 +375,14 @@ function findMatchesInRecords(
     return [];
   }
   const questionTokens = tokenize(question);
+  const routedScores = routedRecordScores(normalizedQuestion);
   return records
     .map((record) => ({
       record,
       score:
         phraseScore(normalizedQuestion, record) +
-        keywordScore(questionTokens, record)
+        keywordScore(questionTokens, record) +
+        (routedScores.get(record.id) ?? 0)
     }))
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
     .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))

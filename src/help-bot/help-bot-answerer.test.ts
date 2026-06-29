@@ -300,6 +300,84 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('answers wallet consolidation setup questions through routed knowledge', async () => {
+    const index: HelpBotKnowledgeIndex = {
+      ...TEST_INDEX,
+      records: [
+        {
+          id: 'delegation.wallet-architecture',
+          kind: 'workflow',
+          title: 'Wallet Architecture',
+          linkLabel: 'Wallet Architecture',
+          canonicalPath: '/delegation/wallet-architecture',
+          aliases: ['wallet architecture'],
+          keywords: ['wallet', 'architecture', 'vault'],
+          facts: ['Separate vault, transaction, and minting wallets.'],
+          relatedPaths: ['/delegation/wallet-checker'],
+          tags: ['delegation'],
+          sourceRefs: []
+        },
+        {
+          id: 'delegation.register-consolidation-doc',
+          kind: 'workflow',
+          title: 'Register Consolidation Guide',
+          linkLabel: 'Register Consolidation Guide',
+          canonicalPath: '/delegation/delegation-faq/register-consolidation',
+          aliases: ['register consolidation guide'],
+          keywords: ['register', 'consolidation'],
+          facts: ['Register Consolidation connects wallets you control.'],
+          relatedPaths: ['/delegation/register-consolidation'],
+          tags: ['delegation'],
+          sourceRefs: []
+        },
+        {
+          id: 'delegation.register-consolidation',
+          kind: 'route',
+          title: 'Register Consolidation',
+          linkLabel: 'Register Consolidation',
+          canonicalPath: '/delegation/register-consolidation',
+          aliases: ['register consolidation'],
+          keywords: ['register', 'consolidation'],
+          facts: ['Use the Register Consolidation form.'],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        }
+      ]
+    };
+
+    const answer = await answerer(
+      undefined,
+      undefined,
+      undefined,
+      index
+    ).answer({
+      question:
+        "i have four wallets i'd like to consolidate. how do i do that?",
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('delegation.register-consolidation-doc');
+      expect(answer.answer).toContain(
+        'Register Consolidation connects wallets you control.'
+      );
+      expect(answer.answer).toContain(
+        'Wallet Architecture: Separate vault, transaction, and minting wallets.'
+      );
+      expect(answer.answer).toContain(
+        '[Register Consolidation Guide](https://6529.io/delegation/delegation-faq/register-consolidation)'
+      );
+      expect(answer.answer).toContain(
+        '[Register Consolidation](https://6529.io/delegation/register-consolidation)'
+      );
+      expect(answer.answer).toContain(
+        '[Wallet Architecture](https://6529.io/delegation/wallet-architecture)'
+      );
+    }
+  });
+
   it('adds a weak-match caveat and review flag when the match score is uncertain', async () => {
     const answer = await answerer(undefined, undefined, undefined).answer({
       question: 'weakbot card',
