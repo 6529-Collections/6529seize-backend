@@ -258,6 +258,9 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
           error
         }
       );
+      if (ctx.connection) {
+        return;
+      }
       await this.refreshWaveScoresForWaveIdsBestEffort(waveIds, ctx);
     }
   }
@@ -333,17 +336,25 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     let batches = 0;
     let waves = 0;
     let hasMore = false;
+    const processedWaveIds = new Set<string>();
 
     for (;;) {
       if (batches >= maxBatches) {
         hasMore = true;
         break;
       }
-      const rows = await this.getDirtyWaveScoreRefreshRequests(batchSize, ctx);
+      const rows = await this.getDirtyWaveScoreRefreshRequests(
+        batchSize,
+        Array.from(processedWaveIds),
+        ctx
+      );
       if (!rows.length) {
-        hasMore = false;
+        hasMore = processedWaveIds.size
+          ? await this.hasDirtyWaveScoreRefreshRequests(ctx)
+          : false;
         break;
       }
+      rows.forEach((row) => processedWaveIds.add(row.wave_id));
       try {
         await this.refreshWaveScoresForWaveIds(
           rows.map((row) => row.wave_id),
@@ -358,6 +369,7 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
       waves += rows.length;
       hasMore = rows.length === batchSize;
       if (!hasMore) {
+        hasMore = await this.hasDirtyWaveScoreRefreshRequests(ctx);
         break;
       }
     }
@@ -421,16 +433,25 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
 
   private async getDirtyWaveScoreRefreshRequests(
     batchSize: number,
+    excludedWaveIds: string[],
     ctx: RequestContext
   ): Promise<DirtyWaveScoreRefreshRequestRow[]> {
+    const params: Record<string, string[] | number> = { batchSize };
+    const excludedWaveIdsClause = excludedWaveIds.length
+      ? `where wave_id not in (:excludedWaveIds)`
+      : '';
+    if (excludedWaveIds.length) {
+      params.excludedWaveIds = excludedWaveIds;
+    }
     return this.db.execute<DirtyWaveScoreRefreshRequestRow>(
       `
       select wave_id, dirty_at
       from ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}
+      ${excludedWaveIdsClause}
       order by dirty_at asc, wave_id asc
       limit :batchSize
       `,
-      { batchSize },
+      params,
       {
         wrappedConnection: ctx.connection,
         // Dirty rows are inserted on the primary inside the write transaction.
@@ -438,6 +459,24 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
         forcePool: DbPoolName.WRITE
       }
     );
+  }
+
+  private async hasDirtyWaveScoreRefreshRequests(
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const rows = await this.db.execute<{ readonly wave_id: string }>(
+      `
+      select wave_id
+      from ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}
+      limit 1
+      `,
+      undefined,
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
+    );
+    return rows.length > 0;
   }
 
   private async deleteDirtyWaveScoreRefreshRequests(

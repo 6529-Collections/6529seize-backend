@@ -9,6 +9,7 @@ import { WaveDecisionsDb } from '@/waves/wave-decisions.db';
 import { WaveDecisionsService } from '@/waves/wave-decisions.service';
 import { WaveLeaderboardCalculationService } from '@/waves/wave-leaderboard-calculation.service';
 import * as pushNotificationsService from '@/api/push-notifications/push-notifications.service';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 describe('WaveDecisionsService', () => {
   let service: WaveDecisionsService;
@@ -26,6 +27,9 @@ describe('WaveDecisionsService', () => {
     deployerDropper = mock();
     jest
       .spyOn(pushNotificationsService, 'sendIdentityPushNotifications')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(waveScoreService, 'enqueueDirtyWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
     jest.spyOn(wavesApiDb, 'getWavesOutcomes').mockResolvedValue({});
     jest

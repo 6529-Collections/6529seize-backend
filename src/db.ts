@@ -105,6 +105,7 @@ import {
   invalidateWaveUnreadCache,
   type WaveUnreadCacheInvalidations
 } from '@/api/waves/wave-unread-cache';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 const mysql = require('mysql');
 
@@ -1069,6 +1070,9 @@ export async function persistConsolidatedTDH(
   });
 
   await invalidateWaveUnreadCache(unreadCacheInvalidations);
+  if (unreadCacheInvalidations.waveIds.length) {
+    await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort();
+  }
   await recalculateXTdhUseCase.activateLoop({});
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }

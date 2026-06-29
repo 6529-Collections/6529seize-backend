@@ -15,6 +15,7 @@ import {
   PUBLIC_PHASE_ENDING_SOON_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE
 } from '@/constants';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 interface PhaseConfig {
   readonly name: string;
@@ -232,6 +233,7 @@ export class AnnounceMintStateChangeUseCase {
             return pendingPushNotificationIds;
           }
         );
+      await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort(ctx);
       await sendIdentityPushNotifications(pendingPushNotificationIds);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->handle`);

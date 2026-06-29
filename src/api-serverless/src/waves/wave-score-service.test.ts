@@ -311,6 +311,74 @@ describe('WaveScoreService', () => {
     );
   });
 
+  it('does not reselect already processed dirty waves in the same drain', async () => {
+    const dirtySelectParams: Array<Record<string, unknown>> = [];
+    const execute = jest.fn(async (sql: string, params?: any) => {
+      if (sql.includes('select wave_id, dirty_at')) {
+        dirtySelectParams.push(params);
+        if (dirtySelectParams.length === 1) {
+          return [{ wave_id: 'wave-1', dirty_at: '1000' }];
+        }
+        if (dirtySelectParams.length === 2) {
+          return [{ wave_id: 'wave-2', dirty_at: '1001' }];
+        }
+        return [];
+      }
+      if (sql.includes('select wave_id')) {
+        return [{ wave_id: 'wave-1' }];
+      }
+      return [];
+    });
+    const service = new WaveScoreService(() => ({ execute }) as any);
+    jest
+      .spyOn(service, 'refreshWaveScoresForWaveIds')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      service.refreshDirtyWaveScores({ batchSize: 1, maxBatches: 3 })
+    ).resolves.toEqual({
+      batches: 2,
+      waves: 2,
+      hasMore: true
+    });
+
+    expect(dirtySelectParams).toEqual([
+      { batchSize: 1 },
+      { batchSize: 1, excludedWaveIds: ['wave-1'] },
+      { batchSize: 1, excludedWaveIds: ['wave-1', 'wave-2'] }
+    ]);
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      1,
+      ['wave-1'],
+      {}
+    );
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      2,
+      ['wave-2'],
+      {}
+    );
+  });
+
+  it('does not run synchronous fallback inside a dirty mark transaction', async () => {
+    const service = new WaveScoreService(
+      () =>
+        ({
+          execute: jest.fn().mockRejectedValue(new Error('missing table'))
+        }) as any
+    );
+    const refreshWaveScoresForWaveIdsBestEffort = jest
+      .spyOn(service, 'refreshWaveScoresForWaveIdsBestEffort')
+      .mockResolvedValue(undefined);
+
+    await service.markWaveScoresDirtyBestEffort(
+      ['wave-1'],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      { connection: {} as any }
+    );
+
+    expect(refreshWaveScoresForWaveIdsBestEffort).not.toHaveBeenCalled();
+  });
+
   it('persists and enqueues async dirty refresh requests', async () => {
     const service = new WaveScoreService(() => ({}) as any);
     const markWaveScoresDirty = jest

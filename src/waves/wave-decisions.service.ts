@@ -31,6 +31,7 @@ import {
 } from './wave-leaderboard-calculation.service';
 import * as priorityAlertsContext from '../priority-alerts.context';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 interface WaveOutcome {
   type: WaveOutcomeType;
@@ -185,6 +186,9 @@ export class WaveDecisionsService {
             );
           }
         );
+        await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort({
+          timer
+        });
         if (claimBuildDropId) {
           await this.enqueueClaimBuild(claimBuildDropId, waveId);
         }
@@ -314,6 +318,9 @@ export class WaveDecisionsService {
               decisionResult.pendingPushNotificationIds;
           }
         );
+        await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort({
+          timer
+        });
         if (claimBuildDropId) {
           await this.enqueueClaimBuild(claimBuildDropId, waveId);
         }
