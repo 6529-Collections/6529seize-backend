@@ -18,6 +18,7 @@ import { profilesService } from '@/profiles/profiles.service';
 import { CLOUDFRONT_LINK } from '@/constants';
 import {
   CreateOrUpdateDropUseCase,
+  normalizeDropGroupMentions,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 
@@ -275,6 +276,46 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
+  });
+
+  it('strips ALL group mention metadata when the drop content has no @all token', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content:
+              'Round 10 Vote Reconciliation\n\n@[MoonZoey] and @[QuantumSpirit]'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('keeps ALL group mention metadata for standalone @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL, DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'Heads up @all: please review this drop.'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('does not treat embedded @all text as an ALL group mention', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'email@example.com @alliance hello@all @all_again'
+          }
+        ]
+      })
+    ).toEqual([]);
   });
 
   it('allows wave admins to use group mentions', () => {
