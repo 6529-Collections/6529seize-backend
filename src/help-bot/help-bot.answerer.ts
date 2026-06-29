@@ -206,12 +206,23 @@ function sourceLinksMarkdown(links: readonly HelpBotSourceLink[]): string {
     .join(' | ');
 }
 
+function containsHelpBotSourceUrl(text: string, url: string): boolean {
+  return text.includes(url);
+}
+
 function replaceMoreInfoLine(
   text: string,
   links: readonly HelpBotSourceLink[]
 ): string {
-  const moreInfo = `More info: ${sourceLinksMarkdown(links)}`;
   const finalMoreInfoPattern = /\n\nMore info: [^\n]+$/;
+  const bodyText = text.replace(finalMoreInfoPattern, '');
+  const missingLinks = links.filter(
+    (link) => !containsHelpBotSourceUrl(bodyText, link.url)
+  );
+  if (!missingLinks.length) {
+    return bodyText;
+  }
+  const moreInfo = `More info: ${sourceLinksMarkdown(missingLinks)}`;
   if (finalMoreInfoPattern.test(text)) {
     return text.replace(finalMoreInfoPattern, `\n\n${moreInfo}`);
   }
