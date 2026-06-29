@@ -14,6 +14,9 @@ export class ActivityEventEntity {
   @Index('activity_events_action_idx')
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly action!: ActivityEventAction;
+  @Index('activity_events_drop_id_idx', { synchronize: false })
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly drop_id!: string | null;
   @Column({ type: 'json', nullable: false })
   readonly data!: string;
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
