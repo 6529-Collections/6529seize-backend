@@ -119,8 +119,26 @@ resources:
               Action:
                 - sqs:GetQueueUrl
                 - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+                - sqs:ChangeMessageVisibility
               Resource:
                 - !GetAtt WaveScoreDirtyRefreshQueue.Arn
+    WaveScoreDirtyRefreshDLQPolicy:
+      Type: 'AWS::SQS::QueuePolicy'
+      Properties:
+        Queues:
+          - Ref: 'WaveScoreDirtyRefreshDLQ'
+        PolicyDocument:
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt WaveScoreDirtyRefreshDLQ.Arn
     WaveScoreRefreshLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       DependsOn:

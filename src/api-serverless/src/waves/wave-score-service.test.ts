@@ -359,6 +359,61 @@ describe('WaveScoreService', () => {
     );
   });
 
+  it('records a dirty wave refresh failure and continues through the batch', async () => {
+    const execute = jest.fn(async (sql: string) => {
+      if (sql.includes('select wave_id, dirty_at')) {
+        return [
+          { wave_id: 'wave-1', dirty_at: '1000' },
+          { wave_id: 'wave-2', dirty_at: '1001' }
+        ];
+      }
+      return [];
+    });
+    const service = new WaveScoreService(() => ({ execute }) as any);
+    jest
+      .spyOn(service, 'refreshWaveScoresForWaveIds')
+      .mockRejectedValueOnce(new Error('score refresh failed'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      service.refreshDirtyWaveScores({ batchSize: 10, maxBatches: 1 })
+    ).resolves.toEqual({
+      batches: 1,
+      waves: 2,
+      hasMore: false
+    });
+
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      1,
+      ['wave-1'],
+      {}
+    );
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      2,
+      ['wave-2'],
+      {}
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('attempts = attempts + 1'),
+      expect.objectContaining({
+        dirtyWaveId0: 'wave-1',
+        dirtyAt0: 1000,
+        lastError: 'score refresh failed'
+      }),
+      expect.objectContaining({ forcePool: DbPoolName.WRITE })
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'where (wave_id, dirty_at) in ((:dirtyWaveId0, :dirtyAt0))'
+      ),
+      {
+        dirtyWaveId0: 'wave-2',
+        dirtyAt0: 1001
+      },
+      expect.objectContaining({ forcePool: DbPoolName.WRITE })
+    );
+  });
+
   it('does not run synchronous fallback inside a dirty mark transaction', async () => {
     const service = new WaveScoreService(
       () =>

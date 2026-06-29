@@ -226,6 +226,8 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
         as new
         on duplicate key update
           reason = new.reason,
+          -- Re-dirties during a drain must survive the captured-version delete.
+          -- A continuously written hot wave remains queued until writes pause.
           dirty_at = greatest(
             new.dirty_at,
             ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}.dirty_at + 1
@@ -355,15 +357,8 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
         break;
       }
       rows.forEach((row) => processedWaveIds.add(row.wave_id));
-      try {
-        await this.refreshWaveScoresForWaveIds(
-          rows.map((row) => row.wave_id),
-          ctx
-        );
-        await this.deleteDirtyWaveScoreRefreshRequests(rows, ctx);
-      } catch (error) {
-        await this.recordDirtyWaveScoreRefreshFailure(rows, error, ctx);
-        throw error;
+      for (const row of rows) {
+        await this.processDirtyWaveScoreRefreshRequest(row, ctx);
       }
       batches += 1;
       waves += rows.length;
@@ -379,6 +374,23 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
       waves,
       hasMore
     };
+  }
+
+  private async processDirtyWaveScoreRefreshRequest(
+    row: DirtyWaveScoreRefreshRequestRow,
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      await this.refreshWaveScoresForWaveIds([row.wave_id], ctx);
+      await this.deleteDirtyWaveScoreRefreshRequests([row], ctx);
+    } catch (error) {
+      await this.recordDirtyWaveScoreRefreshFailure([row], error, ctx);
+      this.logger.error(`Failed to refresh dirty wave score`, {
+        waveId: row.wave_id,
+        dirtyAt: row.dirty_at,
+        error
+      });
+    }
   }
 
   public async refreshAllWaveScores(
