@@ -614,7 +614,10 @@ export class WaveDecisionsService {
       claimBuildDropId,
       pendingPushNotificationIds:
         announcementDropResult.pendingPushNotificationIds,
-      dirtyWaveIds: announcementDropResult.waveIds
+      dirtyWaveIds: collections.distinct([
+        waveId,
+        ...announcementDropResult.waveIds
+      ])
     };
   }
 

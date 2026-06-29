@@ -261,6 +261,8 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
         }
       );
       if (ctx.connection) {
+        // Keep write transactions short; post-commit callers issue a second
+        // best-effort dirty mark and wakeup when the transaction succeeds.
         return;
       }
       await this.refreshWaveScoresForWaveIdsBestEffort(waveIds, ctx);
