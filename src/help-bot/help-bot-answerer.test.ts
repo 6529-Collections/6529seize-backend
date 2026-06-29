@@ -219,7 +219,7 @@ describe('HelpBotAnswerer', () => {
   it('includes related help-index matches in deterministic knowledge answers', async () => {
     const index: HelpBotKnowledgeIndex = {
       ...TEST_INDEX,
-      records: [
+      records: TEST_INDEX.records.concat([
         {
           id: 'delegation.wallet-architecture',
           kind: 'workflow',
@@ -257,7 +257,7 @@ describe('HelpBotAnswerer', () => {
           tags: ['delegation'],
           sourceRefs: []
         }
-      ]
+      ])
     };
 
     const answer = await answerer(
@@ -360,6 +360,7 @@ describe('HelpBotAnswerer', () => {
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
       expect(answer.record.id).toBe('delegation.register-consolidation-doc');
+      expect(answer.record.kind).toBe('workflow');
       expect(answer.answer).toContain(
         'Register Consolidation connects wallets you control.'
       );

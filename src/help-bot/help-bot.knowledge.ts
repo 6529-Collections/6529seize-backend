@@ -84,6 +84,22 @@ const ARCHITECTURE_CONTEXT_PATTERNS = [
   /\btransaction\b/
 ] as const;
 
+const EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS = [
+  /\barchitecture\b/,
+  /\barchitectures\b/,
+  /\btap\b/,
+  /\bthree address\b/,
+  /\bfour address\b/,
+  /\b3 address\b/,
+  /\b4 address\b/,
+  /\bthree wallets?\b/,
+  /\bfour wallets?\b/,
+  /\b3 wallets?\b/,
+  /\b4 wallets?\b/,
+  /\bmultiple wallets?\b/,
+  /\bseveral wallets?\b/
+] as const;
+
 const CONSOLIDATION_CONTEXT_PATTERNS = [
   /\bconsolidat(?:e|es|ed|ing|ion|ions)\b/,
   /\bcount(?:ed)? together\b/,
@@ -102,12 +118,12 @@ const WALLET_CHECK_CONTEXT_PATTERNS = [
   /\bshow\b/
 ] as const;
 
-const WALLET_ARCHITECTURE_RECORD_ID = 'delegation.wallet-architecture';
-const WALLET_CHECKER_RECORD_ID = 'delegation.wallet-checker';
-const CONSOLIDATION_USE_CASES_RECORD_ID = 'delegation.consolidation-use-cases';
-const REGISTER_CONSOLIDATION_RECORD_ID = 'delegation.register-consolidation';
-const REGISTER_CONSOLIDATION_DOC_RECORD_ID =
-  'delegation.register-consolidation-doc';
+const WALLET_ARCHITECTURE_PATH = '/delegation/wallet-architecture';
+const WALLET_CHECKER_PATH = '/delegation/wallet-checker';
+const CONSOLIDATION_USE_CASES_PATH = '/delegation/consolidation-use-cases';
+const REGISTER_CONSOLIDATION_PATH = '/delegation/register-consolidation';
+const REGISTER_CONSOLIDATION_DOC_PATH =
+  '/delegation/delegation-faq/register-consolidation';
 
 export class HelpBotKnowledgeUnavailableError extends Error {
   constructor(
@@ -256,10 +272,16 @@ function tokenVariants(token: string): string[] {
   if (token.length > 4 && token.endsWith('ies')) {
     variants.push(`${token.slice(0, -3)}y`);
   }
-  if (token.length > 3 && token.endsWith('s') && !token.endsWith('ss')) {
+  if (isSafeTrailingPlural(token)) {
     variants.push(token.slice(0, -1));
   }
   return variants;
+}
+
+function isSafeTrailingPlural(token: string): boolean {
+  return (
+    token.length > 3 && token.endsWith('s') && !/(ss|us|is|ias)$/.test(token)
+  );
 }
 
 function normalizedPhraseTokens(value: string): string[] {
@@ -280,7 +302,7 @@ function containsNormalizedPhrase(
     return true;
   }
   const questionTokens = normalizedPhraseTokens(normalizedQuestion);
-  const phraseTokens = normalizedPhraseTokens(phrase);
+  const phraseTokens = normalizedPhraseTokens(normalizedPhrase);
   if (!phraseTokens.length || phraseTokens.length > questionTokens.length) {
     return false;
   }
@@ -304,10 +326,10 @@ function matchesAny(
 
 function addRoutedScore(
   scores: Map<string, number>,
-  recordId: string,
+  canonicalPath: string,
   score: number
 ): void {
-  scores.set(recordId, Math.max(scores.get(recordId) ?? 0, score));
+  scores.set(canonicalPath, Math.max(scores.get(canonicalPath) ?? 0, score));
 }
 
 function routedRecordScores(
@@ -321,6 +343,10 @@ function routedRecordScores(
     normalizedQuestion,
     ARCHITECTURE_CONTEXT_PATTERNS
   );
+  const hasExplicitArchitectureContext = matchesAny(
+    normalizedQuestion,
+    EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS
+  );
   const hasConsolidationContext = matchesAny(
     normalizedQuestion,
     CONSOLIDATION_CONTEXT_PATTERNS
@@ -331,20 +357,19 @@ function routedRecordScores(
   );
   const scores = new Map<string, number>();
 
-  if (hasArchitectureContext && (hasWalletContext || hasWalletCheckContext)) {
-    addRoutedScore(scores, WALLET_ARCHITECTURE_RECORD_ID, 6);
-    addRoutedScore(
-      scores,
-      WALLET_CHECKER_RECORD_ID,
-      hasWalletCheckContext ? 8 : 4
-    );
+  if (
+    (hasArchitectureContext && hasWalletContext) ||
+    (hasExplicitArchitectureContext && hasWalletCheckContext)
+  ) {
+    addRoutedScore(scores, WALLET_ARCHITECTURE_PATH, 6);
+    addRoutedScore(scores, WALLET_CHECKER_PATH, hasWalletCheckContext ? 8 : 4);
   }
 
   if (hasConsolidationContext && (hasWalletContext || hasArchitectureContext)) {
-    addRoutedScore(scores, REGISTER_CONSOLIDATION_DOC_RECORD_ID, 8);
-    addRoutedScore(scores, REGISTER_CONSOLIDATION_RECORD_ID, 7);
-    addRoutedScore(scores, CONSOLIDATION_USE_CASES_RECORD_ID, 5);
-    addRoutedScore(scores, WALLET_ARCHITECTURE_RECORD_ID, 5);
+    addRoutedScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 8);
+    addRoutedScore(scores, REGISTER_CONSOLIDATION_PATH, 7);
+    addRoutedScore(scores, CONSOLIDATION_USE_CASES_PATH, 5);
+    addRoutedScore(scores, WALLET_ARCHITECTURE_PATH, 5);
   }
 
   return scores;
@@ -382,7 +407,7 @@ function findMatchesInRecords(
       score:
         phraseScore(normalizedQuestion, record) +
         keywordScore(questionTokens, record) +
-        (routedScores.get(record.id) ?? 0)
+        (routedScores.get(record.canonicalPath) ?? 0)
     }))
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
     .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))
