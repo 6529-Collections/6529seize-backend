@@ -54,6 +54,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         target_id: creator_id,
         target_type: ActivityEventTargetType.IDENTITY,
         action: ActivityEventAction.DROP_CREATED,
+        drop_id,
         data: { drop_id, wave_id },
         wave_id,
         visibility_group_id,
@@ -65,6 +66,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         target_id: wave_id,
         target_type: ActivityEventTargetType.WAVE,
         action: ActivityEventAction.DROP_CREATED,
+        drop_id,
         data: { drop_id, creator_id },
         wave_id,
         visibility_group_id,
@@ -75,6 +77,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         target_id: reply_to.drop_id,
         target_type: ActivityEventTargetType.DROP,
         action: ActivityEventAction.DROP_REPLIED,
+        drop_id,
         data: {
           replier_id: creator_id,
           drop_part_id: reply_to.part_id,
@@ -107,6 +110,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         target_id: creator_id,
         target_type: ActivityEventTargetType.IDENTITY,
         action: ActivityEventAction.WAVE_CREATED,
+        drop_id: null,
         data: { wave_id },
         wave_id,
         visibility_group_id,
@@ -131,6 +135,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
             target_id,
             target_type,
             action,
+            drop_id,
             data,
             visibility_group_id,
             created_at,
@@ -142,8 +147,8 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
               `(${mysql.escape(event.target_id)}, ${mysql.escape(
                 event.target_type
               )}, ${mysql.escape(event.action)}, ${mysql.escape(
-                JSON.stringify(event.data)
-              )}, ${mysql.escape(
+                event.drop_id
+              )}, ${mysql.escape(JSON.stringify(event.data))}, ${mysql.escape(
                 event.visibility_group_id
               )}, ${now}, ${mysql.escape(event.wave_id)}, ${mysql.escape(
                 event.action_author_id
