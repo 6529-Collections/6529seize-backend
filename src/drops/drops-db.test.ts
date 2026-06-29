@@ -1,4 +1,5 @@
 import {
+  ACTIVITY_EVENTS_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
   IDENTITIES_TABLE,
@@ -10,6 +11,31 @@ import { PageSortDirection } from '@/api/page-request';
 import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
+  it('deletes activity feed items by indexed drop columns', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.deleteDropFeedItems('drop-1', {
+      connection: { connection } as any,
+      timer: undefined
+    });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toBe(
+      `delete from ${ACTIVITY_EVENTS_TABLE} where drop_id = :dropId or (target_type = 'DROP' and target_id = :dropId)`
+    );
+    expect(sql.toLowerCase()).not.toContain('like');
+    expect(params).toEqual({ dropId: 'drop-1' });
+    expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
   it('uses wave voting credit nft rows when finding CARD_SET_TDH overvoters', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new DropsDb(
