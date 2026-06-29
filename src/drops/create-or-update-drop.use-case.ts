@@ -1,5 +1,6 @@
 import {
   CreateOrUpdateDropModel,
+  CreateOrUpdateDropPartModel,
   DropPartIdentifierModel,
   DropReferencedNftModel
 } from './create-or-update-drop.model';
@@ -30,6 +31,7 @@ import {
   DropPartEntity,
   DropType
 } from '@/entities/IDrop';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { AttachmentStatus, DropAttachmentEntity } from '@/entities/IAttachment';
 import {
   identitySubscriptionsDb,
@@ -96,6 +98,25 @@ import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
+const ALL_GROUP_MENTION_REGEX = /(^|[^a-z0-9_@])@all(?![a-z0-9_@])/i;
+
+export function normalizeDropGroupMentions({
+  mentionedGroups,
+  parts
+}: {
+  mentionedGroups?: readonly DropGroupMention[] | null;
+  parts: readonly Pick<CreateOrUpdateDropPartModel, 'content'>[];
+}): DropGroupMention[] {
+  const hasAllMentionInContent = parts.some((part) =>
+    ALL_GROUP_MENTION_REGEX.test(part.content ?? '')
+  );
+  return collections
+    .distinct([...(mentionedGroups ?? [])])
+    .filter(
+      (mentionedGroup) =>
+        mentionedGroup !== DropGroupMention.ALL || hasAllMentionInContent
+    );
+}
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
   return !nomination.has_won;
@@ -200,6 +221,18 @@ export class CreateOrUpdateDropUseCase {
 
   private getAllDropsNotificationsSubscribersLimit(): number {
     return env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
+  }
+
+  private normalizeMentionedGroups(
+    model: CreateOrUpdateDropModel
+  ): CreateOrUpdateDropModel {
+    return {
+      ...model,
+      mentioned_groups: normalizeDropGroupMentions({
+        mentionedGroups: model.mentioned_groups,
+        parts: model.parts
+      })
+    };
   }
 
   public async execute(
@@ -358,8 +391,9 @@ export class CreateOrUpdateDropUseCase {
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
+    const normalizedModel = this.normalizeMentionedGroups(model);
     const { validatedModel, groupIdsUserIsEligibleFor } =
-      await this.validateReferences(model, isDescriptionDrop, {
+      await this.validateReferences(normalizedModel, isDescriptionDrop, {
         timer,
         connection,
         preResolvedIdentityNomination
@@ -1372,7 +1406,7 @@ export class CreateOrUpdateDropUseCase {
 
   private async insertAllDropComponents(
     {
-      model,
+      model: inputModel,
       wave,
       createdAt,
       updatedAt,
@@ -1387,6 +1421,9 @@ export class CreateOrUpdateDropUseCase {
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ): Promise<number[]> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+    // Keep this guard at the persistence boundary too; this method can be
+    // reused independently of execute() and the normalization is idempotent.
+    const model = this.normalizeMentionedGroups(inputModel);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
