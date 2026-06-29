@@ -32,6 +32,7 @@ export function buildAbusivenessBedrockInvokeModelInput(
         { role: 'user', content: [{ type: 'text', text: `${prompt}` }] }
       ],
       temperature: 0.7,
+      top_p: 0.8,
       top_k: 30
     })
   };

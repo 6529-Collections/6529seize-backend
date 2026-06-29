@@ -10,7 +10,7 @@ describe('bedrock abusiveness prompter', () => {
     );
   });
 
-  it('sends Anthropic Bedrock payloads without top_p', () => {
+  it('keeps the historical Anthropic Bedrock payload settings', () => {
     const input = buildAbusivenessBedrockInvokeModelInput(
       'anthropic.test-model',
       'is this category okay?'
@@ -20,8 +20,8 @@ describe('bedrock abusiveness prompter', () => {
     expect(input.modelId).toBe('anthropic.test-model');
     expect(body).toMatchObject({
       temperature: 0.7,
+      top_p: 0.8,
       top_k: 30
     });
-    expect(body).not.toHaveProperty('top_p');
   });
 });
