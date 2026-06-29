@@ -13,10 +13,13 @@ import { DropsApiService } from '@/api/drops/drops.api.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import { ReactionsService } from '@/api/drops/reactions.service';
 import { DropEntity, DropType } from '@/entities/IDrop';
+import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
+import { Logger } from '@/logging';
 
 describe('ReactionsService', () => {
+  const latestActivityAt = new Date('2026-06-29T00:00:00.000Z');
   let reactionsDb: ReactionsDb;
   let wavesDb: WavesApiDb;
   let dropsDb: DropsDb;
@@ -28,7 +31,8 @@ describe('ReactionsService', () => {
   let service: ReactionsService;
 
   const connection = {} as any;
-  const ctx = { connection };
+  const transactionCtx = { connection };
+  const ctx = {};
   const dropEntity: DropEntity = {
     serial_no: 1,
     id: 'drop-1',
@@ -58,6 +62,8 @@ describe('ReactionsService', () => {
     wsListenersNotifier = mock();
     dropsService = mock();
     metricsRecorder = mock();
+
+    jest.spyOn(Logger.get('ReactionsService'), 'error').mockImplementation();
 
     service = new ReactionsService(
       reactionsDb,
@@ -91,8 +97,16 @@ describe('ReactionsService', () => {
     (
       wsListenersNotifier.notifyAboutDropReactionUpdate as jest.Mock
     ).mockResolvedValue(undefined);
+    (
+      reactionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (callback) => await callback(connection));
 
-    jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+    jest
+      .spyOn(profileActivityLogsDb, 'insertLogEntry')
+      .mockResolvedValue(latestActivityAt);
+    jest
+      .spyOn(profileActivityLogsDb, 'touchLatestActivity')
+      .mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -115,10 +129,11 @@ describe('ReactionsService', () => {
       dropEntity.id,
       dropEntity.wave_id,
       ':+1:',
-      ctx
+      transactionCtx
     );
     expect(metricsRecorder.recordActiveIdentity).not.toHaveBeenCalled();
-    expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.insertLogEntry).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.touchLatestActivity).not.toHaveBeenCalled();
     expect(userNotifier.notifyOfDropReaction).not.toHaveBeenCalled();
     expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
     expect(
@@ -136,14 +151,41 @@ describe('ReactionsService', () => {
       dropEntity.id,
       dropEntity.wave_id,
       ':+1:',
-      ctx
+      transactionCtx
     );
     expect(metricsRecorder.recordActiveIdentity).toHaveBeenCalledWith(
       { identityId: 'profile-1' },
       ctx
     );
-    expect(profileActivityLogsDb.insert).toHaveBeenCalled();
-    expect(userNotifier.notifyOfDropReaction).toHaveBeenCalled();
+    expect(profileActivityLogsDb.insertLogEntry).toHaveBeenCalledWith(
+      {
+        profile_id: 'profile-1',
+        type: ProfileActivityLogType.DROP_REACTED,
+        target_id: dropEntity.id,
+        contents: JSON.stringify({ reaction: ':+1:' }),
+        additional_data_1: dropEntity.author_id,
+        additional_data_2: dropEntity.wave_id,
+        proxy_id: null
+      },
+      connection,
+      undefined
+    );
+    expect(profileActivityLogsDb.touchLatestActivity).toHaveBeenCalledWith(
+      'profile-1',
+      latestActivityAt,
+      undefined,
+      undefined
+    );
+    expect(userNotifier.notifyOfDropReaction).toHaveBeenCalledWith(
+      {
+        profile_id: 'profile-1',
+        drop_id: dropEntity.id,
+        drop_author_id: dropEntity.author_id,
+        reaction: ':+1:',
+        wave_id: dropEntity.wave_id
+      },
+      'group-1'
+    );
     expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
@@ -164,9 +206,10 @@ describe('ReactionsService', () => {
       'profile-1',
       dropEntity.id,
       dropEntity.wave_id,
-      ctx
+      transactionCtx
     );
-    expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.insertLogEntry).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.touchLatestActivity).not.toHaveBeenCalled();
     expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
@@ -182,10 +225,50 @@ describe('ReactionsService', () => {
       'profile-1',
       dropEntity.id,
       dropEntity.wave_id,
-      ctx
+      transactionCtx
     );
-    expect(profileActivityLogsDb.insert).toHaveBeenCalled();
+    expect(profileActivityLogsDb.insertLogEntry).toHaveBeenCalledWith(
+      {
+        profile_id: 'profile-1',
+        type: ProfileActivityLogType.DROP_REACTED,
+        target_id: dropEntity.id,
+        contents: JSON.stringify({ reaction: null }),
+        additional_data_1: dropEntity.author_id,
+        additional_data_2: dropEntity.wave_id,
+        proxy_id: null
+      },
+      connection,
+      undefined
+    );
+    expect(profileActivityLogsDb.touchLatestActivity).toHaveBeenCalledWith(
+      'profile-1',
+      latestActivityAt,
+      undefined,
+      undefined
+    );
     expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropReactionUpdate
+    ).toHaveBeenCalledWith(drop, ctx);
+  });
+
+  it('does not fail a committed add reaction when a post-commit side effect fails', async () => {
+    (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+    (profileActivityLogsDb.touchLatestActivity as jest.Mock).mockRejectedValue(
+      new Error('latest activity unavailable')
+    );
+
+    const result = await service.addReaction(
+      dropEntity.id,
+      'profile-1',
+      ':+1:',
+      ctx as any
+    );
+
+    expect(result).toBe(drop);
+    expect(profileActivityLogsDb.insertLogEntry).toHaveBeenCalled();
+    expect(profileActivityLogsDb.touchLatestActivity).toHaveBeenCalled();
+    expect(userNotifier.notifyOfDropReaction).toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
     ).toHaveBeenCalledWith(drop, ctx);
