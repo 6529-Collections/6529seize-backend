@@ -933,6 +933,56 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('does not repeat rendered source links in the more-info footer', async () => {
+    const index: HelpBotKnowledgeIndex = {
+      ...TEST_INDEX,
+      records: [
+        {
+          id: 'delegation.wallet-architecture',
+          kind: 'workflow',
+          title: 'Wallet Architecture',
+          linkLabel: 'Wallet Architecture',
+          canonicalPath: '/delegation/wallet-architecture',
+          aliases: ['wallet architecture'],
+          keywords: ['wallet', 'architecture'],
+          facts: ['Wallet architecture separates wallet roles.'],
+          relatedPaths: [
+            '/delegation/wallet-checker',
+            '/delegation/consolidation-use-cases'
+          ],
+          tags: ['delegation'],
+          sourceRefs: []
+        }
+      ]
+    };
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          'Check [Wallet Architecture](https://6529.io/delegation/wallet-architecture) first.'
+        )
+    };
+
+    const answer = await answerer(renderer, undefined, undefined, index).answer(
+      {
+        question: 'what is wallet architecture?',
+        baseUrl: BASE_URL
+      }
+    );
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(
+        answer.answer.match(
+          /https:\/\/6529\.io\/delegation\/wallet-architecture/g
+        )
+      ).toHaveLength(1);
+      expect(answer.answer).toBe(
+        'Check [Wallet Architecture](https://6529.io/delegation/wallet-architecture) first.\n\nMore info: [Wallet Checker](https://6529.io/delegation/wallet-checker) | [Consolidation Use Cases](https://6529.io/delegation/consolidation-use-cases)'
+      );
+    }
+  });
+
   it('strips help bot self-intros from rendered answers', async () => {
     const renderer: HelpBotLlmRenderer = {
       renderAnswer: jest
