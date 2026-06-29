@@ -4,6 +4,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../sql-executor';
+import { randomInt } from 'crypto';
 import {
   isTargetOfTypeDrop,
   ProfileActivityLog,
@@ -174,7 +175,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   private getProfileLatestRetryDelayMs(attempt: number): number {
     return (
       PROFILE_LATEST_LOG_RETRY_DELAYS_MS[attempt] +
-      Math.floor(Math.random() * PROFILE_LATEST_LOG_RETRY_JITTER_MS)
+      randomInt(PROFILE_LATEST_LOG_RETRY_JITTER_MS)
     );
   }
 
