@@ -1,4 +1,5 @@
 import { Logger } from '@/logging';
+import { CONSOLIDATIONS_LIMIT } from '@/constants';
 import {
   HELP_BOT_INDEX_CACHE_TTL_MS,
   HELP_BOT_INDEX_FETCH_TIMEOUT_MS,
@@ -70,13 +71,9 @@ const ARCHITECTURE_CONTEXT_PATTERNS = [
   /\barchitectures\b/,
   /\btap\b/,
   /\bthree address\b/,
-  /\bfour address\b/,
   /\b3 address\b/,
-  /\b4 address\b/,
   /\bthree wallets?\b/,
-  /\bfour wallets?\b/,
   /\b3 wallets?\b/,
-  /\b4 wallets?\b/,
   /\bmultiple wallets?\b/,
   /\bseveral wallets?\b/,
   /\bvault\b/,
@@ -89,13 +86,9 @@ const EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS = [
   /\barchitectures\b/,
   /\btap\b/,
   /\bthree address\b/,
-  /\bfour address\b/,
   /\b3 address\b/,
-  /\b4 address\b/,
   /\bthree wallets?\b/,
-  /\bfour wallets?\b/,
   /\b3 wallets?\b/,
-  /\b4 wallets?\b/,
   /\bmultiple wallets?\b/,
   /\bseveral wallets?\b/
 ] as const;
@@ -134,6 +127,22 @@ const TDH_UNWEIGHTED_ID = 'network.definitions.tdh-unweighted';
 const TDH_UNBOOSTED_ID = 'network.definitions.tdh-unboosted';
 const NAKAMOTO_SET_ID = 'network.tdh.nakamoto-set';
 const NETWORK_TDH_ID = 'network.tdh';
+
+const WALLET_COUNT_WORDS = new Map<string, number>([
+  ['one', 1],
+  ['two', 2],
+  ['three', 3],
+  ['four', 4],
+  ['five', 5],
+  ['six', 6],
+  ['seven', 7],
+  ['eight', 8],
+  ['nine', 9],
+  ['ten', 10]
+]);
+
+const WALLET_COUNT_PATTERN =
+  /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)[-\s]+(?:wallet|wallets|address|addresses)\b/g;
 
 const DELEGATION_CONTEXT_PATTERNS = [
   /\bdelegat(?:e|es|ed|ing|ion|ions)\b/,
@@ -391,6 +400,37 @@ function matchesAny(
   return patterns.some((pattern) => pattern.test(normalizedQuestion));
 }
 
+function parseWalletCount(rawCount: string): number | null {
+  const wordValue = WALLET_COUNT_WORDS.get(rawCount);
+  if (wordValue !== undefined) {
+    return wordValue;
+  }
+  const parsed = Number.parseInt(rawCount, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function requestedOverLimitWalletCount(
+  normalizedQuestion: string
+): number | null {
+  WALLET_COUNT_PATTERN.lastIndex = 0;
+  let overLimitCount: number | null = null;
+  for (
+    let match = WALLET_COUNT_PATTERN.exec(normalizedQuestion);
+    match;
+    match = WALLET_COUNT_PATTERN.exec(normalizedQuestion)
+  ) {
+    const rawCount = match[1];
+    if (!rawCount) {
+      continue;
+    }
+    const count = parseWalletCount(rawCount);
+    if (count !== null && count > CONSOLIDATIONS_LIMIT) {
+      overLimitCount = Math.max(overLimitCount ?? count, count);
+    }
+  }
+  return overLimitCount;
+}
+
 function addRoutedScore(
   scores: Map<string, number>,
   key: string,
@@ -442,7 +482,16 @@ function routedRecordScores(
     normalizedQuestion,
     WALLET_CHECK_CONTEXT_PATTERNS
   );
+  const overLimitWalletCount =
+    requestedOverLimitWalletCount(normalizedQuestion);
   const scores = new Map<string, number>();
+
+  if (overLimitWalletCount !== null) {
+    addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 16);
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 5);
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 5);
+  }
 
   if (hasExplicitArchitectureContext) {
     addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);

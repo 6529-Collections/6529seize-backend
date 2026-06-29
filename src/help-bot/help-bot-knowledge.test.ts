@@ -183,7 +183,9 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             canonical_path: '/delegation/consolidation-use-cases',
             aliases: ['consolidation use cases'],
             keywords: ['consolidation', 'wallet'],
-            facts: ['Consolidation covers multi-wallet patterns.']
+            facts: [
+              '6529 recognizes up to three addresses as one consolidation group.'
+            ]
           }
         ]
       })
@@ -195,8 +197,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     );
 
     const matchIds = matches.map((match) => match.record.id);
-    expect(matchIds[0]).toBe('delegation.register-consolidation-doc');
-    expect(matchIds[1]).toBe('delegation.register-consolidation');
+    expect(matchIds[0]).toBe('delegation.consolidation-use-cases');
     expect(new Set(matchIds)).toEqual(
       new Set([
         'delegation.register-consolidation-doc',
@@ -312,9 +313,24 @@ describe('StaticHelpBotKnowledgeSource', () => {
           title: 'Wallet Architecture',
           linkLabel: 'Wallet Architecture',
           canonicalPath: '/delegation/wallet-architecture',
-          aliases: ['wallet architecture', '4 wallet architecture'],
+          aliases: ['wallet architecture'],
           keywords: ['wallet', 'architecture', 'vault'],
           facts: ['Separate vault, transaction, and minting wallets.'],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        },
+        {
+          id: 'delegation.consolidation-use-cases',
+          kind: 'workflow',
+          title: 'Consolidation Use Cases',
+          linkLabel: 'Consolidation Use Cases',
+          canonicalPath: '/delegation/consolidation-use-cases',
+          aliases: ['consolidation use cases'],
+          keywords: ['consolidation', 'wallet', 'limit'],
+          facts: [
+            '6529 recognizes up to three addresses as one consolidation group.'
+          ],
           relatedPaths: [],
           tags: ['delegation'],
           sourceRefs: []
@@ -337,11 +353,12 @@ describe('StaticHelpBotKnowledgeSource', () => {
 
     const matches = await source.findMatches!(
       'how do i set up a 4 wallet architecture with delegation docs',
-      2
+      3
     );
 
     expect(matches.map((match) => match.record.id)).toEqual([
       'delegation.wallet-architecture',
+      'delegation.consolidation-use-cases',
       'delegation.faq'
     ]);
   });
