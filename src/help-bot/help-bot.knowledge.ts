@@ -124,6 +124,59 @@ const CONSOLIDATION_USE_CASES_PATH = '/delegation/consolidation-use-cases';
 const REGISTER_CONSOLIDATION_PATH = '/delegation/register-consolidation';
 const REGISTER_CONSOLIDATION_DOC_PATH =
   '/delegation/delegation-faq/register-consolidation';
+const WALLET_ARCHITECTURE_ID = 'delegation.wallet-architecture';
+const WALLET_CHECKER_ID = 'delegation.wallet-checker';
+const NETWORK_DEFINITIONS_ID = 'network.definitions';
+const GENESIS_SETS_ID = 'network.definitions.genesis-sets';
+const MEME_SETS_ID = 'network.definitions.meme-sets';
+const MEME_SETS_MINUS_ID = 'network.definitions.meme-sets-minus';
+const TDH_UNWEIGHTED_ID = 'network.definitions.tdh-unweighted';
+const TDH_UNBOOSTED_ID = 'network.definitions.tdh-unboosted';
+const NAKAMOTO_SET_ID = 'network.tdh.nakamoto-set';
+const NETWORK_TDH_ID = 'network.tdh';
+
+const DELEGATION_CONTEXT_PATTERNS = [
+  /\bdelegat(?:e|es|ed|ing|ion|ions)\b/,
+  /\bdelegation managers?\b/,
+  /\bminting delegation\b/
+] as const;
+
+const GENESIS_SET_PATTERNS = [/\bgenesis sets?\b/] as const;
+
+const NAKAMOTO_SET_PATTERNS = [/\bnakamoto sets?\b/] as const;
+
+const MEME_SET_MINUS_PATTERNS = [
+  /\bmeme sets?\s*(?:-|minus)\s*(?:1|one|2|two)\b/,
+  /\bsets?\s+missing\s+(?:1|one|2|two)\s+cards?\b/
+] as const;
+
+const MEME_SET_PATTERNS = [
+  /\bmeme sets?\b/,
+  /\bcomplete meme sets?\b/,
+  /\bseason sets?\b/
+] as const;
+
+const TDH_UNWEIGHTED_PATTERNS = [
+  /\btdh\s+unweighted\b/,
+  /\bunweighted\s+tdh\b/,
+  /\braw\s+tdh\b/,
+  /\btdh__raw\b/
+] as const;
+
+const TDH_UNBOOSTED_PATTERNS = [
+  /\btdh\s+unboosted\b/,
+  /\bunboosted\s+tdh\b/,
+  /\bweighted\s+tdh\b/,
+  /\bedition weighted\s+tdh\b/
+] as const;
+
+function routedIdKey(id: string): string {
+  return `id:${id}`;
+}
+
+function routedPathKey(path: string): string {
+  return `path:${path}`;
+}
 
 export class HelpBotKnowledgeUnavailableError extends Error {
   constructor(
@@ -267,6 +320,20 @@ function tokenize(value: string): Set<string> {
   return tokens;
 }
 
+function uniqueStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
 function tokenVariants(token: string): string[] {
   const variants = [token];
   if (token.length > 4 && token.endsWith('ies')) {
@@ -326,10 +393,26 @@ function matchesAny(
 
 function addRoutedScore(
   scores: Map<string, number>,
+  key: string,
+  score: number
+): void {
+  scores.set(key, Math.max(scores.get(key) ?? 0, score));
+}
+
+function addRoutedIdScore(
+  scores: Map<string, number>,
+  id: string,
+  score: number
+): void {
+  addRoutedScore(scores, routedIdKey(id), score);
+}
+
+function addRoutedPathScore(
+  scores: Map<string, number>,
   canonicalPath: string,
   score: number
 ): void {
-  scores.set(canonicalPath, Math.max(scores.get(canonicalPath) ?? 0, score));
+  addRoutedScore(scores, routedPathKey(canonicalPath), score);
 }
 
 function routedRecordScores(
@@ -351,43 +434,130 @@ function routedRecordScores(
     normalizedQuestion,
     CONSOLIDATION_CONTEXT_PATTERNS
   );
+  const hasDelegationContext = matchesAny(
+    normalizedQuestion,
+    DELEGATION_CONTEXT_PATTERNS
+  );
   const hasWalletCheckContext = matchesAny(
     normalizedQuestion,
     WALLET_CHECK_CONTEXT_PATTERNS
   );
   const scores = new Map<string, number>();
 
+  if (hasExplicitArchitectureContext) {
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 4);
+  }
+
   if (
     (hasArchitectureContext && hasWalletContext) ||
     (hasExplicitArchitectureContext && hasWalletCheckContext)
   ) {
-    addRoutedScore(scores, WALLET_ARCHITECTURE_PATH, 6);
-    addRoutedScore(scores, WALLET_CHECKER_PATH, hasWalletCheckContext ? 8 : 4);
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 5);
+    addRoutedIdScore(scores, WALLET_CHECKER_ID, hasWalletCheckContext ? 10 : 4);
+    addRoutedPathScore(
+      scores,
+      WALLET_CHECKER_PATH,
+      hasWalletCheckContext ? 7 : 3
+    );
+  }
+
+  if (
+    hasWalletCheckContext &&
+    (hasDelegationContext || hasConsolidationContext)
+  ) {
+    addRoutedIdScore(scores, WALLET_CHECKER_ID, 10);
+    addRoutedPathScore(scores, WALLET_CHECKER_PATH, 7);
   }
 
   if (hasConsolidationContext && (hasWalletContext || hasArchitectureContext)) {
-    addRoutedScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 8);
-    addRoutedScore(scores, REGISTER_CONSOLIDATION_PATH, 7);
-    addRoutedScore(scores, CONSOLIDATION_USE_CASES_PATH, 5);
-    addRoutedScore(scores, WALLET_ARCHITECTURE_PATH, 5);
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 16);
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_PATH, 15);
+    addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 9);
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 5);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 4);
+  }
+
+  if (matchesAny(normalizedQuestion, GENESIS_SET_PATTERNS)) {
+    addRoutedIdScore(scores, GENESIS_SETS_ID, 12);
+    addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 4);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 3);
+  }
+
+  if (matchesAny(normalizedQuestion, NAKAMOTO_SET_PATTERNS)) {
+    addRoutedIdScore(scores, NAKAMOTO_SET_ID, 12);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
+  }
+
+  if (matchesAny(normalizedQuestion, MEME_SET_MINUS_PATTERNS)) {
+    addRoutedIdScore(scores, MEME_SETS_MINUS_ID, 12);
+    addRoutedIdScore(scores, MEME_SETS_ID, 4);
+    addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 3);
+  } else if (matchesAny(normalizedQuestion, MEME_SET_PATTERNS)) {
+    addRoutedIdScore(scores, MEME_SETS_ID, 12);
+    addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 3);
+  }
+
+  if (matchesAny(normalizedQuestion, TDH_UNWEIGHTED_PATTERNS)) {
+    addRoutedIdScore(scores, TDH_UNWEIGHTED_ID, 12);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
+  }
+
+  if (matchesAny(normalizedQuestion, TDH_UNBOOSTED_PATTERNS)) {
+    addRoutedIdScore(scores, TDH_UNBOOSTED_ID, 12);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
   }
 
   return scores;
 }
 
 function phraseScore(question: string, record: HelpBotKnowledgeRecord): number {
-  return record.aliases.reduce((score, alias) => {
-    return containsNormalizedPhrase(question, alias) ? score + 3 : score;
-  }, 0);
+  return uniqueStrings([record.title, ...record.aliases]).reduce(
+    (score, alias) => {
+      return containsNormalizedPhrase(question, alias) ? score + 3 : score;
+    },
+    0
+  );
+}
+
+function keywordMatches(questionTokens: Set<string>, keyword: string): boolean {
+  const normalizedKeyword = normalizeText(keyword);
+  if (!normalizedKeyword) {
+    return false;
+  }
+  if (questionTokens.has(normalizedKeyword)) {
+    return true;
+  }
+  const keywordTokens = normalizedPhraseTokens(normalizedKeyword);
+  return (
+    keywordTokens.length === 1 &&
+    tokenVariants(keywordTokens[0]).some((variant) =>
+      questionTokens.has(variant)
+    )
+  );
 }
 
 function keywordScore(
   questionTokens: Set<string>,
   record: HelpBotKnowledgeRecord
 ): number {
-  return record.keywords.reduce((score, keyword) => {
-    return questionTokens.has(normalizeText(keyword)) ? score + 1 : score;
-  }, 0);
+  return uniqueStrings([...record.keywords, ...record.tags]).reduce(
+    (score, keyword) => {
+      return keywordMatches(questionTokens, keyword) ? score + 1 : score;
+    },
+    0
+  );
+}
+
+function routedScore(
+  routedScores: ReadonlyMap<string, number>,
+  record: HelpBotKnowledgeRecord
+): number {
+  return (
+    (routedScores.get(routedIdKey(record.id)) ?? 0) +
+    (routedScores.get(routedPathKey(record.canonicalPath)) ?? 0)
+  );
 }
 
 function findMatchesInRecords(
@@ -407,7 +577,7 @@ function findMatchesInRecords(
       score:
         phraseScore(normalizedQuestion, record) +
         keywordScore(questionTokens, record) +
-        (routedScores.get(record.canonicalPath) ?? 0)
+        routedScore(routedScores, record)
     }))
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
     .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))
