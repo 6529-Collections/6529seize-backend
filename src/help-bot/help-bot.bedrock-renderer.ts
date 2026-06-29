@@ -27,7 +27,7 @@ const TONE_GUIDANCE =
 const HELP_BOT_MENTION = `@${HELP_BOT_HANDLE}`;
 const NO_SELF_INTRO_GUIDANCE = `Start directly with the answer. Do not begin with ${HELP_BOT_MENTION}, ${HELP_BOT_HANDLE}:, ${HELP_BOT_HANDLE} here, a greeting, or any self-introduction.`;
 const MARKDOWN_LINK_GUIDANCE =
-  'When including the source URL, use a named Markdown link like [More info](https://example.com). Do not print a bare URL.';
+  'When including the source URL, use a named Markdown link like [More info](https://example.com). Do not print a bare URL or raw app path such as /delegation/example in prose.';
 
 function buildPrompt({
   question,

@@ -197,6 +197,25 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('does not echo route metadata facts as answer prose', async () => {
+    const answer = await answerer().answer({
+      question: 'what is a gradient?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('gradients.collection');
+      expect(answer.answer).toContain(
+        '6529 Gradient collection is covered on this 6529 page.'
+      );
+      expect(answer.answer).toContain(
+        '[6529 Gradient](https://6529.io/6529-gradient)'
+      );
+      expect(answer.answer).not.toContain('lives at /6529-gradient');
+    }
+  });
+
   it('includes related help-index matches in deterministic knowledge answers', async () => {
     const index: HelpBotKnowledgeIndex = {
       ...TEST_INDEX,
@@ -269,6 +288,9 @@ describe('HelpBotAnswerer', () => {
       expect(answer.record.facts).toHaveLength(8);
       expect(answer.answer).toContain(
         '[Wallet Architecture](https://6529.io/delegation/wallet-architecture)'
+      );
+      expect(answer.answer).toContain(
+        '[Delegation FAQ](https://6529.io/delegation/delegation-faq)'
       );
       expect(answer.record.aliases).toEqual([
         'wallet architecture',
