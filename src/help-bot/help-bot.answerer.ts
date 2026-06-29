@@ -12,6 +12,7 @@ import {
 import { HelpBotPublicDataService } from './help-bot-public-data.service';
 import {
   ensureCanonicalMarkdownLink,
+  formatHelpBotMarkdownLink,
   stripHelpBotSelfIntro
 } from './help-bot-response-text';
 import {
@@ -71,6 +72,26 @@ function toCanonicalUrl(baseUrl: string, path: string): string {
 const HELP_BOT_CREDIT_CATEGORY_PATH = `/rep/categories/${encodeURIComponent(
   HELP_BOT_CREDIT_CATEGORY
 )}`;
+const MAX_KNOWLEDGE_SOURCE_LINKS = 3;
+const ROUTE_METADATA_FACT_PATTERN =
+  /\b(?:lives|live|is|are)\s+(?:at|on)\s+\/[a-z0-9/{]/i;
+
+const PATH_LINK_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
+  '/delegation/consolidation-use-cases': 'Consolidation Use Cases',
+  '/delegation/delegation-center': 'Delegation Center',
+  '/delegation/delegation-faq': 'Delegation FAQ',
+  '/delegation/delegation-faq/manage-revoke': 'Revoke Delegation',
+  '/delegation/delegation-faq/manage-update': 'Update Delegation',
+  '/delegation/delegation-faq/register-consolidation':
+    'Register Consolidation Guide',
+  '/delegation/register-consolidation': 'Register Consolidation',
+  '/delegation/wallet-architecture': 'Wallet Architecture'
+};
+
+interface HelpBotSourceLink {
+  readonly label: string;
+  readonly url: string;
+}
 
 function getHelpBotCreditGrantText(): string {
   if (
@@ -95,26 +116,152 @@ function safeCanonicalPath(record: HelpBotKnowledgeRecord): string {
   );
 }
 
+function isRouteMetadataFact(fact: string): boolean {
+  return ROUTE_METADATA_FACT_PATTERN.test(fact);
+}
+
+function answerableKnowledgeFacts(
+  title: string,
+  facts: readonly string[]
+): string[] {
+  const filtered = facts.filter((fact) => !isRouteMetadataFact(fact));
+  return filtered.length
+    ? filtered
+    : [`${title} is covered on this 6529 page.`];
+}
+
+function buildAnswerableKnowledgeRecord(
+  record: HelpBotKnowledgeRecord
+): HelpBotKnowledgeRecord {
+  const facts = answerableKnowledgeFacts(record.title, record.facts);
+  if (
+    facts.length === record.facts.length &&
+    facts.every((fact, index) => fact === record.facts[index])
+  ) {
+    return record;
+  }
+  return { ...record, facts };
+}
+
+function titleCasePathSegment(path: string): string {
+  const pathWithoutQuery = path.split(/[?#]/, 1)[0];
+  const segments = pathWithoutQuery.split('/').filter(Boolean);
+  const lastSegment = segments[segments.length - 1];
+  if (!lastSegment) {
+    return 'More info';
+  }
+  return lastSegment
+    .split('-')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function linkLabelForPath(
+  path: string,
+  canonicalPath: string,
+  canonicalLabel: string
+): string {
+  if (path === canonicalPath) {
+    return canonicalLabel;
+  }
+  return PATH_LINK_LABEL_OVERRIDES[path] ?? titleCasePathSegment(path);
+}
+
+function buildKnowledgeSourceLinks(
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): HelpBotSourceLink[] {
+  const canonicalPath = safeCanonicalPath(record);
+  const candidatePaths = [canonicalPath, ...record.relatedPaths];
+  const seenUrls = new Set<string>();
+  const links: HelpBotSourceLink[] = [];
+
+  for (const path of candidatePaths) {
+    if (hasRoutePlaceholder(path)) {
+      continue;
+    }
+    const url = toCanonicalUrl(baseUrl, path);
+    if (seenUrls.has(url)) {
+      continue;
+    }
+    seenUrls.add(url);
+    links.push({
+      label: linkLabelForPath(path, canonicalPath, record.linkLabel),
+      url
+    });
+    if (links.length >= MAX_KNOWLEDGE_SOURCE_LINKS) {
+      break;
+    }
+  }
+
+  return links;
+}
+
+function sourceLinksMarkdown(links: readonly HelpBotSourceLink[]): string {
+  return links
+    .map((link) =>
+      formatHelpBotMarkdownLink({ label: link.label, url: link.url })
+    )
+    .join(' | ');
+}
+
+function replaceMoreInfoLine(
+  text: string,
+  links: readonly HelpBotSourceLink[]
+): string {
+  const moreInfo = `More info: ${sourceLinksMarkdown(links)}`;
+  const finalMoreInfoPattern = /\n\nMore info: [^\n]+$/;
+  if (finalMoreInfoPattern.test(text)) {
+    return text.replace(finalMoreInfoPattern, `\n\n${moreInfo}`);
+  }
+  return `${text}\n\n${moreInfo}`;
+}
+
+function ensureKnowledgeMarkdownLinks({
+  text,
+  record,
+  baseUrl
+}: {
+  readonly text: string;
+  readonly record: HelpBotKnowledgeRecord;
+  readonly baseUrl: string;
+}): string {
+  const links = buildKnowledgeSourceLinks(record, baseUrl);
+  const canonicalLink = links[0];
+  if (!canonicalLink) {
+    return text;
+  }
+  const withCanonicalLink = ensureCanonicalMarkdownLink({
+    text,
+    canonicalUrl: canonicalLink.url,
+    label: canonicalLink.label
+  });
+  return links.length === 1
+    ? withCanonicalLink
+    : replaceMoreInfoLine(withCanonicalLink, links);
+}
+
 function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
-  canonicalUrl: string
+  baseUrl: string
 ): string {
-  return ensureCanonicalMarkdownLink({
+  return ensureKnowledgeMarkdownLinks({
     text: record.facts.join(' '),
-    canonicalUrl,
-    label: record.linkLabel
+    record,
+    baseUrl
   });
 }
 
 function normalizeRenderedAnswer(
   text: string,
-  canonicalUrl: string,
-  label: string
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
 ): string {
-  const withUrl = ensureCanonicalMarkdownLink({
+  const withUrl = ensureKnowledgeMarkdownLinks({
     text: stripHelpBotSelfIntro(text),
-    canonicalUrl,
-    label
+    record,
+    baseUrl
   });
   return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
 }
@@ -1076,9 +1223,10 @@ export class HelpBotAnswerer {
       !strongContextVerificationMatch &&
       isLikelyProductQuestion(request.question, request.previousBotAnswer);
 
+    const answerRecord = buildAnswerableKnowledgeRecord(match.record);
     const canonicalUrl = toCanonicalUrl(
       request.baseUrl,
-      safeCanonicalPath(match.record)
+      safeCanonicalPath(answerRecord)
     );
 
     const maybeWithWeakCaveat = (answer: string) =>
@@ -1088,9 +1236,9 @@ export class HelpBotAnswerer {
       return {
         type: 'ANSWER',
         answer: maybeWithWeakCaveat(
-          buildDeterministicAnswer(match.record, canonicalUrl)
+          buildDeterministicAnswer(answerRecord, request.baseUrl)
         ),
-        record: match.record,
+        record: answerRecord,
         escalateToTechTeam
       };
     }
@@ -1099,20 +1247,16 @@ export class HelpBotAnswerer {
       const rendered = await this.renderer.renderAnswer({
         question: request.question,
         previousBotAnswer: request.previousBotAnswer,
-        record: match.record,
+        record: answerRecord,
         canonicalUrl
       });
       if (rendered.trim()) {
         return {
           type: 'ANSWER',
           answer: maybeWithWeakCaveat(
-            normalizeRenderedAnswer(
-              rendered,
-              canonicalUrl,
-              match.record.linkLabel
-            )
+            normalizeRenderedAnswer(rendered, answerRecord, request.baseUrl)
           ),
-          record: match.record,
+          record: answerRecord,
           escalateToTechTeam
         };
       }
@@ -1126,9 +1270,9 @@ export class HelpBotAnswerer {
     return {
       type: 'ANSWER',
       answer: maybeWithWeakCaveat(
-        buildDeterministicAnswer(match.record, canonicalUrl)
+        buildDeterministicAnswer(answerRecord, request.baseUrl)
       ),
-      record: match.record,
+      record: answerRecord,
       escalateToTechTeam
     };
   }
