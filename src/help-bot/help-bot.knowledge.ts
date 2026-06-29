@@ -34,6 +34,10 @@ export interface HelpBotKnowledgeMatch {
 
 export interface HelpBotKnowledgeSource {
   findMatch(question: string): Promise<HelpBotKnowledgeMatch | null>;
+  findMatches?(
+    question: string,
+    limit?: number
+  ): Promise<HelpBotKnowledgeMatch[]>;
 }
 
 interface HelpBotIndexResponse {
@@ -216,16 +220,17 @@ function keywordScore(
   }, 0);
 }
 
-function findMatchInRecords(
+function findMatchesInRecords(
   question: string,
-  records: readonly HelpBotKnowledgeRecord[]
-): HelpBotKnowledgeMatch | null {
+  records: readonly HelpBotKnowledgeRecord[],
+  limit: number
+): HelpBotKnowledgeMatch[] {
   const normalizedQuestion = normalizeText(question);
   if (!normalizedQuestion) {
-    return null;
+    return [];
   }
   const questionTokens = tokenize(question);
-  const matches = records
+  return records
     .map((record) => ({
       record,
       score:
@@ -233,10 +238,15 @@ function findMatchInRecords(
         keywordScore(questionTokens, record)
     }))
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
-    .sort(
-      (a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id)
-    );
+    .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))
+    .slice(0, Math.max(1, limit));
+}
 
+function findMatchInRecords(
+  question: string,
+  records: readonly HelpBotKnowledgeRecord[]
+): HelpBotKnowledgeMatch | null {
+  const matches = findMatchesInRecords(question, records, 1);
   return matches[0] ?? null;
 }
 
@@ -247,6 +257,13 @@ export class StaticHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
     question: string
   ): Promise<HelpBotKnowledgeMatch | null> {
     return findMatchInRecords(question, this.index.records);
+  }
+
+  public async findMatches(
+    question: string,
+    limit = 1
+  ): Promise<HelpBotKnowledgeMatch[]> {
+    return findMatchesInRecords(question, this.index.records, limit);
   }
 }
 
@@ -263,6 +280,14 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   ): Promise<HelpBotKnowledgeMatch | null> {
     const index = await this.loadIndex();
     return index ? findMatchInRecords(question, index.records) : null;
+  }
+
+  public async findMatches(
+    question: string,
+    limit = 1
+  ): Promise<HelpBotKnowledgeMatch[]> {
+    const index = await this.loadIndex();
+    return index ? findMatchesInRecords(question, index.records, limit) : [];
   }
 
   private async loadIndex(): Promise<HelpBotKnowledgeIndex | null> {

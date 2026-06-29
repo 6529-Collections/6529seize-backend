@@ -567,6 +567,9 @@ const CONTEXTUAL_FOLLOW_UP_PATTERN =
 const WEAK_MATCH_SCORE_MAX = 3;
 const WEAK_MATCH_PREFIX =
   "I might not be fully sure on this one, so here's my best answer.";
+const MAX_KNOWLEDGE_CONTEXT_MATCHES = 3;
+const MAX_RELATED_RECORD_FACTS = 3;
+const MAX_MERGED_KNOWLEDGE_FACTS = 8;
 
 const DEFINITION_QUESTION_PREFIXES = [
   'what is',
@@ -664,6 +667,90 @@ function isWeakKnowledgeMatch(match: HelpBotKnowledgeMatch): boolean {
 
 function appendWeakMatchPrefix(answer: string): string {
   return `${WEAK_MATCH_PREFIX}\n\n${answer}`;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
+function mergeStringField(
+  primary: readonly string[],
+  relatedRecords: readonly HelpBotKnowledgeRecord[],
+  pick: (record: HelpBotKnowledgeRecord) => readonly string[]
+): string[] {
+  return uniqueStrings(
+    primary.concat(relatedRecords.flatMap((record) => [...pick(record)]))
+  );
+}
+
+function mergeKnowledgeFacts(
+  primary: readonly string[],
+  relatedRecords: readonly HelpBotKnowledgeRecord[]
+): string[] {
+  return uniqueStrings(
+    primary.concat(
+      relatedRecords.flatMap((record) =>
+        record.facts
+          .slice(0, MAX_RELATED_RECORD_FACTS)
+          .map((fact) => `${record.title}: ${fact}`)
+      )
+    )
+  ).slice(0, MAX_MERGED_KNOWLEDGE_FACTS);
+}
+
+function mergeKnowledgeMatches(
+  matches: readonly HelpBotKnowledgeMatch[]
+): HelpBotKnowledgeMatch | null {
+  const primary = matches[0];
+  if (!primary) {
+    return null;
+  }
+  if (matches.length === 1) {
+    return primary;
+  }
+
+  const relatedRecords = matches
+    .slice(1)
+    .map((match) => match.record)
+    .filter((record) => record.id !== primary.record.id);
+  if (!relatedRecords.length) {
+    return primary;
+  }
+
+  return {
+    score: primary.score,
+    record: {
+      ...primary.record,
+      facts: mergeKnowledgeFacts(primary.record.facts, relatedRecords),
+      aliases: primary.record.aliases,
+      keywords: primary.record.keywords,
+      relatedPaths: mergeStringField(
+        primary.record.relatedPaths,
+        relatedRecords,
+        (record) => [record.canonicalPath, ...record.relatedPaths]
+      ),
+      tags: mergeStringField(
+        primary.record.tags,
+        relatedRecords,
+        (record) => record.tags
+      ),
+      sourceRefs: mergeStringField(
+        primary.record.sourceRefs,
+        relatedRecords,
+        (record) => record.sourceRefs
+      )
+    }
+  };
 }
 
 function isLikelyProductText(value: string | null | undefined): boolean {
@@ -1091,18 +1178,30 @@ export class HelpBotAnswerer {
     request: HelpBotAnswerRequest
   ): Promise<HelpBotKnowledgeMatch | null> {
     try {
-      const directMatch = await this.knowledgeSource.findMatch(
-        request.question
-      );
+      const directMatch = await this.findKnowledgeMatches(request.question);
       if (directMatch || !request.previousBotAnswer) {
         return directMatch;
       }
-      return await this.knowledgeSource.findMatch(
+      return await this.findKnowledgeMatches(
         [request.question, request.previousBotAnswer].join('\n')
       );
     } catch (error) {
       this.logger.warn('Help bot knowledge source failed', error);
       return null;
     }
+  }
+
+  private async findKnowledgeMatches(
+    question: string
+  ): Promise<HelpBotKnowledgeMatch | null> {
+    if (this.knowledgeSource.findMatches) {
+      return mergeKnowledgeMatches(
+        await this.knowledgeSource.findMatches(
+          question,
+          MAX_KNOWLEDGE_CONTEXT_MATCHES
+        )
+      );
+    }
+    return await this.knowledgeSource.findMatch(question);
   }
 }

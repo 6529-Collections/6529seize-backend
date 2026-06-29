@@ -1,4 +1,8 @@
 import { env } from '@/env';
+import {
+  getConfiguredBedrockAnthropicModelId,
+  getPositiveIntEnvOrDefault
+} from '@/bedrock.config';
 
 export const HELP_BOT_HANDLE = 'help6529';
 export function resolveHelpBotBaseUrl(
@@ -17,9 +21,15 @@ export const HELP_BOT_INDEX_URL = `${HELP_BOT_BASE_URL}/help-index.json`;
 export const HELP_BOT_INDEX_FETCH_TIMEOUT_MS = 5000;
 export const HELP_BOT_INDEX_CACHE_TTL_MS = 300_000;
 export const HELP_BOT_CALENDAR_FETCH_TIMEOUT_MS = 5000;
-export const HELP_BOT_BEDROCK_MODEL_ID =
-  'anthropic.claude-3-sonnet-20240229-v1:0';
-export const HELP_BOT_BEDROCK_TIMEOUT_MS = 4000;
+export const HELP_BOT_BEDROCK_MODEL_ID_ENV = 'HELP_BOT_BEDROCK_MODEL_ID';
+export const HELP_BOT_BEDROCK_MODEL_ID = getConfiguredBedrockAnthropicModelId(
+  HELP_BOT_BEDROCK_MODEL_ID_ENV
+);
+export const HELP_BOT_BEDROCK_TIMEOUT_MS_ENV = 'HELP_BOT_BEDROCK_TIMEOUT_MS';
+export const HELP_BOT_BEDROCK_TIMEOUT_MS = getPositiveIntEnvOrDefault(
+  HELP_BOT_BEDROCK_TIMEOUT_MS_ENV,
+  10_000
+);
 export const HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS = 5000;
 export const HELP_BOT_PUBLIC_DATA_MAX_ROWS = 10;
 export const HELP_BOT_KNOWLEDGE_VERSION = 'frontend-help-index-v1';

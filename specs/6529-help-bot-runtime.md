@@ -150,9 +150,11 @@ Initial curated topics include:
 The backend does not inspect GitHub, frontend source files, or live rendered
 pages while users wait for answers. It fetches the generated index, validates a
 usable record set, caches successful loads for five minutes,
-and keeps the previous valid cache if a refresh fails. Fetches use
-the hardcoded five-second timeout so a slow index endpoint fails into the
-technical-failure reply path instead of stalling the worker.
+and keeps the previous valid cache if a refresh fails. The runtime retrieves a
+bounded set of top matching records and passes the primary record plus related
+facts into the answer context. Fetches use the hardcoded five-second timeout so
+a slow index endpoint fails into the technical-failure reply path instead of
+stalling the worker.
 
 ### 4.2 Future docs chunking and RAG
 
@@ -389,7 +391,15 @@ V1 should use a managed LLM provider rather than self-hosting.
 
 V1 provider:
 
-- Amazon Bedrock with the hardcoded Claude model selected in backend code.
+- Amazon Bedrock with a shared Anthropic Claude model default. The default is
+  the Claude Sonnet 4.5 US geo inference profile
+  `us.anthropic.claude-sonnet-4-5-20250929-v1:0`.
+  `BEDROCK_ANTHROPIC_MODEL_ID` overrides that shared default, and
+  service-specific env vars such as `HELP_BOT_BEDROCK_MODEL_ID` can override
+  one runtime. These values are loaded from process environment at startup, so
+  deployments must restart the affected Lambda runtime to pick up changes.
+- Bedrock answer rendering uses `HELP_BOT_BEDROCK_TIMEOUT_MS`, defaulting to
+  10 seconds.
 
 The backend should isolate provider calls behind an internal service boundary so
 the model can change later.
@@ -525,6 +535,8 @@ private user data beyond what is needed for debugging and abuse controls.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
+- Retrieve a bounded set of top help-index matches so related docs can enrich
+  the answer without full vector search.
 - Answer Meme Card drop timing through the frontend-owned calendar API.
 - Add bounded public-data query-intent mode for aggregate questions over the
   backend-owned public query compiler.
@@ -544,4 +556,6 @@ private user data beyond what is needed for debugging and abuse controls.
 ## 13. Open Questions
 
 - Should successful answers keep ✅ forever, or should status reactions expire?
-- Which Bedrock model should be approved for initial production use?
+- Should the default Bedrock model move from the US geo inference profile to a
+  global or region-specific profile once production access, residency, and
+  latency are verified?
