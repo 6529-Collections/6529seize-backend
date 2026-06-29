@@ -1,7 +1,14 @@
 import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
+import { DbPoolName } from '@/db-query.options';
+import { sqs } from '@/sqs';
 import { Time } from '@/time';
 import { mapWaveScore } from './wave-score.api-mapper';
-import { WaveScoreService } from './wave-score.service';
+import {
+  WAVE_SCORE_DIRTY_REFRESH_MESSAGE_GROUP_ID,
+  WAVE_SCORE_DIRTY_REFRESH_QUEUE_NAME,
+  WaveScoreDirtyRefreshReason,
+  WaveScoreService
+} from './wave-score.service';
 
 function makeInput(overrides: Record<string, unknown> = {}) {
   return {
@@ -235,5 +242,237 @@ describe('WaveScoreService', () => {
     expect(
       getScoreInputRows.mock.calls.map(([ids]) => (ids as string[]).length)
     ).toEqual([100, 100, 5]);
+  });
+
+  it('marks distinct waves dirty with a monotonic dirty timestamp inside the caller connection', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(12_345);
+    const execute = jest.fn().mockResolvedValue([]);
+    const service = new WaveScoreService(() => ({ execute }) as any);
+    const connection = {} as any;
+
+    await service.markWaveScoresDirty(
+      ['wave-1', 'wave-1', ''],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      { connection }
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('insert into wave_score_refresh_requests'),
+      expect.objectContaining({
+        waveId0: 'wave-1',
+        reason0: WaveScoreDirtyRefreshReason.DROP_CHANGED,
+        dirtyAt0: 12_345,
+        createdAt0: 12_345,
+        updatedAt0: 12_345
+      }),
+      { wrappedConnection: connection }
+    );
+    expect(execute.mock.calls[0]?.[0]).toContain('greatest(');
+  });
+
+  it('drains dirty wave refresh rows from the write pool and deletes only the captured dirty timestamp', async () => {
+    const execute = jest.fn(async (sql: string) => {
+      if (sql.includes('select wave_id, dirty_at')) {
+        return [{ wave_id: 'wave-1', dirty_at: '1000' }];
+      }
+      return [];
+    });
+    const service = new WaveScoreService(() => ({ execute }) as any);
+    jest
+      .spyOn(service, 'refreshWaveScoresForWaveIds')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      service.refreshDirtyWaveScores({ batchSize: 10, maxBatches: 1 })
+    ).resolves.toEqual({
+      batches: 1,
+      waves: 1,
+      hasMore: false
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('select wave_id, dirty_at'),
+      { batchSize: 10 },
+      expect.objectContaining({ forcePool: DbPoolName.WRITE })
+    );
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenCalledWith(
+      ['wave-1'],
+      {}
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'where (wave_id, dirty_at) in ((:dirtyWaveId0, :dirtyAt0))'
+      ),
+      {
+        dirtyWaveId0: 'wave-1',
+        dirtyAt0: 1000
+      },
+      expect.objectContaining({ forcePool: DbPoolName.WRITE })
+    );
+  });
+
+  it('does not reselect already processed dirty waves in the same drain', async () => {
+    const dirtySelectParams: Array<Record<string, unknown>> = [];
+    const execute = jest.fn(async (sql: string, params?: any) => {
+      if (sql.includes('select wave_id, dirty_at')) {
+        dirtySelectParams.push(params);
+        if (dirtySelectParams.length === 1) {
+          return [{ wave_id: 'wave-1', dirty_at: '1000' }];
+        }
+        if (dirtySelectParams.length === 2) {
+          return [{ wave_id: 'wave-2', dirty_at: '1001' }];
+        }
+        return [];
+      }
+      if (sql.includes('select wave_id')) {
+        return [{ wave_id: 'wave-1' }];
+      }
+      return [];
+    });
+    const service = new WaveScoreService(() => ({ execute }) as any);
+    jest
+      .spyOn(service, 'refreshWaveScoresForWaveIds')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      service.refreshDirtyWaveScores({ batchSize: 1, maxBatches: 3 })
+    ).resolves.toEqual({
+      batches: 2,
+      waves: 2,
+      hasMore: true
+    });
+
+    expect(dirtySelectParams).toEqual([
+      { batchSize: 1 },
+      { batchSize: 1, excludedWaveId0: 'wave-1' },
+      { batchSize: 1, excludedWaveId0: 'wave-1', excludedWaveId1: 'wave-2' }
+    ]);
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      1,
+      ['wave-1'],
+      {}
+    );
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      2,
+      ['wave-2'],
+      {}
+    );
+  });
+
+  it('records a dirty wave refresh failure and continues through the batch', async () => {
+    const execute = jest.fn(async (sql: string) => {
+      if (sql.includes('select wave_id, dirty_at')) {
+        return [
+          { wave_id: 'wave-1', dirty_at: '1000' },
+          { wave_id: 'wave-2', dirty_at: '1001' }
+        ];
+      }
+      return [];
+    });
+    const service = new WaveScoreService(() => ({ execute }) as any);
+    jest
+      .spyOn(service, 'refreshWaveScoresForWaveIds')
+      .mockRejectedValueOnce(new Error('score refresh failed'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      service.refreshDirtyWaveScores({ batchSize: 10, maxBatches: 1 })
+    ).resolves.toEqual({
+      batches: 1,
+      waves: 2,
+      hasMore: false
+    });
+
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      1,
+      ['wave-1'],
+      {}
+    );
+    expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
+      2,
+      ['wave-2'],
+      {}
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('attempts = attempts + 1'),
+      expect.objectContaining({
+        dirtyWaveId0: 'wave-1',
+        dirtyAt0: 1000,
+        lastError: 'score refresh failed'
+      }),
+      expect.objectContaining({ forcePool: DbPoolName.WRITE })
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'where (wave_id, dirty_at) in ((:dirtyWaveId0, :dirtyAt0))'
+      ),
+      {
+        dirtyWaveId0: 'wave-2',
+        dirtyAt0: 1001
+      },
+      expect.objectContaining({ forcePool: DbPoolName.WRITE })
+    );
+  });
+
+  it('does not run synchronous fallback inside a dirty mark transaction', async () => {
+    const service = new WaveScoreService(
+      () =>
+        ({
+          execute: jest.fn().mockRejectedValue(new Error('missing table'))
+        }) as any
+    );
+    const refreshWaveScoresForWaveIdsBestEffort = jest
+      .spyOn(service, 'refreshWaveScoresForWaveIdsBestEffort')
+      .mockResolvedValue(undefined);
+
+    await service.markWaveScoresDirtyBestEffort(
+      ['wave-1'],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      { connection: {} as any }
+    );
+
+    expect(refreshWaveScoresForWaveIdsBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('persists and enqueues async dirty refresh requests', async () => {
+    const service = new WaveScoreService(() => ({}) as any);
+    const markWaveScoresDirty = jest
+      .spyOn(service, 'markWaveScoresDirty')
+      .mockResolvedValue(undefined);
+    const enqueueDirtyWaveScoreRefresh = jest
+      .spyOn(service, 'enqueueDirtyWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+
+    await service.requestWaveScoreRefreshBestEffort(
+      ['wave-1'],
+      WaveScoreDirtyRefreshReason.WAVE_REP_CHANGED
+    );
+
+    expect(markWaveScoresDirty).toHaveBeenCalledWith(
+      ['wave-1'],
+      WaveScoreDirtyRefreshReason.WAVE_REP_CHANGED,
+      {}
+    );
+    expect(enqueueDirtyWaveScoreRefresh).toHaveBeenCalledWith({});
+  });
+
+  it('sends unique dirty refresh wakeups to the dirty FIFO queue', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(12_345);
+    const sendToQueueName = jest
+      .spyOn(sqs, 'sendToQueueName')
+      .mockResolvedValue(undefined);
+    const service = new WaveScoreService(() => ({}) as any);
+
+    await service.enqueueDirtyWaveScoreRefresh();
+
+    expect(sendToQueueName).toHaveBeenCalledWith({
+      queueName: WAVE_SCORE_DIRTY_REFRESH_QUEUE_NAME,
+      messageGroupId: WAVE_SCORE_DIRTY_REFRESH_MESSAGE_GROUP_ID,
+      message: {
+        mode: 'DIRTY',
+        requestedAt: 12_345,
+        nonce: expect.any(String)
+      }
+    });
   });
 });

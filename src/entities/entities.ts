@@ -197,6 +197,7 @@ export { WaveDropperMetricEntity } from './IWaveDropperMetric';
 export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetadataEntity } from './IWaveMetadata';
 export { WaveMetricEntity } from './IWaveMetric';
+export { WaveScoreRefreshRequestEntity } from './IWaveScoreRefreshRequest';
 export { WaveReaderMetricEntity } from './IWaveReaderMetric';
 export { WaveCurationEntity } from './IWaveCuration';
 export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificationSubscription';

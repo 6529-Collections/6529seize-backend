@@ -31,6 +31,10 @@ import {
 } from './wave-leaderboard-calculation.service';
 import * as priorityAlertsContext from '../priority-alerts.context';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '@/api/waves/wave-score.service';
 
 interface WaveOutcome {
   type: WaveOutcomeType;
@@ -141,6 +145,7 @@ export class WaveDecisionsService {
       if (latestDecisionTime < decisionTime) {
         let claimBuildDropId: string | null = null;
         let pendingPushNotificationIds: number[] = [];
+        let dirtyWaveIds: string[] = [];
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
           async (connection) => {
             this.logger.info(
@@ -158,6 +163,7 @@ export class WaveDecisionsService {
                 claimBuildDropId = decisionResult.claimBuildDropId;
                 pendingPushNotificationIds =
                   decisionResult.pendingPushNotificationIds;
+                dirtyWaveIds = decisionResult.dirtyWaveIds ?? [];
                 decisionsExecuted++;
               } else {
                 this.logger.info(
@@ -185,6 +191,13 @@ export class WaveDecisionsService {
             );
           }
         );
+        if (dirtyWaveIds.length) {
+          await waveScoreService.requestWaveScoreRefreshBestEffort(
+            dirtyWaveIds,
+            WaveScoreDirtyRefreshReason.DROP_CHANGED,
+            { timer }
+          );
+        }
         if (claimBuildDropId) {
           await this.enqueueClaimBuild(claimBuildDropId, waveId);
         }
@@ -288,6 +301,7 @@ export class WaveDecisionsService {
         );
         let claimBuildDropId: string | null = null;
         let pendingPushNotificationIds: number[] = [];
+        let dirtyWaveIds: string[] = [];
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
           async (connection) => {
             this.logger.info(
@@ -312,8 +326,16 @@ export class WaveDecisionsService {
             claimBuildDropId = decisionResult.claimBuildDropId;
             pendingPushNotificationIds =
               decisionResult.pendingPushNotificationIds;
+            dirtyWaveIds = decisionResult.dirtyWaveIds ?? [];
           }
         );
+        if (dirtyWaveIds.length) {
+          await waveScoreService.requestWaveScoreRefreshBestEffort(
+            dirtyWaveIds,
+            WaveScoreDirtyRefreshReason.DROP_CHANGED,
+            { timer }
+          );
+        }
         if (claimBuildDropId) {
           await this.enqueueClaimBuild(claimBuildDropId, waveId);
         }
@@ -459,6 +481,7 @@ export class WaveDecisionsService {
   ): Promise<{
     claimBuildDropId: string | null;
     pendingPushNotificationIds: number[];
+    dirtyWaveIds: string[];
   }> {
     ctx?.timer?.start(`${this.constructor.name}->createDecision`);
     const n = outcomes
@@ -500,6 +523,7 @@ export class WaveDecisionsService {
   ): Promise<{
     claimBuildDropId: string | null;
     pendingPushNotificationIds: number[];
+    dirtyWaveIds: string[];
   }> {
     await this.waveDecisionsDb.insertDecision(
       {
@@ -581,12 +605,20 @@ export class WaveDecisionsService {
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
-    const pendingPushNotificationIds = await this.createAnnouncementDrop(
+    const announcementDropResult = await this.createAnnouncementDrop(
       waveId,
       winnerDropIds,
       ctx
     );
-    return { claimBuildDropId, pendingPushNotificationIds };
+    return {
+      claimBuildDropId,
+      pendingPushNotificationIds:
+        announcementDropResult.pendingPushNotificationIds,
+      dirtyWaveIds: collections.distinct([
+        waveId,
+        ...announcementDropResult.waveIds
+      ])
+    };
   }
 
   private async enqueueClaimBuild(
@@ -717,12 +749,13 @@ export class WaveDecisionsService {
     waveId: string,
     winnerDropIds: string[],
     ctx: RequestContext
-  ): Promise<number[]> {
+  ): Promise<{ pendingPushNotificationIds: number[]; waveIds: string[] }> {
     const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
     const wavesToDropWinnerAnnouncementsTo = env.getStringArray(
       'DEPLOYER_ANNOUNCEMENTS_WAVE_IDS'
     );
     const pendingPushNotificationIds: number[] = [];
+    let createdAnnouncementDrop = false;
     if (wavesToDropWinnerAnnouncementsTo.length && waveId === mainStageWaveId) {
       for (const dropId of winnerDropIds) {
         const winnerHandle = await this.dropsDb.getDropAuthorHandle(
@@ -744,12 +777,18 @@ export class WaveDecisionsService {
           },
           ctx
         );
+        createdAnnouncementDrop = true;
         for (const id of newIds) {
           pendingPushNotificationIds.push(id);
         }
       }
     }
-    return pendingPushNotificationIds;
+    return {
+      pendingPushNotificationIds,
+      waveIds: createdAnnouncementDrop
+        ? collections.distinct(wavesToDropWinnerAnnouncementsTo)
+        : []
+    };
   }
 }
 

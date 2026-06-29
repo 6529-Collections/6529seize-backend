@@ -6,17 +6,25 @@ import { IdentitySubscriptionEntity } from '../entities/IIdentitySubscription';
 import { Rating } from '../entities/IRating';
 import { WaveEntity } from '../entities/IWave';
 import { WaveMetricEntity } from '../entities/IWaveMetric';
+import { WaveScoreRefreshRequestEntity } from '../entities/IWaveScoreRefreshRequest';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import { sqs } from '../sqs';
 import { Timer } from '../time';
-import { waveScoreService } from '../api-serverless/src/waves/wave-score.service';
+import {
+  WAVE_SCORE_DIRTY_REFRESH_MESSAGE_GROUP_ID,
+  WAVE_SCORE_DIRTY_REFRESH_QUEUE_NAME,
+  waveScoreService
+} from '../api-serverless/src/waves/wave-score.service';
+import { randomUUID } from 'crypto';
 
 const logger = Logger.get('WAVE_SCORE_REFRESH_LOOP');
-const QUEUE_NAME = 'wave-score-refresh-start.fifo';
+const FULL_REFRESH_QUEUE_NAME = 'wave-score-refresh-start.fifo';
 const DEFAULT_MAX_BATCHES_PER_INVOCATION = 10;
+type WaveScoreRefreshMode = 'FULL' | 'DIRTY';
 
 interface WaveScoreRefreshMessage {
+  readonly mode?: WaveScoreRefreshMode;
   readonly batchSize?: number;
   readonly maxBatches?: number;
   readonly startAfterWaveId?: string;
@@ -57,6 +65,14 @@ function parseStringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() || undefined : undefined;
 }
 
+function parseModeValue(value: unknown): WaveScoreRefreshMode | undefined {
+  const parsed = parseStringValue(value)?.toUpperCase();
+  if (parsed === 'FULL' || parsed === 'DIRTY') {
+    return parsed;
+  }
+  return undefined;
+}
+
 function parseJsonObject(value: string): Record<string, unknown> {
   const parsed = JSON.parse(value) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -73,6 +89,7 @@ function parseMessageBody(body: string): WaveScoreRefreshMessage {
         ? parseJsonObject(parsed.Message)
         : parsed;
     return {
+      mode: parseModeValue(snsMessage.mode),
       batchSize: parsePositiveIntValue(snsMessage.batchSize, 'batchSize'),
       maxBatches: parsePositiveIntValue(snsMessage.maxBatches, 'maxBatches'),
       startAfterWaveId: parseStringValue(snsMessage.startAfterWaveId)
@@ -99,6 +116,7 @@ function getMessages(event: unknown): WaveScoreRefreshMessage[] {
   }
   return [
     {
+      mode: parseModeValue((event as Record<string, unknown>).mode),
       batchSize: parsePositiveIntValue(
         (event as Record<string, unknown>).batchSize,
         'batchSize'
@@ -128,7 +146,7 @@ function resolveRefreshOptions(message: WaveScoreRefreshMessage) {
   };
 }
 
-async function enqueueContinuation({
+async function enqueueFullRefreshContinuation({
   batchSize,
   maxBatches,
   startAfterWaveId
@@ -138,12 +156,33 @@ async function enqueueContinuation({
   startAfterWaveId: string;
 }) {
   await sqs.sendToQueueName({
-    queueName: QUEUE_NAME,
+    queueName: FULL_REFRESH_QUEUE_NAME,
     messageGroupId: 'wave-score-refresh',
     message: {
+      mode: 'FULL',
       ...(batchSize ? { batchSize } : {}),
       maxBatches,
       startAfterWaveId
+    }
+  });
+}
+
+async function enqueueDirtyRefreshContinuation({
+  batchSize,
+  maxBatches
+}: {
+  batchSize?: number;
+  maxBatches: number;
+}) {
+  await sqs.sendToQueueName({
+    queueName: WAVE_SCORE_DIRTY_REFRESH_QUEUE_NAME,
+    messageGroupId: WAVE_SCORE_DIRTY_REFRESH_MESSAGE_GROUP_ID,
+    message: {
+      mode: 'DIRTY',
+      ...(batchSize ? { batchSize } : {}),
+      maxBatches,
+      requestedAt: Date.now(),
+      nonce: randomUUID()
     }
   });
 }
@@ -155,19 +194,41 @@ const waveScoreRefreshHandler: Handler = async (event) => {
         const timer = new Timer('WAVE_SCORE_REFRESH_LOOP');
         try {
           const options = resolveRefreshOptions(message);
-          const result = await waveScoreService.refreshAllWaveScores(options, {
-            timer
-          });
-          logger.info(`Refreshed wave scores ${JSON.stringify(result)}`);
-          if (result.hasMore && result.lastWaveId) {
-            await enqueueContinuation({
-              batchSize: options.batchSize,
-              maxBatches: options.maxBatches,
-              startAfterWaveId: result.lastWaveId
-            });
-            logger.info(
-              `Queued wave score refresh continuation after ${result.lastWaveId}`
+          if (message.mode === 'DIRTY') {
+            const result = await waveScoreService.refreshDirtyWaveScores(
+              options,
+              {
+                timer
+              }
             );
+            logger.info(
+              `Refreshed dirty wave scores ${JSON.stringify(result)}`
+            );
+            if (result.hasMore) {
+              await enqueueDirtyRefreshContinuation({
+                batchSize: options.batchSize,
+                maxBatches: options.maxBatches
+              });
+              logger.info(`Queued dirty wave score refresh continuation`);
+            }
+          } else {
+            const result = await waveScoreService.refreshAllWaveScores(
+              options,
+              {
+                timer
+              }
+            );
+            logger.info(`Refreshed wave scores ${JSON.stringify(result)}`);
+            if (result.hasMore && result.lastWaveId) {
+              await enqueueFullRefreshContinuation({
+                batchSize: options.batchSize,
+                maxBatches: options.maxBatches,
+                startAfterWaveId: result.lastWaveId
+              });
+              logger.info(
+                `Queued wave score refresh continuation after ${result.lastWaveId}`
+              );
+            }
           }
         } finally {
           logger.info(`Finished executing ${timer.getReport()}`);
@@ -183,7 +244,8 @@ const waveScoreRefreshHandler: Handler = async (event) => {
         IdentitySubscriptionEntity,
         Rating,
         WaveEntity,
-        WaveMetricEntity
+        WaveMetricEntity,
+        WaveScoreRefreshRequestEntity
       ]
     }
   );
