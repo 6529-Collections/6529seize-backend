@@ -30,6 +30,7 @@ const PROFILE_LATEST_LOG_RETRY_CODES = new Set([
   'ER_LOCK_WAIT_TIMEOUT'
 ]);
 const PROFILE_LATEST_LOG_RETRY_DELAYS_MS = [25, 75];
+const PROFILE_LATEST_LOG_RETRY_JITTER_MS = 25;
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -130,7 +131,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     try {
       const touchLatestActivity = async () => {
         await this.db.execute(
-          `insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values (:profileId, :latestActivity) on duplicate key update latest_activity = :latestActivity`,
+          `insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values (:profileId, :latestActivity) on duplicate key update latest_activity = greatest(latest_activity, :latestActivity)`,
           { profileId, latestActivity },
           connectionHolder ? { wrappedConnection: connectionHolder } : undefined
         );
@@ -165,9 +166,16 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         ) {
           throw error;
         }
-        await this.sleep(PROFILE_LATEST_LOG_RETRY_DELAYS_MS[attempt]);
+        await this.sleep(this.getProfileLatestRetryDelayMs(attempt));
       }
     }
+  }
+
+  private getProfileLatestRetryDelayMs(attempt: number): number {
+    return (
+      PROFILE_LATEST_LOG_RETRY_DELAYS_MS[attempt] +
+      Math.floor(Math.random() * PROFILE_LATEST_LOG_RETRY_JITTER_MS)
+    );
   }
 
   private isRetryableProfileLatestLogError(error: unknown): boolean {

@@ -17,6 +17,7 @@ import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { Logger } from '@/logging';
+import { BadRequestException, ForbiddenException } from '@/exceptions';
 
 describe('ReactionsService', () => {
   const latestActivityAt = new Date('2026-06-29T00:00:00.000Z');
@@ -192,6 +193,19 @@ describe('ReactionsService', () => {
     ).toHaveBeenCalledWith(drop, ctx);
   });
 
+  it('surfaces bad request validation failures from inside the transaction', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      service.addReaction(dropEntity.id, 'profile-1', ':+1:', ctx as any)
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(reactionsDb.executeNativeQueriesInTransaction).toHaveBeenCalled();
+    expect(reactionsDb.addReaction).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.insertLogEntry).not.toHaveBeenCalled();
+    expect(metricsRecorder.recordActiveIdentity).not.toHaveBeenCalled();
+  });
+
   it('treats a duplicate remove request as a no-op', async () => {
     (reactionsDb.removeReaction as jest.Mock).mockResolvedValue(false);
 
@@ -250,6 +264,23 @@ describe('ReactionsService', () => {
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
     ).toHaveBeenCalledWith(drop, ctx);
+  });
+
+  it('surfaces forbidden validation failures from inside the transaction', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      id: dropEntity.wave_id,
+      chat_enabled: false,
+      visibility_group_id: 'group-1'
+    });
+
+    await expect(
+      service.removeReaction(dropEntity.id, 'profile-1', ctx as any)
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(reactionsDb.executeNativeQueriesInTransaction).toHaveBeenCalled();
+    expect(reactionsDb.removeReaction).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.insertLogEntry).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.touchLatestActivity).not.toHaveBeenCalled();
   });
 
   it('does not fail a committed add reaction when a post-commit side effect fails', async () => {

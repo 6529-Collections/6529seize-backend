@@ -61,6 +61,9 @@ export class ReactionsService {
     private readonly metricsRecorder: MetricsRecorder
   ) {}
 
+  // Caller-owned transactions keep the legacy all-in-transaction behavior.
+  // HTTP reaction routes use the no-connection path so post-commit side effects
+  // cannot roll back an already durable reaction.
   private async handleReactionInExistingTransaction(
     dropId: string,
     profileId: string,
@@ -289,6 +292,8 @@ export class ReactionsService {
     const postCommitSideEffects: PostCommitSideEffect[] = [
       {
         name: 'record-active-identity',
+        // Active identity metrics are rollups; do not fail a committed reaction
+        // response if this observational write is temporarily unavailable.
         run: () =>
           this.metricsRecorder.recordActiveIdentity(
             { identityId: profileId },
