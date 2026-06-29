@@ -455,108 +455,168 @@ function addRoutedPathScore(
   addRoutedScore(scores, routedPathKey(canonicalPath), score);
 }
 
-function routedRecordScores(
-  normalizedQuestion: string
-): ReadonlyMap<string, number> {
-  const hasWalletContext = matchesAny(
-    normalizedQuestion,
-    WALLET_CONTEXT_PATTERNS
-  );
-  const hasArchitectureContext = matchesAny(
-    normalizedQuestion,
-    ARCHITECTURE_CONTEXT_PATTERNS
-  );
-  const hasExplicitArchitectureContext = matchesAny(
-    normalizedQuestion,
-    EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS
-  );
-  const hasConsolidationContext = matchesAny(
-    normalizedQuestion,
-    CONSOLIDATION_CONTEXT_PATTERNS
-  );
-  const hasDelegationContext = matchesAny(
-    normalizedQuestion,
-    DELEGATION_CONTEXT_PATTERNS
-  );
-  const hasWalletCheckContext = matchesAny(
-    normalizedQuestion,
-    WALLET_CHECK_CONTEXT_PATTERNS
-  );
-  const overLimitWalletCount =
-    requestedOverLimitWalletCount(normalizedQuestion);
-  const scores = new Map<string, number>();
+interface RoutedQuestionContext {
+  readonly normalizedQuestion: string;
+  readonly hasWalletContext: boolean;
+  readonly hasArchitectureContext: boolean;
+  readonly hasExplicitArchitectureContext: boolean;
+  readonly hasConsolidationContext: boolean;
+  readonly hasDelegationContext: boolean;
+  readonly hasWalletCheckContext: boolean;
+  readonly overLimitWalletCount: number | null;
+}
 
-  if (overLimitWalletCount !== null) {
+function routedQuestionContext(
+  normalizedQuestion: string
+): RoutedQuestionContext {
+  return {
+    normalizedQuestion,
+    hasWalletContext: matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS),
+    hasArchitectureContext: matchesAny(
+      normalizedQuestion,
+      ARCHITECTURE_CONTEXT_PATTERNS
+    ),
+    hasExplicitArchitectureContext: matchesAny(
+      normalizedQuestion,
+      EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS
+    ),
+    hasConsolidationContext: matchesAny(
+      normalizedQuestion,
+      CONSOLIDATION_CONTEXT_PATTERNS
+    ),
+    hasDelegationContext: matchesAny(
+      normalizedQuestion,
+      DELEGATION_CONTEXT_PATTERNS
+    ),
+    hasWalletCheckContext: matchesAny(
+      normalizedQuestion,
+      WALLET_CHECK_CONTEXT_PATTERNS
+    ),
+    overLimitWalletCount: requestedOverLimitWalletCount(normalizedQuestion)
+  };
+}
+
+function addOverLimitWalletScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (context.overLimitWalletCount !== null) {
     addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 16);
     addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
     addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 5);
     addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 5);
   }
+}
 
-  if (hasExplicitArchitectureContext) {
+function addArchitectureScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (context.hasExplicitArchitectureContext) {
     addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
     addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 4);
   }
 
   if (
-    (hasArchitectureContext && hasWalletContext) ||
-    (hasExplicitArchitectureContext && hasWalletCheckContext)
+    (context.hasArchitectureContext && context.hasWalletContext) ||
+    (context.hasExplicitArchitectureContext && context.hasWalletCheckContext)
   ) {
     addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
     addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 5);
-    addRoutedIdScore(scores, WALLET_CHECKER_ID, hasWalletCheckContext ? 10 : 4);
+    addRoutedIdScore(
+      scores,
+      WALLET_CHECKER_ID,
+      context.hasWalletCheckContext ? 10 : 4
+    );
     addRoutedPathScore(
       scores,
       WALLET_CHECKER_PATH,
-      hasWalletCheckContext ? 7 : 3
+      context.hasWalletCheckContext ? 7 : 3
     );
   }
+}
 
+function addWalletCheckerScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
   if (
-    hasWalletCheckContext &&
-    (hasDelegationContext || hasConsolidationContext)
+    context.hasWalletCheckContext &&
+    (context.hasDelegationContext || context.hasConsolidationContext)
   ) {
     addRoutedIdScore(scores, WALLET_CHECKER_ID, 10);
     addRoutedPathScore(scores, WALLET_CHECKER_PATH, 7);
   }
+}
 
-  if (hasConsolidationContext && (hasWalletContext || hasArchitectureContext)) {
+function addConsolidationScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (
+    context.hasConsolidationContext &&
+    (context.hasWalletContext || context.hasArchitectureContext)
+  ) {
     addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 16);
     addRoutedPathScore(scores, REGISTER_CONSOLIDATION_PATH, 15);
     addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 9);
     addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 5);
     addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 4);
   }
+}
 
-  if (matchesAny(normalizedQuestion, GENESIS_SET_PATTERNS)) {
+function addNetworkDefinitionScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (matchesAny(context.normalizedQuestion, GENESIS_SET_PATTERNS)) {
     addRoutedIdScore(scores, GENESIS_SETS_ID, 12);
     addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 4);
     addRoutedIdScore(scores, NETWORK_TDH_ID, 3);
   }
 
-  if (matchesAny(normalizedQuestion, NAKAMOTO_SET_PATTERNS)) {
+  if (matchesAny(context.normalizedQuestion, NAKAMOTO_SET_PATTERNS)) {
     addRoutedIdScore(scores, NAKAMOTO_SET_ID, 12);
     addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
   }
 
-  if (matchesAny(normalizedQuestion, MEME_SET_MINUS_PATTERNS)) {
+  if (matchesAny(context.normalizedQuestion, MEME_SET_MINUS_PATTERNS)) {
     addRoutedIdScore(scores, MEME_SETS_MINUS_ID, 12);
     addRoutedIdScore(scores, MEME_SETS_ID, 4);
     addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 3);
-  } else if (matchesAny(normalizedQuestion, MEME_SET_PATTERNS)) {
+  } else if (matchesAny(context.normalizedQuestion, MEME_SET_PATTERNS)) {
     addRoutedIdScore(scores, MEME_SETS_ID, 12);
     addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 3);
   }
+}
 
-  if (matchesAny(normalizedQuestion, TDH_UNWEIGHTED_PATTERNS)) {
+function addTdhDefinitionScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (matchesAny(context.normalizedQuestion, TDH_UNWEIGHTED_PATTERNS)) {
     addRoutedIdScore(scores, TDH_UNWEIGHTED_ID, 12);
     addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
   }
 
-  if (matchesAny(normalizedQuestion, TDH_UNBOOSTED_PATTERNS)) {
+  if (matchesAny(context.normalizedQuestion, TDH_UNBOOSTED_PATTERNS)) {
     addRoutedIdScore(scores, TDH_UNBOOSTED_ID, 12);
     addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
   }
+}
+
+function routedRecordScores(
+  normalizedQuestion: string
+): ReadonlyMap<string, number> {
+  const context = routedQuestionContext(normalizedQuestion);
+  const scores = new Map<string, number>();
+
+  addOverLimitWalletScores(scores, context);
+  addArchitectureScores(scores, context);
+  addWalletCheckerScores(scores, context);
+  addConsolidationScores(scores, context);
+  addNetworkDefinitionScores(scores, context);
+  addTdhDefinitionScores(scores, context);
 
   return scores;
 }
