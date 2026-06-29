@@ -41,7 +41,10 @@ import {
 } from '@/api/drops/drop-polls.api.service';
 import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
-import { waveScoreService } from '@/api/waves/wave-score.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '@/api/waves/wave-score.service';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -103,7 +106,11 @@ export class DropCreationApiService {
           );
         }
       );
-    await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort(ctx);
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      [model.wave_id],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      ctx
+    );
     await invalidateWaveUnreadCacheForWave(model.wave_id);
     void this.sendPendingPushNotifications({
       dropId: drop.id,
@@ -192,10 +199,14 @@ export class DropCreationApiService {
       }
     );
     if (deleteResponse) {
-      await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort({
-        timer,
-        authenticationContext
-      });
+      await waveScoreService.requestWaveScoreRefreshBestEffort(
+        [deleteResponse.wave_id],
+        WaveScoreDirtyRefreshReason.DROP_DELETED,
+        {
+          timer,
+          authenticationContext
+        }
+      );
       await invalidateWaveUnreadCacheForWave(deleteResponse.wave_id);
       await this.wsListenersNotifier.notifyAboutDropDelete(
         {
@@ -322,7 +333,11 @@ export class DropCreationApiService {
           };
         }
       );
-    await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort(ctx);
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      [model.wave_id],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      ctx
+    );
     await invalidateWaveUnreadCacheForWave(model.wave_id);
     void this.sendPendingPushNotifications({
       dropId: apiDrop.id,

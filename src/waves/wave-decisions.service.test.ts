@@ -29,7 +29,7 @@ describe('WaveDecisionsService', () => {
       .spyOn(pushNotificationsService, 'sendIdentityPushNotifications')
       .mockResolvedValue(undefined);
     jest
-      .spyOn(waveScoreService, 'enqueueDirtyWaveScoreRefreshBestEffort')
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
     jest.spyOn(wavesApiDb, 'getWavesOutcomes').mockResolvedValue({});
     jest

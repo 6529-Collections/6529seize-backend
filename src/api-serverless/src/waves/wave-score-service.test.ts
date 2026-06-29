@@ -344,8 +344,8 @@ describe('WaveScoreService', () => {
 
     expect(dirtySelectParams).toEqual([
       { batchSize: 1 },
-      { batchSize: 1, excludedWaveIds: ['wave-1'] },
-      { batchSize: 1, excludedWaveIds: ['wave-1', 'wave-2'] }
+      { batchSize: 1, excludedWaveId0: 'wave-1' },
+      { batchSize: 1, excludedWaveId0: 'wave-1', excludedWaveId1: 'wave-2' }
     ]);
     expect(service.refreshWaveScoresForWaveIds).toHaveBeenNthCalledWith(
       1,

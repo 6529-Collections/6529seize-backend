@@ -8,7 +8,10 @@ import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { MEMES_DEPLOYER } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
-import { waveScoreService } from '@/api/waves/wave-score.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '@/api/waves/wave-score.service';
 
 export class DeployerDropper {
   constructor(private readonly createDrop: CreateOrUpdateDropUseCase) {}
@@ -29,7 +32,11 @@ export class DeployerDropper {
           }
         );
       if (params.waves.length) {
-        await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort(ctx);
+        await waveScoreService.requestWaveScoreRefreshBestEffort(
+          params.waves,
+          WaveScoreDirtyRefreshReason.DROP_CHANGED,
+          ctx
+        );
       }
       await sendIdentityPushNotifications(pendingPushNotificationIds);
       return pendingPushNotificationIds;

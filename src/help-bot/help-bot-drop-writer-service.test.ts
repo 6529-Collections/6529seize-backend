@@ -8,6 +8,7 @@ describe('HelpBotDropWriterService', () => {
     const createOrUpdateDrop = {
       execute: jest.fn().mockResolvedValue({
         drop_id: 'reply-drop',
+        wave_id: 'wave-1',
         pending_push_notification_ids: []
       })
     };
@@ -25,7 +26,7 @@ describe('HelpBotDropWriterService', () => {
       notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
     };
     const enqueueDirtyWaveScoreRefreshSpy = jest
-      .spyOn(waveScoreService, 'enqueueDirtyWaveScoreRefreshBestEffort')
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
     const service = new HelpBotDropWriterService(
       createOrUpdateDrop as never,
@@ -108,6 +109,10 @@ describe('HelpBotDropWriterService', () => {
     ).toBeLessThan(
       wsListenersNotifier.notifyAboutDropUpdate.mock.invocationCallOrder[0]
     );
-    expect(enqueueDirtyWaveScoreRefreshSpy).toHaveBeenCalledWith({});
+    expect(enqueueDirtyWaveScoreRefreshSpy).toHaveBeenCalledWith(
+      ['wave-1'],
+      'DROP_CHANGED',
+      {}
+    );
   });
 });

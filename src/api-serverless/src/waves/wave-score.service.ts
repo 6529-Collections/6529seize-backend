@@ -448,13 +448,22 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     excludedWaveIds: string[],
     ctx: RequestContext
   ): Promise<DirtyWaveScoreRefreshRequestRow[]> {
-    const params: Record<string, string[] | number> = { batchSize };
+    const excludedWaveIdParams = excludedWaveIds.reduce<Record<string, string>>(
+      (acc, waveId, i) => {
+        acc[`excludedWaveId${i}`] = waveId;
+        return acc;
+      },
+      {}
+    );
+    const params: Record<string, string | number> = {
+      batchSize,
+      ...excludedWaveIdParams
+    };
     const excludedWaveIdsClause = excludedWaveIds.length
-      ? `where wave_id not in (:excludedWaveIds)`
+      ? `where wave_id not in (${excludedWaveIds
+          .map((_, i) => `:excludedWaveId${i}`)
+          .join(', ')})`
       : '';
-    if (excludedWaveIds.length) {
-      params.excludedWaveIds = excludedWaveIds;
-    }
     return this.db.execute<DirtyWaveScoreRefreshRequestRow>(
       `
       select wave_id, dirty_at
