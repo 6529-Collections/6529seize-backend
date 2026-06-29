@@ -16,11 +16,15 @@ const RECORD: HelpBotKnowledgeRecord = {
 };
 
 describe('HelpBotBedrockRenderer', () => {
-  function readPrompt(send: jest.Mock): string {
+  function readBody(send: jest.Mock): Record<string, unknown> {
     const command = send.mock.calls[0][0] as {
       readonly input?: { readonly body?: string };
     };
-    const body = JSON.parse(command.input?.body ?? '{}') as {
+    return JSON.parse(command.input?.body ?? '{}') as Record<string, unknown>;
+  }
+
+  function readPrompt(send: jest.Mock): string {
+    const body = readBody(send) as {
       readonly messages?: Array<{
         readonly content?: Array<{ readonly text?: string }>;
       }>;
@@ -51,6 +55,33 @@ describe('HelpBotBedrockRenderer', () => {
     ).resolves.toBe('TDH is Total Days Held.');
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][1]?.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('sends Anthropic Bedrock payloads without top_p', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [{ type: 'text', text: 'TDH is Total Days Held.' }]
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await renderer.renderAnswer({
+      question: 'what is tdh?',
+      record: RECORD,
+      canonicalUrl: 'https://6529.io/network/tdh'
+    });
+
+    expect(readBody(send)).toMatchObject({
+      temperature: 0.2,
+      top_k: 20
+    });
+    expect(readBody(send)).not.toHaveProperty('top_p');
   });
 
   it('includes bounded tone guidance in natural answer prompts', async () => {

@@ -138,7 +138,6 @@ function buildInvokeModelInput(
         }
       ],
       temperature: 0.2,
-      top_p: 0.5,
       top_k: 20
     })
   };
