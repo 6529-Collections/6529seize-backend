@@ -197,6 +197,109 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('does not echo route metadata facts as answer prose', async () => {
+    const answer = await answerer().answer({
+      question: 'what is a gradient?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('gradients.collection');
+      expect(answer.answer).toContain(
+        '6529 Gradient collection is covered on this 6529 page.'
+      );
+      expect(answer.answer).toContain(
+        '[6529 Gradient](https://6529.io/6529-gradient)'
+      );
+      expect(answer.answer).not.toContain('lives at /6529-gradient');
+    }
+  });
+
+  it('includes related help-index matches in deterministic knowledge answers', async () => {
+    const index: HelpBotKnowledgeIndex = {
+      ...TEST_INDEX,
+      records: [
+        {
+          id: 'delegation.wallet-architecture',
+          kind: 'workflow',
+          title: 'Wallet Architecture',
+          linkLabel: 'Wallet Architecture',
+          canonicalPath: '/delegation/wallet-architecture',
+          aliases: ['wallet architecture', '4 wallet architecture'],
+          keywords: ['wallet', 'architecture', 'vault'],
+          facts: [
+            'Separate vault, transaction, and minting wallets.',
+            'Keep the vault wallet cold.',
+            'Use a transaction wallet for active actions.',
+            'Use a minting wallet for mint-specific flows.',
+            'Use delegation to connect the wallets.',
+            'Review wallet architecture before changing roles.'
+          ],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        },
+        {
+          id: 'delegation.faq',
+          kind: 'route',
+          title: 'Delegation FAQ',
+          linkLabel: 'Delegation FAQ',
+          canonicalPath: '/delegation/delegation-faq',
+          aliases: ['delegation docs'],
+          keywords: ['delegation', 'docs', 'wallet'],
+          facts: [
+            'The Delegation FAQ has setup guides.',
+            'The Delegation FAQ covers consolidation registration.',
+            'The Delegation FAQ covers delegation manager flows.'
+          ],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        }
+      ]
+    };
+
+    const answer = await answerer(
+      undefined,
+      undefined,
+      undefined,
+      index
+    ).answer({
+      question: 'how do i set up a 4 wallet architecture with delegation docs',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('delegation.wallet-architecture');
+      expect(answer.answer).toContain(
+        'Separate vault, transaction, and minting wallets.'
+      );
+      expect(answer.answer).toContain(
+        'Delegation FAQ: The Delegation FAQ has setup guides.'
+      );
+      expect(answer.answer).toContain(
+        'Delegation FAQ: The Delegation FAQ covers consolidation registration.'
+      );
+      expect(answer.answer).not.toContain(
+        'Delegation FAQ: The Delegation FAQ covers delegation manager flows.'
+      );
+      expect(answer.record.facts).toHaveLength(8);
+      expect(answer.answer).toContain(
+        '[Wallet Architecture](https://6529.io/delegation/wallet-architecture)'
+      );
+      expect(answer.answer).toContain(
+        '[Delegation FAQ](https://6529.io/delegation/delegation-faq)'
+      );
+      expect(answer.record.aliases).toEqual([
+        'wallet architecture',
+        '4 wallet architecture'
+      ]);
+      expect(answer.record.aliases).not.toContain('delegation docs');
+    }
+  });
+
   it('adds a weak-match caveat and review flag when the match score is uncertain', async () => {
     const answer = await answerer(undefined, undefined, undefined).answer({
       question: 'weakbot card',
@@ -826,6 +929,56 @@ describe('HelpBotAnswerer', () => {
     if (answer.type === 'ANSWER') {
       expect(answer.answer).toBe(
         'TDH is Total Days Held. See [the TDH page](https://6529.io/network/tdh).'
+      );
+    }
+  });
+
+  it('does not repeat rendered source links in the more-info footer', async () => {
+    const index: HelpBotKnowledgeIndex = {
+      ...TEST_INDEX,
+      records: [
+        {
+          id: 'delegation.wallet-architecture',
+          kind: 'workflow',
+          title: 'Wallet Architecture',
+          linkLabel: 'Wallet Architecture',
+          canonicalPath: '/delegation/wallet-architecture',
+          aliases: ['wallet architecture'],
+          keywords: ['wallet', 'architecture'],
+          facts: ['Wallet architecture separates wallet roles.'],
+          relatedPaths: [
+            '/delegation/wallet-checker',
+            '/delegation/consolidation-use-cases'
+          ],
+          tags: ['delegation'],
+          sourceRefs: []
+        }
+      ]
+    };
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          'Check [Wallet Architecture](https://6529.io/delegation/wallet-architecture) first.'
+        )
+    };
+
+    const answer = await answerer(renderer, undefined, undefined, index).answer(
+      {
+        question: 'what is wallet architecture?',
+        baseUrl: BASE_URL
+      }
+    );
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(
+        answer.answer.match(
+          /https:\/\/6529\.io\/delegation\/wallet-architecture/g
+        )
+      ).toHaveLength(1);
+      expect(answer.answer).toBe(
+        'Check [Wallet Architecture](https://6529.io/delegation/wallet-architecture) first.\n\nMore info: [Wallet Checker](https://6529.io/delegation/wallet-checker) | [Consolidation Use Cases](https://6529.io/delegation/consolidation-use-cases)'
       );
     }
   });
