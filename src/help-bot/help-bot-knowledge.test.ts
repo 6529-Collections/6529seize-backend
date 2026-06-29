@@ -95,6 +95,151 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     ]);
   });
 
+  it('matches pluralized product terms against singular aliases', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'network.definitions',
+            title: 'Network Definitions',
+            canonical_path: '/network/definitions',
+            aliases: ['genesis set'],
+            keywords: ['genesis', 'set'],
+            facts: ['Genesis Set is a TDH boost definition.']
+          }
+        ]
+      })
+    );
+
+    const match = await source.findMatch('what are Genesis Sets?');
+
+    expect(match?.record.id).toBe('network.definitions');
+  });
+
+  it('does not generate unsafe trailing-s singular variants', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'debug.bad-stem',
+            title: 'Bad Stem',
+            canonical_path: '/debug/bad-stem',
+            aliases: ['statu'],
+            keywords: ['statu'],
+            facts: ['This record should not match status.']
+          }
+        ]
+      })
+    );
+
+    const match = await source.findMatch('what is status?');
+
+    expect(match).toBeNull();
+  });
+
+  it('routes wallet consolidation questions to consolidation records', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.wallet-architecture',
+            title: 'Wallet Architecture',
+            canonical_path: '/delegation/wallet-architecture',
+            aliases: ['wallet architecture'],
+            keywords: ['wallet', 'architecture', 'vault'],
+            facts: ['Separate vault, transaction, and minting wallets.']
+          },
+          {
+            id: 'delegation.register-consolidation-doc',
+            title: 'Register Consolidation Guide',
+            canonical_path: '/delegation/delegation-faq/register-consolidation',
+            aliases: ['register consolidation guide'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Register Consolidation connects wallets you control.']
+          },
+          {
+            id: 'delegation.register-consolidation',
+            title: 'Register Consolidation',
+            canonical_path: '/delegation/register-consolidation',
+            aliases: ['register consolidation'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Use the Register Consolidation form.']
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            title: 'Consolidation Use Cases',
+            canonical_path: '/delegation/consolidation-use-cases',
+            aliases: ['consolidation use cases'],
+            keywords: ['consolidation', 'wallet'],
+            facts: ['Consolidation covers multi-wallet patterns.']
+          }
+        ]
+      })
+    );
+
+    const matches = await source.findMatches(
+      "i have four wallets i'd like to consolidate. how do i do that?",
+      4
+    );
+
+    const matchIds = matches.map((match) => match.record.id);
+    expect(matchIds[0]).toBe('delegation.register-consolidation-doc');
+    expect(matchIds[1]).toBe('delegation.register-consolidation');
+    expect(new Set(matchIds)).toEqual(
+      new Set([
+        'delegation.register-consolidation-doc',
+        'delegation.register-consolidation',
+        'delegation.wallet-architecture',
+        'delegation.consolidation-use-cases'
+      ])
+    );
+  });
+
+  it('does not route generic transaction display questions as wallet architecture', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.wallet-architecture',
+            title: 'Wallet Architecture',
+            canonical_path: '/delegation/wallet-architecture',
+            aliases: ['wallet architecture'],
+            keywords: ['transaction'],
+            facts: ['Separate vault, transaction, and minting wallets.']
+          },
+          {
+            id: 'delegation.wallet-checker',
+            title: 'Wallet Checker',
+            canonical_path: '/delegation/wallet-checker',
+            aliases: ['wallet checker'],
+            keywords: ['wallet'],
+            facts: ['Wallet Checker reviews wallet setup.']
+          }
+        ]
+      })
+    );
+
+    const match = await source.findMatch('show me my transaction history');
+
+    expect(match).toBeNull();
+  });
+
   it('throws and negative-caches when the frontend help index cannot be loaded', async () => {
     const fetcher = jest
       .fn()
