@@ -334,6 +334,19 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toEqual([DropGroupMention.ALL]);
   });
 
+  it('keeps ALL group mention metadata for line-start @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'first line\n@all on the next line'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
   it('does not treat embedded @all text as an ALL group mention', () => {
     expect(
       normalizeDropGroupMentions({
@@ -343,6 +356,15 @@ describe('CreateOrUpdateDropUseCase', () => {
             content: 'email@example.com @alliance hello@all @all_again'
           }
         ]
+      })
+    ).toEqual([]);
+  });
+
+  it('strips ALL group mention metadata when there are no drop parts', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: []
       })
     ).toEqual([]);
   });
@@ -384,6 +406,27 @@ describe('CreateOrUpdateDropUseCase', () => {
         ]
       })
     ).toEqual([]);
+  });
+
+  it('normalizes group mention metadata idempotently', () => {
+    const specificGroup = 'specific-group' as DropGroupMention;
+    const parts = [{ content: 'hello @all' }];
+    const once = normalizeDropGroupMentions({
+      mentionedGroups: [
+        specificGroup,
+        DropGroupMention.ALL,
+        specificGroup,
+        DropGroupMention.ALL
+      ],
+      parts
+    });
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: once,
+        parts
+      })
+    ).toEqual(once);
   });
 
   it('allows wave admins to use group mentions', () => {
