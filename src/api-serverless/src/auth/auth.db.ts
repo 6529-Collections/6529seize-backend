@@ -18,8 +18,10 @@ import {
 } from '../../../entities/IWalletAuthSession';
 import { WalletConnectionShareEntity } from '../../../entities/IWalletConnectionShare';
 
+type RefreshTokenWalletAuthClientType = Exclude<WalletAuthClientType, 'web'>;
+
 const CLIENT_TYPE_WEB: WalletAuthClientType = 'web';
-const CLIENT_TYPE_NATIVE: WalletAuthClientType = 'native';
+const CLIENT_TYPE_NATIVE: RefreshTokenWalletAuthClientType = 'native';
 
 type AuthDbConnection = ConnectionWrapper<any>;
 
@@ -165,7 +167,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   async getActiveNativeSessionByRefreshHash(
     address: string,
     refreshTokenHash: string,
-    now: Date
+    now: Date,
+    clientType: RefreshTokenWalletAuthClientType = CLIENT_TYPE_NATIVE
   ): Promise<WalletAuthSessionEntity | null> {
     return this.db.oneOrNull<WalletAuthSessionEntity>(
       `select * from ${WALLET_AUTH_SESSIONS_TABLE}
@@ -174,7 +177,7 @@ export class AuthDb extends LazyDbAccessCompatibleService {
          and refresh_token_hash = :refreshTokenHash
          and revoked_at is null
          and expires_at > :now`,
-      { address, refreshTokenHash, now, clientType: CLIENT_TYPE_NATIVE }
+      { address, refreshTokenHash, now, clientType }
     );
   }
 
@@ -209,7 +212,9 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     readonly nextRefreshTokenHash: string;
     readonly expiresAt: Date;
     readonly now: Date;
+    readonly clientType?: RefreshTokenWalletAuthClientType;
   }): Promise<WalletAuthSessionEntity | null> {
+    const clientType = params.clientType ?? CLIENT_TYPE_NATIVE;
     const result = await this.db.execute(
       `update ${WALLET_AUTH_SESSIONS_TABLE}
        set refresh_token_hash = :nextRefreshTokenHash,
@@ -220,7 +225,7 @@ export class AuthDb extends LazyDbAccessCompatibleService {
          and refresh_token_hash = :previousRefreshTokenHash
          and revoked_at is null
          and expires_at > :now`,
-      { ...params, clientType: CLIENT_TYPE_NATIVE }
+      { ...params, clientType }
     );
     if (this.db.getAffectedRows(result) !== 1) {
       return null;

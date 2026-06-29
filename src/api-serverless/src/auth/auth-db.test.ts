@@ -168,6 +168,60 @@ describe('AuthDb', () => {
     );
   });
 
+  it('filters refresh-token wallet auth sessions by the requested client type', async () => {
+    const { authDb, execute, oneOrNull } = createExecutor();
+    const now = new Date();
+    oneOrNull.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 'session-1',
+      address: '0xabc',
+      role: null,
+      client_type: 'desktop',
+      secret_hash: null,
+      refresh_token_hash: 'new-hash',
+      user_agent_hash: null,
+      signature_domain: null,
+      client_origin: null,
+      created_at: new Date(),
+      last_used_at: now,
+      expires_at: now,
+      revoked_at: null
+    });
+
+    await authDb.getActiveNativeSessionByRefreshHash(
+      '0xabc',
+      'refresh-hash',
+      now,
+      'desktop'
+    );
+
+    expect(oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining('client_type = :clientType'),
+      {
+        address: '0xabc',
+        refreshTokenHash: 'refresh-hash',
+        now,
+        clientType: 'desktop'
+      }
+    );
+
+    await authDb.rotateNativeSessionRefreshToken({
+      sessionId: 'session-1',
+      previousRefreshTokenHash: 'old-hash',
+      nextRefreshTokenHash: 'new-hash',
+      expiresAt: now,
+      now,
+      clientType: 'desktop'
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('client_type = :clientType'),
+      expect.objectContaining({
+        sessionId: 'session-1',
+        clientType: 'desktop'
+      })
+    );
+  });
+
   it('reads newly written connection shares from the write pool', async () => {
     const { authDb, oneOrNull } = createExecutor();
     oneOrNull.mockResolvedValueOnce({

@@ -72,8 +72,11 @@ import type {
   ParsedStructuredWalletSignatureMessage,
   StructuredWalletSignatureSessionType
 } from '../wallet-signatures/structured-wallet-signatures';
+import type { WalletAuthClientType } from '@/entities/IWalletAuthSession';
 
 const router = asyncRouter();
+
+type RefreshTokenSessionClientType = Exclude<WalletAuthClientType, 'web'>;
 
 interface NonceQueryRequest {
   signer_address: string;
@@ -82,7 +85,7 @@ interface NonceQueryRequest {
 
 interface SessionNonceQueryRequest {
   signer_address: string;
-  client_type: 'web' | 'native';
+  client_type: WalletAuthClientType;
   chain_id: number;
 }
 
@@ -234,12 +237,13 @@ router.post(
         loginRequest.role ?? null,
         timer
       );
-      if (loginRequest.client_type === 'native') {
-        assertSessionLoginSignatureType(nonce, 'native');
+      if (isRefreshTokenSessionClientType(loginRequest.client_type)) {
+        assertSessionLoginSignatureType(nonce, loginRequest.client_type);
         const created = await createNativeSession({
           address: signingAddress,
           role: chosenRole,
-          userAgent: getUserAgent(req)
+          userAgent: getUserAgent(req),
+          clientType: loginRequest.client_type
         });
         res.status(201).send(created.response);
         return;
@@ -285,14 +289,15 @@ router.post(
   ) {
     const body = req.body ?? {};
     const clientType = getSessionClientType(body);
-    if (clientType === 'native') {
+    if (isRefreshTokenSessionClientType(clientType)) {
       const refreshRequest = getValidatedByJoiOrThrow(
         body,
         SessionRefreshNativeRequestSchema
       );
       const refreshed = await refreshNativeSession({
         address: refreshRequest.client_address,
-        nativeRefreshToken: refreshRequest.native_refresh_token
+        nativeRefreshToken: refreshRequest.native_refresh_token,
+        clientType
       });
       if (!refreshed) {
         throw new UnauthorisedException('Invalid session');
@@ -348,7 +353,7 @@ router.post(
   ) {
     const body = req.body ?? {};
     const clientType = getSessionClientType(body);
-    if (clientType === 'native') {
+    if (isRefreshTokenSessionClientType(clientType)) {
       const logoutRequest = getValidatedByJoiOrThrow(
         body,
         SessionLogoutNativeRequestSchema
@@ -356,7 +361,8 @@ router.post(
       await logoutNativeSession({
         address: logoutRequest.client_address,
         nativeRefreshToken: logoutRequest.native_refresh_token,
-        allSessions: logoutRequest.all_sessions ?? false
+        allSessions: logoutRequest.all_sessions ?? false,
+        clientType
       });
       res.status(204).send();
       return;
@@ -514,14 +520,24 @@ function assertConnectionSharingEnabled(): void {
 
 function getSessionClientType(body: {
   readonly client_type?: unknown;
-}): 'web' | 'native' {
+}): WalletAuthClientType {
   if (body.client_type == null) {
     return 'web';
   }
-  if (body.client_type === 'web' || body.client_type === 'native') {
+  if (
+    body.client_type === 'web' ||
+    body.client_type === 'native' ||
+    body.client_type === 'desktop'
+  ) {
     return body.client_type;
   }
-  throw new BadRequestException('client_type must be either web or native');
+  throw new BadRequestException('client_type must be web, native, or desktop');
+}
+
+function isRefreshTokenSessionClientType(
+  clientType: WalletAuthClientType
+): clientType is RefreshTokenSessionClientType {
+  return clientType === 'native' || clientType === 'desktop';
 }
 
 async function resolveAuthenticatedRole(
@@ -685,10 +701,9 @@ function getAuthWalletChainId(): number {
 
 function assertSessionLoginSignatureType(
   nonce: string,
-  clientType: 'web' | 'native'
+  clientType: WalletAuthClientType
 ): ParsedStructuredWalletSignatureMessage {
-  const expectedSessionType =
-    clientType === 'web' ? 'first_party_web' : 'native';
+  const expectedSessionType = getStructuredSessionTypeForClientType(clientType);
   if (!isStructuredWalletSignatureMessage(nonce)) {
     throw new BadRequestException(
       'Wallet auth sessions require a structured signature'
@@ -701,6 +716,15 @@ function assertSessionLoginSignatureType(
     );
   }
   return parsedMessage;
+}
+
+function getStructuredSessionTypeForClientType(
+  clientType: WalletAuthClientType
+): StructuredWalletSignatureSessionType {
+  if (clientType === 'web') {
+    return 'first_party_web';
+  }
+  return clientType;
 }
 
 function getUserAgent(req: Request<any, any, any, any, any>): string | null {
@@ -760,11 +784,11 @@ function resolveSessionNonceContext(
   req: Request<any, any, any, any, any>,
   nonceRequest: SessionNonceQueryRequest
 ): ResolvedSessionNonceContext {
-  if (nonceRequest.client_type === 'native') {
+  if (isRefreshTokenSessionClientType(nonceRequest.client_type)) {
     return {
-      domain: 'native',
+      domain: nonceRequest.client_type,
       clientOrigin: null,
-      sessionType: 'native'
+      sessionType: nonceRequest.client_type
     };
   }
   const requestOrigin = getNormalizedRequestOrigin(req);
@@ -879,11 +903,14 @@ const NonceQueryRequestSchema: Joi.ObjectSchema<NonceQueryRequest> =
 const SessionNonceQueryRequestSchema: Joi.ObjectSchema<SessionNonceQueryRequest> =
   Joi.object<SessionNonceQueryRequest>({
     signer_address: Joi.string().required(),
-    client_type: Joi.string().valid('web', 'native').optional().default('web'),
+    client_type: Joi.string()
+      .valid('web', 'native', 'desktop')
+      .optional()
+      .default('web'),
     chain_id: Joi.number().integer().min(1).optional().default(1)
   }).unknown(false);
 
-const ClientTypeSchema = Joi.string().valid('web', 'native');
+const ClientTypeSchema = Joi.string().valid('web', 'native', 'desktop');
 
 const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
   Joi.object<ApiSessionLoginRequest>({
@@ -907,7 +934,7 @@ const SessionRefreshWebRequestSchema: Joi.ObjectSchema<ApiSessionRefreshWebReque
 
 const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativeRequest> =
   Joi.object<ApiSessionRefreshNativeRequest>({
-    client_type: Joi.string().valid('native').required(),
+    client_type: Joi.string().valid('native', 'desktop').required(),
     client_address: Joi.string().required(),
     native_refresh_token: Joi.string().hex().length(128).required()
   }).unknown(false);
@@ -921,7 +948,7 @@ const SessionLogoutWebRequestSchema: Joi.ObjectSchema<ApiSessionLogoutWebRequest
 
 const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeRequest> =
   Joi.object<ApiSessionLogoutNativeRequest>({
-    client_type: Joi.string().valid('native').required(),
+    client_type: Joi.string().valid('native', 'desktop').required(),
     client_address: Joi.string().required(),
     native_refresh_token: Joi.string().hex().length(128).required(),
     all_sessions: Joi.boolean().optional().default(false)
@@ -929,7 +956,7 @@ const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeR
 
 const CreateConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateConnectionShareRequest> =
   Joi.object<ApiCreateConnectionShareRequest>({
-    target_client_type: Joi.string().valid('native').required(),
+    target_client_type: Joi.string().valid('native', 'desktop').required(),
     role: Joi.string().optional().allow(null)
   }).unknown(false);
 
@@ -941,7 +968,7 @@ const CreateLegacyDesktopConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreat
 const RedeemConnectionShareRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionShareRequest> =
   Joi.object<ApiRedeemConnectionShareRequest>({
     connection_share_code: Joi.string().hex().length(64).required(),
-    target_client_type: Joi.string().valid('native').required()
+    target_client_type: Joi.string().valid('native', 'desktop').required()
   }).unknown(false);
 
 interface ApiLoginResponse {

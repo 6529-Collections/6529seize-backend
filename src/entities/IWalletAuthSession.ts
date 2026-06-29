@@ -1,7 +1,7 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { WALLET_AUTH_SESSIONS_TABLE } from '@/constants';
 
-export type WalletAuthClientType = 'web' | 'native';
+export type WalletAuthClientType = 'web' | 'native' | 'desktop';
 
 @Entity(WALLET_AUTH_SESSIONS_TABLE)
 export class WalletAuthSessionEntity {
