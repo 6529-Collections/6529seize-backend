@@ -27,6 +27,16 @@ functions:
             Fn::GetAtt:
               - WaveScoreRefreshStartQueue
               - Arn
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - WaveScoreDirtyRefreshQueue
+              - Arn
+      - schedule:
+          rate: rate(1 minute)
+          input:
+            mode: 'DIRTY'
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
@@ -49,6 +59,23 @@ resources:
         QueueName: 'wave-score-refresh-start.fifo'
         FifoQueue: true
         VisibilityTimeout: 1000
+        ContentBasedDeduplication: true
+    WaveScoreDirtyRefreshQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'wave-score-refresh-dirty.fifo'
+        FifoQueue: true
+        VisibilityTimeout: 1000
+        ContentBasedDeduplication: true
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [WaveScoreDirtyRefreshDLQ, Arn]
+          maxReceiveCount: 5
+    WaveScoreDirtyRefreshDLQ:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'wave-score-refresh-dirty-dlq.fifo'
+        FifoQueue: true
         ContentBasedDeduplication: true
     WaveScoreRefreshTDHCalculatedSubscription:
       Type: AWS::SNS::Subscription
@@ -79,6 +106,21 @@ resources:
                 - sqs:ChangeMessageVisibility
               Resource:
                 - !GetAtt WaveScoreRefreshStartQueue.Arn
+    WaveScoreDirtyRefreshQueuePolicy:
+      Type: 'AWS::SQS::QueuePolicy'
+      Properties:
+        Queues:
+          - Ref: 'WaveScoreDirtyRefreshQueue'
+        PolicyDocument:
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:GetQueueUrl
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt WaveScoreDirtyRefreshQueue.Arn
     WaveScoreRefreshLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       DependsOn:

@@ -1,4 +1,5 @@
 import { DropType } from '@/entities/IDrop';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 import { HelpBotDropWriterService } from './help-bot-drop-writer.service';
 
 describe('HelpBotDropWriterService', () => {
@@ -23,6 +24,9 @@ describe('HelpBotDropWriterService', () => {
     const wsListenersNotifier = {
       notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
     };
+    const enqueueDirtyWaveScoreRefreshSpy = jest
+      .spyOn(waveScoreService, 'enqueueDirtyWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
     const service = new HelpBotDropWriterService(
       createOrUpdateDrop as never,
       dropsDb as never,
@@ -104,5 +108,6 @@ describe('HelpBotDropWriterService', () => {
     ).toBeLessThan(
       wsListenersNotifier.notifyAboutDropUpdate.mock.invocationCallOrder[0]
     );
+    expect(enqueueDirtyWaveScoreRefreshSpy).toHaveBeenCalledWith({});
   });
 });

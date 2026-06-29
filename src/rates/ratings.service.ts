@@ -5,7 +5,10 @@ import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBu
 import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
-import { waveScoreService } from '../api-serverless/src/waves/wave-score.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '../api-serverless/src/waves/wave-score.service';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import {
@@ -665,8 +668,9 @@ export class RatingsService {
       });
     }
     if (waveRepTargetsToRefresh.size > 0) {
-      await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
-        Array.from(waveRepTargetsToRefresh)
+      await waveScoreService.requestWaveScoreRefreshBestEffort(
+        Array.from(waveRepTargetsToRefresh),
+        WaveScoreDirtyRefreshReason.WAVE_REP_CHANGED
       );
     }
     this.logger.info(`Reduced rates for profile ${raterProfileId}`);

@@ -5,6 +5,7 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   RATINGS_TABLE,
   WAVE_METRICS_TABLE,
+  WAVE_SCORE_REFRESH_REQUESTS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { assertUnreachable } from '@/assertions';
@@ -14,6 +15,9 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
+import { DbPoolName } from '@/db-query.options';
+import { sqs } from '@/sqs';
+import { randomUUID } from 'crypto';
 import {
   DEMOTED_MIN_VISIBILITY_SCORE,
   EXPLORATION_NEUTRAL_MIN_VISIBILITY_SCORE,
@@ -37,6 +41,22 @@ import {
   WAVE_SCORE_VISIBILITY_COMPONENT_WEIGHTS
 } from './wave-score.constants';
 
+export const WAVE_SCORE_DIRTY_REFRESH_QUEUE_NAME =
+  'wave-score-refresh-dirty.fifo';
+export const WAVE_SCORE_DIRTY_REFRESH_MESSAGE_GROUP_ID =
+  'wave-score-refresh-dirty';
+
+export const WaveScoreDirtyRefreshReason = {
+  DROP_CHANGED: 'DROP_CHANGED',
+  DROP_DELETED: 'DROP_DELETED',
+  WAVE_REP_CHANGED: 'WAVE_REP_CHANGED',
+  WAVE_SUBSCRIPTION_CHANGED: 'WAVE_SUBSCRIPTION_CHANGED',
+  IDENTITY_CONSOLIDATION: 'IDENTITY_CONSOLIDATION'
+} as const;
+
+export type WaveScoreDirtyRefreshReason =
+  (typeof WaveScoreDirtyRefreshReason)[keyof typeof WaveScoreDirtyRefreshReason];
+
 export interface RefreshAllWaveScoresOptions {
   readonly batchSize?: number | undefined;
   readonly maxBatches?: number | undefined;
@@ -49,6 +69,17 @@ export interface RefreshAllWaveScoresResult {
   readonly hasMore: boolean;
   readonly startedAfterWaveId: string | null;
   readonly lastWaveId: string | null;
+}
+
+export interface RefreshDirtyWaveScoresOptions {
+  readonly batchSize?: number | undefined;
+  readonly maxBatches?: number | undefined;
+}
+
+export interface RefreshDirtyWaveScoresResult {
+  readonly batches: number;
+  readonly waves: number;
+  readonly hasMore: boolean;
 }
 
 interface WaveScoreInputRow {
@@ -72,6 +103,11 @@ interface WaveScoreInputRow {
   readonly trusted_subscriber_count: number | string | null;
   readonly trusted_subscription_weight: number | string | null;
   readonly cross_mentions: number | string | null;
+}
+
+interface DirtyWaveScoreRefreshRequestRow {
+  readonly wave_id: string;
+  readonly dirty_at: number | string;
 }
 
 interface WaveScoreCalculation {
@@ -154,6 +190,185 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async markWaveScoresDirty(
+    waveIds: string[],
+    reason: WaveScoreDirtyRefreshReason,
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    const distinctWaveIds = this.distinctWaveIds(waveIds);
+    if (!distinctWaveIds.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->markWaveScoresDirty`);
+    try {
+      const now = Time.currentMillis();
+      const params = distinctWaveIds.reduce<Record<string, string | number>>(
+        (acc, waveId, i) => {
+          acc[`waveId${i}`] = waveId;
+          acc[`reason${i}`] = reason;
+          acc[`dirtyAt${i}`] = now;
+          acc[`createdAt${i}`] = now;
+          acc[`updatedAt${i}`] = now;
+          return acc;
+        },
+        {}
+      );
+      await this.db.execute(
+        `
+        insert into ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}
+          (wave_id, reason, dirty_at, attempts, last_error, created_at, updated_at)
+        values ${distinctWaveIds
+          .map(
+            (_, i) =>
+              `(:waveId${i}, :reason${i}, :dirtyAt${i}, 0, null, :createdAt${i}, :updatedAt${i})`
+          )
+          .join(', ')}
+        as new
+        on duplicate key update
+          reason = new.reason,
+          dirty_at = greatest(
+            new.dirty_at,
+            ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}.dirty_at + 1
+          ),
+          attempts = 0,
+          last_error = null,
+          updated_at = new.updated_at
+        `,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->markWaveScoresDirty`);
+    }
+  }
+
+  public async markWaveScoresDirtyBestEffort(
+    waveIds: string[],
+    reason: WaveScoreDirtyRefreshReason,
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    try {
+      await this.markWaveScoresDirty(waveIds, reason, ctx);
+    } catch (error) {
+      this.logger.error(
+        `Failed to mark wave scores dirty for ${waveIds.length}`,
+        {
+          waveIds,
+          reason,
+          error
+        }
+      );
+      await this.refreshWaveScoresForWaveIdsBestEffort(waveIds, ctx);
+    }
+  }
+
+  public async requestWaveScoreRefreshBestEffort(
+    waveIds: string[],
+    reason: WaveScoreDirtyRefreshReason,
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    try {
+      await this.markWaveScoresDirty(waveIds, reason, ctx);
+    } catch (error) {
+      this.logger.error(
+        `Failed to persist dirty wave score refresh request for ${waveIds.length}`,
+        {
+          waveIds,
+          reason,
+          error
+        }
+      );
+      await this.refreshWaveScoresForWaveIdsBestEffort(waveIds, ctx);
+      return;
+    }
+    await this.enqueueDirtyWaveScoreRefreshBestEffort(ctx);
+  }
+
+  public async enqueueDirtyWaveScoreRefresh(
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    ctx.timer?.start(`${this.constructor.name}->enqueueDirtyWaveScoreRefresh`);
+    try {
+      await sqs.sendToQueueName({
+        queueName: WAVE_SCORE_DIRTY_REFRESH_QUEUE_NAME,
+        messageGroupId: WAVE_SCORE_DIRTY_REFRESH_MESSAGE_GROUP_ID,
+        message: {
+          mode: 'DIRTY',
+          requestedAt: Time.currentMillis(),
+          nonce: randomUUID()
+        }
+      });
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->enqueueDirtyWaveScoreRefresh`);
+    }
+  }
+
+  public async enqueueDirtyWaveScoreRefreshBestEffort(
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    try {
+      await this.enqueueDirtyWaveScoreRefresh(ctx);
+    } catch (error) {
+      this.logger.error(`Failed to enqueue dirty wave score refresh`, {
+        error
+      });
+    }
+  }
+
+  public async refreshDirtyWaveScores(
+    options: RefreshDirtyWaveScoresOptions = {},
+    ctx: RequestContext = {}
+  ): Promise<RefreshDirtyWaveScoresResult> {
+    const batchSize = Math.max(
+      1,
+      Math.min(
+        WAVE_SCORE_MAX_BACKFILL_BATCH_SIZE,
+        options.batchSize ?? WAVE_SCORE_DEFAULT_BACKFILL_BATCH_SIZE
+      )
+    );
+    const maxBatches = Math.max(
+      1,
+      options.maxBatches ?? Number.MAX_SAFE_INTEGER
+    );
+    let batches = 0;
+    let waves = 0;
+    let hasMore = false;
+
+    for (;;) {
+      if (batches >= maxBatches) {
+        hasMore = true;
+        break;
+      }
+      const rows = await this.getDirtyWaveScoreRefreshRequests(batchSize, ctx);
+      if (!rows.length) {
+        hasMore = false;
+        break;
+      }
+      try {
+        await this.refreshWaveScoresForWaveIds(
+          rows.map((row) => row.wave_id),
+          ctx
+        );
+        await this.deleteDirtyWaveScoreRefreshRequests(rows, ctx);
+      } catch (error) {
+        await this.recordDirtyWaveScoreRefreshFailure(rows, error, ctx);
+        throw error;
+      }
+      batches += 1;
+      waves += rows.length;
+      hasMore = rows.length === batchSize;
+      if (!hasMore) {
+        break;
+      }
+    }
+
+    return {
+      batches,
+      waves,
+      hasMore
+    };
+  }
+
   public async refreshAllWaveScores(
     options: RefreshAllWaveScoresOptions = {},
     ctx: RequestContext = {}
@@ -202,6 +417,94 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
       startedAfterWaveId,
       lastWaveId
     };
+  }
+
+  private async getDirtyWaveScoreRefreshRequests(
+    batchSize: number,
+    ctx: RequestContext
+  ): Promise<DirtyWaveScoreRefreshRequestRow[]> {
+    return this.db.execute<DirtyWaveScoreRefreshRequestRow>(
+      `
+      select wave_id, dirty_at
+      from ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}
+      order by dirty_at asc, wave_id asc
+      limit :batchSize
+      `,
+      { batchSize },
+      {
+        wrappedConnection: ctx.connection,
+        // Dirty rows are inserted on the primary inside the write transaction.
+        // The refresher must read primary too, or replica lag can delay/skip work.
+        forcePool: DbPoolName.WRITE
+      }
+    );
+  }
+
+  private async deleteDirtyWaveScoreRefreshRequests(
+    rows: DirtyWaveScoreRefreshRequestRow[],
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!rows.length) {
+      return;
+    }
+    await this.db.execute(
+      `
+      delete from ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}
+      where ${this.capturedDirtyRowsWhere(rows)}
+      `,
+      this.capturedDirtyRowsParams(rows),
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
+    );
+  }
+
+  private async recordDirtyWaveScoreRefreshFailure(
+    rows: DirtyWaveScoreRefreshRequestRow[],
+    error: unknown,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!rows.length) {
+      return;
+    }
+    await this.db.execute(
+      `
+      update ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}
+      set
+        attempts = attempts + 1,
+        last_error = :lastError,
+        updated_at = :updatedAt
+      where ${this.capturedDirtyRowsWhere(rows)}
+      `,
+      {
+        ...this.capturedDirtyRowsParams(rows),
+        lastError: this.errorToString(error).slice(0, 2000),
+        updatedAt: Time.currentMillis()
+      },
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
+    );
+  }
+
+  private capturedDirtyRowsWhere(
+    rows: DirtyWaveScoreRefreshRequestRow[]
+  ): string {
+    return `(wave_id, dirty_at) in (${rows
+      .map((_, i) => `(:dirtyWaveId${i}, :dirtyAt${i})`)
+      .join(', ')})`;
+  }
+
+  private capturedDirtyRowsParams(
+    rows: DirtyWaveScoreRefreshRequestRow[]
+  ): Record<string, string | number> {
+    return rows.reduce<Record<string, string | number>>((acc, row, i) => {
+      acc[`dirtyWaveId${i}`] = row.wave_id;
+      acc[`dirtyAt${i}`] = this.toNumber(row.dirty_at);
+      return acc;
+    }, {});
   }
 
   private async getWaveIdsPage(
@@ -610,6 +913,17 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
 
   private roundScore(value: number): number {
     return Math.round(value * 100) / 100;
+  }
+
+  private distinctWaveIds(waveIds: string[]): string[] {
+    return Array.from(new Set(waveIds)).filter(Boolean);
+  }
+
+  private errorToString(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return String(error);
   }
 
   private clamp(value: number, min: number, max: number): number {

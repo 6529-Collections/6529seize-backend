@@ -108,6 +108,7 @@ import {
   invalidateWaveUnreadCacheForReaderWave,
   invalidateWaveUnreadCacheForWave
 } from '@/api/waves/wave-unread-cache';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -568,6 +569,7 @@ export class WaveApiService {
           };
         }
       );
+    await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort(ctx);
     await invalidateWaveUnreadCacheForWave(createdWave.id);
     await giveReadReplicaTimeToCatchUp();
     await clearWaveGroupsCache();

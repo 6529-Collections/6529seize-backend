@@ -16,6 +16,7 @@ import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { HELP_BOT_HANDLE } from './help-bot.config';
 import { Logger } from '@/logging';
 import { withHelpBotAuthentication } from './help-bot.auth';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 export class HelpBotDropWriterService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -111,6 +112,7 @@ export class HelpBotDropWriterService {
         }
       );
 
+    await waveScoreService.enqueueDirtyWaveScoreRefreshBestEffort(ctx);
     void this.sendPendingPushNotifications({
       dropId: drop.id,
       pendingPushNotificationIds
