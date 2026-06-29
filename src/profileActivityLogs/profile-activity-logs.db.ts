@@ -4,6 +4,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../sql-executor';
+import { randomInt } from 'crypto';
 import {
   isTargetOfTypeDrop,
   ProfileActivityLog,
@@ -24,6 +25,13 @@ import { RequestContext } from '../request.context';
 import { ids } from '../ids';
 
 const mysql = require('mysql');
+
+const PROFILE_LATEST_LOG_RETRY_CODES = new Set([
+  'ER_LOCK_DEADLOCK',
+  'ER_LOCK_WAIT_TIMEOUT'
+]);
+const PROFILE_LATEST_LOG_RETRY_DELAYS_MS = [25, 75];
+const PROFILE_LATEST_LOG_RETRY_JITTER_MS = 25;
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -71,9 +79,32 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start('ProfileActivityLogsDb->insert');
+    try {
+      const currentTime = await this.insertLogEntry(
+        log,
+        connectionHolder,
+        timer
+      );
+      await this.touchLatestActivity(
+        log.profile_id,
+        currentTime,
+        connectionHolder,
+        timer
+      );
+    } finally {
+      timer?.stop('ProfileActivityLogsDb->insert');
+    }
+  }
+
+  public async insertLogEntry(
+    log: Omit<ProfileActivityLog, 'id' | 'created_at'>,
+    connectionHolder: ConnectionWrapper<any>,
+    timer?: Timer
+  ): Promise<Date> {
+    timer?.start('ProfileActivityLogsDb->insertLogEntry');
     const currentTime = Time.now().toDate();
-    await Promise.all([
-      this.db.execute(
+    try {
+      await this.db.execute(
         `
     insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, proxy_id, created_at, additional_data_1, additional_data_2)
     values (:id, :profile_id, :target_id, :contents, :type, :proxy_id, :currentTime, :additional_data_1, :additional_data_2)
@@ -84,14 +115,80 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
           id: ids.uniqueShortId()
         },
         { wrappedConnection: connectionHolder }
-      ),
-      this.db.execute(
-        `insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values (:profileId, :currentTime) on duplicate key update latest_activity = :currentTime`,
-        { profileId: log.profile_id, currentTime },
-        { wrappedConnection: connectionHolder }
-      )
-    ]);
-    timer?.stop('ProfileActivityLogsDb->insert');
+      );
+    } finally {
+      timer?.stop('ProfileActivityLogsDb->insertLogEntry');
+    }
+    return currentTime;
+  }
+
+  public async touchLatestActivity(
+    profileId: string,
+    latestActivity: Date,
+    connectionHolder?: ConnectionWrapper<any>,
+    timer?: Timer
+  ): Promise<void> {
+    timer?.start('ProfileActivityLogsDb->touchLatestActivity');
+    try {
+      const touchLatestActivity = async () => {
+        await this.db.execute(
+          `insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values (:profileId, :latestActivity) on duplicate key update latest_activity = greatest(latest_activity, :latestActivity)`,
+          { profileId, latestActivity },
+          connectionHolder ? { wrappedConnection: connectionHolder } : undefined
+        );
+      };
+
+      if (connectionHolder) {
+        await touchLatestActivity();
+        return;
+      }
+
+      await this.executeWithProfileLatestRetry(touchLatestActivity);
+    } finally {
+      timer?.stop('ProfileActivityLogsDb->touchLatestActivity');
+    }
+  }
+
+  private async executeWithProfileLatestRetry(
+    executable: () => Promise<void>
+  ): Promise<void> {
+    for (
+      let attempt = 0;
+      attempt <= PROFILE_LATEST_LOG_RETRY_DELAYS_MS.length;
+      attempt++
+    ) {
+      try {
+        await executable();
+        return;
+      } catch (error) {
+        if (
+          !this.isRetryableProfileLatestLogError(error) ||
+          attempt === PROFILE_LATEST_LOG_RETRY_DELAYS_MS.length
+        ) {
+          throw error;
+        }
+        await this.sleep(this.getProfileLatestRetryDelayMs(attempt));
+      }
+    }
+  }
+
+  private getProfileLatestRetryDelayMs(attempt: number): number {
+    return (
+      PROFILE_LATEST_LOG_RETRY_DELAYS_MS[attempt] +
+      randomInt(PROFILE_LATEST_LOG_RETRY_JITTER_MS)
+    );
+  }
+
+  private isRetryableProfileLatestLogError(error: unknown): boolean {
+    if (!error || typeof error !== 'object' || !('code' in error)) {
+      return false;
+    }
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' && PROFILE_LATEST_LOG_RETRY_CODES.has(code);
+  }
+
+  private async sleep(milliseconds: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
   public async searchLogs(
