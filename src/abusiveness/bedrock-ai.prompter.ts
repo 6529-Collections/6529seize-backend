@@ -9,12 +9,18 @@ import {
 import { TextDecoder } from 'node:util';
 
 export const ABUSIVENESS_BEDROCK_MODEL_ID_ENV = 'ABUSIVENESS_BEDROCK_MODEL_ID';
+export const DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID =
+  'anthropic.claude-3-sonnet-20240229-v1:0';
 
 const MODEL_ID = getConfiguredBedrockAnthropicModelId(
-  ABUSIVENESS_BEDROCK_MODEL_ID_ENV
+  ABUSIVENESS_BEDROCK_MODEL_ID_ENV,
+  DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
 );
 
-function buildOpts(modelId: string, prompt: string): InvokeModelCommandInput {
+export function buildAbusivenessBedrockInvokeModelInput(
+  modelId: string,
+  prompt: string
+): InvokeModelCommandInput {
   return {
     modelId,
     contentType: 'application/json',
@@ -26,7 +32,6 @@ function buildOpts(modelId: string, prompt: string): InvokeModelCommandInput {
         { role: 'user', content: [{ type: 'text', text: `${prompt}` }] }
       ],
       temperature: 0.7,
-      top_p: 0.8,
       top_k: 30
     })
   };
@@ -37,7 +42,9 @@ class BedrockAiPrompter implements AiPrompter {
 
   public async promptAndGetReply(prompt: string): Promise<string> {
     const response = await this.getBedrock().send(
-      new InvokeModelCommand(buildOpts(MODEL_ID, prompt))
+      new InvokeModelCommand(
+        buildAbusivenessBedrockInvokeModelInput(MODEL_ID, prompt)
+      )
     );
     const rawRes = response.body;
 

@@ -1,5 +1,6 @@
 import { env } from '@/env';
 import {
+  DEFAULT_HELP_BOT_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId,
   getPositiveIntEnvOrDefault
 } from '@/bedrock.config';
@@ -23,7 +24,8 @@ export const HELP_BOT_INDEX_CACHE_TTL_MS = 300_000;
 export const HELP_BOT_CALENDAR_FETCH_TIMEOUT_MS = 5000;
 export const HELP_BOT_BEDROCK_MODEL_ID_ENV = 'HELP_BOT_BEDROCK_MODEL_ID';
 export const HELP_BOT_BEDROCK_MODEL_ID = getConfiguredBedrockAnthropicModelId(
-  HELP_BOT_BEDROCK_MODEL_ID_ENV
+  HELP_BOT_BEDROCK_MODEL_ID_ENV,
+  DEFAULT_HELP_BOT_BEDROCK_MODEL_ID
 );
 export const HELP_BOT_BEDROCK_TIMEOUT_MS_ENV = 'HELP_BOT_BEDROCK_TIMEOUT_MS';
 export const HELP_BOT_BEDROCK_TIMEOUT_MS = getPositiveIntEnvOrDefault(

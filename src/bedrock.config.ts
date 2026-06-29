@@ -1,7 +1,6 @@
 import { env } from './env';
 
-export const BEDROCK_ANTHROPIC_MODEL_ID_ENV = 'BEDROCK_ANTHROPIC_MODEL_ID';
-export const DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID =
+export const DEFAULT_HELP_BOT_BEDROCK_MODEL_ID =
   'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
 
 function readTrimmedEnv(name: string): string | null {
@@ -9,13 +8,10 @@ function readTrimmedEnv(name: string): string | null {
 }
 
 export function getConfiguredBedrockAnthropicModelId(
-  serviceOverrideEnvName?: string
+  serviceModelEnvName: string,
+  defaultModelId: string
 ): string {
-  return (
-    (serviceOverrideEnvName ? readTrimmedEnv(serviceOverrideEnvName) : null) ??
-    readTrimmedEnv(BEDROCK_ANTHROPIC_MODEL_ID_ENV) ??
-    DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID
-  );
+  return readTrimmedEnv(serviceModelEnvName) ?? defaultModelId;
 }
 
 export function getPositiveIntEnvOrDefault(

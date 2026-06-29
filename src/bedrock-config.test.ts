@@ -1,45 +1,71 @@
 import fc from 'fast-check';
 import {
-  BEDROCK_ANTHROPIC_MODEL_ID_ENV,
-  DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID,
+  DEFAULT_HELP_BOT_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId,
   getPositiveIntEnvOrDefault
 } from './bedrock.config';
 
 describe('bedrock config', () => {
+  const GLOBAL_MODEL_ENV = 'BEDROCK_ANTHROPIC_MODEL_ID';
   const SERVICE_MODEL_ENV = 'TEST_SERVICE_BEDROCK_MODEL_ID';
   const POSITIVE_INT_ENV = 'TEST_POSITIVE_INT_ENV';
   const previousEnv = {
-    globalModel: process.env[BEDROCK_ANTHROPIC_MODEL_ID_ENV],
+    globalModel: process.env[GLOBAL_MODEL_ENV],
     serviceModel: process.env[SERVICE_MODEL_ENV],
     positiveInt: process.env[POSITIVE_INT_ENV]
   };
 
   afterEach(() => {
-    restoreEnv(BEDROCK_ANTHROPIC_MODEL_ID_ENV, previousEnv.globalModel);
+    restoreEnv(GLOBAL_MODEL_ENV, previousEnv.globalModel);
     restoreEnv(SERVICE_MODEL_ENV, previousEnv.serviceModel);
     restoreEnv(POSITIVE_INT_ENV, previousEnv.positiveInt);
   });
 
-  it('defaults to the shared Claude Sonnet 4.5 Bedrock inference profile', () => {
-    delete process.env[BEDROCK_ANTHROPIC_MODEL_ID_ENV];
+  it('defaults help bot to the Claude Sonnet 4.5 Bedrock inference profile', () => {
     delete process.env[SERVICE_MODEL_ENV];
 
-    expect(DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID).toBe(
+    expect(DEFAULT_HELP_BOT_BEDROCK_MODEL_ID).toBe(
       'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
     );
-    expect(getConfiguredBedrockAnthropicModelId(SERVICE_MODEL_ENV)).toBe(
-      DEFAULT_BEDROCK_ANTHROPIC_MODEL_ID
-    );
+    expect(
+      getConfiguredBedrockAnthropicModelId(
+        SERVICE_MODEL_ENV,
+        DEFAULT_HELP_BOT_BEDROCK_MODEL_ID
+      )
+    ).toBe(DEFAULT_HELP_BOT_BEDROCK_MODEL_ID);
   });
 
-  it('allows service model config to override the shared model config', () => {
-    process.env[BEDROCK_ANTHROPIC_MODEL_ID_ENV] = 'global-model';
+  it('allows service model config to override the service default', () => {
     process.env[SERVICE_MODEL_ENV] = 'service-model';
 
-    expect(getConfiguredBedrockAnthropicModelId(SERVICE_MODEL_ENV)).toBe(
-      'service-model'
-    );
+    expect(
+      getConfiguredBedrockAnthropicModelId(SERVICE_MODEL_ENV, 'default-model')
+    ).toBe('service-model');
+  });
+
+  it('does not use a shared model fallback for service defaults', () => {
+    process.env[GLOBAL_MODEL_ENV] = 'global-model';
+    delete process.env[SERVICE_MODEL_ENV];
+
+    expect(
+      getConfiguredBedrockAnthropicModelId(SERVICE_MODEL_ENV, 'default-model')
+    ).toBe('default-model');
+  });
+
+  it('ignores blank service model config', () => {
+    process.env[SERVICE_MODEL_ENV] = '  ';
+
+    expect(
+      getConfiguredBedrockAnthropicModelId(SERVICE_MODEL_ENV, 'default-model')
+    ).toBe('default-model');
+  });
+
+  it('trims service model config', () => {
+    process.env[SERVICE_MODEL_ENV] = '  service-model  ';
+
+    expect(
+      getConfiguredBedrockAnthropicModelId(SERVICE_MODEL_ENV, 'default-model')
+    ).toBe('service-model');
   });
 
   it('reads positive integer env values with a default', () => {
