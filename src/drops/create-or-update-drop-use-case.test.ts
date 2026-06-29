@@ -18,6 +18,7 @@ import { profilesService } from '@/profiles/profiles.service';
 import { CLOUDFRONT_LINK } from '@/constants';
 import {
   CreateOrUpdateDropUseCase,
+  normalizeDropGroupMentions,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 
@@ -275,6 +276,157 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
+  });
+
+  it('strips ALL group mention metadata when the drop content has no @all token', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content:
+              'Round 10 Vote Reconciliation\n\n@[MoonZoey] and @[QuantumSpirit]'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('keeps ALL group mention metadata for standalone @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL, DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'Heads up @all: please review this drop.'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('keeps ALL group mention metadata when @all is in a later part', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'first part'
+          },
+          {
+            content: 'second part with @all'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('keeps ALL group mention metadata for case-insensitive @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'Heads up @ALL'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('keeps ALL group mention metadata for line-start @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'first line\n@all on the next line'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('does not treat embedded @all text as an ALL group mention', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'email@example.com @alliance hello@all @all_again'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('strips ALL group mention metadata when there are no drop parts', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: []
+      })
+    ).toEqual([]);
+  });
+
+  it('preserves non-ALL group mention metadata without @all content', () => {
+    const specificGroup = 'specific-group' as DropGroupMention;
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [specificGroup, DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'no all mention here'
+          }
+        ]
+      })
+    ).toEqual([specificGroup]);
+  });
+
+  it('treats missing group mention metadata as empty', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: undefined,
+        parts: [
+          {
+            content: '@all'
+          }
+        ]
+      })
+    ).toEqual([]);
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: null,
+        parts: [
+          {
+            content: '@all'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('normalizes group mention metadata idempotently', () => {
+    const specificGroup = 'specific-group' as DropGroupMention;
+    const parts = [{ content: 'hello @all' }];
+    const once = normalizeDropGroupMentions({
+      mentionedGroups: [
+        specificGroup,
+        DropGroupMention.ALL,
+        specificGroup,
+        DropGroupMention.ALL
+      ],
+      parts
+    });
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: once,
+        parts
+      })
+    ).toEqual(once);
   });
 
   it('allows wave admins to use group mentions', () => {
