@@ -193,6 +193,7 @@ export {
   WaveDecisionWinnerDropEntity
 } from './IWaveDecision';
 export { WaveChatDropCooldownEntity } from './IWaveChatDropCooldown';
+export { WaveDropMetricsRefreshRequestEntity } from './IWaveDropMetricsRefreshRequest';
 export { WaveDropperMetricEntity } from './IWaveDropperMetric';
 export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetadataEntity } from './IWaveMetadata';

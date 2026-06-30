@@ -54,6 +54,7 @@
     { "name": "transactionsProcessingLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "waveDecisionExecutionLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "waveLeaderboardSnapshotterLoop", "allowed_environments": ["staging", "prod"] },
+    { "name": "waveDropMetricsRefreshLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "waveScoreRefreshLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "xTdhLoop", "allowed_environments": ["staging", "prod"] }
   ]
