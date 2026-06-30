@@ -116,6 +116,47 @@ describe('HelpBotBedrockRenderer', () => {
     );
   });
 
+  it('does not require source links for records that suppress them', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [{ type: 'text', text: 'Use the profile menu.' }]
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await renderer.renderAnswer({
+      question: 'how do i share connection?',
+      record: {
+        ...RECORD,
+        id: 'wallet.connection-sharing',
+        title: 'Connection sharing',
+        linkLabel: 'Connection sharing',
+        canonicalPath: '/',
+        suppressSourceLinks: true,
+        aliases: ['share connection'],
+        keywords: ['share', 'connection'],
+        facts: ['Use the profile menu to open the Share menu.']
+      },
+      canonicalUrl: 'https://6529.io/'
+    });
+
+    expect(readPrompt(send)).toContain(
+      'Do not include source links unless the provided facts explicitly require one.'
+    );
+    expect(readPrompt(send)).not.toContain(
+      'Include this URL exactly once as a Markdown link target'
+    );
+    expect(readPrompt(send)).not.toContain(
+      'Use this exact Markdown link label for that URL'
+    );
+  });
+
   it('aborts a slow Bedrock response', async () => {
     const send = jest.fn(
       (

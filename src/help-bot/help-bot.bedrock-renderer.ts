@@ -41,6 +41,15 @@ function buildPrompt({
   readonly canonicalUrl: string;
 }): string {
   const factLines = record.facts.map((fact) => `- ${fact}`).join('\n');
+  const linkGuidance = record.suppressSourceLinks
+    ? [
+        'Do not include source links unless the provided facts explicitly require one.'
+      ]
+    : [
+        MARKDOWN_LINK_GUIDANCE,
+        `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
+        `Use this exact Markdown link label for that URL: ${record.linkLabel}`
+      ];
   return [
     `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the provided facts.',
@@ -48,9 +57,7 @@ function buildPrompt({
     'Use one or two short paragraphs.',
     TONE_GUIDANCE,
     NO_SELF_INTRO_GUIDANCE,
-    MARKDOWN_LINK_GUIDANCE,
-    `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
-    `Use this exact Markdown link label for that URL: ${record.linkLabel}`,
+    ...linkGuidance,
     previousBotAnswer
       ? `Previous bot answer for context:\n${previousBotAnswer}`
       : '',
