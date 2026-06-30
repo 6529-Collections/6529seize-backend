@@ -92,7 +92,10 @@ import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/mode
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
 import waveRepRoutes from './wave-rep.routes';
-import { waveScoreService } from './wave-score.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from './wave-score.service';
 
 const router = asyncRouter();
 
@@ -374,8 +377,9 @@ router.post(
       subscriber: authenticatedProfileId,
       actions: request.actions
     });
-    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
       [req.params.id],
+      WaveScoreDirtyRefreshReason.WAVE_SUBSCRIPTION_CHANGED,
       { authenticationContext, timer }
     );
     res.send({
@@ -471,8 +475,9 @@ router.delete(
       subscriber: authenticatedProfileId,
       actions: request.actions
     });
-    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
       [req.params.id],
+      WaveScoreDirtyRefreshReason.WAVE_SUBSCRIPTION_CHANGED,
       { authenticationContext, timer }
     );
     res.send({

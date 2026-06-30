@@ -101,8 +101,8 @@ describe('DeleteDropUseCase', () => {
       identityFetcher,
       'getProfileIdByIdentityKey'
     );
-    const refreshWaveScoresSpy = jest
-      .spyOn(waveScoreService, 'refreshWaveScoresForWaveIdsBestEffort')
+    const markWaveScoresDirtySpy = jest
+      .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
       .mockResolvedValue(undefined);
 
     await expect(
@@ -137,10 +137,14 @@ describe('DeleteDropUseCase', () => {
       timer: undefined,
       connection
     });
-    expect(refreshWaveScoresSpy).toHaveBeenCalledWith(['wave-1'], {
-      timer: undefined,
-      connection
-    });
+    expect(markWaveScoresDirtySpy).toHaveBeenCalledWith(
+      ['wave-1'],
+      'DROP_DELETED',
+      {
+        timer: undefined,
+        connection
+      }
+    );
     expect(dropsDb.insertDeletedDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'drop-1',
