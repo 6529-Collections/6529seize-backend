@@ -101,6 +101,18 @@ const CONSOLIDATION_CONTEXT_PATTERNS = [
   /\bcombine(?:d|s|ing)? (?:my )?(?:wallets?|addresses?)\b/
 ] as const;
 
+const CONSOLIDATION_LIMIT_CONTEXT_PATTERNS = [
+  /\bhow many\b/,
+  /\bmaximum\b/,
+  /\bmax\b/,
+  /\blimit\b/,
+  /\blimits\b/,
+  /\bgroup size\b/,
+  /\bone consolidation group\b/,
+  /\bper consolidation group\b/,
+  /\bcan be in\b/
+] as const;
+
 const WALLET_CHECK_CONTEXT_PATTERNS = [
   /\bcheck\b/,
   /\bview\b/,
@@ -461,6 +473,7 @@ interface RoutedQuestionContext {
   readonly hasArchitectureContext: boolean;
   readonly hasExplicitArchitectureContext: boolean;
   readonly hasConsolidationContext: boolean;
+  readonly hasConsolidationLimitContext: boolean;
   readonly hasDelegationContext: boolean;
   readonly hasWalletCheckContext: boolean;
   readonly overLimitWalletCount: number | null;
@@ -483,6 +496,10 @@ function routedQuestionContext(
     hasConsolidationContext: matchesAny(
       normalizedQuestion,
       CONSOLIDATION_CONTEXT_PATTERNS
+    ),
+    hasConsolidationLimitContext: matchesAny(
+      normalizedQuestion,
+      CONSOLIDATION_LIMIT_CONTEXT_PATTERNS
     ),
     hasDelegationContext: matchesAny(
       normalizedQuestion,
@@ -553,6 +570,18 @@ function addConsolidationScores(
   scores: Map<string, number>,
   context: RoutedQuestionContext
 ): void {
+  if (
+    context.hasConsolidationContext &&
+    context.hasConsolidationLimitContext &&
+    (context.hasWalletContext || context.hasArchitectureContext)
+  ) {
+    addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 18);
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 6);
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 5);
+    return;
+  }
+
   if (
     context.hasConsolidationContext &&
     (context.hasWalletContext || context.hasArchitectureContext)

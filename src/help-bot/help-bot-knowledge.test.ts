@@ -396,6 +396,10 @@ describe('StaticHelpBotKnowledgeSource', () => {
       expectedRecordIds: ['delegation.wallet-checker']
     },
     {
+      question: 'how many wallets can be in one consolidation group',
+      expectedRecordIds: ['delegation.consolidation-use-cases']
+    },
+    {
       question: 'what is Nakamoto Set',
       expectedRecordIds: ['network.tdh.nakamoto-set']
     },
@@ -525,6 +529,21 @@ describe('StaticHelpBotKnowledgeSource', () => {
             ],
             facts: [
               'Wallet Checker reviews active delegations and consolidations.'
+            ],
+            relatedPaths: ['/delegation/wallet-architecture'],
+            tags: ['delegation', 'wallet'],
+            sourceRefs: []
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            kind: 'workflow',
+            title: 'Consolidation Use Cases',
+            linkLabel: 'Consolidation Use Cases',
+            canonicalPath: '/delegation/consolidation-use-cases',
+            aliases: ['consolidation use cases'],
+            keywords: ['consolidation', 'wallet', 'limit'],
+            facts: [
+              '6529 recognizes up to three addresses as one consolidation group.'
             ],
             relatedPaths: ['/delegation/wallet-architecture'],
             tags: ['delegation', 'wallet'],
