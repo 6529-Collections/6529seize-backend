@@ -238,7 +238,13 @@ router.post(
         timer
       );
       if (isRefreshTokenSessionClientType(loginRequest.client_type)) {
-        assertSessionLoginSignatureType(nonce, loginRequest.client_type);
+        const parsedMessage = assertSessionLoginSignatureType(
+          nonce,
+          loginRequest.client_type
+        );
+        if (loginRequest.client_type === 'desktop') {
+          assertDesktopSessionOriginAllowed(req, parsedMessage);
+        }
         const created = await createNativeSession({
           address: signingAddress,
           role: chosenRole,
@@ -780,17 +786,60 @@ function normalizeDomain(value: string | null | undefined): string | null {
   }
 }
 
+export function isDesktopSessionOriginAllowed(
+  origin: string | null | undefined
+): boolean {
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
+    return false;
+  }
+
+  try {
+    const url = new URL(normalizedOrigin);
+    return (
+      url.protocol === 'http:' &&
+      !!url.port &&
+      (url.hostname === 'localhost' ||
+        url.hostname === '127.0.0.1' ||
+        url.hostname === '::1' ||
+        url.hostname === '[::1]')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function resolveSessionNonceContext(
   req: Request<any, any, any, any, any>,
   nonceRequest: SessionNonceQueryRequest
 ): ResolvedSessionNonceContext {
-  if (isRefreshTokenSessionClientType(nonceRequest.client_type)) {
+  if (nonceRequest.client_type === 'native') {
     return {
       domain: nonceRequest.client_type,
       clientOrigin: null,
       sessionType: nonceRequest.client_type
     };
   }
+  if (nonceRequest.client_type === 'desktop') {
+    const requestOrigin = getNormalizedRequestOrigin(req);
+    if (!isDesktopSessionOriginAllowed(requestOrigin)) {
+      throw new BadRequestException(
+        'Wallet auth desktop sessions require a localhost Origin'
+      );
+    }
+    const domain = normalizeDomain(requestOrigin);
+    if (!domain) {
+      throw new BadRequestException(
+        'Wallet auth desktop sessions require a valid localhost Origin'
+      );
+    }
+    return {
+      domain,
+      clientOrigin: requestOrigin,
+      sessionType: 'desktop'
+    };
+  }
+
   const requestOrigin = getNormalizedRequestOrigin(req);
   if (!requestOrigin) {
     throw new BadRequestException(
@@ -814,6 +863,35 @@ function resolveSessionNonceContext(
     clientOrigin: requestOrigin,
     sessionType: 'first_party_web'
   };
+}
+
+function assertDesktopSessionOriginAllowed(
+  req: Request<any, any, any, any, any>,
+  parsedMessage: ParsedStructuredWalletSignatureMessage
+): void {
+  const signedClientOrigin = parsedMessage.clientOrigin;
+  if (
+    !signedClientOrigin ||
+    !isDesktopSessionOriginAllowed(signedClientOrigin)
+  ) {
+    throw new BadRequestException(
+      'Wallet auth desktop sessions require a localhost Origin'
+    );
+  }
+
+  const expectedDomain = normalizeDomain(signedClientOrigin);
+  if (!expectedDomain || parsedMessage.domain !== expectedDomain) {
+    throw new BadRequestException(
+      'Wallet auth desktop session domain does not match the signed Origin'
+    );
+  }
+
+  const requestOrigin = getNormalizedRequestOrigin(req);
+  if (requestOrigin && requestOrigin !== signedClientOrigin) {
+    throw new BadRequestException(
+      'Wallet auth desktop session Origin does not match the signed challenge'
+    );
+  }
 }
 
 function assertSessionOriginMatchesRequest(
