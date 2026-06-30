@@ -31,6 +31,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             aliases: ['tdh', 'total days held'],
             keywords: ['tdh', 'total', 'days', 'held'],
             facts: ['TDH stands for Total Days Held.'],
+            suppress_source_links: true,
             related_paths: ['/network/definitions'],
             tags: ['network'],
             source_refs: ['ops/help/help-index.json']
@@ -44,6 +45,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     expect(match?.record.id).toBe('network.tdh');
     expect(match?.record.linkLabel).toBe('TDH page');
     expect(match?.record.canonicalPath).toBe('/network/tdh');
+    expect(match?.record.suppressSourceLinks).toBe(true);
     expect(match?.record.relatedPaths).toEqual(['/network/definitions']);
     expect(match?.record.sourceRefs).toEqual(['ops/help/help-index.json']);
   });
