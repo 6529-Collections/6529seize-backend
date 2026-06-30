@@ -238,6 +238,9 @@ function ensureKnowledgeMarkdownLinks({
   readonly record: HelpBotKnowledgeRecord;
   readonly baseUrl: string;
 }): string {
+  if (record.suppressSourceLinks) {
+    return text;
+  }
   const links = buildKnowledgeSourceLinks(record, baseUrl);
   const canonicalLink = links[0];
   if (!canonicalLink) {
