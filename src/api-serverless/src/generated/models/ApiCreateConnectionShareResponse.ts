@@ -71,6 +71,7 @@ export class ApiCreateConnectionShareResponse {
 }
 
 export enum ApiCreateConnectionShareResponseTargetClientTypeEnum {
-    Native = 'native'
+    Native = 'native',
+    Desktop = 'desktop'
 }
 
