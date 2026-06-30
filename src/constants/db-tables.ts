@@ -147,6 +147,8 @@ export const MINTING_CLAIMS_TABLE = 'minting_claims';
 export const MINTING_CLAIM_ACTIONS_TABLE = 'minting_claim_actions';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_SCORE_REFRESH_REQUESTS_TABLE = 'wave_score_refresh_requests';
+export const WAVE_DROP_METRICS_REFRESH_REQUESTS_TABLE =
+  'wave_drop_metrics_refresh_requests';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
 export const WAVE_CHAT_DROP_COOLDOWNS_TABLE = 'wave_chat_drop_cooldowns';
 export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';
