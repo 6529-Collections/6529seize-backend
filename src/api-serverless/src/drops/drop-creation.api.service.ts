@@ -45,6 +45,10 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
+import {
+  waveDropMetricsRefreshService,
+  WaveDropMetricsDirtyRefreshReason
+} from '@/drops/wave-drop-metrics-refresh.service';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -199,6 +203,14 @@ export class DropCreationApiService {
       }
     );
     if (deleteResponse) {
+      await waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
+        [deleteResponse.wave_id],
+        WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+        {
+          timer,
+          authenticationContext
+        }
+      );
       await waveScoreService.requestWaveScoreRefreshBestEffort(
         [deleteResponse.wave_id],
         WaveScoreDirtyRefreshReason.DROP_DELETED,
