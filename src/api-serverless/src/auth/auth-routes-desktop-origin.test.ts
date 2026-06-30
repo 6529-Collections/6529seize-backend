@@ -1,3 +1,9 @@
+jest.mock('passport', () => ({
+  authenticate: jest.fn(
+    () => (_req: unknown, _res: unknown, next: () => void) => next()
+  )
+}));
+
 import { isDesktopSessionOriginAllowed } from './auth.routes';
 
 describe('desktop auth origin validation', () => {
