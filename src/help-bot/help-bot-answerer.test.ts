@@ -1062,6 +1062,46 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('does not add source links for records that suppress source links', async () => {
+    const index: HelpBotKnowledgeIndex = {
+      ...TEST_INDEX,
+      records: [
+        {
+          id: 'wallet.connection-sharing',
+          kind: 'workflow',
+          title: 'Connection sharing',
+          linkLabel: 'Connection sharing',
+          canonicalPath: '/',
+          suppressSourceLinks: true,
+          aliases: ['share connection'],
+          keywords: ['share', 'connection', 'mobile', 'desktop'],
+          facts: [
+            'Use the profile menu to share your current connection.',
+            'Connection sharing can create a QR code for the mobile app or a deep link for the desktop app.'
+          ],
+          relatedPaths: [],
+          tags: ['auth', 'wallet'],
+          sourceRefs: []
+        }
+      ]
+    };
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest.fn().mockResolvedValue('Use the profile menu.')
+    };
+
+    const answer = await answerer(renderer, undefined, undefined, index).answer(
+      {
+        question: 'how do I share connection?',
+        baseUrl: BASE_URL
+      }
+    );
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toBe('Use the profile menu.');
+    }
+  });
+
   it('strips help bot self-intros from rendered answers', async () => {
     const renderer: HelpBotLlmRenderer = {
       renderAnswer: jest

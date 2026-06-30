@@ -31,6 +31,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             aliases: ['tdh', 'total days held'],
             keywords: ['tdh', 'total', 'days', 'held'],
             facts: ['TDH stands for Total Days Held.'],
+            suppress_source_links: true,
             related_paths: ['/network/definitions'],
             tags: ['network'],
             source_refs: ['ops/help/help-index.json']
@@ -44,6 +45,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     expect(match?.record.id).toBe('network.tdh');
     expect(match?.record.linkLabel).toBe('TDH page');
     expect(match?.record.canonicalPath).toBe('/network/tdh');
+    expect(match?.record.suppressSourceLinks).toBe(true);
     expect(match?.record.relatedPaths).toEqual(['/network/definitions']);
     expect(match?.record.sourceRefs).toEqual(['ops/help/help-index.json']);
   });
@@ -183,7 +185,9 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             canonical_path: '/delegation/consolidation-use-cases',
             aliases: ['consolidation use cases'],
             keywords: ['consolidation', 'wallet'],
-            facts: ['Consolidation covers multi-wallet patterns.']
+            facts: [
+              '6529 recognizes up to three addresses as one consolidation group.'
+            ]
           }
         ]
       })
@@ -195,8 +199,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     );
 
     const matchIds = matches.map((match) => match.record.id);
-    expect(matchIds[0]).toBe('delegation.register-consolidation-doc');
-    expect(matchIds[1]).toBe('delegation.register-consolidation');
+    expect(matchIds[0]).toBe('delegation.consolidation-use-cases');
     expect(new Set(matchIds)).toEqual(
       new Set([
         'delegation.register-consolidation-doc',
@@ -312,9 +315,24 @@ describe('StaticHelpBotKnowledgeSource', () => {
           title: 'Wallet Architecture',
           linkLabel: 'Wallet Architecture',
           canonicalPath: '/delegation/wallet-architecture',
-          aliases: ['wallet architecture', '4 wallet architecture'],
+          aliases: ['wallet architecture'],
           keywords: ['wallet', 'architecture', 'vault'],
           facts: ['Separate vault, transaction, and minting wallets.'],
+          relatedPaths: [],
+          tags: ['delegation'],
+          sourceRefs: []
+        },
+        {
+          id: 'delegation.consolidation-use-cases',
+          kind: 'workflow',
+          title: 'Consolidation Use Cases',
+          linkLabel: 'Consolidation Use Cases',
+          canonicalPath: '/delegation/consolidation-use-cases',
+          aliases: ['consolidation use cases'],
+          keywords: ['consolidation', 'wallet', 'limit'],
+          facts: [
+            '6529 recognizes up to three addresses as one consolidation group.'
+          ],
           relatedPaths: [],
           tags: ['delegation'],
           sourceRefs: []
@@ -337,12 +355,213 @@ describe('StaticHelpBotKnowledgeSource', () => {
 
     const matches = await source.findMatches!(
       'how do i set up a 4 wallet architecture with delegation docs',
-      2
+      3
     );
 
     expect(matches.map((match) => match.record.id)).toEqual([
       'delegation.wallet-architecture',
+      'delegation.consolidation-use-cases',
       'delegation.faq'
     ]);
   });
+
+  it.each([
+    {
+      question: 'what is Genesis Set',
+      expectedRecordIds: ['network.definitions.genesis-sets']
+    },
+    {
+      question: 'what are Genesis Sets',
+      expectedRecordIds: ['network.definitions.genesis-sets']
+    },
+    {
+      question: 'what is Meme Set',
+      expectedRecordIds: ['network.definitions.meme-sets']
+    },
+    {
+      question: 'what is TDH unweighted',
+      expectedRecordIds: ['network.definitions.tdh-unweighted']
+    },
+    {
+      question: 'how can I check my architecture',
+      expectedRecordIds: [
+        'delegation.wallet-checker',
+        'delegation.wallet-architecture'
+      ]
+    },
+    {
+      question: 'what is wallet architecture',
+      expectedRecordIds: ['delegation.wallet-architecture']
+    },
+    {
+      question: 'how do I check delegations/consolidations',
+      expectedRecordIds: ['delegation.wallet-checker']
+    },
+    {
+      question: 'how many wallets can be in one consolidation group',
+      expectedRecordIds: ['delegation.consolidation-use-cases']
+    },
+    {
+      question: 'what is Nakamoto Set',
+      expectedRecordIds: ['network.tdh.nakamoto-set']
+    },
+    {
+      question: 'how can i check my architecture and view delegations',
+      expectedRecordIds: [
+        'delegation.wallet-checker',
+        'delegation.wallet-architecture'
+      ]
+    }
+  ])(
+    'routes "$question" to explicit help bot concept records',
+    async ({ question, expectedRecordIds }) => {
+      const source = new StaticHelpBotKnowledgeSource({
+        ...index,
+        records: index.records.concat([
+          {
+            id: 'network.definitions',
+            kind: 'glossary',
+            title: 'Network definitions',
+            linkLabel: 'Network definitions',
+            canonicalPath: '/network/definitions',
+            aliases: ['network definitions', 'genesis set'],
+            keywords: ['definitions', 'network', 'genesis'],
+            facts: ['Network definitions explain metric terms.'],
+            relatedPaths: ['/network/tdh'],
+            tags: ['network', 'glossary'],
+            sourceRefs: []
+          },
+          {
+            id: 'network.definitions.genesis-sets',
+            kind: 'concept',
+            title: 'Genesis Sets',
+            linkLabel: 'Genesis Sets',
+            canonicalPath: '/network/definitions',
+            aliases: ['genesis set', 'genesis sets'],
+            keywords: ['genesis', 'set', 'sets', 'tdh'],
+            facts: [
+              'Genesis Sets are complete sets of the first three Meme NFTs.'
+            ],
+            relatedPaths: ['/network/tdh'],
+            tags: ['network', 'concept'],
+            sourceRefs: []
+          },
+          {
+            id: 'network.definitions.meme-sets',
+            kind: 'concept',
+            title: 'Meme Sets',
+            linkLabel: 'Meme Sets',
+            canonicalPath: '/network/definitions',
+            aliases: ['meme set', 'meme sets'],
+            keywords: ['meme', 'memes', 'set', 'sets'],
+            facts: ['Meme Sets are complete sets of The Memes.'],
+            relatedPaths: ['/network/tdh'],
+            tags: ['network', 'concept'],
+            sourceRefs: []
+          },
+          {
+            id: 'network.definitions.tdh-unweighted',
+            kind: 'concept',
+            title: 'TDH (unweighted)',
+            linkLabel: 'TDH unweighted',
+            canonicalPath: '/network/definitions',
+            aliases: ['tdh unweighted', 'unweighted tdh', 'raw tdh'],
+            keywords: ['tdh', 'unweighted', 'raw'],
+            facts: ['TDH unweighted is one unit per NFT per day held.'],
+            relatedPaths: ['/network/tdh'],
+            tags: ['network', 'tdh', 'concept'],
+            sourceRefs: []
+          },
+          {
+            id: 'network.tdh',
+            kind: 'glossary',
+            title: 'TDH',
+            linkLabel: 'TDH',
+            canonicalPath: '/network/tdh',
+            aliases: ['tdh', 'total days held'],
+            keywords: ['tdh', 'boost', 'genesis', 'nakamoto'],
+            facts: ['TDH means Total Days Held.'],
+            relatedPaths: ['/network/definitions'],
+            tags: ['network', 'tdh'],
+            sourceRefs: []
+          },
+          {
+            id: 'network.tdh.nakamoto-set',
+            kind: 'concept',
+            title: 'Nakamoto Set',
+            linkLabel: 'Nakamoto Set',
+            canonicalPath: '/network/tdh',
+            aliases: ['nakamoto set', 'nakamoto sets'],
+            keywords: ['nakamoto', 'set', 'sets', 'tdh', 'boost'],
+            facts: ['Nakamoto Set is a SZN1 Category B TDH boost term.'],
+            relatedPaths: ['/network/definitions'],
+            tags: ['network', 'tdh', 'concept'],
+            sourceRefs: []
+          },
+          {
+            id: 'delegation.wallet-architecture',
+            kind: 'workflow',
+            title: 'Wallet Architecture',
+            linkLabel: 'Wallet Architecture',
+            canonicalPath: '/delegation/wallet-architecture',
+            aliases: ['wallet architecture', 'architecture'],
+            keywords: ['wallet', 'architecture', 'vault'],
+            facts: [
+              'Wallet architecture separates vault, transaction, and minting wallets.'
+            ],
+            relatedPaths: ['/delegation/wallet-checker'],
+            tags: ['delegation', 'wallet'],
+            sourceRefs: []
+          },
+          {
+            id: 'delegation.wallet-checker',
+            kind: 'route',
+            title: 'Wallet Checker',
+            linkLabel: 'Wallet Checker',
+            canonicalPath: '/delegation/wallet-checker',
+            aliases: ['wallet checker', 'check wallet architecture'],
+            keywords: [
+              'wallet',
+              'checker',
+              'check',
+              'view',
+              'delegations',
+              'consolidations',
+              'architecture'
+            ],
+            facts: [
+              'Wallet Checker reviews active delegations and consolidations.'
+            ],
+            relatedPaths: ['/delegation/wallet-architecture'],
+            tags: ['delegation', 'wallet'],
+            sourceRefs: []
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            kind: 'workflow',
+            title: 'Consolidation Use Cases',
+            linkLabel: 'Consolidation Use Cases',
+            canonicalPath: '/delegation/consolidation-use-cases',
+            aliases: ['consolidation use cases'],
+            keywords: ['consolidation', 'wallet', 'limit'],
+            facts: [
+              '6529 recognizes up to three addresses as one consolidation group.'
+            ],
+            relatedPaths: ['/delegation/wallet-architecture'],
+            tags: ['delegation', 'wallet'],
+            sourceRefs: []
+          }
+        ])
+      });
+
+      const matches = await source.findMatches!(
+        question,
+        expectedRecordIds.length
+      );
+
+      expect(matches.map((match) => match.record.id)).toEqual(
+        expectedRecordIds
+      );
+    }
+  );
 });

@@ -1,4 +1,5 @@
 import { Logger } from '@/logging';
+import { CONSOLIDATIONS_LIMIT } from '@/constants';
 import {
   HELP_BOT_INDEX_CACHE_TTL_MS,
   HELP_BOT_INDEX_FETCH_TIMEOUT_MS,
@@ -11,6 +12,7 @@ export interface HelpBotKnowledgeRecord {
   readonly title: string;
   readonly linkLabel: string;
   readonly canonicalPath: string;
+  readonly suppressSourceLinks?: boolean;
   readonly aliases: string[];
   readonly keywords: string[];
   readonly facts: string[];
@@ -70,13 +72,9 @@ const ARCHITECTURE_CONTEXT_PATTERNS = [
   /\barchitectures\b/,
   /\btap\b/,
   /\bthree address\b/,
-  /\bfour address\b/,
   /\b3 address\b/,
-  /\b4 address\b/,
   /\bthree wallets?\b/,
-  /\bfour wallets?\b/,
   /\b3 wallets?\b/,
-  /\b4 wallets?\b/,
   /\bmultiple wallets?\b/,
   /\bseveral wallets?\b/,
   /\bvault\b/,
@@ -89,13 +87,9 @@ const EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS = [
   /\barchitectures\b/,
   /\btap\b/,
   /\bthree address\b/,
-  /\bfour address\b/,
   /\b3 address\b/,
-  /\b4 address\b/,
   /\bthree wallets?\b/,
-  /\bfour wallets?\b/,
   /\b3 wallets?\b/,
-  /\b4 wallets?\b/,
   /\bmultiple wallets?\b/,
   /\bseveral wallets?\b/
 ] as const;
@@ -106,6 +100,18 @@ const CONSOLIDATION_CONTEXT_PATTERNS = [
   /\btreat(?:ed)? together\b/,
   /\bconnect(?:ed|ing)? (?:my )?(?:wallets?|addresses?)\b/,
   /\bcombine(?:d|s|ing)? (?:my )?(?:wallets?|addresses?)\b/
+] as const;
+
+const CONSOLIDATION_LIMIT_CONTEXT_PATTERNS = [
+  /\bhow many\b/,
+  /\bmaximum\b/,
+  /\bmax\b/,
+  /\blimit\b/,
+  /\blimits\b/,
+  /\bgroup size\b/,
+  /\bone consolidation group\b/,
+  /\bper consolidation group\b/,
+  /\bcan be in\b/
 ] as const;
 
 const WALLET_CHECK_CONTEXT_PATTERNS = [
@@ -124,6 +130,75 @@ const CONSOLIDATION_USE_CASES_PATH = '/delegation/consolidation-use-cases';
 const REGISTER_CONSOLIDATION_PATH = '/delegation/register-consolidation';
 const REGISTER_CONSOLIDATION_DOC_PATH =
   '/delegation/delegation-faq/register-consolidation';
+const WALLET_ARCHITECTURE_ID = 'delegation.wallet-architecture';
+const WALLET_CHECKER_ID = 'delegation.wallet-checker';
+const NETWORK_DEFINITIONS_ID = 'network.definitions';
+const GENESIS_SETS_ID = 'network.definitions.genesis-sets';
+const MEME_SETS_ID = 'network.definitions.meme-sets';
+const MEME_SETS_MINUS_ID = 'network.definitions.meme-sets-minus';
+const TDH_UNWEIGHTED_ID = 'network.definitions.tdh-unweighted';
+const TDH_UNBOOSTED_ID = 'network.definitions.tdh-unboosted';
+const NAKAMOTO_SET_ID = 'network.tdh.nakamoto-set';
+const NETWORK_TDH_ID = 'network.tdh';
+
+const WALLET_COUNT_WORDS = new Map<string, number>([
+  ['one', 1],
+  ['two', 2],
+  ['three', 3],
+  ['four', 4],
+  ['five', 5],
+  ['six', 6],
+  ['seven', 7],
+  ['eight', 8],
+  ['nine', 9],
+  ['ten', 10]
+]);
+
+const WALLET_COUNT_PATTERN =
+  /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)[-\s]+(?:wallet|wallets|address|addresses)\b/g;
+
+const DELEGATION_CONTEXT_PATTERNS = [
+  /\bdelegat(?:e|es|ed|ing|ion|ions)\b/,
+  /\bdelegation managers?\b/,
+  /\bminting delegation\b/
+] as const;
+
+const GENESIS_SET_PATTERNS = [/\bgenesis sets?\b/] as const;
+
+const NAKAMOTO_SET_PATTERNS = [/\bnakamoto sets?\b/] as const;
+
+const MEME_SET_MINUS_PATTERNS = [
+  /\bmeme sets?\s*(?:-|minus)\s*(?:1|one|2|two)\b/,
+  /\bsets?\s+missing\s+(?:1|one|2|two)\s+cards?\b/
+] as const;
+
+const MEME_SET_PATTERNS = [
+  /\bmeme sets?\b/,
+  /\bcomplete meme sets?\b/,
+  /\bseason sets?\b/
+] as const;
+
+const TDH_UNWEIGHTED_PATTERNS = [
+  /\btdh\s+unweighted\b/,
+  /\bunweighted\s+tdh\b/,
+  /\braw\s+tdh\b/,
+  /\btdh__raw\b/
+] as const;
+
+const TDH_UNBOOSTED_PATTERNS = [
+  /\btdh\s+unboosted\b/,
+  /\bunboosted\s+tdh\b/,
+  /\bweighted\s+tdh\b/,
+  /\bedition weighted\s+tdh\b/
+] as const;
+
+function routedIdKey(id: string): string {
+  return `id:${id}`;
+}
+
+function routedPathKey(path: string): string {
+  return `path:${path}`;
+}
 
 export class HelpBotKnowledgeUnavailableError extends Error {
   constructor(
@@ -167,6 +242,10 @@ function readStringArray(value: unknown): string[] {
     : [];
 }
 
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
 function readCanonicalPath(raw: Record<string, unknown>): string | null {
   return readString(raw.canonicalPath) ?? readString(raw.canonical_path);
 }
@@ -206,6 +285,10 @@ function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
     title,
     linkLabel: readLinkLabel(raw, title),
     canonicalPath,
+    suppressSourceLinks:
+      readBoolean(raw.suppressSourceLinks) ??
+      readBoolean(raw.suppress_source_links) ??
+      false,
     aliases: aliases.length ? aliases : [title],
     keywords: keywords.length ? keywords : aliases.concat([title]),
     facts,
@@ -267,6 +350,20 @@ function tokenize(value: string): Set<string> {
   return tokens;
 }
 
+function uniqueStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
 function tokenVariants(token: string): string[] {
   const variants = [token];
   if (token.length > 4 && token.endsWith('ies')) {
@@ -324,70 +421,290 @@ function matchesAny(
   return patterns.some((pattern) => pattern.test(normalizedQuestion));
 }
 
+function parseWalletCount(rawCount: string): number | null {
+  const wordValue = WALLET_COUNT_WORDS.get(rawCount);
+  if (wordValue !== undefined) {
+    return wordValue;
+  }
+  const parsed = Number.parseInt(rawCount, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function requestedOverLimitWalletCount(
+  normalizedQuestion: string
+): number | null {
+  WALLET_COUNT_PATTERN.lastIndex = 0;
+  let overLimitCount: number | null = null;
+  for (
+    let match = WALLET_COUNT_PATTERN.exec(normalizedQuestion);
+    match;
+    match = WALLET_COUNT_PATTERN.exec(normalizedQuestion)
+  ) {
+    const rawCount = match[1];
+    if (!rawCount) {
+      continue;
+    }
+    const count = parseWalletCount(rawCount);
+    if (count !== null && count > CONSOLIDATIONS_LIMIT) {
+      overLimitCount = Math.max(overLimitCount ?? count, count);
+    }
+  }
+  return overLimitCount;
+}
+
 function addRoutedScore(
+  scores: Map<string, number>,
+  key: string,
+  score: number
+): void {
+  scores.set(key, Math.max(scores.get(key) ?? 0, score));
+}
+
+function addRoutedIdScore(
+  scores: Map<string, number>,
+  id: string,
+  score: number
+): void {
+  addRoutedScore(scores, routedIdKey(id), score);
+}
+
+function addRoutedPathScore(
   scores: Map<string, number>,
   canonicalPath: string,
   score: number
 ): void {
-  scores.set(canonicalPath, Math.max(scores.get(canonicalPath) ?? 0, score));
+  addRoutedScore(scores, routedPathKey(canonicalPath), score);
+}
+
+interface RoutedQuestionContext {
+  readonly normalizedQuestion: string;
+  readonly hasWalletContext: boolean;
+  readonly hasArchitectureContext: boolean;
+  readonly hasExplicitArchitectureContext: boolean;
+  readonly hasConsolidationContext: boolean;
+  readonly hasConsolidationLimitContext: boolean;
+  readonly hasDelegationContext: boolean;
+  readonly hasWalletCheckContext: boolean;
+  readonly overLimitWalletCount: number | null;
+}
+
+function routedQuestionContext(
+  normalizedQuestion: string
+): RoutedQuestionContext {
+  return {
+    normalizedQuestion,
+    hasWalletContext: matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS),
+    hasArchitectureContext: matchesAny(
+      normalizedQuestion,
+      ARCHITECTURE_CONTEXT_PATTERNS
+    ),
+    hasExplicitArchitectureContext: matchesAny(
+      normalizedQuestion,
+      EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS
+    ),
+    hasConsolidationContext: matchesAny(
+      normalizedQuestion,
+      CONSOLIDATION_CONTEXT_PATTERNS
+    ),
+    hasConsolidationLimitContext: matchesAny(
+      normalizedQuestion,
+      CONSOLIDATION_LIMIT_CONTEXT_PATTERNS
+    ),
+    hasDelegationContext: matchesAny(
+      normalizedQuestion,
+      DELEGATION_CONTEXT_PATTERNS
+    ),
+    hasWalletCheckContext: matchesAny(
+      normalizedQuestion,
+      WALLET_CHECK_CONTEXT_PATTERNS
+    ),
+    overLimitWalletCount: requestedOverLimitWalletCount(normalizedQuestion)
+  };
+}
+
+function addOverLimitWalletScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (context.overLimitWalletCount !== null) {
+    addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 16);
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 5);
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 5);
+  }
+}
+
+function addArchitectureScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (context.hasExplicitArchitectureContext) {
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 4);
+  }
+
+  if (
+    (context.hasArchitectureContext && context.hasWalletContext) ||
+    (context.hasExplicitArchitectureContext && context.hasWalletCheckContext)
+  ) {
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 5);
+    addRoutedIdScore(
+      scores,
+      WALLET_CHECKER_ID,
+      context.hasWalletCheckContext ? 10 : 4
+    );
+    addRoutedPathScore(
+      scores,
+      WALLET_CHECKER_PATH,
+      context.hasWalletCheckContext ? 7 : 3
+    );
+  }
+}
+
+function addWalletCheckerScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (
+    context.hasWalletCheckContext &&
+    (context.hasDelegationContext || context.hasConsolidationContext)
+  ) {
+    addRoutedIdScore(scores, WALLET_CHECKER_ID, 10);
+    addRoutedPathScore(scores, WALLET_CHECKER_PATH, 7);
+  }
+}
+
+function addConsolidationScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (
+    context.hasConsolidationContext &&
+    context.hasConsolidationLimitContext &&
+    (context.hasWalletContext || context.hasArchitectureContext)
+  ) {
+    addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 18);
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 8);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 6);
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 5);
+    return;
+  }
+
+  if (
+    context.hasConsolidationContext &&
+    (context.hasWalletContext || context.hasArchitectureContext)
+  ) {
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 16);
+    addRoutedPathScore(scores, REGISTER_CONSOLIDATION_PATH, 15);
+    addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 9);
+    addRoutedIdScore(scores, WALLET_ARCHITECTURE_ID, 5);
+    addRoutedPathScore(scores, WALLET_ARCHITECTURE_PATH, 4);
+  }
+}
+
+function addNetworkDefinitionScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (matchesAny(context.normalizedQuestion, GENESIS_SET_PATTERNS)) {
+    addRoutedIdScore(scores, GENESIS_SETS_ID, 12);
+    addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 4);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 3);
+  }
+
+  if (matchesAny(context.normalizedQuestion, NAKAMOTO_SET_PATTERNS)) {
+    addRoutedIdScore(scores, NAKAMOTO_SET_ID, 12);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
+  }
+
+  if (matchesAny(context.normalizedQuestion, MEME_SET_MINUS_PATTERNS)) {
+    addRoutedIdScore(scores, MEME_SETS_MINUS_ID, 12);
+    addRoutedIdScore(scores, MEME_SETS_ID, 4);
+    addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 3);
+  } else if (matchesAny(context.normalizedQuestion, MEME_SET_PATTERNS)) {
+    addRoutedIdScore(scores, MEME_SETS_ID, 12);
+    addRoutedIdScore(scores, NETWORK_DEFINITIONS_ID, 3);
+  }
+}
+
+function addTdhDefinitionScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (matchesAny(context.normalizedQuestion, TDH_UNWEIGHTED_PATTERNS)) {
+    addRoutedIdScore(scores, TDH_UNWEIGHTED_ID, 12);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
+  }
+
+  if (matchesAny(context.normalizedQuestion, TDH_UNBOOSTED_PATTERNS)) {
+    addRoutedIdScore(scores, TDH_UNBOOSTED_ID, 12);
+    addRoutedIdScore(scores, NETWORK_TDH_ID, 4);
+  }
 }
 
 function routedRecordScores(
   normalizedQuestion: string
 ): ReadonlyMap<string, number> {
-  const hasWalletContext = matchesAny(
-    normalizedQuestion,
-    WALLET_CONTEXT_PATTERNS
-  );
-  const hasArchitectureContext = matchesAny(
-    normalizedQuestion,
-    ARCHITECTURE_CONTEXT_PATTERNS
-  );
-  const hasExplicitArchitectureContext = matchesAny(
-    normalizedQuestion,
-    EXPLICIT_ARCHITECTURE_CONTEXT_PATTERNS
-  );
-  const hasConsolidationContext = matchesAny(
-    normalizedQuestion,
-    CONSOLIDATION_CONTEXT_PATTERNS
-  );
-  const hasWalletCheckContext = matchesAny(
-    normalizedQuestion,
-    WALLET_CHECK_CONTEXT_PATTERNS
-  );
+  const context = routedQuestionContext(normalizedQuestion);
   const scores = new Map<string, number>();
 
-  if (
-    (hasArchitectureContext && hasWalletContext) ||
-    (hasExplicitArchitectureContext && hasWalletCheckContext)
-  ) {
-    addRoutedScore(scores, WALLET_ARCHITECTURE_PATH, 6);
-    addRoutedScore(scores, WALLET_CHECKER_PATH, hasWalletCheckContext ? 8 : 4);
-  }
-
-  if (hasConsolidationContext && (hasWalletContext || hasArchitectureContext)) {
-    addRoutedScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 8);
-    addRoutedScore(scores, REGISTER_CONSOLIDATION_PATH, 7);
-    addRoutedScore(scores, CONSOLIDATION_USE_CASES_PATH, 5);
-    addRoutedScore(scores, WALLET_ARCHITECTURE_PATH, 5);
-  }
+  addOverLimitWalletScores(scores, context);
+  addArchitectureScores(scores, context);
+  addWalletCheckerScores(scores, context);
+  addConsolidationScores(scores, context);
+  addNetworkDefinitionScores(scores, context);
+  addTdhDefinitionScores(scores, context);
 
   return scores;
 }
 
 function phraseScore(question: string, record: HelpBotKnowledgeRecord): number {
-  return record.aliases.reduce((score, alias) => {
-    return containsNormalizedPhrase(question, alias) ? score + 3 : score;
-  }, 0);
+  return uniqueStrings([record.title, ...record.aliases]).reduce(
+    (score, alias) => {
+      return containsNormalizedPhrase(question, alias) ? score + 3 : score;
+    },
+    0
+  );
+}
+
+function keywordMatches(questionTokens: Set<string>, keyword: string): boolean {
+  const normalizedKeyword = normalizeText(keyword);
+  if (!normalizedKeyword) {
+    return false;
+  }
+  if (questionTokens.has(normalizedKeyword)) {
+    return true;
+  }
+  const keywordTokens = normalizedPhraseTokens(normalizedKeyword);
+  return (
+    keywordTokens.length === 1 &&
+    tokenVariants(keywordTokens[0]).some((variant) =>
+      questionTokens.has(variant)
+    )
+  );
 }
 
 function keywordScore(
   questionTokens: Set<string>,
   record: HelpBotKnowledgeRecord
 ): number {
-  return record.keywords.reduce((score, keyword) => {
-    return questionTokens.has(normalizeText(keyword)) ? score + 1 : score;
-  }, 0);
+  return uniqueStrings([...record.keywords, ...record.tags]).reduce(
+    (score, keyword) => {
+      return keywordMatches(questionTokens, keyword) ? score + 1 : score;
+    },
+    0
+  );
+}
+
+function routedScore(
+  routedScores: ReadonlyMap<string, number>,
+  record: HelpBotKnowledgeRecord
+): number {
+  return (
+    (routedScores.get(routedIdKey(record.id)) ?? 0) +
+    (routedScores.get(routedPathKey(record.canonicalPath)) ?? 0)
+  );
 }
 
 function findMatchesInRecords(
@@ -407,7 +724,7 @@ function findMatchesInRecords(
       score:
         phraseScore(normalizedQuestion, record) +
         keywordScore(questionTokens, record) +
-        (routedScores.get(record.canonicalPath) ?? 0)
+        routedScore(routedScores, record)
     }))
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
     .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))
