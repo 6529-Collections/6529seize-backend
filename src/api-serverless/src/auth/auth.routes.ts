@@ -47,6 +47,7 @@ import {
   createConnectionShare,
   createNativeSession,
   createWebSession,
+  hasActiveNativeSessionForAddressAndRole,
   hasActiveWebSessionForAddressAndRole,
   isAuthConnectionSharingEnabled,
   issueAccessToken,
@@ -93,6 +94,13 @@ interface ResolvedSessionNonceContext {
   readonly domain: string;
   readonly clientOrigin: string | null;
   readonly sessionType: StructuredWalletSignatureSessionType;
+}
+
+interface ConnectionShareAuthProof {
+  readonly role?: string | null;
+  readonly client_type?: RefreshTokenSessionClientType;
+  readonly client_address?: string;
+  readonly native_refresh_token?: string;
 }
 
 router.get(
@@ -403,7 +411,7 @@ router.post(
       CreateConnectionShareRequestSchema
     );
     const { authenticatedWallet, authRole } =
-      await getAuthenticatedConnectionShareContext(req, shareRequest.role);
+      await getAuthenticatedConnectionShareContext(req, shareRequest);
     const created = await createConnectionShare({
       address: authenticatedWallet,
       role: authRole,
@@ -433,10 +441,7 @@ router.post(
       CreateLegacyDesktopConnectionShareRequestSchema
     );
     const { authenticatedWallet, authRole } =
-      await getAuthenticatedConnectionShareContext(
-        req,
-        legacyShareRequest.role
-      );
+      await getAuthenticatedConnectionShareContext(req, legacyShareRequest);
     const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
       authenticatedWallet,
       authRole
@@ -929,7 +934,7 @@ function assertWebAuthCredentialOriginAllowed(
 
 async function getAuthenticatedConnectionShareContext(
   req: Request<any, any, any, any, any>,
-  requestedRole: string | null | undefined
+  shareRequest: ConnectionShareAuthProof
 ): Promise<{
   readonly authenticatedWallet: string;
   readonly authRole: string | null;
@@ -939,11 +944,38 @@ async function getAuthenticatedConnectionShareContext(
     throw new UnauthorisedException('Authentication required');
   }
   const authRole = ((req.user as any)?.role ?? null) as string | null;
-  if (requestedRole && requestedRole !== authRole) {
+  if (shareRequest.role !== undefined && shareRequest.role !== authRole) {
     throw new BadRequestException(
       'Share role must match authenticated session role'
     );
   }
+
+  if (shareRequest.client_type) {
+    if (
+      !shareRequest.client_address ||
+      !shareRequest.native_refresh_token ||
+      shareRequest.client_address.toLowerCase() !== authenticatedWallet
+    ) {
+      throw new BadRequestException(
+        'Share source session must match authenticated wallet'
+      );
+    }
+
+    const hasActiveMatchingNativeSession =
+      await hasActiveNativeSessionForAddressAndRole({
+        address: authenticatedWallet,
+        role: authRole,
+        nativeRefreshToken: shareRequest.native_refresh_token,
+        clientType: shareRequest.client_type
+      });
+    if (!hasActiveMatchingNativeSession) {
+      throw new UnauthorisedException(
+        'Connection sharing requires an active session-v2 native session'
+      );
+    }
+    return { authenticatedWallet, authRole };
+  }
+
   const hasActiveMatchingWebSession =
     await hasActiveWebSessionForAddressAndRole({
       cookieHeader: req.headers.cookie,
@@ -1030,18 +1062,28 @@ const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeR
     client_address: Joi.string().required(),
     native_refresh_token: Joi.string().hex().length(128).required(),
     all_sessions: Joi.boolean().optional().default(false)
-  });
+  }).unknown(false);
 
 const CreateConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateConnectionShareRequest> =
   Joi.object<ApiCreateConnectionShareRequest>({
     target_client_type: Joi.string().valid('native', 'desktop').required(),
-    role: Joi.string().optional().allow(null)
-  }).unknown(false);
+    role: Joi.string().optional().allow(null),
+    client_type: Joi.string().valid('native', 'desktop').optional(),
+    client_address: Joi.string().optional(),
+    native_refresh_token: Joi.string().hex().length(128).optional()
+  })
+    .and('client_type', 'client_address', 'native_refresh_token')
+    .unknown(false);
 
 const CreateLegacyDesktopConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateLegacyDesktopConnectionShareRequest> =
   Joi.object<ApiCreateLegacyDesktopConnectionShareRequest>({
-    role: Joi.string().optional().allow(null).default(null)
-  }).unknown(false);
+    role: Joi.string().optional().allow(null),
+    client_type: Joi.string().valid('native', 'desktop').optional(),
+    client_address: Joi.string().optional(),
+    native_refresh_token: Joi.string().hex().length(128).optional()
+  })
+    .and('client_type', 'client_address', 'native_refresh_token')
+    .unknown(false);
 
 const RedeemConnectionShareRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionShareRequest> =
   Joi.object<ApiRedeemConnectionShareRequest>({

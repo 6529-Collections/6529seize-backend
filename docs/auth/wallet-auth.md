@@ -58,6 +58,13 @@ For native clients:
 - The structured message uses `Session Type: native`.
 - No browser client origin is included.
 
+For 6529 Desktop clients:
+
+- The client must request `client_type=desktop`.
+- The structured message uses the normalized localhost host as `Domain`.
+- The structured message includes `Client Origin` for that localhost app origin.
+- The structured message uses `Session Type: desktop`.
+
 `chain_id` is accepted for backward-compatible request shape, but wallet auth challenges are issued for the backend-configured auth chain. `AUTH_WALLET_CHAIN_ID` defaults to Ethereum mainnet.
 
 ## Session V2 Login
@@ -79,12 +86,14 @@ For web sessions:
   the scoped cookie lets multi-account web sessions refresh, logout, and create
   connection shares for the intended active wallet.
 
-For native sessions:
+For native and desktop sessions:
 
-- The signed message must have `Session Type: native`.
-- The server creates a row in `wallet_auth_sessions` with `client_type=native`.
-- The native refresh token is returned in the JSON response.
-- The native refresh token is stored only as a server-side hash.
+- The signed message must have `Session Type: native` or `Session Type:
+  desktop`, matching the requested `client_type`.
+- The server creates a row in `wallet_auth_sessions` with `client_type=native`
+  or `client_type=desktop`.
+- The refresh token is returned in the JSON response.
+- The refresh token is stored only as a server-side hash.
 
 Both web and native session login return a JWT access token and access-token expiry.
 
@@ -106,10 +115,11 @@ For web sessions:
   scoped cookie for the requested address without clearing another account's
   compatibility cookie.
 
-For native sessions:
+For native and desktop sessions:
 
 - The request supplies `client_address` and `native_refresh_token`.
-- The native refresh token is rotated on every successful refresh.
+- The request supplies `client_type=native` or `client_type=desktop`.
+- The refresh token is rotated on every successful refresh.
 
 `POST /api/auth/session-logout` revokes the current session by default. Current
 web clients send `client_address` so logout targets the matching address-scoped
@@ -122,24 +132,37 @@ stored session origin before revoking an existing session.
 
 Connection sharing is not a replacement for refresh-token redemption. It creates an additional authenticated session from an already authenticated session.
 
-The session-v2 mobile/native flow is:
+The session-v2 mobile/native/desktop flow is:
 
 1. An authenticated client calls `POST /api/auth/connection-share`.
 2. The server creates a short-lived one-time `connection_share_code`.
 3. The response includes `connection_share_code` and a `deep_link_path`.
-4. A native client calls `POST /api/auth/connection-share/redeem`.
-5. The server consumes the share code once and creates a native wallet auth session.
+4. A native or desktop client calls `POST /api/auth/connection-share/redeem`.
+5. The server consumes the share code once and creates the requested native or
+   desktop wallet auth session.
 
 The original client remains connected. This is connection sharing, not moving or revoking the original connection.
 
-Connection share state is stored in `wallet_connection_shares`. Share codes are stored only as server-side hashes and expire after a short TTL.
+Connection share creation requires bearer JWT auth plus proof that the caller has
+an active matching source session for the authenticated wallet and role:
 
-The desktop compatibility flow intentionally remains on the legacy refresh-token
-handoff while 6529 Desktop is still a legacy client:
+- Web callers prove the source session with the active session-v2 web cookie.
+- Native and desktop callers can instead include `client_type`,
+  `client_address`, and `native_refresh_token`; the backend checks that refresh
+  token against the active source session before issuing a share.
 
-1. A session-v2 web client calls `POST /api/auth/connection-share/legacy-desktop`.
-2. The server requires bearer JWT auth plus an active matching session-v2 web
-   cookie for the authenticated wallet and role.
+Connection share state is stored in `wallet_connection_shares`. Share codes are
+stored only as server-side hashes and expire after a short TTL. Redeeming a
+share returns `client_type` so callers can persist the refresh token under the
+actual session type created by the backend.
+
+The desktop compatibility flow remains available for legacy Desktop builds that
+still need the legacy refresh-token handoff:
+
+1. A session-v2 client calls `POST /api/auth/connection-share/legacy-desktop`.
+2. The server requires bearer JWT auth plus either an active matching
+   session-v2 web cookie or the native/desktop source-session proof described
+   above.
 3. The server returns a legacy refresh token and an
    `/accept-connection-sharing?token=...&address=...` deep-link path.
 4. 6529 Desktop redeems that token through `POST /api/auth/redeem-refresh-token`

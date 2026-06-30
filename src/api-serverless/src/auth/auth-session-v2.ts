@@ -14,7 +14,10 @@ import {
   ApiCreateConnectionShareResponse,
   ApiCreateConnectionShareResponseTargetClientTypeEnum
 } from '../generated/models/ApiCreateConnectionShareResponse';
-import { ApiRedeemConnectionShareResponse } from '../generated/models/ApiRedeemConnectionShareResponse';
+import {
+  ApiRedeemConnectionShareResponse,
+  ApiRedeemConnectionShareResponseClientTypeEnum
+} from '../generated/models/ApiRedeemConnectionShareResponse';
 import {
   ApiSessionNativeResponse,
   ApiSessionNativeResponseClientTypeEnum
@@ -388,6 +391,31 @@ export async function hasActiveWebSessionForAddressAndRole({
   return false;
 }
 
+export async function hasActiveNativeSessionForAddressAndRole({
+  address,
+  role,
+  nativeRefreshToken,
+  clientType
+}: {
+  readonly address: string;
+  readonly role: string | null;
+  readonly nativeRefreshToken: string;
+  readonly clientType: RefreshTokenSessionClientType;
+}): Promise<boolean> {
+  const normalizedAddress = address.toLowerCase();
+  const existing = await authDb.getActiveNativeSessionByRefreshHash(
+    normalizedAddress,
+    hashSecret(nativeRefreshToken),
+    new Date(),
+    clientType
+  );
+  return (
+    existing?.address === normalizedAddress &&
+    existing.role === role &&
+    existing.client_type === clientType
+  );
+}
+
 export async function refreshWebSessionForAddress({
   cookieHeader,
   address,
@@ -723,6 +751,10 @@ export async function redeemConnectionShare({
       role: session.response.role,
       access_token: session.response.access_token,
       access_token_expires_at: session.response.access_token_expires_at,
+      client_type:
+        session.response.client_type === 'desktop'
+          ? ApiRedeemConnectionShareResponseClientTypeEnum.Desktop
+          : ApiRedeemConnectionShareResponseClientTypeEnum.Native,
       native_refresh_token: session.response.native_refresh_token,
       refresh_token_expires_at: session.response.refresh_token_expires_at
     }
