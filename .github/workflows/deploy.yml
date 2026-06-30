@@ -71,6 +71,7 @@ on:
           - transactionsProcessingLoop
           - waveDecisionExecutionLoop
           - waveLeaderboardSnapshotterLoop
+          - waveDropMetricsRefreshLoop
           - waveScoreRefreshLoop
           - xTdhLoop
 

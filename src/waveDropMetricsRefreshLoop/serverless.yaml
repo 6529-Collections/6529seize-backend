@@ -1,0 +1,154 @@
+service: waveDropMetricsRefreshLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  waveDropMetricsRefreshLoop:
+    handler: index.handler
+    reservedConcurrency: 1
+    name: waveDropMetricsRefreshLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - WaveDropMetricsDirtyRefreshQueue
+              - Arn
+      - schedule:
+          rate: rate(1 minute)
+          input:
+            mode: 'DIRTY'
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'waveDropMetricsRefreshLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    WaveDropMetricsRefreshLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/waveDropMetricsRefreshLoop
+        RetentionInDays: 60
+
+    WaveDropMetricsDirtyRefreshQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'wave-drop-metrics-refresh-dirty.fifo'
+        FifoQueue: true
+        VisibilityTimeout: 1200
+        ContentBasedDeduplication: true
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [WaveDropMetricsDirtyRefreshDLQ, Arn]
+          maxReceiveCount: 5
+    WaveDropMetricsDirtyRefreshDLQ:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'wave-drop-metrics-refresh-dirty-dlq.fifo'
+        FifoQueue: true
+        MessageRetentionPeriod: 1209600
+        ContentBasedDeduplication: true
+    WaveDropMetricsDirtyRefreshQueuePolicy:
+      Type: 'AWS::SQS::QueuePolicy'
+      Properties:
+        Queues:
+          - Ref: 'WaveDropMetricsDirtyRefreshQueue'
+        PolicyDocument:
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:GetQueueUrl
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+                - sqs:ChangeMessageVisibility
+              Resource:
+                - !GetAtt WaveDropMetricsDirtyRefreshQueue.Arn
+    WaveDropMetricsDirtyRefreshDLQPolicy:
+      Type: 'AWS::SQS::QueuePolicy'
+      Properties:
+        Queues:
+          - Ref: 'WaveDropMetricsDirtyRefreshDLQ'
+        PolicyDocument:
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt WaveDropMetricsDirtyRefreshDLQ.Arn
+    WaveDropMetricsRefreshLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - WaveDropMetricsRefreshLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: WaveDropMetricsRefreshLoopLogGroup
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'waveDropMetricsRefreshLoop_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    WaveDropMetricsRefreshLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: WaveDropMetricsRefreshLoopOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-waveDropMetricsRefreshLoop-OOM'
+        AlarmDescription: !Sub 'Lambda waveDropMetricsRefreshLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'waveDropMetricsRefreshLoop_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WaveDropMetricsDirtyRefreshDLQDepthAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-waveDropMetricsRefreshLoop-DLQ'
+        AlarmDescription: !Sub 'waveDropMetricsRefreshLoop DLQ has visible messages in ${AWS::Region}'
+        Namespace: 'AWS/SQS'
+        MetricName: 'ApproximateNumberOfMessagesVisible'
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt: [WaveDropMetricsDirtyRefreshDLQ, QueueName]
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
