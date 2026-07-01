@@ -194,9 +194,10 @@ describe('ApiDropMapper', () => {
       { 'drop-1': ['DROP_REPLIED'] }
     );
 
-    const result = await mapper.mapDrops([drop], {
+    const ctx = {
       authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
-    });
+    };
+    const result = await mapper.mapDrops([drop], ctx);
 
     expect(result['drop-1']).toMatchObject({
       id: 'drop-1',
@@ -286,6 +287,47 @@ describe('ApiDropMapper', () => {
         { option_no: 2, option_string: 'Second', votes: 3 }
       ]
     });
+  });
+
+  it('uses provided eligible groups for mentioned wave overviews', async () => {
+    const { mapper, deps } = createMapper();
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+    deps.dropsDb.findMentionedWavesByDropIds.mockResolvedValue([
+      {
+        id: 'mention-1',
+        drop_id: 'drop-1',
+        wave_id: 'mentioned-wave-1',
+        wave_name_in_content: 'wave-name'
+      }
+    ]);
+    deps.wavesApiDb.findWaveMentionOverviewsByIds.mockResolvedValue({
+      'mentioned-wave-1': {
+        id: 'mentioned-wave-1',
+        name: 'Mentioned Wave',
+        picture: null,
+        visibility_group_id: null,
+        participation_group_id: null,
+        chat_group_id: null,
+        admin_group_id: null,
+        voting_group_id: null,
+        is_direct_message: false
+      }
+    });
+
+    await mapper.mapDrops([makeDrop()], ctx, {
+      groupIdsUserIsEligibleFor: ['visible-group']
+    });
+
+    expect(
+      deps.userGroupsService.getGroupsUserIsEligibleFor
+    ).not.toHaveBeenCalled();
+    expect(deps.wavesApiDb.findWaveMentionOverviewsByIds).toHaveBeenCalledWith(
+      ['mentioned-wave-1'],
+      ['visible-group'],
+      ctx
+    );
   });
 
   it('maps attachments, mentions, replies, and submission voting context', async () => {
@@ -425,9 +467,10 @@ describe('ApiDropMapper', () => {
     });
     deps.dropsDb.findDropIdsWithMetadata.mockResolvedValue(new Set(['drop-2']));
 
-    const result = await mapper.mapDrops([drop], {
+    const ctx = {
       authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
-    });
+    };
+    const result = await mapper.mapDrops([drop], ctx);
 
     expect(result['drop-2']).toMatchObject({
       id: 'drop-2',
@@ -497,9 +540,7 @@ describe('ApiDropMapper', () => {
     });
     expect(deps.dropsDb.findDropIdsWithMetadata).toHaveBeenCalledWith(
       ['drop-2'],
-      {
-        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
-      }
+      ctx
     );
   });
 

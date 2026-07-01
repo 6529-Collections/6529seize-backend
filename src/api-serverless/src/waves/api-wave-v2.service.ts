@@ -36,6 +36,7 @@ import {
 } from '@/api/waves/api-wave-overview.mapper';
 import {
   assertWaveAndParentVisibleOrThrow,
+  getGroupsUserIsEligibleForReadContext,
   getWaveReadContextProfileId
 } from '@/api/waves/wave-access.helpers';
 import {
@@ -192,14 +193,8 @@ export class ApiWaveV2Service {
     const timerKey = `${this.constructor.name}->findDropsFeed`;
     ctx.timer?.start(timerKey);
     try {
-      const contextProfileId = getWaveReadContextProfileId(
-        ctx.authenticationContext
-      );
       const groupIdsUserIsEligibleForPromise =
-        this.userGroupsService.getGroupsUserIsEligibleFor(
-          contextProfileId,
-          ctx.timer
-        );
+        getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx);
       const waveAndCurationFilterPromise = this.findWaveAndCurationFilter(
         {
           waveId: request.wave_id,
@@ -237,7 +232,8 @@ export class ApiWaveV2Service {
             {
               ...request,
               wave: visibleWave,
-              curationFilter
+              curationFilter,
+              groupIdsUserIsEligibleFor
             },
             ctx
           );
@@ -253,13 +249,10 @@ export class ApiWaveV2Service {
     const timerKey = `${this.constructor.name}->findDropRepliesFeed`;
     ctx.timer?.start(timerKey);
     try {
-      const contextProfileId = getWaveReadContextProfileId(
-        ctx.authenticationContext
-      );
       const groupIdsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          contextProfileId,
-          ctx.timer
+        await getGroupsUserIsEligibleForReadContext(
+          this.userGroupsService,
+          ctx
         );
       const rootDrop = await this.findVisibleRootDropOrThrow(
         request.drop_id,
@@ -318,14 +311,11 @@ export class ApiWaveV2Service {
       if (!wave) {
         throw new NotFoundException(`Wave ${wave_id} not found`);
       }
-      const contextProfileId = getWaveReadContextProfileId(
-        ctx.authenticationContext
-      );
       const visibilityGroupId = wave.visibility_group_id;
       const groupIdsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          contextProfileId,
-          ctx.timer
+        await getGroupsUserIsEligibleForReadContext(
+          this.userGroupsService,
+          ctx
         );
       await assertWaveAndParentVisibleOrThrow({
         wave: {
@@ -343,7 +333,9 @@ export class ApiWaveV2Service {
         ctx
       );
       const pageDropEntities = dropEntities.slice(0, size);
-      const drops = await this.apiDropMapper.mapDrops(pageDropEntities, ctx);
+      const drops = await this.apiDropMapper.mapDrops(pageDropEntities, ctx, {
+        groupIdsUserIsEligibleFor
+      });
       return {
         data: pageDropEntities.map((drop) => drops[drop.id]),
         next: dropEntities.length > size,
@@ -407,7 +399,10 @@ export class ApiWaveV2Service {
       const pageDropEntities = dropEntities.slice(0, page_size);
       const dropsById = await this.apiDropMapper.mapDrops(
         pageDropEntities,
-        ctx
+        ctx,
+        {
+          groupIdsUserIsEligibleFor: eligibleGroups
+        }
       );
       return {
         data: pageDropEntities.map((drop) => dropsById[drop.id]),
@@ -557,12 +552,10 @@ export class ApiWaveV2Service {
     const authenticatedProfileId = getWaveReadContextProfileId(
       ctx.authenticationContext
     );
-    const eligibleGroups = authenticatedProfileId
-      ? await this.userGroupsService.getGroupsUserIsEligibleFor(
-          authenticatedProfileId,
-          ctx.timer
-        )
-      : [];
+    const eligibleGroups = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      ctx
+    );
     return {
       authenticatedProfileId,
       eligibleGroups
@@ -660,10 +653,12 @@ export class ApiWaveV2Service {
       serial_no_limit,
       search_strategy,
       curationFilter,
-      drop_type
+      drop_type,
+      groupIdsUserIsEligibleFor
     }: FindWaveDropsFeedV2Request & {
       readonly wave: WaveEntity;
       readonly curationFilter: string | null;
+      readonly groupIdsUserIsEligibleFor: string[];
     },
     ctx: RequestContext
   ): Promise<ApiWaveDropsFeedV2> {
@@ -679,9 +674,13 @@ export class ApiWaveV2Service {
         },
         ctx
       ),
-      this.apiWaveOverviewMapper.mapWaves([wave], ctx)
+      this.apiWaveOverviewMapper.mapWaves([wave], ctx, {
+        groupIdsUserIsEligibleFor
+      })
     ]);
-    const apiDropById = await this.apiDropMapper.mapDrops(dropEntities, ctx);
+    const apiDropById = await this.apiDropMapper.mapDrops(dropEntities, ctx, {
+      groupIdsUserIsEligibleFor
+    });
     return {
       drops: dropEntities.map((drop) => apiDropById[drop.id]),
       wave: apiWaveById[wave.id]
@@ -730,7 +729,9 @@ export class ApiWaveV2Service {
         },
         ctx
       ),
-      this.apiWaveOverviewMapper.mapWaves([wave], ctx)
+      this.apiWaveOverviewMapper.mapWaves([wave], ctx, {
+        groupIdsUserIsEligibleFor
+      })
     ]);
     // This remains defensive for callers that provide a wave separately from
     // the root drop lookup.
@@ -744,7 +745,8 @@ export class ApiWaveV2Service {
     );
     const apiDropById = await this.apiDropMapper.mapDrops(
       dropEntitiesToMap,
-      ctx
+      ctx,
+      { groupIdsUserIsEligibleFor }
     );
 
     return {

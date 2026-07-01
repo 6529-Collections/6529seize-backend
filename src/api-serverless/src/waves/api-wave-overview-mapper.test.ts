@@ -466,6 +466,24 @@ describe('ApiWaveOverviewMapper', () => {
     );
   });
 
+  it('uses provided eligible groups instead of loading them again', async () => {
+    const { mapper, deps } = createMapper();
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    await mapper.mapWaves([makeWave()], ctx, {
+      groupIdsUserIsEligibleFor: ['visible-group']
+    });
+
+    expect(
+      deps.userGroupsService.getGroupsUserIsEligibleFor
+    ).not.toHaveBeenCalled();
+    expect(
+      deps.wavesApiDb.findVisibleParentWavesByChildWaveIds
+    ).toHaveBeenCalledWith(['wave-1'], ['visible-group'], ctx);
+  });
+
   it('maps active chat slow mode cooldown in context profile context', async () => {
     const { mapper, deps } = createMapper();
     const nextDropTimestamp = Date.now() + 60000;

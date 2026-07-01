@@ -37,7 +37,10 @@ import {
   resolveWavePictureOverride,
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
-import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
+import {
+  getGroupsUserIsEligibleForReadContext,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 import {
   FollowedSubwaveOverviewContext,
   wavesApiDb,
@@ -49,6 +52,10 @@ import {
 } from '@/api/waves/wave-score.api-mapper';
 import { WaveUnreadSummary } from '@/api/waves/wave-unread-cache';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
+
+export interface ApiWaveOverviewMapperOptions {
+  readonly groupIdsUserIsEligibleFor?: string[];
+}
 
 export function createUnknownWaveCreatorProfile({
   profileId,
@@ -95,7 +102,8 @@ export class ApiWaveOverviewMapper {
 
   public async mapWaves(
     waveEntities: WaveEntity[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: ApiWaveOverviewMapperOptions = {}
   ): Promise<Record<string, ApiWaveOverview>> {
     const timerKey = `${this.constructor.name}->mapWaves`;
     ctx.timer?.start(timerKey);
@@ -108,12 +116,12 @@ export class ApiWaveOverviewMapper {
       const contextProfileId = getWaveReadContextProfileId(
         ctx.authenticationContext
       );
-      const groupIdsUserIsEligibleFor = contextProfileId
-        ? await this.userGroupsService.getGroupsUserIsEligibleFor(
-            contextProfileId,
-            ctx.timer
-          )
-        : [];
+      const groupIdsUserIsEligibleFor =
+        options.groupIdsUserIsEligibleFor ??
+        (await getGroupsUserIsEligibleForReadContext(
+          this.userGroupsService,
+          ctx
+        ));
       const requestedWaveIds = entities.map((wave) => wave.id);
       const parentWavesByChildWaveId =
         await this.wavesApiDb.findVisibleParentWavesByChildWaveIds(
