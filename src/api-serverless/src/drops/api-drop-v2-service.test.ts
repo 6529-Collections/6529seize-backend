@@ -306,6 +306,7 @@ describe('ApiDropV2Service', () => {
     const authenticationContext =
       AuthenticationContext.fromProfileId('viewer-1');
     const connection = {} as any;
+    const ctx = { authenticationContext, connection };
     deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(parentDrop);
     deps.dropsDb.findVisibleDrops.mockResolvedValue([
       firstReply,
@@ -321,7 +322,7 @@ describe('ApiDropV2Service', () => {
         page_size: 2,
         page: 2
       },
-      { authenticationContext, connection }
+      ctx
     );
 
     expect(
@@ -341,11 +342,12 @@ describe('ApiDropV2Service', () => {
         limit: 3,
         offset: 2
       },
-      { authenticationContext, connection }
+      ctx
     );
     expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
       [firstReply, secondReply],
-      { authenticationContext, connection }
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
     expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
       ['wave-1'],
@@ -354,7 +356,8 @@ describe('ApiDropV2Service', () => {
     );
     expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
       [makeWave()],
-      { authenticationContext, connection }
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
     expect(result).toEqual({
       data: [
@@ -397,6 +400,7 @@ describe('ApiDropV2Service', () => {
     });
     const authenticationContext =
       AuthenticationContext.fromProfileId('viewer-1');
+    const ctx = { authenticationContext };
     deps.dropsDb.findVisibleDrops.mockResolvedValue([firstDrop, secondDrop]);
     deps.wavesApiDb.findWavesByIdsEligibleForRead.mockResolvedValue([
       makeWave(),
@@ -415,7 +419,7 @@ describe('ApiDropV2Service', () => {
         page_size: 50,
         page: 1
       },
-      { authenticationContext }
+      ctx
     );
 
     expect(
@@ -430,7 +434,7 @@ describe('ApiDropV2Service', () => {
         limit: 51,
         offset: 0
       },
-      { authenticationContext }
+      ctx
     );
     expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
       ['wave-1', 'wave-2'],
@@ -457,6 +461,7 @@ describe('ApiDropV2Service', () => {
     });
     const authenticationContext =
       AuthenticationContext.fromProfileId('viewer-1');
+    const ctx = { authenticationContext };
     deps.dropsDb.findVisibleDrops.mockResolvedValue([firstDrop, secondDrop]);
     deps.wavesApiDb.findWavesByIdsEligibleForRead.mockResolvedValue([
       makeWave(),
@@ -475,7 +480,7 @@ describe('ApiDropV2Service', () => {
         page_size: 50,
         page: 1
       },
-      { authenticationContext }
+      ctx
     );
 
     expect(deps.dropsDb.findVisibleDrops).toHaveBeenCalledWith(
@@ -487,7 +492,7 @@ describe('ApiDropV2Service', () => {
         limit: 51,
         offset: 0
       },
-      { authenticationContext }
+      ctx
     );
     expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
       ['wave-1', 'wave-2'],
@@ -551,13 +556,11 @@ describe('ApiDropV2Service', () => {
     const authenticationContext =
       AuthenticationContext.fromProfileId('viewer-1');
     const connection = {} as any;
+    const ctx = { authenticationContext, connection };
     deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(drop);
     deps.dropsDb.findWaveByIdOrNull.mockResolvedValue(wave);
 
-    const result = await service.findWithWaveByIdOrThrow('drop-1', {
-      authenticationContext,
-      connection
-    });
+    const result = await service.findWithWaveByIdOrThrow('drop-1', ctx);
 
     expect(result).toEqual({
       drop: { id: 'drop-1' },
@@ -575,14 +578,11 @@ describe('ApiDropV2Service', () => {
       'wave-1',
       connection
     );
-    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith([drop], {
-      authenticationContext,
-      connection
-    });
-    expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith([wave], {
-      authenticationContext,
-      connection
-    });
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith([drop], ctx);
+    expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
+      [wave],
+      ctx
+    );
   });
 
   it('throws when drop is missing or not visible', async () => {
@@ -597,7 +597,12 @@ describe('ApiDropV2Service', () => {
 
     expect(
       deps.userGroupsService.getGroupsUserIsEligibleFor
-    ).toHaveBeenCalledWith(null, undefined);
+    ).not.toHaveBeenCalled();
+    expect(deps.dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
+      'missing-drop',
+      [],
+      undefined
+    );
     expect(deps.dropsDb.findWaveByIdOrNull).not.toHaveBeenCalled();
     expect(deps.apiDropMapper.mapDrops).not.toHaveBeenCalled();
     expect(deps.apiWaveOverviewMapper.mapWaves).not.toHaveBeenCalled();
@@ -1005,7 +1010,11 @@ describe('ApiDropV2Service', () => {
       },
       ctx
     );
-    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(dropEntities, ctx);
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      dropEntities,
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
+    );
     expect(
       deps.wavesApiDb.findWavesByIdsEligibleForRead
     ).not.toHaveBeenCalled();
@@ -1060,7 +1069,8 @@ describe('ApiDropV2Service', () => {
     );
     expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
       waveEntities,
-      ctx
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
     expect(result).toEqual({
       data: [

@@ -1,7 +1,7 @@
 import { AuthenticationContext } from '@/auth-context';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
-import { RequestContext } from '@/request.context';
+import { getRequestScopedPromise, RequestContext } from '@/request.context';
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
 
@@ -31,9 +31,14 @@ export async function getGroupsUserIsEligibleForReadContext(
   ctx: RequestContext
 ): Promise<string[]> {
   const profileId = getWaveReadContextProfileId(ctx.authenticationContext);
-  return await userGroupsService.getGroupsUserIsEligibleFor(
-    profileId,
-    ctx.timer
+  if (!profileId) {
+    return [];
+  }
+  // Eligibility depends on profileId; ctx.timer only instruments the call.
+  return await getRequestScopedPromise(
+    ctx,
+    `wave-read-eligible-groups:${profileId}`,
+    () => userGroupsService.getGroupsUserIsEligibleFor(profileId, ctx.timer)
   );
 }
 

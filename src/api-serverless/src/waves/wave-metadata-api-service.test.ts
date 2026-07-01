@@ -67,10 +67,7 @@ describe('WaveMetadataApiService', () => {
       }
     ]);
 
-    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
-      null,
-      undefined
-    );
+    expect(userGroupsService.getGroupsUserIsEligibleFor).not.toHaveBeenCalled();
     expect(waveMetadataDb.listByWaveId).toHaveBeenCalledWith('wave-1', {});
   });
 
