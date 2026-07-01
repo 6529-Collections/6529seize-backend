@@ -47,6 +47,7 @@ import {
   createConnectionShare,
   createNativeSession,
   createWebSession,
+  hasActiveNativeSessionForAddressAndRole,
   hasActiveWebSessionForAddressAndRole,
   isAuthConnectionSharingEnabled,
   issueAccessToken,
@@ -72,8 +73,11 @@ import type {
   ParsedStructuredWalletSignatureMessage,
   StructuredWalletSignatureSessionType
 } from '../wallet-signatures/structured-wallet-signatures';
+import type { WalletAuthClientType } from '@/entities/IWalletAuthSession';
 
 const router = asyncRouter();
+
+type RefreshTokenSessionClientType = Exclude<WalletAuthClientType, 'web'>;
 
 interface NonceQueryRequest {
   signer_address: string;
@@ -82,7 +86,7 @@ interface NonceQueryRequest {
 
 interface SessionNonceQueryRequest {
   signer_address: string;
-  client_type: 'web' | 'native';
+  client_type: WalletAuthClientType;
   chain_id: number;
 }
 
@@ -90,6 +94,13 @@ interface ResolvedSessionNonceContext {
   readonly domain: string;
   readonly clientOrigin: string | null;
   readonly sessionType: StructuredWalletSignatureSessionType;
+}
+
+interface ConnectionShareAuthProof {
+  readonly role?: string | null;
+  readonly client_type?: RefreshTokenSessionClientType;
+  readonly client_address?: string;
+  readonly native_refresh_token?: string;
 }
 
 router.get(
@@ -234,12 +245,19 @@ router.post(
         loginRequest.role ?? null,
         timer
       );
-      if (loginRequest.client_type === 'native') {
-        assertSessionLoginSignatureType(nonce, 'native');
+      if (isRefreshTokenSessionClientType(loginRequest.client_type)) {
+        const parsedMessage = assertSessionLoginSignatureType(
+          nonce,
+          loginRequest.client_type
+        );
+        if (loginRequest.client_type === 'desktop') {
+          assertDesktopSessionOriginAllowed(req, parsedMessage);
+        }
         const created = await createNativeSession({
           address: signingAddress,
           role: chosenRole,
-          userAgent: getUserAgent(req)
+          userAgent: getUserAgent(req),
+          clientType: loginRequest.client_type
         });
         res.status(201).send(created.response);
         return;
@@ -285,14 +303,15 @@ router.post(
   ) {
     const body = req.body ?? {};
     const clientType = getSessionClientType(body);
-    if (clientType === 'native') {
+    if (isRefreshTokenSessionClientType(clientType)) {
       const refreshRequest = getValidatedByJoiOrThrow(
         body,
         SessionRefreshNativeRequestSchema
       );
       const refreshed = await refreshNativeSession({
         address: refreshRequest.client_address,
-        nativeRefreshToken: refreshRequest.native_refresh_token
+        nativeRefreshToken: refreshRequest.native_refresh_token,
+        clientType
       });
       if (!refreshed) {
         throw new UnauthorisedException('Invalid session');
@@ -348,7 +367,7 @@ router.post(
   ) {
     const body = req.body ?? {};
     const clientType = getSessionClientType(body);
-    if (clientType === 'native') {
+    if (isRefreshTokenSessionClientType(clientType)) {
       const logoutRequest = getValidatedByJoiOrThrow(
         body,
         SessionLogoutNativeRequestSchema
@@ -356,7 +375,8 @@ router.post(
       await logoutNativeSession({
         address: logoutRequest.client_address,
         nativeRefreshToken: logoutRequest.native_refresh_token,
-        allSessions: logoutRequest.all_sessions ?? false
+        allSessions: logoutRequest.all_sessions ?? false,
+        clientType
       });
       res.status(204).send();
       return;
@@ -391,7 +411,7 @@ router.post(
       CreateConnectionShareRequestSchema
     );
     const { authenticatedWallet, authRole } =
-      await getAuthenticatedConnectionShareContext(req, shareRequest.role);
+      await getAuthenticatedConnectionShareContext(req, shareRequest);
     const created = await createConnectionShare({
       address: authenticatedWallet,
       role: authRole,
@@ -421,10 +441,7 @@ router.post(
       CreateLegacyDesktopConnectionShareRequestSchema
     );
     const { authenticatedWallet, authRole } =
-      await getAuthenticatedConnectionShareContext(
-        req,
-        legacyShareRequest.role
-      );
+      await getAuthenticatedConnectionShareContext(req, legacyShareRequest);
     const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
       authenticatedWallet,
       authRole
@@ -514,14 +531,24 @@ function assertConnectionSharingEnabled(): void {
 
 function getSessionClientType(body: {
   readonly client_type?: unknown;
-}): 'web' | 'native' {
+}): WalletAuthClientType {
   if (body.client_type == null) {
     return 'web';
   }
-  if (body.client_type === 'web' || body.client_type === 'native') {
+  if (
+    body.client_type === 'web' ||
+    body.client_type === 'native' ||
+    body.client_type === 'desktop'
+  ) {
     return body.client_type;
   }
-  throw new BadRequestException('client_type must be either web or native');
+  throw new BadRequestException('client_type must be web, native, or desktop');
+}
+
+function isRefreshTokenSessionClientType(
+  clientType: WalletAuthClientType
+): clientType is RefreshTokenSessionClientType {
+  return clientType === 'native' || clientType === 'desktop';
 }
 
 async function resolveAuthenticatedRole(
@@ -685,10 +712,9 @@ function getAuthWalletChainId(): number {
 
 function assertSessionLoginSignatureType(
   nonce: string,
-  clientType: 'web' | 'native'
+  clientType: WalletAuthClientType
 ): ParsedStructuredWalletSignatureMessage {
-  const expectedSessionType =
-    clientType === 'web' ? 'first_party_web' : 'native';
+  const expectedSessionType = getStructuredSessionTypeForClientType(clientType);
   if (!isStructuredWalletSignatureMessage(nonce)) {
     throw new BadRequestException(
       'Wallet auth sessions require a structured signature'
@@ -701,6 +727,15 @@ function assertSessionLoginSignatureType(
     );
   }
   return parsedMessage;
+}
+
+function getStructuredSessionTypeForClientType(
+  clientType: WalletAuthClientType
+): StructuredWalletSignatureSessionType {
+  if (clientType === 'web') {
+    return 'first_party_web';
+  }
+  return clientType;
 }
 
 function getUserAgent(req: Request<any, any, any, any, any>): string | null {
@@ -756,17 +791,60 @@ function normalizeDomain(value: string | null | undefined): string | null {
   }
 }
 
+export function isDesktopSessionOriginAllowed(
+  origin: string | null | undefined
+): boolean {
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
+    return false;
+  }
+
+  try {
+    const url = new URL(normalizedOrigin);
+    return (
+      url.protocol === 'http:' &&
+      !!url.port &&
+      (url.hostname === 'localhost' ||
+        url.hostname === '127.0.0.1' ||
+        url.hostname === '::1' ||
+        url.hostname === '[::1]')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function resolveSessionNonceContext(
   req: Request<any, any, any, any, any>,
   nonceRequest: SessionNonceQueryRequest
 ): ResolvedSessionNonceContext {
   if (nonceRequest.client_type === 'native') {
     return {
-      domain: 'native',
+      domain: nonceRequest.client_type,
       clientOrigin: null,
-      sessionType: 'native'
+      sessionType: nonceRequest.client_type
     };
   }
+  if (nonceRequest.client_type === 'desktop') {
+    const requestOrigin = getNormalizedRequestOrigin(req);
+    if (!isDesktopSessionOriginAllowed(requestOrigin)) {
+      throw new BadRequestException(
+        'Wallet auth desktop sessions require a localhost Origin'
+      );
+    }
+    const domain = normalizeDomain(requestOrigin);
+    if (!domain) {
+      throw new BadRequestException(
+        'Wallet auth desktop sessions require a valid localhost Origin'
+      );
+    }
+    return {
+      domain,
+      clientOrigin: requestOrigin,
+      sessionType: 'desktop'
+    };
+  }
+
   const requestOrigin = getNormalizedRequestOrigin(req);
   if (!requestOrigin) {
     throw new BadRequestException(
@@ -790,6 +868,35 @@ function resolveSessionNonceContext(
     clientOrigin: requestOrigin,
     sessionType: 'first_party_web'
   };
+}
+
+function assertDesktopSessionOriginAllowed(
+  req: Request<any, any, any, any, any>,
+  parsedMessage: ParsedStructuredWalletSignatureMessage
+): void {
+  const signedClientOrigin = parsedMessage.clientOrigin;
+  if (
+    !signedClientOrigin ||
+    !isDesktopSessionOriginAllowed(signedClientOrigin)
+  ) {
+    throw new BadRequestException(
+      'Wallet auth desktop sessions require a localhost Origin'
+    );
+  }
+
+  const expectedDomain = normalizeDomain(signedClientOrigin);
+  if (!expectedDomain || parsedMessage.domain !== expectedDomain) {
+    throw new BadRequestException(
+      'Wallet auth desktop session domain does not match the signed Origin'
+    );
+  }
+
+  const requestOrigin = getNormalizedRequestOrigin(req);
+  if (requestOrigin && requestOrigin !== signedClientOrigin) {
+    throw new BadRequestException(
+      'Wallet auth desktop session Origin does not match the signed challenge'
+    );
+  }
 }
 
 function assertSessionOriginMatchesRequest(
@@ -827,7 +934,7 @@ function assertWebAuthCredentialOriginAllowed(
 
 async function getAuthenticatedConnectionShareContext(
   req: Request<any, any, any, any, any>,
-  requestedRole: string | null | undefined
+  shareRequest: ConnectionShareAuthProof
 ): Promise<{
   readonly authenticatedWallet: string;
   readonly authRole: string | null;
@@ -837,11 +944,38 @@ async function getAuthenticatedConnectionShareContext(
     throw new UnauthorisedException('Authentication required');
   }
   const authRole = ((req.user as any)?.role ?? null) as string | null;
-  if (requestedRole && requestedRole !== authRole) {
+  if (shareRequest.role !== undefined && shareRequest.role !== authRole) {
     throw new BadRequestException(
       'Share role must match authenticated session role'
     );
   }
+
+  if (shareRequest.client_type) {
+    if (
+      !shareRequest.client_address ||
+      !shareRequest.native_refresh_token ||
+      shareRequest.client_address.toLowerCase() !== authenticatedWallet
+    ) {
+      throw new BadRequestException(
+        'Share source session must match authenticated wallet'
+      );
+    }
+
+    const hasActiveMatchingNativeSession =
+      await hasActiveNativeSessionForAddressAndRole({
+        address: authenticatedWallet,
+        role: authRole,
+        nativeRefreshToken: shareRequest.native_refresh_token,
+        clientType: shareRequest.client_type
+      });
+    if (!hasActiveMatchingNativeSession) {
+      throw new UnauthorisedException(
+        'Connection sharing requires an active session-v2 refresh-token session'
+      );
+    }
+    return { authenticatedWallet, authRole };
+  }
+
   const hasActiveMatchingWebSession =
     await hasActiveWebSessionForAddressAndRole({
       cookieHeader: req.headers.cookie,
@@ -879,11 +1013,14 @@ const NonceQueryRequestSchema: Joi.ObjectSchema<NonceQueryRequest> =
 const SessionNonceQueryRequestSchema: Joi.ObjectSchema<SessionNonceQueryRequest> =
   Joi.object<SessionNonceQueryRequest>({
     signer_address: Joi.string().required(),
-    client_type: Joi.string().valid('web', 'native').optional().default('web'),
+    client_type: Joi.string()
+      .valid('web', 'native', 'desktop')
+      .optional()
+      .default('web'),
     chain_id: Joi.number().integer().min(1).optional().default(1)
   }).unknown(false);
 
-const ClientTypeSchema = Joi.string().valid('web', 'native');
+const ClientTypeSchema = Joi.string().valid('web', 'native', 'desktop');
 
 const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
   Joi.object<ApiSessionLoginRequest>({
@@ -907,7 +1044,7 @@ const SessionRefreshWebRequestSchema: Joi.ObjectSchema<ApiSessionRefreshWebReque
 
 const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativeRequest> =
   Joi.object<ApiSessionRefreshNativeRequest>({
-    client_type: Joi.string().valid('native').required(),
+    client_type: Joi.string().valid('native', 'desktop').required(),
     client_address: Joi.string().required(),
     native_refresh_token: Joi.string().hex().length(128).required()
   }).unknown(false);
@@ -921,27 +1058,37 @@ const SessionLogoutWebRequestSchema: Joi.ObjectSchema<ApiSessionLogoutWebRequest
 
 const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeRequest> =
   Joi.object<ApiSessionLogoutNativeRequest>({
-    client_type: Joi.string().valid('native').required(),
+    client_type: Joi.string().valid('native', 'desktop').required(),
     client_address: Joi.string().required(),
     native_refresh_token: Joi.string().hex().length(128).required(),
     all_sessions: Joi.boolean().optional().default(false)
-  });
+  }).unknown(false);
 
 const CreateConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateConnectionShareRequest> =
   Joi.object<ApiCreateConnectionShareRequest>({
-    target_client_type: Joi.string().valid('native').required(),
-    role: Joi.string().optional().allow(null)
-  }).unknown(false);
+    target_client_type: Joi.string().valid('native', 'desktop').required(),
+    role: Joi.string().optional().allow(null),
+    client_type: Joi.string().valid('native', 'desktop').optional(),
+    client_address: Joi.string().optional(),
+    native_refresh_token: Joi.string().hex().length(128).optional()
+  })
+    .and('client_type', 'client_address', 'native_refresh_token')
+    .unknown(false);
 
 const CreateLegacyDesktopConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateLegacyDesktopConnectionShareRequest> =
   Joi.object<ApiCreateLegacyDesktopConnectionShareRequest>({
-    role: Joi.string().optional().allow(null).default(null)
-  }).unknown(false);
+    role: Joi.string().optional().allow(null),
+    client_type: Joi.string().valid('native', 'desktop').optional(),
+    client_address: Joi.string().optional(),
+    native_refresh_token: Joi.string().hex().length(128).optional()
+  })
+    .and('client_type', 'client_address', 'native_refresh_token')
+    .unknown(false);
 
 const RedeemConnectionShareRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionShareRequest> =
   Joi.object<ApiRedeemConnectionShareRequest>({
     connection_share_code: Joi.string().hex().length(64).required(),
-    target_client_type: Joi.string().valid('native').required()
+    target_client_type: Joi.string().valid('native', 'desktop').required()
   }).unknown(false);
 
 interface ApiLoginResponse {

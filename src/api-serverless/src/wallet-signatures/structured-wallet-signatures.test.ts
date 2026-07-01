@@ -121,6 +121,25 @@ describe('structured wallet signatures', () => {
       clientOrigin: 'https://example.com',
       sessionType: 'first_party_web'
     });
+
+    const desktopMessage = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'desktop',
+      sessionType: 'desktop',
+      wallet: wallet.address,
+      issuedAt,
+      expirationTime: getExpirationTime(),
+      nonce: 'login-nonce-desktop-session',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+
+    expect(parseStructuredWalletSignatureMessage(desktopMessage)).toMatchObject(
+      {
+        domain: 'desktop',
+        sessionType: 'desktop'
+      }
+    );
   });
 
   it('parses field values that contain additional colons', () => {

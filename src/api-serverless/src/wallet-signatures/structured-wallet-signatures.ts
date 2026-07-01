@@ -55,7 +55,8 @@ export type StructuredWalletSignatureAction =
 export type StructuredWalletSignatureSessionType =
   | 'first_party_web'
   | 'external_client'
-  | 'native';
+  | 'native'
+  | 'desktop';
 
 export interface ParsedStructuredWalletSignatureMessage {
   kind: StructuredWalletSignatureKind;
@@ -409,7 +410,8 @@ function parseSessionType(
   if (
     value === 'first_party_web' ||
     value === 'external_client' ||
-    value === 'native'
+    value === 'native' ||
+    value === 'desktop'
   ) {
     return value;
   }
