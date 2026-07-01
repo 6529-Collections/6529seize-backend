@@ -970,7 +970,7 @@ async function getAuthenticatedConnectionShareContext(
       });
     if (!hasActiveMatchingNativeSession) {
       throw new UnauthorisedException(
-        'Connection sharing requires an active session-v2 native session'
+        'Connection sharing requires an active session-v2 refresh-token session'
       );
     }
     return { authenticatedWallet, authRole };

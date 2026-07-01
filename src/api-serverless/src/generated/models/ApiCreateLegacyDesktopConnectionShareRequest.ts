@@ -69,3 +69,4 @@ export enum ApiCreateLegacyDesktopConnectionShareRequestClientTypeEnum {
     Native = 'native',
     Desktop = 'desktop'
 }
+
