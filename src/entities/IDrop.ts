@@ -30,6 +30,11 @@ export enum DropType {
 @Index('idx_drop_wave_serial_no', ['wave_id', 'serial_no'])
 @Index('idx_drop_wave_type_author', ['wave_id', 'drop_type', 'author_id'])
 @Index('idx_drop_wave_created_at', ['wave_id', 'created_at'])
+@Index(
+  'idx_drops_wave_type_created_id',
+  ['wave_id', 'drop_type', 'created_at', 'id'],
+  { synchronize: false }
+)
 export class DropEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly serial_no!: number;

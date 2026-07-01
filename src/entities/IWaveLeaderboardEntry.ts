@@ -2,6 +2,11 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { WAVE_LEADERBOARD_ENTRIES_TABLE } from '@/constants';
 
 @Entity(WAVE_LEADERBOARD_ENTRIES_TABLE)
+@Index(
+  'idx_wave_leaderboard_entries_wave_vote_time_drop',
+  ['wave_id', 'vote', 'timestamp', 'drop_id'],
+  { synchronize: false }
+)
 export class WaveLeaderboardEntryEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly drop_id!: string;
