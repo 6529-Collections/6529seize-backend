@@ -57,6 +57,7 @@ export class ApiSessionLogoutNativeRequest {
 }
 
 export enum ApiSessionLogoutNativeRequestClientTypeEnum {
-    Native = 'native'
+    Native = 'native',
+    Desktop = 'desktop'
 }
 

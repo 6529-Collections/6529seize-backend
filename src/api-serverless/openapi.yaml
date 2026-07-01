@@ -235,8 +235,9 @@ paths:
       description: >
         V2 wallet session nonce endpoint. Web session challenges derive their
         domain and client origin from the request Origin header and require a
-        configured first-party origin. Native challenges are selected with
-        client_type=native and never receive first-party web semantics.
+        configured first-party origin. Native challenges are selected
+        explicitly. Desktop challenges are selected explicitly and require a
+        loopback localhost Origin, which is signed into the challenge.
       operationId: getWalletAuthSessionNonce
       security: []
       parameters:
@@ -254,10 +255,12 @@ paths:
             enum:
               - web
               - native
+              - desktop
             default: web
           description: >
-            Web challenges require an allowed Origin header. Native challenges
-            are explicitly requested by native clients.
+            Web challenges require an allowed Origin header. Desktop challenges
+            require a localhost Origin. Native challenges are explicitly
+            requested by refresh-token clients.
         - name: chain_id
           in: query
           required: false
@@ -286,9 +289,11 @@ paths:
       summary: Authenticate and create a wallet auth session
       description: >
         V2 wallet sessions require structured authentication signatures. Web
-        cookie sessions require Session Type first_party_web; native refresh
-        token sessions require Session Type native. External clients should use
-        the non-cookie bearer-token login flow.
+        cookie sessions require Session Type first_party_web; native and desktop
+        refresh-token sessions require matching Session Type values. Desktop
+        sessions also require the signed Client Origin to be a localhost
+        loopback origin. External clients should use the non-cookie bearer-token
+        login flow.
       operationId: createWalletAuthSession
       security: []
       requestBody:
@@ -395,14 +400,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ApiCreateLegacyDesktopConnectionShareRequest"
+              $ref: >-
+                #/components/schemas/ApiCreateLegacyDesktopConnectionShareRequest
       responses:
         "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiCreateLegacyDesktopConnectionShareResponse"
+                $ref: >-
+                  #/components/schemas/ApiCreateLegacyDesktopConnectionShareResponse
         "400":
           description: Invalid request
   /auth/connection-share/redeem:
@@ -11777,9 +11784,22 @@ components:
           type: string
           enum:
             - native
+            - desktop
         role:
           type: string
           nullable: true
+        client_type:
+          type: string
+          description: Optional source session type for native or desktop callers.
+          enum:
+            - native
+            - desktop
+        client_address:
+          type: string
+          description: Wallet address bound to the source native or desktop session.
+        native_refresh_token:
+          type: string
+          description: Refresh token for the source native or desktop session.
     ApiCreateConnectionShareResponse:
       type: object
       required:
@@ -11803,28 +11823,7 @@ components:
           type: string
           enum:
             - native
-        deep_link_path:
-          type: string
-    ApiCreateLegacyDesktopConnectionShareRequest:
-      type: object
-      properties:
-        role:
-          type: string
-          nullable: true
-    ApiCreateLegacyDesktopConnectionShareResponse:
-      type: object
-      required:
-        - refresh_token
-        - address
-        - deep_link_path
-      properties:
-        refresh_token:
-          type: string
-        address:
-          type: string
-        role:
-          type: string
-          nullable: true
+            - desktop
         deep_link_path:
           type: string
     ApiCreateDropMedia:
@@ -11968,6 +11967,40 @@ components:
         is_beneficiary_of_grant_id:
           type: string
           nullable: true
+    ApiCreateLegacyDesktopConnectionShareRequest:
+      type: object
+      properties:
+        role:
+          type: string
+          nullable: true
+        client_type:
+          type: string
+          description: Optional source session type for native or desktop callers.
+          enum:
+            - native
+            - desktop
+        client_address:
+          type: string
+          description: Wallet address bound to the source native or desktop session.
+        native_refresh_token:
+          type: string
+          description: Refresh token for the source native or desktop session.
+    ApiCreateLegacyDesktopConnectionShareResponse:
+      type: object
+      required:
+        - refresh_token
+        - address
+        - deep_link_path
+      properties:
+        refresh_token:
+          type: string
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        deep_link_path:
+          type: string
     ApiCreateMediaUploadUrlRequest:
       required:
         - content_type
@@ -17028,12 +17061,14 @@ components:
           type: string
           enum:
             - native
+            - desktop
     ApiRedeemConnectionShareResponse:
       type: object
       required:
         - address
         - access_token
         - access_token_expires_at
+        - client_type
         - native_refresh_token
         - refresh_token_expires_at
       properties:
@@ -17047,6 +17082,11 @@ components:
         access_token_expires_at:
           type: string
           format: date-time
+        client_type:
+          type: string
+          enum:
+            - native
+            - desktop
         native_refresh_token:
           type: string
         refresh_token_expires_at:
@@ -17307,6 +17347,7 @@ components:
           enum:
             - web
             - native
+            - desktop
         client_address:
           type: string
         client_signature:
@@ -17316,8 +17357,9 @@ components:
           description: >-
             Server-signed structured challenge token. /auth/session-login only
             accepts first_party_web challenges for web cookie sessions and
-            native challenges for native refresh-token sessions; external_client
-            challenges use /auth/login bearer-token auth instead.
+            matching native or desktop challenges for refresh-token sessions;
+            external_client challenges use /auth/login bearer-token auth
+            instead.
         role:
           type: string
           nullable: true
@@ -17345,6 +17387,7 @@ components:
           type: string
           enum:
             - native
+            - desktop
         client_address:
           type: string
         native_refresh_token:
@@ -17394,6 +17437,7 @@ components:
           type: string
           enum:
             - native
+            - desktop
         native_refresh_token:
           type: string
         refresh_token_expires_at:
@@ -17413,6 +17457,7 @@ components:
           enum:
             - web
             - native
+            - desktop
           default: web
         chain_id:
           type: integer
@@ -17442,6 +17487,7 @@ components:
           type: string
           enum:
             - native
+            - desktop
         client_address:
           type: string
         native_refresh_token:

@@ -219,8 +219,9 @@ Important API responsibilities:
   `/auth/session-login`, `/auth/session-refresh`, and `/auth/session-logout`.
   Web session v2 challenges derive their domain and client origin from the
   request `Origin` header and refresh/logout checks are bound to the stored
-  origin. Native session v2 challenges are explicitly requested with
-  `client_type=native` and do not receive first-party web semantics. The full
+  origin. Native and desktop session v2 challenges are explicitly requested with
+  `client_type=native` or `client_type=desktop` and do not receive first-party
+  web semantics. The full
   auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.

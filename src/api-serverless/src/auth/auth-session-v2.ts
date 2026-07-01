@@ -13,16 +13,19 @@ import { authDb } from './auth.db';
 import {
   ApiCreateConnectionShareResponse,
   ApiCreateConnectionShareResponseTargetClientTypeEnum
-} from '../generated/models/ApiCreateConnectionShareResponse';
-import { ApiRedeemConnectionShareResponse } from '../generated/models/ApiRedeemConnectionShareResponse';
+} from '@/api/generated/models/ApiCreateConnectionShareResponse';
+import {
+  ApiRedeemConnectionShareResponse,
+  ApiRedeemConnectionShareResponseClientTypeEnum
+} from '@/api/generated/models/ApiRedeemConnectionShareResponse';
 import {
   ApiSessionNativeResponse,
   ApiSessionNativeResponseClientTypeEnum
-} from '../generated/models/ApiSessionNativeResponse';
+} from '@/api/generated/models/ApiSessionNativeResponse';
 import {
   ApiSessionWebResponse,
   ApiSessionWebResponseClientTypeEnum
-} from '../generated/models/ApiSessionWebResponse';
+} from '@/api/generated/models/ApiSessionWebResponse';
 
 export const WALLET_SESSION_COOKIE_NAME = '6529_session';
 const WALLET_SESSION_ADDRESS_COOKIE_PREFIX = `${WALLET_SESSION_COOKIE_NAME}_`;
@@ -38,6 +41,8 @@ export interface IssuedAccessToken {
 export type SessionV2WebResponse = ApiSessionWebResponse;
 
 export type SessionV2NativeResponse = ApiSessionNativeResponse;
+
+type RefreshTokenSessionClientType = Exclude<WalletAuthClientType, 'web'>;
 
 export interface CreatedWebSession {
   readonly response: SessionV2WebResponse;
@@ -267,16 +272,19 @@ export async function createWebSession({
 export async function createNativeSession({
   address,
   role,
-  userAgent
+  userAgent,
+  clientType = 'native'
 }: {
   readonly address: string;
   readonly role: string | null;
   readonly userAgent: string | null;
+  readonly clientType?: RefreshTokenSessionClientType;
 }): Promise<CreatedNativeSession> {
   const session = await createNativeSessionRecord({
     address,
     role,
-    userAgent
+    userAgent,
+    clientType
   });
   return { response: session.response };
 }
@@ -381,6 +389,31 @@ export async function hasActiveWebSessionForAddressAndRole({
   }
 
   return false;
+}
+
+export async function hasActiveNativeSessionForAddressAndRole({
+  address,
+  role,
+  nativeRefreshToken,
+  clientType
+}: {
+  readonly address: string;
+  readonly role: string | null;
+  readonly nativeRefreshToken: string;
+  readonly clientType: RefreshTokenSessionClientType;
+}): Promise<boolean> {
+  const normalizedAddress = address.toLowerCase();
+  const existing = await authDb.getActiveNativeSessionByRefreshHash(
+    normalizedAddress,
+    hashSecret(nativeRefreshToken),
+    new Date(),
+    clientType
+  );
+  return (
+    existing?.address === normalizedAddress &&
+    existing.role === role &&
+    existing.client_type === clientType
+  );
 }
 
 export async function refreshWebSessionForAddress({
@@ -518,16 +551,19 @@ function getWebSessionClearCookieHeader({
 
 export async function refreshNativeSession({
   address,
-  nativeRefreshToken
+  nativeRefreshToken,
+  clientType = 'native'
 }: {
   readonly address: string;
   readonly nativeRefreshToken: string;
+  readonly clientType?: RefreshTokenSessionClientType;
 }): Promise<CreatedNativeSession | null> {
   const now = new Date();
   const existing = await authDb.getActiveNativeSessionByRefreshHash(
     address.toLowerCase(),
     hashSecret(nativeRefreshToken),
-    now
+    now,
+    clientType
   );
   if (!existing) {
     return null;
@@ -539,7 +575,8 @@ export async function refreshNativeSession({
     previousRefreshTokenHash: hashSecret(nativeRefreshToken),
     nextRefreshTokenHash: hashSecret(nextRefreshToken),
     expiresAt,
-    now
+    now,
+    clientType
   });
   if (!rotated) {
     return null;
@@ -551,7 +588,7 @@ export async function refreshNativeSession({
       role: rotated.role,
       access_token: accessToken.token,
       access_token_expires_at: accessToken.expiresAt,
-      client_type: ApiSessionNativeResponseClientTypeEnum.Native,
+      client_type: toNativeSessionResponseClientType(clientType),
       native_refresh_token: nextRefreshToken,
       refresh_token_expires_at: expiresAt
     }
@@ -606,11 +643,13 @@ export async function logoutWebSession({
 export async function logoutNativeSession({
   address,
   nativeRefreshToken,
-  allSessions
+  allSessions,
+  clientType = 'native'
 }: {
   readonly address: string;
   readonly nativeRefreshToken: string;
   readonly allSessions: boolean;
+  readonly clientType?: RefreshTokenSessionClientType;
 }): Promise<void> {
   const now = new Date();
   const refreshTokenHash = hashSecret(nativeRefreshToken);
@@ -618,7 +657,8 @@ export async function logoutNativeSession({
     const existing = await authDb.getActiveNativeSessionByRefreshHash(
       address.toLowerCase(),
       refreshTokenHash,
-      now
+      now,
+      clientType
     );
     if (existing) {
       await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
@@ -637,7 +677,7 @@ export async function createConnectionShare({
   readonly role: string | null;
   readonly targetClientType: WalletAuthClientType;
 }): Promise<CreatedConnectionShare> {
-  assertNativeConnectionShareTarget(targetClientType);
+  assertRefreshTokenConnectionShareTarget(targetClientType);
   const connectionShareCode = createOpaqueSecret();
   const expiresAt = getConnectionShareExpiresAt();
   const share = await authDb.createWalletConnectionShare({
@@ -657,7 +697,7 @@ export async function createConnectionShare({
     address: share.address,
     role: share.role,
     target_client_type:
-      ApiCreateConnectionShareResponseTargetClientTypeEnum.Native,
+      toConnectionShareResponseTargetClientType(targetClientType),
     deep_link_path: `/accept-connection-sharing?${queryParams.toString()}`
   };
 }
@@ -671,7 +711,7 @@ export async function redeemConnectionShare({
   readonly targetClientType: WalletAuthClientType;
   readonly userAgent: string | null;
 }): Promise<RedeemedConnectionShare | null> {
-  assertNativeConnectionShareTarget(targetClientType);
+  assertRefreshTokenConnectionShareTarget(targetClientType);
   const session = await authDb.executeNativeQueriesInTransaction(
     async (connection) => {
       const share = await authDb.consumeWalletConnectionShare(
@@ -689,7 +729,8 @@ export async function redeemConnectionShare({
         {
           address: share.address,
           role: share.role,
-          userAgent
+          userAgent,
+          clientType: targetClientType
         },
         connection
       );
@@ -710,20 +751,42 @@ export async function redeemConnectionShare({
       role: session.response.role,
       access_token: session.response.access_token,
       access_token_expires_at: session.response.access_token_expires_at,
+      client_type:
+        session.response.client_type === 'desktop'
+          ? ApiRedeemConnectionShareResponseClientTypeEnum.Desktop
+          : ApiRedeemConnectionShareResponseClientTypeEnum.Native,
       native_refresh_token: session.response.native_refresh_token,
       refresh_token_expires_at: session.response.refresh_token_expires_at
     }
   };
 }
 
-function assertNativeConnectionShareTarget(
+function assertRefreshTokenConnectionShareTarget(
   targetClientType: WalletAuthClientType
-): void {
-  if (targetClientType !== 'native') {
+): asserts targetClientType is RefreshTokenSessionClientType {
+  if (targetClientType !== 'native' && targetClientType !== 'desktop') {
     throw new BadRequestException(
-      'Connection share codes currently support native clients only'
+      'Connection share codes currently support refresh-token clients only'
     );
   }
+}
+
+function toNativeSessionResponseClientType(
+  clientType: RefreshTokenSessionClientType
+): ApiSessionNativeResponseClientTypeEnum {
+  if (clientType === 'desktop') {
+    return ApiSessionNativeResponseClientTypeEnum.Desktop;
+  }
+  return ApiSessionNativeResponseClientTypeEnum.Native;
+}
+
+function toConnectionShareResponseTargetClientType(
+  clientType: RefreshTokenSessionClientType
+): ApiCreateConnectionShareResponseTargetClientTypeEnum {
+  if (clientType === 'desktop') {
+    return ApiCreateConnectionShareResponseTargetClientTypeEnum.Desktop;
+  }
+  return ApiCreateConnectionShareResponseTargetClientTypeEnum.Native;
 }
 
 function toWebSessionResponse(
@@ -744,11 +807,13 @@ async function createNativeSessionRecord(
   {
     address,
     role,
-    userAgent
+    userAgent,
+    clientType = 'native'
   }: {
     readonly address: string;
     readonly role: string | null;
     readonly userAgent: string | null;
+    readonly clientType?: RefreshTokenSessionClientType;
   },
   connection?: AuthDbConnection
 ): Promise<CreatedNativeSession & { readonly sessionId: string }> {
@@ -760,7 +825,7 @@ async function createNativeSessionRecord(
       id: sessionId,
       address: address.toLowerCase(),
       role,
-      clientType: 'native',
+      clientType,
       secretHash: null,
       refreshTokenHash: hashSecret(nativeRefreshToken),
       userAgentHash: userAgent ? hashPublicValue(userAgent) : null,
@@ -778,7 +843,7 @@ async function createNativeSessionRecord(
       role: session.role,
       access_token: accessToken.token,
       access_token_expires_at: accessToken.expiresAt,
-      client_type: ApiSessionNativeResponseClientTypeEnum.Native,
+      client_type: toNativeSessionResponseClientType(clientType),
       native_refresh_token: nativeRefreshToken,
       refresh_token_expires_at: expiresAt
     }

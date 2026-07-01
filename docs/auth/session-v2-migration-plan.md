@@ -107,8 +107,10 @@ Backend checks after deploy:
 - `/api/settings` returns `auth.session_v2_migration_deadline=null`.
 - `POST /api/auth/redeem-refresh-token` still works for valid legacy refresh
   tokens.
-- `POST /api/auth/connection-share/legacy-desktop` works only from an
-  authenticated session-v2 web session and returns a legacy desktop
+- `POST /api/auth/connection-share/legacy-desktop` works from an authenticated
+  session-v2 source session. Web callers prove that with the web session cookie;
+  native and desktop callers provide their active refresh-token source-session
+  proof. The route returns a legacy desktop
   `/accept-connection-sharing?token=...&address=...` path.
 - V2 web auth routes return exact credentialed CORS for the real web origin and
   reject unrelated browser origins.
@@ -140,9 +142,9 @@ Frontend targets:
 - Staging web: `https://staging.6529.io` EC2/pm2 app.
 - Native app clients: iOS and Android builds that include session-v2 native
   refresh storage and connection-share redemption.
-- 6529 Desktop app: unchanged legacy build. It must continue to receive
-  connection-share links with `token`, `address`, and optional `role` query
-  parameters.
+- 6529 Desktop app: current builds should use `client_type=desktop` for
+  session-v2 auth and connection-share redemption while retaining the legacy
+  desktop bridge for backward compatibility.
 
 Checks after deploy:
 
@@ -156,9 +158,9 @@ Checks after deploy:
 - Connection sharing create/redeem works from an active session-v2 web session.
   Legacy-authenticated web users should be prompted to update authentication
   before they can create a share.
-- Desktop connection sharing from a v2 web session creates a legacy desktop
-  link and the current Desktop app can accept it through legacy refresh-token
-  redemption.
+- Desktop connection sharing from a v2 web or desktop source session creates a
+  desktop v2 share for current Desktop builds. The legacy desktop bridge still
+  creates a legacy refresh-token link for old Desktop builds.
 - A connection-share QR is an end-to-end test only when the receiver is a native
   client or native release candidate with the session-v2 accept flow. A staging
   web build without the frontend session-v2 changes is not a valid receiver
@@ -238,12 +240,14 @@ through one of these paths:
 
 This keeps the v2 session model clean: every v2 session is created by a v2
 signature or by a v2-authenticated connection-sharing flow.
-Mobile/native connection-share URLs carry the one-time code and address only;
-the server stores and returns the role associated with the share.
+Mobile/native/desktop connection-share URLs carry the one-time code and address
+only; the server stores and returns the role associated with the share. Redeem
+responses include the created `client_type` so clients persist refresh tokens
+under the correct session type.
 
-Desktop connection-share URLs are the temporary exception while Desktop remains
-legacy: they carry a legacy refresh `token`, `address`, and optional `role`, and
-are redeemed by the existing Desktop legacy auth flow.
+Legacy Desktop connection-share URLs are the temporary exception for older
+Desktop builds: they carry a legacy refresh `token`, `address`, and optional
+`role`, and are redeemed by the existing Desktop legacy auth flow.
 
 ## Rollback
 

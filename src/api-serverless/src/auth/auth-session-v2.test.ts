@@ -4,9 +4,11 @@ import {
   clearWalletSessionCookieForAddressAndOrigin,
   clearWalletSessionCookieForOrigin,
   createConnectionShare,
+  createNativeSession,
   createWebSession,
   getActiveWebSession,
   getWalletSessionCookieNameForAddress,
+  hasActiveNativeSessionForAddressAndRole,
   hasActiveWebSessionForAddressAndRole,
   isAuthConnectionSharingEnabled,
   logoutNativeSession,
@@ -254,6 +256,46 @@ describe('auth-session-v2', () => {
     expect(setCookieHeader).not.toContain('SameSite=None');
   });
 
+  it('creates desktop refresh-token sessions with a desktop client type', async () => {
+    authDbMock.createWalletAuthSession.mockImplementation(async (params) => ({
+      id: params.id,
+      address: params.address,
+      role: params.role,
+      client_type: params.clientType,
+      secret_hash: params.secretHash,
+      refresh_token_hash: params.refreshTokenHash,
+      user_agent_hash: params.userAgentHash,
+      signature_domain: params.signatureDomain,
+      client_origin: params.clientOrigin,
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: params.expiresAt,
+      revoked_at: null
+    }));
+
+    const result = await createNativeSession({
+      address: '0xABCDEF',
+      role: 'profile-1',
+      userAgent: '6529 Desktop',
+      clientType: 'desktop'
+    });
+
+    expect(result.response).toMatchObject({
+      address: '0xabcdef',
+      role: 'profile-1',
+      client_type: 'desktop'
+    });
+    expect(result.response.native_refresh_token).toEqual(expect.any(String));
+
+    const [storedSession] = authDbMock.createWalletAuthSession.mock.calls[0];
+    expect(storedSession.clientType).toBe('desktop');
+    expect(storedSession.secretHash).toBeNull();
+    expect(storedSession.refreshTokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(storedSession.userAgentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(storedSession.signatureDomain).toBeNull();
+    expect(storedSession.clientOrigin).toBeNull();
+  });
+
   it('loads active web sessions from the session-v2 cookie without trusting URL role metadata', async () => {
     authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue({
       id: 'session-1',
@@ -381,6 +423,67 @@ describe('auth-session-v2', () => {
         address: '0xaaa',
         role: 'profile-b',
         requestOrigin: 'https://6529.io'
+      })
+    ).resolves.toBe(false);
+  });
+
+  it('accepts active native sessions for matching source wallet, role, and client type', async () => {
+    authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValue({
+      id: 'session-a',
+      address: '0xaaa',
+      role: 'profile-a',
+      client_type: 'desktop',
+      secret_hash: null,
+      refresh_token_hash: 'stored-refresh-hash',
+      user_agent_hash: null,
+      signature_domain: 'localhost:6529',
+      client_origin: 'http://localhost:6529',
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: null
+    });
+
+    await expect(
+      hasActiveNativeSessionForAddressAndRole({
+        address: '0xAAA',
+        role: 'profile-a',
+        nativeRefreshToken: 'refresh-secret',
+        clientType: 'desktop'
+      })
+    ).resolves.toBe(true);
+
+    expect(authDbMock.getActiveNativeSessionByRefreshHash).toHaveBeenCalledWith(
+      '0xaaa',
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      expect.any(Date),
+      'desktop'
+    );
+  });
+
+  it('rejects native source sessions with the wrong role', async () => {
+    authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValue({
+      id: 'session-a',
+      address: '0xaaa',
+      role: 'profile-a',
+      client_type: 'desktop',
+      secret_hash: null,
+      refresh_token_hash: 'stored-refresh-hash',
+      user_agent_hash: null,
+      signature_domain: 'localhost:6529',
+      client_origin: 'http://localhost:6529',
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: null
+    });
+
+    await expect(
+      hasActiveNativeSessionForAddressAndRole({
+        address: '0xAAA',
+        role: 'profile-b',
+        nativeRefreshToken: 'refresh-secret',
+        clientType: 'desktop'
       })
     ).resolves.toBe(false);
   });
@@ -567,7 +670,8 @@ describe('auth-session-v2', () => {
     expect(authDbMock.getActiveNativeSessionByRefreshHash).toHaveBeenCalledWith(
       '0xabc',
       expect.stringMatching(/^[a-f0-9]{64}$/),
-      expect.any(Date)
+      expect.any(Date),
+      'native'
     );
     expect(authDbMock.revokeWalletAuthSessionsForAddress).toHaveBeenCalledWith(
       '0xabc',
@@ -753,6 +857,63 @@ describe('auth-session-v2', () => {
     expect(rotateParams.nextRefreshTokenHash).not.toBe(
       result?.response.native_refresh_token
     );
+    expect(rotateParams.clientType).toBe('native');
+  });
+
+  it('rotates desktop refresh tokens separately from native sessions', async () => {
+    authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValue({
+      id: 'session-1',
+      address: '0xabc',
+      role: 'profile-1',
+      client_type: 'desktop',
+      secret_hash: null,
+      refresh_token_hash: 'old-hash',
+      user_agent_hash: null,
+      signature_domain: null,
+      client_origin: null,
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: null
+    });
+    authDbMock.rotateNativeSessionRefreshToken.mockImplementation(
+      async (params) => ({
+        id: params.sessionId,
+        address: '0xabc',
+        role: 'profile-1',
+        client_type: 'desktop',
+        secret_hash: null,
+        refresh_token_hash: params.nextRefreshTokenHash,
+        user_agent_hash: null,
+        signature_domain: null,
+        client_origin: null,
+        created_at: new Date(),
+        last_used_at: params.now,
+        expires_at: params.expiresAt,
+        revoked_at: null
+      })
+    );
+
+    const result = await refreshNativeSession({
+      address: '0xABC',
+      nativeRefreshToken: 'raw-desktop-refresh-token',
+      clientType: 'desktop'
+    });
+
+    expect(result?.response).toMatchObject({
+      address: '0xabc',
+      role: 'profile-1',
+      client_type: 'desktop'
+    });
+    expect(authDbMock.getActiveNativeSessionByRefreshHash).toHaveBeenCalledWith(
+      '0xabc',
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      expect.any(Date),
+      'desktop'
+    );
+    const [rotateParams] =
+      authDbMock.rotateNativeSessionRefreshToken.mock.calls[0];
+    expect(rotateParams.clientType).toBe('desktop');
   });
 
   it('creates one-time connection share codes as hashes and redeems them into native sessions', async () => {
@@ -827,10 +988,10 @@ describe('auth-session-v2', () => {
 
     expect(redeemed?.response).toMatchObject({
       address: '0xabc',
-      role: 'profile-1'
+      role: 'profile-1',
+      client_type: 'native'
     });
     expect(redeemed?.response.native_refresh_token).toEqual(expect.any(String));
-    expect(redeemed?.response).not.toHaveProperty('client_type');
 
     const [consumeParams] =
       authDbMock.consumeWalletConnectionShare.mock.calls[0];
@@ -849,6 +1010,73 @@ describe('auth-session-v2', () => {
     );
   });
 
+  it('creates one-time connection share codes for desktop sessions', async () => {
+    authDbMock.createWalletConnectionShare.mockImplementation(
+      async (params) => ({
+        id: params.id,
+        connection_share_code_hash: params.connectionShareCodeHash,
+        address: params.address,
+        role: params.role,
+        target_client_type: params.targetClientType,
+        created_at: new Date(),
+        expires_at: params.expiresAt,
+        consumed_at: null,
+        consumed_session_id: null
+      })
+    );
+    authDbMock.consumeWalletConnectionShare.mockResolvedValue({
+      id: 'share-1',
+      connection_share_code_hash: 'hashed-share',
+      address: '0xabc',
+      role: 'profile-1',
+      target_client_type: 'desktop',
+      created_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      consumed_at: new Date(),
+      consumed_session_id: null
+    });
+    authDbMock.createWalletAuthSession.mockImplementation(async (params) => ({
+      id: params.id,
+      address: params.address,
+      role: params.role,
+      client_type: params.clientType,
+      secret_hash: params.secretHash,
+      refresh_token_hash: params.refreshTokenHash,
+      user_agent_hash: params.userAgentHash,
+      signature_domain: params.signatureDomain,
+      client_origin: params.clientOrigin,
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: params.expiresAt,
+      revoked_at: null
+    }));
+
+    const created = await createConnectionShare({
+      address: '0xABC',
+      role: 'profile-1',
+      targetClientType: 'desktop'
+    });
+    const redeemed = await redeemConnectionShare({
+      connectionShareCode: created.connection_share_code,
+      targetClientType: 'desktop',
+      userAgent: '6529 Desktop'
+    });
+
+    expect(created).toMatchObject({
+      address: '0xabc',
+      role: 'profile-1',
+      target_client_type: 'desktop'
+    });
+    expect(redeemed?.response.native_refresh_token).toEqual(expect.any(String));
+    expect(redeemed?.response.client_type).toBe('desktop');
+
+    const [storedSession] = authDbMock.createWalletAuthSession.mock.calls[0];
+    expect(storedSession.clientType).toBe('desktop');
+    const [consumeParams] =
+      authDbMock.consumeWalletConnectionShare.mock.calls[0];
+    expect(consumeParams.targetClientType).toBe('desktop');
+  });
+
   it('rejects web connection-share targets at the service boundary', async () => {
     await expect(
       createConnectionShare({
@@ -856,7 +1084,7 @@ describe('auth-session-v2', () => {
         role: null,
         targetClientType: 'web'
       })
-    ).rejects.toThrow('native clients only');
+    ).rejects.toThrow('refresh-token clients only');
 
     await expect(
       redeemConnectionShare({
@@ -864,6 +1092,6 @@ describe('auth-session-v2', () => {
         targetClientType: 'web',
         userAgent: 'Mozilla/5.0'
       })
-    ).rejects.toThrow('native clients only');
+    ).rejects.toThrow('refresh-token clients only');
   });
 });
