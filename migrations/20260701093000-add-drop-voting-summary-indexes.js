@@ -27,10 +27,6 @@ var INDEXES = [
     drop: 'DROP INDEX idx_winner_drop_voter_votes_drop_votes_voter ON winner_drop_voter_votes'
   },
   {
-    add: 'ALTER TABLE drop_ranks ADD INDEX idx_drop_ranks_wave_vote_last_drop (wave_id, vote, last_increased, drop_id), ALGORITHM=INPLACE, LOCK=NONE',
-    drop: 'DROP INDEX idx_drop_ranks_wave_vote_last_drop ON drop_ranks'
-  },
-  {
     add: 'ALTER TABLE wave_leaderboard_entries ADD INDEX idx_wave_leaderboard_entries_wave_vote_time_drop (wave_id, vote, timestamp, drop_id), ALGORITHM=INPLACE, LOCK=NONE',
     drop: 'DROP INDEX idx_wave_leaderboard_entries_wave_vote_time_drop ON wave_leaderboard_entries'
   },
