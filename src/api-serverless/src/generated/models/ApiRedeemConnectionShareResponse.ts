@@ -81,3 +81,4 @@ export enum ApiRedeemConnectionShareResponseClientTypeEnum {
     Native = 'native',
     Desktop = 'desktop'
 }
+

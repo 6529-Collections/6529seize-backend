@@ -13,19 +13,19 @@ import { authDb } from './auth.db';
 import {
   ApiCreateConnectionShareResponse,
   ApiCreateConnectionShareResponseTargetClientTypeEnum
-} from '../generated/models/ApiCreateConnectionShareResponse';
+} from '@/api/generated/models/ApiCreateConnectionShareResponse';
 import {
   ApiRedeemConnectionShareResponse,
   ApiRedeemConnectionShareResponseClientTypeEnum
-} from '../generated/models/ApiRedeemConnectionShareResponse';
+} from '@/api/generated/models/ApiRedeemConnectionShareResponse';
 import {
   ApiSessionNativeResponse,
   ApiSessionNativeResponseClientTypeEnum
-} from '../generated/models/ApiSessionNativeResponse';
+} from '@/api/generated/models/ApiSessionNativeResponse';
 import {
   ApiSessionWebResponse,
   ApiSessionWebResponseClientTypeEnum
-} from '../generated/models/ApiSessionWebResponse';
+} from '@/api/generated/models/ApiSessionWebResponse';
 
 export const WALLET_SESSION_COOKIE_NAME = '6529_session';
 const WALLET_SESSION_ADDRESS_COOKIE_PREFIX = `${WALLET_SESSION_COOKIE_NAME}_`;
