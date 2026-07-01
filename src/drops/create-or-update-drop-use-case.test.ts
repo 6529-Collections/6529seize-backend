@@ -676,16 +676,17 @@ describe('CreateOrUpdateDropUseCase', () => {
       ...createSlowModeWave({
         chat_slow_mode_cooldown_ms: null,
         is_direct_message: true,
-        visibility_group_id: 'dm-group',
-        participation_group_id: 'dm-group',
-        chat_group_id: 'dm-group',
-        admin_group_id: 'dm-group',
-        voting_group_id: 'dm-group'
+        visibility_group_id: 'visibility-group',
+        participation_group_id: 'participation-group',
+        chat_group_id: 'chat-dm-group',
+        admin_group_id: 'admin-group',
+        voting_group_id: 'voting-group'
       }),
       type: WaveType.CHAT,
       next_decision_time: null
     };
     const wavesApiDb = {
+      findExistingWaveReaderMetricReaderIds: jest.fn().mockResolvedValue([]),
       insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
@@ -708,7 +709,16 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
 
     expect(userGroupsService.findIdentitiesInGroups).toHaveBeenCalledWith(
-      ['dm-group'],
+      ['chat-dm-group'],
+      { timer: undefined, connection }
+    );
+    expect(
+      wavesApiDb.findExistingWaveReaderMetricReaderIds
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        readerIds: ['reader-profile']
+      },
       { timer: undefined, connection }
     );
     expect(wavesApiDb.insertMissingWaveReaderMetrics).toHaveBeenCalledWith(
@@ -719,6 +729,45 @@ describe('CreateOrUpdateDropUseCase', () => {
       },
       { timer: undefined, connection }
     );
+  });
+
+  it('skips direct-message reader metric seeding when recipients already have metrics', async () => {
+    const connection = {};
+    const wave = {
+      ...createSlowModeWave({
+        chat_slow_mode_cooldown_ms: null,
+        is_direct_message: true,
+        chat_group_id: 'chat-dm-group'
+      }),
+      type: WaveType.CHAT,
+      next_decision_time: null
+    };
+    const wavesApiDb = {
+      findExistingWaveReaderMetricReaderIds: jest
+        .fn()
+        .mockResolvedValue(['reader-profile']),
+      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+    };
+    const userGroupsService = {
+      findIdentitiesInGroups: jest
+        .fn()
+        .mockResolvedValue(['author-profile', 'reader-profile'])
+    };
+    const useCase = createUseCaseWithMocks({
+      wavesApiDb,
+      userGroupsService
+    });
+
+    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+      {
+        wave,
+        authorId: 'author-profile',
+        createdAt: 1400
+      },
+      { connection }
+    );
+
+    expect(wavesApiDb.insertMissingWaveReaderMetrics).not.toHaveBeenCalled();
   });
 
   it('allows scheme-less Tenor candidates in chat link allowlist', () => {

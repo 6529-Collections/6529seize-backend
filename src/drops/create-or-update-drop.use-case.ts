@@ -571,12 +571,28 @@ export class CreateOrUpdateDropUseCase {
       [directMessageGroupId],
       { timer, connection }
     );
+    const recipientIds = readerIds.filter((readerId) => readerId !== authorId);
+    const existingReaderMetricIds =
+      await this.wavesApiDb.findExistingWaveReaderMetricReaderIds(
+        {
+          waveId: wave.id,
+          readerIds: recipientIds
+        },
+        { timer, connection }
+      );
+    const existingReaderMetricIdSet = new Set(existingReaderMetricIds);
+    const missingReaderMetricIds = recipientIds.filter(
+      (readerId) => !existingReaderMetricIdSet.has(readerId)
+    );
+    if (!missingReaderMetricIds.length) {
+      return;
+    }
     // Reader metrics are part of DM write consistency: without this row the
     // unread summary cannot distinguish current unread activity from old history.
     await this.wavesApiDb.insertMissingWaveReaderMetrics(
       {
         waveId: wave.id,
-        readerIds: readerIds.filter((readerId) => readerId !== authorId),
+        readerIds: missingReaderMetricIds,
         latestReadTimestamp: Math.max(0, createdAt - 1)
       },
       { timer, connection }

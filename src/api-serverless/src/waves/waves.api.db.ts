@@ -2854,22 +2854,52 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(
       `${this.constructor.name}->insertMissingWaveReaderMetrics`
     );
-    await Promise.all(
-      readerIds.map((readerId) =>
-        this.db.execute(
-          `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
-           values (:waveId, :readerId, :latestReadTimestamp)
-           on duplicate key update reader_id = reader_id`,
-          {
-            waveId: param.waveId,
-            readerId,
-            latestReadTimestamp: param.latestReadTimestamp
-          },
-          { wrappedConnection: ctx.connection }
-        )
-      )
+    await this.db.bulkInsert(
+      WAVE_READER_METRICS_TABLE,
+      readerIds.map((readerId) => ({
+        wave_id: param.waveId,
+        reader_id: readerId,
+        latest_read_timestamp: param.latestReadTimestamp
+      })),
+      ['wave_id', 'reader_id', 'latest_read_timestamp'],
+      ctx,
+      {
+        connection: ctx.connection,
+        ignoreDuplicates: true
+      }
     );
     ctx.timer?.stop(`${this.constructor.name}->insertMissingWaveReaderMetrics`);
+  }
+
+  async findExistingWaveReaderMetricReaderIds(
+    param: {
+      waveId: string;
+      readerIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return [];
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->findExistingWaveReaderMetricReaderIds`
+    );
+    const result = await this.db.execute<{ reader_id: string }>(
+      `select reader_id
+       from ${WAVE_READER_METRICS_TABLE}
+       where wave_id = :waveId
+         and reader_id in (:readerIds)`,
+      {
+        waveId: param.waveId,
+        readerIds
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findExistingWaveReaderMetricReaderIds`
+    );
+    return result.map((row) => row.reader_id);
   }
 
   async setWaveMuted(

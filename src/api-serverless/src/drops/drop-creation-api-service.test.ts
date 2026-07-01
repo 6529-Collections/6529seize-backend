@@ -1,6 +1,7 @@
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
+import { DropType } from '@/entities/IDrop';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
@@ -141,6 +142,95 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
       ctx
     );
     expect(wsListenersNotifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('DropCreationApiService.createDrop', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  it('invalidates unread cache after the drop transaction commits', async () => {
+    const connection = {} as any;
+    const order: string[] = [];
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(
+        async (callback: (connection: unknown) => Promise<unknown>) => {
+          order.push('transaction');
+          const result = await callback(connection);
+          order.push('committed');
+          return result;
+        }
+      )
+    };
+    const dropsMappers = {
+      createDropApiToUseCaseModel: jest.fn().mockReturnValue({
+        wave_id: 'wave-1',
+        drop_type: DropType.CHAT
+      })
+    };
+    const createOrUpdateDrop = {
+      preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+      execute: jest.fn().mockImplementation(async () => {
+        order.push('drop-written');
+        return {
+          drop_id: 'drop-1',
+          pending_push_notification_ids: []
+        };
+      })
+    };
+    const dropPollsApiService = {
+      createPollForDrop: jest.fn().mockResolvedValue(undefined)
+    };
+    const dropsService = {
+      findDropByIdOrThrow: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        wave_id: 'wave-1'
+      })
+    };
+    const wsListenersNotifier = {
+      notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+    };
+    const dropNftLinksDb = {
+      findByDropId: jest.fn().mockResolvedValue([])
+    };
+    const service = new DropCreationApiService(
+      dropsService as never,
+      dropsDb as never,
+      dropsMappers as never,
+      createOrUpdateDrop as never,
+      {} as never,
+      wsListenersNotifier as never,
+      dropNftLinksDb as never,
+      {} as never,
+      dropPollsApiService as never
+    );
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+    (invalidateWaveUnreadCacheForWave as jest.Mock).mockImplementationOnce(
+      async () => {
+        order.push('unread-cache-invalidated');
+      }
+    );
+
+    await service.createDrop(
+      {
+        createDropRequest: {} as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile'
+      },
+      { timer: undefined } as never
+    );
+
+    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
+    expect(order).toEqual([
+      'transaction',
+      'drop-written',
+      'committed',
+      'unread-cache-invalidated'
+    ]);
   });
 });
 
