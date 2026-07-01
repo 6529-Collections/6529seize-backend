@@ -2876,18 +2876,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
     const dbresult = await this.db.execute<WaveUnreadSummaryRow>(
       `
-        SELECT r.wave_id AS wave_id,
+        SELECT d.wave_id AS wave_id,
                COUNT(d.id) AS unread_drops_count,
                MIN(d.serial_no) AS first_unread_drop_serial_no
-        FROM ${WAVE_READER_METRICS_TABLE} r
-        INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
-          ON d.wave_id = r.wave_id
-          AND d.created_at > r.latest_read_timestamp
-        WHERE r.reader_id = :identityId
-          AND r.wave_id IN (:waveIds)
-          AND r.latest_read_timestamp IS NOT NULL
+        FROM ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+          ON r.wave_id = d.wave_id
+          AND r.reader_id = :identityId
+        WHERE d.wave_id IN (:waveIds)
+          AND d.author_id != :identityId
+          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
           AND COALESCE(r.muted, false) = false
-        GROUP BY r.wave_id
+        GROUP BY d.wave_id
     `,
       { identityId: param.identityId, waveIds: uncachedWaveIds },
       { wrappedConnection: ctx.connection }

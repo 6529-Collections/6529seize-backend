@@ -926,12 +926,27 @@ const mutedUnreadSummaryWave = aWave(
     name: 'Muted Unread Summary Wave'
   }
 );
+const noReaderMetricUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-no-reader-metric-unread-summary',
+    serial_no: 33,
+    name: 'No Reader Metric Unread Summary Wave'
+  }
+);
 
 describeWithSeed(
   'WavesApiDb unread summaries',
   [
     withIdentities([author, unreadReader]),
-    withWaves([unreadSummaryWave, noUnreadSummaryWave, mutedUnreadSummaryWave]),
+    withWaves([
+      unreadSummaryWave,
+      noUnreadSummaryWave,
+      mutedUnreadSummaryWave,
+      noReaderMetricUnreadSummaryWave
+    ]),
     {
       table: WAVE_READER_METRICS_TABLE,
       rows: [
@@ -1011,6 +1026,51 @@ describeWithSeed(
           drop_type: DropType.CHAT,
           signature: null,
           hide_link_preview: false
+        },
+        {
+          serial_no: 25,
+          id: 'reader-authored-summary-drop',
+          wave_id: unreadSummaryWave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 1300,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 26,
+          id: 'no-reader-metric-unread-summary-drop',
+          wave_id: noReaderMetricUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1400,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 27,
+          id: 'no-reader-metric-reader-authored-summary-drop',
+          wave_id: noReaderMetricUnreadSummaryWave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 1500,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
         }
       ]
     }
@@ -1024,7 +1084,8 @@ describeWithSeed(
             waveIds: [
               unreadSummaryWave.id,
               noUnreadSummaryWave.id,
-              mutedUnreadSummaryWave.id
+              mutedUnreadSummaryWave.id,
+              noReaderMetricUnreadSummaryWave.id
             ]
           },
           ctx
@@ -1041,6 +1102,10 @@ describeWithSeed(
         [mutedUnreadSummaryWave.id]: {
           unread_drops_count: 0,
           first_unread_drop_serial_no: null
+        },
+        [noReaderMetricUnreadSummaryWave.id]: {
+          unread_drops_count: 1,
+          first_unread_drop_serial_no: 26
         }
       });
     });
