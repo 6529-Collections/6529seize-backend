@@ -42,7 +42,7 @@ export function getRequestScopedPromise<T>(
 ): Promise<T> {
   const requestScope = getOrCreateRequestScope(ctx);
   const existingPromise = requestScope.promisesByKey.get(key);
-  if (existingPromise) {
+  if (existingPromise !== undefined) {
     return existingPromise as Promise<T>;
   }
 
