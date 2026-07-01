@@ -1,8 +1,12 @@
 'use strict';
 
+function isMysqlError(error, ignoredCodes) {
+  return error && ignoredCodes.indexOf(error.code) !== -1;
+}
+
 function ignoreMysqlError(promise, ignoredCodes) {
   return promise.catch(function(error) {
-    if (error && ignoredCodes.indexOf(error.code) !== -1) {
+    if (isMysqlError(error, ignoredCodes)) {
       return null;
     }
     throw error;
@@ -10,7 +14,17 @@ function ignoreMysqlError(promise, ignoredCodes) {
 }
 
 function addIndex(db, sql) {
-  return ignoreMysqlError(db.runSql(sql), ['ER_DUP_KEYNAME']);
+  return db
+    .runSql(sql)
+    .then(function() {
+      return true;
+    })
+    .catch(function(error) {
+      if (isMysqlError(error, ['ER_DUP_KEYNAME'])) {
+        return false;
+      }
+      throw error;
+    });
 }
 
 function dropIndex(db, sql) {
@@ -36,8 +50,9 @@ var INDEXES = [
   }
 ];
 
-function cleanupIndexes(db) {
-  return INDEXES.slice()
+function cleanupIndexes(db, indexes) {
+  return indexes
+    .slice()
     .reverse()
     .reduce(function(promise, index) {
       return promise.then(function() {
@@ -47,19 +62,31 @@ function cleanupIndexes(db) {
 }
 
 exports.up = function(db) {
+  var createdIndexes = [];
+
   return INDEXES.reduce(function(promise, index) {
     return promise.then(function() {
-      return addIndex(db, index.add);
+      return addIndex(db, index.add).then(function(created) {
+        if (created) {
+          createdIndexes.push(index);
+        }
+      });
     });
   }, Promise.resolve()).catch(function(error) {
-    return cleanupIndexes(db).then(function() {
-      throw error;
-    });
+    return cleanupIndexes(db, createdIndexes)
+      .catch(function(cleanupError) {
+        if (error && typeof error === 'object') {
+          error.cleanupError = cleanupError;
+        }
+      })
+      .then(function() {
+        throw error;
+      });
   });
 };
 
 exports.down = function(db) {
-  return cleanupIndexes(db);
+  return cleanupIndexes(db, INDEXES);
 };
 
 exports._meta = {
