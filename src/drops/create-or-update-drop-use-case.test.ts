@@ -701,6 +701,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
       {
         wave,
+        authorId: 'author-profile',
         createdAt: 1400
       },
       { connection }
@@ -713,7 +714,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(wavesApiDb.insertMissingWaveReaderMetrics).toHaveBeenCalledWith(
       {
         waveId: 'wave-1',
-        readerIds: ['author-profile', 'reader-profile'],
+        readerIds: ['reader-profile'],
         latestReadTimestamp: 1399
       },
       { timer: undefined, connection }

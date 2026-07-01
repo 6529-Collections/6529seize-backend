@@ -2907,6 +2907,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return cachedByWaveId;
     }
 
+    // Reader metrics are the unread baseline source of truth. Without a reader
+    // row we do not infer unread drops from old wave history.
     const dbresult = await this.db.execute<WaveUnreadSummaryRow>(
       `
         SELECT d.wave_id AS wave_id,

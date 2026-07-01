@@ -928,7 +928,8 @@ const mutedUnreadSummaryWave = aWave(
 );
 const noReaderMetricUnreadSummaryWave = aWave(
   {
-    created_by: author.profile_id!
+    created_by: author.profile_id!,
+    is_direct_message: false
   },
   {
     id: 'wave-no-reader-metric-unread-summary',
@@ -1144,6 +1145,23 @@ describeWithSeed(
           unread_drops_count: 0,
           first_unread_drop_serial_no: null
         },
+        [noReaderMetricUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        }
+      });
+    });
+
+    it('does not infer unread history for a non-DM wave without reader metrics', async () => {
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [noReaderMetricUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
         [noReaderMetricUnreadSummaryWave.id]: {
           unread_drops_count: 0,
           first_unread_drop_serial_no: null

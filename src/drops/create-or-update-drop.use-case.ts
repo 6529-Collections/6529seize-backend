@@ -512,6 +512,7 @@ export class CreateOrUpdateDropUseCase {
       await this.ensureDirectMessageReaderMetricsForNewDrop(
         {
           wave,
+          authorId,
           createdAt
         },
         { connection, timer }
@@ -550,9 +551,11 @@ export class CreateOrUpdateDropUseCase {
   private async ensureDirectMessageReaderMetricsForNewDrop(
     {
       wave,
+      authorId,
       createdAt
     }: {
       wave: WaveEntity;
+      authorId: string;
       createdAt: number;
     },
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
@@ -560,26 +563,20 @@ export class CreateOrUpdateDropUseCase {
     if (wave.is_direct_message !== true) {
       return;
     }
-    const waveGroupIds = collections.distinct(
-      [
-        wave.visibility_group_id,
-        wave.participation_group_id,
-        wave.chat_group_id,
-        wave.admin_group_id,
-        wave.voting_group_id
-      ].filter((groupId): groupId is string => groupId !== null)
-    );
-    if (!waveGroupIds.length) {
+    const directMessageGroupId = wave.chat_group_id;
+    if (!directMessageGroupId) {
       return;
     }
     const readerIds = await this.userGroupsService.findIdentitiesInGroups(
-      waveGroupIds,
+      [directMessageGroupId],
       { timer, connection }
     );
+    // Reader metrics are part of DM write consistency: without this row the
+    // unread summary cannot distinguish current unread activity from old history.
     await this.wavesApiDb.insertMissingWaveReaderMetrics(
       {
         waveId: wave.id,
-        readerIds,
+        readerIds: readerIds.filter((readerId) => readerId !== authorId),
         latestReadTimestamp: Math.max(0, createdAt - 1)
       },
       { timer, connection }
