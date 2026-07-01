@@ -13,6 +13,10 @@ function addIndex(db, sql) {
   return ignoreMysqlError(db.runSql(sql), ['ER_DUP_KEYNAME']);
 }
 
+function dropIndex(db, sql) {
+  return ignoreMysqlError(db.runSql(sql), ['ER_CANT_DROP_FIELD_OR_KEY']);
+}
+
 exports.up = function(db) {
   return addIndex(
     db,
@@ -44,7 +48,36 @@ exports.up = function(db) {
     });
 };
 
-exports.down = function() {};
+exports.down = function(db) {
+  return dropIndex(
+    db,
+    'DROP INDEX idx_drops_wave_type_created_id ON drops'
+  )
+    .then(function() {
+      return dropIndex(
+        db,
+        'DROP INDEX idx_wave_leaderboard_entries_wave_vote_time_drop ON wave_leaderboard_entries'
+      );
+    })
+    .then(function() {
+      return dropIndex(
+        db,
+        'DROP INDEX idx_drop_ranks_wave_vote_last_drop ON drop_ranks'
+      );
+    })
+    .then(function() {
+      return dropIndex(
+        db,
+        'DROP INDEX idx_winner_drop_voter_votes_drop_votes_voter ON winner_drop_voter_votes'
+      );
+    })
+    .then(function() {
+      return dropIndex(
+        db,
+        'DROP INDEX idx_drop_voter_states_drop_votes_voter ON drop_voter_states'
+      );
+    });
+};
 
 exports._meta = {
   version: 1
