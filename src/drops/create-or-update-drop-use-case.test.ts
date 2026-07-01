@@ -59,6 +59,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     overrides: {
       dropsDb?: any;
       wavesApiDb?: any;
+      userGroupsService?: any;
       userNotifier?: any;
       identitySubscriptionsDb?: any;
       deleteDropUseCase?: any;
@@ -69,7 +70,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     return new CreateOrUpdateDropUseCase(
       overrides.dropsDb ?? ({} as any),
       {} as any,
-      {} as any,
+      overrides.userGroupsService ?? ({} as any),
       overrides.wavesApiDb ?? ({} as any),
       overrides.userNotifier ?? ({} as any),
       {} as any,
@@ -139,6 +140,8 @@ describe('CreateOrUpdateDropUseCase', () => {
     return {
       drop_id: null,
       wave_id: 'wave-1',
+      reply_to: null,
+      title: null,
       drop_type: DropType.CHAT,
       author_identity: 'author-profile',
       author_id: 'author-profile',
@@ -149,6 +152,13 @@ describe('CreateOrUpdateDropUseCase', () => {
           media: []
         }
       ],
+      referenced_nfts: [],
+      mentioned_users: [],
+      mentioned_waves: [],
+      metadata: [],
+      mentioned_groups: [],
+      signature: null,
+      is_additional_action_promised: null,
       ...overrides
     };
   }
@@ -658,6 +668,106 @@ describe('CreateOrUpdateDropUseCase', () => {
         'https://d3lqz0a4bldqgf.cloudfront.net/drops/asset.html'
       )
     ).toBe(true);
+  });
+
+  it('seeds missing reader metrics before a new direct-message drop', async () => {
+    const connection = {};
+    const wave = {
+      ...createSlowModeWave({
+        chat_slow_mode_cooldown_ms: null,
+        is_direct_message: true,
+        visibility_group_id: 'visibility-group',
+        participation_group_id: 'participation-group',
+        chat_group_id: 'chat-dm-group',
+        admin_group_id: 'admin-group',
+        voting_group_id: 'voting-group'
+      }),
+      type: WaveType.CHAT,
+      next_decision_time: null
+    };
+    const wavesApiDb = {
+      findExistingWaveReaderMetricReaderIds: jest.fn().mockResolvedValue([]),
+      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+    };
+    const userGroupsService = {
+      findIdentitiesInGroups: jest
+        .fn()
+        .mockResolvedValue(['author-profile', 'reader-profile'])
+    };
+    const useCase = createUseCaseWithMocks({
+      wavesApiDb,
+      userGroupsService
+    });
+
+    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+      {
+        wave,
+        authorId: 'author-profile',
+        createdAt: 1400
+      },
+      { connection }
+    );
+
+    expect(userGroupsService.findIdentitiesInGroups).toHaveBeenCalledWith(
+      ['chat-dm-group'],
+      { timer: undefined, connection }
+    );
+    expect(
+      wavesApiDb.findExistingWaveReaderMetricReaderIds
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        readerIds: ['reader-profile']
+      },
+      { timer: undefined, connection }
+    );
+    expect(wavesApiDb.insertMissingWaveReaderMetrics).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        readerIds: ['reader-profile'],
+        latestReadTimestamp: 1399
+      },
+      { timer: undefined, connection }
+    );
+  });
+
+  it('skips direct-message reader metric seeding when recipients already have metrics', async () => {
+    const connection = {};
+    const wave = {
+      ...createSlowModeWave({
+        chat_slow_mode_cooldown_ms: null,
+        is_direct_message: true,
+        chat_group_id: 'chat-dm-group'
+      }),
+      type: WaveType.CHAT,
+      next_decision_time: null
+    };
+    const wavesApiDb = {
+      findExistingWaveReaderMetricReaderIds: jest
+        .fn()
+        .mockResolvedValue(['reader-profile']),
+      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+    };
+    const userGroupsService = {
+      findIdentitiesInGroups: jest
+        .fn()
+        .mockResolvedValue(['author-profile', 'reader-profile'])
+    };
+    const useCase = createUseCaseWithMocks({
+      wavesApiDb,
+      userGroupsService
+    });
+
+    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+      {
+        wave,
+        authorId: 'author-profile',
+        createdAt: 1400
+      },
+      { connection }
+    );
+
+    expect(wavesApiDb.insertMissingWaveReaderMetrics).not.toHaveBeenCalled();
   });
 
   it('allows scheme-less Tenor candidates in chat link allowlist', () => {
