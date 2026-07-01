@@ -2839,6 +2839,39 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async insertMissingWaveReaderMetrics(
+    param: {
+      waveId: string;
+      readerIds: string[];
+      latestReadTimestamp: number;
+    },
+    ctx: RequestContext
+  ) {
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return;
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->insertMissingWaveReaderMetrics`
+    );
+    await Promise.all(
+      readerIds.map((readerId) =>
+        this.db.execute(
+          `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
+           values (:waveId, :readerId, :latestReadTimestamp)
+           on duplicate key update reader_id = reader_id`,
+          {
+            waveId: param.waveId,
+            readerId,
+            latestReadTimestamp: param.latestReadTimestamp
+          },
+          { wrappedConnection: ctx.connection }
+        )
+      )
+    );
+    ctx.timer?.stop(`${this.constructor.name}->insertMissingWaveReaderMetrics`);
+  }
+
   async setWaveMuted(
     param: { waveId: string; readerId: string; muted: boolean },
     ctx: RequestContext
@@ -2880,13 +2913,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                COUNT(d.id) AS unread_drops_count,
                MIN(d.serial_no) AS first_unread_drop_serial_no
         FROM ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
-        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+        JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = d.wave_id
           AND r.reader_id = :identityId
         WHERE d.wave_id IN (:waveIds)
           AND d.author_id != :identityId
-          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
-          AND COALESCE(r.muted, false) = false
+          AND d.created_at > r.latest_read_timestamp
+          AND r.muted = false
         GROUP BY d.wave_id
     `,
       { identityId: param.identityId, waveIds: uncachedWaveIds },

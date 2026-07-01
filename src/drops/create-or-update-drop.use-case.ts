@@ -498,13 +498,21 @@ export class CreateOrUpdateDropUseCase {
       );
     } else {
       dropId = randomUUID();
+      const createdAt = Time.currentMillis();
       pendingPushNotificationIds = await this.insertAllDropComponents(
         {
           model: { ...validatedModel, drop_id: dropId },
-          createdAt: Time.currentMillis(),
+          createdAt,
           serialNo: null,
           updatedAt: null,
           wave
+        },
+        { connection, timer }
+      );
+      await this.ensureDirectMessageReaderMetricsForNewDrop(
+        {
+          wave,
+          createdAt
         },
         { connection, timer }
       );
@@ -537,6 +545,45 @@ export class CreateOrUpdateDropUseCase {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds
     };
+  }
+
+  private async ensureDirectMessageReaderMetricsForNewDrop(
+    {
+      wave,
+      createdAt
+    }: {
+      wave: WaveEntity;
+      createdAt: number;
+    },
+    { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
+  ) {
+    if (wave.is_direct_message !== true) {
+      return;
+    }
+    const waveGroupIds = collections.distinct(
+      [
+        wave.visibility_group_id,
+        wave.participation_group_id,
+        wave.chat_group_id,
+        wave.admin_group_id,
+        wave.voting_group_id
+      ].filter((groupId): groupId is string => groupId !== null)
+    );
+    if (!waveGroupIds.length) {
+      return;
+    }
+    const readerIds = await this.userGroupsService.findIdentitiesInGroups(
+      waveGroupIds,
+      { timer, connection }
+    );
+    await this.wavesApiDb.insertMissingWaveReaderMetrics(
+      {
+        waveId: wave.id,
+        readerIds,
+        latestReadTimestamp: Math.max(0, createdAt - 1)
+      },
+      { timer, connection }
+    );
   }
 
   private async validateReferences(
