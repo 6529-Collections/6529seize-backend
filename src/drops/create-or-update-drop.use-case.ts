@@ -498,13 +498,22 @@ export class CreateOrUpdateDropUseCase {
       );
     } else {
       dropId = randomUUID();
+      const createdAt = Time.currentMillis();
       pendingPushNotificationIds = await this.insertAllDropComponents(
         {
           model: { ...validatedModel, drop_id: dropId },
-          createdAt: Time.currentMillis(),
+          createdAt,
           serialNo: null,
           updatedAt: null,
           wave
+        },
+        { connection, timer }
+      );
+      await this.ensureDirectMessageReaderMetricsForNewDrop(
+        {
+          wave,
+          authorId,
+          createdAt
         },
         { connection, timer }
       );
@@ -537,6 +546,57 @@ export class CreateOrUpdateDropUseCase {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds
     };
+  }
+
+  private async ensureDirectMessageReaderMetricsForNewDrop(
+    {
+      wave,
+      authorId,
+      createdAt
+    }: {
+      wave: WaveEntity;
+      authorId: string;
+      createdAt: number;
+    },
+    { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
+  ) {
+    if (wave.is_direct_message !== true) {
+      return;
+    }
+    const directMessageGroupId = wave.chat_group_id;
+    if (!directMessageGroupId) {
+      return;
+    }
+    const readerIds = await this.userGroupsService.findIdentitiesInGroups(
+      [directMessageGroupId],
+      { timer, connection }
+    );
+    const recipientIds = readerIds.filter((readerId) => readerId !== authorId);
+    const existingReaderMetricIds =
+      await this.wavesApiDb.findExistingWaveReaderMetricReaderIds(
+        {
+          waveId: wave.id,
+          readerIds: recipientIds
+        },
+        { timer, connection }
+      );
+    const existingReaderMetricIdSet = new Set(existingReaderMetricIds);
+    const missingReaderMetricIds = recipientIds.filter(
+      (readerId) => !existingReaderMetricIdSet.has(readerId)
+    );
+    if (!missingReaderMetricIds.length) {
+      return;
+    }
+    // Reader metrics are part of DM write consistency: without this row the
+    // unread summary cannot distinguish current unread activity from old history.
+    await this.wavesApiDb.insertMissingWaveReaderMetrics(
+      {
+        waveId: wave.id,
+        readerIds: missingReaderMetricIds,
+        latestReadTimestamp: Math.max(0, createdAt - 1)
+      },
+      { timer, connection }
+    );
   }
 
   private async validateReferences(

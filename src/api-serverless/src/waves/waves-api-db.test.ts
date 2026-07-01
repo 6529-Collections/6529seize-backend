@@ -928,12 +928,23 @@ const mutedUnreadSummaryWave = aWave(
 );
 const noReaderMetricUnreadSummaryWave = aWave(
   {
-    created_by: author.profile_id!
+    created_by: author.profile_id!,
+    is_direct_message: false
   },
   {
     id: 'wave-no-reader-metric-unread-summary',
     serial_no: 33,
     name: 'No Reader Metric Unread Summary Wave'
+  }
+);
+const seededReaderMetricUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-seeded-reader-metric-unread-summary',
+    serial_no: 34,
+    name: 'Seeded Reader Metric Unread Summary Wave'
   }
 );
 
@@ -945,7 +956,8 @@ describeWithSeed(
       unreadSummaryWave,
       noUnreadSummaryWave,
       mutedUnreadSummaryWave,
-      noReaderMetricUnreadSummaryWave
+      noReaderMetricUnreadSummaryWave,
+      seededReaderMetricUnreadSummaryWave
     ]),
     {
       table: WAVE_READER_METRICS_TABLE,
@@ -1071,6 +1083,36 @@ describeWithSeed(
           drop_type: DropType.CHAT,
           signature: null,
           hide_link_preview: false
+        },
+        {
+          serial_no: 28,
+          id: 'seeded-reader-metric-old-summary-drop',
+          wave_id: seededReaderMetricUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1300,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 29,
+          id: 'seeded-reader-metric-current-summary-drop',
+          wave_id: seededReaderMetricUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1400,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
         }
       ]
     }
@@ -1104,8 +1146,51 @@ describeWithSeed(
           first_unread_drop_serial_no: null
         },
         [noReaderMetricUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        }
+      });
+    });
+
+    it('does not infer unread history for a non-DM wave without reader metrics', async () => {
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [noReaderMetricUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [noReaderMetricUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        }
+      });
+    });
+
+    it('counts only drops after an explicitly seeded reader metric', async () => {
+      await repo.insertMissingWaveReaderMetrics(
+        {
+          waveId: seededReaderMetricUnreadSummaryWave.id,
+          readerIds: [unreadReader.profile_id!],
+          latestReadTimestamp: 1399
+        },
+        ctx
+      );
+
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [seededReaderMetricUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [seededReaderMetricUnreadSummaryWave.id]: {
           unread_drops_count: 1,
-          first_unread_drop_serial_no: 26
+          first_unread_drop_serial_no: 29
         }
       });
     });

@@ -2839,6 +2839,69 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async insertMissingWaveReaderMetrics(
+    param: {
+      waveId: string;
+      readerIds: string[];
+      latestReadTimestamp: number;
+    },
+    ctx: RequestContext
+  ) {
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return;
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->insertMissingWaveReaderMetrics`
+    );
+    await this.db.bulkInsert(
+      WAVE_READER_METRICS_TABLE,
+      readerIds.map((readerId) => ({
+        wave_id: param.waveId,
+        reader_id: readerId,
+        latest_read_timestamp: param.latestReadTimestamp
+      })),
+      ['wave_id', 'reader_id', 'latest_read_timestamp'],
+      ctx,
+      {
+        connection: ctx.connection,
+        ignoreDuplicates: true
+      }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->insertMissingWaveReaderMetrics`);
+  }
+
+  async findExistingWaveReaderMetricReaderIds(
+    param: {
+      waveId: string;
+      readerIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return [];
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->findExistingWaveReaderMetricReaderIds`
+    );
+    const result = await this.db.execute<{ reader_id: string }>(
+      `select reader_id
+       from ${WAVE_READER_METRICS_TABLE}
+       where wave_id = :waveId
+         and reader_id in (:readerIds)`,
+      {
+        waveId: param.waveId,
+        readerIds
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findExistingWaveReaderMetricReaderIds`
+    );
+    return result.map((row) => row.reader_id);
+  }
+
   async setWaveMuted(
     param: { waveId: string; readerId: string; muted: boolean },
     ctx: RequestContext
@@ -2874,19 +2937,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return cachedByWaveId;
     }
 
+    // Reader metrics are the unread baseline source of truth. Without a reader
+    // row we do not infer unread drops from old wave history.
     const dbresult = await this.db.execute<WaveUnreadSummaryRow>(
       `
         SELECT d.wave_id AS wave_id,
                COUNT(d.id) AS unread_drops_count,
                MIN(d.serial_no) AS first_unread_drop_serial_no
         FROM ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
-        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+        JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = d.wave_id
           AND r.reader_id = :identityId
         WHERE d.wave_id IN (:waveIds)
           AND d.author_id != :identityId
-          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
-          AND COALESCE(r.muted, false) = false
+          AND d.created_at > r.latest_read_timestamp
+          AND r.muted = false
         GROUP BY d.wave_id
     `,
       { identityId: param.identityId, waveIds: uncachedWaveIds },
