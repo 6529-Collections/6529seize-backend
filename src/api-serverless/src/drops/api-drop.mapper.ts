@@ -46,7 +46,10 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '@/api/identity-subscriptions/identity-subscriptions.db';
-import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
+import {
+  getGroupsUserIsEligibleForReadContext,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 import {
   userGroupsService,
   UserGroupsService
@@ -99,6 +102,10 @@ type VoteRangeByDropId = Record<
 
 const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 
+export interface ApiDropMapperOptions {
+  readonly groupIdsUserIsEligibleFor?: string[];
+}
+
 export class ApiDropMapper {
   constructor(
     private readonly identityFetcher: IdentityFetcher,
@@ -121,7 +128,8 @@ export class ApiDropMapper {
 
   public async mapDrops(
     dropEntities: DropEntity[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: ApiDropMapperOptions = {}
   ): Promise<Record<string, ApiDropV2>> {
     const timerKey = `${this.constructor.name}->mapDrops`;
     ctx.timer?.start(timerKey);
@@ -172,7 +180,14 @@ export class ApiDropMapper {
       );
       const mentionedWaveOverviewsPromise = mentionedWavesPromise.then(
         (mentionedWaves) =>
-          this.getMentionedWaveOverviews(mentionedWaves, contextProfileId, ctx)
+          this.getMentionedWaveOverviews(
+            {
+              mentionedWaves,
+              contextProfileId,
+              groupIdsUserIsEligibleFor: options.groupIdsUserIsEligibleFor
+            },
+            ctx
+          )
       );
 
       const [
@@ -655,8 +670,15 @@ export class ApiDropMapper {
   }
 
   private async getMentionedWaveOverviews(
-    mentionedWaves: DropMentionedWaveEntity[],
-    contextProfileId: string | null,
+    {
+      mentionedWaves,
+      contextProfileId,
+      groupIdsUserIsEligibleFor
+    }: {
+      readonly mentionedWaves: DropMentionedWaveEntity[];
+      readonly contextProfileId: string | null;
+      readonly groupIdsUserIsEligibleFor?: string[];
+    },
     ctx: RequestContext
   ): Promise<Record<string, WaveMentionOverview>> {
     const mentionedWaveIds = collections.distinct(
@@ -665,15 +687,16 @@ export class ApiDropMapper {
     if (!mentionedWaveIds.length) {
       return {};
     }
-    const groupIdsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        contextProfileId,
-        ctx.timer
-      );
+    const eligibleGroupIds =
+      groupIdsUserIsEligibleFor ??
+      (await getGroupsUserIsEligibleForReadContext(
+        this.userGroupsService,
+        ctx
+      ));
     const waveOverviewsById =
       await this.wavesApiDb.findWaveMentionOverviewsByIds(
         mentionedWaveIds,
-        groupIdsUserIsEligibleFor,
+        eligibleGroupIds,
         ctx
       );
     const waveOverviews = Object.values(waveOverviewsById);

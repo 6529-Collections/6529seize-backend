@@ -463,9 +463,14 @@ describe('ApiWaveV2Service', () => {
     );
     expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
       [wave],
-      ctx
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
-    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith([makeDrop()], ctx);
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      [makeDrop()],
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
+    );
   });
 
   it('finds curation drops and maps them with V2 models', async () => {
@@ -507,7 +512,8 @@ describe('ApiWaveV2Service', () => {
     );
     expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
       curationDrops.slice(0, 2),
-      ctx
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
     expect(result).toEqual({
       data: [{ id: 'curated-drop-1' }, { id: 'curated-drop-2' }],
@@ -562,7 +568,8 @@ describe('ApiWaveV2Service', () => {
     );
     expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
       [rootDrop, reply],
-      expect.any(Object)
+      expect.any(Object),
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
   });
 
@@ -672,7 +679,8 @@ describe('ApiWaveV2Service', () => {
     );
     expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
       [makeDrop({ id: 'search-drop-1' }), makeDrop({ id: 'search-drop-2' })],
-      ctx
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
     expect(result).toEqual({
       data: [{ id: 'search-drop-1' }, { id: 'search-drop-2' }],
