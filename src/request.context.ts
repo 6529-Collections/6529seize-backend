@@ -10,6 +10,11 @@ export interface RequestContext {
   readonly connection?: ConnectionWrapper<any>;
   readonly timer?: Timer;
   readonly authenticationContext?: AuthenticationContext;
+  /**
+   * Best-effort memoization for async work performed with the same ctx object.
+   * It is attached non-enumerably, so spreading ctx intentionally starts a new
+   * scope. Cache keys must include every input that changes the returned value.
+   */
   readonly requestScope?: RequestScope;
 }
 
@@ -41,12 +46,12 @@ export function getRequestScopedPromise<T>(
     return existingPromise as Promise<T>;
   }
 
-  const promise = getValue().catch((error: unknown) => {
+  const promise = getValue();
+  requestScope.promisesByKey.set(key, promise);
+  void promise.catch(() => {
     if (requestScope.promisesByKey.get(key) === promise) {
       requestScope.promisesByKey.delete(key);
     }
-    throw error;
   });
-  requestScope.promisesByKey.set(key, promise);
   return promise;
 }

@@ -34,6 +34,7 @@ export async function getGroupsUserIsEligibleForReadContext(
   if (!profileId) {
     return [];
   }
+  // Eligibility depends on profileId; ctx.timer only instruments the call.
   return await getRequestScopedPromise(
     ctx,
     `wave-read-eligible-groups:${profileId}`,
