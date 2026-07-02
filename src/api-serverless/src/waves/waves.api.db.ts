@@ -120,6 +120,10 @@ type WaveUnreadSummaryRow = {
   first_unread_drop_serial_no: number | string | null;
 };
 
+type UnreadDmDropsCountRow = {
+  count: number | string;
+};
+
 export interface FollowedSubwaveOverviewContext {
   readonly followed_subwaves_count: number;
   readonly latest_followed_subwave_activity_timestamp: number | null;
@@ -3025,6 +3029,47 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       },
       {} as Record<string, number | null>
     );
+  }
+
+  async countIdentityUnreadDmDrops(
+    param: {
+      identityId: string;
+      eligibleGroups: string[];
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    const timerLabel = `${this.constructor.name}->countIdentityUnreadDmDrops`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const row = await this.db.oneOrNull<UnreadDmDropsCountRow>(
+        `
+          SELECT COUNT(d.id) AS count
+          FROM ${DROPS_TABLE} d
+          JOIN ${WAVE_READER_METRICS_TABLE} r
+            ON r.wave_id = d.wave_id
+           AND r.reader_id = :identityId
+          JOIN ${WAVES_TABLE} w
+            ON w.id = d.wave_id
+           AND w.is_direct_message = true
+          LEFT JOIN ${WAVES_TABLE} parent
+            ON parent.id = w.parent_wave_id
+          WHERE d.author_id != :identityId
+            AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+            AND r.muted = false
+            AND ${this.getWaveAndParentVisibilityFilter(
+              'w',
+              'parent',
+              param.eligibleGroups,
+              'eligibleGroups'
+            )}
+        `,
+        { identityId: param.identityId, eligibleGroups: param.eligibleGroups },
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row?.count ?? 0);
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
   }
 
   async deleteBoosts(waveId: string, ctx: RequestContext) {
