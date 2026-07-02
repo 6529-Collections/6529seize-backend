@@ -210,7 +210,10 @@ function assignRanks<T extends { id: number }>(
 
 export async function findMemesExtendedData() {
   const nfts = await fetchNftsForContract(MEMES_CONTRACT, 'id desc');
-  const recordedTdhIds = await fetchRecordedTdhIdsForRanks(MEMES_CONTRACT);
+  const recordedTdhIds = await fetchRecordedTdhIdsForRanks(
+    MEMES_CONTRACT,
+    nfts.map((nft) => nft.id)
+  );
 
   const extended = await generateExtendedData<NFT, MemesExtendedData>({
     nfts,
@@ -271,9 +274,12 @@ export async function findMemesExtendedData() {
   return extended;
 }
 
-async function fetchRecordedTdhIdsForRanks(contract: string) {
+async function fetchRecordedTdhIdsForRanks(
+  contract: string,
+  ids: readonly number[]
+) {
   try {
-    const recordedIds = await fetchNftIdsRecordedInTdh(contract);
+    const recordedIds = await fetchNftIdsRecordedInTdh(contract, ids);
     if (recordedIds.size > 0) {
       return recordedIds;
     }
