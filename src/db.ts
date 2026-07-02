@@ -25,6 +25,7 @@ import {
   NFTS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
+  TDH_NFT_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
@@ -458,6 +459,25 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
     r.metadata = JSON.parse(r.metadata);
   });
   return results;
+}
+
+export async function isNftRecordedInTdh(
+  contract: string,
+  id: number
+): Promise<boolean> {
+  const sql = `SELECT EXISTS (
+    SELECT 1
+    FROM ${TDH_NFT_TABLE}
+    WHERE contract = LOWER(:contract)
+      AND id = :id
+    LIMIT 1
+  ) AS recorded_in_tdh;`;
+  const results = await sqlExecutor.execute<{ recorded_in_tdh: unknown }>(sql, {
+    contract,
+    id
+  });
+  const recorded = results[0]?.recorded_in_tdh;
+  return recorded === true || recorded === 1 || recorded === '1';
 }
 
 export async function fetchAllMemeLabNFTs(orderBy?: string) {

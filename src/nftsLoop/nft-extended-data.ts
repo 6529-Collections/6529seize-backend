@@ -8,6 +8,7 @@ import {
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
   getDataSource,
+  isNftRecordedInTdh,
   persistLabExtendedData,
   persistMemesExtendedData,
   persistMemesSeasons
@@ -57,7 +58,8 @@ interface ExtendedOptions<T, M> {
   getId: (nft: T) => number;
   getName?: (nft: T) => string;
   getMetadata?: (nft: T) => any;
-  getExtra?: (nft: T) => Partial<M>;
+  getExtra?: (nft: T) => Partial<M> | Promise<Partial<M>>;
+  rankFilter?: (item: M) => boolean;
   adjustBalances?: (nft: T, owner: NFTOwner) => void;
 }
 
@@ -71,6 +73,7 @@ async function generateExtendedData<T, M extends ExtendedBase>(
     getId,
     getName,
     getExtra,
+    rankFilter,
     adjustBalances
   } = opts;
 
@@ -132,6 +135,7 @@ async function generateExtendedData<T, M extends ExtendedBase>(
         edition_size_not_burnt > 0 ? nonBurnt / edition_size_not_burnt : 0;
       const percent_unique_cleaned =
         edition_size_cleaned > 0 ? cleaned / edition_size_cleaned : 0;
+      const extra = await getExtra?.(nft);
 
       const base: M = {
         id,
@@ -155,24 +159,26 @@ async function generateExtendedData<T, M extends ExtendedBase>(
         percent_unique_rank: -1,
         percent_unique_not_burnt_rank: -1,
         percent_unique_cleaned_rank: -1,
-        ...getExtra?.(nft)
+        ...(extra ?? {})
       } as M;
 
       results.push(base);
     })
   );
 
+  const rankedResults = rankFilter ? results.filter(rankFilter) : results;
+
   // Ascending: smaller is better
-  assignRanks(results, 'edition_size', 'asc');
-  assignRanks(results, 'museum_holdings', 'asc');
-  assignRanks(results, 'edition_size_not_burnt', 'asc');
-  assignRanks(results, 'edition_size_cleaned', 'asc');
+  assignRanks(rankedResults, 'edition_size', 'asc');
+  assignRanks(rankedResults, 'museum_holdings', 'asc');
+  assignRanks(rankedResults, 'edition_size_not_burnt', 'asc');
+  assignRanks(rankedResults, 'edition_size_cleaned', 'asc');
 
   // Descending: bigger is better
-  assignRanks(results, 'hodlers', 'desc');
-  assignRanks(results, 'percent_unique', 'desc');
-  assignRanks(results, 'percent_unique_not_burnt', 'desc');
-  assignRanks(results, 'percent_unique_cleaned', 'desc');
+  assignRanks(rankedResults, 'hodlers', 'desc');
+  assignRanks(rankedResults, 'percent_unique', 'desc');
+  assignRanks(rankedResults, 'percent_unique_not_burnt', 'desc');
+  assignRanks(rankedResults, 'percent_unique_cleaned', 'desc');
 
   return results;
 }
@@ -215,7 +221,7 @@ export async function findMemesExtendedData() {
         owner.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
       }
     },
-    getExtra: (nft) => {
+    getExtra: async (nft) => {
       const attrs = nft.metadata?.attributes ?? [];
       return {
         season: Number.parseInt(
@@ -227,10 +233,16 @@ export async function findMemesExtendedData() {
           attrs.find((a: any) => a.trait_type === 'Type - Meme')?.value ?? '0',
           10
         ),
-        meme_name: attrs.find((a: any) => a.trait_type === 'Meme Name')?.value
+        meme_name: attrs.find((a: any) => a.trait_type === 'Meme Name')?.value,
+        recorded_in_tdh: await isNftRecordedInTdh(nft.contract, nft.id)
       };
-    }
+    },
+    rankFilter: (meme) => meme.recorded_in_tdh === true
   });
+  const rankedCollectionSize = extended.filter(
+    (e) => e.recorded_in_tdh === true
+  ).length;
+  extended.forEach((e) => (e.ranked_collection_size = rankedCollectionSize));
 
   // Seasons
   const seasons = Array.from(new Set(extended.map((e) => e.season)));
