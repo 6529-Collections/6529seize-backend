@@ -30,7 +30,10 @@ import {
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
-import { resolveEffectiveMemeEditionSizes } from '@/memes-tdh-effective-edition-size';
+import {
+  getCalculationEditionSize,
+  resolveMemeEditionSizeFloors
+} from '@/memes-edition-size-floor';
 import {
   publishMissingS3UploaderAuditJobs,
   resolveAuditS3CheckConcurrency
@@ -242,7 +245,11 @@ async function processNFTsForType(
   logInfo(`🔄 Updating supply for ${EntityClass.name}s`);
   const maxSupply = await updateSupply(nftMap);
   if (updateHodlRate && EntityClass === NFT) {
-    await updateHodlRatesForNfts(
+    await updateEditionSizeFloorsForNfts(
+      nftMap as Map<string, NftOnlyProcessingEntry>,
+      provider
+    );
+    updateHodlRatesForNfts(
       nftMap as Map<string, NftOnlyProcessingEntry>,
       maxSupply
     );
@@ -717,6 +724,7 @@ async function buildBaseNft(
   };
 
   if (EntityClass !== LabNFT) {
+    baseNft.edition_size_floor = baseNft.supply;
     baseNft.hodl_rate = 0;
     baseNft.boosted_tdh = 0;
     baseNft.tdh = 0;
@@ -989,21 +997,50 @@ async function updateSupply(
   return maxSupply;
 }
 
-async function updateHodlRatesForNfts(
+async function updateEditionSizeFloorsForNfts(
   nftMap: Map<string, NftOnlyProcessingEntry>,
-  maxSupply: number
+  provider: ethers.Provider
 ): Promise<void> {
-  const effectiveMemeEditionSizes = await resolveEffectiveMemeEditionSizes({
-    actualEditionSizes: getMemeEditionSizes(nftMap)
+  const memeEditionSizeFloors = await resolveMemeEditionSizeFloors({
+    actualEditionSizes: getMemeEditionSizes(nftMap),
+    provider
   });
 
   nftMap.forEach((entry) => {
     const nft = entry.nft;
-    const editionSizeForRate = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
-      ? (effectiveMemeEditionSizes[nft.id] ?? nft.supply)
+    const newFloor = resolveNftEditionSizeFloor(nft, memeEditionSizeFloors);
+    if (nft.edition_size_floor !== newFloor) {
+      logInfo(
+        `♻️ ${nft.contract} #${nft.id} updating edition size floor from ${nft.edition_size_floor} to ${newFloor}`
+      );
+      nft.edition_size_floor = newFloor;
+      entry.changed = true;
+    }
+  });
+}
+
+export function resolveNftEditionSizeFloor(
+  nft: Pick<NFT, 'contract' | 'id' | 'supply' | 'edition_size_floor'>,
+  memeEditionSizeFloors: Record<number, number>
+): number {
+  if (!equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
+    return nft.supply;
+  }
+
+  const existingFloor =
+    nft.edition_size_floor && nft.edition_size_floor > 0
+      ? nft.edition_size_floor
       : nft.supply;
-    let newRate = maxSupply / editionSizeForRate;
-    if (!isFinite(newRate) || newRate < 1) newRate = 1;
+  return memeEditionSizeFloors[nft.id] ?? existingFloor;
+}
+
+function updateHodlRatesForNfts(
+  nftMap: Map<string, NftOnlyProcessingEntry>,
+  maxSupply: number
+) {
+  nftMap.forEach((entry) => {
+    const nft = entry.nft;
+    const newRate = calculateNftHodlRate(maxSupply, nft);
     if (nft.hodl_rate !== newRate) {
       logInfo(
         `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
@@ -1012,6 +1049,16 @@ async function updateHodlRatesForNfts(
       entry.changed = true;
     }
   });
+}
+
+export function calculateNftHodlRate(
+  maxSupply: number,
+  nft: Pick<NFT, 'supply' | 'edition_size_floor'>
+): number {
+  const editionSizeForRate = getCalculationEditionSize(nft);
+  const rate = maxSupply / editionSizeForRate;
+  if (!isFinite(rate) || rate < 1) return 1;
+  return rate;
 }
 
 function getMemeEditionSizes(

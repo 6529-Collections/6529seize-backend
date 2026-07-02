@@ -23,7 +23,7 @@ import { NFTOwner } from '../entities/INFTOwner';
 import { MemesSeason } from '../entities/ISeason';
 import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
-import { resolveEffectiveMemeEditionSizes } from '../memes-tdh-effective-edition-size';
+import { getCalculationEditionSize } from '../memes-edition-size-floor';
 import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('NFT_EXTENDED_DATA');
@@ -267,7 +267,7 @@ export async function findMemesExtendedData() {
     },
     rankFilter: recordedTdhIds ? isMemeRecordedInTdh : undefined
   });
-  await assignEffectiveEditionSizeRanks(extended, recordedTdhIds);
+  assignEditionSizeFloorRanks(extended, nfts, recordedTdhIds);
   assignRankedCollectionSize(extended, recordedTdhIds);
 
   // Seasons
@@ -296,16 +296,12 @@ export async function findMemesExtendedData() {
   return extended;
 }
 
-async function assignEffectiveEditionSizeRanks(
+function assignEditionSizeFloorRanks(
   extended: MemesExtendedData[],
+  nfts: NFT[],
   recordedTdhIds: Set<number> | null
 ) {
-  const effectiveEditionSizes = await resolveEffectiveMemeEditionSizes({
-    actualEditionSizes: extended.reduce<Record<number, number>>((acc, meme) => {
-      acc[meme.id] = meme.edition_size;
-      return acc;
-    }, {})
-  });
+  const nftById = new Map(nfts.map((nft) => [nft.id, nft]));
   const rankedMemes = recordedTdhIds
     ? extended.filter(isMemeRecordedInTdh)
     : extended;
@@ -313,7 +309,11 @@ async function assignEffectiveEditionSizeRanks(
   assignRanksByValue(
     rankedMemes,
     'edition_size_rank',
-    (meme) => effectiveEditionSizes[meme.id] ?? meme.edition_size,
+    (meme) =>
+      getCalculationEditionSize({
+        supply: meme.edition_size,
+        edition_size_floor: nftById.get(meme.id)?.edition_size_floor
+      }),
     'asc'
   );
 }

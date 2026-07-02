@@ -13,7 +13,6 @@ import {
   MemesExtendedData,
   NFT
 } from '../entities/INFT';
-import { resolveEffectiveMemeEditionSizes } from '../memes-tdh-effective-edition-size';
 import {
   findMemeLabExtendedData,
   findMemesExtendedData
@@ -27,9 +26,6 @@ jest.mock('../db', () => ({
   persistLabExtendedData: jest.fn(),
   persistMemesExtendedData: jest.fn(),
   persistMemesSeasons: jest.fn()
-}));
-jest.mock('../memes-tdh-effective-edition-size', () => ({
-  resolveEffectiveMemeEditionSizes: jest.fn()
 }));
 
 const mockedFetchNftIdsRecordedInTdh =
@@ -54,10 +50,6 @@ const mockedPersistMemesSeasons = persistMemesSeasons as jest.MockedFunction<
 >;
 const mockedPersistLabExtendedData =
   persistLabExtendedData as jest.MockedFunction<typeof persistLabExtendedData>;
-const mockedResolveEffectiveMemeEditionSizes =
-  resolveEffectiveMemeEditionSizes as jest.MockedFunction<
-    typeof resolveEffectiveMemeEditionSizes
-  >;
 
 type Owner = {
   readonly contract: string;
@@ -70,9 +62,6 @@ describe('nft extended data', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set());
-    mockedResolveEffectiveMemeEditionSizes.mockImplementation(
-      async ({ actualEditionSizes }) => actualEditionSizes
-    );
     mockedPersistMemesExtendedData.mockResolvedValue(undefined);
     mockedPersistMemesSeasons.mockResolvedValue(undefined);
     mockedPersistLabExtendedData.mockResolvedValue(undefined);
@@ -168,27 +157,20 @@ describe('nft extended data', () => {
     expect(saved[2].ranked_collection_size).toBeNull();
   });
 
-  it('uses effective edition size for Meme edition size ranking', async () => {
+  it('uses edition size floor for Meme edition size ranking', async () => {
     const ownersById = new Map<number, Owner[]>([
       [1, [owner(1, '0x111', 100)]],
       [2, [owner(2, '0x222', 200)]]
     ]);
     mockOwners(ownersById);
-    mockedFetchNftsForContract.mockResolvedValue([memeNft(1), memeNft(2)]);
+    mockedFetchNftsForContract.mockResolvedValue([
+      memeNft(1, 305),
+      memeNft(2, 200)
+    ]);
     mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set([1, 2]));
-    mockedResolveEffectiveMemeEditionSizes.mockResolvedValue({
-      1: 305,
-      2: 200
-    });
 
     await findMemesExtendedData();
 
-    expect(mockedResolveEffectiveMemeEditionSizes).toHaveBeenCalledWith({
-      actualEditionSizes: {
-        1: 100,
-        2: 200
-      }
-    });
     const saved = keyedById(
       mockedPersistMemesExtendedData.mock.calls[0][0] as MemesExtendedData[]
     );
@@ -237,10 +219,11 @@ function keyedById<T extends { id: number }>(rows: T[]): Record<number, T> {
   }, {});
 }
 
-function memeNft(id: number): NFT {
+function memeNft(id: number, editionSizeFloor = 0): NFT {
   return {
     id,
     contract: '0xmemes',
+    edition_size_floor: editionSizeFloor,
     metadata: {
       attributes: [
         { trait_type: 'Type - Season', value: '1' },

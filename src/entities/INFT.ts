@@ -98,6 +98,9 @@ export class LabNFT extends BaseNFT {
 
 @Entity('nfts')
 export class NFT extends BaseNFT {
+  @Column({ type: 'int' })
+  edition_size_floor!: number;
+
   @Column({ type: 'double' })
   hodl_rate!: number;
 

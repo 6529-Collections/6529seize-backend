@@ -1,4 +1,8 @@
 import { getAnimationPaths } from '@/nftsLoop/nft-animation-paths';
+import {
+  calculateNftHodlRate,
+  resolveNftEditionSizeFloor
+} from '@/nftsLoop/nfts';
 
 describe('getAnimationPaths', () => {
   it('keeps the original html animation url instead of rewriting it to CloudFront', () => {
@@ -49,5 +53,63 @@ describe('getAnimationPaths', () => {
     ).toEqual({
       animation: 'https://example.com/interactive/index.html'
     });
+  });
+});
+
+describe('NFT edition size floor calculations', () => {
+  it('uses resolved Meme floors and current supply for non-Memes', () => {
+    expect(
+      resolveNftEditionSizeFloor(
+        {
+          contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+          id: 516,
+          supply: 176,
+          edition_size_floor: 176
+        },
+        { 516: 310 }
+      )
+    ).toBe(310);
+
+    expect(
+      resolveNftEditionSizeFloor(
+        {
+          contract: '0x0c58ef43ff3032005e472cb5709f8908acb00205',
+          id: 1,
+          supply: 101,
+          edition_size_floor: 101
+        },
+        { 1: 310 }
+      )
+    ).toBe(101);
+  });
+
+  it('keeps an existing Meme floor when no fresh on-chain floor is available', () => {
+    expect(
+      resolveNftEditionSizeFloor(
+        {
+          contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+          id: 516,
+          supply: 176,
+          edition_size_floor: 305
+        },
+        {}
+      )
+    ).toBe(305);
+  });
+
+  it('calculates hodl rate from max supply over calculation edition size', () => {
+    expect(
+      calculateNftHodlRate(1000, {
+        supply: 176,
+        edition_size_floor: 305
+      })
+    ).toBe(1000 / 305);
+
+    expect(
+      calculateNftHodlRate(100, {
+        supply: 320,
+        edition_size_floor: 310
+      })
+    ).toBe(1);
   });
 });
