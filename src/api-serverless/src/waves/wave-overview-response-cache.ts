@@ -3,7 +3,7 @@ import type { FindWavesV2Request } from '@/api/waves/api-wave-v2.service';
 import { Logger } from '@/logging';
 import { redisGet, redisSetJson } from '@/redis';
 import { Time } from '@/time';
-import { stableCacheHash } from './wave-cache-key';
+import { compareCacheStrings, stableCacheHash } from './wave-cache-key';
 
 const logger = Logger.get('WAVE_OVERVIEW_RESPONSE_CACHE');
 // The full response can hold viewer counters/unread badges up to 10 seconds
@@ -34,7 +34,7 @@ export async function withWaveOverviewResponseCache({
   }
 
   const existing = inFlightResponseReads.get(cacheKey);
-  if (existing) {
+  if (existing !== undefined) {
     return await existing;
   }
 
@@ -64,7 +64,9 @@ function getResponseCacheKey({
 }): string {
   return `${CACHE_KEY_PREFIX}:${stableCacheHash({
     contextProfileId: contextProfileId ?? 'anonymous',
-    eligibleGroups: Array.from(new Set(eligibleGroups)).sort(),
+    eligibleGroups: Array.from(new Set(eligibleGroups)).sort(
+      compareCacheStrings
+    ),
     request
   })}`;
 }

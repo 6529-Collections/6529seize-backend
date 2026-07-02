@@ -4,7 +4,7 @@ import { WaveEntity } from '@/entities/IWave';
 import { Logger } from '@/logging';
 import { redisGetMany, redisSetJson } from '@/redis';
 import { Time } from '@/time';
-import { stableCacheHash } from './wave-cache-key';
+import { compareCacheStrings, stableCacheHash } from './wave-cache-key';
 
 export interface WaveOverviewStaticCacheEntry {
   readonly descriptionDropPartOne: DropPartEntity | null;
@@ -109,10 +109,10 @@ export async function withInFlightWaveOverviewStaticCacheRead({
 
   const inFlightKey = waveIds
     .map((waveId) => cacheKeysByWaveId[waveId] ?? waveId)
-    .sort()
+    .sort(compareCacheStrings)
     .join('|');
   const existing = inFlightReads.get(inFlightKey);
-  if (existing) {
+  if (existing !== undefined) {
     return await existing;
   }
 

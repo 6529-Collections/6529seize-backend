@@ -1,7 +1,7 @@
 import { Logger } from '@/logging';
 import { redisGet, redisSetJson } from '@/redis';
 import { Time } from '@/time';
-import { stableCacheHash } from './wave-cache-key';
+import { compareCacheStrings, stableCacheHash } from './wave-cache-key';
 
 export interface CachedFollowedSubwaveOverviewContext {
   readonly followed_subwaves_count: number;
@@ -43,7 +43,7 @@ export async function withFollowedSubwaveOverviewContextCache({
   }
 
   const existing = inFlightReads.get(cacheKey);
-  if (existing) {
+  if (existing !== undefined) {
     return await existing;
   }
 
@@ -83,7 +83,7 @@ export async function withInFlightFollowedSubwaveUnreadRead<T>({
     eligibleGroups: distinctSorted(eligibleGroups)
   })}`;
   const existing = inFlightUnreadReads.get(cacheKey);
-  if (existing) {
+  if (existing !== undefined) {
     return (await existing) as T;
   }
 
@@ -115,7 +115,7 @@ function getCacheKey({
 }
 
 function distinctSorted(values: string[]): string[] {
-  return Array.from(new Set(values)).sort();
+  return Array.from(new Set(values)).sort(compareCacheStrings);
 }
 
 async function readCache(

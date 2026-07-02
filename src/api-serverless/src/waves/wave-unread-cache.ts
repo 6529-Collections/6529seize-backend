@@ -1,6 +1,7 @@
 import { getRedisClient, redisGetMany, redisSetJson } from '@/redis';
 import { Logger } from '@/logging';
 import { Time } from '@/time';
+import { compareCacheStrings } from './wave-cache-key';
 
 export interface WaveUnreadSummary {
   readonly unread_drops_count: number;
@@ -207,10 +208,10 @@ export async function withInFlightWaveUnreadSummaryCacheMiss({
 
   const inFlightKey = `${identityId}:${uniqueWaveIds
     .map((waveId) => cacheKeysByWaveId[waveId] ?? waveId)
-    .sort()
+    .sort(compareCacheStrings)
     .join('|')}`;
   const existing = inFlightSummaryMissReads.get(inFlightKey);
-  if (existing) {
+  if (existing !== undefined) {
     return await existing;
   }
 

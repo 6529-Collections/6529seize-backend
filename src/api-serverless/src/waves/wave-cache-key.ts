@@ -6,6 +6,10 @@ export function stableCacheHash(value: unknown): string {
     .digest('hex');
 }
 
+export function compareCacheStrings(a: string, b: string): number {
+  return a.localeCompare(b);
+}
+
 function stableCacheValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(stableCacheValue);
@@ -17,7 +21,7 @@ function stableCacheValue(value: unknown): unknown {
     return value;
   }
   return Object.keys(value)
-    .sort()
+    .sort(compareCacheStrings)
     .reduce(
       (acc, key) => {
         const rawValue = (value as Record<string, unknown>)[key];
