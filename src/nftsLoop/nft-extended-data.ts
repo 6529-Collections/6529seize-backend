@@ -5,6 +5,7 @@ import {
   SIX529_MUSEUM
 } from '@/constants';
 import {
+  fetchNftIdsRecordedInTdh,
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
   getDataSource,
@@ -57,7 +58,8 @@ interface ExtendedOptions<T, M> {
   getId: (nft: T) => number;
   getName?: (nft: T) => string;
   getMetadata?: (nft: T) => any;
-  getExtra?: (nft: T) => Partial<M>;
+  getExtra?: (nft: T) => Partial<M> | Promise<Partial<M>>;
+  rankFilter?: (item: M) => boolean;
   adjustBalances?: (nft: T, owner: NFTOwner) => void;
 }
 
@@ -71,6 +73,7 @@ async function generateExtendedData<T, M extends ExtendedBase>(
     getId,
     getName,
     getExtra,
+    rankFilter,
     adjustBalances
   } = opts;
 
@@ -154,25 +157,31 @@ async function generateExtendedData<T, M extends ExtendedBase>(
         hodlers_rank: -1,
         percent_unique_rank: -1,
         percent_unique_not_burnt_rank: -1,
-        percent_unique_cleaned_rank: -1,
-        ...getExtra?.(nft)
+        percent_unique_cleaned_rank: -1
       } as M;
+
+      const extra = await getExtra?.(nft);
+      if (extra) {
+        Object.assign(base, extra);
+      }
 
       results.push(base);
     })
   );
 
+  const rankedResults = rankFilter ? results.filter(rankFilter) : results;
+
   // Ascending: smaller is better
-  assignRanks(results, 'edition_size', 'asc');
-  assignRanks(results, 'museum_holdings', 'asc');
-  assignRanks(results, 'edition_size_not_burnt', 'asc');
-  assignRanks(results, 'edition_size_cleaned', 'asc');
+  assignRanks(rankedResults, 'edition_size', 'asc');
+  assignRanks(rankedResults, 'museum_holdings', 'asc');
+  assignRanks(rankedResults, 'edition_size_not_burnt', 'asc');
+  assignRanks(rankedResults, 'edition_size_cleaned', 'asc');
 
   // Descending: bigger is better
-  assignRanks(results, 'hodlers', 'desc');
-  assignRanks(results, 'percent_unique', 'desc');
-  assignRanks(results, 'percent_unique_not_burnt', 'desc');
-  assignRanks(results, 'percent_unique_cleaned', 'desc');
+  assignRanks(rankedResults, 'hodlers', 'desc');
+  assignRanks(rankedResults, 'percent_unique', 'desc');
+  assignRanks(rankedResults, 'percent_unique_not_burnt', 'desc');
+  assignRanks(rankedResults, 'percent_unique_cleaned', 'desc');
 
   return results;
 }
@@ -201,6 +210,7 @@ function assignRanks<T extends { id: number }>(
 
 export async function findMemesExtendedData() {
   const nfts = await fetchNftsForContract(MEMES_CONTRACT, 'id desc');
+  const recordedTdhIds = await fetchRecordedTdhIdsForRanks(MEMES_CONTRACT);
 
   const extended = await generateExtendedData<NFT, MemesExtendedData>({
     nfts,
@@ -215,7 +225,7 @@ export async function findMemesExtendedData() {
         owner.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
       }
     },
-    getExtra: (nft) => {
+    getExtra: async (nft) => {
       const attrs = nft.metadata?.attributes ?? [];
       return {
         season: Number.parseInt(
@@ -227,10 +237,13 @@ export async function findMemesExtendedData() {
           attrs.find((a: any) => a.trait_type === 'Type - Meme')?.value ?? '0',
           10
         ),
-        meme_name: attrs.find((a: any) => a.trait_type === 'Meme Name')?.value
+        meme_name: attrs.find((a: any) => a.trait_type === 'Meme Name')?.value,
+        recorded_in_tdh: recordedTdhIds ? recordedTdhIds.has(nft.id) : null
       };
-    }
+    },
+    rankFilter: recordedTdhIds ? isMemeRecordedInTdh : undefined
   });
+  assignRankedCollectionSize(extended, recordedTdhIds);
 
   // Seasons
   const seasons = Array.from(new Set(extended.map((e) => e.season)));
@@ -256,6 +269,45 @@ export async function findMemesExtendedData() {
   await persistMemesExtendedData(extended);
   await persistMemesSeasons(memesSeasons);
   return extended;
+}
+
+async function fetchRecordedTdhIdsForRanks(contract: string) {
+  try {
+    const recordedIds = await fetchNftIdsRecordedInTdh(contract);
+    if (recordedIds.size > 0) {
+      return recordedIds;
+    }
+    logger.warn(
+      `No TDH NFT rows found for contract ${contract}; keeping legacy Meme rank behavior for this run`
+    );
+  } catch (error) {
+    logger.error(
+      `Failed to fetch TDH NFT rows for contract ${contract}; keeping legacy Meme rank behavior for this run`,
+      error
+    );
+  }
+  return null;
+}
+
+function isMemeRecordedInTdh(meme: MemesExtendedData) {
+  return meme.recorded_in_tdh === true;
+}
+
+function assignRankedCollectionSize(
+  extended: MemesExtendedData[],
+  recordedTdhIds: Set<number> | null
+) {
+  if (!recordedTdhIds) {
+    extended.forEach((meme) => (meme.ranked_collection_size = null));
+    return;
+  }
+
+  const rankedCollectionSize = extended.filter(isMemeRecordedInTdh).length;
+  extended.forEach((meme) => {
+    meme.ranked_collection_size = isMemeRecordedInTdh(meme)
+      ? rankedCollectionSize
+      : null;
+  });
 }
 
 export async function findMemeLabExtendedData() {
