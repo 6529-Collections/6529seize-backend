@@ -4,6 +4,7 @@ import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
+import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
@@ -47,6 +48,20 @@ import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+
+export type GetDmDropsUnreadPathParams = Record<string, never>;
+
+export type GetDmDropsUnreadQuery = Record<string, never>;
+
+export type GetDmDropsUnreadResponse = ApiDmDropsUnreadCount;
+
+export type GetDmDropsUnreadRequest = Request<
+  GetDmDropsUnreadPathParams,
+  ApiResponse<GetDmDropsUnreadResponse>,
+  never,
+  GetDmDropsUnreadQuery,
+  Record<string, never>
+>;
 
 export type ResolveDecentralizedMediaPathParams = Record<string, never>;
 
