@@ -1,15 +1,19 @@
-import type { FollowedSubwaveOverviewContext } from '@/api/waves/waves.api.db';
 import { Logger } from '@/logging';
 import { redisGet, redisSetJson } from '@/redis';
 import { Time } from '@/time';
 import { stableCacheHash } from './wave-cache-key';
+
+export interface CachedFollowedSubwaveOverviewContext {
+  readonly followed_subwaves_count: number;
+  readonly latest_followed_subwave_activity_timestamp: number | null;
+}
 
 const logger = Logger.get('WAVE_FOLLOWED_SUBWAVE_OVERVIEW_CACHE');
 const CACHE_TTL = Time.seconds(30);
 const CACHE_KEY_PREFIX = 'cache_6529_wave_followed_subwave_overview_v1';
 const inFlightReads = new Map<
   string,
-  Promise<Record<string, FollowedSubwaveOverviewContext>>
+  Promise<Record<string, CachedFollowedSubwaveOverviewContext>>
 >();
 
 export async function withFollowedSubwaveOverviewContextCache({
@@ -24,9 +28,9 @@ export async function withFollowedSubwaveOverviewContextCache({
   readonly eligibleGroups: string[];
   readonly cacheable: boolean;
   readonly getValue: () => Promise<
-    Record<string, FollowedSubwaveOverviewContext>
+    Record<string, CachedFollowedSubwaveOverviewContext>
   >;
-}): Promise<Record<string, FollowedSubwaveOverviewContext>> {
+}): Promise<Record<string, CachedFollowedSubwaveOverviewContext>> {
   if (!cacheable || !parentWaveIds.length) {
     return await getValue();
   }
@@ -79,9 +83,9 @@ function distinctSorted(values: string[]): string[] {
 
 async function readCache(
   cacheKey: string
-): Promise<Record<string, FollowedSubwaveOverviewContext> | null> {
+): Promise<Record<string, CachedFollowedSubwaveOverviewContext> | null> {
   try {
-    return await redisGet<Record<string, FollowedSubwaveOverviewContext>>(
+    return await redisGet<Record<string, CachedFollowedSubwaveOverviewContext>>(
       cacheKey
     );
   } catch (error) {
@@ -92,7 +96,7 @@ async function readCache(
 
 async function writeCache(
   cacheKey: string,
-  value: Record<string, FollowedSubwaveOverviewContext>
+  value: Record<string, CachedFollowedSubwaveOverviewContext>
 ): Promise<void> {
   try {
     await redisSetJson(cacheKey, value, CACHE_TTL);

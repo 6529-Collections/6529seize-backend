@@ -18,9 +18,7 @@ describe('followed subwave overview cache', () => {
     const cached = {
       'wave-1': {
         followed_subwaves_count: 2,
-        latest_followed_subwave_activity_timestamp: 100,
-        hidden_followed_subwave_unread_drops: 1,
-        first_hidden_followed_subwave_unread_drop_serial_no: 7
+        latest_followed_subwave_activity_timestamp: 100
       }
     };
     redisGetMock.mockResolvedValue(cached);
@@ -45,9 +43,7 @@ describe('followed subwave overview cache', () => {
     const loaded = {
       'wave-1': {
         followed_subwaves_count: 1,
-        latest_followed_subwave_activity_timestamp: null,
-        hidden_followed_subwave_unread_drops: 0,
-        first_hidden_followed_subwave_unread_drop_serial_no: null
+        latest_followed_subwave_activity_timestamp: null
       }
     };
     const getValue = jest.fn().mockResolvedValue(loaded);

@@ -27,6 +27,7 @@ describe('wave overview response cache', () => {
     await expect(
       withWaveOverviewResponseCache({
         contextProfileId: 'viewer-1',
+        eligibleGroups: ['group-1'],
         request: {
           view: ApiWavesV2ListType.Overview,
           page: 1,
@@ -58,11 +59,13 @@ describe('wave overview response cache', () => {
       Promise.all([
         withWaveOverviewResponseCache({
           contextProfileId: 'viewer-1',
+          eligibleGroups: ['group-1'],
           request,
           getValue
         }),
         withWaveOverviewResponseCache({
           contextProfileId: 'viewer-1',
+          eligibleGroups: ['group-1'],
           request,
           getValue
         })
@@ -76,5 +79,40 @@ describe('wave overview response cache', () => {
       loaded,
       expect.any(Object)
     );
+  });
+
+  it('uses eligible groups to separate otherwise identical cache keys', async () => {
+    redisGetMock.mockResolvedValue(null);
+    const request = {
+      view: ApiWavesV2ListType.Overview,
+      page: 1,
+      page_size: 10
+    } as any;
+
+    await Promise.all([
+      withWaveOverviewResponseCache({
+        contextProfileId: 'viewer-1',
+        eligibleGroups: ['group-1'],
+        request,
+        getValue: jest.fn().mockResolvedValue({
+          data: [{ id: 'wave-1' }],
+          page: 1,
+          next: false
+        })
+      }),
+      withWaveOverviewResponseCache({
+        contextProfileId: 'viewer-1',
+        eligibleGroups: ['group-2'],
+        request,
+        getValue: jest.fn().mockResolvedValue({
+          data: [{ id: 'wave-2' }],
+          page: 1,
+          next: false
+        })
+      })
+    ]);
+
+    const writtenKeys = redisSetJsonMock.mock.calls.map(([key]) => key);
+    expect(new Set(writtenKeys).size).toBe(2);
   });
 });

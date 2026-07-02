@@ -1,14 +1,12 @@
 import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
 import { DropMediaEntity, DropPartEntity } from '@/entities/IDrop';
 import { WaveEntity } from '@/entities/IWave';
-import { WaveMetricEntity } from '@/entities/IWaveMetric';
 import { Logger } from '@/logging';
 import { redisGetMany, redisSetJson } from '@/redis';
 import { Time } from '@/time';
 import { stableCacheHash } from './wave-cache-key';
 
 export interface WaveOverviewStaticCacheEntry {
-  readonly metrics: WaveMetricEntity | null;
   readonly descriptionDropPartOne: DropPartEntity | null;
   readonly descriptionDropPartOneMedia: DropMediaEntity[];
   readonly creator: ApiProfileMin | null;

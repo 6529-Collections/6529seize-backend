@@ -12,14 +12,20 @@ const inFlightResponseReads = new Map<string, Promise<ApiWaveOverviewPage>>();
 
 export async function withWaveOverviewResponseCache({
   contextProfileId,
+  eligibleGroups,
   request,
   getValue
 }: {
   readonly contextProfileId: string | null;
+  readonly eligibleGroups: string[];
   readonly request: FindWavesV2Request;
   readonly getValue: () => Promise<ApiWaveOverviewPage>;
 }): Promise<ApiWaveOverviewPage> {
-  const cacheKey = getResponseCacheKey({ contextProfileId, request });
+  const cacheKey = getResponseCacheKey({
+    contextProfileId,
+    eligibleGroups,
+    request
+  });
   const cached = await readResponseCache(cacheKey);
   if (cached) {
     return cached;
@@ -47,13 +53,16 @@ export async function withWaveOverviewResponseCache({
 
 function getResponseCacheKey({
   contextProfileId,
+  eligibleGroups,
   request
 }: {
   readonly contextProfileId: string | null;
+  readonly eligibleGroups: string[];
   readonly request: FindWavesV2Request;
 }): string {
   return `${CACHE_KEY_PREFIX}:${stableCacheHash({
     contextProfileId: contextProfileId ?? 'anonymous',
+    eligibleGroups: Array.from(new Set(eligibleGroups)).sort(),
     request
   })}`;
 }

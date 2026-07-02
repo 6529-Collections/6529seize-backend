@@ -1102,119 +1102,137 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findFollowedSubwaveOverviewContextsByParentWaveId`;
     ctx.timer?.start(timerKey);
     try {
-      return await withFollowedSubwaveOverviewContextCache({
-        identityId,
-        parentWaveIds,
-        eligibleGroups,
-        cacheable: ctx.connection === undefined,
-        getValue: async () => {
-          const activityRows =
-            await this.db.execute<FollowedSubwaveActivityRow>(
-              `
-                ${this.getFollowedSubwaveActivitySelect({
-                  groupIds: eligibleGroups,
-                  identityParamName: 'identityId',
-                  eligibleGroupsParamName: 'eligibleGroups',
-                  parentWaveIdsParamName: 'parentWaveIds'
-                })}
-              `,
-              {
-                identityId,
-                parentWaveIds,
-                eligibleGroups,
-                wave_target_type: ActivityEventTargetType.WAVE,
-                drop_created_action: ActivityEventAction.DROP_CREATED
+      const followedSubwaveActivityByParentWaveId =
+        await withFollowedSubwaveOverviewContextCache({
+          identityId,
+          parentWaveIds,
+          eligibleGroups,
+          cacheable: ctx.connection === undefined,
+          getValue: async () => {
+            const activityRows =
+              await this.db.execute<FollowedSubwaveActivityRow>(
+                `
+                  ${this.getFollowedSubwaveActivitySelect({
+                    groupIds: eligibleGroups,
+                    identityParamName: 'identityId',
+                    eligibleGroupsParamName: 'eligibleGroups',
+                    parentWaveIdsParamName: 'parentWaveIds'
+                  })}
+                `,
+                {
+                  identityId,
+                  parentWaveIds,
+                  eligibleGroups,
+                  wave_target_type: ActivityEventTargetType.WAVE,
+                  drop_created_action: ActivityEventAction.DROP_CREATED
+                },
+                { wrappedConnection: ctx.connection }
+              );
+
+            return activityRows.reduce(
+              (acc, row) => {
+                acc[row.parent_wave_id] = {
+                  followed_subwaves_count: Number(row.followed_subwaves_count),
+                  latest_followed_subwave_activity_timestamp:
+                    this.toActivityTimestamp(
+                      row.latest_followed_subwave_activity_timestamp
+                    )
+                };
+                return acc;
               },
-              { wrappedConnection: ctx.connection }
+              {} as Record<
+                string,
+                {
+                  followed_subwaves_count: number;
+                  latest_followed_subwave_activity_timestamp: number | null;
+                }
+              >
             );
-
-          const unreadRows =
-            await this.db.execute<HiddenFollowedSubwaveUnreadRow>(
-              `
-                select
-                  child.parent_wave_id,
-                  count(d.id) as hidden_followed_subwave_unread_drops,
-                  min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
-                from ${WAVES_TABLE} child
-                join ${WAVES_TABLE} parent
-                  on parent.id = child.parent_wave_id
-                 and parent.parent_wave_id is null
-                left join ${WAVE_READER_METRICS_TABLE} parent_reader
-                  on parent_reader.wave_id = parent.id
-                 and parent_reader.reader_id = :identityId
-                join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
-                  on child_follow.subscriber_id = :identityId
-                 and child_follow.target_id = child.id
-                 and child_follow.target_type = :waveTargetType
-                 and child_follow.target_action = :dropCreatedAction
-                join ${WAVE_READER_METRICS_TABLE} child_reader
-                  on child_reader.wave_id = child.id
-                 and child_reader.reader_id = :identityId
-                 and child_reader.latest_read_timestamp is not null
-                 and coalesce(child_reader.muted, false) = false
-                join ${DROPS_TABLE} d
-                  on d.wave_id = child.id
-                 and d.created_at > child_reader.latest_read_timestamp
-                where child.parent_wave_id in (:parentWaveIds)
-                  and coalesce(parent_reader.muted, false) = false
-                  and ${this.getWaveVisibilityFilter(
-                    'child',
-                    eligibleGroups,
-                    'eligibleGroups'
-                  )}
-                  and ${this.getWaveVisibilityFilter(
-                    'parent',
-                    eligibleGroups,
-                    'eligibleGroups'
-                  )}
-                group by child.parent_wave_id
-              `,
-              {
-                identityId,
-                parentWaveIds,
-                eligibleGroups,
-                waveTargetType: ActivityEventTargetType.WAVE,
-                dropCreatedAction: ActivityEventAction.DROP_CREATED
-              },
-              { wrappedConnection: ctx.connection }
-            );
-
-          const result = activityRows.reduce(
-            (acc, row) => {
-              acc[row.parent_wave_id] = {
-                followed_subwaves_count: Number(row.followed_subwaves_count),
-                latest_followed_subwave_activity_timestamp:
-                  this.toActivityTimestamp(
-                    row.latest_followed_subwave_activity_timestamp
-                  ),
-                hidden_followed_subwave_unread_drops: 0,
-                first_hidden_followed_subwave_unread_drop_serial_no: null
-              };
-              return acc;
-            },
-            {} as Record<string, FollowedSubwaveOverviewContext>
-          );
-
-          for (const row of unreadRows) {
-            const existing = result[row.parent_wave_id];
-            if (!existing) {
-              continue;
-            }
-            result[row.parent_wave_id] = {
-              ...existing,
-              hidden_followed_subwave_unread_drops: Number(
-                row.hidden_followed_subwave_unread_drops
-              ),
-              first_hidden_followed_subwave_unread_drop_serial_no:
-                this.toNullableNumber(
-                  row.first_hidden_followed_subwave_unread_drop_serial_no
-                )
-            };
           }
+        });
 
-          return result;
+      const unreadRows = await this.db.execute<HiddenFollowedSubwaveUnreadRow>(
+        `
+          select
+            child.parent_wave_id,
+            count(d.id) as hidden_followed_subwave_unread_drops,
+            min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
+          from ${WAVES_TABLE} child
+          join ${WAVES_TABLE} parent
+            on parent.id = child.parent_wave_id
+           and parent.parent_wave_id is null
+          left join ${WAVE_READER_METRICS_TABLE} parent_reader
+            on parent_reader.wave_id = parent.id
+           and parent_reader.reader_id = :identityId
+          join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+            on child_follow.subscriber_id = :identityId
+           and child_follow.target_id = child.id
+           and child_follow.target_type = :waveTargetType
+           and child_follow.target_action = :dropCreatedAction
+          join ${WAVE_READER_METRICS_TABLE} child_reader
+            on child_reader.wave_id = child.id
+           and child_reader.reader_id = :identityId
+           and child_reader.latest_read_timestamp is not null
+           and coalesce(child_reader.muted, false) = false
+          join ${DROPS_TABLE} d
+            on d.wave_id = child.id
+           and d.created_at > child_reader.latest_read_timestamp
+          where child.parent_wave_id in (:parentWaveIds)
+            and coalesce(parent_reader.muted, false) = false
+            and ${this.getWaveVisibilityFilter(
+              'child',
+              eligibleGroups,
+              'eligibleGroups'
+            )}
+            and ${this.getWaveVisibilityFilter(
+              'parent',
+              eligibleGroups,
+              'eligibleGroups'
+            )}
+          group by child.parent_wave_id
+        `,
+        {
+          identityId,
+          parentWaveIds,
+          eligibleGroups,
+          waveTargetType: ActivityEventTargetType.WAVE,
+          dropCreatedAction: ActivityEventAction.DROP_CREATED
+        },
+        { wrappedConnection: ctx.connection }
+      );
+
+      const result = Object.entries(
+        followedSubwaveActivityByParentWaveId
+      ).reduce(
+        (acc, [parentWaveId, activity]) => {
+          acc[parentWaveId] = {
+            ...activity,
+            hidden_followed_subwave_unread_drops: 0,
+            first_hidden_followed_subwave_unread_drop_serial_no: null
+          };
+          return acc;
+        },
+        {} as Record<string, FollowedSubwaveOverviewContext>
+      );
+
+      for (const row of unreadRows) {
+        const existing = result[row.parent_wave_id];
+        if (!existing) {
+          continue;
         }
-      });
+        result[row.parent_wave_id] = {
+          ...existing,
+          hidden_followed_subwave_unread_drops: Number(
+            row.hidden_followed_subwave_unread_drops
+          ),
+          first_hidden_followed_subwave_unread_drop_serial_no:
+            this.toNullableNumber(
+              row.first_hidden_followed_subwave_unread_drop_serial_no
+            )
+        };
+      }
+
+      return result;
     } finally {
       ctx.timer?.stop(timerKey);
     }

@@ -94,6 +94,11 @@ export interface FindSubwavesRequest {
   readonly sort: ApiSubwavesSort;
 }
 
+interface ReadableWaveContext {
+  readonly authenticatedProfileId: string | null;
+  readonly eligibleGroups: string[];
+}
+
 export class ApiWaveV2Service {
   constructor(
     private readonly dropsDb: DropsDb,
@@ -112,19 +117,17 @@ export class ApiWaveV2Service {
     const timerKey = `${this.constructor.name}->findWaves`;
     ctx.timer?.start(timerKey);
     try {
-      const contextProfileId = getWaveReadContextProfileId(
-        ctx.authenticationContext
-      );
+      const readableContext = await this.getReadableWaveContext(ctx);
       const getValue = async () => {
         switch (request.view) {
           case ApiWavesV2ListType.Search:
-            return await this.findSearchedWaves(request, ctx);
+            return await this.findSearchedWaves(request, ctx, readableContext);
           case ApiWavesV2ListType.Overview:
-            return await this.findOverviewWaves(request, ctx);
+            return await this.findOverviewWaves(request, ctx, readableContext);
           case ApiWavesV2ListType.Hot:
-            return await this.findHotWaves(request, ctx);
+            return await this.findHotWaves(request, ctx, readableContext);
           case ApiWavesV2ListType.Favourites:
-            return await this.findFavouriteWaves(request, ctx);
+            return await this.findFavouriteWaves(request, ctx, readableContext);
           default:
             return assertUnreachable(request.view);
         }
@@ -132,7 +135,8 @@ export class ApiWaveV2Service {
       return ctx.connection
         ? await getValue()
         : await withWaveOverviewResponseCache({
-            contextProfileId,
+            contextProfileId: readableContext.authenticatedProfileId,
+            eligibleGroups: readableContext.eligibleGroups,
             request,
             getValue
           });
@@ -432,9 +436,9 @@ export class ApiWaveV2Service {
 
   private async findSearchedWaves(
     request: FindWavesV2Request,
-    ctx: RequestContext
+    ctx: RequestContext,
+    readableContext: ReadableWaveContext
   ): Promise<ApiWaveOverviewPage> {
-    const { eligibleGroups } = await this.getReadableWaveContext(ctx);
     const author = request.author
       ? await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
           { identityKey: request.author },
@@ -452,17 +456,18 @@ export class ApiWaveV2Service {
     };
     const waveEntities = await this.wavesApiDb.searchWaves(
       searchParams,
-      eligibleGroups,
+      readableContext.eligibleGroups,
       ctx
     );
     return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
-      groupIdsUserIsEligibleFor: eligibleGroups
+      groupIdsUserIsEligibleFor: readableContext.eligibleGroups
     });
   }
 
   private async findOverviewWaves(
     request: FindWavesV2Request,
-    ctx: RequestContext
+    ctx: RequestContext,
+    readableContext: ReadableWaveContext
   ): Promise<ApiWaveOverviewPage> {
     const overviewType = request.overview_type;
     if (!overviewType) {
@@ -470,27 +475,25 @@ export class ApiWaveV2Service {
         `overview_type is required for OVERVIEW view`
       );
     }
-    const { authenticatedProfileId, eligibleGroups } =
-      await this.getReadableWaveContext(ctx);
     const onlyFollowed =
       request.only_waves_followed_by_authenticated_user ?? false;
-    if (onlyFollowed && !authenticatedProfileId) {
+    if (onlyFollowed && !readableContext.authenticatedProfileId) {
       throw new BadRequestException(
         `You can't see waves organised by your behaviour unless you're authenticated`
       );
     }
     const excludeFollowed = request.exclude_followed ?? false;
-    if (excludeFollowed && !authenticatedProfileId) {
+    if (excludeFollowed && !readableContext.authenticatedProfileId) {
       throw new BadRequestException(
         `You can't exclude followed waves unless you're authenticated`
       );
     }
     const findParams = {
-      authenticated_user_id: authenticatedProfileId,
+      authenticated_user_id: readableContext.authenticatedProfileId,
       only_waves_followed_by_authenticated_user: onlyFollowed,
       offset: this.getOffset(request),
       limit: request.page_size + 1,
-      eligibleGroups,
+      eligibleGroups: readableContext.eligibleGroups,
       direct_message: request.direct_message,
       pinned: request.pinned ?? null
     };
@@ -512,19 +515,17 @@ export class ApiWaveV2Service {
               })
             : assertUnreachable(overviewType);
     return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
-      groupIdsUserIsEligibleFor: eligibleGroups
+      groupIdsUserIsEligibleFor: readableContext.eligibleGroups
     });
   }
 
   private async findHotWaves(
     request: FindWavesV2Request,
-    ctx: RequestContext
+    ctx: RequestContext,
+    readableContext: ReadableWaveContext
   ): Promise<ApiWaveOverviewPage> {
-    const authenticatedProfileId = getWaveReadContextProfileId(
-      ctx.authenticationContext
-    );
     const excludeFollowed = request.exclude_followed ?? false;
-    if (excludeFollowed && !authenticatedProfileId) {
+    if (excludeFollowed && !readableContext.authenticatedProfileId) {
       throw new BadRequestException(
         `You can't exclude followed waves unless you're authenticated`
       );
@@ -533,21 +534,23 @@ export class ApiWaveV2Service {
       cutoffTimestamp: Time.currentMillis() - Time.hours(24).toMillis(),
       limit: request.page_size + 1,
       offset: this.getOffset(request),
-      authenticated_user_id: authenticatedProfileId,
+      authenticated_user_id: readableContext.authenticatedProfileId,
       exclude_followed: excludeFollowed
     });
-    return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
+    return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
+      groupIdsUserIsEligibleFor: readableContext.eligibleGroups
+    });
   }
 
   private async findFavouriteWaves(
     request: FindWavesV2Request,
-    ctx: RequestContext
+    ctx: RequestContext,
+    readableContext: ReadableWaveContext
   ): Promise<ApiWaveOverviewPage> {
     const identity = request.identity;
     if (!identity) {
       throw new BadRequestException(`identity is required for FAVOURITES view`);
     }
-    const { eligibleGroups } = await this.getReadableWaveContext(ctx);
     const targetProfileId =
       await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
         { identityKey: identity },
@@ -556,21 +559,20 @@ export class ApiWaveV2Service {
     const waveEntities = await this.wavesApiDb.findFavouriteWavesOfIdentity(
       {
         identityId: targetProfileId,
-        eligibleGroups,
+        eligibleGroups: readableContext.eligibleGroups,
         limit: request.page_size + 1,
         offset: this.getOffset(request)
       },
       ctx
     );
     return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
-      groupIdsUserIsEligibleFor: eligibleGroups
+      groupIdsUserIsEligibleFor: readableContext.eligibleGroups
     });
   }
 
-  private async getReadableWaveContext(ctx: RequestContext): Promise<{
-    authenticatedProfileId: string | null;
-    eligibleGroups: string[];
-  }> {
+  private async getReadableWaveContext(
+    ctx: RequestContext
+  ): Promise<ReadableWaveContext> {
     const authenticatedProfileId = getWaveReadContextProfileId(
       ctx.authenticationContext
     );

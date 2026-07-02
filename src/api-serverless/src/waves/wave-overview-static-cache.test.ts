@@ -30,7 +30,6 @@ describe('wave overview static cache', () => {
 
   it('maps cached entries by wave id and reports misses', async () => {
     const cachedEntry = {
-      metrics: null,
       descriptionDropPartOne: null,
       descriptionDropPartOneMedia: [],
       creator: null
@@ -63,7 +62,6 @@ describe('wave overview static cache', () => {
   it('writes entries and coalesces equivalent miss loads', async () => {
     const loaded = {
       'wave-1': {
-        metrics: null,
         descriptionDropPartOne: null,
         descriptionDropPartOneMedia: [],
         creator: null
