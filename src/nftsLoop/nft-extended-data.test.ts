@@ -1,8 +1,8 @@
 import {
+  fetchNftIdsRecordedInTdh,
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
   getDataSource,
-  isNftRecordedInTdh,
   persistLabExtendedData,
   persistMemesExtendedData,
   persistMemesSeasons
@@ -19,15 +19,19 @@ import {
 } from './nft-extended-data';
 
 jest.mock('../db', () => ({
+  fetchNftIdsRecordedInTdh: jest.fn(),
   fetchAllMemeLabNFTs: jest.fn(),
   fetchNftsForContract: jest.fn(),
   getDataSource: jest.fn(),
-  isNftRecordedInTdh: jest.fn(),
   persistLabExtendedData: jest.fn(),
   persistMemesExtendedData: jest.fn(),
   persistMemesSeasons: jest.fn()
 }));
 
+const mockedFetchNftIdsRecordedInTdh =
+  fetchNftIdsRecordedInTdh as jest.MockedFunction<
+    typeof fetchNftIdsRecordedInTdh
+  >;
 const mockedFetchNftsForContract = fetchNftsForContract as jest.MockedFunction<
   typeof fetchNftsForContract
 >;
@@ -36,9 +40,6 @@ const mockedFetchAllMemeLabNFTs = fetchAllMemeLabNFTs as jest.MockedFunction<
 >;
 const mockedGetDataSource = getDataSource as jest.MockedFunction<
   typeof getDataSource
->;
-const mockedIsNftRecordedInTdh = isNftRecordedInTdh as jest.MockedFunction<
-  typeof isNftRecordedInTdh
 >;
 const mockedPersistMemesExtendedData =
   persistMemesExtendedData as jest.MockedFunction<
@@ -60,6 +61,7 @@ type Owner = {
 describe('nft extended data', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set());
     mockedPersistMemesExtendedData.mockResolvedValue(undefined);
     mockedPersistMemesSeasons.mockResolvedValue(undefined);
     mockedPersistLabExtendedData.mockResolvedValue(undefined);
@@ -77,12 +79,11 @@ describe('nft extended data', () => {
       memeNft(2),
       memeNft(3)
     ]);
-    mockedIsNftRecordedInTdh.mockImplementation((_contract, id) =>
-      Promise.resolve(id !== 2)
-    );
+    mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set([1, 3]));
 
     await findMemesExtendedData();
 
+    expect(mockedFetchNftIdsRecordedInTdh).toHaveBeenCalledTimes(1);
     expect(mockedPersistMemesExtendedData).toHaveBeenCalledTimes(1);
     const saved = keyedById(
       mockedPersistMemesExtendedData.mock.calls[0][0] as MemesExtendedData[]
@@ -96,12 +97,60 @@ describe('nft extended data', () => {
     expect(saved[2].recorded_in_tdh).toBe(false);
     expect(saved[2].edition_size_rank).toBe(-1);
     expect(saved[2].hodlers_rank).toBe(-1);
-    expect(saved[2].ranked_collection_size).toBe(2);
+    expect(saved[2].ranked_collection_size).toBeNull();
 
     expect(saved[3].recorded_in_tdh).toBe(true);
     expect(saved[3].edition_size_rank).toBe(2);
     expect(saved[3].hodlers_rank).toBe(2);
     expect(saved[3].ranked_collection_size).toBe(2);
+  });
+
+  it('keeps legacy Meme ranking when TDH recorded rows are empty', async () => {
+    const ownersById = new Map<number, Owner[]>([
+      [1, [owner(1, '0x111', 100)]],
+      [2, [owner(2, '0x222', 10)]]
+    ]);
+    mockOwners(ownersById);
+    mockedFetchNftsForContract.mockResolvedValue([memeNft(1), memeNft(2)]);
+    mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set());
+
+    await findMemesExtendedData();
+
+    const saved = keyedById(
+      mockedPersistMemesExtendedData.mock.calls[0][0] as MemesExtendedData[]
+    );
+
+    expect(saved[1].recorded_in_tdh).toBeNull();
+    expect(saved[1].edition_size_rank).toBe(2);
+    expect(saved[1].ranked_collection_size).toBeNull();
+    expect(saved[2].recorded_in_tdh).toBeNull();
+    expect(saved[2].edition_size_rank).toBe(1);
+    expect(saved[2].ranked_collection_size).toBeNull();
+  });
+
+  it('keeps legacy Meme ranking when TDH recorded lookup fails', async () => {
+    const ownersById = new Map<number, Owner[]>([
+      [1, [owner(1, '0x111', 100)]],
+      [2, [owner(2, '0x222', 10)]]
+    ]);
+    mockOwners(ownersById);
+    mockedFetchNftsForContract.mockResolvedValue([memeNft(1), memeNft(2)]);
+    mockedFetchNftIdsRecordedInTdh.mockRejectedValue(
+      new Error('tdh unavailable')
+    );
+
+    await findMemesExtendedData();
+
+    const saved = keyedById(
+      mockedPersistMemesExtendedData.mock.calls[0][0] as MemesExtendedData[]
+    );
+
+    expect(saved[1].recorded_in_tdh).toBeNull();
+    expect(saved[1].edition_size_rank).toBe(2);
+    expect(saved[1].ranked_collection_size).toBeNull();
+    expect(saved[2].recorded_in_tdh).toBeNull();
+    expect(saved[2].edition_size_rank).toBe(1);
+    expect(saved[2].ranked_collection_size).toBeNull();
   });
 
   it('continues ranking Meme Lab extended data without TDH eligibility', async () => {
@@ -114,7 +163,7 @@ describe('nft extended data', () => {
 
     await findMemeLabExtendedData();
 
-    expect(mockedIsNftRecordedInTdh).not.toHaveBeenCalled();
+    expect(mockedFetchNftIdsRecordedInTdh).not.toHaveBeenCalled();
     expect(mockedPersistLabExtendedData).toHaveBeenCalledTimes(1);
     const saved = keyedById(
       mockedPersistLabExtendedData.mock.calls[0][0] as LabExtendedData[]

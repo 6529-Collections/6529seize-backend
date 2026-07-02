@@ -461,23 +461,21 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
   return results;
 }
 
-export async function isNftRecordedInTdh(
-  contract: string,
-  id: number
-): Promise<boolean> {
-  const sql = `SELECT EXISTS (
-    SELECT 1
+export async function fetchNftIdsRecordedInTdh(
+  contract: string
+): Promise<Set<number>> {
+  const sql = `SELECT DISTINCT id
     FROM ${TDH_NFT_TABLE}
-    WHERE contract = LOWER(:contract)
-      AND id = :id
-    LIMIT 1
-  ) AS recorded_in_tdh;`;
-  const results = await sqlExecutor.execute<{ recorded_in_tdh: unknown }>(sql, {
-    contract,
-    id
+    WHERE LOWER(contract) = LOWER(:contract);`;
+  const results = await sqlExecutor.execute<{ id: number | string }>(sql, {
+    contract
   });
-  const recorded = results[0]?.recorded_in_tdh;
-  return recorded === true || recorded === 1 || recorded === '1';
+
+  return new Set(
+    results
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  );
 }
 
 export async function fetchAllMemeLabNFTs(orderBy?: string) {
