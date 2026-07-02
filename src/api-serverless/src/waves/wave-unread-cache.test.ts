@@ -3,6 +3,7 @@ import {
   invalidateWaveUnreadCacheForReaderWave,
   invalidateWaveUnreadCacheForWave,
   readWaveUnreadSummaryCache,
+  withInFlightWaveUnreadSummaryCacheMiss,
   writeWaveUnreadSummaryCache
 } from './wave-unread-cache';
 
@@ -100,6 +101,33 @@ describe('wave unread cache', () => {
       },
       expect.any(Object)
     );
+  });
+
+  it('coalesces concurrent summary cache misses for the same versioned keys', async () => {
+    const summaries = {
+      'wave-1': {
+        unread_drops_count: 2,
+        first_unread_drop_serial_no: 12
+      }
+    };
+    const getValue = jest.fn().mockResolvedValue(summaries);
+    const params = {
+      identityId: 'reader-1',
+      waveIds: ['wave-1'],
+      cacheKeysByWaveId: {
+        'wave-1': 'cache-key-1'
+      },
+      getValue
+    };
+
+    await expect(
+      Promise.all([
+        withInFlightWaveUnreadSummaryCacheMiss(params),
+        withInFlightWaveUnreadSummaryCacheMiss(params)
+      ])
+    ).resolves.toEqual([summaries, summaries]);
+
+    expect(getValue).toHaveBeenCalledTimes(1);
   });
 
   it('bumps version keys for wave and reader invalidation', async () => {

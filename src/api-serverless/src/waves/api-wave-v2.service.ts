@@ -45,6 +45,7 @@ import {
   wavesApiDb,
   WavesApiDb
 } from '@/api/waves/waves.api.db';
+import { withWaveOverviewResponseCache } from './wave-overview-response-cache';
 
 export interface FindWaveDropsFeedV2Request {
   readonly drop_id: string | null;
@@ -111,18 +112,30 @@ export class ApiWaveV2Service {
     const timerKey = `${this.constructor.name}->findWaves`;
     ctx.timer?.start(timerKey);
     try {
-      switch (request.view) {
-        case ApiWavesV2ListType.Search:
-          return await this.findSearchedWaves(request, ctx);
-        case ApiWavesV2ListType.Overview:
-          return await this.findOverviewWaves(request, ctx);
-        case ApiWavesV2ListType.Hot:
-          return await this.findHotWaves(request, ctx);
-        case ApiWavesV2ListType.Favourites:
-          return await this.findFavouriteWaves(request, ctx);
-        default:
-          return assertUnreachable(request.view);
-      }
+      const contextProfileId = getWaveReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const getValue = async () => {
+        switch (request.view) {
+          case ApiWavesV2ListType.Search:
+            return await this.findSearchedWaves(request, ctx);
+          case ApiWavesV2ListType.Overview:
+            return await this.findOverviewWaves(request, ctx);
+          case ApiWavesV2ListType.Hot:
+            return await this.findHotWaves(request, ctx);
+          case ApiWavesV2ListType.Favourites:
+            return await this.findFavouriteWaves(request, ctx);
+          default:
+            return assertUnreachable(request.view);
+        }
+      };
+      return ctx.connection
+        ? await getValue()
+        : await withWaveOverviewResponseCache({
+            contextProfileId,
+            request,
+            getValue
+          });
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -157,7 +170,9 @@ export class ApiWaveV2Service {
         },
         ctx
       );
-      return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
+      return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
+        groupIdsUserIsEligibleFor: eligibleGroups
+      });
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -176,7 +191,8 @@ export class ApiWaveV2Service {
       );
       const wavesById = await this.apiWaveOverviewMapper.mapWaves(
         waveEntities,
-        ctx
+        ctx,
+        { groupIdsUserIsEligibleFor: eligibleGroups }
       );
       return waveEntities
         .map((wave) => wavesById[wave.id])
@@ -439,7 +455,9 @@ export class ApiWaveV2Service {
       eligibleGroups,
       ctx
     );
-    return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
+    return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
+      groupIdsUserIsEligibleFor: eligibleGroups
+    });
   }
 
   private async findOverviewWaves(
@@ -493,7 +511,9 @@ export class ApiWaveV2Service {
                 visibility_tier: request.visibility_tier
               })
             : assertUnreachable(overviewType);
-    return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
+    return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
+      groupIdsUserIsEligibleFor: eligibleGroups
+    });
   }
 
   private async findHotWaves(
@@ -542,7 +562,9 @@ export class ApiWaveV2Service {
       },
       ctx
     );
-    return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
+    return await this.mapWaveEntitiesPage(waveEntities, request, ctx, {
+      groupIdsUserIsEligibleFor: eligibleGroups
+    });
   }
 
   private async getReadableWaveContext(ctx: RequestContext): Promise<{
@@ -575,12 +597,16 @@ export class ApiWaveV2Service {
   private async mapWaveEntitiesPage(
     waveEntities: WaveEntity[],
     request: { readonly page: number; readonly page_size: number },
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: {
+      readonly groupIdsUserIsEligibleFor?: string[];
+    } = {}
   ): Promise<ApiWaveOverviewPage> {
     const pageWaveEntities = waveEntities.slice(0, request.page_size);
     const wavesById = await this.apiWaveOverviewMapper.mapWaves(
       pageWaveEntities,
-      ctx
+      ctx,
+      options
     );
     return {
       data: pageWaveEntities.map((wave) => wavesById[wave.id]),

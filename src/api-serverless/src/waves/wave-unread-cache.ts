@@ -38,10 +38,14 @@ export function distinctWaveUnreadReaderWaves(
 }
 
 const logger = Logger.get('WAVE_UNREAD_CACHE');
-const CACHE_TTL = Time.seconds(30);
+const CACHE_TTL = Time.minutes(5);
 const CACHE_KEY_PREFIX = 'cache_6529_wave_unread_summary_v1';
 const WAVE_VERSION_KEY_PREFIX = 'cache_6529_wave_unread_wave_version_v1';
 const READER_VERSION_KEY_PREFIX = 'cache_6529_wave_unread_reader_version_v1';
+const inFlightSummaryMissReads = new Map<
+  string,
+  Promise<Record<string, WaveUnreadSummary>>
+>();
 
 function distinct(values: string[]): string[] {
   return Array.from(new Set(values));
@@ -182,6 +186,42 @@ export async function writeWaveUnreadSummaryCache({
     );
   } catch (error) {
     logger.warn('Failed to write wave unread summary cache', error);
+  }
+}
+
+export async function withInFlightWaveUnreadSummaryCacheMiss({
+  identityId,
+  waveIds,
+  cacheKeysByWaveId,
+  getValue
+}: {
+  readonly identityId: string;
+  readonly waveIds: string[];
+  readonly cacheKeysByWaveId: Record<string, string>;
+  readonly getValue: () => Promise<Record<string, WaveUnreadSummary>>;
+}): Promise<Record<string, WaveUnreadSummary>> {
+  const uniqueWaveIds = distinct(waveIds);
+  if (!uniqueWaveIds.length) {
+    return {};
+  }
+
+  const inFlightKey = `${identityId}:${uniqueWaveIds
+    .map((waveId) => cacheKeysByWaveId[waveId] ?? waveId)
+    .sort()
+    .join('|')}`;
+  const existing = inFlightSummaryMissReads.get(inFlightKey);
+  if (existing) {
+    return await existing;
+  }
+
+  const promise = getValue();
+  inFlightSummaryMissReads.set(inFlightKey, promise);
+  try {
+    return await promise;
+  } finally {
+    if (inFlightSummaryMissReads.get(inFlightKey) === promise) {
+      inFlightSummaryMissReads.delete(inFlightKey);
+    }
   }
 }
 
