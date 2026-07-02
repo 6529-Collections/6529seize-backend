@@ -1,9 +1,20 @@
 const mockGetAuthenticationContext = jest.fn();
 const mockGetFromRequest = jest.fn();
 const mockCountIdentityUnreadDmDrops = jest.fn();
+const mockGetGroupsUserIsEligibleForReadContext = jest.fn();
+const mockUserGroupsService = { marker: 'user-groups-service' };
 
 jest.mock('@/api/auth/auth', () => ({
   getAuthenticationContext: mockGetAuthenticationContext
+}));
+
+jest.mock('@/api/community-members/user-groups.service', () => ({
+  userGroupsService: mockUserGroupsService
+}));
+
+jest.mock('@/api/waves/wave-access.helpers', () => ({
+  getGroupsUserIsEligibleForReadContext:
+    mockGetGroupsUserIsEligibleForReadContext
 }));
 
 jest.mock('@/api/waves/waves.api.db', () => ({
@@ -31,6 +42,7 @@ describe('handleGetDmDropsUnread', () => {
     authenticationContext.getActingAsId.mockReturnValue('profile-1');
     mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
     mockGetFromRequest.mockReturnValue(timer);
+    mockGetGroupsUserIsEligibleForReadContext.mockResolvedValue(['group-1']);
     mockCountIdentityUnreadDmDrops.mockResolvedValue(7);
   });
 
@@ -41,8 +53,12 @@ describe('handleGetDmDropsUnread', () => {
 
     expect(mockGetFromRequest).toHaveBeenCalledWith(req);
     expect(mockGetAuthenticationContext).toHaveBeenCalledWith(req, timer);
+    expect(mockGetGroupsUserIsEligibleForReadContext).toHaveBeenCalledWith(
+      mockUserGroupsService,
+      { timer, authenticationContext }
+    );
     expect(mockCountIdentityUnreadDmDrops).toHaveBeenCalledWith(
-      { identityId: 'profile-1' },
+      { identityId: 'profile-1', eligibleGroups: ['group-1'] },
       { timer, authenticationContext }
     );
   });
@@ -53,6 +69,8 @@ describe('handleGetDmDropsUnread', () => {
     await expect(handleGetDmDropsUnread(req)).rejects.toThrow(
       '"limit" is not allowed'
     );
+    expect(mockGetAuthenticationContext).not.toHaveBeenCalled();
+    expect(mockGetGroupsUserIsEligibleForReadContext).not.toHaveBeenCalled();
     expect(mockCountIdentityUnreadDmDrops).not.toHaveBeenCalled();
   });
 
@@ -63,6 +81,7 @@ describe('handleGetDmDropsUnread', () => {
     await expect(handleGetDmDropsUnread(req)).rejects.toThrow(
       'You need to create a profile before you can access direct messages'
     );
+    expect(mockGetGroupsUserIsEligibleForReadContext).not.toHaveBeenCalled();
     expect(mockCountIdentityUnreadDmDrops).not.toHaveBeenCalled();
   });
 });
