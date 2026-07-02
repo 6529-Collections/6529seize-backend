@@ -96,4 +96,20 @@ describe('wave overview static cache', () => {
       expect.any(Object)
     );
   });
+
+  it('normalizes date-shaped updated_at values in cache keys', async () => {
+    redisGetManyMock.mockResolvedValue({});
+    const updatedAt = new Date(1700000000000);
+
+    const dateResult = await readWaveOverviewStaticCache([
+      makeWave({ updated_at: updatedAt })
+    ]);
+    const timestampResult = await readWaveOverviewStaticCache([
+      makeWave({ updated_at: updatedAt.getTime() })
+    ]);
+
+    expect(dateResult.cacheKeysByWaveId['wave-1']).toEqual(
+      timestampResult.cacheKeysByWaveId['wave-1']
+    );
+  });
 });

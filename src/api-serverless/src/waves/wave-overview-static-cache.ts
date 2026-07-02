@@ -133,12 +133,19 @@ function getCacheKeysByWaveId(waves: WaveEntity[]): Record<string, string> {
       acc[wave.id] = `${CACHE_KEY_PREFIX}:${wave.id}:${stableCacheHash({
         createdBy: wave.created_by,
         descriptionDropId: wave.description_drop_id,
-        updatedAt: wave.updated_at
+        updatedAt: normalizeUpdatedAt(wave.updated_at)
       })}`;
       return acc;
     },
     {} as Record<string, string>
   );
+}
+
+function normalizeUpdatedAt(updatedAt: unknown): number | string | null {
+  if (updatedAt instanceof Date) {
+    return updatedAt.getTime();
+  }
+  return (updatedAt as number | string | null) ?? null;
 }
 
 function distinctWaves(waves: WaveEntity[]): WaveEntity[] {

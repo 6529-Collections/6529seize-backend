@@ -1,5 +1,8 @@
 import { redisGet, redisSetJson } from '@/redis';
-import { withFollowedSubwaveOverviewContextCache } from './wave-followed-subwave-overview-cache';
+import {
+  withFollowedSubwaveOverviewContextCache,
+  withInFlightFollowedSubwaveUnreadRead
+} from './wave-followed-subwave-overview-cache';
 
 jest.mock('@/redis', () => ({
   redisGet: jest.fn(),
@@ -69,5 +72,46 @@ describe('followed subwave overview cache', () => {
 
     expect(getValue).toHaveBeenCalledTimes(1);
     expect(redisSetJsonMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces equivalent hidden unread reads without caching them', async () => {
+    const loaded = [
+      {
+        parent_wave_id: 'wave-1',
+        hidden_followed_subwave_unread_drops: 2,
+        first_hidden_followed_subwave_unread_drop_serial_no: 10
+      }
+    ];
+    const getValue = jest.fn().mockResolvedValue(loaded);
+
+    await expect(
+      Promise.all([
+        withInFlightFollowedSubwaveUnreadRead({
+          identityId: 'viewer-1',
+          parentWaveIds: ['wave-1', 'wave-2'],
+          eligibleGroups: ['group-2', 'group-1'],
+          getValue
+        }),
+        withInFlightFollowedSubwaveUnreadRead({
+          identityId: 'viewer-1',
+          parentWaveIds: ['wave-2', 'wave-1'],
+          eligibleGroups: ['group-1', 'group-2'],
+          getValue
+        })
+      ])
+    ).resolves.toEqual([loaded, loaded]);
+
+    expect(getValue).toHaveBeenCalledTimes(1);
+    expect(redisGetMock).not.toHaveBeenCalled();
+    expect(redisSetJsonMock).not.toHaveBeenCalled();
+
+    await withInFlightFollowedSubwaveUnreadRead({
+      identityId: 'viewer-1',
+      parentWaveIds: ['wave-1'],
+      eligibleGroups: ['group-1'],
+      getValue
+    });
+
+    expect(getValue).toHaveBeenCalledTimes(2);
   });
 });

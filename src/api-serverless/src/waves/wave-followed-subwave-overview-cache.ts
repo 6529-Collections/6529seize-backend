@@ -15,6 +15,7 @@ const inFlightReads = new Map<
   string,
   Promise<Record<string, CachedFollowedSubwaveOverviewContext>>
 >();
+const inFlightUnreadReads = new Map<string, Promise<unknown>>();
 
 export async function withFollowedSubwaveOverviewContextCache({
   identityId,
@@ -57,6 +58,42 @@ export async function withFollowedSubwaveOverviewContextCache({
   } finally {
     if (inFlightReads.get(cacheKey) === promise) {
       inFlightReads.delete(cacheKey);
+    }
+  }
+}
+
+export async function withInFlightFollowedSubwaveUnreadRead<T>({
+  identityId,
+  parentWaveIds,
+  eligibleGroups,
+  getValue
+}: {
+  readonly identityId: string;
+  readonly parentWaveIds: string[];
+  readonly eligibleGroups: string[];
+  readonly getValue: () => Promise<T>;
+}): Promise<T> {
+  if (!parentWaveIds.length) {
+    return await getValue();
+  }
+
+  const cacheKey = `${CACHE_KEY_PREFIX}:unread:${stableCacheHash({
+    identityId,
+    parentWaveIds: distinctSorted(parentWaveIds),
+    eligibleGroups: distinctSorted(eligibleGroups)
+  })}`;
+  const existing = inFlightUnreadReads.get(cacheKey);
+  if (existing) {
+    return (await existing) as T;
+  }
+
+  const promise = getValue();
+  inFlightUnreadReads.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    if (inFlightUnreadReads.get(cacheKey) === promise) {
+      inFlightUnreadReads.delete(cacheKey);
     }
   }
 }

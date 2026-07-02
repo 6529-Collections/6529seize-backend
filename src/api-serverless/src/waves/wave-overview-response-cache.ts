@@ -6,6 +6,8 @@ import { Time } from '@/time';
 import { stableCacheHash } from './wave-cache-key';
 
 const logger = Logger.get('WAVE_OVERVIEW_RESPONSE_CACHE');
+// The full response can hold viewer counters/unread badges up to 10 seconds
+// stale. Visibility stays isolated because eligible groups are part of the key.
 const CACHE_TTL = Time.seconds(10);
 const CACHE_KEY_PREFIX = 'cache_6529_api_v2_waves_response_v1';
 const inFlightResponseReads = new Map<string, Promise<ApiWaveOverviewPage>>();

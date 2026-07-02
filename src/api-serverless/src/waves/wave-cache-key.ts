@@ -10,6 +10,9 @@ function stableCacheValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(stableCacheValue);
   }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
   if (!value || typeof value !== 'object') {
     return value;
   }

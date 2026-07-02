@@ -68,7 +68,10 @@ import {
   withInFlightWaveUnreadSummaryCacheMiss,
   writeWaveUnreadSummaryCache
 } from './wave-unread-cache';
-import { withFollowedSubwaveOverviewContextCache } from './wave-followed-subwave-overview-cache';
+import {
+  withFollowedSubwaveOverviewContextCache,
+  withInFlightFollowedSubwaveUnreadRead
+} from './wave-followed-subwave-overview-cache';
 
 type RawWaveEntity = Omit<
   WaveEntity,
@@ -1151,55 +1154,64 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           }
         });
 
-      const unreadRows = await this.db.execute<HiddenFollowedSubwaveUnreadRow>(
-        `
-          select
-            child.parent_wave_id,
-            count(d.id) as hidden_followed_subwave_unread_drops,
-            min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
-          from ${WAVES_TABLE} child
-          join ${WAVES_TABLE} parent
-            on parent.id = child.parent_wave_id
-           and parent.parent_wave_id is null
-          left join ${WAVE_READER_METRICS_TABLE} parent_reader
-            on parent_reader.wave_id = parent.id
-           and parent_reader.reader_id = :identityId
-          join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
-            on child_follow.subscriber_id = :identityId
-           and child_follow.target_id = child.id
-           and child_follow.target_type = :waveTargetType
-           and child_follow.target_action = :dropCreatedAction
-          join ${WAVE_READER_METRICS_TABLE} child_reader
-            on child_reader.wave_id = child.id
-           and child_reader.reader_id = :identityId
-           and child_reader.latest_read_timestamp is not null
-           and coalesce(child_reader.muted, false) = false
-          join ${DROPS_TABLE} d
-            on d.wave_id = child.id
-           and d.created_at > child_reader.latest_read_timestamp
-          where child.parent_wave_id in (:parentWaveIds)
-            and coalesce(parent_reader.muted, false) = false
-            and ${this.getWaveVisibilityFilter(
-              'child',
+      const unreadRows = await withInFlightFollowedSubwaveUnreadRead({
+        identityId,
+        parentWaveIds,
+        eligibleGroups,
+        getValue: async () => {
+          // Keep hidden unread live so wave-reader-metric invalidations are
+          // visible immediately; only coalesce identical concurrent reads.
+          return this.db.execute<HiddenFollowedSubwaveUnreadRow>(
+            `
+              select
+                child.parent_wave_id,
+                count(d.id) as hidden_followed_subwave_unread_drops,
+                min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
+              from ${WAVES_TABLE} child
+              join ${WAVES_TABLE} parent
+                on parent.id = child.parent_wave_id
+               and parent.parent_wave_id is null
+              left join ${WAVE_READER_METRICS_TABLE} parent_reader
+                on parent_reader.wave_id = parent.id
+               and parent_reader.reader_id = :identityId
+              join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+                on child_follow.subscriber_id = :identityId
+               and child_follow.target_id = child.id
+               and child_follow.target_type = :waveTargetType
+               and child_follow.target_action = :dropCreatedAction
+              join ${WAVE_READER_METRICS_TABLE} child_reader
+                on child_reader.wave_id = child.id
+               and child_reader.reader_id = :identityId
+               and child_reader.latest_read_timestamp is not null
+               and coalesce(child_reader.muted, false) = false
+              join ${DROPS_TABLE} d
+                on d.wave_id = child.id
+               and d.created_at > child_reader.latest_read_timestamp
+              where child.parent_wave_id in (:parentWaveIds)
+                and coalesce(parent_reader.muted, false) = false
+                and ${this.getWaveVisibilityFilter(
+                  'child',
+                  eligibleGroups,
+                  'eligibleGroups'
+                )}
+                and ${this.getWaveVisibilityFilter(
+                  'parent',
+                  eligibleGroups,
+                  'eligibleGroups'
+                )}
+              group by child.parent_wave_id
+            `,
+            {
+              identityId,
+              parentWaveIds,
               eligibleGroups,
-              'eligibleGroups'
-            )}
-            and ${this.getWaveVisibilityFilter(
-              'parent',
-              eligibleGroups,
-              'eligibleGroups'
-            )}
-          group by child.parent_wave_id
-        `,
-        {
-          identityId,
-          parentWaveIds,
-          eligibleGroups,
-          waveTargetType: ActivityEventTargetType.WAVE,
-          dropCreatedAction: ActivityEventAction.DROP_CREATED
-        },
-        { wrappedConnection: ctx.connection }
-      );
+              waveTargetType: ActivityEventTargetType.WAVE,
+              dropCreatedAction: ActivityEventAction.DROP_CREATED
+            },
+            { wrappedConnection: ctx.connection }
+          );
+        }
+      });
 
       const result = Object.entries(
         followedSubwaveActivityByParentWaveId
