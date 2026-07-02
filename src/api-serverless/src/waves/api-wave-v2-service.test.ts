@@ -224,7 +224,8 @@ describe('ApiWaveV2Service', () => {
     );
     expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
       waveEntities.slice(0, 2),
-      ctx
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
     expect(result).toEqual({
       data: [{ id: 'wave-1' }, { id: 'wave-2' }],
@@ -414,7 +415,8 @@ describe('ApiWaveV2Service', () => {
     );
     expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
       waveEntities,
-      ctx
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
     );
     expect(result).toEqual([{ id: 'wave-1' }, { id: 'wave-2' }]);
   });
