@@ -45,6 +45,7 @@ describe('WavesApiDb DM unread drops count', () => {
     expect(sql).not.toContain('USE INDEX');
     expect(sql).toContain('w.visibility_group_id is null');
     expect(sql).toContain('parent.visibility_group_id is null');
+    expect(sql).toContain('COALESCE(r.latest_read_timestamp, 0)');
     expect(db.oneOrNull).toHaveBeenCalledWith(
       expect.stringContaining('d.author_id != :identityId'),
       expect.anything(),

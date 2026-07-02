@@ -3054,7 +3054,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           LEFT JOIN ${WAVES_TABLE} parent
             ON parent.id = w.parent_wave_id
           WHERE d.author_id != :identityId
-            AND d.created_at > r.latest_read_timestamp
+            AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
             AND r.muted = false
             AND ${this.getWaveAndParentVisibilityFilter(
               'w',
