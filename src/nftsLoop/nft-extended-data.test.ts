@@ -13,6 +13,7 @@ import {
   MemesExtendedData,
   NFT
 } from '../entities/INFT';
+import { resolveEffectiveMemeEditionSizes } from '../memes-tdh-effective-edition-size';
 import {
   findMemeLabExtendedData,
   findMemesExtendedData
@@ -26,6 +27,9 @@ jest.mock('../db', () => ({
   persistLabExtendedData: jest.fn(),
   persistMemesExtendedData: jest.fn(),
   persistMemesSeasons: jest.fn()
+}));
+jest.mock('../memes-tdh-effective-edition-size', () => ({
+  resolveEffectiveMemeEditionSizes: jest.fn()
 }));
 
 const mockedFetchNftIdsRecordedInTdh =
@@ -50,6 +54,10 @@ const mockedPersistMemesSeasons = persistMemesSeasons as jest.MockedFunction<
 >;
 const mockedPersistLabExtendedData =
   persistLabExtendedData as jest.MockedFunction<typeof persistLabExtendedData>;
+const mockedResolveEffectiveMemeEditionSizes =
+  resolveEffectiveMemeEditionSizes as jest.MockedFunction<
+    typeof resolveEffectiveMemeEditionSizes
+  >;
 
 type Owner = {
   readonly contract: string;
@@ -62,6 +70,9 @@ describe('nft extended data', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set());
+    mockedResolveEffectiveMemeEditionSizes.mockImplementation(
+      async ({ actualEditionSizes }) => actualEditionSizes
+    );
     mockedPersistMemesExtendedData.mockResolvedValue(undefined);
     mockedPersistMemesSeasons.mockResolvedValue(undefined);
     mockedPersistLabExtendedData.mockResolvedValue(undefined);
@@ -155,6 +166,37 @@ describe('nft extended data', () => {
     expect(saved[2].recorded_in_tdh).toBeNull();
     expect(saved[2].edition_size_rank).toBe(1);
     expect(saved[2].ranked_collection_size).toBeNull();
+  });
+
+  it('uses effective edition size for Meme edition size ranking', async () => {
+    const ownersById = new Map<number, Owner[]>([
+      [1, [owner(1, '0x111', 100)]],
+      [2, [owner(2, '0x222', 200)]]
+    ]);
+    mockOwners(ownersById);
+    mockedFetchNftsForContract.mockResolvedValue([memeNft(1), memeNft(2)]);
+    mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set([1, 2]));
+    mockedResolveEffectiveMemeEditionSizes.mockResolvedValue({
+      1: 305,
+      2: 200
+    });
+
+    await findMemesExtendedData();
+
+    expect(mockedResolveEffectiveMemeEditionSizes).toHaveBeenCalledWith({
+      actualEditionSizes: {
+        1: 100,
+        2: 200
+      }
+    });
+    const saved = keyedById(
+      mockedPersistMemesExtendedData.mock.calls[0][0] as MemesExtendedData[]
+    );
+
+    expect(saved[1].edition_size).toBe(100);
+    expect(saved[1].edition_size_rank).toBe(2);
+    expect(saved[2].edition_size).toBe(200);
+    expect(saved[2].edition_size_rank).toBe(1);
   });
 
   it('continues ranking Meme Lab extended data without TDH eligibility', async () => {

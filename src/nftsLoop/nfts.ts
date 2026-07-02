@@ -30,6 +30,7 @@ import {
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
+import { resolveEffectiveMemeEditionSizes } from '@/memes-tdh-effective-edition-size';
 import {
   publishMissingS3UploaderAuditJobs,
   resolveAuditS3CheckConcurrency
@@ -241,7 +242,7 @@ async function processNFTsForType(
   logInfo(`🔄 Updating supply for ${EntityClass.name}s`);
   const maxSupply = await updateSupply(nftMap);
   if (updateHodlRate && EntityClass === NFT) {
-    updateHodlRatesForNfts(
+    await updateHodlRatesForNfts(
       nftMap as Map<string, NftOnlyProcessingEntry>,
       maxSupply
     );
@@ -988,13 +989,20 @@ async function updateSupply(
   return maxSupply;
 }
 
-function updateHodlRatesForNfts(
+async function updateHodlRatesForNfts(
   nftMap: Map<string, NftOnlyProcessingEntry>,
   maxSupply: number
-) {
+): Promise<void> {
+  const effectiveMemeEditionSizes = await resolveEffectiveMemeEditionSizes({
+    actualEditionSizes: getMemeEditionSizes(nftMap)
+  });
+
   nftMap.forEach((entry) => {
     const nft = entry.nft;
-    let newRate = maxSupply / nft.supply;
+    const editionSizeForRate = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
+      ? (effectiveMemeEditionSizes[nft.id] ?? nft.supply)
+      : nft.supply;
+    let newRate = maxSupply / editionSizeForRate;
     if (!isFinite(newRate) || newRate < 1) newRate = 1;
     if (nft.hodl_rate !== newRate) {
       logInfo(
@@ -1004,6 +1012,21 @@ function updateHodlRatesForNfts(
       entry.changed = true;
     }
   });
+}
+
+function getMemeEditionSizes(
+  nftMap: Map<string, NftOnlyProcessingEntry>
+): Record<number, number> {
+  return Array.from(nftMap.values()).reduce<Record<number, number>>(
+    (acc, entry) => {
+      const { nft } = entry;
+      if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
+        acc[nft.id] = nft.supply;
+      }
+      return acc;
+    },
+    {}
+  );
 }
 
 async function populateMintStatsForEligibleNFTs(

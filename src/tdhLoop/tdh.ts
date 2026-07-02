@@ -25,6 +25,7 @@ import { MemesSeason } from '../entities/ISeason';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
+import { resolveEffectiveMemeEditionSizes } from '../memes-tdh-effective-edition-size';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import {
   getNextgenNetwork,
@@ -243,6 +244,10 @@ export const updateTDH = async (
     (acc, size) => Math.max(acc, size),
     0
   );
+  const effectiveMemesEditionSizes = await resolveEffectiveMemeEditionSizes({
+    actualEditionSizes: memesEditionSizes,
+    blockTag: block
+  });
   logger.info(`[MEMES HODL INDEX ${MEMES_HODL_INDEX}]`);
 
   const combinedAddresses = new Set<string>();
@@ -347,7 +352,8 @@ export const updateTDH = async (
         );
 
         const hodlRate = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
-          ? MEMES_HODL_INDEX / memesEditionSizes[nft.id]
+          ? MEMES_HODL_INDEX /
+            (effectiveMemesEditionSizes[nft.id] ?? memesEditionSizes[nft.id])
           : nft.hodl_rate;
 
         if (tokenConsolidatedTransactions.length === 0) {

@@ -23,6 +23,7 @@ import { NFTOwner } from '../entities/INFTOwner';
 import { MemesSeason } from '../entities/ISeason';
 import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
+import { resolveEffectiveMemeEditionSizes } from '../memes-tdh-effective-edition-size';
 import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('NFT_EXTENDED_DATA');
@@ -191,20 +192,40 @@ function assignRanks<T extends { id: number }>(
   field: keyof T & string,
   direction: 'asc' | 'desc' = 'desc'
 ) {
+  assignRanksByValue(
+    arr,
+    `${field}_rank`,
+    (item) => (item as any)[field],
+    direction
+  );
+}
+
+function assignRanksByValue<T extends { id: number }>(
+  arr: T[],
+  rankField: string,
+  valueGetter: (item: T) => number,
+  direction: 'asc' | 'desc' = 'desc'
+) {
   arr.forEach((item) => {
+    const itemValue = valueGetter(item);
     const rank =
       arr.filter((other) => {
-        const a = (item as any)[field];
-        const b = (other as any)[field];
+        const otherValue = valueGetter(other);
 
         if (direction === 'asc') {
-          return b < a || (b === a && other.id < item.id);
+          return (
+            otherValue < itemValue ||
+            (otherValue === itemValue && other.id < item.id)
+          );
         } else {
-          return b > a || (b === a && other.id < item.id);
+          return (
+            otherValue > itemValue ||
+            (otherValue === itemValue && other.id < item.id)
+          );
         }
       }).length + 1;
 
-    (item as any)[`${field}_rank`] = rank;
+    (item as any)[rankField] = rank;
   });
 }
 
@@ -246,6 +267,7 @@ export async function findMemesExtendedData() {
     },
     rankFilter: recordedTdhIds ? isMemeRecordedInTdh : undefined
   });
+  await assignEffectiveEditionSizeRanks(extended, recordedTdhIds);
   assignRankedCollectionSize(extended, recordedTdhIds);
 
   // Seasons
@@ -272,6 +294,28 @@ export async function findMemesExtendedData() {
   await persistMemesExtendedData(extended);
   await persistMemesSeasons(memesSeasons);
   return extended;
+}
+
+async function assignEffectiveEditionSizeRanks(
+  extended: MemesExtendedData[],
+  recordedTdhIds: Set<number> | null
+) {
+  const effectiveEditionSizes = await resolveEffectiveMemeEditionSizes({
+    actualEditionSizes: extended.reduce<Record<number, number>>((acc, meme) => {
+      acc[meme.id] = meme.edition_size;
+      return acc;
+    }, {})
+  });
+  const rankedMemes = recordedTdhIds
+    ? extended.filter(isMemeRecordedInTdh)
+    : extended;
+
+  assignRanksByValue(
+    rankedMemes,
+    'edition_size_rank',
+    (meme) => effectiveEditionSizes[meme.id] ?? meme.edition_size,
+    'asc'
+  );
 }
 
 async function fetchRecordedTdhIdsForRanks(
