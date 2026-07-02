@@ -7,6 +7,10 @@ import { WavesApiDb } from './waves.api.db';
 jest.mock('./wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn(),
   readWaveUnreadSummaryCache: jest.fn(),
+  withInFlightWaveUnreadSummaryCacheMiss: jest.fn(
+    async ({ getValue }: { getValue: () => Promise<unknown> }) =>
+      await getValue()
+  ),
   writeWaveUnreadSummaryCache: jest.fn()
 }));
 
