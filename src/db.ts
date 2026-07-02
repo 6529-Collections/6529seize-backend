@@ -462,13 +462,23 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
 }
 
 export async function fetchNftIdsRecordedInTdh(
-  contract: string
+  contract: string,
+  ids: readonly number[]
 ): Promise<Set<number>> {
+  const uniqueIds = Array.from(
+    new Set(ids.filter((id) => Number.isInteger(id) && id > 0))
+  );
+  if (uniqueIds.length === 0) {
+    return new Set();
+  }
+
   const sql = `SELECT DISTINCT id
     FROM ${TDH_NFT_TABLE}
-    WHERE LOWER(contract) = LOWER(:contract);`;
+    WHERE contract = :contract
+      AND id IN (:ids);`;
   const results = await sqlExecutor.execute<{ id: number | string }>(sql, {
-    contract
+    contract: contract.toLowerCase(),
+    ids: uniqueIds
   });
 
   return new Set(

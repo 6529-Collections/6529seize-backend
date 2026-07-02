@@ -84,6 +84,10 @@ describe('nft extended data', () => {
     await findMemesExtendedData();
 
     expect(mockedFetchNftIdsRecordedInTdh).toHaveBeenCalledTimes(1);
+    expect(mockedFetchNftIdsRecordedInTdh).toHaveBeenCalledWith(
+      '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+      [1, 2, 3]
+    );
     expect(mockedPersistMemesExtendedData).toHaveBeenCalledTimes(1);
     const saved = keyedById(
       mockedPersistMemesExtendedData.mock.calls[0][0] as MemesExtendedData[]
