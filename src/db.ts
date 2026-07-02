@@ -25,6 +25,7 @@ import {
   NFTS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
+  TDH_NFT_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
@@ -458,6 +459,33 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
     r.metadata = JSON.parse(r.metadata);
   });
   return results;
+}
+
+export async function fetchNftIdsRecordedInTdh(
+  contract: string,
+  ids: readonly number[]
+): Promise<Set<number>> {
+  const uniqueIds = Array.from(
+    new Set(ids.filter((id) => Number.isInteger(id) && id > 0))
+  );
+  if (uniqueIds.length === 0) {
+    return new Set();
+  }
+
+  const sql = `SELECT DISTINCT id
+    FROM ${TDH_NFT_TABLE}
+    WHERE contract = :contract
+      AND id IN (:ids);`;
+  const results = await sqlExecutor.execute<{ id: number | string }>(sql, {
+    contract: contract.toLowerCase(),
+    ids: uniqueIds
+  });
+
+  return new Set(
+    results
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  );
 }
 
 export async function fetchAllMemeLabNFTs(orderBy?: string) {
