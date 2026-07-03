@@ -135,7 +135,9 @@ describe('IdentityNotificationsDb mute filtering', () => {
     );
     expect(db.execute).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining('select id'),
+      expect.stringContaining(
+        '`additional_data` <=> CAST(:additional_data_0 AS JSON)'
+      ),
       expect.objectContaining({
         firstInsertId: 301,
         identity_id_0: 'recipient-2',
