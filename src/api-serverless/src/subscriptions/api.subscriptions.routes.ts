@@ -49,6 +49,7 @@ import {
   fetchFinalSubscription,
   fetchFinalSubscriptionsByPhase,
   fetchLogsForConsolidationKey,
+  fetchMemeSubscriptionCount,
   fetchPastMemeSubscriptionCounts,
   fetchRedeemedMemeSubscriptionCountsDownload,
   fetchRedeemedSubscriptionsForConsolidationKey,
@@ -141,6 +142,10 @@ async function invalidateSubscriptionCache(consolidationKey: string) {
     {
       label: 'subscription-upcoming-memes-counts',
       path: `/api/subscriptions/upcoming-memes-counts`
+    },
+    {
+      label: 'subscription-meme-count',
+      path: `/api/subscriptions/memes/*/count`
     }
   ];
 
@@ -403,21 +408,36 @@ router.get(
       any,
       {
         card_count?: string;
-        token_id?: string;
       }
     >,
     res: Response<SubscriptionCounts[]>
   ) {
     const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
-    const tokenId = numbers.parseIntOrNull(req.query.token_id);
-    if (req.query.token_id !== undefined && (tokenId === null || tokenId < 1)) {
+    const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
+    return res.json(result);
+  }
+);
+
+router.get(
+  `/memes/:token_id/count`,
+  cacheRequest(),
+  async function (
+    req: Request<
+      {
+        token_id: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<SubscriptionCounts>
+  ) {
+    const tokenId = numbers.parseIntOrNull(req.params.token_id);
+    if (tokenId === null || tokenId < 1) {
       throw new BadRequestException('Invalid token ID');
     }
 
-    const result = await fetchUpcomingMemeSubscriptionCounts(
-      cardCount,
-      tokenId ?? undefined
-    );
+    const result = await fetchMemeSubscriptionCount(tokenId);
     return res.json(result);
   }
 );
