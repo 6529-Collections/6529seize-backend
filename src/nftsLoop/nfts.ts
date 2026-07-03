@@ -1057,7 +1057,7 @@ export function calculateNftHodlRate(
 ): number {
   const editionSizeForRate = getCalculationEditionSize(nft);
   const rate = maxSupply / editionSizeForRate;
-  if (!isFinite(rate) || rate < 1) return 1;
+  if (!Number.isFinite(rate) || rate < 1) return 1;
   return rate;
 }
 
