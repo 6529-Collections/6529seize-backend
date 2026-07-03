@@ -1,7 +1,8 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { WAVE_READER_METRICS_TABLE } from '@/constants';
 
 @Entity(WAVE_READER_METRICS_TABLE)
+@Index('idx_wrm_reader_wave', ['reader_id', 'wave_id'])
 export class WaveReaderMetricEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string;
