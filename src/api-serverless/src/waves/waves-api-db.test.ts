@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   DROPS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  PINNED_WAVES_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
@@ -21,6 +22,8 @@ import { Time } from '@/time';
 import { WavesApiDb, WaveSubwavesSort } from './waves.api.db';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
+import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
+import { WaveOverviewCandidate } from './wave-overview-candidate-cache';
 
 const repo = new WavesApiDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
@@ -154,6 +157,49 @@ const mutedContainerComparatorWave = aWave(
   { id: 'wave-muted-container-comparator', serial_no: 19, name: 'Comparator' }
 );
 
+const pinnedCandidateWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-pinned-candidate', serial_no: 20, name: 'Pinned Candidate' }
+);
+
+const unpinnedCandidateWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-unpinned-candidate', serial_no: 21, name: 'Unpinned Candidate' }
+);
+
+type CandidateFallbackTestRepo = {
+  sortRecentlyDroppedCandidates: (
+    candidates: WaveOverviewCandidate[]
+  ) => WaveOverviewCandidate[];
+  sortScoredCandidates: (
+    candidates: WaveOverviewCandidate[]
+  ) => WaveOverviewCandidate[];
+  findRecentlyDroppedToWavesFromCandidates: (
+    param: Record<string, unknown>
+  ) => Promise<unknown>;
+  findScoredRecentlyDroppedToWavesFromCandidates: (
+    param: Record<string, unknown>
+  ) => Promise<unknown>;
+  findRecentlyDroppedToWaveCandidates: jest.Mock;
+  findScoredRecentlyDroppedToWaveCandidates: jest.Mock;
+  findPinnedCandidateWaveIds: jest.Mock;
+  findMutedCandidateWaveIds: jest.Mock;
+  findVisibleCandidatePageOrFallback: jest.Mock;
+};
+
+function buildCandidateWindow(count: number): WaveOverviewCandidate[] {
+  return Array.from({ length: count }, (_, index) => ({
+    waveId: `candidate-wave-${index}`,
+    tierRank: 1,
+    sortVal: count - index,
+    latestDropTimestamp: count - index
+  }));
+}
+
 describeWithSeed(
   'WavesApiDb read visibility',
   [
@@ -241,6 +287,235 @@ describeWithSeed(
         )
       ).resolves.toEqual([
         expect.objectContaining({ id: privateWave.id }),
+        expect.objectContaining({ id: publicWave.id })
+      ]);
+    });
+  }
+);
+
+describe('WavesApiDb overview candidate fallback guards', () => {
+  const baseParams = {
+    authenticated_user_id: author.profile_id!,
+    only_waves_followed_by_authenticated_user: false,
+    offset: 0,
+    limit: 20,
+    eligibleGroups: [],
+    direct_message: false,
+    pinned: null
+  };
+
+  it('uses SQL-compatible id-desc tie-breakers for candidate ordering', () => {
+    const testRepo = new WavesApiDb(
+      () => sqlExecutor
+    ) as unknown as CandidateFallbackTestRepo;
+    const tiedCandidates: WaveOverviewCandidate[] = [
+      {
+        waveId: 'wave-a',
+        tierRank: 1,
+        sortVal: 100,
+        latestDropTimestamp: 100
+      },
+      {
+        waveId: 'wave_',
+        tierRank: 1,
+        sortVal: 100,
+        latestDropTimestamp: 100
+      }
+    ];
+
+    expect(
+      testRepo
+        .sortRecentlyDroppedCandidates(tiedCandidates)
+        .map((candidate) => candidate.waveId)
+    ).toEqual(['wave_', 'wave-a']);
+    expect(
+      testRepo
+        .sortScoredCandidates(tiedCandidates)
+        .map((candidate) => candidate.waveId)
+    ).toEqual(['wave_', 'wave-a']);
+  });
+
+  it('falls back for recently dropped candidates when muting affects a full window', async () => {
+    const testRepo = new WavesApiDb(
+      () => sqlExecutor
+    ) as unknown as CandidateFallbackTestRepo;
+    const candidates = buildCandidateWindow(250);
+    testRepo.findRecentlyDroppedToWaveCandidates = jest
+      .fn()
+      .mockResolvedValue(candidates);
+    testRepo.findPinnedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set());
+    testRepo.findMutedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set([candidates[0]!.waveId]));
+    testRepo.findVisibleCandidatePageOrFallback = jest.fn();
+
+    await expect(
+      testRepo.findRecentlyDroppedToWavesFromCandidates(baseParams)
+    ).resolves.toBeNull();
+    expect(testRepo.findVisibleCandidatePageOrFallback).not.toHaveBeenCalled();
+  });
+
+  it('falls back for scored candidates when muting affects a full window', async () => {
+    const testRepo = new WavesApiDb(
+      () => sqlExecutor
+    ) as unknown as CandidateFallbackTestRepo;
+    const candidates = buildCandidateWindow(250);
+    testRepo.findScoredRecentlyDroppedToWaveCandidates = jest
+      .fn()
+      .mockResolvedValue(candidates);
+    testRepo.findPinnedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set());
+    testRepo.findMutedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set([candidates[0]!.waveId]));
+    testRepo.findVisibleCandidatePageOrFallback = jest.fn();
+
+    await expect(
+      testRepo.findScoredRecentlyDroppedToWavesFromCandidates({
+        ...baseParams,
+        score_sort: ApiWaveScoreSort.Balanced,
+        exclude_followed: false
+      })
+    ).resolves.toBeNull();
+    expect(testRepo.findVisibleCandidatePageOrFallback).not.toHaveBeenCalled();
+  });
+});
+
+describeWithSeed(
+  'WavesApiDb overview candidate safety',
+  [
+    withIdentities([author]),
+    withWaves([
+      publicWave,
+      privateWave,
+      pinnedCandidateWave,
+      unpinnedCandidateWave
+    ]),
+    {
+      table: WAVE_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: publicWave.id,
+          latest_drop_timestamp: 100,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 40,
+          wave_quality_score: 40,
+          wave_hotness_score: 40,
+          wave_rep_sort_score: 40
+        },
+        {
+          wave_id: privateWave.id,
+          latest_drop_timestamp: 200,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 90,
+          wave_quality_score: 90,
+          wave_hotness_score: 90,
+          wave_rep_sort_score: 90
+        },
+        {
+          wave_id: pinnedCandidateWave.id,
+          latest_drop_timestamp: 300,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 60,
+          wave_quality_score: 60,
+          wave_hotness_score: 60,
+          wave_rep_sort_score: 60
+        },
+        {
+          wave_id: unpinnedCandidateWave.id,
+          latest_drop_timestamp: 400,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 70,
+          wave_quality_score: 70,
+          wave_hotness_score: 70,
+          wave_rep_sort_score: 70
+        }
+      ]
+    },
+    {
+      table: PINNED_WAVES_TABLE,
+      rows: [
+        {
+          wave_id: pinnedCandidateWave.id,
+          profile_id: author.profile_id!
+        }
+      ]
+    }
+  ],
+  () => {
+    it('keeps scored candidate results behind current visibility groups', async () => {
+      await expect(
+        repo.findScoredRecentlyDroppedToWaves({
+          authenticated_user_id: null,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: [],
+          direct_message: false,
+          pinned: null,
+          score_sort: ApiWaveScoreSort.Balanced,
+          exclude_followed: false
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: unpinnedCandidateWave.id }),
+        expect.objectContaining({ id: pinnedCandidateWave.id }),
+        expect.objectContaining({ id: publicWave.id })
+      ]);
+
+      await expect(
+        repo.findScoredRecentlyDroppedToWaves({
+          authenticated_user_id: null,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: ['visibility-group'],
+          direct_message: false,
+          pinned: null,
+          score_sort: ApiWaveScoreSort.Balanced,
+          exclude_followed: false
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: privateWave.id }),
+        expect.objectContaining({ id: unpinnedCandidateWave.id }),
+        expect.objectContaining({ id: pinnedCandidateWave.id }),
+        expect.objectContaining({ id: publicWave.id })
+      ]);
+    });
+
+    it('applies pin filters from live per-user state after candidate ranking', async () => {
+      await expect(
+        repo.findRecentlyDroppedToWaves({
+          authenticated_user_id: author.profile_id!,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: [],
+          direct_message: false,
+          pinned: ApiWavesPinFilter.Pinned
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: pinnedCandidateWave.id })
+      ]);
+
+      await expect(
+        repo.findRecentlyDroppedToWaves({
+          authenticated_user_id: author.profile_id!,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: [],
+          direct_message: false,
+          pinned: ApiWavesPinFilter.NotPinned
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: unpinnedCandidateWave.id }),
         expect.objectContaining({ id: publicWave.id })
       ]);
     });
