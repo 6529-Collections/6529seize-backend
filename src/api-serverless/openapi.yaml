@@ -6586,6 +6586,14 @@ paths:
             type: integer
             format: int64
             minimum: 1
+        - name: token_id
+          in: query
+          description: Specific Meme Card token ID to fetch. When provided, returns only that token.
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
       responses:
         "200":
           description: successful operation
