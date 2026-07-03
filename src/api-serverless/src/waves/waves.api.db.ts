@@ -28,6 +28,7 @@ import {
   WAVES_DECISIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { Logger } from '@/logging';
 import {
   groupWaveVotingCreditNftsByContract,
   normalizeWaveVotingCreditNfts,
@@ -73,6 +74,13 @@ import {
   withFollowedSubwaveOverviewContextCache,
   withInFlightFollowedSubwaveUnreadRead
 } from './wave-followed-subwave-overview-cache';
+import {
+  WaveOverviewCandidate,
+  withWaveOverviewCandidateCache
+} from './wave-overview-candidate-cache';
+import { compareCacheStrings } from './wave-cache-key';
+
+const logger = Logger.get('WAVES_API_DB');
 
 type RawWaveEntity = Omit<
   WaveEntity,
@@ -126,6 +134,17 @@ type WaveUnreadSummaryRow = {
   first_unread_drop_serial_no: number | string | null;
 };
 
+type WaveOverviewCandidateRow = {
+  wave_id: string;
+  tier_rank: number | string;
+  sort_val: number | string;
+  latest_drop_timestamp: number | string;
+};
+
+type WaveIdRow = {
+  wave_id: string;
+};
+
 type UnreadDmDropsCountRow = {
   count: number | string;
 };
@@ -168,6 +187,63 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  private getOverviewCandidateLimit({
+    offset,
+    limit
+  }: {
+    offset: number;
+    limit: number;
+  }): number | null {
+    const needed = offset + limit;
+    if (needed > 500) {
+      return null;
+    }
+    return Math.min(Math.max(needed * 5, 250), 1_000);
+  }
+
+  private parseWaveOverviewCandidates(
+    rows: WaveOverviewCandidateRow[]
+  ): WaveOverviewCandidate[] {
+    return rows.map((row) => ({
+      waveId: row.wave_id,
+      tierRank: Number(row.tier_rank),
+      sortVal: Number(row.sort_val),
+      latestDropTimestamp: Number(row.latest_drop_timestamp)
+    }));
+  }
+
+  private sortRecentlyDroppedCandidates(
+    candidates: WaveOverviewCandidate[]
+  ): WaveOverviewCandidate[] {
+    return [...candidates].sort((left, right) => {
+      const sortDiff = right.sortVal - left.sortVal;
+      return sortDiff || this.compareWaveIdsDesc(left.waveId, right.waveId);
+    });
+  }
+
+  private sortScoredCandidates(
+    candidates: WaveOverviewCandidate[]
+  ): WaveOverviewCandidate[] {
+    return [...candidates].sort((left, right) => {
+      const tierDiff = left.tierRank - right.tierRank;
+      const scoreDiff = right.sortVal - left.sortVal;
+      const activityDiff = right.latestDropTimestamp - left.latestDropTimestamp;
+      return (
+        tierDiff ||
+        scoreDiff ||
+        activityDiff ||
+        this.compareWaveIdsDesc(left.waveId, right.waveId)
+      );
+    });
+  }
+
+  private compareWaveIdsDesc(left: string, right: string): number {
+    if (left === right) {
+      return 0;
+    }
+    return left > right ? -1 : 1;
+  }
+
   private getWaveVisibilityFilter(
     alias: string,
     groupIds: readonly string[],
@@ -195,6 +271,482 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       groupIds,
       groupIdsParamName
     )}))`;
+  }
+
+  private getSortedEligibleGroups(eligibleGroups: readonly string[]): string[] {
+    return [...eligibleGroups].sort(compareCacheStrings);
+  }
+
+  private hasScoredOverviewFilters(param: {
+    min_visibility_score?: number;
+    min_quality_score?: number;
+    min_hotness_score?: number;
+    min_rep_sort_score?: number;
+    visibility_tier?: ApiWaveVisibilityTier;
+  }): boolean {
+    return (
+      param.min_visibility_score !== undefined ||
+      param.min_quality_score !== undefined ||
+      param.min_hotness_score !== undefined ||
+      param.min_rep_sort_score !== undefined ||
+      param.visibility_tier !== undefined
+    );
+  }
+
+  private async findVisibleWavesByOrderedCandidateIds({
+    candidateIds,
+    eligibleGroups
+  }: {
+    candidateIds: string[];
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[]> {
+    if (!candidateIds.length) {
+      return [];
+    }
+    // Candidate caches are only a ranking hint; this final DB read applies
+    // the current request's visibility groups before any wave is returned.
+    const visibleWaves = await this.findWavesByIdsEligibleForRead(
+      candidateIds,
+      eligibleGroups
+    );
+    const wavesById = new Map(visibleWaves.map((wave) => [wave.id, wave]));
+    const orderedWaves: WaveEntity[] = [];
+    candidateIds.forEach((id) => {
+      const wave = wavesById.get(id);
+      if (wave) {
+        orderedWaves.push(wave);
+      }
+    });
+    return orderedWaves;
+  }
+
+  private async findPinnedCandidateWaveIds({
+    authenticated_user_id,
+    waveIds
+  }: {
+    authenticated_user_id: string | null;
+    waveIds: string[];
+  }): Promise<Set<string>> {
+    if (!authenticated_user_id || !waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<WaveIdRow>(
+      `
+        select wave_id
+        from ${PINNED_WAVES_TABLE}
+        where profile_id = :authenticated_user_id
+          and wave_id in (:waveIds)
+      `,
+      { authenticated_user_id, waveIds }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private async findMutedCandidateWaveIds({
+    authenticated_user_id,
+    waveIds
+  }: {
+    authenticated_user_id: string | null;
+    waveIds: string[];
+  }): Promise<Set<string>> {
+    if (!authenticated_user_id || !waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<WaveIdRow>(
+      `
+        select wave_id
+        from ${WAVE_READER_METRICS_TABLE}
+        where reader_id = :authenticated_user_id
+          and wave_id in (:waveIds)
+          and coalesce(muted, false) = true
+      `,
+      { authenticated_user_id, waveIds }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private async findFollowedCandidateWaveIds({
+    authenticated_user_id,
+    waveIds,
+    eligibleGroups
+  }: {
+    authenticated_user_id: string | null;
+    waveIds: string[];
+    eligibleGroups: string[];
+  }): Promise<Set<string>> {
+    if (!authenticated_user_id || !waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<WaveIdRow>(
+      `
+        select target_id as wave_id
+        from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+        where subscriber_id = :authenticated_user_id
+          and target_id in (:waveIds)
+          and target_type = :wave_target_type
+          and target_action = :drop_created_action
+        union
+        select distinct child.parent_wave_id as wave_id
+        from ${WAVES_TABLE} child
+          join ${WAVES_TABLE} parent
+            on parent.id = child.parent_wave_id
+           and parent.parent_wave_id is null
+          join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+            on child_follow.subscriber_id = :authenticated_user_id
+           and child_follow.target_id = child.id
+           and child_follow.target_type = :wave_target_type
+           and child_follow.target_action = :drop_created_action
+        where child.parent_wave_id in (:waveIds)
+          and ${this.getWaveVisibilityFilter(
+            'child',
+            eligibleGroups,
+            'eligibleGroups'
+          )}
+          and ${this.getWaveVisibilityFilter(
+            'parent',
+            eligibleGroups,
+            'eligibleGroups'
+          )}
+      `,
+      {
+        authenticated_user_id,
+        waveIds,
+        eligibleGroups,
+        wave_target_type: ActivityEventTargetType.WAVE,
+        drop_created_action: ActivityEventAction.DROP_CREATED
+      }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private applyPinnedCandidateFilter({
+    candidates,
+    pinned,
+    pinnedWaveIds,
+    authenticated_user_id
+  }: {
+    candidates: WaveOverviewCandidate[];
+    pinned: ApiWavesPinFilter | null;
+    pinnedWaveIds: Set<string>;
+    authenticated_user_id: string | null;
+  }): WaveOverviewCandidate[] {
+    if (!authenticated_user_id) {
+      return candidates;
+    }
+    if (pinned === ApiWavesPinFilter.Pinned) {
+      return candidates.filter((candidate) =>
+        pinnedWaveIds.has(candidate.waveId)
+      );
+    }
+    if (pinned === ApiWavesPinFilter.NotPinned) {
+      return candidates.filter(
+        (candidate) => !pinnedWaveIds.has(candidate.waveId)
+      );
+    }
+    return candidates;
+  }
+
+  private async findRecentlyDroppedToWaveCandidates(
+    param: {
+      eligibleGroups: string[];
+      direct_message?: boolean;
+    },
+    candidateLimit: number
+  ): Promise<WaveOverviewCandidate[]> {
+    return await withWaveOverviewCandidateCache({
+      keyParts: {
+        kind: 'recently-dropped-to-waves',
+        candidateLimit,
+        direct_message: param.direct_message,
+        eligibleGroups: this.getSortedEligibleGroups(param.eligibleGroups)
+      },
+      getValue: async () => {
+        const rows = await this.db.execute<WaveOverviewCandidateRow>(
+          `
+            select
+              w.id as wave_id,
+              0 as tier_rank,
+              coalesce(wm.latest_drop_timestamp, 0) as sort_val,
+              coalesce(wm.latest_drop_timestamp, 0) as latest_drop_timestamp
+            from ${WAVES_TABLE} w
+              join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+            where w.parent_wave_id is null
+              ${
+                param.direct_message !== undefined
+                  ? `and w.is_direct_message = :direct_message`
+                  : ``
+              }
+              and ${this.getWaveVisibilityFilter(
+                'w',
+                param.eligibleGroups,
+                'eligibleGroups'
+              )}
+            order by sort_val desc, w.id desc
+            limit :candidateLimit
+          `,
+          { ...param, candidateLimit }
+        );
+        return this.parseWaveOverviewCandidates(rows);
+      }
+    });
+  }
+
+  private async findScoredRecentlyDroppedToWaveCandidates(
+    param: {
+      eligibleGroups: string[];
+      direct_message?: boolean;
+      score_sort: ApiWaveScoreSort;
+      min_visibility_score?: number;
+      min_quality_score?: number;
+      min_hotness_score?: number;
+      min_rep_sort_score?: number;
+      visibility_tier?: ApiWaveVisibilityTier;
+    },
+    candidateLimit: number
+  ): Promise<WaveOverviewCandidate[]> {
+    const scoreColumn = this.getWaveScoreSortColumn(param.score_sort);
+    const filters = [
+      param.min_visibility_score !== undefined
+        ? `wm.wave_visibility_score >= :min_visibility_score`
+        : null,
+      param.min_quality_score !== undefined
+        ? `wm.wave_quality_score >= :min_quality_score`
+        : null,
+      param.min_hotness_score !== undefined
+        ? `wm.wave_hotness_score >= :min_hotness_score`
+        : null,
+      param.min_rep_sort_score !== undefined
+        ? `wm.wave_rep_sort_score >= :min_rep_sort_score`
+        : null,
+      param.visibility_tier !== undefined
+        ? `wm.wave_visibility_tier = :visibility_tier`
+        : null
+    ]
+      .filter((filter): filter is string => !!filter)
+      .join(' and ');
+    const scoreFilters = filters ? `and ${filters}` : ``;
+    return await withWaveOverviewCandidateCache({
+      keyParts: {
+        kind: 'scored-recently-dropped-to-waves',
+        candidateLimit,
+        direct_message: param.direct_message,
+        eligibleGroups: this.getSortedEligibleGroups(param.eligibleGroups),
+        score_sort: param.score_sort,
+        min_visibility_score: param.min_visibility_score,
+        min_quality_score: param.min_quality_score,
+        min_hotness_score: param.min_hotness_score,
+        min_rep_sort_score: param.min_rep_sort_score,
+        visibility_tier: param.visibility_tier
+      },
+      getValue: async () => {
+        const rows = await this.db.execute<WaveOverviewCandidateRow>(
+          `
+            select
+              w.id as wave_id,
+              wm.wave_visibility_rank as tier_rank,
+              ${scoreColumn} as sort_val,
+              coalesce(wm.latest_drop_timestamp, 0) as latest_drop_timestamp
+            from ${WAVES_TABLE} w
+              join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+            where w.parent_wave_id is null
+              ${
+                param.direct_message !== undefined
+                  ? `and w.is_direct_message = :direct_message`
+                  : ``
+              }
+              and ${this.getWaveVisibilityFilter(
+                'w',
+                param.eligibleGroups,
+                'eligibleGroups'
+              )}
+              ${scoreFilters}
+            order by
+              tier_rank asc,
+              sort_val desc,
+              latest_drop_timestamp desc,
+              w.id desc
+            limit :candidateLimit
+          `,
+          { ...param, candidateLimit }
+        );
+        return this.parseWaveOverviewCandidates(rows);
+      }
+    });
+  }
+
+  private async findVisibleCandidatePageOrFallback({
+    pageCandidates,
+    eligibleGroups
+  }: {
+    pageCandidates: WaveOverviewCandidate[];
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[] | null> {
+    const candidateIds = pageCandidates.map((candidate) => candidate.waveId);
+    const waves = await this.findVisibleWavesByOrderedCandidateIds({
+      candidateIds,
+      eligibleGroups
+    });
+    if (waves.length === candidateIds.length) {
+      return waves;
+    }
+    // Eligible groups are part of the candidate cache key. A mismatch here
+    // means stale or visibility-changed rows, so fall back to legacy SQL.
+    logger.info('[WAVE_OVERVIEW_CANDIDATE_FALLBACK]', {
+      event: 'wave_overview_candidate_fallback',
+      reason: 'visibility_mismatch',
+      candidate_count: candidateIds.length,
+      visible_count: waves.length,
+      eligible_group_count: eligibleGroups.length
+    });
+    return null;
+  }
+
+  private async findRecentlyDroppedToWavesFromCandidates(param: {
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+    direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
+  }): Promise<WaveEntity[] | null> {
+    if (param.only_waves_followed_by_authenticated_user) {
+      return null;
+    }
+    const candidateLimit = this.getOverviewCandidateLimit(param);
+    if (candidateLimit === null) {
+      return null;
+    }
+    const candidates = await this.findRecentlyDroppedToWaveCandidates(
+      param,
+      candidateLimit
+    );
+    if (!candidates.length) {
+      return [];
+    }
+    const candidateIds = candidates.map((candidate) => candidate.waveId);
+    const [pinnedWaveIds, mutedWaveIds] = await Promise.all([
+      this.findPinnedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      }),
+      this.findMutedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      })
+    ]);
+    if (mutedWaveIds.size > 0 && candidates.length >= candidateLimit) {
+      return null;
+    }
+    const filteredCandidates = this.applyPinnedCandidateFilter({
+      candidates,
+      pinned: param.pinned,
+      pinnedWaveIds,
+      authenticated_user_id: param.authenticated_user_id
+    });
+    const orderedCandidates = this.sortRecentlyDroppedCandidates(
+      filteredCandidates.map((candidate) =>
+        mutedWaveIds.has(candidate.waveId)
+          ? { ...candidate, sortVal: 0 }
+          : candidate
+      )
+    );
+    const pageCandidates = orderedCandidates.slice(
+      param.offset,
+      param.offset + param.limit
+    );
+    const needsCompleteCandidateWindow = pageCandidates.length < param.limit;
+    if (needsCompleteCandidateWindow && candidates.length >= candidateLimit) {
+      return null;
+    }
+    return await this.findVisibleCandidatePageOrFallback({
+      pageCandidates,
+      eligibleGroups: param.eligibleGroups
+    });
+  }
+
+  private async findScoredRecentlyDroppedToWavesFromCandidates(param: {
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+    direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
+    score_sort: ApiWaveScoreSort;
+    exclude_followed: boolean;
+    min_visibility_score?: number;
+    min_quality_score?: number;
+    min_hotness_score?: number;
+    min_rep_sort_score?: number;
+    visibility_tier?: ApiWaveVisibilityTier;
+  }): Promise<WaveEntity[] | null> {
+    if (param.only_waves_followed_by_authenticated_user) {
+      return null;
+    }
+    if (param.authenticated_user_id && this.hasScoredOverviewFilters(param)) {
+      return null;
+    }
+    const candidateLimit = this.getOverviewCandidateLimit(param);
+    if (candidateLimit === null) {
+      return null;
+    }
+    const candidates = await this.findScoredRecentlyDroppedToWaveCandidates(
+      param,
+      candidateLimit
+    );
+    if (!candidates.length) {
+      return [];
+    }
+    const candidateIds = candidates.map((candidate) => candidate.waveId);
+    const [pinnedWaveIds, mutedWaveIds, followedWaveIds] = await Promise.all([
+      this.findPinnedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      }),
+      this.findMutedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      }),
+      param.exclude_followed
+        ? this.findFollowedCandidateWaveIds({
+            authenticated_user_id: param.authenticated_user_id,
+            waveIds: candidateIds,
+            eligibleGroups: param.eligibleGroups
+          })
+        : Promise.resolve(new Set<string>())
+    ]);
+    if (mutedWaveIds.size > 0 && candidates.length >= candidateLimit) {
+      return null;
+    }
+    const filteredCandidates = this.applyPinnedCandidateFilter({
+      candidates,
+      pinned: param.pinned,
+      pinnedWaveIds,
+      authenticated_user_id: param.authenticated_user_id
+    }).filter(
+      (candidate) =>
+        !param.exclude_followed || !followedWaveIds.has(candidate.waveId)
+    );
+    const orderedCandidates = this.sortScoredCandidates(
+      filteredCandidates.map((candidate) =>
+        mutedWaveIds.has(candidate.waveId)
+          ? { ...candidate, tierRank: 999, sortVal: 0 }
+          : candidate
+      )
+    );
+    const pageCandidates = orderedCandidates.slice(
+      param.offset,
+      param.offset + param.limit
+    );
+    const needsCompleteCandidateWindow = pageCandidates.length < param.limit;
+    if (needsCompleteCandidateWindow && candidates.length >= candidateLimit) {
+      return null;
+    }
+    return await this.findVisibleCandidatePageOrFallback({
+      pageCandidates,
+      eligibleGroups: param.eligibleGroups
+    });
   }
 
   private toNullableNumber(
@@ -2226,6 +2778,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    const candidateResult =
+      await this.findRecentlyDroppedToWavesFromCandidates(param);
+    if (candidateResult !== null) {
+      return candidateResult;
+    }
     const useFollowedSubwaveActivity =
       !!param.authenticated_user_id &&
       param.only_waves_followed_by_authenticated_user;
@@ -2347,6 +2904,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       throw new Error(
         'Cannot request followed-only waves and exclude-followed waves together'
       );
+    }
+    const candidateResult =
+      await this.findScoredRecentlyDroppedToWavesFromCandidates(param);
+    if (candidateResult !== null) {
+      return candidateResult;
     }
     const useFollowedSubwaveActivity =
       !!param.authenticated_user_id &&
