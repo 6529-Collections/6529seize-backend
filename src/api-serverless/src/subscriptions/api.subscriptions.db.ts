@@ -720,6 +720,66 @@ async function fetchFinalMemeSubscriptionCount(
   };
 }
 
+function getEffectiveSubscriptionCount(
+  balance: number,
+  requestedCount: number
+): number {
+  const affordableCount = Math.floor(balance / MEMES_MINT_PRICE);
+  return Math.min(requestedCount, Math.max(0, affordableCount));
+}
+
+function getSubscriptionBalance(
+  balanceMap: Map<string, number>,
+  consolidationKey: string
+): number {
+  return balanceMap.get(consolidationKey.toLowerCase()) ?? 0;
+}
+
+function getTokenSubscriptionPartitions(
+  tokenId: number,
+  subs: NFTSubscription[],
+  autoSubs: SubscriptionMode[]
+): {
+  tokenSubs: NFTSubscription[];
+  tokenAutoSubs: SubscriptionMode[];
+} {
+  const allTokenSubs = subs.filter((s) => s.token_id === tokenId);
+  const tokenSubs = allTokenSubs.filter((s) => s.subscribed);
+  const tokenAutoSubs = autoSubs.filter(
+    (s) =>
+      !allTokenSubs.some((ts) =>
+        equalIgnoreCase(ts.consolidation_key, s.consolidation_key)
+      )
+  );
+
+  return { tokenSubs, tokenAutoSubs };
+}
+
+function getManualSubscriptionEffectiveCount(
+  sub: NFTSubscription,
+  balanceMap: Map<string, number>
+): number {
+  return getEffectiveSubscriptionCount(
+    getSubscriptionBalance(balanceMap, sub.consolidation_key),
+    sub.subscribed_count ?? 1
+  );
+}
+
+function getAutomaticSubscriptionEffectiveCount(
+  autoSub: SubscriptionMode,
+  balanceMap: Map<string, number>,
+  autoSubEligibilityMap: Map<string, number>
+): number {
+  const eligibility =
+    autoSubEligibilityMap.get(autoSub.consolidation_key.toLowerCase()) ?? 1;
+  const subscribedCount = autoSub.subscribe_all_editions ? eligibility : 1;
+
+  return getEffectiveSubscriptionCount(
+    getSubscriptionBalance(balanceMap, autoSub.consolidation_key),
+    subscribedCount
+  );
+}
+
 async function fetchEffectiveUpcomingMemeSubscriptionCounts(
   tokenIds: number[]
 ): Promise<SubscriptionCounts[]> {
@@ -775,52 +835,31 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
 
   const counts: SubscriptionCounts[] = [];
   for (const id of tokenIds) {
-    // Get all manual subscription records for this token (both subscribed = true and false)
-    const allTokenSubs = [...subs].filter((s) => s.token_id === id);
-    // Only count manual subscriptions where subscribed = true
-    const tokenSubs = allTokenSubs.filter((s) => s.subscribed);
-    // For auto subscriptions, only count if they don't have ANY manual record for this token
-    // (if they have a manual record with subscribed = false, they manually unsubscribed)
-    const tokenAutoSubs = [...autoSubs].filter(
-      (s) =>
-        !allTokenSubs.some((ts) =>
-          equalIgnoreCase(ts.consolidation_key, s.consolidation_key)
-        )
+    const { tokenSubs, tokenAutoSubs } = getTokenSubscriptionPartitions(
+      id,
+      subs,
+      autoSubs
     );
-
-    let totalCount = 0;
-
-    // Calculate effective count for manual subscriptions (only those with subscribed = true)
-    for (const sub of tokenSubs) {
-      const balance = balanceMap.get(sub.consolidation_key.toLowerCase()) ?? 0;
-      const affordableCount = Math.floor(balance / MEMES_MINT_PRICE);
-      const effectiveCount = Math.min(
-        sub.subscribed_count ?? 1,
-        Math.max(0, affordableCount)
-      );
-      totalCount += effectiveCount;
-    }
-
-    // Calculate effective count for auto subscriptions
-    // (only those without any manual subscription record for this token)
-    for (const autoSub of tokenAutoSubs) {
-      const balance =
-        balanceMap.get(autoSub.consolidation_key.toLowerCase()) ?? 0;
-      const eligibility =
-        autoSubEligibilityMap.get(autoSub.consolidation_key.toLowerCase()) ?? 1;
-      const subscribedCount = autoSub.subscribe_all_editions ? eligibility : 1;
-      const affordableCount = Math.floor(balance / MEMES_MINT_PRICE);
-      const effectiveCount = Math.min(
-        subscribedCount,
-        Math.max(0, affordableCount)
-      );
-      totalCount += effectiveCount;
-    }
+    const manualCount = tokenSubs.reduce(
+      (total, sub) =>
+        total + getManualSubscriptionEffectiveCount(sub, balanceMap),
+      0
+    );
+    const automaticCount = tokenAutoSubs.reduce(
+      (total, autoSub) =>
+        total +
+        getAutomaticSubscriptionEffectiveCount(
+          autoSub,
+          balanceMap,
+          autoSubEligibilityMap
+        ),
+      0
+    );
 
     counts.push({
       contract: MEMES_CONTRACT,
       token_id: id,
-      count: totalCount
+      count: manualCount + automaticCount
     });
   }
   return counts;
@@ -836,7 +875,13 @@ export async function fetchMemeSubscriptionCount(
   }
 
   const [count] = await fetchEffectiveUpcomingMemeSubscriptionCounts([tokenId]);
-  return count;
+  return (
+    count ?? {
+      contract: MEMES_CONTRACT,
+      token_id: tokenId,
+      count: 0
+    }
+  );
 }
 
 export async function fetchUpcomingMemeSubscriptionCounts(
