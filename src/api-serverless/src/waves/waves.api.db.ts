@@ -9,6 +9,7 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
+  IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFTS_TABLE,
@@ -2999,8 +3000,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 JOIN ${WAVE_READER_METRICS_TABLE} r
                   ON r.wave_id = d.wave_id
                   AND r.reader_id = :identityId
+                LEFT JOIN ${IDENTITY_MUTES_TABLE} im
+                  ON im.muter_id = :identityId
+                  AND im.muted_identity_id = d.author_id
                 WHERE d.wave_id IN (:waveIds)
                   AND d.author_id != :identityId
+                  AND im.id IS NULL
                   AND d.created_at > r.latest_read_timestamp
                   AND r.muted = false
                 GROUP BY d.wave_id
@@ -3102,9 +3107,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           JOIN ${WAVES_TABLE} w
             ON w.id = d.wave_id
            AND w.is_direct_message = true
+          LEFT JOIN ${IDENTITY_MUTES_TABLE} im
+            ON im.muter_id = :identityId
+           AND im.muted_identity_id = d.author_id
           LEFT JOIN ${WAVES_TABLE} parent
             ON parent.id = w.parent_wave_id
           WHERE d.author_id != :identityId
+            AND im.id IS NULL
             AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
             AND r.muted = false
             AND ${this.getWaveAndParentVisibilityFilter(

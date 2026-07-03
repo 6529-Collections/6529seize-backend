@@ -18,12 +18,14 @@ import { ApiIdentitySubscriptionTargetAction } from '@/api/generated/models/ApiI
 import { identitiesService } from './identities.service';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { ApiIdentityActivity } from '@/api/generated/models/ApiIdentityActivity';
+import { ApiIdentityMuteState } from '@/api/generated/models/ApiIdentityMuteState';
 import { Time, Timer } from '@/time';
 import { WALLET_REGEX } from '@/constants';
 import { identityFetcher } from './identity.fetcher';
 import { numbers } from '@/numbers';
 import { identitiesActivityApiService } from './identities.activity.api.service';
 import { cacheRequest } from '@/api/request-cache';
+import { identityMutesApiService } from '@/api/identity-mutes/identity-mutes.api.service';
 
 const router = asyncRouter();
 
@@ -132,6 +134,60 @@ router.get(
       throw new NotFoundException(`Identity ${identityKey} not found`);
     }
     res.send(identity);
+  }
+);
+
+router.get(
+  '/:id/mute',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiIdentityMuteState>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    res.send(
+      await identityMutesApiService.getIdentityMuteState(req.params.id, {
+        authenticationContext,
+        timer
+      })
+    );
+  }
+);
+
+router.post(
+  '/:id/mute',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiIdentityMuteState>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    res.send(
+      await identityMutesApiService.muteIdentity(req.params.id, {
+        authenticationContext,
+        timer
+      })
+    );
+  }
+);
+
+router.delete(
+  '/:id/mute',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiIdentityMuteState>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    res.send(
+      await identityMutesApiService.unmuteIdentity(req.params.id, {
+        authenticationContext,
+        timer
+      })
+    );
   }
 );
 
