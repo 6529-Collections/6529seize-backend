@@ -411,7 +411,7 @@ router.get(
     const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
     const tokenId = numbers.parseIntOrNull(req.query.token_id);
     if (req.query.token_id !== undefined && (tokenId === null || tokenId < 1)) {
-      return res.status(400).send('Invalid token ID');
+      throw new BadRequestException('Invalid token ID');
     }
 
     const result = await fetchUpcomingMemeSubscriptionCounts(
