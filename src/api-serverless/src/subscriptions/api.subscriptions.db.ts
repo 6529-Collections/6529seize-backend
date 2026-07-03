@@ -702,24 +702,41 @@ export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
   );
 }
 
-export async function fetchUpcomingMemeSubscriptionCounts(
-  cardCount: number
+async function fetchFinalMemeSubscriptionCount(
+  tokenId: number
+): Promise<SubscriptionCounts> {
+  const results = await sqlExecutor.execute<{ count: number | string | null }>(
+    `SELECT COALESCE(SUM(subscribed_count), 0) AS count
+    FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+    WHERE contract = :contract
+      AND token_id = :tokenId`,
+    { contract: MEMES_CONTRACT, tokenId }
+  );
+
+  return {
+    contract: MEMES_CONTRACT,
+    token_id: tokenId,
+    count: Number(results[0]?.count ?? 0)
+  };
+}
+
+async function fetchEffectiveUpcomingMemeSubscriptionCounts(
+  tokenIds: number[]
 ): Promise<SubscriptionCounts[]> {
+  if (tokenIds.length === 0) {
+    return [];
+  }
+
   const autoSubs: SubscriptionMode[] = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE automatic = :automatic`,
     { automatic: true }
   );
 
-  const maxMemeId = await getMaxMemeId();
-
   // Fetch all subscription records (both subscribed = true and false)
   // to check if someone manually unsubscribed from a specific card
   const subs: NFTSubscription[] = await sqlExecutor.execute(
-    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE token_id > :startIndex AND token_id <= :endIndex`,
-    {
-      startIndex: maxMemeId,
-      endIndex: maxMemeId + cardCount
-    }
+    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE token_id IN (:tokenIds)`,
+    { tokenIds }
   );
 
   // Get all unique consolidation keys from subscriptions and auto subscriptions
@@ -757,8 +774,7 @@ export async function fetchUpcomingMemeSubscriptionCounts(
   );
 
   const counts: SubscriptionCounts[] = [];
-  for (let i = 1; i <= cardCount; i++) {
-    const id = maxMemeId + i;
+  for (const id of tokenIds) {
     // Get all manual subscription records for this token (both subscribed = true and false)
     const allTokenSubs = [...subs].filter((s) => s.token_id === id);
     // Only count manual subscriptions where subscribed = true
@@ -808,6 +824,28 @@ export async function fetchUpcomingMemeSubscriptionCounts(
     });
   }
   return counts;
+}
+
+export async function fetchUpcomingMemeSubscriptionCounts(
+  cardCount: number,
+  tokenId?: number
+): Promise<SubscriptionCounts[]> {
+  const maxMemeId = await getMaxMemeId();
+
+  if (tokenId !== undefined) {
+    if (tokenId <= maxMemeId) {
+      return [await fetchFinalMemeSubscriptionCount(tokenId)];
+    }
+
+    return fetchEffectiveUpcomingMemeSubscriptionCounts([tokenId]);
+  }
+
+  const tokenIds = Array.from(
+    { length: cardCount },
+    (_value, index) => maxMemeId + index + 1
+  );
+
+  return fetchEffectiveUpcomingMemeSubscriptionCounts(tokenIds);
 }
 
 const REDEEMED_COUNTS_JOINS = `
