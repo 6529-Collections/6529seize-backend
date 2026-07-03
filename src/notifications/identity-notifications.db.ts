@@ -217,6 +217,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         (column) => {
           const paramName = `${column}_${rowIndex}`;
           params[paramName] = row[column];
+          if (column === 'additional_data') {
+            return `\`${column}\` <=> CAST(:${paramName} AS JSON)`;
+          }
           return `\`${column}\` <=> :${paramName}`;
         }
       );
