@@ -1,6 +1,6 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
-import Joi from 'joi';
+import * as Joi from 'joi';
 import { ApiResponse } from '../api-response';
 import {
   getAuthenticatedProfileIdOrNull,
