@@ -591,6 +591,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     // Eligible groups are part of the candidate cache key. A mismatch here
     // means stale or visibility-changed rows, so fall back to legacy SQL.
     logger.info('[WAVE_OVERVIEW_CANDIDATE_FALLBACK]', {
+      event: 'wave_overview_candidate_fallback',
       reason: 'visibility_mismatch',
       candidate_count: candidateIds.length,
       visible_count: waves.length,
