@@ -45,6 +45,7 @@ import {
   PushNotificationSendResult,
   sendMessages
 } from '@/pushNotificationsHandler/sendPushNotifications';
+import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -252,6 +253,7 @@ export async function sendIdentityNotificationsBatch(
   const notificationsById = new Map(
     notifications.map((notification) => [Number(notification.id), notification])
   );
+  const mutedNotificationIds = await findMutedNotificationIds(notifications);
 
   uniqueIds
     .filter((id) => !notificationsById.has(id))
@@ -262,6 +264,12 @@ export async function sendIdentityNotificationsBatch(
     uniqueIds.map(async (id) => {
       const notification = notificationsById.get(id);
       if (!notification) {
+        return [];
+      }
+      if (mutedNotificationIds.has(Number(notification.id))) {
+        logger.info(
+          `[ID ${notification.id}] Identity ${notification.additional_identity_id} is muted by user ${notification.identity_id}`
+        );
         return [];
       }
       try {
@@ -290,6 +298,35 @@ export async function sendIdentityNotificationsBatch(
   }
 
   return Array.from(new Set(failedIds));
+}
+
+async function findMutedNotificationIds(
+  notifications: IdentityNotificationEntity[]
+): Promise<Set<number>> {
+  const notificationRows = notifications.map((notification) => ({
+    notification_id: Number(notification.id),
+    identity_id: notification.identity_id,
+    additional_identity_id: notification.additional_identity_id
+  }));
+  if (!notificationRows.some((row) => row.additional_identity_id !== null)) {
+    return new Set();
+  }
+
+  try {
+    const unmutedRows =
+      await identityMutesDb.filterMutedNotificationRows(notificationRows);
+    const unmutedNotificationIds = new Set(
+      unmutedRows.map((row) => row.notification_id)
+    );
+    return new Set(
+      notificationRows
+        .filter((row) => !unmutedNotificationIds.has(row.notification_id))
+        .map((row) => row.notification_id)
+    );
+  } catch (error) {
+    logger.error('Failed to filter muted push notifications', error);
+    return new Set();
+  }
 }
 
 async function buildIdentityNotificationMessages(
