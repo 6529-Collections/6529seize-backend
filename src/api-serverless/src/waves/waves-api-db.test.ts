@@ -180,10 +180,10 @@ type CandidateFallbackTestRepo = {
   ) => WaveOverviewCandidate[];
   findRecentlyDroppedToWavesFromCandidates: (
     param: Record<string, unknown>
-  ) => Promise<unknown>;
+  ) => Promise<readonly { id: string }[] | null>;
   findScoredRecentlyDroppedToWavesFromCandidates: (
     param: Record<string, unknown>
-  ) => Promise<unknown>;
+  ) => Promise<readonly { id: string }[] | null>;
   findRecentlyDroppedToWaveCandidates: jest.Mock;
   findScoredRecentlyDroppedToWaveCandidates: jest.Mock;
   findPinnedCandidateWaveIds: jest.Mock;
@@ -198,6 +198,29 @@ function buildCandidateWindow(count: number): WaveOverviewCandidate[] {
     sortVal: count - index,
     latestDropTimestamp: count - index
   }));
+}
+
+function getWaveIds(waves: readonly { id: string }[] | null): string[] {
+  if (!waves) {
+    throw new Error('Expected wave list');
+  }
+  return waves.map((wave) => wave.id);
+}
+
+function buildLegacyOverviewRepo(): WavesApiDb {
+  const legacyRepo = new WavesApiDb(() => sqlExecutor);
+  const candidateMethods = legacyRepo as unknown as Pick<
+    CandidateFallbackTestRepo,
+    | 'findRecentlyDroppedToWavesFromCandidates'
+    | 'findScoredRecentlyDroppedToWavesFromCandidates'
+  >;
+  candidateMethods.findRecentlyDroppedToWavesFromCandidates = jest
+    .fn()
+    .mockResolvedValue(null);
+  candidateMethods.findScoredRecentlyDroppedToWavesFromCandidates = jest
+    .fn()
+    .mockResolvedValue(null);
+  return legacyRepo;
 }
 
 describeWithSeed(
@@ -999,6 +1022,61 @@ describeWithSeed(
     }
   ],
   () => {
+    it('matches legacy recently-dropped ordering for muted waves in partial candidate windows', async () => {
+      const params = {
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: false,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null
+      };
+      const candidateMethods = repo as unknown as CandidateFallbackTestRepo;
+      const candidatePathWaves =
+        await candidateMethods.findRecentlyDroppedToWavesFromCandidates(params);
+      const candidateWaves = await repo.findRecentlyDroppedToWaves(params);
+      const legacyWaves =
+        await buildLegacyOverviewRepo().findRecentlyDroppedToWaves(params);
+
+      expect(getWaveIds(candidatePathWaves)).toEqual([
+        visibleScoredWave.id,
+        mutedHighScoreWave.id
+      ]);
+      expect(getWaveIds(candidateWaves)).toEqual(getWaveIds(legacyWaves));
+    });
+
+    it('matches legacy scored ordering for muted waves in partial candidate windows', async () => {
+      const params = {
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: false,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null,
+        score_sort: ApiWaveScoreSort.Quality,
+        exclude_followed: false
+      };
+      const candidateMethods = repo as unknown as CandidateFallbackTestRepo;
+      const candidatePathWaves =
+        await candidateMethods.findScoredRecentlyDroppedToWavesFromCandidates(
+          params
+        );
+      const candidateWaves =
+        await repo.findScoredRecentlyDroppedToWaves(params);
+      const legacyWaves =
+        await buildLegacyOverviewRepo().findScoredRecentlyDroppedToWaves(
+          params
+        );
+
+      expect(getWaveIds(candidatePathWaves)).toEqual([
+        visibleScoredWave.id,
+        mutedHighScoreWave.id
+      ]);
+      expect(getWaveIds(candidateWaves)).toEqual(getWaveIds(legacyWaves));
+    });
+
     it('applies muted score floors to scored min filters and tier filters', async () => {
       const waves = await repo.findScoredRecentlyDroppedToWaves({
         authenticated_user_id: author.profile_id!,
