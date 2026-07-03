@@ -21,7 +21,25 @@ import { WAVE_METRICS_TABLE } from '@/constants';
   'latest_drop_timestamp',
   'wave_id'
 ])
+@Index('idx_wmet_rank_quality_score', [
+  'wave_visibility_rank',
+  'wave_quality_score',
+  'latest_drop_timestamp',
+  'wave_id'
+])
 @Index('idx_wmet_rep_score', [
+  'wave_rep_sort_score',
+  'latest_drop_timestamp',
+  'wave_id'
+])
+@Index('idx_wmet_rank_hot_score', [
+  'wave_visibility_rank',
+  'wave_hotness_score',
+  'latest_drop_timestamp',
+  'wave_id'
+])
+@Index('idx_wmet_rank_rep_score', [
+  'wave_visibility_rank',
   'wave_rep_sort_score',
   'latest_drop_timestamp',
   'wave_id'
