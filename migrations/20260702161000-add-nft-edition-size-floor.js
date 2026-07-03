@@ -12,7 +12,7 @@ function ignoreMysqlError(promise, ignoredCodes) {
 exports.up = function (db) {
   return ignoreMysqlError(
     db.runSql(
-      'ALTER TABLE nfts ADD COLUMN edition_size_floor int NOT NULL DEFAULT 0 AFTER supply'
+      "ALTER TABLE nfts ADD COLUMN edition_size_floor int NOT NULL DEFAULT 0 COMMENT 'Minimum edition-size denominator for TDH-style calculations; use max(supply, edition_size_floor).' AFTER supply"
     ),
     ['ER_DUP_FIELDNAME']
   ).then(function () {

@@ -1002,7 +1002,7 @@ async function updateEditionSizeFloorsForNfts(
   provider: ethers.Provider
 ): Promise<void> {
   const memeEditionSizeFloors = await resolveMemeEditionSizeFloors({
-    actualEditionSizes: getMemeEditionSizes(nftMap),
+    tokenIds: getMemeTokenIds(nftMap),
     provider
   });
 
@@ -1061,19 +1061,13 @@ export function calculateNftHodlRate(
   return rate;
 }
 
-function getMemeEditionSizes(
+function getMemeTokenIds(
   nftMap: Map<string, NftOnlyProcessingEntry>
-): Record<number, number> {
-  return Array.from(nftMap.values()).reduce<Record<number, number>>(
-    (acc, entry) => {
-      const { nft } = entry;
-      if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
-        acc[nft.id] = nft.supply;
-      }
-      return acc;
-    },
-    {}
-  );
+): number[] {
+  return Array.from(nftMap.values())
+    .map((entry) => entry.nft)
+    .filter((nft) => equalIgnoreCase(nft.contract, MEMES_CONTRACT))
+    .map((nft) => nft.id);
 }
 
 async function populateMintStatsForEligibleNFTs(

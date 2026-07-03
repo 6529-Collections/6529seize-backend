@@ -206,6 +206,8 @@ export function buildMemeCalculationEditionSizes(
   nfts: Array<Pick<NFT, 'id' | 'contract' | 'supply' | 'edition_size_floor'>>,
   actualEditionSizes: Record<number, number>
 ): Record<number, number> {
+  // This map is keyed by token id because it intentionally contains Memes only.
+  // Callers read it only inside MEMES_CONTRACT branches, so Gradient id overlap is irrelevant.
   return nfts.reduce<Record<number, number>>((acc, nft) => {
     if (!equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
       return acc;

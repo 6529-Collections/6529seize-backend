@@ -18,7 +18,7 @@ const MANIFOLD_CLAIM_FETCH_CONCURRENCY = 10;
 
 export const MEMES_EDITION_SIZE_FLOOR_CAP = 310;
 
-export type MemeEditionSizeMap = Record<number, number>;
+export type MemeEditionSizeFloorMap = Record<number, number>;
 
 type ClaimMaxFetcher = (
   tokenIds: readonly number[],
@@ -26,7 +26,7 @@ type ClaimMaxFetcher = (
 ) => Promise<Map<number, number>>;
 
 export type ResolveMemeEditionSizeFloorsOptions = {
-  actualEditionSizes: MemeEditionSizeMap;
+  tokenIds: readonly number[];
   provider?: ethers.Provider;
   fetchOnChainClaimMaxes?: ClaimMaxFetcher;
 };
@@ -36,18 +36,13 @@ function normalizePositiveInteger(value: unknown): number | null {
   return parsed !== null && parsed > 0 ? parsed : null;
 }
 
-export function getMemeEditionSizeFloor({
-  actualEditionSize,
-  claimMaxEditionSize
-}: {
-  actualEditionSize: number;
-  claimMaxEditionSize?: number | null;
-}): number {
-  const actual = normalizePositiveInteger(actualEditionSize) ?? 0;
+export function getMemeEditionSizeFloor(
+  claimMaxEditionSize: number
+): number | null {
   const claimMax = normalizePositiveInteger(claimMaxEditionSize);
 
   if (claimMax === null) {
-    return actual;
+    return null;
   }
 
   return Math.min(claimMax, MEMES_EDITION_SIZE_FLOOR_CAP);
@@ -67,34 +62,32 @@ export function getCalculationEditionSize({
 }
 
 export async function resolveMemeEditionSizeFloors({
-  actualEditionSizes,
+  tokenIds,
   provider,
   fetchOnChainClaimMaxes = fetchOnChainMemeClaimMaxEditionSizes
-}: ResolveMemeEditionSizeFloorsOptions): Promise<MemeEditionSizeMap> {
-  const result: MemeEditionSizeMap = {};
-  const tokenIds = uniquePositiveTokenIds(
-    Object.keys(actualEditionSizes).map(Number)
-  );
+}: ResolveMemeEditionSizeFloorsOptions): Promise<MemeEditionSizeFloorMap> {
+  const result: MemeEditionSizeFloorMap = {};
+  const uniqueTokenIds = uniquePositiveTokenIds(tokenIds);
 
-  if (tokenIds.length === 0) {
+  if (uniqueTokenIds.length === 0) {
     return result;
   }
 
   const claimMaxes = await safeFetchOnChainClaimMaxes(
     fetchOnChainClaimMaxes,
-    tokenIds,
+    uniqueTokenIds,
     provider
   );
 
-  for (const tokenId of tokenIds) {
+  for (const tokenId of uniqueTokenIds) {
     const claimMaxEditionSize = claimMaxes.get(tokenId);
     if (claimMaxEditionSize === undefined) {
       continue;
     }
-    result[tokenId] = getMemeEditionSizeFloor({
-      actualEditionSize: actualEditionSizes[tokenId] ?? 0,
-      claimMaxEditionSize
-    });
+    const floor = getMemeEditionSizeFloor(claimMaxEditionSize);
+    if (floor !== null) {
+      result[tokenId] = floor;
+    }
   }
 
   return result;

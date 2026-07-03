@@ -6,39 +6,19 @@ import {
 
 describe('getMemeEditionSizeFloor', () => {
   it('uses claim max for the floor when claim max is below the cap', () => {
-    expect(
-      getMemeEditionSizeFloor({
-        actualEditionSize: 176,
-        claimMaxEditionSize: 305
-      })
-    ).toBe(305);
+    expect(getMemeEditionSizeFloor(305)).toBe(305);
   });
 
   it('caps the floor at the research floor cap', () => {
-    expect(
-      getMemeEditionSizeFloor({
-        actualEditionSize: 176,
-        claimMaxEditionSize: 315
-      })
-    ).toBe(310);
+    expect(getMemeEditionSizeFloor(315)).toBe(310);
   });
 
-  it('falls back to actual edition size when claim max is missing', () => {
-    expect(
-      getMemeEditionSizeFloor({
-        actualEditionSize: 176,
-        claimMaxEditionSize: null
-      })
-    ).toBe(176);
+  it('ignores invalid claim maxes', () => {
+    expect(getMemeEditionSizeFloor(0)).toBeNull();
   });
 
   it('allows the floor to be below actual supply', () => {
-    expect(
-      getMemeEditionSizeFloor({
-        actualEditionSize: 320,
-        claimMaxEditionSize: 315
-      })
-    ).toBe(310);
+    expect(getMemeEditionSizeFloor(315)).toBe(310);
   });
 });
 
@@ -74,7 +54,7 @@ describe('getCalculationEditionSize', () => {
 describe('resolveMemeEditionSizeFloors', () => {
   it('resolves floors from on-chain claim maxes', async () => {
     const floors = await resolveMemeEditionSizeFloors({
-      actualEditionSizes: { 516: 176, 517: 301 },
+      tokenIds: [516, 517],
       fetchOnChainClaimMaxes: async () =>
         new Map([
           [516, 305],
@@ -90,7 +70,7 @@ describe('resolveMemeEditionSizeFloors', () => {
 
   it('omits tokens without on-chain claim maxes', async () => {
     const floors = await resolveMemeEditionSizeFloors({
-      actualEditionSizes: { 516: 176, 517: 301 },
+      tokenIds: [516, 517],
       fetchOnChainClaimMaxes: async () => new Map([[516, 315]])
     });
 
@@ -104,7 +84,7 @@ describe('resolveMemeEditionSizeFloors', () => {
 
     await expect(
       resolveMemeEditionSizeFloors({
-        actualEditionSizes: {},
+        tokenIds: [],
         fetchOnChainClaimMaxes
       })
     ).resolves.toEqual({});
