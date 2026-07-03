@@ -1,8 +1,30 @@
+const mockGetClaimForToken = jest.fn();
+const mockContract = jest.fn(() => ({
+  getClaimForToken: mockGetClaimForToken
+}));
+
+jest.mock('ethers', () => ({
+  ethers: {
+    Contract: mockContract,
+    JsonRpcProvider: jest.fn()
+  }
+}));
+
 import {
+  fetchOnChainMemeClaimMaxEditionSizes,
   getCalculationEditionSize,
   getMemeEditionSizeFloor,
   resolveMemeEditionSizeFloors
 } from './memes-edition-size-floor';
+
+beforeEach(() => {
+  mockContract.mockClear();
+  mockGetClaimForToken.mockReset();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 describe('getMemeEditionSizeFloor', () => {
   it('uses claim max for the floor when claim max is below the cap', () => {
@@ -90,5 +112,34 @@ describe('resolveMemeEditionSizeFloors', () => {
     ).resolves.toEqual({});
 
     expect(fetchOnChainClaimMaxes).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchOnChainMemeClaimMaxEditionSizes', () => {
+  it('times out a hung token claim fetch without blocking other tokens', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetClaimForToken.mockImplementation(
+        (_contract: string, tokenId: number) => {
+          if (tokenId === 516) {
+            return new Promise(() => undefined);
+          }
+          return Promise.resolve([0, { totalMax: 305 }]);
+        }
+      );
+
+      const claimMaxesPromise = fetchOnChainMemeClaimMaxEditionSizes(
+        [516, 517],
+        {} as never
+      );
+
+      await Promise.resolve();
+      jest.advanceTimersByTime(10_000);
+
+      await expect(claimMaxesPromise).resolves.toEqual(new Map([[517, 305]]));
+      expect(mockGetClaimForToken).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

@@ -2,6 +2,7 @@ import { getRpcUrl } from '@/alchemy';
 import { MEMES_CONTRACT } from '@/constants';
 import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
+import { Time } from '@/time';
 import { ethers } from 'ethers';
 import pLimit from 'p-limit';
 
@@ -15,6 +16,7 @@ const MANIFOLD_LAZY_CLAIM_ABI = [
 ];
 
 const MANIFOLD_CLAIM_FETCH_CONCURRENCY = 10;
+const MANIFOLD_CLAIM_FETCH_TIMEOUT_MS = Time.seconds(10).toMillis();
 
 export const MEMES_EDITION_SIZE_FLOOR_CAP = 310;
 
@@ -127,9 +129,10 @@ export async function fetchOnChainMemeClaimMaxEditionSizes(
     uniqueTokenIds.map((tokenId) =>
       limit(async () => {
         try {
-          const [, claim] = await contract.getClaimForToken(
-            MEMES_CONTRACT,
-            tokenId
+          const [, claim] = await withTimeout(
+            contract.getClaimForToken(MEMES_CONTRACT, tokenId),
+            MANIFOLD_CLAIM_FETCH_TIMEOUT_MS,
+            `Timed out fetching Manifold totalMax for Meme #${tokenId}`
           );
           const totalMax = normalizePositiveInteger(claim.totalMax);
           if (totalMax !== null) {
@@ -146,6 +149,26 @@ export async function fetchOnChainMemeClaimMaxEditionSizes(
   );
 
   return claimMaxes;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    timeout.unref?.();
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function uniquePositiveTokenIds(tokenIds: readonly number[]): number[] {
