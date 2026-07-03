@@ -116,7 +116,7 @@ export class DropCreationApiService {
       ctx
     );
     await invalidateWaveUnreadCacheForWave(model.wave_id);
-    void this.sendPendingPushNotifications({
+    await this.sendPendingPushNotifications({
       dropId: drop.id,
       pendingPushNotificationIds
     });
@@ -351,7 +351,7 @@ export class DropCreationApiService {
       ctx
     );
     await invalidateWaveUnreadCacheForWave(model.wave_id);
-    void this.sendPendingPushNotifications({
+    await this.sendPendingPushNotifications({
       dropId: apiDrop.id,
       pendingPushNotificationIds
     });
