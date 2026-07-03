@@ -1,6 +1,7 @@
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   IDENTITIES_TABLE,
+  IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
 } from '@/constants';
@@ -14,14 +15,40 @@ import { RequestContext } from '../request.context';
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '../sql-executor';
 import { Time } from '../time';
+import {
+  identityMutesDb as defaultIdentityMutesDb,
+  IdentityMutesDb
+} from '@/api/identity-mutes/identity-mutes.db';
 
 type SerializableNotificationInsertRow = Record<string, string | number | null>;
 
+const IDENTITY_NOTIFICATION_INSERT_COLUMNS = [
+  'identity_id',
+  'additional_identity_id',
+  'related_drop_id',
+  'related_drop_part_no',
+  'related_drop_2_id',
+  'related_drop_2_part_no',
+  'cause',
+  'additional_data',
+  'created_at',
+  'visibility_group_id',
+  'wave_id'
+] as const;
+
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityNotificationsDb.name);
+
+  constructor(
+    dbSupplier: () => SqlExecutor,
+    private readonly identityMutesDb: IdentityMutesDb = defaultIdentityMutesDb
+  ) {
+    super(dbSupplier);
+  }
 
   private isNotifierActivated() {
     return process.env.USER_NOTIFIER_ACTIVATED === 'true';
@@ -32,43 +59,22 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ) {
     if (this.isNotifierActivated()) {
-      const result = await this.db.execute(
-        `
-        insert into ${IDENTITY_NOTIFICATIONS_TABLE} (
-          identity_id, 
-          additional_identity_id,
-          related_drop_id,
-          related_drop_part_no,
-          related_drop_2_id,
-          related_drop_2_part_no,
-          cause,
-          additional_data, 
-          created_at,
-          visibility_group_id,
-          wave_id
-        ) values (
-          :identity_id,
-          :additional_identity_id,
-          :related_drop_id,
-          :related_drop_part_no,
-          :related_drop_2_id,
-          :related_drop_2_part_no,
-          :cause,
-          :additional_data,
-          :created_at,
-          :visibility_group_id,
-          :wave_id
-        )
-      `,
-        {
-          ...notification,
-          created_at: Time.currentMillis(),
-          additional_data: JSON.stringify(notification.additional_data)
-        },
-        connection ? { wrappedConnection: connection } : undefined
-      );
+      const [filteredNotification] =
+        await this.filterMutedNotificationRowsForWrite(
+          [notification],
+          connection
+        );
+      if (!filteredNotification) {
+        return;
+      }
 
-      const notificationId: number = result?.[2] ?? null;
+      const notificationId = await this.insertNotificationRow(
+        this.serializeNotificationInsertRow(
+          filteredNotification,
+          Time.currentMillis()
+        ),
+        connection
+      );
 
       if (notificationId) {
         await sendIdentityPushNotification(notificationId);
@@ -105,56 +111,143 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     notifications: NewIdentityNotification[],
     connection: ConnectionWrapper<any>
   ): Promise<number[]> {
+    const unmutedNotifications = await this.filterMutedNotificationRowsForWrite(
+      notifications,
+      connection
+    );
     const insertedIds: number[] = [];
     const chunkSize = 1000;
-    const columns = [
-      'identity_id',
-      'additional_identity_id',
-      'related_drop_id',
-      'related_drop_part_no',
-      'related_drop_2_id',
-      'related_drop_2_part_no',
-      'cause',
-      'additional_data',
-      'created_at',
-      'visibility_group_id',
-      'wave_id'
-    ] as const;
-    for (let i = 0; i < notifications.length; i += chunkSize) {
-      const chunk = notifications.slice(i, i + chunkSize);
+    for (let i = 0; i < unmutedNotifications.length; i += chunkSize) {
+      const chunk = unmutedNotifications.slice(i, i + chunkSize);
       const createdAt = Time.currentMillis();
-      const rows: SerializableNotificationInsertRow[] = chunk.map(
-        (notification) => ({
-          identity_id: notification.identity_id,
-          additional_identity_id: notification.additional_identity_id,
-          related_drop_id: notification.related_drop_id,
-          related_drop_part_no: notification.related_drop_part_no,
-          related_drop_2_id: notification.related_drop_2_id,
-          related_drop_2_part_no: notification.related_drop_2_part_no,
-          cause: notification.cause,
-          additional_data: JSON.stringify(notification.additional_data),
-          created_at: createdAt,
-          visibility_group_id: notification.visibility_group_id,
-          wave_id: notification.wave_id
-        })
+      const rows = chunk.map((notification) =>
+        this.serializeNotificationInsertRow(notification, createdAt)
       );
       await this.db.bulkInsert(
         IDENTITY_NOTIFICATIONS_TABLE,
         rows,
-        [...columns],
+        [...IDENTITY_NOTIFICATION_INSERT_COLUMNS],
         undefined,
         { connection }
       );
       const firstInsertId = await this.getLastInsertId(connection);
-      insertedIds.push(
-        ...Array.from(
-          { length: chunk.length },
-          (_, index) => firstInsertId + index
-        )
+      const chunkIds = await this.findInsertedNotificationIds(
+        rows,
+        firstInsertId,
+        connection
       );
+      if (chunkIds.length !== rows.length) {
+        this.logger.error(
+          `Expected ${rows.length} inserted notification ids, found ${chunkIds.length}`
+        );
+      }
+      insertedIds.push(...chunkIds);
     }
 
     return insertedIds;
+  }
+
+  private async filterMutedNotificationRowsForWrite<
+    T extends {
+      readonly identity_id: string;
+      readonly additional_identity_id: string | null;
+    }
+  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+    try {
+      return await this.identityMutesDb.filterMutedNotificationRows(
+        notifications,
+        connection
+      );
+    } catch (error) {
+      this.logger.error(
+        'Failed to filter muted notification rows; inserting unfiltered notifications',
+        error
+      );
+      return notifications;
+    }
+  }
+
+  private serializeNotificationInsertRow(
+    notification: NewIdentityNotification,
+    createdAt: number
+  ): SerializableNotificationInsertRow {
+    return {
+      identity_id: notification.identity_id,
+      additional_identity_id: notification.additional_identity_id,
+      related_drop_id: notification.related_drop_id,
+      related_drop_part_no: notification.related_drop_part_no,
+      related_drop_2_id: notification.related_drop_2_id,
+      related_drop_2_part_no: notification.related_drop_2_part_no,
+      cause: notification.cause,
+      additional_data: JSON.stringify(notification.additional_data),
+      created_at: createdAt,
+      visibility_group_id: notification.visibility_group_id,
+      wave_id: notification.wave_id
+    };
+  }
+
+  private async insertNotificationRow(
+    row: SerializableNotificationInsertRow,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number | null> {
+    const result = await this.db.execute(
+      `
+        insert into ${IDENTITY_NOTIFICATIONS_TABLE} (
+          ${IDENTITY_NOTIFICATION_INSERT_COLUMNS.map((column) => `\`${column}\``).join(', ')}
+        ) values (
+          ${IDENTITY_NOTIFICATION_INSERT_COLUMNS.map((column) => `:${column}`).join(', ')}
+        )
+      `,
+      row,
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return this.extractInsertId(result);
+  }
+
+  private async findInsertedNotificationIds(
+    rows: SerializableNotificationInsertRow[],
+    firstInsertId: number,
+    connection: ConnectionWrapper<any>
+  ): Promise<number[]> {
+    const params: Record<string, string | number | null> = {
+      firstInsertId
+    };
+    const rowClauses = rows.map((row, rowIndex) => {
+      const columnClauses = IDENTITY_NOTIFICATION_INSERT_COLUMNS.map(
+        (column) => {
+          const paramName = `${column}_${rowIndex}`;
+          params[paramName] = row[column];
+          return `\`${column}\` <=> :${paramName}`;
+        }
+      );
+      return `(${columnClauses.join(' AND ')})`;
+    });
+
+    const insertedRows = await this.db.execute<{ id: number }>(
+      `
+        select id
+        from ${IDENTITY_NOTIFICATIONS_TABLE}
+        where id >= :firstInsertId
+          and (${rowClauses.join(' OR ')})
+        order by id asc
+      `,
+      params,
+      { wrappedConnection: connection }
+    );
+    return insertedRows.map((row) => Number(row.id));
+  }
+
+  private extractInsertId(result: any): number | null {
+    const candidates = Array.isArray(result)
+      ? [result[2], result[0]?.insertId, result[0]?.id]
+      : [result?.insertId, result?.id];
+    for (const candidate of candidates) {
+      const parsed = Number(candidate);
+      if (Number.isInteger(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+    return null;
   }
 
   async updateNotificationReadAt(
@@ -250,6 +343,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
+        LEFT JOIN ${IDENTITY_MUTES_TABLE} m
+          ON m.muter_id = n.identity_id
+          AND m.muted_identity_id = n.additional_identity_id
         WHERE n.identity_id = :identity_id ${
           param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
@@ -262,6 +358,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         ${causesExclude ? ` AND n.cause NOT IN (:causesExclude)` : ``}
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
         AND COALESCE(r.muted, FALSE) = FALSE
+        AND m.id IS NULL
         ORDER BY n.id DESC LIMIT :limit
       `,
         { ...param, causes, causesExclude },
@@ -330,6 +427,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
+        LEFT JOIN ${IDENTITY_MUTES_TABLE} m
+          ON m.muter_id = n.identity_id
+          AND m.muted_identity_id = n.additional_identity_id
         WHERE (
           (
             n.identity_id = :identity_id
@@ -340,6 +440,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
                 : ``
             })
             AND COALESCE(r.muted, FALSE) = FALSE
+            AND m.id IS NULL
           )${includeClause}
         )${causeClause}
       `,

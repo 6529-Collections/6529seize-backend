@@ -1,5 +1,9 @@
 import 'reflect-metadata';
-import { DROPS_TABLE, WAVE_READER_METRICS_TABLE } from '@/constants';
+import {
+  DROPS_TABLE,
+  IDENTITY_MUTES_TABLE,
+  WAVE_READER_METRICS_TABLE
+} from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
@@ -48,6 +52,11 @@ describe('WavesApiDb DM unread drops count', () => {
     expect(sql).toContain('COALESCE(r.latest_read_timestamp, 0)');
     expect(db.oneOrNull).toHaveBeenCalledWith(
       expect.stringContaining('d.author_id != :identityId'),
+      expect.anything(),
+      expect.anything()
+    );
+    expect(db.oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining(`LEFT JOIN ${IDENTITY_MUTES_TABLE}`),
       expect.anything(),
       expect.anything()
     );
