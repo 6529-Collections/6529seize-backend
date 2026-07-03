@@ -1002,7 +1002,7 @@ async function updateEditionSizeFloorsForNfts(
   provider: ethers.Provider
 ): Promise<void> {
   const memeEditionSizeFloors = await resolveMemeEditionSizeFloors({
-    tokenIds: getMemeTokenIds(nftMap),
+    tokenIds: getMemeTokenIdsForEditionSizeFloorRefresh(nftMap),
     provider
   });
 
@@ -1061,13 +1061,22 @@ export function calculateNftHodlRate(
   return rate;
 }
 
-function getMemeTokenIds(
-  nftMap: Map<string, NftOnlyProcessingEntry>
+export function getMemeTokenIdsForEditionSizeFloorRefresh(
+  nftMap: Map<string, { nft: Pick<NFT, 'contract' | 'id'> }>
 ): number[] {
-  return Array.from(nftMap.values())
+  // Only the latest Meme's Manifold totalMax should still be mutable.
+  // Older Meme floors are treated as finalized once a newer Meme exists.
+  const latestMeme = Array.from(nftMap.values())
     .map((entry) => entry.nft)
     .filter((nft) => equalIgnoreCase(nft.contract, MEMES_CONTRACT))
-    .map((nft) => nft.id);
+    .reduce<Pick<NFT, 'id'> | null>((latest, nft) => {
+      if (latest === null || nft.id > latest.id) {
+        return nft;
+      }
+      return latest;
+    }, null);
+
+  return latestMeme ? [latestMeme.id] : [];
 }
 
 async function populateMintStatsForEligibleNFTs(

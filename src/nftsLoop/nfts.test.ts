@@ -1,6 +1,7 @@
 import { getAnimationPaths } from '@/nftsLoop/nft-animation-paths';
 import {
   calculateNftHodlRate,
+  getMemeTokenIdsForEditionSizeFloorRefresh,
   resolveNftEditionSizeFloor
 } from '@/nftsLoop/nfts';
 
@@ -57,6 +58,40 @@ describe('getAnimationPaths', () => {
 });
 
 describe('NFT edition size floor calculations', () => {
+  it('refreshes the on-chain edition size floor only for the latest Meme', () => {
+    const nftMap = new Map([
+      [
+        'memes-515',
+        {
+          nft: {
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            id: 515
+          }
+        }
+      ],
+      [
+        'memes-516',
+        {
+          nft: {
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            id: 516
+          }
+        }
+      ],
+      [
+        'gradient-1000',
+        {
+          nft: {
+            contract: '0x0c58ef43ff3032005e472cb5709f8908acb00205',
+            id: 1000
+          }
+        }
+      ]
+    ]);
+
+    expect(getMemeTokenIdsForEditionSizeFloorRefresh(nftMap)).toEqual([516]);
+  });
+
   it('uses resolved Meme floors and current supply for non-Memes', () => {
     expect(
       resolveNftEditionSizeFloor(
