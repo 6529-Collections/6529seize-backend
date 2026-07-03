@@ -1,15 +1,21 @@
 import * as dbApi from '@/db-api';
+import * as nftsDb from '@/nftsLoop/db.nfts';
 import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_MINT_PRICE,
   NFTS_TABLE,
+  SUBSCRIPTIONS_MODE_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import {
+  fetchMemeSubscriptionCount,
   fetchPastMemeSubscriptionCounts,
-  fetchRedeemedMemeSubscriptionCountsDownload
+  fetchRedeemedMemeSubscriptionCountsDownload,
+  fetchUpcomingMemeSubscriptionCounts
 } from './api.subscriptions.db';
 
 describe('fetchPastMemeSubscriptionCounts', () => {
@@ -57,6 +63,86 @@ describe('fetchPastMemeSubscriptionCounts', () => {
       expect.any(String),
       `${NFTS_TABLE}.contract, ${NFTS_TABLE}.id`,
       { skipJoinsOnCountQuery: false }
+    );
+  });
+});
+
+describe('fetchUpcomingMemeSubscriptionCounts', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('keeps card_count behavior based on the next meme IDs', async () => {
+    jest.spyOn(nftsDb, 'getMaxMemeId').mockResolvedValue(516);
+    const executeSpy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await expect(fetchUpcomingMemeSubscriptionCounts(2)).resolves.toEqual([
+      { contract: MEMES_CONTRACT, token_id: 517, count: 0 },
+      { contract: MEMES_CONTRACT, token_id: 518, count: 0 }
+    ]);
+
+    expect(executeSpy).toHaveBeenNthCalledWith(
+      1,
+      `SELECT * FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE automatic = :automatic`,
+      { automatic: true }
+    );
+    expect(executeSpy).toHaveBeenNthCalledWith(
+      2,
+      `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE token_id IN (:tokenIds)`,
+      { tokenIds: [517, 518] }
+    );
+  });
+});
+
+describe('fetchMemeSubscriptionCount', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('returns baked final subscribed count for a dropped meme ID', async () => {
+    jest.spyOn(nftsDb, 'getMaxMemeId').mockResolvedValue(516);
+    const executeSpy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockResolvedValue([{ count: '13' }]);
+
+    await expect(fetchMemeSubscriptionCount(516)).resolves.toEqual({
+      contract: MEMES_CONTRACT,
+      token_id: 516,
+      count: 13
+    });
+
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(executeSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`),
+      { contract: MEMES_CONTRACT, tokenId: 516 }
+    );
+  });
+
+  it('returns effective upcoming subscribed count for a future meme ID', async () => {
+    jest.spyOn(nftsDb, 'getMaxMemeId').mockResolvedValue(516);
+    const executeSpy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await expect(fetchMemeSubscriptionCount(517)).resolves.toEqual({
+      contract: MEMES_CONTRACT,
+      token_id: 517,
+      count: 0
+    });
+
+    expect(executeSpy).toHaveBeenNthCalledWith(
+      1,
+      `SELECT * FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE automatic = :automatic`,
+      { automatic: true }
+    );
+    expect(executeSpy).toHaveBeenNthCalledWith(
+      2,
+      `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE token_id IN (:tokenIds)`,
+      { tokenIds: [517] }
     );
   });
 });
