@@ -3385,6 +3385,88 @@ paths:
                 $ref: "#/components/schemas/ApiMediaResolveResponse"
         "400":
           description: Invalid request shape
+  /memes_extended_data:
+    get:
+      tags:
+        - Memes
+      summary: Get paginated Memes extended data
+      description: >-
+        Returns Meme Card metadata joined with the card's NFT market and TDH
+        fields. `collection_size` is the total Meme Cards collection size.
+        `ranked_collection_size`, when present, is the denominator for rank
+        fields on rows included in TDH ranking. Rows not yet included in TDH
+        calculations can return `recorded_in_tdh: false`, `-1` rank values, and
+        `ranked_collection_size: null`. During migration or transient TDH lookup
+        fallback, `recorded_in_tdh` and `ranked_collection_size` can be `null`
+        or absent, and clients should treat that as legacy/transitional state.
+      operationId: getMemesExtendedData
+      parameters:
+        - name: page_size
+          in: query
+          description: Default is 101
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+            maximum: 101
+        - name: page
+          in: query
+          description: Default is 1
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+        - name: id
+          in: query
+          description: Comma-separated Meme Card IDs
+          required: false
+          schema:
+            type: string
+        - name: season
+          in: query
+          description: Comma-separated Meme seasons
+          required: false
+          schema:
+            type: string
+        - name: sort
+          in: query
+          description: Default is age
+          required: false
+          schema:
+            type: string
+            enum:
+              - age
+              - edition_size
+              - meme
+              - hodlers
+              - tdh
+              - percent_unique
+              - percent_unique_cleaned
+              - floor_price
+              - market_cap
+              - total_volume_last_24_hours
+              - total_volume_last_7_days
+              - total_volume_last_1_month
+              - total_volume
+              - highest_offer
+        - name: sort_direction
+          in: query
+          description: Default is DESC
+          required: false
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMemesExtendedDataPage"
   /memes-mint-stats:
     get:
       tags:
@@ -3475,89 +3557,6 @@ paths:
                 $ref: "#/components/schemas/ApiMemesMintStat"
         "404":
           description: Memes mint stats for id not found
-  /memes_extended_data:
-    get:
-      tags:
-        - Memes
-      summary: Get paginated Memes extended data
-      description: >-
-        Returns Meme Card metadata joined with the card's NFT market and TDH
-        fields. `collection_size` is the total Meme Cards collection size.
-        `ranked_collection_size`, when present, is the denominator for
-        rank fields on rows included in TDH ranking. Rows not yet included in
-        TDH calculations can return `recorded_in_tdh: false`, `-1` rank values,
-        and `ranked_collection_size: null`. During migration or transient TDH
-        lookup fallback, `recorded_in_tdh` and `ranked_collection_size` can be
-        `null` or absent, and clients should treat that as legacy/transitional
-        state.
-      operationId: getMemesExtendedData
-      parameters:
-        - name: page_size
-          in: query
-          description: Default is 101
-          required: false
-          schema:
-            type: number
-            format: int64
-            minimum: 1
-            maximum: 101
-        - name: page
-          in: query
-          description: Default is 1
-          required: false
-          schema:
-            type: number
-            format: int64
-            minimum: 1
-        - name: id
-          in: query
-          description: Comma-separated Meme Card IDs
-          required: false
-          schema:
-            type: string
-        - name: season
-          in: query
-          description: Comma-separated Meme seasons
-          required: false
-          schema:
-            type: string
-        - name: sort
-          in: query
-          description: Default is age
-          required: false
-          schema:
-            type: string
-            enum:
-              - age
-              - edition_size
-              - meme
-              - hodlers
-              - tdh
-              - percent_unique
-              - percent_unique_cleaned
-              - floor_price
-              - market_cap
-              - total_volume_last_24_hours
-              - total_volume_last_7_days
-              - total_volume_last_1_month
-              - total_volume
-              - highest_offer
-        - name: sort_direction
-          in: query
-          description: Default is DESC
-          required: false
-          schema:
-            type: string
-            enum:
-              - ASC
-              - DESC
-      responses:
-        "200":
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiMemesExtendedDataPage"
   /minting-claims/{contract}/{card_id}/{merkle_root}/proofs/{address}:
     get:
       tags:
@@ -6649,6 +6648,30 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SubscriptionCounts"
+  /subscriptions/memes/{token_id}/count:
+    get:
+      tags:
+        - Subscriptions
+      summary: Get meme subscription count
+      operationId: getMemeSubscriptionCount
+      parameters:
+        - name: token_id
+          in: path
+          description: Meme token ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionCounts"
+        "400":
+          description: Invalid token ID
   /subscriptions/redeemed-memes-counts:
     get:
       tags:
