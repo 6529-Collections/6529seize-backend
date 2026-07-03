@@ -826,19 +826,23 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
   return counts;
 }
 
-export async function fetchUpcomingMemeSubscriptionCounts(
-  cardCount: number,
-  tokenId?: number
-): Promise<SubscriptionCounts[]> {
+export async function fetchMemeSubscriptionCount(
+  tokenId: number
+): Promise<SubscriptionCounts> {
   const maxMemeId = await getMaxMemeId();
 
-  if (tokenId !== undefined) {
-    if (tokenId <= maxMemeId) {
-      return [await fetchFinalMemeSubscriptionCount(tokenId)];
-    }
-
-    return fetchEffectiveUpcomingMemeSubscriptionCounts([tokenId]);
+  if (tokenId <= maxMemeId) {
+    return fetchFinalMemeSubscriptionCount(tokenId);
   }
+
+  const [count] = await fetchEffectiveUpcomingMemeSubscriptionCounts([tokenId]);
+  return count;
+}
+
+export async function fetchUpcomingMemeSubscriptionCounts(
+  cardCount: number
+): Promise<SubscriptionCounts[]> {
+  const maxMemeId = await getMaxMemeId();
 
   const tokenIds = Array.from(
     { length: cardCount },
