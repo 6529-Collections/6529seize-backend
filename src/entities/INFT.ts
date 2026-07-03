@@ -98,6 +98,13 @@ export class LabNFT extends BaseNFT {
 
 @Entity('nfts')
 export class NFT extends BaseNFT {
+  @Column({
+    type: 'int',
+    comment:
+      'Minimum edition-size denominator for TDH-style calculations; use max(supply, edition_size_floor).'
+  })
+  edition_size_floor!: number;
+
   @Column({ type: 'double' })
   hodl_rate!: number;
 

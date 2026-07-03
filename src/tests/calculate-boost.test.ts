@@ -5,6 +5,7 @@ import { numbers } from '@/numbers';
 import {
   ADDITIONAL_CARD_SET_BOOST,
   ADDITIONAL_CARD_SET_RATIO,
+  buildMemeCalculationEditionSizes,
   calculateBoost
 } from '../tdhLoop/tdh';
 
@@ -73,6 +74,42 @@ function getSeasonSet(id: number): TokenTDH[] {
 function createGradients(count: number) {
   return Array.from({ length: count }, (_, i) => ({ id: i + 1 }));
 }
+
+describe('buildMemeCalculationEditionSizes', () => {
+  it('uses max actual edition size at block and stored edition size floor', () => {
+    expect(
+      buildMemeCalculationEditionSizes(
+        [
+          {
+            id: 1,
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            supply: 301,
+            edition_size_floor: 310
+          },
+          {
+            id: 2,
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            supply: 320,
+            edition_size_floor: 310
+          },
+          {
+            id: 1,
+            contract: '0x0c58ef43ff3032005e472cb5709f8908acb00205',
+            supply: 101,
+            edition_size_floor: 101
+          }
+        ],
+        {
+          1: 301,
+          2: 320
+        }
+      )
+    ).toEqual({
+      1: 310,
+      2: 320
+    });
+  });
+});
 
 describe('calculateBoost', () => {
   describe('baseline season sets', () => {

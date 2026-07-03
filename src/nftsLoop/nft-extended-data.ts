@@ -23,6 +23,7 @@ import { NFTOwner } from '../entities/INFTOwner';
 import { MemesSeason } from '../entities/ISeason';
 import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
+import { getCalculationEditionSize } from '../memes-edition-size-floor';
 import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('NFT_EXTENDED_DATA');
@@ -191,20 +192,40 @@ function assignRanks<T extends { id: number }>(
   field: keyof T & string,
   direction: 'asc' | 'desc' = 'desc'
 ) {
+  assignRanksByValue(
+    arr,
+    `${field}_rank`,
+    (item) => (item as any)[field],
+    direction
+  );
+}
+
+function assignRanksByValue<T extends { id: number }>(
+  arr: T[],
+  rankField: string,
+  valueGetter: (item: T) => number,
+  direction: 'asc' | 'desc' = 'desc'
+) {
   arr.forEach((item) => {
+    const itemValue = valueGetter(item);
     const rank =
       arr.filter((other) => {
-        const a = (item as any)[field];
-        const b = (other as any)[field];
+        const otherValue = valueGetter(other);
 
         if (direction === 'asc') {
-          return b < a || (b === a && other.id < item.id);
+          return (
+            otherValue < itemValue ||
+            (otherValue === itemValue && other.id < item.id)
+          );
         } else {
-          return b > a || (b === a && other.id < item.id);
+          return (
+            otherValue > itemValue ||
+            (otherValue === itemValue && other.id < item.id)
+          );
         }
       }).length + 1;
 
-    (item as any)[`${field}_rank`] = rank;
+    (item as any)[rankField] = rank;
   });
 }
 
@@ -246,6 +267,7 @@ export async function findMemesExtendedData() {
     },
     rankFilter: recordedTdhIds ? isMemeRecordedInTdh : undefined
   });
+  assignEditionSizeFloorRanks(extended, nfts, recordedTdhIds);
   assignRankedCollectionSize(extended, recordedTdhIds);
 
   // Seasons
@@ -272,6 +294,28 @@ export async function findMemesExtendedData() {
   await persistMemesExtendedData(extended);
   await persistMemesSeasons(memesSeasons);
   return extended;
+}
+
+function assignEditionSizeFloorRanks(
+  extended: MemesExtendedData[],
+  nfts: NFT[],
+  recordedTdhIds: Set<number> | null
+) {
+  const nftById = new Map(nfts.map((nft) => [nft.id, nft]));
+  const rankedMemes = recordedTdhIds
+    ? extended.filter(isMemeRecordedInTdh)
+    : extended;
+
+  assignRanksByValue(
+    rankedMemes,
+    'edition_size_rank',
+    (meme) =>
+      getCalculationEditionSize({
+        supply: meme.edition_size,
+        edition_size_floor: nftById.get(meme.id)?.edition_size_floor
+      }),
+    'asc'
+  );
 }
 
 async function fetchRecordedTdhIdsForRanks(

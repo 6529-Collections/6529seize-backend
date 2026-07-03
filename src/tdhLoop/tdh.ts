@@ -25,6 +25,7 @@ import { MemesSeason } from '../entities/ISeason';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
+import { getCalculationEditionSize } from '../memes-edition-size-floor';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import {
   getNextgenNetwork,
@@ -201,6 +202,24 @@ export const getAdjustedMemesAndSeasons = async (timestamp: Date) => {
   };
 };
 
+export function buildMemeCalculationEditionSizes(
+  nfts: Array<Pick<NFT, 'id' | 'contract' | 'supply' | 'edition_size_floor'>>,
+  actualEditionSizes: Record<number, number>
+): Record<number, number> {
+  // This map is keyed by token id because it intentionally contains Memes only.
+  // Callers read it only inside MEMES_CONTRACT branches, so Gradient id overlap is irrelevant.
+  return nfts.reduce<Record<number, number>>((acc, nft) => {
+    if (!equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
+      return acc;
+    }
+    acc[nft.id] = getCalculationEditionSize({
+      supply: actualEditionSizes[nft.id] ?? nft.supply,
+      edition_size_floor: nft.edition_size_floor
+    });
+    return acc;
+  }, {});
+}
+
 export const updateTDH = async (
   lastTDHCalc: Date,
   startingWallets?: string[]
@@ -239,11 +258,6 @@ export const updateTDH = async (
   logger.info(`[OWNERS COUNT ${owners.length}]`);
 
   const memesEditionSizes = await extractMemesEditionSizes(transactions);
-  const MEMES_HODL_INDEX = Object.values(memesEditionSizes).reduce(
-    (acc, size) => Math.max(acc, size),
-    0
-  );
-  logger.info(`[MEMES HODL INDEX ${MEMES_HODL_INDEX}]`);
 
   const combinedAddresses = new Set<string>();
 
@@ -268,6 +282,15 @@ export const updateTDH = async (
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
     await getAdjustedMemesAndSeasons(blockTimestamp);
+  const memesCalculationEditionSizes = buildMemeCalculationEditionSizes(
+    ADJUSTED_NFTS,
+    memesEditionSizes
+  );
+  const MEMES_HODL_INDEX = Object.values(memesCalculationEditionSizes).reduce(
+    (acc, size) => Math.max(acc, size),
+    0
+  );
+  logger.info(`[MEMES HODL INDEX ${MEMES_HODL_INDEX}]`);
 
   logger.info(
     `[BLOCK ${block} - ${blockTimestamp.toUTCString()}] [ADJUSTED_NFTS ${
@@ -347,7 +370,9 @@ export const updateTDH = async (
         );
 
         const hodlRate = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
-          ? MEMES_HODL_INDEX / memesEditionSizes[nft.id]
+          ? MEMES_HODL_INDEX /
+            (memesCalculationEditionSizes[nft.id] ??
+              getCalculationEditionSize(nft))
           : nft.hodl_rate;
 
         if (tokenConsolidatedTransactions.length === 0) {

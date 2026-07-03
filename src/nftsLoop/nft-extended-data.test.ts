@@ -157,6 +157,30 @@ describe('nft extended data', () => {
     expect(saved[2].ranked_collection_size).toBeNull();
   });
 
+  it('uses edition size floor for Meme edition size ranking', async () => {
+    const ownersById = new Map<number, Owner[]>([
+      [1, [owner(1, '0x111', 100)]],
+      [2, [owner(2, '0x222', 200)]]
+    ]);
+    mockOwners(ownersById);
+    mockedFetchNftsForContract.mockResolvedValue([
+      memeNft(1, 305),
+      memeNft(2, 200)
+    ]);
+    mockedFetchNftIdsRecordedInTdh.mockResolvedValue(new Set([1, 2]));
+
+    await findMemesExtendedData();
+
+    const saved = keyedById(
+      mockedPersistMemesExtendedData.mock.calls[0][0] as MemesExtendedData[]
+    );
+
+    expect(saved[1].edition_size).toBe(100);
+    expect(saved[1].edition_size_rank).toBe(2);
+    expect(saved[2].edition_size).toBe(200);
+    expect(saved[2].edition_size_rank).toBe(1);
+  });
+
   it('continues ranking Meme Lab extended data without TDH eligibility', async () => {
     const ownersById = new Map<number, Owner[]>([
       [1, [owner(1, '0x111', 100)]],
@@ -195,10 +219,11 @@ function keyedById<T extends { id: number }>(rows: T[]): Record<number, T> {
   }, {});
 }
 
-function memeNft(id: number): NFT {
+function memeNft(id: number, editionSizeFloor = 0): NFT {
   return {
     id,
     contract: '0xmemes',
+    edition_size_floor: editionSizeFloor,
     metadata: {
       attributes: [
         { trait_type: 'Type - Season', value: '1' },
