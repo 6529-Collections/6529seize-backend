@@ -68,6 +68,7 @@ export { ExternalIndexedOwnership721Entity } from './IExternalIndexedOwnership72
 export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwnership721History';
 export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
+export { IdentityMuteEntity } from './IIdentityMute';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
 export { MintingClaimEntity } from './IMintingClaim';
