@@ -29,6 +29,7 @@ const repoRoot = path.resolve(
 );
 const fix = process.argv.includes('--fix');
 
+const gitignoreMatchers = loadGitignoreMatchers();
 const packageJsonFiles = [];
 const strayLockfiles = [];
 collectFiles(repoRoot);
@@ -69,21 +70,68 @@ for (const file of packageJsonFiles) {
 function collectFiles(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const absolutePath = path.join(directory, entry.name);
+    const relativePath = path
+      .relative(repoRoot, absolutePath)
+      .replaceAll(path.sep, '/');
     if (entry.isDirectory()) {
-      if (!SKIPPED_DIRECTORIES.has(entry.name)) {
+      if (
+        !SKIPPED_DIRECTORIES.has(entry.name) &&
+        !isGitignored(relativePath, true)
+      ) {
         collectFiles(absolutePath);
       }
       continue;
     }
-    const relativePath = path
-      .relative(repoRoot, absolutePath)
-      .replaceAll(path.sep, '/');
+    if (isGitignored(relativePath, false)) {
+      continue;
+    }
     if (entry.name === 'package.json') {
       packageJsonFiles.push(relativePath);
     } else if (FORBIDDEN_FILES.has(entry.name)) {
       strayLockfiles.push(relativePath);
     }
   }
+}
+
+// Minimal .gitignore support so local-only files (scratch directories,
+// vendored tools) are not validated or rewritten. Handles the pattern
+// shapes used in this repo's root .gitignore: bare names, dir/ suffixes,
+// leading-/ anchors, and * / ? / ** globs. Negations are ignored, which
+// only makes the check skip more, never fail on a re-included file.
+function loadGitignoreMatchers() {
+  const gitignorePath = path.join(repoRoot, '.gitignore');
+  if (!fs.existsSync(gitignorePath)) {
+    return [];
+  }
+  return fs
+    .readFileSync(gitignorePath, 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
+    .map((pattern) => {
+      const directoryOnly = pattern.endsWith('/');
+      let body = directoryOnly ? pattern.slice(0, -1) : pattern;
+      const anchored = body.startsWith('/') || body.includes('/');
+      body = body.startsWith('/') ? body.slice(1) : body;
+      const regexBody = body
+        .split('**')
+        .map((part) =>
+          part
+            .replaceAll(/[.+^${}()|[\]\\]/g, '\\$&')
+            .replaceAll('*', '[^/]*')
+            .replaceAll('?', '[^/]')
+        )
+        .join('.*');
+      const prefix = anchored ? '^' : '(^|/)';
+      return { regex: new RegExp(`${prefix}${regexBody}$`), directoryOnly };
+    });
+}
+
+function isGitignored(relativePath, isDirectory) {
+  return gitignoreMatchers.some(
+    ({ regex, directoryOnly }) =>
+      (!directoryOnly || isDirectory) && regex.test(relativePath)
+  );
 }
 
 function setPackageManager(raw) {
