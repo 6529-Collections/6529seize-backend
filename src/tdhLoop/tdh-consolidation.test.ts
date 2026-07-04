@@ -5,9 +5,9 @@ import {
   fetchLatestTDHBlockNumber,
   retrieveConsolidationsForWallets,
   retrieveWalletConsolidations
-} from '../db';
-import { TDHENS } from '../entities/ITDH';
-import { equalIgnoreCase } from '../strings';
+} from '@/db';
+import { TDHENS } from '@/entities/ITDH';
+import { equalIgnoreCase } from '@/strings';
 import { createMemesData, getGenesisAndNaka } from './tdh';
 import {
   consolidateCards,
@@ -15,7 +15,7 @@ import {
   consolidateTDHForWallets
 } from './tdh_consolidation';
 
-jest.mock('../db', () => ({
+jest.mock('@/db', () => ({
   fetchAllConsolidatedTdh: jest.fn(),
   fetchAllTDH: jest.fn(),
   fetchConsolidationDisplay: jest.fn(),
@@ -27,7 +27,7 @@ jest.mock('../db', () => ({
   retrieveWalletConsolidations: jest.fn()
 }));
 
-jest.mock('../nextgen/nextgen.db', () => ({
+jest.mock('@/nextgen/nextgen.db', () => ({
   fetchNextgenTokens: jest.fn()
 }));
 
@@ -103,6 +103,7 @@ function distinctByTokenId(tokens: TokenLike[]): TokenLike[] {
 const tdhEntryArb: fc.Arbitrary<TDHENS> = fc
   .record({
     walletIdx: fc.integer({ min: 0, max: WALLET_POOL.length - 1 }),
+    block: fc.integer({ min: 1, max: 99 }),
     tdh: fc.integer({ min: 0, max: 100000 }),
     tdh__raw: fc.integer({ min: 0, max: 100000 }),
     balance: fc.integer({ min: 0, max: 100 }),
@@ -124,7 +125,7 @@ const tdhEntryArb: fc.Arbitrary<TDHENS> = fc
       ({
         wallet: WALLET_POOL[r.walletIdx],
         ensName: '',
-        block: 42,
+        block: r.block,
         tdh: r.tdh,
         tdh__raw: r.tdh__raw,
         balance: r.balance,
