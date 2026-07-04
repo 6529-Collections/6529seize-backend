@@ -14,5 +14,6 @@
   "license": "ISC",
   "dependencies": {
     "node-fetch": "^3.3.0"
-  }
+  },
+  "packageManager": "npm@10.9.8"
 }
