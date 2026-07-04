@@ -249,7 +249,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->bulkInsertProfiles`);
   }
 
-  private async getProfileByHandle(
+  async getProfileByHandle(
     handle: string,
     connection?: ConnectionWrapper<any>
   ): Promise<Profile | null> {

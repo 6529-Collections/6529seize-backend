@@ -18,6 +18,7 @@ import { profilesService } from '@/profiles/profiles.service';
 import { CLOUDFRONT_LINK } from '@/constants';
 import {
   CreateOrUpdateDropUseCase,
+  normalizeDropGroupMentions,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 
@@ -58,6 +59,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     overrides: {
       dropsDb?: any;
       wavesApiDb?: any;
+      userGroupsService?: any;
       userNotifier?: any;
       identitySubscriptionsDb?: any;
       deleteDropUseCase?: any;
@@ -68,7 +70,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     return new CreateOrUpdateDropUseCase(
       overrides.dropsDb ?? ({} as any),
       {} as any,
-      {} as any,
+      overrides.userGroupsService ?? ({} as any),
       overrides.wavesApiDb ?? ({} as any),
       overrides.userNotifier ?? ({} as any),
       {} as any,
@@ -138,6 +140,8 @@ describe('CreateOrUpdateDropUseCase', () => {
     return {
       drop_id: null,
       wave_id: 'wave-1',
+      reply_to: null,
+      title: null,
       drop_type: DropType.CHAT,
       author_identity: 'author-profile',
       author_id: 'author-profile',
@@ -148,6 +152,13 @@ describe('CreateOrUpdateDropUseCase', () => {
           media: []
         }
       ],
+      referenced_nfts: [],
+      mentioned_users: [],
+      mentioned_waves: [],
+      metadata: [],
+      mentioned_groups: [],
+      signature: null,
+      is_additional_action_promised: null,
       ...overrides
     };
   }
@@ -275,6 +286,157 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
+  });
+
+  it('strips ALL group mention metadata when the drop content has no @all token', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content:
+              'Round 10 Vote Reconciliation\n\n@[MoonZoey] and @[QuantumSpirit]'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('keeps ALL group mention metadata for standalone @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL, DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'Heads up @all: please review this drop.'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('keeps ALL group mention metadata when @all is in a later part', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'first part'
+          },
+          {
+            content: 'second part with @all'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('keeps ALL group mention metadata for case-insensitive @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'Heads up @ALL'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('keeps ALL group mention metadata for line-start @all tokens', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'first line\n@all on the next line'
+          }
+        ]
+      })
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('does not treat embedded @all text as an ALL group mention', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'email@example.com @alliance hello@all @all_again'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('strips ALL group mention metadata when there are no drop parts', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [DropGroupMention.ALL],
+        parts: []
+      })
+    ).toEqual([]);
+  });
+
+  it('preserves non-ALL group mention metadata without @all content', () => {
+    const specificGroup = 'specific-group' as DropGroupMention;
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [specificGroup, DropGroupMention.ALL],
+        parts: [
+          {
+            content: 'no all mention here'
+          }
+        ]
+      })
+    ).toEqual([specificGroup]);
+  });
+
+  it('treats missing group mention metadata as empty', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: undefined,
+        parts: [
+          {
+            content: '@all'
+          }
+        ]
+      })
+    ).toEqual([]);
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: null,
+        parts: [
+          {
+            content: '@all'
+          }
+        ]
+      })
+    ).toEqual([]);
+  });
+
+  it('normalizes group mention metadata idempotently', () => {
+    const specificGroup = 'specific-group' as DropGroupMention;
+    const parts = [{ content: 'hello @all' }];
+    const once = normalizeDropGroupMentions({
+      mentionedGroups: [
+        specificGroup,
+        DropGroupMention.ALL,
+        specificGroup,
+        DropGroupMention.ALL
+      ],
+      parts
+    });
+
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: once,
+        parts
+      })
+    ).toEqual(once);
   });
 
   it('allows wave admins to use group mentions', () => {
@@ -506,6 +668,106 @@ describe('CreateOrUpdateDropUseCase', () => {
         'https://d3lqz0a4bldqgf.cloudfront.net/drops/asset.html'
       )
     ).toBe(true);
+  });
+
+  it('seeds missing reader metrics before a new direct-message drop', async () => {
+    const connection = {};
+    const wave = {
+      ...createSlowModeWave({
+        chat_slow_mode_cooldown_ms: null,
+        is_direct_message: true,
+        visibility_group_id: 'visibility-group',
+        participation_group_id: 'participation-group',
+        chat_group_id: 'chat-dm-group',
+        admin_group_id: 'admin-group',
+        voting_group_id: 'voting-group'
+      }),
+      type: WaveType.CHAT,
+      next_decision_time: null
+    };
+    const wavesApiDb = {
+      findExistingWaveReaderMetricReaderIds: jest.fn().mockResolvedValue([]),
+      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+    };
+    const userGroupsService = {
+      findIdentitiesInGroups: jest
+        .fn()
+        .mockResolvedValue(['author-profile', 'reader-profile'])
+    };
+    const useCase = createUseCaseWithMocks({
+      wavesApiDb,
+      userGroupsService
+    });
+
+    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+      {
+        wave,
+        authorId: 'author-profile',
+        createdAt: 1400
+      },
+      { connection }
+    );
+
+    expect(userGroupsService.findIdentitiesInGroups).toHaveBeenCalledWith(
+      ['chat-dm-group'],
+      { timer: undefined, connection }
+    );
+    expect(
+      wavesApiDb.findExistingWaveReaderMetricReaderIds
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        readerIds: ['reader-profile']
+      },
+      { timer: undefined, connection }
+    );
+    expect(wavesApiDb.insertMissingWaveReaderMetrics).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        readerIds: ['reader-profile'],
+        latestReadTimestamp: 1399
+      },
+      { timer: undefined, connection }
+    );
+  });
+
+  it('skips direct-message reader metric seeding when recipients already have metrics', async () => {
+    const connection = {};
+    const wave = {
+      ...createSlowModeWave({
+        chat_slow_mode_cooldown_ms: null,
+        is_direct_message: true,
+        chat_group_id: 'chat-dm-group'
+      }),
+      type: WaveType.CHAT,
+      next_decision_time: null
+    };
+    const wavesApiDb = {
+      findExistingWaveReaderMetricReaderIds: jest
+        .fn()
+        .mockResolvedValue(['reader-profile']),
+      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+    };
+    const userGroupsService = {
+      findIdentitiesInGroups: jest
+        .fn()
+        .mockResolvedValue(['author-profile', 'reader-profile'])
+    };
+    const useCase = createUseCaseWithMocks({
+      wavesApiDb,
+      userGroupsService
+    });
+
+    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+      {
+        wave,
+        authorId: 'author-profile',
+        createdAt: 1400
+      },
+      { connection }
+    );
+
+    expect(wavesApiDb.insertMissingWaveReaderMetrics).not.toHaveBeenCalled();
   });
 
   it('allows scheme-less Tenor candidates in chat link allowlist', () => {

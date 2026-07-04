@@ -40,6 +40,15 @@ import {
   DropPollsApiService
 } from '@/api/drops/drop-polls.api.service';
 import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
+import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '@/api/waves/wave-score.service';
+import {
+  waveDropMetricsRefreshService,
+  WaveDropMetricsDirtyRefreshReason
+} from '@/drops/wave-drop-metrics-refresh.service';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -101,7 +110,13 @@ export class DropCreationApiService {
           );
         }
       );
-    void this.sendPendingPushNotifications({
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      [model.wave_id],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      ctx
+    );
+    await invalidateWaveUnreadCacheForWave(model.wave_id);
+    await this.sendPendingPushNotifications({
       dropId: drop.id,
       pendingPushNotificationIds
     });
@@ -188,6 +203,23 @@ export class DropCreationApiService {
       }
     );
     if (deleteResponse) {
+      await waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
+        [deleteResponse.wave_id],
+        WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+        {
+          timer,
+          authenticationContext
+        }
+      );
+      await waveScoreService.requestWaveScoreRefreshBestEffort(
+        [deleteResponse.wave_id],
+        WaveScoreDirtyRefreshReason.DROP_DELETED,
+        {
+          timer,
+          authenticationContext
+        }
+      );
+      await invalidateWaveUnreadCacheForWave(deleteResponse.wave_id);
       await this.wsListenersNotifier.notifyAboutDropDelete(
         {
           drop_id: deleteResponse.id,
@@ -313,7 +345,13 @@ export class DropCreationApiService {
           };
         }
       );
-    void this.sendPendingPushNotifications({
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      [model.wave_id],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      ctx
+    );
+    await invalidateWaveUnreadCacheForWave(model.wave_id);
+    await this.sendPendingPushNotifications({
       dropId: apiDrop.id,
       pendingPushNotificationIds
     });

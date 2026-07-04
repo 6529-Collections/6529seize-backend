@@ -9,6 +9,7 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
+  IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFTS_TABLE,
@@ -27,6 +28,7 @@ import {
   WAVES_DECISIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { Logger } from '@/logging';
 import {
   groupWaveVotingCreditNftsByContract,
   normalizeWaveVotingCreditNfts,
@@ -62,6 +64,23 @@ import {
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
+import {
+  readWaveUnreadSummaryCache,
+  WaveUnreadSummary,
+  withInFlightWaveUnreadSummaryCacheMiss,
+  writeWaveUnreadSummaryCache
+} from './wave-unread-cache';
+import {
+  withFollowedSubwaveOverviewContextCache,
+  withInFlightFollowedSubwaveUnreadRead
+} from './wave-followed-subwave-overview-cache';
+import {
+  WaveOverviewCandidate,
+  withWaveOverviewCandidateCache
+} from './wave-overview-candidate-cache';
+import { compareCacheStrings } from './wave-cache-key';
+
+const logger = Logger.get('WAVES_API_DB');
 
 type RawWaveEntity = Omit<
   WaveEntity,
@@ -109,6 +128,27 @@ type HiddenFollowedSubwaveUnreadRow = {
   first_hidden_followed_subwave_unread_drop_serial_no: number | string | null;
 };
 
+type WaveUnreadSummaryRow = {
+  wave_id: string;
+  unread_drops_count: number | string;
+  first_unread_drop_serial_no: number | string | null;
+};
+
+type WaveOverviewCandidateRow = {
+  wave_id: string;
+  tier_rank: number | string;
+  sort_val: number | string;
+  latest_drop_timestamp: number | string;
+};
+
+type WaveIdRow = {
+  wave_id: string;
+};
+
+type UnreadDmDropsCountRow = {
+  count: number | string;
+};
+
 export interface FollowedSubwaveOverviewContext {
   readonly followed_subwaves_count: number;
   readonly latest_followed_subwave_activity_timestamp: number | null;
@@ -147,6 +187,63 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  private getOverviewCandidateLimit({
+    offset,
+    limit
+  }: {
+    offset: number;
+    limit: number;
+  }): number | null {
+    const needed = offset + limit;
+    if (needed > 500) {
+      return null;
+    }
+    return Math.min(Math.max(needed * 5, 250), 1_000);
+  }
+
+  private parseWaveOverviewCandidates(
+    rows: WaveOverviewCandidateRow[]
+  ): WaveOverviewCandidate[] {
+    return rows.map((row) => ({
+      waveId: row.wave_id,
+      tierRank: Number(row.tier_rank),
+      sortVal: Number(row.sort_val),
+      latestDropTimestamp: Number(row.latest_drop_timestamp)
+    }));
+  }
+
+  private sortRecentlyDroppedCandidates(
+    candidates: WaveOverviewCandidate[]
+  ): WaveOverviewCandidate[] {
+    return [...candidates].sort((left, right) => {
+      const sortDiff = right.sortVal - left.sortVal;
+      return sortDiff || this.compareWaveIdsDesc(left.waveId, right.waveId);
+    });
+  }
+
+  private sortScoredCandidates(
+    candidates: WaveOverviewCandidate[]
+  ): WaveOverviewCandidate[] {
+    return [...candidates].sort((left, right) => {
+      const tierDiff = left.tierRank - right.tierRank;
+      const scoreDiff = right.sortVal - left.sortVal;
+      const activityDiff = right.latestDropTimestamp - left.latestDropTimestamp;
+      return (
+        tierDiff ||
+        scoreDiff ||
+        activityDiff ||
+        this.compareWaveIdsDesc(left.waveId, right.waveId)
+      );
+    });
+  }
+
+  private compareWaveIdsDesc(left: string, right: string): number {
+    if (left === right) {
+      return 0;
+    }
+    return left > right ? -1 : 1;
+  }
+
   private getWaveVisibilityFilter(
     alias: string,
     groupIds: readonly string[],
@@ -174,6 +271,482 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       groupIds,
       groupIdsParamName
     )}))`;
+  }
+
+  private getSortedEligibleGroups(eligibleGroups: readonly string[]): string[] {
+    return [...eligibleGroups].sort(compareCacheStrings);
+  }
+
+  private hasScoredOverviewFilters(param: {
+    min_visibility_score?: number;
+    min_quality_score?: number;
+    min_hotness_score?: number;
+    min_rep_sort_score?: number;
+    visibility_tier?: ApiWaveVisibilityTier;
+  }): boolean {
+    return (
+      param.min_visibility_score !== undefined ||
+      param.min_quality_score !== undefined ||
+      param.min_hotness_score !== undefined ||
+      param.min_rep_sort_score !== undefined ||
+      param.visibility_tier !== undefined
+    );
+  }
+
+  private async findVisibleWavesByOrderedCandidateIds({
+    candidateIds,
+    eligibleGroups
+  }: {
+    candidateIds: string[];
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[]> {
+    if (!candidateIds.length) {
+      return [];
+    }
+    // Candidate caches are only a ranking hint; this final DB read applies
+    // the current request's visibility groups before any wave is returned.
+    const visibleWaves = await this.findWavesByIdsEligibleForRead(
+      candidateIds,
+      eligibleGroups
+    );
+    const wavesById = new Map(visibleWaves.map((wave) => [wave.id, wave]));
+    const orderedWaves: WaveEntity[] = [];
+    candidateIds.forEach((id) => {
+      const wave = wavesById.get(id);
+      if (wave) {
+        orderedWaves.push(wave);
+      }
+    });
+    return orderedWaves;
+  }
+
+  private async findPinnedCandidateWaveIds({
+    authenticated_user_id,
+    waveIds
+  }: {
+    authenticated_user_id: string | null;
+    waveIds: string[];
+  }): Promise<Set<string>> {
+    if (!authenticated_user_id || !waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<WaveIdRow>(
+      `
+        select wave_id
+        from ${PINNED_WAVES_TABLE}
+        where profile_id = :authenticated_user_id
+          and wave_id in (:waveIds)
+      `,
+      { authenticated_user_id, waveIds }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private async findMutedCandidateWaveIds({
+    authenticated_user_id,
+    waveIds
+  }: {
+    authenticated_user_id: string | null;
+    waveIds: string[];
+  }): Promise<Set<string>> {
+    if (!authenticated_user_id || !waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<WaveIdRow>(
+      `
+        select wave_id
+        from ${WAVE_READER_METRICS_TABLE}
+        where reader_id = :authenticated_user_id
+          and wave_id in (:waveIds)
+          and coalesce(muted, false) = true
+      `,
+      { authenticated_user_id, waveIds }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private async findFollowedCandidateWaveIds({
+    authenticated_user_id,
+    waveIds,
+    eligibleGroups
+  }: {
+    authenticated_user_id: string | null;
+    waveIds: string[];
+    eligibleGroups: string[];
+  }): Promise<Set<string>> {
+    if (!authenticated_user_id || !waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<WaveIdRow>(
+      `
+        select target_id as wave_id
+        from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+        where subscriber_id = :authenticated_user_id
+          and target_id in (:waveIds)
+          and target_type = :wave_target_type
+          and target_action = :drop_created_action
+        union
+        select distinct child.parent_wave_id as wave_id
+        from ${WAVES_TABLE} child
+          join ${WAVES_TABLE} parent
+            on parent.id = child.parent_wave_id
+           and parent.parent_wave_id is null
+          join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+            on child_follow.subscriber_id = :authenticated_user_id
+           and child_follow.target_id = child.id
+           and child_follow.target_type = :wave_target_type
+           and child_follow.target_action = :drop_created_action
+        where child.parent_wave_id in (:waveIds)
+          and ${this.getWaveVisibilityFilter(
+            'child',
+            eligibleGroups,
+            'eligibleGroups'
+          )}
+          and ${this.getWaveVisibilityFilter(
+            'parent',
+            eligibleGroups,
+            'eligibleGroups'
+          )}
+      `,
+      {
+        authenticated_user_id,
+        waveIds,
+        eligibleGroups,
+        wave_target_type: ActivityEventTargetType.WAVE,
+        drop_created_action: ActivityEventAction.DROP_CREATED
+      }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private applyPinnedCandidateFilter({
+    candidates,
+    pinned,
+    pinnedWaveIds,
+    authenticated_user_id
+  }: {
+    candidates: WaveOverviewCandidate[];
+    pinned: ApiWavesPinFilter | null;
+    pinnedWaveIds: Set<string>;
+    authenticated_user_id: string | null;
+  }): WaveOverviewCandidate[] {
+    if (!authenticated_user_id) {
+      return candidates;
+    }
+    if (pinned === ApiWavesPinFilter.Pinned) {
+      return candidates.filter((candidate) =>
+        pinnedWaveIds.has(candidate.waveId)
+      );
+    }
+    if (pinned === ApiWavesPinFilter.NotPinned) {
+      return candidates.filter(
+        (candidate) => !pinnedWaveIds.has(candidate.waveId)
+      );
+    }
+    return candidates;
+  }
+
+  private async findRecentlyDroppedToWaveCandidates(
+    param: {
+      eligibleGroups: string[];
+      direct_message?: boolean;
+    },
+    candidateLimit: number
+  ): Promise<WaveOverviewCandidate[]> {
+    return await withWaveOverviewCandidateCache({
+      keyParts: {
+        kind: 'recently-dropped-to-waves',
+        candidateLimit,
+        direct_message: param.direct_message,
+        eligibleGroups: this.getSortedEligibleGroups(param.eligibleGroups)
+      },
+      getValue: async () => {
+        const rows = await this.db.execute<WaveOverviewCandidateRow>(
+          `
+            select
+              w.id as wave_id,
+              0 as tier_rank,
+              coalesce(wm.latest_drop_timestamp, 0) as sort_val,
+              coalesce(wm.latest_drop_timestamp, 0) as latest_drop_timestamp
+            from ${WAVES_TABLE} w
+              join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+            where w.parent_wave_id is null
+              ${
+                param.direct_message !== undefined
+                  ? `and w.is_direct_message = :direct_message`
+                  : ``
+              }
+              and ${this.getWaveVisibilityFilter(
+                'w',
+                param.eligibleGroups,
+                'eligibleGroups'
+              )}
+            order by sort_val desc, w.id desc
+            limit :candidateLimit
+          `,
+          { ...param, candidateLimit }
+        );
+        return this.parseWaveOverviewCandidates(rows);
+      }
+    });
+  }
+
+  private async findScoredRecentlyDroppedToWaveCandidates(
+    param: {
+      eligibleGroups: string[];
+      direct_message?: boolean;
+      score_sort: ApiWaveScoreSort;
+      min_visibility_score?: number;
+      min_quality_score?: number;
+      min_hotness_score?: number;
+      min_rep_sort_score?: number;
+      visibility_tier?: ApiWaveVisibilityTier;
+    },
+    candidateLimit: number
+  ): Promise<WaveOverviewCandidate[]> {
+    const scoreColumn = this.getWaveScoreSortColumn(param.score_sort);
+    const filters = [
+      param.min_visibility_score !== undefined
+        ? `wm.wave_visibility_score >= :min_visibility_score`
+        : null,
+      param.min_quality_score !== undefined
+        ? `wm.wave_quality_score >= :min_quality_score`
+        : null,
+      param.min_hotness_score !== undefined
+        ? `wm.wave_hotness_score >= :min_hotness_score`
+        : null,
+      param.min_rep_sort_score !== undefined
+        ? `wm.wave_rep_sort_score >= :min_rep_sort_score`
+        : null,
+      param.visibility_tier !== undefined
+        ? `wm.wave_visibility_tier = :visibility_tier`
+        : null
+    ]
+      .filter((filter): filter is string => !!filter)
+      .join(' and ');
+    const scoreFilters = filters ? `and ${filters}` : ``;
+    return await withWaveOverviewCandidateCache({
+      keyParts: {
+        kind: 'scored-recently-dropped-to-waves',
+        candidateLimit,
+        direct_message: param.direct_message,
+        eligibleGroups: this.getSortedEligibleGroups(param.eligibleGroups),
+        score_sort: param.score_sort,
+        min_visibility_score: param.min_visibility_score,
+        min_quality_score: param.min_quality_score,
+        min_hotness_score: param.min_hotness_score,
+        min_rep_sort_score: param.min_rep_sort_score,
+        visibility_tier: param.visibility_tier
+      },
+      getValue: async () => {
+        const rows = await this.db.execute<WaveOverviewCandidateRow>(
+          `
+            select
+              w.id as wave_id,
+              wm.wave_visibility_rank as tier_rank,
+              ${scoreColumn} as sort_val,
+              coalesce(wm.latest_drop_timestamp, 0) as latest_drop_timestamp
+            from ${WAVES_TABLE} w
+              join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+            where w.parent_wave_id is null
+              ${
+                param.direct_message !== undefined
+                  ? `and w.is_direct_message = :direct_message`
+                  : ``
+              }
+              and ${this.getWaveVisibilityFilter(
+                'w',
+                param.eligibleGroups,
+                'eligibleGroups'
+              )}
+              ${scoreFilters}
+            order by
+              tier_rank asc,
+              sort_val desc,
+              latest_drop_timestamp desc,
+              w.id desc
+            limit :candidateLimit
+          `,
+          { ...param, candidateLimit }
+        );
+        return this.parseWaveOverviewCandidates(rows);
+      }
+    });
+  }
+
+  private async findVisibleCandidatePageOrFallback({
+    pageCandidates,
+    eligibleGroups
+  }: {
+    pageCandidates: WaveOverviewCandidate[];
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[] | null> {
+    const candidateIds = pageCandidates.map((candidate) => candidate.waveId);
+    const waves = await this.findVisibleWavesByOrderedCandidateIds({
+      candidateIds,
+      eligibleGroups
+    });
+    if (waves.length === candidateIds.length) {
+      return waves;
+    }
+    // Eligible groups are part of the candidate cache key. A mismatch here
+    // means stale or visibility-changed rows, so fall back to legacy SQL.
+    logger.info('[WAVE_OVERVIEW_CANDIDATE_FALLBACK]', {
+      event: 'wave_overview_candidate_fallback',
+      reason: 'visibility_mismatch',
+      candidate_count: candidateIds.length,
+      visible_count: waves.length,
+      eligible_group_count: eligibleGroups.length
+    });
+    return null;
+  }
+
+  private async findRecentlyDroppedToWavesFromCandidates(param: {
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+    direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
+  }): Promise<WaveEntity[] | null> {
+    if (param.only_waves_followed_by_authenticated_user) {
+      return null;
+    }
+    const candidateLimit = this.getOverviewCandidateLimit(param);
+    if (candidateLimit === null) {
+      return null;
+    }
+    const candidates = await this.findRecentlyDroppedToWaveCandidates(
+      param,
+      candidateLimit
+    );
+    if (!candidates.length) {
+      return [];
+    }
+    const candidateIds = candidates.map((candidate) => candidate.waveId);
+    const [pinnedWaveIds, mutedWaveIds] = await Promise.all([
+      this.findPinnedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      }),
+      this.findMutedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      })
+    ]);
+    if (mutedWaveIds.size > 0 && candidates.length >= candidateLimit) {
+      return null;
+    }
+    const filteredCandidates = this.applyPinnedCandidateFilter({
+      candidates,
+      pinned: param.pinned,
+      pinnedWaveIds,
+      authenticated_user_id: param.authenticated_user_id
+    });
+    const orderedCandidates = this.sortRecentlyDroppedCandidates(
+      filteredCandidates.map((candidate) =>
+        mutedWaveIds.has(candidate.waveId)
+          ? { ...candidate, sortVal: 0 }
+          : candidate
+      )
+    );
+    const pageCandidates = orderedCandidates.slice(
+      param.offset,
+      param.offset + param.limit
+    );
+    const needsCompleteCandidateWindow = pageCandidates.length < param.limit;
+    if (needsCompleteCandidateWindow && candidates.length >= candidateLimit) {
+      return null;
+    }
+    return await this.findVisibleCandidatePageOrFallback({
+      pageCandidates,
+      eligibleGroups: param.eligibleGroups
+    });
+  }
+
+  private async findScoredRecentlyDroppedToWavesFromCandidates(param: {
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+    direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
+    score_sort: ApiWaveScoreSort;
+    exclude_followed: boolean;
+    min_visibility_score?: number;
+    min_quality_score?: number;
+    min_hotness_score?: number;
+    min_rep_sort_score?: number;
+    visibility_tier?: ApiWaveVisibilityTier;
+  }): Promise<WaveEntity[] | null> {
+    if (param.only_waves_followed_by_authenticated_user) {
+      return null;
+    }
+    if (param.authenticated_user_id && this.hasScoredOverviewFilters(param)) {
+      return null;
+    }
+    const candidateLimit = this.getOverviewCandidateLimit(param);
+    if (candidateLimit === null) {
+      return null;
+    }
+    const candidates = await this.findScoredRecentlyDroppedToWaveCandidates(
+      param,
+      candidateLimit
+    );
+    if (!candidates.length) {
+      return [];
+    }
+    const candidateIds = candidates.map((candidate) => candidate.waveId);
+    const [pinnedWaveIds, mutedWaveIds, followedWaveIds] = await Promise.all([
+      this.findPinnedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      }),
+      this.findMutedCandidateWaveIds({
+        authenticated_user_id: param.authenticated_user_id,
+        waveIds: candidateIds
+      }),
+      param.exclude_followed
+        ? this.findFollowedCandidateWaveIds({
+            authenticated_user_id: param.authenticated_user_id,
+            waveIds: candidateIds,
+            eligibleGroups: param.eligibleGroups
+          })
+        : Promise.resolve(new Set<string>())
+    ]);
+    if (mutedWaveIds.size > 0 && candidates.length >= candidateLimit) {
+      return null;
+    }
+    const filteredCandidates = this.applyPinnedCandidateFilter({
+      candidates,
+      pinned: param.pinned,
+      pinnedWaveIds,
+      authenticated_user_id: param.authenticated_user_id
+    }).filter(
+      (candidate) =>
+        !param.exclude_followed || !followedWaveIds.has(candidate.waveId)
+    );
+    const orderedCandidates = this.sortScoredCandidates(
+      filteredCandidates.map((candidate) =>
+        mutedWaveIds.has(candidate.waveId)
+          ? { ...candidate, tierRank: 999, sortVal: 0 }
+          : candidate
+      )
+    );
+    const pageCandidates = orderedCandidates.slice(
+      param.offset,
+      param.offset + param.limit
+    );
+    const needsCompleteCandidateWindow = pageCandidates.length < param.limit;
+    if (needsCompleteCandidateWindow && candidates.length >= candidateLimit) {
+      return null;
+    }
+    return await this.findVisibleCandidatePageOrFallback({
+      pageCandidates,
+      eligibleGroups: param.eligibleGroups
+    });
   }
 
   private toNullableNumber(
@@ -895,6 +1468,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const offset = searchParams.offset ?? 0;
     const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
+           left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
 	         join ${
              UserGroupsService.GENERATED_VIEW
            } cm on cm.profile_id = w.created_by
@@ -904,11 +1478,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            searchParams.direct_message !== undefined
              ? ` w.is_direct_message = :direct_message and `
              : ``
-         }(${
-           groupsUserIsEligibleFor.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
-             : ``
-         } w.visibility_group_id is null) and w.parent_wave_id is null and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
+         }${this.getWaveAndParentVisibilityFilter(
+           'w',
+           'parent',
+           groupsUserIsEligibleFor,
+           'groupsUserIsEligibleFor'
+         )} and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
            searchParams.limit
          } offset :offset`;
     const params: Record<string, any> = {
@@ -1083,83 +1658,120 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findFollowedSubwaveOverviewContextsByParentWaveId`;
     ctx.timer?.start(timerKey);
     try {
-      const activityRows = await this.db.execute<FollowedSubwaveActivityRow>(
-        `
-            ${this.getFollowedSubwaveActivitySelect({
-              groupIds: eligibleGroups,
-              identityParamName: 'identityId',
-              eligibleGroupsParamName: 'eligibleGroups',
-              parentWaveIdsParamName: 'parentWaveIds'
-            })}
-          `,
-        {
+      const followedSubwaveActivityByParentWaveId =
+        await withFollowedSubwaveOverviewContextCache({
           identityId,
           parentWaveIds,
           eligibleGroups,
-          wave_target_type: ActivityEventTargetType.WAVE,
-          drop_created_action: ActivityEventAction.DROP_CREATED
-        },
-        { wrappedConnection: ctx.connection }
-      );
+          cacheable: ctx.connection === undefined,
+          getValue: async () => {
+            const activityRows =
+              await this.db.execute<FollowedSubwaveActivityRow>(
+                `
+                  ${this.getFollowedSubwaveActivitySelect({
+                    groupIds: eligibleGroups,
+                    identityParamName: 'identityId',
+                    eligibleGroupsParamName: 'eligibleGroups',
+                    parentWaveIdsParamName: 'parentWaveIds'
+                  })}
+                `,
+                {
+                  identityId,
+                  parentWaveIds,
+                  eligibleGroups,
+                  wave_target_type: ActivityEventTargetType.WAVE,
+                  drop_created_action: ActivityEventAction.DROP_CREATED
+                },
+                { wrappedConnection: ctx.connection }
+              );
 
-      const unreadRows = await this.db.execute<HiddenFollowedSubwaveUnreadRow>(
-        `
-            select
-              child.parent_wave_id,
-              count(d.id) as hidden_followed_subwave_unread_drops,
-              min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
-            from ${WAVES_TABLE} child
-            join ${WAVES_TABLE} parent
-              on parent.id = child.parent_wave_id
-             and parent.parent_wave_id is null
-            left join ${WAVE_READER_METRICS_TABLE} parent_reader
-              on parent_reader.wave_id = parent.id
-             and parent_reader.reader_id = :identityId
-            join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
-              on child_follow.subscriber_id = :identityId
-             and child_follow.target_id = child.id
-             and child_follow.target_type = :waveTargetType
-             and child_follow.target_action = :dropCreatedAction
-            join ${WAVE_READER_METRICS_TABLE} child_reader
-              on child_reader.wave_id = child.id
-             and child_reader.reader_id = :identityId
-             and child_reader.latest_read_timestamp is not null
-             and coalesce(child_reader.muted, false) = false
-            join ${DROPS_TABLE} d
-              on d.wave_id = child.id
-             and d.created_at > child_reader.latest_read_timestamp
-            where child.parent_wave_id in (:parentWaveIds)
-              and coalesce(parent_reader.muted, false) = false
-              and ${this.getWaveVisibilityFilter(
-                'child',
-                eligibleGroups,
-                'eligibleGroups'
-              )}
-              and ${this.getWaveVisibilityFilter(
-                'parent',
-                eligibleGroups,
-                'eligibleGroups'
-              )}
-            group by child.parent_wave_id
-          `,
-        {
-          identityId,
-          parentWaveIds,
-          eligibleGroups,
-          waveTargetType: ActivityEventTargetType.WAVE,
-          dropCreatedAction: ActivityEventAction.DROP_CREATED
-        },
-        { wrappedConnection: ctx.connection }
-      );
+            return activityRows.reduce(
+              (acc, row) => {
+                acc[row.parent_wave_id] = {
+                  followed_subwaves_count: Number(row.followed_subwaves_count),
+                  latest_followed_subwave_activity_timestamp:
+                    this.toActivityTimestamp(
+                      row.latest_followed_subwave_activity_timestamp
+                    )
+                };
+                return acc;
+              },
+              {} as Record<
+                string,
+                {
+                  followed_subwaves_count: number;
+                  latest_followed_subwave_activity_timestamp: number | null;
+                }
+              >
+            );
+          }
+        });
 
-      const result = activityRows.reduce(
-        (acc, row) => {
-          acc[row.parent_wave_id] = {
-            followed_subwaves_count: Number(row.followed_subwaves_count),
-            latest_followed_subwave_activity_timestamp:
-              this.toActivityTimestamp(
-                row.latest_followed_subwave_activity_timestamp
-              ),
+      const unreadRows = await withInFlightFollowedSubwaveUnreadRead({
+        identityId,
+        parentWaveIds,
+        eligibleGroups,
+        getValue: async () => {
+          // Keep hidden unread live so wave-reader-metric invalidations are
+          // visible immediately; only coalesce identical concurrent reads.
+          return this.db.execute<HiddenFollowedSubwaveUnreadRow>(
+            `
+              select
+                child.parent_wave_id,
+                count(d.id) as hidden_followed_subwave_unread_drops,
+                min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
+              from ${WAVES_TABLE} child
+              join ${WAVES_TABLE} parent
+                on parent.id = child.parent_wave_id
+               and parent.parent_wave_id is null
+              left join ${WAVE_READER_METRICS_TABLE} parent_reader
+                on parent_reader.wave_id = parent.id
+               and parent_reader.reader_id = :identityId
+              join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+                on child_follow.subscriber_id = :identityId
+               and child_follow.target_id = child.id
+               and child_follow.target_type = :waveTargetType
+               and child_follow.target_action = :dropCreatedAction
+              join ${WAVE_READER_METRICS_TABLE} child_reader
+                on child_reader.wave_id = child.id
+               and child_reader.reader_id = :identityId
+               and child_reader.latest_read_timestamp is not null
+               and coalesce(child_reader.muted, false) = false
+              join ${DROPS_TABLE} d
+                on d.wave_id = child.id
+               and d.created_at > child_reader.latest_read_timestamp
+              where child.parent_wave_id in (:parentWaveIds)
+                and coalesce(parent_reader.muted, false) = false
+                and ${this.getWaveVisibilityFilter(
+                  'child',
+                  eligibleGroups,
+                  'eligibleGroups'
+                )}
+                and ${this.getWaveVisibilityFilter(
+                  'parent',
+                  eligibleGroups,
+                  'eligibleGroups'
+                )}
+              group by child.parent_wave_id
+            `,
+            {
+              identityId,
+              parentWaveIds,
+              eligibleGroups,
+              waveTargetType: ActivityEventTargetType.WAVE,
+              dropCreatedAction: ActivityEventAction.DROP_CREATED
+            },
+            { wrappedConnection: ctx.connection }
+          );
+        }
+      });
+
+      const result = Object.entries(
+        followedSubwaveActivityByParentWaveId
+      ).reduce(
+        (acc, [parentWaveId, activity]) => {
+          acc[parentWaveId] = {
+            ...activity,
             hidden_followed_subwave_unread_drops: 0,
             first_hidden_followed_subwave_unread_drop_serial_no: null
           };
@@ -2166,6 +2778,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    const candidateResult =
+      await this.findRecentlyDroppedToWavesFromCandidates(param);
+    if (candidateResult !== null) {
+      return candidateResult;
+    }
     const useFollowedSubwaveActivity =
       !!param.authenticated_user_id &&
       param.only_waves_followed_by_authenticated_user;
@@ -2287,6 +2904,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       throw new Error(
         'Cannot request followed-only waves and exclude-followed waves together'
       );
+    }
+    const candidateResult =
+      await this.findScoredRecentlyDroppedToWavesFromCandidates(param);
+    if (candidateResult !== null) {
+      return candidateResult;
     }
     const useFollowedSubwaveActivity =
       !!param.authenticated_user_id &&
@@ -2826,6 +3448,69 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async insertMissingWaveReaderMetrics(
+    param: {
+      waveId: string;
+      readerIds: string[];
+      latestReadTimestamp: number;
+    },
+    ctx: RequestContext
+  ) {
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return;
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->insertMissingWaveReaderMetrics`
+    );
+    await this.db.bulkInsert(
+      WAVE_READER_METRICS_TABLE,
+      readerIds.map((readerId) => ({
+        wave_id: param.waveId,
+        reader_id: readerId,
+        latest_read_timestamp: param.latestReadTimestamp
+      })),
+      ['wave_id', 'reader_id', 'latest_read_timestamp'],
+      ctx,
+      {
+        connection: ctx.connection,
+        ignoreDuplicates: true
+      }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->insertMissingWaveReaderMetrics`);
+  }
+
+  async findExistingWaveReaderMetricReaderIds(
+    param: {
+      waveId: string;
+      readerIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return [];
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->findExistingWaveReaderMetricReaderIds`
+    );
+    const result = await this.db.execute<{ reader_id: string }>(
+      `select reader_id
+       from ${WAVE_READER_METRICS_TABLE}
+       where wave_id = :waveId
+         and reader_id in (:readerIds)`,
+      {
+        waveId: param.waveId,
+        readerIds
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findExistingWaveReaderMetricReaderIds`
+    );
+    return result.map((row) => row.reader_id);
+  }
+
   async setWaveMuted(
     param: { waveId: string; readerId: string; muted: boolean },
     ctx: RequestContext
@@ -2841,6 +3526,89 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
   }
 
+  async findIdentityUnreadDropsSummaryByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, WaveUnreadSummary>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsSummaryByWaveId`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const { cachedByWaveId, uncachedWaveIds, cacheKeysByWaveId } =
+        await readWaveUnreadSummaryCache(param.identityId, param.waveIds);
+      if (!uncachedWaveIds.length) {
+        return cachedByWaveId;
+      }
+
+      const dbSummariesByWaveId = await withInFlightWaveUnreadSummaryCacheMiss({
+        identityId: param.identityId,
+        waveIds: uncachedWaveIds,
+        cacheKeysByWaveId,
+        getValue: async () => {
+          // Reader metrics are the unread baseline source of truth. Without
+          // a reader row we do not infer unread drops from old wave history.
+          const dbresult = await this.db.execute<WaveUnreadSummaryRow>(
+            `
+                SELECT d.wave_id AS wave_id,
+                       COUNT(d.id) AS unread_drops_count,
+                       MIN(d.serial_no) AS first_unread_drop_serial_no
+                FROM ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
+                JOIN ${WAVE_READER_METRICS_TABLE} r
+                  ON r.wave_id = d.wave_id
+                  AND r.reader_id = :identityId
+                LEFT JOIN ${IDENTITY_MUTES_TABLE} im
+                  ON im.muter_id = :identityId
+                  AND im.muted_identity_id = d.author_id
+                WHERE d.wave_id IN (:waveIds)
+                  AND d.author_id != :identityId
+                  AND im.id IS NULL
+                  AND d.created_at > r.latest_read_timestamp
+                  AND r.muted = false
+                GROUP BY d.wave_id
+              `,
+            { identityId: param.identityId, waveIds: uncachedWaveIds },
+            { wrappedConnection: ctx.connection }
+          );
+
+          const uncachedSummariesByWaveId = uncachedWaveIds.reduce(
+            (acc, waveId) => {
+              acc[waveId] = {
+                unread_drops_count: 0,
+                first_unread_drop_serial_no: null
+              };
+              return acc;
+            },
+            {} as Record<string, WaveUnreadSummary>
+          );
+          const summariesByWaveId = dbresult.reduce((acc, row) => {
+            acc[row.wave_id] = {
+              unread_drops_count: Number(row.unread_drops_count),
+              first_unread_drop_serial_no: this.toNullableNumber(
+                row.first_unread_drop_serial_no
+              )
+            };
+            return acc;
+          }, uncachedSummariesByWaveId);
+          await writeWaveUnreadSummaryCache({
+            summariesByWaveId,
+            cacheKeysByWaveId
+          });
+          return summariesByWaveId;
+        }
+      });
+
+      return { ...cachedByWaveId, ...dbSummariesByWaveId };
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
   async findIdentityUnreadDropsCountByWaveId(
     param: {
       identityId: string;
@@ -2848,41 +3616,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<Record<string, number>> {
-    if (!param.waveIds.length) {
-      return {};
-    }
-
-    const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsCountByWaveId`;
-    ctx.timer?.start(timerLabel);
-
-    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
-      `
-        SELECT r.wave_id AS wave_id, COUNT(d.id) AS cnt
-        FROM ${WAVE_READER_METRICS_TABLE} r
-        INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
-          ON d.wave_id = r.wave_id
-          AND d.created_at > r.latest_read_timestamp
-        WHERE r.reader_id = :identityId
-          AND r.wave_id IN (:waveIds)
-          AND r.latest_read_timestamp IS NOT NULL
-          AND COALESCE(r.muted, false) = false
-        GROUP BY r.wave_id
-    `,
+    const summaries = await this.findIdentityUnreadDropsSummaryByWaveId(
       param,
-      { wrappedConnection: ctx.connection }
+      ctx
     );
-
-    const result = dbresult.reduce(
-      (acc, row) => {
-        acc[row.wave_id] = row.cnt;
+    return Object.entries(summaries).reduce(
+      (acc, [waveId, summary]) => {
+        acc[waveId] = summary.unread_drops_count;
         return acc;
       },
       {} as Record<string, number>
     );
-
-    ctx.timer?.stop(timerLabel);
-
-    return result;
   }
 
   async findFirstUnreadDropSerialNoByWaveId(
@@ -2892,44 +3636,62 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<Record<string, number | null>> {
-    if (!param.waveIds.length) {
-      return {};
-    }
-
-    const timerLabel = `${this.constructor.name}->findFirstUnreadDropSerialNoByWaveId`;
-    ctx.timer?.start(timerLabel);
-
-    const dbresult = await this.db.execute<{
-      wave_id: string;
-      serial_no: number;
-    }>(
-      `
-        SELECT r.wave_id, MIN(d.serial_no) AS serial_no
-        FROM ${WAVE_READER_METRICS_TABLE} r
-        INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
-          ON d.wave_id = r.wave_id
-          AND d.created_at > r.latest_read_timestamp
-        WHERE r.reader_id = :identityId
-          AND r.wave_id IN (:waveIds)
-          AND r.latest_read_timestamp IS NOT NULL
-          AND COALESCE(r.muted, false) = false
-        GROUP BY r.wave_id
-    `,
+    const summaries = await this.findIdentityUnreadDropsSummaryByWaveId(
       param,
-      { wrappedConnection: ctx.connection }
+      ctx
     );
-
-    const result = dbresult.reduce(
-      (acc, row) => {
-        acc[row.wave_id] = row.serial_no;
+    return Object.entries(summaries).reduce(
+      (acc, [waveId, summary]) => {
+        acc[waveId] = summary.first_unread_drop_serial_no;
         return acc;
       },
       {} as Record<string, number | null>
     );
+  }
 
-    ctx.timer?.stop(timerLabel);
-
-    return result;
+  async countIdentityUnreadDmDrops(
+    param: {
+      identityId: string;
+      eligibleGroups: string[];
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    const timerLabel = `${this.constructor.name}->countIdentityUnreadDmDrops`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const row = await this.db.oneOrNull<UnreadDmDropsCountRow>(
+        `
+          SELECT COUNT(d.id) AS count
+          FROM ${DROPS_TABLE} d
+          JOIN ${WAVE_READER_METRICS_TABLE} r
+            ON r.wave_id = d.wave_id
+           AND r.reader_id = :identityId
+          JOIN ${WAVES_TABLE} w
+            ON w.id = d.wave_id
+           AND w.is_direct_message = true
+          LEFT JOIN ${IDENTITY_MUTES_TABLE} im
+            ON im.muter_id = :identityId
+           AND im.muted_identity_id = d.author_id
+          LEFT JOIN ${WAVES_TABLE} parent
+            ON parent.id = w.parent_wave_id
+          WHERE d.author_id != :identityId
+            AND im.id IS NULL
+            AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+            AND r.muted = false
+            AND ${this.getWaveAndParentVisibilityFilter(
+              'w',
+              'parent',
+              param.eligibleGroups,
+              'eligibleGroups'
+            )}
+        `,
+        { identityId: param.identityId, eligibleGroups: param.eligibleGroups },
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row?.count ?? 0);
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
   }
 
   async deleteBoosts(waveId: string, ctx: RequestContext) {

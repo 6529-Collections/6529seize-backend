@@ -12,7 +12,7 @@ import {
   apiWaveOverviewMapper,
   ApiWaveOverviewMapper
 } from '@/api/waves/api-wave-overview.mapper';
-import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
+import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 import {
   identityFetcher,
   IdentityFetcher
@@ -99,13 +99,10 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findDrops`;
     ctx.timer?.start(timerKey);
     try {
-      const contextProfileId = getWaveReadContextProfileId(
-        ctx.authenticationContext
-      );
       const groupIdsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          contextProfileId,
-          ctx.timer
+        await getGroupsUserIsEligibleForReadContext(
+          this.userGroupsService,
+          ctx
         );
       if (req.parent_drop_id) {
         const parentDrop = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -134,7 +131,8 @@ export class ApiDropV2Service {
       );
       const dropsByIdPromise = this.apiDropMapper.mapDrops(
         pageDropEntities,
-        ctx
+        ctx,
+        { groupIdsUserIsEligibleFor }
       );
       const wavesByIdPromise = this.wavesApiDb
         .findWavesByIdsEligibleForRead(
@@ -142,7 +140,11 @@ export class ApiDropV2Service {
           groupIdsUserIsEligibleFor,
           ctx.connection
         )
-        .then((waves) => this.apiWaveOverviewMapper.mapWaves(waves, ctx));
+        .then((waves) =>
+          this.apiWaveOverviewMapper.mapWaves(waves, ctx, {
+            groupIdsUserIsEligibleFor
+          })
+        );
       const [dropsById, wavesById] = await Promise.all([
         dropsByIdPromise,
         wavesByIdPromise
@@ -410,13 +412,10 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findBoostedDrops`;
     ctx.timer?.start(timerKey);
     try {
-      const contextProfileId = getWaveReadContextProfileId(
-        ctx.authenticationContext
-      );
       const groupIdsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          contextProfileId,
-          ctx.timer
+        await getGroupsUserIsEligibleForReadContext(
+          this.userGroupsService,
+          ctx
         );
       const boosterId =
         req.booster === null
@@ -461,7 +460,9 @@ export class ApiDropV2Service {
           ctx
         )
       ]);
-      const dropsByIdPromise = this.apiDropMapper.mapDrops(dropEntities, ctx);
+      const dropsByIdPromise = this.apiDropMapper.mapDrops(dropEntities, ctx, {
+        groupIdsUserIsEligibleFor
+      });
       const wavesByIdPromise =
         req.wave_id === null
           ? this.mapBoostedDropWaves(
@@ -508,7 +509,9 @@ export class ApiDropV2Service {
       groupIdsUserIsEligibleFor,
       ctx.connection
     );
-    return this.apiWaveOverviewMapper.mapWaves(waveEntities, ctx);
+    return this.apiWaveOverviewMapper.mapWaves(waveEntities, ctx, {
+      groupIdsUserIsEligibleFor
+    });
   }
 
   public async findVoteEditLogsByDropIdOrThrow(
@@ -679,14 +682,8 @@ export class ApiDropV2Service {
     ctx: RequestContext,
     notFoundMessage = `Drop ${id} not found`
   ): Promise<DropEntity> {
-    const contextProfileId = getWaveReadContextProfileId(
-      ctx.authenticationContext
-    );
     const groupIdsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        contextProfileId,
-        ctx.timer
-      );
+      await getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx);
     const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
       id,
       groupIdsUserIsEligibleFor,

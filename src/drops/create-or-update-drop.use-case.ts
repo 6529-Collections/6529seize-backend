@@ -1,5 +1,6 @@
 import {
   CreateOrUpdateDropModel,
+  CreateOrUpdateDropPartModel,
   DropPartIdentifierModel,
   DropReferencedNftModel
 } from './create-or-update-drop.model';
@@ -30,6 +31,7 @@ import {
   DropPartEntity,
   DropType
 } from '@/entities/IDrop';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { AttachmentStatus, DropAttachmentEntity } from '@/entities/IAttachment';
 import {
   identitySubscriptionsDb,
@@ -73,7 +75,10 @@ import {
   artCurationTokenWatchService,
   ArtCurationTokenWatchService
 } from '@/art-curation/art-curation-token-watch.service';
-import { waveScoreService } from '@/api/waves/wave-score.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '@/api/waves/wave-score.service';
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
@@ -96,6 +101,25 @@ import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
+const ALL_GROUP_MENTION_REGEX = /(^|[^a-z0-9_@])@all(?![a-z0-9_@])/i;
+
+export function normalizeDropGroupMentions({
+  mentionedGroups,
+  parts
+}: {
+  mentionedGroups?: readonly DropGroupMention[] | null;
+  parts: readonly Pick<CreateOrUpdateDropPartModel, 'content'>[];
+}): DropGroupMention[] {
+  const hasAllMentionInContent = parts.some((part) =>
+    ALL_GROUP_MENTION_REGEX.test(part.content ?? '')
+  );
+  return collections
+    .distinct([...(mentionedGroups ?? [])])
+    .filter(
+      (mentionedGroup) =>
+        mentionedGroup !== DropGroupMention.ALL || hasAllMentionInContent
+    );
+}
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
   return !nomination.has_won;
@@ -200,6 +224,18 @@ export class CreateOrUpdateDropUseCase {
 
   private getAllDropsNotificationsSubscribersLimit(): number {
     return env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
+  }
+
+  private normalizeMentionedGroups(
+    model: CreateOrUpdateDropModel
+  ): CreateOrUpdateDropModel {
+    return {
+      ...model,
+      mentioned_groups: normalizeDropGroupMentions({
+        mentionedGroups: model.mentioned_groups,
+        parts: model.parts
+      })
+    };
   }
 
   public async execute(
@@ -358,8 +394,9 @@ export class CreateOrUpdateDropUseCase {
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
+    const normalizedModel = this.normalizeMentionedGroups(model);
     const { validatedModel, groupIdsUserIsEligibleFor } =
-      await this.validateReferences(model, isDescriptionDrop, {
+      await this.validateReferences(normalizedModel, isDescriptionDrop, {
         timer,
         connection,
         preResolvedIdentityNomination
@@ -461,13 +498,22 @@ export class CreateOrUpdateDropUseCase {
       );
     } else {
       dropId = randomUUID();
+      const createdAt = Time.currentMillis();
       pendingPushNotificationIds = await this.insertAllDropComponents(
         {
           model: { ...validatedModel, drop_id: dropId },
-          createdAt: Time.currentMillis(),
+          createdAt,
           serialNo: null,
           updatedAt: null,
           wave
+        },
+        { connection, timer }
+      );
+      await this.ensureDirectMessageReaderMetricsForNewDrop(
+        {
+          wave,
+          authorId,
+          createdAt
         },
         { connection, timer }
       );
@@ -500,6 +546,57 @@ export class CreateOrUpdateDropUseCase {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds
     };
+  }
+
+  private async ensureDirectMessageReaderMetricsForNewDrop(
+    {
+      wave,
+      authorId,
+      createdAt
+    }: {
+      wave: WaveEntity;
+      authorId: string;
+      createdAt: number;
+    },
+    { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
+  ) {
+    if (wave.is_direct_message !== true) {
+      return;
+    }
+    const directMessageGroupId = wave.chat_group_id;
+    if (!directMessageGroupId) {
+      return;
+    }
+    const readerIds = await this.userGroupsService.findIdentitiesInGroups(
+      [directMessageGroupId],
+      { timer, connection }
+    );
+    const recipientIds = readerIds.filter((readerId) => readerId !== authorId);
+    const existingReaderMetricIds =
+      await this.wavesApiDb.findExistingWaveReaderMetricReaderIds(
+        {
+          waveId: wave.id,
+          readerIds: recipientIds
+        },
+        { timer, connection }
+      );
+    const existingReaderMetricIdSet = new Set(existingReaderMetricIds);
+    const missingReaderMetricIds = recipientIds.filter(
+      (readerId) => !existingReaderMetricIdSet.has(readerId)
+    );
+    if (!missingReaderMetricIds.length) {
+      return;
+    }
+    // Reader metrics are part of DM write consistency: without this row the
+    // unread summary cannot distinguish current unread activity from old history.
+    await this.wavesApiDb.insertMissingWaveReaderMetrics(
+      {
+        waveId: wave.id,
+        readerIds: missingReaderMetricIds,
+        latestReadTimestamp: Math.max(0, createdAt - 1)
+      },
+      { timer, connection }
+    );
   }
 
   private async validateReferences(
@@ -1372,7 +1469,7 @@ export class CreateOrUpdateDropUseCase {
 
   private async insertAllDropComponents(
     {
-      model,
+      model: inputModel,
       wave,
       createdAt,
       updatedAt,
@@ -1387,6 +1484,9 @@ export class CreateOrUpdateDropUseCase {
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ): Promise<number[]> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+    // Keep this guard at the persistence boundary too; this method can be
+    // reused independently of execute() and the normalization is idempotent.
+    const model = this.normalizeMentionedGroups(inputModel);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
@@ -1590,10 +1690,14 @@ export class CreateOrUpdateDropUseCase {
       connection,
       timer
     });
-    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort([wave.id], {
-      timer,
-      connection
-    });
+    await waveScoreService.markWaveScoresDirtyBestEffort(
+      [wave.id],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      {
+        timer,
+        connection
+      }
+    );
     await this.recordQuoteNotifications({ model, wave }, { timer, connection });
     const pendingPushNotificationIds = await this.notifyWaveDropRecipients(
       {

@@ -5,6 +5,7 @@ import {
   IsNull,
   LessThan,
   MoreThanOrEqual,
+  Brackets,
   QueryRunner
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
@@ -24,6 +25,7 @@ import {
   NFTS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
+  TDH_NFT_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
@@ -54,7 +56,12 @@ import {
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Profile } from './entities/IProfile';
-import { Rememe, RememeUpload } from './entities/IRememe';
+import {
+  REMEME_S3_MAX_PROCESSING_ATTEMPTS,
+  Rememe,
+  RememeS3ProcessingStatus,
+  RememeUpload
+} from './entities/IRememe';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 import { MemesSeason } from './entities/ISeason';
 import {
@@ -95,6 +102,14 @@ import { equalIgnoreCase } from './strings';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
 import { recalculateXTdhUseCase } from './xtdh/recalculate-xtdh.use-case';
+import {
+  invalidateWaveUnreadCache,
+  type WaveUnreadCacheInvalidations
+} from '@/api/waves/wave-unread-cache';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '@/api/waves/wave-score.service';
 
 const mysql = require('mysql');
 
@@ -444,6 +459,33 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
     r.metadata = JSON.parse(r.metadata);
   });
   return results;
+}
+
+export async function fetchNftIdsRecordedInTdh(
+  contract: string,
+  ids: readonly number[]
+): Promise<Set<number>> {
+  const uniqueIds = Array.from(
+    new Set(ids.filter((id) => Number.isInteger(id) && id > 0))
+  );
+  if (uniqueIds.length === 0) {
+    return new Set();
+  }
+
+  const sql = `SELECT DISTINCT id
+    FROM ${TDH_NFT_TABLE}
+    WHERE contract = :contract
+      AND id IN (:ids);`;
+  const results = await sqlExecutor.execute<{ id: number | string }>(sql, {
+    contract: contract.toLowerCase(),
+    ids: uniqueIds
+  });
+
+  return new Set(
+    results
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  );
 }
 
 export async function fetchAllMemeLabNFTs(orderBy?: string) {
@@ -990,6 +1032,10 @@ export async function persistConsolidatedTDH(
   wallets?: string[]
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
+  let unreadCacheInvalidations: WaveUnreadCacheInvalidations = {
+    waveIds: [],
+    readerWaves: []
+  };
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -1044,15 +1090,23 @@ export async function persistConsolidatedTDH(
     }
 
     await updateBoostedTdhRates(qrHolder);
-    await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
-      qrHolder
-    );
+    unreadCacheInvalidations =
+      await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
+        qrHolder
+      );
     await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
 
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
   });
 
+  await invalidateWaveUnreadCache(unreadCacheInvalidations);
+  if (unreadCacheInvalidations.waveIds.length) {
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      unreadCacheInvalidations.waveIds,
+      WaveScoreDirtyRefreshReason.IDENTITY_CONSOLIDATION
+    );
+  }
   await recalculateXTdhUseCase.activateLoop({});
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
@@ -1516,11 +1570,50 @@ export async function fetchRememes() {
 }
 
 export async function fetchMissingS3Rememes() {
-  return await AppDataSource.getRepository(Rememe).find({
-    where: {
-      s3_image_original: IsNull()
-    }
-  });
+  const retryBefore = Time.hoursAgo(6).toDate();
+
+  return await AppDataSource.getRepository(Rememe)
+    .createQueryBuilder('rememe')
+    .where(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_original IS NULL')
+          .orWhere('rememe.s3_image_scaled IS NULL')
+          .orWhere('rememe.s3_image_thumbnail IS NULL')
+          .orWhere('rememe.s3_image_icon IS NULL');
+      })
+    )
+    .andWhere(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_processing_status IS NULL').orWhere(
+          'rememe.s3_image_processing_status IN (:...retryableStatuses)',
+          {
+            retryableStatuses: [
+              RememeS3ProcessingStatus.TRANSIENT_ERROR,
+              RememeS3ProcessingStatus.PARTIAL
+            ]
+          }
+        );
+      })
+    )
+    .andWhere(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_processing_attempts IS NULL').orWhere(
+          'rememe.s3_image_processing_attempts < :maxAttempts',
+          { maxAttempts: REMEME_S3_MAX_PROCESSING_ATTEMPTS }
+        );
+      })
+    )
+    .andWhere(
+      new Brackets((qb) => {
+        qb.where('rememe.s3_image_last_attempt_at IS NULL').orWhere(
+          'rememe.s3_image_last_attempt_at < :retryBefore',
+          { retryBefore }
+        );
+      })
+    )
+    .orderBy('rememe.updated_at', 'ASC')
+    .take(50)
+    .getMany();
 }
 
 export async function persistTDHHistory(date: Date, tdhHistory: TDHHistory[]) {

@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   DROPS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  PINNED_WAVES_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
@@ -21,6 +22,8 @@ import { Time } from '@/time';
 import { WavesApiDb, WaveSubwavesSort } from './waves.api.db';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
+import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
+import { WaveOverviewCandidate } from './wave-overview-candidate-cache';
 
 const repo = new WavesApiDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
@@ -32,6 +35,15 @@ const author = anIdentity(
     profile_id: 'profile-wave-author',
     primary_address: 'wallet-wave-author',
     handle: 'wave-author'
+  }
+);
+const unreadReader = anIdentity(
+  {},
+  {
+    consolidation_key: 'identity-unread-reader',
+    profile_id: 'profile-unread-reader',
+    primary_address: 'wallet-unread-reader',
+    handle: 'unread-reader'
   }
 );
 
@@ -145,6 +157,72 @@ const mutedContainerComparatorWave = aWave(
   { id: 'wave-muted-container-comparator', serial_no: 19, name: 'Comparator' }
 );
 
+const pinnedCandidateWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-pinned-candidate', serial_no: 20, name: 'Pinned Candidate' }
+);
+
+const unpinnedCandidateWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-unpinned-candidate', serial_no: 21, name: 'Unpinned Candidate' }
+);
+
+type CandidateFallbackTestRepo = {
+  sortRecentlyDroppedCandidates: (
+    candidates: WaveOverviewCandidate[]
+  ) => WaveOverviewCandidate[];
+  sortScoredCandidates: (
+    candidates: WaveOverviewCandidate[]
+  ) => WaveOverviewCandidate[];
+  findRecentlyDroppedToWavesFromCandidates: (
+    param: Record<string, unknown>
+  ) => Promise<readonly { id: string }[] | null>;
+  findScoredRecentlyDroppedToWavesFromCandidates: (
+    param: Record<string, unknown>
+  ) => Promise<readonly { id: string }[] | null>;
+  findRecentlyDroppedToWaveCandidates: jest.Mock;
+  findScoredRecentlyDroppedToWaveCandidates: jest.Mock;
+  findPinnedCandidateWaveIds: jest.Mock;
+  findMutedCandidateWaveIds: jest.Mock;
+  findVisibleCandidatePageOrFallback: jest.Mock;
+};
+
+function buildCandidateWindow(count: number): WaveOverviewCandidate[] {
+  return Array.from({ length: count }, (_, index) => ({
+    waveId: `candidate-wave-${index}`,
+    tierRank: 1,
+    sortVal: count - index,
+    latestDropTimestamp: count - index
+  }));
+}
+
+function getWaveIds(waves: readonly { id: string }[] | null): string[] {
+  if (!waves) {
+    throw new Error('Expected wave list');
+  }
+  return waves.map((wave) => wave.id);
+}
+
+function buildLegacyOverviewRepo(): WavesApiDb {
+  const legacyRepo = new WavesApiDb(() => sqlExecutor);
+  const candidateMethods = legacyRepo as unknown as Pick<
+    CandidateFallbackTestRepo,
+    | 'findRecentlyDroppedToWavesFromCandidates'
+    | 'findScoredRecentlyDroppedToWavesFromCandidates'
+  >;
+  candidateMethods.findRecentlyDroppedToWavesFromCandidates = jest
+    .fn()
+    .mockResolvedValue(null);
+  candidateMethods.findScoredRecentlyDroppedToWavesFromCandidates = jest
+    .fn()
+    .mockResolvedValue(null);
+  return legacyRepo;
+}
+
 describeWithSeed(
   'WavesApiDb read visibility',
   [
@@ -232,6 +310,235 @@ describeWithSeed(
         )
       ).resolves.toEqual([
         expect.objectContaining({ id: privateWave.id }),
+        expect.objectContaining({ id: publicWave.id })
+      ]);
+    });
+  }
+);
+
+describe('WavesApiDb overview candidate fallback guards', () => {
+  const baseParams = {
+    authenticated_user_id: author.profile_id!,
+    only_waves_followed_by_authenticated_user: false,
+    offset: 0,
+    limit: 20,
+    eligibleGroups: [],
+    direct_message: false,
+    pinned: null
+  };
+
+  it('uses SQL-compatible id-desc tie-breakers for candidate ordering', () => {
+    const testRepo = new WavesApiDb(
+      () => sqlExecutor
+    ) as unknown as CandidateFallbackTestRepo;
+    const tiedCandidates: WaveOverviewCandidate[] = [
+      {
+        waveId: 'wave-a',
+        tierRank: 1,
+        sortVal: 100,
+        latestDropTimestamp: 100
+      },
+      {
+        waveId: 'wave_',
+        tierRank: 1,
+        sortVal: 100,
+        latestDropTimestamp: 100
+      }
+    ];
+
+    expect(
+      testRepo
+        .sortRecentlyDroppedCandidates(tiedCandidates)
+        .map((candidate) => candidate.waveId)
+    ).toEqual(['wave_', 'wave-a']);
+    expect(
+      testRepo
+        .sortScoredCandidates(tiedCandidates)
+        .map((candidate) => candidate.waveId)
+    ).toEqual(['wave_', 'wave-a']);
+  });
+
+  it('falls back for recently dropped candidates when muting affects a full window', async () => {
+    const testRepo = new WavesApiDb(
+      () => sqlExecutor
+    ) as unknown as CandidateFallbackTestRepo;
+    const candidates = buildCandidateWindow(250);
+    testRepo.findRecentlyDroppedToWaveCandidates = jest
+      .fn()
+      .mockResolvedValue(candidates);
+    testRepo.findPinnedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set());
+    testRepo.findMutedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set([candidates[0]!.waveId]));
+    testRepo.findVisibleCandidatePageOrFallback = jest.fn();
+
+    await expect(
+      testRepo.findRecentlyDroppedToWavesFromCandidates(baseParams)
+    ).resolves.toBeNull();
+    expect(testRepo.findVisibleCandidatePageOrFallback).not.toHaveBeenCalled();
+  });
+
+  it('falls back for scored candidates when muting affects a full window', async () => {
+    const testRepo = new WavesApiDb(
+      () => sqlExecutor
+    ) as unknown as CandidateFallbackTestRepo;
+    const candidates = buildCandidateWindow(250);
+    testRepo.findScoredRecentlyDroppedToWaveCandidates = jest
+      .fn()
+      .mockResolvedValue(candidates);
+    testRepo.findPinnedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set());
+    testRepo.findMutedCandidateWaveIds = jest
+      .fn()
+      .mockResolvedValue(new Set([candidates[0]!.waveId]));
+    testRepo.findVisibleCandidatePageOrFallback = jest.fn();
+
+    await expect(
+      testRepo.findScoredRecentlyDroppedToWavesFromCandidates({
+        ...baseParams,
+        score_sort: ApiWaveScoreSort.Balanced,
+        exclude_followed: false
+      })
+    ).resolves.toBeNull();
+    expect(testRepo.findVisibleCandidatePageOrFallback).not.toHaveBeenCalled();
+  });
+});
+
+describeWithSeed(
+  'WavesApiDb overview candidate safety',
+  [
+    withIdentities([author]),
+    withWaves([
+      publicWave,
+      privateWave,
+      pinnedCandidateWave,
+      unpinnedCandidateWave
+    ]),
+    {
+      table: WAVE_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: publicWave.id,
+          latest_drop_timestamp: 100,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 40,
+          wave_quality_score: 40,
+          wave_hotness_score: 40,
+          wave_rep_sort_score: 40
+        },
+        {
+          wave_id: privateWave.id,
+          latest_drop_timestamp: 200,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 90,
+          wave_quality_score: 90,
+          wave_hotness_score: 90,
+          wave_rep_sort_score: 90
+        },
+        {
+          wave_id: pinnedCandidateWave.id,
+          latest_drop_timestamp: 300,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 60,
+          wave_quality_score: 60,
+          wave_hotness_score: 60,
+          wave_rep_sort_score: 60
+        },
+        {
+          wave_id: unpinnedCandidateWave.id,
+          latest_drop_timestamp: 400,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 70,
+          wave_quality_score: 70,
+          wave_hotness_score: 70,
+          wave_rep_sort_score: 70
+        }
+      ]
+    },
+    {
+      table: PINNED_WAVES_TABLE,
+      rows: [
+        {
+          wave_id: pinnedCandidateWave.id,
+          profile_id: author.profile_id!
+        }
+      ]
+    }
+  ],
+  () => {
+    it('keeps scored candidate results behind current visibility groups', async () => {
+      await expect(
+        repo.findScoredRecentlyDroppedToWaves({
+          authenticated_user_id: null,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: [],
+          direct_message: false,
+          pinned: null,
+          score_sort: ApiWaveScoreSort.Balanced,
+          exclude_followed: false
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: unpinnedCandidateWave.id }),
+        expect.objectContaining({ id: pinnedCandidateWave.id }),
+        expect.objectContaining({ id: publicWave.id })
+      ]);
+
+      await expect(
+        repo.findScoredRecentlyDroppedToWaves({
+          authenticated_user_id: null,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: ['visibility-group'],
+          direct_message: false,
+          pinned: null,
+          score_sort: ApiWaveScoreSort.Balanced,
+          exclude_followed: false
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: privateWave.id }),
+        expect.objectContaining({ id: unpinnedCandidateWave.id }),
+        expect.objectContaining({ id: pinnedCandidateWave.id }),
+        expect.objectContaining({ id: publicWave.id })
+      ]);
+    });
+
+    it('applies pin filters from live per-user state after candidate ranking', async () => {
+      await expect(
+        repo.findRecentlyDroppedToWaves({
+          authenticated_user_id: author.profile_id!,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: [],
+          direct_message: false,
+          pinned: ApiWavesPinFilter.Pinned
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: pinnedCandidateWave.id })
+      ]);
+
+      await expect(
+        repo.findRecentlyDroppedToWaves({
+          authenticated_user_id: author.profile_id!,
+          only_waves_followed_by_authenticated_user: false,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: [],
+          direct_message: false,
+          pinned: ApiWavesPinFilter.NotPinned
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({ id: unpinnedCandidateWave.id }),
         expect.objectContaining({ id: publicWave.id })
       ]);
     });
@@ -715,6 +1022,61 @@ describeWithSeed(
     }
   ],
   () => {
+    it('matches legacy recently-dropped ordering for muted waves in partial candidate windows', async () => {
+      const params = {
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: false,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null
+      };
+      const candidateMethods = repo as unknown as CandidateFallbackTestRepo;
+      const candidatePathWaves =
+        await candidateMethods.findRecentlyDroppedToWavesFromCandidates(params);
+      const candidateWaves = await repo.findRecentlyDroppedToWaves(params);
+      const legacyWaves =
+        await buildLegacyOverviewRepo().findRecentlyDroppedToWaves(params);
+
+      expect(getWaveIds(candidatePathWaves)).toEqual([
+        visibleScoredWave.id,
+        mutedHighScoreWave.id
+      ]);
+      expect(getWaveIds(candidateWaves)).toEqual(getWaveIds(legacyWaves));
+    });
+
+    it('matches legacy scored ordering for muted waves in partial candidate windows', async () => {
+      const params = {
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: false,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null,
+        score_sort: ApiWaveScoreSort.Quality,
+        exclude_followed: false
+      };
+      const candidateMethods = repo as unknown as CandidateFallbackTestRepo;
+      const candidatePathWaves =
+        await candidateMethods.findScoredRecentlyDroppedToWavesFromCandidates(
+          params
+        );
+      const candidateWaves =
+        await repo.findScoredRecentlyDroppedToWaves(params);
+      const legacyWaves =
+        await buildLegacyOverviewRepo().findScoredRecentlyDroppedToWaves(
+          params
+        );
+
+      expect(getWaveIds(candidatePathWaves)).toEqual([
+        visibleScoredWave.id,
+        mutedHighScoreWave.id
+      ]);
+      expect(getWaveIds(candidateWaves)).toEqual(getWaveIds(legacyWaves));
+    });
+
     it('applies muted score floors to scored min filters and tier filters', async () => {
       const waves = await repo.findScoredRecentlyDroppedToWaves({
         authenticated_user_id: author.profile_id!,
@@ -804,10 +1166,42 @@ describeWithSeed(
     }
   ],
   () => {
-    it('excludes subwaves from top-level search results', async () => {
+    it('includes visible subwaves in search results', async () => {
       const waves = await repo.searchWaves(
         {
           limit: 10,
+          name: 'Subwave',
+          direct_message: false
+        },
+        [],
+        ctx
+      );
+
+      expect(waves.map((wave) => wave.id)).toEqual([
+        betaSubwave.id,
+        alphaSubwave.id
+      ]);
+    });
+
+    it('hides search results for subwaves whose parent is not visible', async () => {
+      const waves = await repo.searchWaves(
+        {
+          limit: 10,
+          name: 'Visible Child',
+          direct_message: false
+        },
+        [],
+        ctx
+      );
+
+      expect(waves.map((wave) => wave.id)).toEqual([]);
+    });
+
+    it('returns subwaves of hidden parents when the parent is visible to the user', async () => {
+      const waves = await repo.searchWaves(
+        {
+          limit: 10,
+          name: 'Visible Child',
           direct_message: false
         },
         ['hidden-parent-group'],
@@ -815,8 +1209,7 @@ describeWithSeed(
       );
 
       expect(waves.map((wave) => wave.id)).toEqual([
-        hiddenParentWave.id,
-        parentWave.id
+        publicSubwaveOfHiddenParent.id
       ]);
     });
 
@@ -856,6 +1249,303 @@ describeWithSeed(
       ).resolves.toEqual([
         expect.objectContaining({ id: publicSubwaveOfHiddenParent.id })
       ]);
+    });
+  }
+);
+
+const unreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-unread-summary', serial_no: 30, name: 'Unread Summary Wave' }
+);
+const noUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-no-unread-summary',
+    serial_no: 31,
+    name: 'No Unread Summary Wave'
+  }
+);
+const mutedUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-muted-unread-summary',
+    serial_no: 32,
+    name: 'Muted Unread Summary Wave'
+  }
+);
+const noReaderMetricUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!,
+    is_direct_message: false
+  },
+  {
+    id: 'wave-no-reader-metric-unread-summary',
+    serial_no: 33,
+    name: 'No Reader Metric Unread Summary Wave'
+  }
+);
+const seededReaderMetricUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-seeded-reader-metric-unread-summary',
+    serial_no: 34,
+    name: 'Seeded Reader Metric Unread Summary Wave'
+  }
+);
+
+describeWithSeed(
+  'WavesApiDb unread summaries',
+  [
+    withIdentities([author, unreadReader]),
+    withWaves([
+      unreadSummaryWave,
+      noUnreadSummaryWave,
+      mutedUnreadSummaryWave,
+      noReaderMetricUnreadSummaryWave,
+      seededReaderMetricUnreadSummaryWave
+    ]),
+    {
+      table: WAVE_READER_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: unreadSummaryWave.id,
+          reader_id: unreadReader.profile_id!,
+          latest_read_timestamp: 1000,
+          muted: false
+        },
+        {
+          wave_id: mutedUnreadSummaryWave.id,
+          reader_id: unreadReader.profile_id!,
+          latest_read_timestamp: 1000,
+          muted: true
+        }
+      ]
+    },
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          serial_no: 21,
+          id: 'read-drop-before-timestamp',
+          wave_id: unreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 900,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 22,
+          id: 'first-unread-summary-drop',
+          wave_id: unreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1100,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 23,
+          id: 'second-unread-summary-drop',
+          wave_id: unreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1200,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 24,
+          id: 'muted-unread-summary-drop',
+          wave_id: mutedUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1200,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 25,
+          id: 'reader-authored-summary-drop',
+          wave_id: unreadSummaryWave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 1300,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 26,
+          id: 'no-reader-metric-unread-summary-drop',
+          wave_id: noReaderMetricUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1400,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 27,
+          id: 'no-reader-metric-reader-authored-summary-drop',
+          wave_id: noReaderMetricUnreadSummaryWave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 1500,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 28,
+          id: 'seeded-reader-metric-old-summary-drop',
+          wave_id: seededReaderMetricUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1300,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 29,
+          id: 'seeded-reader-metric-current-summary-drop',
+          wave_id: seededReaderMetricUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 1400,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        }
+      ]
+    }
+  ],
+  () => {
+    it('returns unread counts and first unread serials from one summary read', async () => {
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [
+              unreadSummaryWave.id,
+              noUnreadSummaryWave.id,
+              mutedUnreadSummaryWave.id,
+              noReaderMetricUnreadSummaryWave.id
+            ]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [unreadSummaryWave.id]: {
+          unread_drops_count: 2,
+          first_unread_drop_serial_no: 22
+        },
+        [noUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        },
+        [mutedUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        },
+        [noReaderMetricUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        }
+      });
+    });
+
+    it('does not infer unread history for a non-DM wave without reader metrics', async () => {
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [noReaderMetricUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [noReaderMetricUnreadSummaryWave.id]: {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        }
+      });
+    });
+
+    it('counts only drops after an explicitly seeded reader metric', async () => {
+      await repo.insertMissingWaveReaderMetrics(
+        {
+          waveId: seededReaderMetricUnreadSummaryWave.id,
+          readerIds: [unreadReader.profile_id!],
+          latestReadTimestamp: 1399
+        },
+        ctx
+      );
+
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [seededReaderMetricUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [seededReaderMetricUnreadSummaryWave.id]: {
+          unread_drops_count: 1,
+          first_unread_drop_serial_no: 29
+        }
+      });
     });
   }
 );

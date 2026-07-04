@@ -11,8 +11,13 @@ export * from '../models/ApiArchiveProfileCmsPackageRequest';
 export * from '../models/ApiArtistNameItem';
 export * from '../models/ApiAttachment';
 export * from '../models/ApiAttachmentKind';
+export * from '../models/ApiAttachmentSafety';
+export * from '../models/ApiAttachmentSafetyScanner';
+export * from '../models/ApiAttachmentSafetyStatus';
+export * from '../models/ApiAttachmentSafetyValidation';
 export * from '../models/ApiAttachmentStatus';
 export * from '../models/ApiAttachmentUploadMimeType';
+export * from '../models/ApiAuthSettings';
 export * from '../models/ApiAvailableRatingCredit';
 export * from '../models/ApiBlockItem';
 export * from '../models/ApiBlocksPage';
@@ -62,12 +67,16 @@ export * from '../models/ApiConsolidatedTdhMetricsSort';
 export * from '../models/ApiConsolidatedTdhView';
 export * from '../models/ApiCreateAttachmentMultipartUploadRequest';
 export * from '../models/ApiCreateAttachmentMultipartUploadResponse';
+export * from '../models/ApiCreateConnectionShareRequest';
+export * from '../models/ApiCreateConnectionShareResponse';
 export * from '../models/ApiCreateDropMedia';
 export * from '../models/ApiCreateDropPart';
 export * from '../models/ApiCreateDropPollRequest';
 export * from '../models/ApiCreateDropRequest';
 export * from '../models/ApiCreateGroup';
 export * from '../models/ApiCreateGroupDescription';
+export * from '../models/ApiCreateLegacyDesktopConnectionShareRequest';
+export * from '../models/ApiCreateLegacyDesktopConnectionShareResponse';
 export * from '../models/ApiCreateMediaUploadUrlRequest';
 export * from '../models/ApiCreateMediaUrlResponse';
 export * from '../models/ApiCreateMentionedWave';
@@ -102,6 +111,7 @@ export * from '../models/ApiDecentralizedMediaProtocol';
 export * from '../models/ApiDecentralizedMediaResolution';
 export * from '../models/ApiDistributionAirdropsCsvUploadRequest';
 export * from '../models/ApiDistributionAirdropsUploadResponse';
+export * from '../models/ApiDmDropsUnreadCount';
 export * from '../models/ApiDrop';
 export * from '../models/ApiDropAndDropVote';
 export * from '../models/ApiDropAndWave';
@@ -186,6 +196,7 @@ export * from '../models/ApiGroupTdhInclusionStrategy';
 export * from '../models/ApiIdentity';
 export * from '../models/ApiIdentityActivity';
 export * from '../models/ApiIdentityAndSubscriptionActions';
+export * from '../models/ApiIdentityMuteState';
 export * from '../models/ApiIdentityOverview';
 export * from '../models/ApiIdentityOverviewBadges';
 export * from '../models/ApiIdentityOverviewContextProfileContext';
@@ -201,6 +212,8 @@ export * from '../models/ApiMarkDropUnreadResponse';
 export * from '../models/ApiMediaResolveRequest';
 export * from '../models/ApiMediaResolveResponse';
 export * from '../models/ApiMediaUploadMimeType';
+export * from '../models/ApiMemesExtendedData';
+export * from '../models/ApiMemesExtendedDataPage';
 export * from '../models/ApiMemesMintStat';
 export * from '../models/ApiMemesMintStatsPage';
 export * from '../models/ApiMemesMintStatsTotals';
@@ -291,6 +304,8 @@ export * from '../models/ApiQuotedDropResponse';
 export * from '../models/ApiRateMatter';
 export * from '../models/ApiRatingWithProfileInfoAndLevel';
 export * from '../models/ApiRatingWithProfileInfoAndLevelPage';
+export * from '../models/ApiRedeemConnectionShareRequest';
+export * from '../models/ApiRedeemConnectionShareResponse';
 export * from '../models/ApiRedeemRefreshTokenRequest';
 export * from '../models/ApiRedeemRefreshTokenResponse';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
@@ -308,6 +323,15 @@ export * from '../models/ApiReplyToDropV2';
 export * from '../models/ApiRollbackProfileCmsPackageRequest';
 export * from '../models/ApiSaveProfileCmsPackageDraftRequest';
 export * from '../models/ApiSeizeSettings';
+export * from '../models/ApiSessionLoginRequest';
+export * from '../models/ApiSessionLogoutNativeRequest';
+export * from '../models/ApiSessionLogoutWebRequest';
+export * from '../models/ApiSessionNativeResponse';
+export * from '../models/ApiSessionNonceQuery';
+export * from '../models/ApiSessionNonceResponse';
+export * from '../models/ApiSessionRefreshNativeRequest';
+export * from '../models/ApiSessionRefreshWebRequest';
+export * from '../models/ApiSessionWebResponse';
 export * from '../models/ApiSetPinnedDropRequest';
 export * from '../models/ApiSetProfileWaveRequest';
 export * from '../models/ApiStartMultipartMediaUploadResponse';
@@ -434,6 +458,7 @@ export * from '../models/ApiXTdhStats';
 export * from '../models/ApiXTdhToken';
 export * from '../models/ApiXTdhTokensPage';
 export * from '../models/CreateDirectMessageWaveRequest';
+export * from '../models/CreateWalletAuthSession201Response';
 export * from '../models/DistributionNormalized';
 export * from '../models/DistributionNormalizedPage';
 export * from '../models/DistributionOverview';
@@ -443,6 +468,7 @@ export * from '../models/DistributionPhotoCompleteRequest';
 export * from '../models/DistributionPhotoCompleteRequestPhoto';
 export * from '../models/DistributionPhotoCompleteResponse';
 export * from '../models/DistributionPhotosPage';
+export * from '../models/LogoutWalletAuthSessionRequest';
 export * from '../models/MintingClaim';
 export * from '../models/MintingClaimAnimationDetails';
 export * from '../models/MintingClaimAnimationDetailsGlb';
@@ -466,6 +492,7 @@ export * from '../models/RedeemedSubscription';
 export * from '../models/RedeemedSubscriptionCounts';
 export * from '../models/RedeemedSubscriptionCountsPage';
 export * from '../models/RedeemedSubscriptionPage';
+export * from '../models/RefreshWalletAuthSessionRequest';
 export * from '../models/SubscribeAllEditionsResponse';
 export * from '../models/SubscriptionCountResponse';
 export * from '../models/SubscriptionCounts';
@@ -492,10 +519,15 @@ import { ApiAggregatedActivityMemes } from '../models/ApiAggregatedActivityMemes
 import { ApiAggregatedActivityPage } from '../models/ApiAggregatedActivityPage';
 import { ApiArchiveProfileCmsPackageRequest } from '../models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtistNameItem } from '../models/ApiArtistNameItem';
-import { ApiAttachment        } from '../models/ApiAttachment';
+import { ApiAttachment         } from '../models/ApiAttachment';
 import { ApiAttachmentKind } from '../models/ApiAttachmentKind';
+import { ApiAttachmentSafety      } from '../models/ApiAttachmentSafety';
+import { ApiAttachmentSafetyScanner } from '../models/ApiAttachmentSafetyScanner';
+import { ApiAttachmentSafetyStatus } from '../models/ApiAttachmentSafetyStatus';
+import { ApiAttachmentSafetyValidation } from '../models/ApiAttachmentSafetyValidation';
 import { ApiAttachmentStatus } from '../models/ApiAttachmentStatus';
 import { ApiAttachmentUploadMimeType } from '../models/ApiAttachmentUploadMimeType';
+import { ApiAuthSettings } from '../models/ApiAuthSettings';
 import { ApiAvailableRatingCredit } from '../models/ApiAvailableRatingCredit';
 import { ApiBlockItem } from '../models/ApiBlockItem';
 import { ApiBlocksPage } from '../models/ApiBlocksPage';
@@ -545,12 +577,16 @@ import { ApiConsolidatedTdhMetricsSort } from '../models/ApiConsolidatedTdhMetri
 import { ApiConsolidatedTdhView } from '../models/ApiConsolidatedTdhView';
 import { ApiCreateAttachmentMultipartUploadRequest   } from '../models/ApiCreateAttachmentMultipartUploadRequest';
 import { ApiCreateAttachmentMultipartUploadResponse     } from '../models/ApiCreateAttachmentMultipartUploadResponse';
+import { ApiCreateConnectionShareRequest, ApiCreateConnectionShareRequestTargetClientTypeEnum   , ApiCreateConnectionShareRequestClientTypeEnum     } from '../models/ApiCreateConnectionShareRequest';
+import { ApiCreateConnectionShareResponse    , ApiCreateConnectionShareResponseTargetClientTypeEnum    } from '../models/ApiCreateConnectionShareResponse';
 import { ApiCreateDropMedia } from '../models/ApiCreateDropMedia';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropPollRequest } from '../models/ApiCreateDropPollRequest';
-import { ApiCreateDropRequest                } from '../models/ApiCreateDropRequest';
+import { ApiCreateDropRequest                 } from '../models/ApiCreateDropRequest';
 import { ApiCreateGroup } from '../models/ApiCreateGroup';
 import { ApiCreateGroupDescription } from '../models/ApiCreateGroupDescription';
+import { ApiCreateLegacyDesktopConnectionShareRequest , ApiCreateLegacyDesktopConnectionShareRequestClientTypeEnum     } from '../models/ApiCreateLegacyDesktopConnectionShareRequest';
+import { ApiCreateLegacyDesktopConnectionShareResponse } from '../models/ApiCreateLegacyDesktopConnectionShareResponse';
 import { ApiCreateMediaUploadUrlRequest   } from '../models/ApiCreateMediaUploadUrlRequest';
 import { ApiCreateMediaUrlResponse } from '../models/ApiCreateMediaUrlResponse';
 import { ApiCreateMentionedWave } from '../models/ApiCreateMentionedWave';
@@ -585,6 +621,7 @@ import { ApiDecentralizedMediaProtocol } from '../models/ApiDecentralizedMediaPr
 import { ApiDecentralizedMediaResolution          } from '../models/ApiDecentralizedMediaResolution';
 import { ApiDistributionAirdropsCsvUploadRequest } from '../models/ApiDistributionAirdropsCsvUploadRequest';
 import { ApiDistributionAirdropsUploadResponse } from '../models/ApiDistributionAirdropsUploadResponse';
+import { ApiDmDropsUnreadCount } from '../models/ApiDmDropsUnreadCount';
 import { ApiDrop                                 } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
 import { ApiDropAndWave } from '../models/ApiDropAndWave';
@@ -669,6 +706,7 @@ import { ApiGroupTdhInclusionStrategy } from '../models/ApiGroupTdhInclusionStra
 import { ApiIdentity                          } from '../models/ApiIdentity';
 import { ApiIdentityActivity } from '../models/ApiIdentityActivity';
 import { ApiIdentityAndSubscriptionActions } from '../models/ApiIdentityAndSubscriptionActions';
+import { ApiIdentityMuteState } from '../models/ApiIdentityMuteState';
 import { ApiIdentityOverview         } from '../models/ApiIdentityOverview';
 import { ApiIdentityOverviewBadges } from '../models/ApiIdentityOverviewBadges';
 import { ApiIdentityOverviewContextProfileContext } from '../models/ApiIdentityOverviewContextProfileContext';
@@ -684,6 +722,8 @@ import { ApiMarkDropUnreadResponse } from '../models/ApiMarkDropUnreadResponse';
 import { ApiMediaResolveRequest } from '../models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '../models/ApiMediaResolveResponse';
 import { ApiMediaUploadMimeType } from '../models/ApiMediaUploadMimeType';
+import { ApiMemesExtendedData                             , ApiMemesExtendedDataTokenTypeEnum                               } from '../models/ApiMemesExtendedData';
+import { ApiMemesExtendedDataPage } from '../models/ApiMemesExtendedDataPage';
 import { ApiMemesMintStat } from '../models/ApiMemesMintStat';
 import { ApiMemesMintStatsPage } from '../models/ApiMemesMintStatsPage';
 import { ApiMemesMintStatsTotals } from '../models/ApiMemesMintStatsTotals';
@@ -774,6 +814,8 @@ import { ApiQuotedDropResponse } from '../models/ApiQuotedDropResponse';
 import { ApiRateMatter } from '../models/ApiRateMatter';
 import { ApiRatingWithProfileInfoAndLevel } from '../models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../models/ApiRatingWithProfileInfoAndLevelPage';
+import { ApiRedeemConnectionShareRequest , ApiRedeemConnectionShareRequestTargetClientTypeEnum   } from '../models/ApiRedeemConnectionShareRequest';
+import { ApiRedeemConnectionShareResponse    , ApiRedeemConnectionShareResponseClientTypeEnum     } from '../models/ApiRedeemConnectionShareResponse';
 import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
@@ -791,6 +833,15 @@ import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
 import { ApiRollbackProfileCmsPackageRequest } from '../models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '../models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
+import { ApiSessionLoginRequest, ApiSessionLoginRequestClientTypeEnum      , ApiSessionLoginRequestWalletKindHintEnum  , ApiSessionLoginRequestSignatureVersionEnum   } from '../models/ApiSessionLoginRequest';
+import { ApiSessionLogoutNativeRequest, ApiSessionLogoutNativeRequestClientTypeEnum      } from '../models/ApiSessionLogoutNativeRequest';
+import { ApiSessionLogoutWebRequest, ApiSessionLogoutWebRequestClientTypeEnum     } from '../models/ApiSessionLogoutWebRequest';
+import { ApiSessionNativeResponse    , ApiSessionNativeResponseClientTypeEnum     } from '../models/ApiSessionNativeResponse';
+import { ApiSessionNonceQuery , ApiSessionNonceQueryClientTypeEnum    } from '../models/ApiSessionNonceQuery';
+import { ApiSessionNonceResponse } from '../models/ApiSessionNonceResponse';
+import { ApiSessionRefreshNativeRequest, ApiSessionRefreshNativeRequestClientTypeEnum     } from '../models/ApiSessionRefreshNativeRequest';
+import { ApiSessionRefreshWebRequest, ApiSessionRefreshWebRequestClientTypeEnum    } from '../models/ApiSessionRefreshWebRequest';
+import { ApiSessionWebResponse    , ApiSessionWebResponseClientTypeEnum   } from '../models/ApiSessionWebResponse';
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
 import { ApiSetProfileWaveRequest } from '../models/ApiSetProfileWaveRequest';
 import { ApiStartMultipartMediaUploadResponse     } from '../models/ApiStartMultipartMediaUploadResponse';
@@ -917,6 +968,7 @@ import { ApiXTdhStats } from '../models/ApiXTdhStats';
 import { ApiXTdhToken } from '../models/ApiXTdhToken';
 import { ApiXTdhTokensPage } from '../models/ApiXTdhTokensPage';
 import { CreateDirectMessageWaveRequest } from '../models/CreateDirectMessageWaveRequest';
+import { CreateWalletAuthSession201ResponseClass } from '../models/CreateWalletAuthSession201Response';
 import { DistributionNormalized } from '../models/DistributionNormalized';
 import { DistributionNormalizedPage } from '../models/DistributionNormalizedPage';
 import { DistributionOverview } from '../models/DistributionOverview';
@@ -926,6 +978,7 @@ import { DistributionPhotoCompleteRequest } from '../models/DistributionPhotoCom
 import { DistributionPhotoCompleteRequestPhoto } from '../models/DistributionPhotoCompleteRequestPhoto';
 import { DistributionPhotoCompleteResponse } from '../models/DistributionPhotoCompleteResponse';
 import { DistributionPhotosPage } from '../models/DistributionPhotosPage';
+import { LogoutWalletAuthSessionRequestClass } from '../models/LogoutWalletAuthSessionRequest';
 import { MintingClaim } from '../models/MintingClaim';
 import { MintingClaimAnimationDetailsClass } from '../models/MintingClaimAnimationDetails';
 import { MintingClaimAnimationDetailsGlb , MintingClaimAnimationDetailsGlbFormatEnum    } from '../models/MintingClaimAnimationDetailsGlb';
@@ -949,6 +1002,7 @@ import { RedeemedSubscription } from '../models/RedeemedSubscription';
 import { RedeemedSubscriptionCounts } from '../models/RedeemedSubscriptionCounts';
 import { RedeemedSubscriptionCountsPage } from '../models/RedeemedSubscriptionCountsPage';
 import { RedeemedSubscriptionPage } from '../models/RedeemedSubscriptionPage';
+import { RefreshWalletAuthSessionRequestClass } from '../models/RefreshWalletAuthSessionRequest';
 import { SubscribeAllEditionsResponse } from '../models/SubscribeAllEditionsResponse';
 import { SubscriptionCountResponse } from '../models/SubscriptionCountResponse';
 import { SubscriptionCounts } from '../models/SubscriptionCounts';
@@ -979,6 +1033,9 @@ let primitives = [
 let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
     "ApiAttachmentKind",
+    "ApiAttachmentSafetyScanner",
+    "ApiAttachmentSafetyStatus",
+    "ApiAttachmentSafetyValidation",
     "ApiAttachmentStatus",
     "ApiAttachmentUploadMimeType",
     "ApiCmsAgentPatchSchemaEnum",
@@ -989,6 +1046,10 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiConsolidatedTdhMetricsContent",
     "ApiConsolidatedTdhMetricsSort",
     "ApiConsolidatedTdhView",
+    "ApiCreateConnectionShareRequestTargetClientTypeEnum",
+    "ApiCreateConnectionShareRequestClientTypeEnum",
+    "ApiCreateConnectionShareResponseTargetClientTypeEnum",
+    "ApiCreateLegacyDesktopConnectionShareRequestClientTypeEnum",
     "ApiDecentralizedMediaProtocol",
     "ApiDropGroupMention",
     "ApiDropMainType",
@@ -1003,6 +1064,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiIdentitySubscriptionTargetAction",
     "ApiIdentitySubscriptionTargetType",
     "ApiMediaUploadMimeType",
+    "ApiMemesExtendedDataTokenTypeEnum",
     "ApiNftTokenTypeEnum",
     "ApiNftLinkMediaPreviewStatusEnum",
     "ApiNotificationCause",
@@ -1031,7 +1093,19 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileCmsWalletGalleryWalletStatusEnum",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
+    "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
+    "ApiRedeemConnectionShareResponseClientTypeEnum",
     "ApiRepDirection",
+    "ApiSessionLoginRequestClientTypeEnum",
+    "ApiSessionLoginRequestWalletKindHintEnum",
+    "ApiSessionLoginRequestSignatureVersionEnum",
+    "ApiSessionLogoutNativeRequestClientTypeEnum",
+    "ApiSessionLogoutWebRequestClientTypeEnum",
+    "ApiSessionNativeResponseClientTypeEnum",
+    "ApiSessionNonceQueryClientTypeEnum",
+    "ApiSessionRefreshNativeRequestClientTypeEnum",
+    "ApiSessionRefreshWebRequestClientTypeEnum",
+    "ApiSessionWebResponseClientTypeEnum",
     "ApiSubmissionDropStatus",
     "ApiSubwavesSort",
     "ApiUpcomingMemeSubscriptionStatusSourceEnum",
@@ -1054,9 +1128,12 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiWavesV2ListType",
     "ApiXTdhGrantStatus",
     "ApiXTdhGrantTargetChain",
+    "CreateWalletAuthSession201ResponseClientTypeEnum",
+    "LogoutWalletAuthSessionRequestClientTypeEnum",
     "MintingClaimAnimationDetailsFormatEnum",
     "MintingClaimAnimationDetailsGlbFormatEnum",
     "MintingClaimAnimationDetailsHtmlFormatEnum",
+    "RefreshWalletAuthSessionRequestClientTypeEnum",
 ]);
 
 let typeMap: {[index: string]: any} = {
@@ -1072,6 +1149,8 @@ let typeMap: {[index: string]: any} = {
     "ApiArchiveProfileCmsPackageRequest": ApiArchiveProfileCmsPackageRequest,
     "ApiArtistNameItem": ApiArtistNameItem,
     "ApiAttachment": ApiAttachment,
+    "ApiAttachmentSafety": ApiAttachmentSafety,
+    "ApiAuthSettings": ApiAuthSettings,
     "ApiAvailableRatingCredit": ApiAvailableRatingCredit,
     "ApiBlockItem": ApiBlockItem,
     "ApiBlocksPage": ApiBlocksPage,
@@ -1116,12 +1195,16 @@ let typeMap: {[index: string]: any} = {
     "ApiConsolidatedTdhMetricsPage": ApiConsolidatedTdhMetricsPage,
     "ApiCreateAttachmentMultipartUploadRequest": ApiCreateAttachmentMultipartUploadRequest,
     "ApiCreateAttachmentMultipartUploadResponse": ApiCreateAttachmentMultipartUploadResponse,
+    "ApiCreateConnectionShareRequest": ApiCreateConnectionShareRequest,
+    "ApiCreateConnectionShareResponse": ApiCreateConnectionShareResponse,
     "ApiCreateDropMedia": ApiCreateDropMedia,
     "ApiCreateDropPart": ApiCreateDropPart,
     "ApiCreateDropPollRequest": ApiCreateDropPollRequest,
     "ApiCreateDropRequest": ApiCreateDropRequest,
     "ApiCreateGroup": ApiCreateGroup,
     "ApiCreateGroupDescription": ApiCreateGroupDescription,
+    "ApiCreateLegacyDesktopConnectionShareRequest": ApiCreateLegacyDesktopConnectionShareRequest,
+    "ApiCreateLegacyDesktopConnectionShareResponse": ApiCreateLegacyDesktopConnectionShareResponse,
     "ApiCreateMediaUploadUrlRequest": ApiCreateMediaUploadUrlRequest,
     "ApiCreateMediaUrlResponse": ApiCreateMediaUrlResponse,
     "ApiCreateMentionedWave": ApiCreateMentionedWave,
@@ -1155,6 +1238,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDecentralizedMediaResolution": ApiDecentralizedMediaResolution,
     "ApiDistributionAirdropsCsvUploadRequest": ApiDistributionAirdropsCsvUploadRequest,
     "ApiDistributionAirdropsUploadResponse": ApiDistributionAirdropsUploadResponse,
+    "ApiDmDropsUnreadCount": ApiDmDropsUnreadCount,
     "ApiDrop": ApiDrop,
     "ApiDropAndDropVote": ApiDropAndDropVote,
     "ApiDropAndWave": ApiDropAndWave,
@@ -1230,6 +1314,7 @@ let typeMap: {[index: string]: any} = {
     "ApiIdentity": ApiIdentity,
     "ApiIdentityActivity": ApiIdentityActivity,
     "ApiIdentityAndSubscriptionActions": ApiIdentityAndSubscriptionActions,
+    "ApiIdentityMuteState": ApiIdentityMuteState,
     "ApiIdentityOverview": ApiIdentityOverview,
     "ApiIdentityOverviewBadges": ApiIdentityOverviewBadges,
     "ApiIdentityOverviewContextProfileContext": ApiIdentityOverviewContextProfileContext,
@@ -1242,6 +1327,8 @@ let typeMap: {[index: string]: any} = {
     "ApiMarkDropUnreadResponse": ApiMarkDropUnreadResponse,
     "ApiMediaResolveRequest": ApiMediaResolveRequest,
     "ApiMediaResolveResponse": ApiMediaResolveResponse,
+    "ApiMemesExtendedData": ApiMemesExtendedData,
+    "ApiMemesExtendedDataPage": ApiMemesExtendedDataPage,
     "ApiMemesMintStat": ApiMemesMintStat,
     "ApiMemesMintStatsPage": ApiMemesMintStatsPage,
     "ApiMemesMintStatsTotals": ApiMemesMintStatsTotals,
@@ -1325,6 +1412,8 @@ let typeMap: {[index: string]: any} = {
     "ApiQuotedDropResponse": ApiQuotedDropResponse,
     "ApiRatingWithProfileInfoAndLevel": ApiRatingWithProfileInfoAndLevel,
     "ApiRatingWithProfileInfoAndLevelPage": ApiRatingWithProfileInfoAndLevelPage,
+    "ApiRedeemConnectionShareRequest": ApiRedeemConnectionShareRequest,
+    "ApiRedeemConnectionShareResponse": ApiRedeemConnectionShareResponse,
     "ApiRedeemRefreshTokenRequest": ApiRedeemRefreshTokenRequest,
     "ApiRedeemRefreshTokenResponse": ApiRedeemRefreshTokenResponse,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
@@ -1341,6 +1430,15 @@ let typeMap: {[index: string]: any} = {
     "ApiRollbackProfileCmsPackageRequest": ApiRollbackProfileCmsPackageRequest,
     "ApiSaveProfileCmsPackageDraftRequest": ApiSaveProfileCmsPackageDraftRequest,
     "ApiSeizeSettings": ApiSeizeSettings,
+    "ApiSessionLoginRequest": ApiSessionLoginRequest,
+    "ApiSessionLogoutNativeRequest": ApiSessionLogoutNativeRequest,
+    "ApiSessionLogoutWebRequest": ApiSessionLogoutWebRequest,
+    "ApiSessionNativeResponse": ApiSessionNativeResponse,
+    "ApiSessionNonceQuery": ApiSessionNonceQuery,
+    "ApiSessionNonceResponse": ApiSessionNonceResponse,
+    "ApiSessionRefreshNativeRequest": ApiSessionRefreshNativeRequest,
+    "ApiSessionRefreshWebRequest": ApiSessionRefreshWebRequest,
+    "ApiSessionWebResponse": ApiSessionWebResponse,
     "ApiSetPinnedDropRequest": ApiSetPinnedDropRequest,
     "ApiSetProfileWaveRequest": ApiSetProfileWaveRequest,
     "ApiStartMultipartMediaUploadResponse": ApiStartMultipartMediaUploadResponse,
@@ -1446,6 +1544,7 @@ let typeMap: {[index: string]: any} = {
     "ApiXTdhToken": ApiXTdhToken,
     "ApiXTdhTokensPage": ApiXTdhTokensPage,
     "CreateDirectMessageWaveRequest": CreateDirectMessageWaveRequest,
+    "CreateWalletAuthSession201Response": CreateWalletAuthSession201ResponseClass,
     "DistributionNormalized": DistributionNormalized,
     "DistributionNormalizedPage": DistributionNormalizedPage,
     "DistributionOverview": DistributionOverview,
@@ -1455,6 +1554,7 @@ let typeMap: {[index: string]: any} = {
     "DistributionPhotoCompleteRequestPhoto": DistributionPhotoCompleteRequestPhoto,
     "DistributionPhotoCompleteResponse": DistributionPhotoCompleteResponse,
     "DistributionPhotosPage": DistributionPhotosPage,
+    "LogoutWalletAuthSessionRequest": LogoutWalletAuthSessionRequestClass,
     "MintingClaim": MintingClaim,
     "MintingClaimAnimationDetails": MintingClaimAnimationDetailsClass,
     "MintingClaimAnimationDetailsGlb": MintingClaimAnimationDetailsGlb,
@@ -1478,6 +1578,7 @@ let typeMap: {[index: string]: any} = {
     "RedeemedSubscriptionCounts": RedeemedSubscriptionCounts,
     "RedeemedSubscriptionCountsPage": RedeemedSubscriptionCountsPage,
     "RedeemedSubscriptionPage": RedeemedSubscriptionPage,
+    "RefreshWalletAuthSessionRequest": RefreshWalletAuthSessionRequestClass,
     "SubscribeAllEditionsResponse": SubscribeAllEditionsResponse,
     "SubscriptionCountResponse": SubscriptionCountResponse,
     "SubscriptionCounts": SubscriptionCounts,

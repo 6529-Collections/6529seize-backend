@@ -29,7 +29,10 @@ import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 import { waveRepOverviewApiService } from '@/api/waves/wave-rep-overview.api.service';
-import { waveScoreService } from '@/api/waves/wave-score.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '@/api/waves/wave-score.service';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { ApiRatingWithProfileInfoAndLevelPage } from '@/api/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -199,8 +202,9 @@ router.post(
       },
       ctx
     );
-    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
       [req.params.id],
+      WaveScoreDirtyRefreshReason.WAVE_REP_CHANGED,
       ctx
     );
     await giveReadReplicaTimeToCatchUp();

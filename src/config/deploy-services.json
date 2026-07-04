@@ -21,6 +21,7 @@
     { "name": "ethPriceLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "externalCollectionLiveTailingLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "externalCollectionSnapshottingLoop", "allowed_environments": ["staging", "prod"] },
+    { "name": "helpBotReplyLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "marketStatsLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "mediaResizerLoop", "allowed_environments": ["prod"] },
     { "name": "mintAnnouncementsLoop", "allowed_environments": ["staging", "prod"] },
@@ -53,6 +54,7 @@
     { "name": "transactionsProcessingLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "waveDecisionExecutionLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "waveLeaderboardSnapshotterLoop", "allowed_environments": ["staging", "prod"] },
+    { "name": "waveDropMetricsRefreshLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "waveScoreRefreshLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "xTdhLoop", "allowed_environments": ["staging", "prod"] }
   ]

@@ -112,6 +112,7 @@ function createMapper() {
       .fn()
       .mockResolvedValue(new Set<string>()),
     findWaveReaderMetricsByWaveIds: jest.fn().mockResolvedValue({}),
+    findIdentityUnreadDropsSummaryByWaveId: jest.fn().mockResolvedValue({}),
     findIdentityUnreadDropsCountByWaveId: jest.fn().mockResolvedValue({}),
     findFirstUnreadDropSerialNoByWaveId: jest.fn().mockResolvedValue({}),
     findWaveChatDropCooldownsByWaveIds: jest.fn().mockResolvedValue({}),
@@ -407,11 +408,11 @@ describe('ApiWaveOverviewMapper', () => {
         muted: true
       }
     });
-    deps.wavesApiDb.findIdentityUnreadDropsCountByWaveId.mockResolvedValue({
-      'wave-1': 7
-    });
-    deps.wavesApiDb.findFirstUnreadDropSerialNoByWaveId.mockResolvedValue({
-      'wave-1': 19
+    deps.wavesApiDb.findIdentityUnreadDropsSummaryByWaveId.mockResolvedValue({
+      'wave-1': {
+        unread_drops_count: 7,
+        first_unread_drop_serial_no: 19
+      }
     });
 
     const result = await mapper.mapWaves([wave], {
@@ -463,6 +464,24 @@ describe('ApiWaveOverviewMapper', () => {
       },
       undefined
     );
+  });
+
+  it('uses provided eligible groups instead of loading them again', async () => {
+    const { mapper, deps } = createMapper();
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    await mapper.mapWaves([makeWave()], ctx, {
+      groupIdsUserIsEligibleFor: ['visible-group']
+    });
+
+    expect(
+      deps.userGroupsService.getGroupsUserIsEligibleFor
+    ).not.toHaveBeenCalled();
+    expect(
+      deps.wavesApiDb.findVisibleParentWavesByChildWaveIds
+    ).toHaveBeenCalledWith(['wave-1'], ['visible-group'], ctx);
   });
 
   it('maps active chat slow mode cooldown in context profile context', async () => {

@@ -1,6 +1,7 @@
 import { identityFetcher } from '@/api-serverless/src/identities/identity.fetcher';
 import { userGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
 import { waveScoreService } from '@/api/waves/wave-score.service';
+import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 import { DropType } from '@/entities/IDrop';
 import { DeleteDropUseCase } from './delete-drop.use-case';
 
@@ -30,7 +31,7 @@ describe('DeleteDropUseCase', () => {
       deleteDropFeedItems: jest.fn().mockResolvedValue(undefined),
       deleteDropNotifications: jest.fn().mockResolvedValue(undefined),
       deleteDropSubscriptions: jest.fn().mockResolvedValue(undefined),
-      resyncDropCountsForWaves: jest.fn().mockResolvedValue(undefined),
+      applyDeletedDropMetricsDelta: jest.fn().mockResolvedValue(undefined),
       insertDeletedDrop: jest.fn().mockResolvedValue(undefined)
     };
     const reactionsService = {
@@ -101,8 +102,14 @@ describe('DeleteDropUseCase', () => {
       identityFetcher,
       'getProfileIdByIdentityKey'
     );
-    const refreshWaveScoresSpy = jest
-      .spyOn(waveScoreService, 'refreshWaveScoresForWaveIdsBestEffort')
+    const markWaveScoresDirtySpy = jest
+      .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+      .mockResolvedValue(undefined);
+    const markWaveDropMetricsDirtySpy = jest
+      .spyOn(
+        waveDropMetricsRefreshService,
+        'markWaveDropMetricsDirtyBestEffort'
+      )
       .mockResolvedValue(undefined);
 
     await expect(
@@ -133,14 +140,26 @@ describe('DeleteDropUseCase', () => {
       timer: undefined,
       connection
     });
-    expect(dropsDb.resyncDropCountsForWaves).toHaveBeenCalledWith(['wave-1'], {
+    expect(dropsDb.applyDeletedDropMetricsDelta).toHaveBeenCalledWith(drop, {
       timer: undefined,
       connection
     });
-    expect(refreshWaveScoresSpy).toHaveBeenCalledWith(['wave-1'], {
-      timer: undefined,
-      connection
-    });
+    expect(markWaveDropMetricsDirtySpy).toHaveBeenCalledWith(
+      ['wave-1'],
+      'DROP_DELETED',
+      {
+        timer: undefined,
+        connection
+      }
+    );
+    expect(markWaveScoresDirtySpy).toHaveBeenCalledWith(
+      ['wave-1'],
+      'DROP_DELETED',
+      {
+        timer: undefined,
+        connection
+      }
+    );
     expect(dropsDb.insertDeletedDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'drop-1',

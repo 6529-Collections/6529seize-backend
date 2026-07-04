@@ -40,6 +40,8 @@ export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
 export const PROFILE_LATEST_LOG_TABLE = 'profile_latest_logs';
 export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
 export const REFRESH_TOKENS_TABLE = 'refresh_tokens';
+export const WALLET_AUTH_SESSIONS_TABLE = 'wallet_auth_sessions';
+export const WALLET_CONNECTION_SHARES_TABLE = 'wallet_connection_shares';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';
 export const TEAM_TABLE = 'team';
@@ -67,6 +69,8 @@ export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
 export const DROP_REACTIONS_TABLE = 'drop_reactions';
+export const HELP_BOT_INTERACTIONS_TABLE = 'help_bot_interactions';
+export const HELP_BOT_CREDIT_EVENTS_TABLE = 'help_bot_credit_events';
 export const DROP_REAL_VOTER_VOTE_IN_TIME_TABLE =
   'drop_real_voter_vote_in_time';
 export const EXTERNAL_INDEXED_CONTRACTS_TABLE = 'external_indexed_contracts';
@@ -142,6 +146,9 @@ export const WAVES_DECISION_WINNER_DROPS_TABLE = 'wave_decision_winner_drops';
 export const MINTING_CLAIMS_TABLE = 'minting_claims';
 export const MINTING_CLAIM_ACTIONS_TABLE = 'minting_claim_actions';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
+export const WAVE_SCORE_REFRESH_REQUESTS_TABLE = 'wave_score_refresh_requests';
+export const WAVE_DROP_METRICS_REFRESH_REQUESTS_TABLE =
+  'wave_drop_metrics_refresh_requests';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
 export const WAVE_CHAT_DROP_COOLDOWNS_TABLE = 'wave_chat_drop_cooldowns';
 export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';
@@ -182,6 +189,7 @@ export const PRENODES_TABLE = 'prenodes';
 export const PUSH_NOTIFICATION_DEVICES_TABLE = 'push_notification_devices';
 export const PUSH_NOTIFICATION_SETTINGS_TABLE = 'push_notification_settings';
 export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';
+export const IDENTITY_MUTES_TABLE = 'identity_mutes';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';

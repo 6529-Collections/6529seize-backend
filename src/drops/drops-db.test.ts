@@ -1,15 +1,123 @@
 import {
+  ACTIVITY_EVENTS_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
   IDENTITIES_TABLE,
   TDH_NFT_TABLE,
+  WAVE_DROPPER_METRICS_TABLE,
+  WAVE_METRICS_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { PageSortDirection } from '@/api/page-request';
+import { DbPoolName } from '@/db-query.options';
+import { DropType } from '@/entities/IDrop';
 import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
+  it('applies a bounded metrics delta when a drop is deleted', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.applyDeletedDropMetricsDelta(
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        drop_type: DropType.PARTICIPATORY
+      },
+      {
+        connection: { connection } as any,
+        timer: undefined
+      }
+    );
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0]?.[0]).toContain(
+      `update ${WAVE_METRICS_TABLE} wm`
+    );
+    expect(execute.mock.calls[0]?.[0]).toContain(
+      'wm.participatory_drops_count - :participatoryDropsDelta'
+    );
+    expect(execute.mock.calls[0]?.[0]).toContain(`from ${DROPS_TABLE} d`);
+    expect(execute.mock.calls[0]?.[1]).toEqual({
+      waveId: 'wave-1',
+      chatDropsDelta: 0,
+      participatoryDropsDelta: 1
+    });
+    expect(execute.mock.calls[0]?.[2]).toEqual({
+      wrappedConnection: { connection }
+    });
+    expect(execute.mock.calls[1]?.[0]).toContain(
+      `update ${WAVE_DROPPER_METRICS_TABLE} wdm`
+    );
+    expect(execute.mock.calls[1]?.[1]).toEqual({
+      waveId: 'wave-1',
+      dropperId: 'author-1',
+      chatDropsDelta: 0,
+      participatoryDropsDelta: 1
+    });
+    expect(execute.mock.calls[1]?.[2]).toEqual({
+      wrappedConnection: { connection }
+    });
+  });
+
+  it('can force full drop metrics resyncs onto the write pool', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.resyncDropCountsForWaves(
+      ['wave-1'],
+      { timer: undefined },
+      { forcePool: DbPoolName.WRITE }
+    );
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0]?.[2]).toEqual({
+      wrappedConnection: undefined,
+      forcePool: DbPoolName.WRITE
+    });
+    expect(execute.mock.calls[1]?.[2]).toEqual({
+      wrappedConnection: undefined,
+      forcePool: DbPoolName.WRITE
+    });
+  });
+
+  it('deletes activity feed items by indexed drop columns', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.deleteDropFeedItems('drop-1', {
+      connection: { connection } as any,
+      timer: undefined
+    });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toBe(
+      `delete from ${ACTIVITY_EVENTS_TABLE} where drop_id = :dropId or (target_type = 'DROP' and target_id = :dropId)`
+    );
+    expect(sql.toLowerCase()).not.toContain('like');
+    expect(params).toEqual({ dropId: 'drop-1' });
+    expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
   it('uses wave voting credit nft rows when finding CARD_SET_TDH overvoters', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new DropsDb(

@@ -5,7 +5,10 @@ import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBu
 import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
-import { waveScoreService } from '../api-serverless/src/waves/wave-score.service';
+import {
+  waveScoreService,
+  WaveScoreDirtyRefreshReason
+} from '../api-serverless/src/waves/wave-score.service';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import {
@@ -42,6 +45,10 @@ import { ids } from '../ids';
 import { Logger } from '../logging';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { userNotifier } from '../notifications/user.notifier';
+import {
+  HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE,
+  isHelpBotCreditCategory
+} from '../help-bot/help-bot.config';
 import {
   profileProxiesDb,
   ProfileProxiesDb
@@ -168,6 +175,7 @@ export class RatingsService {
       if (!authenticatedProfileId) {
         throw new ForbiddenException(`Create a profile before you rate`);
       }
+      this.assertUserCanRateCategory(request.matter, request.matter_category);
       if (!request.authenticationContext.isAuthenticatedAsProxy()) {
         const { identityUpdate } = await this.updateRatingUnsafe({
           request,
@@ -660,8 +668,9 @@ export class RatingsService {
       });
     }
     if (waveRepTargetsToRefresh.size > 0) {
-      await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
-        Array.from(waveRepTargetsToRefresh)
+      await waveScoreService.requestWaveScoreRefreshBestEffort(
+        Array.from(waveRepTargetsToRefresh),
+        WaveScoreDirtyRefreshReason.WAVE_REP_CHANGED
       );
     }
     this.logger.info(`Reduced rates for profile ${raterProfileId}`);
@@ -1048,6 +1057,7 @@ export class RatingsService {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
         const matter = enums.resolve(RateMatter, apiRequest.matter)!;
+        this.assertUserCanRateCategory(matter, apiRequest.category);
         const wallets = apiRequest.target_wallet_addresses.map((it) =>
           it.toLowerCase()
         );
@@ -1295,6 +1305,9 @@ export class RatingsService {
     const proposedCategories = collections.distinct(
       targets.map((target) => target.category)
     );
+    proposedCategories.forEach((category) =>
+      this.assertUserCanRateCategory(RateMatter.REP, category)
+    );
     await this.abusivenessCheckService.bulkCheckRepPhrases(
       proposedCategories,
       ctx
@@ -1534,6 +1547,15 @@ export class RatingsService {
           }))
       })
     );
+  }
+
+  private assertUserCanRateCategory(
+    matter: RateMatter,
+    category: string | null | undefined
+  ): void {
+    if (matter === RateMatter.REP && isHelpBotCreditCategory(category)) {
+      throw new BadRequestException(HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE);
+    }
   }
 }
 

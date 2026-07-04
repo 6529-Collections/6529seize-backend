@@ -75,6 +75,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { Time, Timer } from '../time';
+import { DbPoolName } from '@/db-query.options';
 
 const mysql = require('mysql');
 
@@ -1736,8 +1737,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   public async deleteDropFeedItems(dropId: string, ctx: RequestContext) {
     ctx.timer?.start('dropsDb->deleteDropFeedItems');
     await this.db.execute(
-      `delete from ${ACTIVITY_EVENTS_TABLE} where target_id = :dropId or data like :likeDropId`,
-      { dropId, likeDropId: `%"${dropId}"%` },
+      `delete from ${ACTIVITY_EVENTS_TABLE} where drop_id = :dropId or (target_type = 'DROP' and target_id = :dropId)`,
+      { dropId },
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->deleteDropFeedItems');
@@ -1797,15 +1798,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   public async resyncDropCountsForWaves(
     waveIds: string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: { forcePool?: DbPoolName } = {}
   ) {
     if (!waveIds.length) {
       return;
     }
     ctx.timer?.start('dropsDb->resyncDropCountsForWaves');
-    await Promise.all([
-      this.db.execute(
-        `
+    try {
+      const queryOptions = options.forcePool
+        ? {
+            wrappedConnection: ctx.connection,
+            forcePool: options.forcePool
+          }
+        : { wrappedConnection: ctx.connection };
+      await Promise.all([
+        this.db.execute(
+          `
           update ${WAVE_DROPPER_METRICS_TABLE} wdm
             left join (
               select
@@ -1828,11 +1837,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               or wdm.latest_drop_timestamp <> ifnull(actual.latest_drop_timestamp, 0)
             )
         `,
-        { waveIds },
-        { wrappedConnection: ctx.connection }
-      ),
-      this.db.execute(
-        `
+          { waveIds },
+          queryOptions
+        ),
+        this.db.execute(
+          `
           update ${WAVE_METRICS_TABLE} wm
             left join (
               select
@@ -1854,11 +1863,80 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               or wm.latest_drop_timestamp <> ifnull(actual.latest_drop_timestamp, 0)
             )
         `,
-        { waveIds },
-        { wrappedConnection: ctx.connection }
-      )
-    ]);
-    ctx.timer?.stop('dropsDb->resyncDropCountsForWaves');
+          { waveIds },
+          queryOptions
+        )
+      ]);
+    } finally {
+      ctx.timer?.stop('dropsDb->resyncDropCountsForWaves');
+    }
+  }
+
+  public async applyDeletedDropMetricsDelta(
+    drop: Pick<DropEntity, 'wave_id' | 'author_id' | 'drop_type'>,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('dropsDb->applyDeletedDropMetricsDelta');
+    try {
+      // Mirrors insertDrop: CHAT increments drops_count, PARTICIPATORY increments
+      // participatory_drops_count, and WINNER only affects latest_drop_timestamp.
+      // This keeps DELETE fast; the async full resync is the authoritative repair
+      // for stale counters, retries, and races.
+      const chatDropsDelta = drop.drop_type === DropType.CHAT ? 1 : 0;
+      const participatoryDropsDelta =
+        drop.drop_type === DropType.PARTICIPATORY ? 1 : 0;
+      await Promise.all([
+        this.db.execute(
+          `
+          update ${WAVE_METRICS_TABLE} wm
+          set wm.drops_count = greatest(wm.drops_count - :chatDropsDelta, 0),
+              wm.participatory_drops_count = greatest(
+                wm.participatory_drops_count - :participatoryDropsDelta,
+                0
+              ),
+              wm.latest_drop_timestamp = (
+                select ifnull(max(d.created_at), 0)
+                from ${DROPS_TABLE} d
+                where d.wave_id = :waveId
+              )
+          where wm.wave_id = :waveId
+        `,
+          {
+            waveId: drop.wave_id,
+            chatDropsDelta,
+            participatoryDropsDelta
+          },
+          { wrappedConnection: ctx.connection }
+        ),
+        this.db.execute(
+          `
+          update ${WAVE_DROPPER_METRICS_TABLE} wdm
+          set wdm.drops_count = greatest(wdm.drops_count - :chatDropsDelta, 0),
+              wdm.participatory_drops_count = greatest(
+                wdm.participatory_drops_count - :participatoryDropsDelta,
+                0
+              ),
+              wdm.latest_drop_timestamp = (
+                select ifnull(max(d.created_at), 0)
+                from ${DROPS_TABLE} d
+                where d.wave_id = :waveId
+                  and d.author_id = :dropperId
+              )
+          where wdm.wave_id = :waveId
+            and wdm.dropper_id = :dropperId
+        `,
+          {
+            waveId: drop.wave_id,
+            dropperId: drop.author_id,
+            chatDropsDelta,
+            participatoryDropsDelta
+          },
+          { wrappedConnection: ctx.connection }
+        )
+      ]);
+    } finally {
+      ctx.timer?.stop('dropsDb->applyDeletedDropMetricsDelta');
+    }
   }
 
   public async deleteDropSubscriptions(dropId: string, ctx: RequestContext) {

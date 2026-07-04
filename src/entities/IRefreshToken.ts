@@ -8,4 +8,7 @@ export class RefreshToken {
 
   @Column({ type: 'text' })
   refresh_token!: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  role!: string | null;
 }

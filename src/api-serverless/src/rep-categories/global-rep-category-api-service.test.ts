@@ -530,10 +530,7 @@ describe('GlobalRepCategoryApiService', () => {
 
     await service.getWaveOverview({ category: 'Dev extraordinaire' }, ctx);
 
-    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
-      null,
-      undefined
-    );
+    expect(userGroupsService.getGroupsUserIsEligibleFor).not.toHaveBeenCalled();
     expect(globalRepCategoryDb.getWaveOverviewStats).toHaveBeenCalledWith(
       expect.objectContaining({
         category: 'Dev extraordinaire',

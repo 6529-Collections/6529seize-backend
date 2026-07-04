@@ -117,6 +117,30 @@ The test configuration uses:
 
 Keep `docs/architecture.md` up to date when changing the system shape. Update it in the same change whenever you add, remove, rename, or materially rewire a Lambda, API boundary, SQS/SNS queue or topic, EventBridge trigger, DB/runtime pattern, media/edge flow, deployable service, or major external integration. If a development touches those areas but does not require a docs update, say that explicitly in the final response.
 
+## 6529 Help Bot Knowledge Maintenance
+
+When changing backend-owned product behavior that users may ask `@help6529`
+about, update the help bot knowledge in the same PR. The canonical bot handle is
+`help6529` (`@help6529` in user-facing wave text), matching
+`HELP_BOT_HANDLE` in `src/help-bot/help-bot.config.ts`; do not replace it with
+any alternate spelling. This includes changes to subscriptions, eligibility
+rules, wave or drop permissions, posting limits, profile/business-rule
+terminology, and canonical backend-owned URLs.
+
+For V1, frontend product knowledge is owned by the frontend repository in
+`ops/help/help-index.json` and published as `/help-index.json`. The backend help
+bot runtime should consume and cache that artifact instead of hardcoding
+frontend routes, controls, or product navigation. Keep
+`specs/6529-help-bot-runtime.md` aligned with any runtime, provider, source,
+failure-mode, or coverage change. If a backend behavior is user-visible but the
+frontend corpus is not updated in the same release set, state the gap in the PR
+or final handoff.
+
+Backend public-data answers are backend-owned. When changing table names,
+columns, query semantics, or whitelisted public-data surfaces used by
+`src/help-bot/help-bot-public-data.catalog.ts`, update the catalog and its
+validator/query tests in the same PR.
+
 ### Loop-Based Services (Backend)
 
 The backend consists of independent "loop" services that run as AWS Lambda functions or cron jobs. Each loop is self-contained in `src/*Loop/` directories:
@@ -126,7 +150,7 @@ The backend consists of independent "loop" services that run as AWS Lambda funct
 - `nftOwnersLoop` - Tracks NFT ownership changes
 - `nftHistoryLoop` - Maintains NFT ownership history
 - `transactionsProcessingLoop` - Processes blockchain transactions
-- `tdhHistoryLoop` - Calculates TDH (The Destructive Hemisphere) scores
+- `tdhHistoryLoop` - Calculates TDH (Total Days Held) scores
 - `delegationsLoop` - Processes delegation.cash delegations
 - `marketStatsLoop` - Aggregates NFT market statistics
 - `aggregatedActivityLoop` - Calculates aggregated activity metrics
@@ -215,9 +239,9 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - **Ratings** - Reputation system with categories (CIC, REP)
 - **Identities** - User profiles with proxy support
 
-**TDH (The Destructive Hemisphere):**
-- Scoring system based on NFT ownership and community participation
-- Consolidated calculations across wallet consolidations
+**TDH (Total Days Held):**
+- Scoring system based on eligible NFT ownership duration
+- Per-wallet calculations and consolidated calculations across wallet consolidations
 - Historical tracking in `tdh_history` and `tdh_global_history`
 
 **Delegations:**

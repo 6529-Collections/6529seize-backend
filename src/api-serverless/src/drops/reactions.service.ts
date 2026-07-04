@@ -12,7 +12,10 @@ import {
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { reactionsDb, ReactionsDb } from './reactions.db';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
-import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
+import {
+  NewProfileActivityLog,
+  profileActivityLogsDb
+} from '../../../profileActivityLogs/profile-activity-logs.db';
 import {
   UserNotifier,
   userNotifier
@@ -30,8 +33,23 @@ import {
   metricsRecorder,
   MetricsRecorder
 } from '../../../metrics/MetricsRecorder';
+import { Logger } from '../../../logging';
+
+type ReactionMutationResult = {
+  readonly dropEntity: DropEntity;
+  readonly wave: WaveEntity;
+  readonly reactionChanged: boolean;
+  readonly latestActivityAt: Date | null;
+};
+
+type PostCommitSideEffect = {
+  readonly name: string;
+  readonly run: () => Promise<void>;
+};
 
 export class ReactionsService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly reactionsDb: ReactionsDb,
     private readonly wavesDb: WavesApiDb,
@@ -43,7 +61,10 @@ export class ReactionsService {
     private readonly metricsRecorder: MetricsRecorder
   ) {}
 
-  private async handleReaction(
+  // Caller-owned transactions keep the legacy all-in-transaction behavior.
+  // HTTP reaction routes use the no-connection path so post-commit side effects
+  // cannot roll back an already durable reaction.
+  private async handleReactionInExistingTransaction(
     dropId: string,
     profileId: string,
     callback: (
@@ -88,25 +109,241 @@ export class ReactionsService {
     return drop;
   }
 
+  private async handleReactionMutation(
+    dropId: string,
+    profileId: string,
+    callback: (dropEntity: DropEntity) => Promise<{
+      wave: WaveEntity;
+      reactionChanged: boolean;
+      latestActivityAt: Date | null;
+    }>,
+    ctx: RequestContext
+  ): Promise<ReactionMutationResult> {
+    const groupIdsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        profileId,
+        ctx.timer
+      );
+    const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
+      dropId,
+      groupIdsUserIsEligibleFor,
+      ctx.connection
+    );
+    if (!dropEntity) {
+      throw new NotFoundException(`Drop ${dropId} not found`);
+    }
+    const mutationResult = await callback(dropEntity);
+    return {
+      dropEntity,
+      ...mutationResult
+    };
+  }
+
+  private async completeReaction(
+    dropId: string,
+    mutationResult: ReactionMutationResult,
+    postCommitSideEffects: PostCommitSideEffect[],
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    if (mutationResult.reactionChanged) {
+      await giveReadReplicaTimeToCatchUp();
+    }
+
+    const drop = await this.dropsService.findDropByIdOrThrow(
+      {
+        dropId: dropId,
+        skipEligibilityCheck: true
+      },
+      ctx
+    );
+
+    if (mutationResult.reactionChanged) {
+      await this.runPostCommitSideEffects([
+        ...postCommitSideEffects,
+        {
+          name: 'notify-drop-reaction-update',
+          run: () =>
+            this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx)
+        }
+      ]);
+    }
+    return drop;
+  }
+
+  private async runPostCommitSideEffects(
+    sideEffects: PostCommitSideEffect[]
+  ): Promise<void> {
+    const results = await Promise.allSettled(
+      sideEffects.map((sideEffect) => sideEffect.run())
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        this.logger.error(
+          `Reaction post-commit side effect failed: ${sideEffects[index].name}`,
+          result.reason
+        );
+      }
+    });
+  }
+
+  private buildReactionActivityLog({
+    dropEntity,
+    profileId,
+    reaction
+  }: {
+    dropEntity: DropEntity;
+    profileId: string;
+    reaction: string | null;
+  }): NewProfileActivityLog {
+    return {
+      profile_id: profileId,
+      type: ProfileActivityLogType.DROP_REACTED,
+      target_id: dropEntity.id,
+      contents: JSON.stringify({
+        reaction
+      }),
+      additional_data_1: dropEntity.author_id,
+      additional_data_2: dropEntity.wave_id,
+      proxy_id: null
+    };
+  }
+
+  private touchLatestActivitySideEffect(
+    profileId: string,
+    latestActivityAt: Date | null,
+    ctx: RequestContext
+  ): PostCommitSideEffect {
+    return {
+      name: 'touch-profile-latest-activity',
+      run: async () => {
+        if (latestActivityAt) {
+          await profileActivityLogsDb.touchLatestActivity(
+            profileId,
+            latestActivityAt,
+            undefined,
+            ctx.timer
+          );
+        }
+      }
+    };
+  }
+
   async addReaction(
     dropId: string,
     profileId: string,
     reaction: string,
     ctx: RequestContext
   ): Promise<ApiDrop> {
-    if (!ctx.connection) {
-      return await this.reactionsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          return await this.addReaction(dropId, profileId, reaction, {
-            ...ctx,
-            connection
-          });
-        }
+    if (ctx.connection) {
+      return await this.addReactionInExistingTransaction(
+        dropId,
+        profileId,
+        reaction,
+        ctx
       );
     }
 
+    const mutationResult =
+      await this.reactionsDb.executeNativeQueriesInTransaction(
+        async (connection) =>
+          await this.handleReactionMutation(
+            dropId,
+            profileId,
+            async (dropEntity) => {
+              const transactionCtx = {
+                ...ctx,
+                connection
+              };
+              const wave = await this.validateReaction(
+                dropEntity,
+                transactionCtx
+              );
+              const reactionChanged = await this.reactionsDb.addReaction(
+                profileId,
+                dropId,
+                dropEntity.wave_id,
+                reaction,
+                transactionCtx
+              );
+
+              if (!reactionChanged) {
+                return { wave, reactionChanged, latestActivityAt: null };
+              }
+
+              const latestActivityAt =
+                await profileActivityLogsDb.insertLogEntry(
+                  this.buildReactionActivityLog({
+                    dropEntity,
+                    profileId,
+                    reaction
+                  }),
+                  connection,
+                  ctx.timer
+                );
+              return { wave, reactionChanged, latestActivityAt };
+            },
+            {
+              ...ctx,
+              connection
+            }
+          )
+      );
+
+    const postCommitSideEffects: PostCommitSideEffect[] = [
+      {
+        name: 'record-active-identity',
+        // Active identity metrics are rollups; do not fail a committed reaction
+        // response if this observational write is temporarily unavailable.
+        run: () =>
+          this.metricsRecorder.recordActiveIdentity(
+            { identityId: profileId },
+            ctx
+          )
+      },
+      this.touchLatestActivitySideEffect(
+        profileId,
+        mutationResult.latestActivityAt,
+        ctx
+      )
+    ];
+
+    if (mutationResult.dropEntity.author_id !== profileId) {
+      postCommitSideEffects.push({
+        name: 'notify-drop-reaction',
+        run: () =>
+          this.userNotifier.notifyOfDropReaction(
+            {
+              profile_id: profileId,
+              drop_id: dropId,
+              drop_author_id: mutationResult.dropEntity.author_id,
+              reaction: reaction,
+              wave_id: mutationResult.dropEntity.wave_id
+            },
+            mutationResult.wave.visibility_group_id
+          )
+      });
+    }
+
+    return await this.completeReaction(
+      dropId,
+      mutationResult,
+      postCommitSideEffects,
+      ctx
+    );
+  }
+
+  private async addReactionInExistingTransaction(
+    dropId: string,
+    profileId: string,
+    reaction: string,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
     const connection = ctx.connection;
-    return await this.handleReaction(
+    if (!connection) {
+      throw new Error('addReactionInExistingTransaction requires a connection');
+    }
+
+    return await this.handleReactionInExistingTransaction(
       dropId,
       profileId,
       async (dropEntity) => {
@@ -132,17 +369,11 @@ export class ReactionsService {
             ctx
           ),
           profileActivityLogsDb.insert(
-            {
-              profile_id: profileId,
-              type: ProfileActivityLogType.DROP_REACTED,
-              target_id: dropId,
-              contents: JSON.stringify({
-                reaction
-              }),
-              additional_data_1: dropEntity.author_id,
-              additional_data_2: dropEntity.wave_id,
-              proxy_id: null
-            },
+            this.buildReactionActivityLog({
+              dropEntity,
+              profileId,
+              reaction
+            }),
             connection,
             ctx.timer
           ),
@@ -172,19 +403,86 @@ export class ReactionsService {
     profileId: string,
     ctx: RequestContext
   ): Promise<ApiDrop> {
-    if (!ctx.connection) {
-      return await this.reactionsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          return await this.removeReaction(dropId, profileId, {
-            ...ctx,
-            connection
-          });
-        }
+    if (ctx.connection) {
+      return await this.removeReactionInExistingTransaction(
+        dropId,
+        profileId,
+        ctx
       );
     }
 
+    const mutationResult =
+      await this.reactionsDb.executeNativeQueriesInTransaction(
+        async (connection) =>
+          await this.handleReactionMutation(
+            dropId,
+            profileId,
+            async (dropEntity) => {
+              const transactionCtx = {
+                ...ctx,
+                connection
+              };
+              const wave = await this.validateReaction(
+                dropEntity,
+                transactionCtx
+              );
+              const reactionChanged = await this.reactionsDb.removeReaction(
+                profileId,
+                dropId,
+                dropEntity.wave_id,
+                transactionCtx
+              );
+
+              if (!reactionChanged) {
+                return { wave, reactionChanged, latestActivityAt: null };
+              }
+
+              const latestActivityAt =
+                await profileActivityLogsDb.insertLogEntry(
+                  this.buildReactionActivityLog({
+                    dropEntity,
+                    profileId,
+                    reaction: null
+                  }),
+                  connection,
+                  ctx.timer
+                );
+              return { wave, reactionChanged, latestActivityAt };
+            },
+            {
+              ...ctx,
+              connection
+            }
+          )
+      );
+
+    return await this.completeReaction(
+      dropId,
+      mutationResult,
+      [
+        this.touchLatestActivitySideEffect(
+          profileId,
+          mutationResult.latestActivityAt,
+          ctx
+        )
+      ],
+      ctx
+    );
+  }
+
+  private async removeReactionInExistingTransaction(
+    dropId: string,
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
     const connection = ctx.connection;
-    return await this.handleReaction(
+    if (!connection) {
+      throw new Error(
+        'removeReactionInExistingTransaction requires a connection'
+      );
+    }
+
+    return await this.handleReactionInExistingTransaction(
       dropId,
       profileId,
       async (dropEntity) => {
@@ -204,17 +502,11 @@ export class ReactionsService {
         }
 
         await profileActivityLogsDb.insert(
-          {
-            profile_id: profileId,
-            type: ProfileActivityLogType.DROP_REACTED,
-            target_id: dropId,
-            contents: JSON.stringify({
-              reaction: null
-            }),
-            additional_data_1: dropEntity.author_id,
-            additional_data_2: dropEntity.wave_id,
-            proxy_id: null
-          },
+          this.buildReactionActivityLog({
+            dropEntity,
+            profileId,
+            reaction: null
+          }),
           connection,
           ctx.timer
         );

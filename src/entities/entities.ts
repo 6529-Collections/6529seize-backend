@@ -50,6 +50,8 @@ export {
   DropPollOptionEntity,
   DropPollVoteEntity
 } from './IDropPoll';
+export { HelpBotCreditEventEntity } from './IHelpBotCreditEvent';
+export { HelpBotInteractionEntity } from './IHelpBotInteraction';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';
 export { DropRealVoteInTimeEntity } from './IDropRealVoteInTime';
@@ -66,6 +68,7 @@ export { ExternalIndexedOwnership721Entity } from './IExternalIndexedOwnership72
 export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwnership721History';
 export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
+export { IdentityMuteEntity } from './IIdentityMute';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
 export { MintingClaimEntity } from './IMintingClaim';
@@ -183,15 +186,20 @@ export {
   WaveVotingCreditNftArchiveEntity,
   WaveVotingCreditNftEntity
 } from './IWaveVotingCreditNft';
+export { WalletAuthSessionEntity } from './IWalletAuthSession';
+export type { WalletAuthClientType } from './IWalletAuthSession';
+export { WalletConnectionShareEntity } from './IWalletConnectionShare';
 export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
 } from './IWaveDecision';
 export { WaveChatDropCooldownEntity } from './IWaveChatDropCooldown';
+export { WaveDropMetricsRefreshRequestEntity } from './IWaveDropMetricsRefreshRequest';
 export { WaveDropperMetricEntity } from './IWaveDropperMetric';
 export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetadataEntity } from './IWaveMetadata';
 export { WaveMetricEntity } from './IWaveMetric';
+export { WaveScoreRefreshRequestEntity } from './IWaveScoreRefreshRequest';
 export { WaveReaderMetricEntity } from './IWaveReaderMetric';
 export { WaveCurationEntity } from './IWaveCuration';
 export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificationSubscription';

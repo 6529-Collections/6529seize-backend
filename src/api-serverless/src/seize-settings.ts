@@ -1,4 +1,5 @@
 import { env } from '@/env';
+import type { ApiAuthSettings } from '@/api/generated/models/ApiAuthSettings';
 import type { ApiSeizeSettings } from '@/api/generated/models/ApiSeizeSettings';
 
 function normalizeWalletList(wallets: string[]): string[] {
@@ -13,6 +14,33 @@ export function getDistributionAdminWallets(): string[] {
 
 export function getClaimsAdminWallets(): string[] {
   return normalizeWalletList(env.getStringArray('CLAIMS_ADMIN_WALLETS', ','));
+}
+
+function isIsoDateTimeWithTimezone(value: string): boolean {
+  return (
+    Number.isFinite(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+  );
+}
+
+function getSessionV2MigrationDeadline(): string | null {
+  const deadline = env.getStringOrNull('SESSION_V2_MIGRATION_DEADLINE');
+  if (!deadline) {
+    return null;
+  }
+  if (!isIsoDateTimeWithTimezone(deadline)) {
+    throw new Error(
+      'SESSION_V2_MIGRATION_DEADLINE must be an ISO datetime with timezone'
+    );
+  }
+  return deadline;
+}
+
+function authSettings(): ApiAuthSettings {
+  return {
+    structured_signatures_required:
+      process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED === 'true',
+    session_v2_migration_deadline: getSessionV2MigrationDeadline()
+  };
 }
 
 export const seizeSettings = (): ApiSeizeSettings => {
@@ -36,6 +64,7 @@ export const seizeSettings = (): ApiSeizeSettings => {
     distribution_admin_wallets,
     claims_admin_wallets,
     announcements_wave_id,
-    quorum_wave_id
+    quorum_wave_id,
+    auth: authSettings()
   };
 };

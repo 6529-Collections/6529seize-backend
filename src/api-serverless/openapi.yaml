@@ -156,21 +156,21 @@ paths:
         - Authentication
       summary: Get a message to sign with your web3 wallet
       operationId: getNonce
+      security: []
       parameters:
         - name: signer_address
           in: query
-          description: Your wallet address
           required: true
           schema:
             type: string
+          description: Your wallet address
         - name: short_nonce
           in: query
-          description: >-
-            If true, the nonce will be shorter and easier to sign. Default is
-            false.
           required: false
           schema:
             type: boolean
+            default: false
+          description: If true, the nonce will be shorter and easier to sign.
       responses:
         "200":
           description: successful operation
@@ -225,6 +225,213 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiRedeemRefreshTokenResponse"
+        "400":
+          description: Invalid request
+  /auth/session-nonce:
+    get:
+      tags:
+        - Authentication
+      summary: Get a structured wallet auth session message to sign
+      description: >
+        V2 wallet session nonce endpoint. Web session challenges derive their
+        domain and client origin from the request Origin header and require a
+        configured first-party origin. Native challenges are selected
+        explicitly. Desktop challenges are selected explicitly and require a
+        loopback localhost Origin, which is signed into the challenge.
+      operationId: getWalletAuthSessionNonce
+      security: []
+      parameters:
+        - name: signer_address
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Your wallet address
+        - name: client_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - web
+              - native
+              - desktop
+            default: web
+          description: >
+            Web challenges require an allowed Origin header. Desktop challenges
+            require a localhost Origin. Native challenges are explicitly
+            requested by refresh-token clients.
+        - name: chain_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: >-
+            Backward-compatible request field. Session challenges are issued for
+            the backend-configured auth chain, not this client-supplied value.
+      x-6529-query-schema:
+        $ref: "#/components/schemas/ApiSessionNonceQuery"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSessionNonceResponse"
+        "400":
+          description: Invalid request
+  /auth/session-login:
+    post:
+      tags:
+        - Authentication
+      summary: Authenticate and create a wallet auth session
+      description: >
+        V2 wallet sessions require structured authentication signatures. Web
+        cookie sessions require Session Type first_party_web; native and desktop
+        refresh-token sessions require matching Session Type values. Desktop
+        sessions also require the signed Client Origin to be a localhost
+        loopback origin. External clients should use the non-cookie bearer-token
+        login flow.
+      operationId: createWalletAuthSession
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiSessionLoginRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ApiSessionWebResponse"
+                  - $ref: "#/components/schemas/ApiSessionNativeResponse"
+        "400":
+          description: Invalid request
+  /auth/session-refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Rotate a wallet auth session and issue a fresh JWT
+      operationId: refreshWalletAuthSession
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ApiSessionRefreshWebRequest"
+                - $ref: "#/components/schemas/ApiSessionRefreshNativeRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ApiSessionWebResponse"
+                  - $ref: "#/components/schemas/ApiSessionNativeResponse"
+        "400":
+          description: Invalid request
+  /auth/session-logout:
+    post:
+      tags:
+        - Authentication
+      summary: Revoke a wallet auth session
+      operationId: logoutWalletAuthSession
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ApiSessionLogoutWebRequest"
+                - $ref: "#/components/schemas/ApiSessionLogoutNativeRequest"
+      responses:
+        "204":
+          description: successful operation
+        "400":
+          description: Invalid request
+  /auth/connection-share:
+    post:
+      tags:
+        - Authentication
+      summary: Create a one-time wallet connection share code
+      operationId: createWalletConnectionShare
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiCreateConnectionShareRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCreateConnectionShareResponse"
+        "400":
+          description: Invalid request
+  /auth/connection-share/legacy-desktop:
+    post:
+      tags:
+        - Authentication
+      summary: Create a legacy desktop connection share link
+      description: >
+        Compatibility bridge for 6529 Desktop builds that still redeem legacy
+        refresh tokens. The caller must have bearer auth and a matching active
+        session-v2 web cookie. This endpoint remains available only while legacy
+        refresh redemption is enabled.
+      operationId: createLegacyDesktopConnectionShare
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: >-
+                #/components/schemas/ApiCreateLegacyDesktopConnectionShareRequest
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiCreateLegacyDesktopConnectionShareResponse
+        "400":
+          description: Invalid request
+  /auth/connection-share/redeem:
+    post:
+      tags:
+        - Authentication
+      summary: Redeem a one-time wallet connection share code
+      operationId: redeemWalletConnectionShare
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiRedeemConnectionShareRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiRedeemConnectionShareResponse"
         "400":
           description: Invalid request
   /cms/profile/{identity}/primary:
@@ -1851,7 +2058,7 @@ paths:
         - Drops
       summary: Mark a drop and all subsequent drops in the wave as unread
       description: >-
-        Sets the user"s latest_read_timestamp to just before this drop"s
+        Sets the user's latest_read_timestamp to just before this drop's
         created_at, making this drop and all newer drops unread.
       operationId: markDropUnread
       parameters:
@@ -1869,6 +2076,31 @@ paths:
                 $ref: "#/components/schemas/ApiMarkDropUnreadResponse"
         "404":
           description: Drop not found
+  /dm-drops/unread:
+    get:
+      tags:
+        - Drops
+      summary: Get authenticated user's unread direct-message drop count.
+      operationId: getDmDropsUnread
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/dm-drops/dm-drops.handlers"
+          name: handleGetDmDropsUnread
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDmDropsUnreadCount"
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden - profile required
   /drops/{dropId}/toggle-hide-link-preview:
     post:
       tags:
@@ -3099,6 +3331,81 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
+  /identities/{id}/mute:
+    get:
+      tags:
+        - Identities
+      summary: Get authenticated user's mute state for an identity.
+      operationId: getIdentityMuteState
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentityMuteState"
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Identity not found
+    post:
+      tags:
+        - Identities
+      summary: Mute identity notifications for authenticated user.
+      operationId: muteIdentity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentityMuteState"
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Identity not found
+    delete:
+      tags:
+        - Identities
+      summary: Unmute identity notifications for authenticated user.
+      operationId: unmuteIdentity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentityMuteState"
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Identity not found
   /identities/{id}/activity:
     get:
       tags:
@@ -3153,6 +3460,88 @@ paths:
                 $ref: "#/components/schemas/ApiMediaResolveResponse"
         "400":
           description: Invalid request shape
+  /memes_extended_data:
+    get:
+      tags:
+        - Memes
+      summary: Get paginated Memes extended data
+      description: >-
+        Returns Meme Card metadata joined with the card's NFT market and TDH
+        fields. `collection_size` is the total Meme Cards collection size.
+        `ranked_collection_size`, when present, is the denominator for rank
+        fields on rows included in TDH ranking. Rows not yet included in TDH
+        calculations can return `recorded_in_tdh: false`, `-1` rank values, and
+        `ranked_collection_size: null`. During migration or transient TDH lookup
+        fallback, `recorded_in_tdh` and `ranked_collection_size` can be `null`
+        or absent, and clients should treat that as legacy/transitional state.
+      operationId: getMemesExtendedData
+      parameters:
+        - name: page_size
+          in: query
+          description: Default is 101
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+            maximum: 101
+        - name: page
+          in: query
+          description: Default is 1
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+        - name: id
+          in: query
+          description: Comma-separated Meme Card IDs
+          required: false
+          schema:
+            type: string
+        - name: season
+          in: query
+          description: Comma-separated Meme seasons
+          required: false
+          schema:
+            type: string
+        - name: sort
+          in: query
+          description: Default is age
+          required: false
+          schema:
+            type: string
+            enum:
+              - age
+              - edition_size
+              - meme
+              - hodlers
+              - tdh
+              - percent_unique
+              - percent_unique_cleaned
+              - floor_price
+              - market_cap
+              - total_volume_last_24_hours
+              - total_volume_last_7_days
+              - total_volume_last_1_month
+              - total_volume
+              - highest_offer
+        - name: sort_direction
+          in: query
+          description: Default is DESC
+          required: false
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMemesExtendedDataPage"
   /memes-mint-stats:
     get:
       tags:
@@ -6334,6 +6723,30 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SubscriptionCounts"
+  /subscriptions/memes/{token_id}/count:
+    get:
+      tags:
+        - Subscriptions
+      summary: Get meme subscription count
+      operationId: getMemeSubscriptionCount
+      parameters:
+        - name: token_id
+          in: path
+          description: Meme token ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionCounts"
+        "400":
+          description: Invalid token ID
   /subscriptions/redeemed-memes-counts:
     get:
       tags:
@@ -10349,11 +10762,54 @@ components:
         error_reason:
           type: string
           nullable: true
+        safety:
+          $ref: "#/components/schemas/ApiAttachmentSafety"
     ApiAttachmentKind:
       type: string
       enum:
         - pdf
         - csv
+    ApiAttachmentSafety:
+      type: object
+      required:
+        - status
+        - scanner
+        - validation
+        - size_bytes
+        - sha256
+      properties:
+        status:
+          $ref: "#/components/schemas/ApiAttachmentSafetyStatus"
+        scanner:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ApiAttachmentSafetyScanner"
+        validation:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ApiAttachmentSafetyValidation"
+        size_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        sha256:
+          type: string
+          nullable: true
+    ApiAttachmentSafetyScanner:
+      type: string
+      enum:
+        - guardduty
+    ApiAttachmentSafetyStatus:
+      type: string
+      enum:
+        - pending
+        - scanned_validated
+        - blocked
+        - failed
+    ApiAttachmentSafetyValidation:
+      type: string
+      enum:
+        - public_ipfs_validated
     ApiAttachmentStatus:
       type: string
       enum:
@@ -10367,6 +10823,26 @@ components:
       enum:
         - application/pdf
         - text/csv
+    ApiAuthSettings:
+      type: object
+      required:
+        - structured_signatures_required
+        - session_v2_migration_deadline
+      properties:
+        structured_signatures_required:
+          type: boolean
+          description: >-
+            True when backend strict structured wallet signature enforcement is
+            enabled. Frontend clients should treat legacy auth as no longer
+            acceptable when this is true.
+        session_v2_migration_deadline:
+          type: string
+          nullable: true
+          description: >-
+            Optional global deadline for frontend v1-auth to session-v2
+            migration countdown and cutoff behavior, formatted as an ISO
+            datetime with timezone. Null means no migration prompt should be
+            shown unless strict structured signatures are required.
     ApiAvailableRatingCredit:
       type: object
       required:
@@ -11505,6 +11981,57 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/ApiAttachmentStatus"
+    ApiCreateConnectionShareRequest:
+      type: object
+      required:
+        - target_client_type
+      properties:
+        target_client_type:
+          type: string
+          enum:
+            - native
+            - desktop
+        role:
+          type: string
+          nullable: true
+        client_type:
+          type: string
+          description: Optional source session type for native or desktop callers.
+          enum:
+            - native
+            - desktop
+        client_address:
+          type: string
+          description: Wallet address bound to the source native or desktop session.
+        native_refresh_token:
+          type: string
+          description: Refresh token for the source native or desktop session.
+    ApiCreateConnectionShareResponse:
+      type: object
+      required:
+        - connection_share_code
+        - expires_at
+        - address
+        - target_client_type
+        - deep_link_path
+      properties:
+        connection_share_code:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        target_client_type:
+          type: string
+          enum:
+            - native
+            - desktop
+        deep_link_path:
+          type: string
     ApiCreateDropMedia:
       type: object
       required:
@@ -11646,6 +12173,40 @@ components:
         is_beneficiary_of_grant_id:
           type: string
           nullable: true
+    ApiCreateLegacyDesktopConnectionShareRequest:
+      type: object
+      properties:
+        role:
+          type: string
+          nullable: true
+        client_type:
+          type: string
+          description: Optional source session type for native or desktop callers.
+          enum:
+            - native
+            - desktop
+        client_address:
+          type: string
+          description: Wallet address bound to the source native or desktop session.
+        native_refresh_token:
+          type: string
+          description: Refresh token for the source native or desktop session.
+    ApiCreateLegacyDesktopConnectionShareResponse:
+      type: object
+      required:
+        - refresh_token
+        - address
+        - deep_link_path
+      properties:
+        refresh_token:
+          type: string
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        deep_link_path:
+          type: string
     ApiCreateMediaUploadUrlRequest:
       required:
         - content_type
@@ -12149,7 +12710,15 @@ components:
             If wave requires drop signatures then this needs to be set.
             Signature of a drop is ethSign(creatorWallet,
             sha256(oneLineJsonWithAlphabeticallySortedFieldsRecursive(ApiCreateDropRequest
-            - signature (+ wave.participation.terms if it exists))))
+            - signature - signature_message (+ wave.participation.terms if it
+            exists))))
+          type: string
+          nullable: true
+        signature_message:
+          description: >-
+            Optional request-only structured wallet signature message. Present
+            when structured signatures are enabled and omitted from the payload
+            hash before signature verification.
           type: string
           nullable: true
         is_safe_signature:
@@ -12295,6 +12864,14 @@ components:
           type: boolean
         message:
           type: string
+    ApiDmDropsUnreadCount:
+      type: object
+      required:
+        - count
+      properties:
+        count:
+          type: integer
+          minimum: 0
     ApiDrop:
       type: object
       required:
@@ -14057,6 +14634,13 @@ components:
       properties:
         subscribed:
           type: boolean
+    ApiIdentityMuteState:
+      type: object
+      required:
+        - muted
+      properties:
+        muted:
+          type: boolean
     ApiIdentitySubscriptionActions:
       type: object
       required:
@@ -14234,6 +14818,136 @@ components:
         - model/gltf-binary
         - video/quicktime
         - image/webp
+    ApiMemesExtendedData:
+      type: object
+      description: >-
+        Meme Card NFT data plus extended collection metrics. Positive rank
+        values are ranked against `ranked_collection_size` when that value is
+        present. `collection_size` remains the total Meme Cards collection size.
+        A rank value of `-1` represents an unranked card when `recorded_in_tdh`
+        is `false`; `recorded_in_tdh: null` or an absent value is a
+        legacy/transitional state.
+      required:
+        - collection_size
+        - edition_size
+        - edition_size_rank
+        - museum_holdings
+        - museum_holdings_rank
+        - edition_size_cleaned
+        - edition_size_cleaned_rank
+        - hodlers
+        - hodlers_rank
+        - percent_unique
+        - percent_unique_rank
+        - percent_unique_cleaned
+        - percent_unique_cleaned_rank
+        - burnt
+        - edition_size_not_burnt
+        - edition_size_not_burnt_rank
+        - percent_unique_not_burnt
+        - percent_unique_not_burnt_rank
+        - season
+        - meme
+        - meme_name
+      allOf:
+        - $ref: "#/components/schemas/ApiNft"
+      properties:
+        collection_size:
+          type: integer
+          format: int64
+          description: Total Meme Cards collection size.
+        edition_size:
+          type: integer
+          format: int64
+        edition_size_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        museum_holdings:
+          type: integer
+          format: int64
+        museum_holdings_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        edition_size_cleaned:
+          type: integer
+          format: int64
+        edition_size_cleaned_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        hodlers:
+          type: integer
+          format: int64
+        hodlers_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        percent_unique:
+          type: number
+          format: double
+        percent_unique_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        percent_unique_cleaned:
+          type: number
+          format: double
+        percent_unique_cleaned_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        burnt:
+          type: integer
+          format: int64
+        edition_size_not_burnt:
+          type: integer
+          format: int64
+        edition_size_not_burnt_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        percent_unique_not_burnt:
+          type: number
+          format: double
+        percent_unique_not_burnt_rank:
+          type: integer
+          format: int64
+          description: Positive rank for TDH-recorded cards, or -1 when unranked.
+        season:
+          type: integer
+          format: int64
+        meme:
+          type: integer
+          format: int64
+        meme_name:
+          type: string
+        recorded_in_tdh:
+          type: boolean
+          nullable: true
+          description: >-
+            True when this Meme Card is present in TDH NFT records, false when
+            it is known not to be recorded yet, and null/absent during legacy or
+            fallback states.
+        ranked_collection_size:
+          type: integer
+          format: int64
+          nullable: true
+          description: >-
+            Rank denominator for TDH-recorded cards. Null for unranked, legacy,
+            or fallback rows.
+    ApiMemesExtendedDataPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMemesExtendedData"
     ApiMemesMintStat:
       type: object
       required:
@@ -14578,7 +15292,7 @@ components:
           type: string
           enum:
             - ERC1155
-            - EEC721
+            - ERC721
         hodl_rate:
           type: number
           format: float
@@ -16686,6 +17400,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiRatingWithProfileInfoAndLevel"
+    ApiRedeemConnectionShareRequest:
+      type: object
+      required:
+        - connection_share_code
+        - target_client_type
+      properties:
+        connection_share_code:
+          type: string
+        target_client_type:
+          type: string
+          enum:
+            - native
+            - desktop
+    ApiRedeemConnectionShareResponse:
+      type: object
+      required:
+        - address
+        - access_token
+        - access_token_expires_at
+        - client_type
+        - native_refresh_token
+        - refresh_token_expires_at
+      properties:
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        access_token:
+          type: string
+        access_token_expires_at:
+          type: string
+          format: date-time
+        client_type:
+          type: string
+          enum:
+            - native
+            - desktop
+        native_refresh_token:
+          type: string
+        refresh_token_expires_at:
+          type: string
+          format: date-time
     ApiRedeemRefreshTokenRequest:
       type: object
       required:
@@ -16897,6 +17654,7 @@ components:
         - claims_admin_wallets
         - announcements_wave_id
         - quorum_wave_id
+        - auth
       properties:
         rememes_submission_tdh_threshold:
           type: integer
@@ -16924,6 +17682,206 @@ components:
         quorum_wave_id:
           type: string
           nullable: true
+        auth:
+          $ref: "#/components/schemas/ApiAuthSettings"
+    ApiSessionLoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - client_type
+        - client_address
+        - client_signature
+        - server_signature
+      properties:
+        client_type:
+          type: string
+          enum:
+            - web
+            - native
+            - desktop
+        client_address:
+          type: string
+        client_signature:
+          type: string
+        server_signature:
+          type: string
+          description: >-
+            Server-signed structured challenge token. /auth/session-login only
+            accepts first_party_web challenges for web cookie sessions and
+            matching native or desktop challenges for refresh-token sessions;
+            external_client challenges use /auth/login bearer-token auth
+            instead.
+        role:
+          type: string
+          nullable: true
+        wallet_kind_hint:
+          type: string
+          nullable: true
+          enum:
+            - eoa
+            - contract
+            - unknown
+        signature_version:
+          type: integer
+          enum:
+            - 1
+            - 2
+          default: 2
+    ApiSessionLogoutNativeRequest:
+      type: object
+      required:
+        - client_type
+        - client_address
+        - native_refresh_token
+      properties:
+        client_type:
+          type: string
+          enum:
+            - native
+            - desktop
+        client_address:
+          type: string
+        native_refresh_token:
+          type: string
+        all_sessions:
+          type: boolean
+    ApiSessionLogoutWebRequest:
+      type: object
+      required:
+        - client_type
+      additionalProperties: false
+      properties:
+        client_type:
+          type: string
+          enum:
+            - web
+        client_address:
+          type: string
+          nullable: true
+          description: >-
+            Optional active wallet address. Web clients should include it so
+            multi-account logout targets the matching address-scoped cookie
+            instead of the compatibility cookie.
+        all_sessions:
+          type: boolean
+    ApiSessionNativeResponse:
+      type: object
+      required:
+        - address
+        - access_token
+        - access_token_expires_at
+        - client_type
+        - native_refresh_token
+        - refresh_token_expires_at
+      properties:
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        access_token:
+          type: string
+        access_token_expires_at:
+          type: string
+          format: date-time
+        client_type:
+          type: string
+          enum:
+            - native
+            - desktop
+        native_refresh_token:
+          type: string
+        refresh_token_expires_at:
+          type: string
+          format: date-time
+    ApiSessionNonceQuery:
+      type: object
+      additionalProperties: false
+      required:
+        - signer_address
+      properties:
+        signer_address:
+          type: string
+          description: Your wallet address
+        client_type:
+          type: string
+          enum:
+            - web
+            - native
+            - desktop
+          default: web
+        chain_id:
+          type: integer
+          minimum: 1
+          default: 1
+          description: >-
+            Backward-compatible request field. Session challenges are issued for
+            the backend-configured auth chain, not this client-supplied value.
+    ApiSessionNonceResponse:
+      type: object
+      required:
+        - signable_message
+        - server_signature
+      properties:
+        signable_message:
+          type: string
+        server_signature:
+          type: string
+    ApiSessionRefreshNativeRequest:
+      type: object
+      required:
+        - client_type
+        - client_address
+        - native_refresh_token
+      properties:
+        client_type:
+          type: string
+          enum:
+            - native
+            - desktop
+        client_address:
+          type: string
+        native_refresh_token:
+          type: string
+    ApiSessionRefreshWebRequest:
+      type: object
+      required:
+        - client_type
+      additionalProperties: false
+      properties:
+        client_type:
+          type: string
+          enum:
+            - web
+        client_address:
+          type: string
+          nullable: true
+          description: >-
+            Optional active wallet address. Web clients should include it so
+            multi-account sessions refresh the matching address-scoped cookie
+            instead of the compatibility cookie.
+    ApiSessionWebResponse:
+      type: object
+      required:
+        - address
+        - access_token
+        - access_token_expires_at
+        - client_type
+      properties:
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        access_token:
+          type: string
+        access_token_expires_at:
+          type: string
+          format: date-time
+        client_type:
+          type: string
+          enum:
+            - web
     ApiSetPinnedDropRequest:
       type: object
       required:

@@ -96,9 +96,9 @@ import { parseTdhResultsFromDB } from '@/sql_helpers';
 import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
-  corsOptions,
   DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
+  getCorsOptionsForRequest,
   NFTS_PAGE_SIZE,
   PaginatedResponse,
   SORT_DIRECTIONS
@@ -144,6 +144,7 @@ import { getValidatedByJoiOrThrow } from './validation';
 import {
   appWebSockets,
   authenticateWebSocketJwtOrGetByConnectionId,
+  authenticateWebSocketToken,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
@@ -697,7 +698,26 @@ async function initializeApp() {
   }
   app.use(requestLogMiddleware());
   app.use(compression());
-  app.use(cors(corsOptions));
+  app.use(
+    cors(
+      (
+        req: Request,
+        callback: (
+          error: Error | null,
+          options: ReturnType<typeof getCorsOptionsForRequest>
+        ) => void
+      ) => {
+        callback(
+          null,
+          getCorsOptionsForRequest(
+            req.path,
+            req.headers.origin,
+            req.headers.host
+          )
+        );
+      }
+    )
+  );
   app.use(
     express.json({
       limit: '5mb',
@@ -1676,6 +1696,7 @@ async function initializeApp() {
         );
         const { identityId, jwtExpiry } =
           await authenticateWebSocketJwtOrGetByConnectionId(event);
+        let activeIdentityId = identityId;
         await appWebSockets.register({
           identityId,
           connectionId,
@@ -1690,6 +1711,41 @@ async function initializeApp() {
             const message = JSON.parse(rawData.toString());
 
             switch (message.type) {
+              case WsMessageType.AUTHENTICATE: {
+                const accessToken = (
+                  message.access_token ?? message.token
+                )?.toString();
+                const authenticated = accessToken
+                  ? await authenticateWebSocketToken(accessToken)
+                  : null;
+                if (!authenticated) {
+                  socket.send(
+                    JSON.stringify({
+                      type: WsMessageType.AUTHENTICATION_FAILED
+                    })
+                  );
+                  break;
+                }
+                activeIdentityId = authenticated.identityId;
+                await appWebSockets.authenticateConnection(
+                  {
+                    connectionId,
+                    identityId: authenticated.identityId,
+                    jwtExpiry: authenticated.jwtExpiry
+                  },
+                  {}
+                );
+                socket.send(
+                  JSON.stringify({
+                    type: WsMessageType.AUTHENTICATED,
+                    identity_id: authenticated.identityId,
+                    expires_at: new Date(
+                      authenticated.jwtExpiry * 1000
+                    ).toISOString()
+                  })
+                );
+                break;
+              }
               case WsMessageType.SUBSCRIBE_TO_WAVE: {
                 const waveId = message.wave_id?.toString() ?? null;
                 if (waveId && !ids.isValidUuid(waveId)) {
@@ -1717,7 +1773,7 @@ async function initializeApp() {
                   );
                 } else {
                   await wsListenersNotifier.notifyAboutUserIsTyping({
-                    identityId,
+                    identityId: activeIdentityId,
                     waveId
                   });
                 }

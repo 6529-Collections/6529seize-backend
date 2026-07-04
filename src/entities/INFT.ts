@@ -186,6 +186,12 @@ export class MemesExtendedData extends ExtendedDataBase {
 
   @Column({ type: 'text' })
   meme_name!: string;
+
+  @Column({ type: 'boolean', nullable: true })
+  recorded_in_tdh?: boolean | null;
+
+  @Column({ type: 'int', nullable: true })
+  ranked_collection_size?: number | null;
 }
 
 export interface NFTWithExtendedData extends NFT, MemesExtendedData {}
