@@ -8,5 +8,6 @@
     "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "packageManager": "npm@10.9.8"
 }
