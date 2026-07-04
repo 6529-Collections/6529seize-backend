@@ -1,6 +1,6 @@
 import 'reflect-metadata';
-import { connect, disconnect, getDataSource } from '../db';
-import { NFTOwner } from '../entities/INFTOwner';
+import { connect, disconnect, getDataSource } from '@/db';
+import { NFTOwner } from '@/entities/INFTOwner';
 import { fetchAllNftOwners } from './db.nft_owners';
 
 const MEMES = '0xmemescontract';
