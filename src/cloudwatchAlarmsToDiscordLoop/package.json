@@ -17,5 +17,6 @@
   },
   "dependencies": {
     "discord.js": "^14.25.1"
-  }
+  },
+  "packageManager": "npm@10.9.8"
 }

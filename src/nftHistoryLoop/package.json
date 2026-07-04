@@ -9,5 +9,6 @@
     "postbuild": "cd dist && zip -r index.zip index.js*",
     "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
     "sls-deploy:staging": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
-  }
+  },
+  "packageManager": "npm@10.9.8"
 }

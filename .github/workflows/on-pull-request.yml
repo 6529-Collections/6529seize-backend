@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      - name: Check package manager discipline
+        run: node scripts/check-package-manager.mjs
       - name: Install dependencies
         run: npm i && pushd src/api-serverless && npm i && popd
       - name: Verify generated files are committed
