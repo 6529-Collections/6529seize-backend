@@ -2,13 +2,13 @@ import {
   fetchAllSeasons,
   fetchTransactionAddressesFromBlock,
   fetchWalletConsolidationKeysViewForWallet
-} from '../db';
-import { NFTOwner } from '../entities/INFTOwner';
-import { MemesSeason } from '../entities/ISeason';
+} from '@/db';
+import { NFTOwner } from '@/entities/INFTOwner';
+import { MemesSeason } from '@/entities/ISeason';
 import {
   fetchAllNftOwners,
   getMaxNftOwnersBlockReference
-} from '../nftOwnersLoop/db.nft_owners';
+} from '@/nftOwnersLoop/db.nft_owners';
 import {
   fetchAllOwnerBalancesWallets,
   fetchRefreshOutdatedBalances,
@@ -21,7 +21,7 @@ import {
   updateOwnerBalances
 } from './owners_balances';
 
-jest.mock('../db', () => ({
+jest.mock('@/db', () => ({
   fetchAllSeasons: jest.fn(),
   fetchTransactionAddressesFromBlock: jest.fn(),
   fetchWalletConsolidationKeysViewForWallet: jest.fn()
@@ -35,7 +35,7 @@ jest.mock('./db.owners_balances', () => ({
   persistOwnerBalances: jest.fn()
 }));
 
-jest.mock('../nftOwnersLoop/db.nft_owners', () => ({
+jest.mock('@/nftOwnersLoop/db.nft_owners', () => ({
   fetchAllNftOwners: jest.fn(),
   getMaxNftOwnersBlockReference: jest.fn()
 }));
@@ -201,6 +201,10 @@ describe('updateOwnerBalances (incremental)', () => {
     // consolidated wallets resolve through the view; unknown wallet falls back
     // to itself, exactly like the old per-address [0]-or-fallback logic
     expect(keys).toEqual(['0xaliceaa-0xbobbb', '0xgonecc']);
+
+    // consolidated balances are computed once per unique consolidation, not
+    // once per member address: 1 incremental owners fetch + 2 unique groups
+    expect(mockedFetchAllNftOwners).toHaveBeenCalledTimes(3);
   });
 });
 

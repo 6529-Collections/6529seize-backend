@@ -407,54 +407,59 @@ export async function consolidateOwnerBalances(
     const chunk = addressArray.slice(i, i + CONSOLIDATION_KEYS_CHUNK_SIZE);
     const rows = await fetchWalletConsolidationKeysViewForWallet(chunk);
     rows.forEach((row) => {
-      // the view's row shape is { address, consolidation_key }
-      const rowAddress = (row as unknown as { address: string }).address;
       if (
-        rowAddress &&
-        !consolidationKeyByAddress.has(rowAddress.toLowerCase())
+        row.address &&
+        !consolidationKeyByAddress.has(row.address.toLowerCase())
       ) {
         consolidationKeyByAddress.set(
-          rowAddress.toLowerCase(),
+          row.address.toLowerCase(),
           row.consolidation_key
         );
       }
     });
   }
 
-  await Promise.all(
-    addressArray.map(async (address) => {
-      const viewConsolidationKey = consolidationKeyByAddress.get(
+  // multiple addresses can resolve to the same consolidation: compute each
+  // consolidation's balances once, not once per member address
+  const consolidationAddressesByKey = new Map<string, string[]>();
+  addressArray.forEach((address) => {
+    const viewConsolidationKey = consolidationKeyByAddress.get(
+      address.toLowerCase()
+    );
+    if (viewConsolidationKey === undefined) {
+      consolidationAddressesByKey.set(address.toLowerCase(), [
         address.toLowerCase()
+      ]);
+    } else if (!consolidationAddressesByKey.has(viewConsolidationKey)) {
+      consolidationAddressesByKey.set(
+        viewConsolidationKey,
+        viewConsolidationKey.split('-')
       );
+    }
+  });
 
-      let consolidationKey: string;
-      let consolidationAddresses: string[] = [];
-      if (viewConsolidationKey === undefined) {
-        consolidationKey = address.toLowerCase();
-        consolidationAddresses.push(address.toLowerCase());
-      } else {
-        consolidationKey = viewConsolidationKey;
-        consolidationAddresses = viewConsolidationKey.split('-');
+  await Promise.all(
+    Array.from(consolidationAddressesByKey.entries()).map(
+      async ([consolidationKey, consolidationAddresses]) => {
+        const consolidatedBalances = await getConsolidatedBalances(
+          seasons,
+          allContracts,
+          consolidationKey,
+          consolidationAddresses
+        );
+        consolidatedOwnersBalancesMap.set(
+          consolidationKey,
+          consolidatedBalances.balance
+        );
+        consolidatedOwnersBalancesMemesMap.set(
+          consolidationKey,
+          consolidatedBalances.memes
+        );
+        consolidationAddresses.forEach((address) => {
+          deleteDelta.add(address);
+        });
       }
-
-      const consolidatedBalances = await getConsolidatedBalances(
-        seasons,
-        allContracts,
-        consolidationKey,
-        consolidationAddresses
-      );
-      consolidatedOwnersBalancesMap.set(
-        consolidationKey,
-        consolidatedBalances.balance
-      );
-      consolidatedOwnersBalancesMemesMap.set(
-        consolidationKey,
-        consolidatedBalances.memes
-      );
-      consolidationAddresses.forEach((address) => {
-        deleteDelta.add(address);
-      });
-    })
+    )
   );
 
   const consolidatedOwnersBalances = Array.from(
