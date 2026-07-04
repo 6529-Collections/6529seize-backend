@@ -36,7 +36,10 @@ import { BadRequestException } from '@/exceptions';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
 import { sqlExecutor } from '@/sql-executor';
 import { equalIgnoreCase } from '@/strings';
-import { fetchSubscriptionEligibility } from '@/subscriptionsDaily/db.subscriptions';
+import {
+  fetchSubscriptionEligibility,
+  fetchSubscriptionEligibilityForKeys
+} from '@/subscriptionsDaily/db.subscriptions';
 import { Time } from '@/time';
 
 const SUBSCRIPTIONS_START_ID = 220;
@@ -819,18 +822,9 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
     balanceMap.set(b.consolidation_key.toLowerCase(), b.balance);
   });
 
-  // Fetch subscription eligibility for auto subscriptions
-  const autoSubEligibilityMap = new Map<string, number>();
-  await Promise.all(
-    autoSubs.map(async (autoSub) => {
-      const eligibility = await fetchSubscriptionEligibility(
-        autoSub.consolidation_key
-      );
-      autoSubEligibilityMap.set(
-        autoSub.consolidation_key.toLowerCase(),
-        eligibility
-      );
-    })
+  // Fetch subscription eligibility for auto subscriptions in one batched query
+  const autoSubEligibilityMap = await fetchSubscriptionEligibilityForKeys(
+    autoSubs.map((autoSub) => autoSub.consolidation_key)
   );
 
   const counts: SubscriptionCounts[] = [];
