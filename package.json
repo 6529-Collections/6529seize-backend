@@ -35,7 +35,7 @@
   "devDependencies": {
     "@aws-sdk/lib-storage": "^3.980.0",
     "@eslint/js": "^9.27.0",
-    "@testcontainers/mysql": "^11.0.3",
+    "@testcontainers/mysql": "^12.0.3",
     "@types/fluent-ffmpeg": "^2.1.20",
     "@types/jest": "^29.5.3",
     "@types/jest-when": "^3.5.5",
@@ -49,7 +49,7 @@
     "@types/winston": "^2.4.4",
     "@typescript-eslint/eslint-plugin": "^8.32.1",
     "@typescript-eslint/parser": "^8.32.1",
-    "esbuild": "^0.27.2",
+    "esbuild": "^0.28.1",
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-prettier": "^5.4.0",
@@ -62,7 +62,7 @@
     "rimraf": "^3.0.2",
     "serverless": "^3.40.0",
     "serverless-offline": "^13.9.0",
-    "testcontainers": "^11.0.3",
+    "testcontainers": "^12.0.3",
     "ts-jest": "^29.1.1",
     "ts-jest-mocker": "^0.5.0",
     "ts-node": "^10.9.1",
@@ -96,7 +96,7 @@
     "csv-parser": "^3.2.0",
     "db-migrate": "^0.11.14",
     "db-migrate-mysql": "^3.0.0",
-    "discord.js": "^14.25.1",
+    "discord.js": "^14.26.4",
     "dotenv": "^17.2.4",
     "ethereum-block-by-date": "^1.4.9",
     "ethers": "^6.16.0",
@@ -130,17 +130,18 @@
   },
   "overrides": {
     "serverless": {
-      "tar": "7.5.13",
-      "ws": "8.18.0"
+      "tar": "7.5.16",
+      "ws": "8.21.0"
     },
     "@serverless/platform-client": {
-      "ws": "8.18.0"
+      "ws": "8.21.0"
     },
+    "uuid": "11.1.1",
     "discord.js": {
-      "undici": "7.25.0"
+      "undici": "6.27.0"
     },
     "@discordjs/rest": {
-      "undici": "7.25.0"
+      "undici": "6.27.0"
     },
     "http-proxy-agent": {
       "@tootallnate/once": "3.0.1"
