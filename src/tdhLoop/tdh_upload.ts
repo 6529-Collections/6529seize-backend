@@ -1,4 +1,4 @@
-import converter from 'json-2-csv';
+import { json2csv } from 'json-2-csv';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { s3ObjectExists, s3UploadObject } from '@/helpers/s3_helpers';
 import { persistConsolidatedTdhUpload, persistTdhUpload } from '../db';
@@ -162,7 +162,7 @@ async function persistUpload(
 ) {
   logger.info(`[CREATING CSV]`);
 
-  const csv = await converter.json2csvAsync(tdhUpload);
+  const csv = json2csv(tdhUpload);
 
   const size = csv.length / (1024 * 1024);
   logger.info(`[CSV CREATED - SIZE ${size.toFixed(2)} MB]`);

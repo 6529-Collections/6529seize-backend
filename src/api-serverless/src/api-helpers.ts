@@ -8,7 +8,7 @@ import {
   SORT_DIRECTIONS
 } from './api-constants';
 
-const converter = require('json-2-csv');
+const { json2csv } = require('json-2-csv');
 
 function getCacheKeyPrefix(): string {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__`;
@@ -49,7 +49,7 @@ export async function returnCSVResult(
   results: any,
   response: Response
 ) {
-  const csv = await converter.json2csvAsync(results);
+  const csv = json2csv(results);
   response.header(CONTENT_TYPE_HEADER, 'text/csv');
   response.attachment(`${fileName}.csv`);
   return response.send(csv);
