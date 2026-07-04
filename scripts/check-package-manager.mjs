@@ -1,10 +1,11 @@
-import { execSync } from 'node:child_process';
 import console from 'node:console';
 import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 const PINNED_PACKAGE_MANAGER = 'npm@10.9.8';
-const FORBIDDEN_FILES = [
+const FORBIDDEN_FILES = new Set([
   'yarn.lock',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
@@ -12,24 +13,28 @@ const FORBIDDEN_FILES = [
   'bun.lock',
   '.yarnrc',
   '.yarnrc.yml'
-];
+]);
+const SKIPPED_DIRECTORIES = new Set([
+  'node_modules',
+  '.git',
+  '.serverless',
+  'dist',
+  'build',
+  'coverage'
+]);
 
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..'
+);
 const fix = process.argv.includes('--fix');
 
-const trackedFiles = execSync('git ls-files', { encoding: 'utf8' })
-  .split('\n')
-  .filter(Boolean);
-
-const packageJsonFiles = trackedFiles.filter(
-  (file) => file === 'package.json' || file.endsWith('/package.json')
-);
+const packageJsonFiles = [];
+const strayLockfiles = [];
+collectFiles(repoRoot);
 
 const errors = [];
 
-const strayLockfiles = trackedFiles.filter((file) => {
-  const basename = file.split('/').pop();
-  return FORBIDDEN_FILES.includes(basename);
-});
 for (const file of strayLockfiles) {
   errors.push(
     `${file}: forbidden package-manager file. This repo uses npm only; remove it.`
@@ -37,7 +42,8 @@ for (const file of strayLockfiles) {
 }
 
 for (const file of packageJsonFiles) {
-  const raw = fs.readFileSync(file, 'utf8');
+  const absolutePath = path.join(repoRoot, file);
+  const raw = fs.readFileSync(absolutePath, 'utf8');
   let manifest;
   try {
     manifest = JSON.parse(raw);
@@ -49,8 +55,7 @@ for (const file of packageJsonFiles) {
     continue;
   }
   if (fix) {
-    const updated = setPackageManager(raw, manifest);
-    fs.writeFileSync(file, updated);
+    fs.writeFileSync(absolutePath, setPackageManager(raw));
     console.log(`fixed: ${file}`);
   } else {
     errors.push(
@@ -61,15 +66,45 @@ for (const file of packageJsonFiles) {
   }
 }
 
-function setPackageManager(raw, manifest) {
-  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
-  const trailingNewline = raw.endsWith('\n');
-  manifest.packageManager = PINNED_PACKAGE_MANAGER;
-  let output = JSON.stringify(manifest, null, 2);
-  if (eol !== '\n') {
-    output = output.replaceAll('\n', eol);
+function collectFiles(directory) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!SKIPPED_DIRECTORIES.has(entry.name)) {
+        collectFiles(absolutePath);
+      }
+      continue;
+    }
+    const relativePath = path
+      .relative(repoRoot, absolutePath)
+      .replaceAll(path.sep, '/');
+    if (entry.name === 'package.json') {
+      packageJsonFiles.push(relativePath);
+    } else if (FORBIDDEN_FILES.has(entry.name)) {
+      strayLockfiles.push(relativePath);
+    }
   }
-  return trailingNewline ? output + eol : output;
+}
+
+function setPackageManager(raw) {
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  const existingKey = /"packageManager"\s*:\s*"[^"]*"/;
+  if (existingKey.test(raw)) {
+    return raw.replace(
+      existingKey,
+      `"packageManager": "${PINNED_PACKAGE_MANAGER}"`
+    );
+  }
+  const indentMatch = raw.match(/^([ \t]+)"/m);
+  const indent = indentMatch ? indentMatch[1] : '  ';
+  const closingIndex = raw.lastIndexOf('}');
+  const head = raw.slice(0, closingIndex).replace(/\s*$/, '');
+  const needsComma = !head.endsWith('{');
+  return (
+    head +
+    `${needsComma ? ',' : ''}${eol}${indent}"packageManager": "${PINNED_PACKAGE_MANAGER}"${eol}` +
+    raw.slice(closingIndex)
+  );
 }
 
 if (errors.length > 0) {
