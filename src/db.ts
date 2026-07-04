@@ -1703,3 +1703,62 @@ export async function fetchWalletConsolidationKeysViewForWallet(
   const sql = `SELECT * FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address IN (:addresses)`;
   return await sqlExecutor.execute(sql, { addresses });
 }
+
+const CONSOLIDATION_KEY_ADDRESSES_CHUNK_SIZE = 5000;
+
+/**
+ * Resolves consolidations for all given addresses through the
+ * address_consolidation_keys view using chunked batch queries (instead of one
+ * query per address) and dedupes the result to one entry per consolidation:
+ * consolidation key -> member addresses (key.split('-')). Addresses missing
+ * from the view fall back to a singleton group keyed by the lowercased
+ * address, mirroring the per-address [0]-or-fallback logic used before.
+ * Group order follows the first appearance of a member in the input.
+ */
+export async function fetchConsolidationGroupsForAddresses(
+  addresses: string[]
+): Promise<Map<string, string[]>> {
+  const consolidationKeyByAddress = new Map<string, string>();
+  for (
+    let i = 0;
+    i < addresses.length;
+    i += CONSOLIDATION_KEY_ADDRESSES_CHUNK_SIZE
+  ) {
+    const chunk = addresses.slice(
+      i,
+      i + CONSOLIDATION_KEY_ADDRESSES_CHUNK_SIZE
+    );
+    const rows = await fetchWalletConsolidationKeysViewForWallet(chunk);
+    rows.forEach((row) => {
+      // the view's row shape is { address, consolidation_key }
+      const rowAddress = (row as unknown as { address: string }).address;
+      if (
+        rowAddress &&
+        !consolidationKeyByAddress.has(rowAddress.toLowerCase())
+      ) {
+        consolidationKeyByAddress.set(
+          rowAddress.toLowerCase(),
+          row.consolidation_key
+        );
+      }
+    });
+  }
+
+  const consolidationAddressesByKey = new Map<string, string[]>();
+  addresses.forEach((address) => {
+    const consolidationKey = consolidationKeyByAddress.get(
+      address.toLowerCase()
+    );
+    if (consolidationKey === undefined) {
+      consolidationAddressesByKey.set(address.toLowerCase(), [
+        address.toLowerCase()
+      ]);
+    } else if (!consolidationAddressesByKey.has(consolidationKey)) {
+      consolidationAddressesByKey.set(
+        consolidationKey,
+        consolidationKey.split('-')
+      );
+    }
+  });
+  return consolidationAddressesByKey;
+}

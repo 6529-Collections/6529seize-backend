@@ -20,9 +20,9 @@ import {
   NULL_ADDRESS
 } from '@/constants';
 import {
+  fetchConsolidationGroupsForAddresses,
   fetchMaxTransactionsBlockNumber,
-  fetchTransactionsAfterBlock,
-  fetchWalletConsolidationKeysViewForWallet
+  fetchTransactionsAfterBlock
 } from '../db';
 
 function normalizeAddress(addr: string): string {
@@ -260,36 +260,30 @@ export async function consolidateNftOwners(
   const upsertDeltaMap = new Map<string, ConsolidatedNFTOwner[]>();
   const deleteDelta = new Set<string>();
 
+  // one batched lookup for all addresses, then one owners fetch per unique
+  // consolidation instead of one per member address
+  const consolidationGroups = await fetchConsolidationGroupsForAddresses(
+    Array.from(addresses)
+  );
+
   await Promise.all(
-    Array.from(addresses).map(async (address) => {
-      const consolidation = (
-        await fetchWalletConsolidationKeysViewForWallet([address])
-      )[0];
+    Array.from(consolidationGroups.entries()).map(
+      async ([consolidationKey, consolidationAddresses]) => {
+        const owners = await fetchAllNftOwners(
+          undefined,
+          Array.from(consolidationAddresses)
+        );
 
-      let consolidationKey: string;
-      let consolidationAddresses: string[] = [];
-      if (!consolidation) {
-        consolidationKey = address.toLowerCase();
-        consolidationAddresses.push(address.toLowerCase());
-      } else {
-        consolidationKey = consolidation.consolidation_key;
-        consolidationAddresses = consolidation.consolidation_key.split('-');
+        const consolidatedOwners = getConsolidatedOwners(
+          consolidationKey,
+          owners
+        );
+
+        upsertDeltaMap.set(consolidationKey, consolidatedOwners);
+
+        consolidationAddresses.forEach((addr) => deleteDelta.add(addr));
       }
-
-      const owners = await fetchAllNftOwners(
-        undefined,
-        Array.from(consolidationAddresses)
-      );
-
-      const consolidatedOwners = getConsolidatedOwners(
-        consolidationKey,
-        owners
-      );
-
-      upsertDeltaMap.set(consolidationKey, consolidatedOwners);
-
-      consolidationAddresses.forEach((addr) => deleteDelta.add(addr));
-    })
+    )
   );
 
   const upsertDelta = Array.from(upsertDeltaMap.values()).flat();
