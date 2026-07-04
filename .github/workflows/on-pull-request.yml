@@ -21,12 +21,17 @@ jobs:
       - name: Check package manager discipline
         run: node scripts/check-package-manager.mjs
       - name: Activate pinned npm via Corepack
+        shell: bash
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         run: |
+          expected="$(node -p "String(require('./package.json').packageManager ?? '').split('npm@')[1] ?? ''")"
+          if [[ -z "${expected}" ]]; then
+            echo "::error::package.json has no npm packageManager pin; the discipline check should have caught this."
+            exit 1
+          fi
           corepack enable npm
           corepack install
-          expected="$(node -p "require('./package.json').packageManager.split('@')[1]")"
           resolved="$(npm --version)"
           echo "npm resolved to ${resolved} (pinned ${expected})"
           if [[ "${resolved}" != "${expected}" ]]; then
