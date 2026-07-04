@@ -25,7 +25,7 @@ jobs:
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         run: |
-          expected="$(node -p "String(require('./package.json').packageManager ?? '').split('npm@')[1] ?? ''")"
+          expected="$(node -p "String(require('./package.json').packageManager ?? '').split('npm@')[1]?.split('+')[0] ?? ''")"
           if [[ -z "${expected}" ]]; then
             echo "::error::package.json has no npm packageManager pin; the discipline check should have caught this."
             exit 1
