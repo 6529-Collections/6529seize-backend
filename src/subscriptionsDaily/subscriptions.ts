@@ -348,8 +348,9 @@ async function uploadFinalSubscriptions(
 
 const CONSOLIDATION_LOOKUP_CHUNK_SIZE = 5000;
 
-export async function consolidateSubscriptions(addresses: Set<string>) {
-  const addressList = Array.from(addresses);
+async function fetchAffectedSubscriptions(
+  addressList: string[]
+): Promise<SubscriptionBalance[]> {
   const addressesFilter = addressList
     .map(
       (_, i) =>
@@ -364,28 +365,16 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
     {} as Record<string, string>
   );
 
-  const affectedSubscriptions: SubscriptionBalance[] =
-    await sqlExecutor.execute(
-      `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+  return await sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
     WHERE (${addressesFilter})`,
-      addressesFilterParams
-    );
-
-  logger.info(
-    `[CONSOLIDATING SUBSCRIPTIONS] : [FOUND ${affectedSubscriptions.length} AFFECTED SUBSCRIPTIONS]`
+    addressesFilterParams
   );
+}
 
-  // prefetch view keys for every wallet part and TDH for every candidate key,
-  // instead of querying per wallet part inside the loop below
-  const allWalletParts = new Set<string>();
-  affectedSubscriptions.forEach((sub) => {
-    sub.consolidation_key.split('-').forEach((wallet) => {
-      if (wallet) {
-        allWalletParts.add(wallet);
-      }
-    });
-  });
-  const walletPartsList = Array.from(allWalletParts);
+async function buildViewKeyByWallet(
+  walletPartsList: string[]
+): Promise<Map<string, string>> {
   const viewKeyByWallet = new Map<string, string>();
   for (
     let i = 0;
@@ -402,12 +391,12 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       }
     });
   }
+  return viewKeyByWallet;
+}
 
-  const candidateKeys = new Set<string>();
-  walletPartsList.forEach((wallet) => {
-    candidateKeys.add(viewKeyByWallet.get(wallet.toLowerCase()) ?? wallet);
-  });
-  const candidateKeysList = Array.from(candidateKeys);
+async function buildTdhByKey(
+  candidateKeysList: string[]
+): Promise<Map<string, number>> {
   const tdhByKey = new Map<string, number>();
   for (
     let i = 0;
@@ -430,6 +419,36 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       }
     });
   }
+  return tdhByKey;
+}
+
+export async function consolidateSubscriptions(addresses: Set<string>) {
+  const affectedSubscriptions = await fetchAffectedSubscriptions(
+    Array.from(addresses)
+  );
+
+  logger.info(
+    `[CONSOLIDATING SUBSCRIPTIONS] : [FOUND ${affectedSubscriptions.length} AFFECTED SUBSCRIPTIONS]`
+  );
+
+  // prefetch view keys for every wallet part and TDH for every candidate key,
+  // instead of querying per wallet part inside the loop below
+  const allWalletParts = new Set<string>();
+  affectedSubscriptions.forEach((sub) => {
+    sub.consolidation_key.split('-').forEach((wallet) => {
+      if (wallet) {
+        allWalletParts.add(wallet);
+      }
+    });
+  });
+  const walletPartsList = Array.from(allWalletParts);
+  const viewKeyByWallet = await buildViewKeyByWallet(walletPartsList);
+
+  const candidateKeys = new Set<string>();
+  walletPartsList.forEach((wallet) => {
+    candidateKeys.add(viewKeyByWallet.get(wallet.toLowerCase()) ?? wallet);
+  });
+  const tdhByKey = await buildTdhByKey(Array.from(candidateKeys));
 
   const replaceConsolidations = new Map<string, string>();
 
