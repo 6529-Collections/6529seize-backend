@@ -10,7 +10,7 @@ import {
   persistRememes,
   persistRememesUpload
 } from '../db';
-import converter from 'json-2-csv';
+import { json2csv } from 'json-2-csv';
 import { persistRememesS3 } from '../s3_rememes';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
@@ -312,7 +312,7 @@ async function upload(rememes: Rememe[]) {
 
   logger.info(`[UPLOADING TO ARWEAVE]`);
 
-  const csv = await converter.json2csvAsync(rememes);
+  const csv = json2csv(rememes);
 
   const transaction = await myarweave.createTransaction(
     { data: Buffer.from(csv) },

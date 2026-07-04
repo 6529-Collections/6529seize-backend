@@ -1,4 +1,4 @@
-import converter from 'json-2-csv';
+import { json2csv } from 'json-2-csv';
 import { arweaveFileUploader } from '../arweave';
 import { collections } from '../collections';
 import {
@@ -332,7 +332,7 @@ async function uploadFinalSubscriptions(
         subscribed_at: sub.subscribed_at
       };
     });
-  const csv = await converter.json2csvAsync(finalUpload);
+  const csv = json2csv(finalUpload);
   const { url } = await arweaveFileUploader.uploadFile(
     Buffer.from(csv),
     'text/csv'
