@@ -957,42 +957,74 @@ async function updateSupply(
   nftMap: Map<string, NftProcessingEntry>
 ): Promise<number> {
   let maxSupply = 0;
+  const entries = Array.from(nftMap.values());
 
-  await Promise.all(
-    Array.from(nftMap.values()).map(async (entry) => {
-      const nft = entry.nft;
-      let supply: number;
-
-      if (nft.token_type === TokenType.ERC1155) {
-        const raw = await getDataSource()
-          .getRepository(NFTOwner)
-          .createQueryBuilder('owner')
-          .select('SUM(owner.balance)', 'sum')
-          .where('owner.contract = :contract', { contract: nft.contract })
-          .andWhere('owner.token_id = :token_id', { token_id: nft.id })
-          .getRawOne();
-        supply = Number(raw?.sum ?? 0);
-
-        if (equalIgnoreCase(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
-          supply += MEME_8_EDITION_BURN_ADJUSTMENT;
-        }
-      } else {
-        supply = Array.from(nftMap.values()).filter((e) =>
-          equalIgnoreCase(e.nft.contract, nft.contract)
-        ).length;
-      }
-
-      if (supply !== nft.supply) {
-        logInfo(
-          `♻️ ${nft.contract} #${nft.id} updating supply from ${nft.supply} to ${supply}`
-        );
-        nft.supply = supply;
-        entry.changed = true;
-      }
-
-      maxSupply = Math.max(maxSupply, supply);
-    })
+  const erc1155Contracts = Array.from(
+    new Set(
+      entries
+        .filter((e) => e.nft.token_type === TokenType.ERC1155)
+        .map((e) => e.nft.contract.toLowerCase())
+    )
   );
+  const erc1155SupplyByContractAndToken = new Map<string, number>();
+  if (erc1155Contracts.length) {
+    const raws: { contract: string; token_id: number; sum: any }[] =
+      await getDataSource()
+        .getRepository(NFTOwner)
+        .createQueryBuilder('owner')
+        .select('owner.contract', 'contract')
+        .addSelect('owner.token_id', 'token_id')
+        .addSelect('SUM(owner.balance)', 'sum')
+        .where('owner.contract IN (:...contracts)', {
+          contracts: erc1155Contracts
+        })
+        .groupBy('owner.contract')
+        .addGroupBy('owner.token_id')
+        .getRawMany();
+    raws.forEach((raw) => {
+      erc1155SupplyByContractAndToken.set(
+        `${raw.contract.toLowerCase()}_${raw.token_id}`,
+        Number(raw.sum ?? 0)
+      );
+    });
+  }
+
+  const entryCountByContract = new Map<string, number>();
+  entries.forEach((e) => {
+    const contractKey = e.nft.contract.toLowerCase();
+    entryCountByContract.set(
+      contractKey,
+      (entryCountByContract.get(contractKey) ?? 0) + 1
+    );
+  });
+
+  entries.forEach((entry) => {
+    const nft = entry.nft;
+    let supply: number;
+
+    if (nft.token_type === TokenType.ERC1155) {
+      supply =
+        erc1155SupplyByContractAndToken.get(
+          `${nft.contract.toLowerCase()}_${nft.id}`
+        ) ?? 0;
+
+      if (equalIgnoreCase(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
+        supply += MEME_8_EDITION_BURN_ADJUSTMENT;
+      }
+    } else {
+      supply = entryCountByContract.get(nft.contract.toLowerCase()) ?? 0;
+    }
+
+    if (supply !== nft.supply) {
+      logInfo(
+        `♻️ ${nft.contract} #${nft.id} updating supply from ${nft.supply} to ${supply}`
+      );
+      nft.supply = supply;
+      entry.changed = true;
+    }
+
+    maxSupply = Math.max(maxSupply, supply);
+  });
 
   return maxSupply;
 }
