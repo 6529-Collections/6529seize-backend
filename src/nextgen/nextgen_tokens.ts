@@ -60,16 +60,27 @@ async function processCollectionTraitScores(
   logger.info(
     `[PROCESSING TRAIT SCORES] : [COLLECTION ${collection.id}] : [TOKEN COUNT ${tokenCount}]`
   );
+  // per trait: how often each value occurs (map size = distinct value count)
+  const traitValueCounts = new Map<string, Map<string, number>>();
+  tokenTraits.forEach((tt) => {
+    let valueCounts = traitValueCounts.get(tt.trait);
+    if (!valueCounts) {
+      valueCounts = new Map<string, number>();
+      traitValueCounts.set(tt.trait, valueCounts);
+    }
+    valueCounts.set(tt.value, (valueCounts.get(tt.value) ?? 0) + 1);
+  });
+
   tokenTraits.forEach((tt) => {
     const name = tt.trait;
     const value = tt.value;
 
     tt.token_count = tokenCount;
 
-    const sharedKey = tokenTraits.filter((tt) => tt.trait === name);
-    tt.trait_count = new Set(sharedKey.map((item) => item.value)).size;
+    const valueCounts = traitValueCounts.get(name)!;
+    tt.trait_count = valueCounts.size;
 
-    tt.value_count = sharedKey.filter((tt) => tt.value === value).length;
+    tt.value_count = valueCounts.get(value) ?? 0;
 
     if (name.toLowerCase().startsWith(mintTypeTraitLower)) {
       tt.statistical_rarity = -1;
@@ -79,12 +90,9 @@ async function processCollectionTraitScores(
       tt.statistical_rarity_normalised = -1;
       tt.single_trait_rarity_score_normalised = -1;
     } else {
-      const sharedKeyValue = sharedKey.filter(
-        (tt) => tt.value === value
-      ).length;
+      const sharedKeyValue = tt.value_count;
 
-      const valuesCountForTrait = new Set(sharedKey.map((item) => item.value))
-        .size;
+      const valuesCountForTrait = valueCounts.size;
 
       const statisticalScore = sharedKeyValue / tokenCount;
       tt.statistical_rarity = statisticalScore;
@@ -395,12 +403,21 @@ function calulateTokenRanks(
   startingTraits: NextGenTokenTrait[],
   field: string
 ) {
-  const categories = new Set<string>(startingTraits.map((tt) => tt.trait));
-
-  const rankedTokens = Array.from(categories).map((category) => {
-    const traits = startingTraits.filter((tt) => tt.trait === category);
-    return calculateTokenRanksForCategory(traits, field);
+  // group rows by trait in one pass; map insertion order matches the previous
+  // Set-of-categories first-appearance order, and rows keep array order
+  const traitsByCategory = new Map<string, NextGenTokenTrait[]>();
+  startingTraits.forEach((tt) => {
+    const categoryTraits = traitsByCategory.get(tt.trait);
+    if (categoryTraits) {
+      categoryTraits.push(tt);
+    } else {
+      traitsByCategory.set(tt.trait, [tt]);
+    }
   });
+
+  const rankedTokens = Array.from(traitsByCategory.values()).map((traits) =>
+    calculateTokenRanksForCategory(traits, field)
+  );
   return rankedTokens.flat();
 }
 
