@@ -177,13 +177,15 @@ jobs:
             fi
           fi
 
-          echo "ATTACHMENTS_INGEST_S3_BUCKET=$ATTACHMENTS_BUCKET" >> "$GITHUB_ENV"
-          echo "DROP_MEDIA_SANITIZE_IMAGES=$DROP_MEDIA_SANITIZE_IMAGES_VALUE" >> "$GITHUB_ENV"
-          echo "DROP_MEDIA_INGEST_S3_BUCKET=$DROP_MEDIA_INGEST_BUCKET" >> "$GITHUB_ENV"
-          echo "DROP_MEDIA_INGEST_S3_REGION=$DROP_MEDIA_INGEST_REGION" >> "$GITHUB_ENV"
-          echo "DROP_MEDIA_INGEST_STAGE=\${{ github.event.inputs.environment }}" >> "$GITHUB_ENV"
-          echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE" >> "$GITHUB_ENV"
-          echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT" >> "$GITHUB_ENV"
+          {
+            echo "ATTACHMENTS_INGEST_S3_BUCKET=$ATTACHMENTS_BUCKET"
+            echo "DROP_MEDIA_SANITIZE_IMAGES=$DROP_MEDIA_SANITIZE_IMAGES_VALUE"
+            echo "DROP_MEDIA_INGEST_S3_BUCKET=$DROP_MEDIA_INGEST_BUCKET"
+            echo "DROP_MEDIA_INGEST_S3_REGION=$DROP_MEDIA_INGEST_REGION"
+            echo "DROP_MEDIA_INGEST_STAGE=\${{ github.event.inputs.environment }}"
+            echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE"
+            echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT"
+          } >> "$GITHUB_ENV"
       - name: Deploy service
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
