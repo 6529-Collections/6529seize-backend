@@ -181,7 +181,7 @@ punk6529bot waves search --name "follow the repo"
    - incidents, failed gates, fix-forward or rollback decisions, and final state
    - known follow-ups, skipped checks, and remaining risks
 4. Keep the post detailed but safe to publish. Use public GitHub/workflow links when possible, but omit secrets, credentials, cookies, private URLs, raw production data, local paths, hidden prompts, and internal-only exploit or incident details.
-5. Re-check the wave before sending so the overview is not duplicating a newer deploy note. If the local helper is available, dry-run or draft first, then send after the content passes the safety check. Multiline content MUST go via `--file` (an LF text file) — inline `--text` from PowerShell silently loses everything after the first newline — and `--send` must come BEFORE the content flag or it is swallowed:
+5. Re-check the wave before sending so the overview is not duplicating a newer deploy note. Publish per the full posting contract in `ops/skills/post-6529/SKILL.md` from the separate repository `6529-Collections/6529seize-frontend` (do not resolve that path inside the backend repo): dry-run or draft first, multiline content via `--file` (an LF text file — inline `--text` from PowerShell silently loses everything after the first newline), and `--send` BEFORE the content flag or it is swallowed:
 
 ```powershell
 punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --file overview.txt
