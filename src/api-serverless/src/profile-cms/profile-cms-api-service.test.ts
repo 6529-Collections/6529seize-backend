@@ -13,6 +13,7 @@ import {
 import { ProfileCmsPointerEventType } from '@/entities/IProfileCmsPointerEvent';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
@@ -22,11 +23,15 @@ import { ProfileCmsPublishSignaturesDb } from '@/profile-cms/profile-cms-publish
 import { ProfileCmsStorageReceiptVerifier } from '@/profile-cms/profile-cms-storage';
 import { ProfileCmsPublishSignatureVerificationResult } from '@/profile-cms/profile-cms-signing';
 import {
+  canonicalizeJson,
   CMS_AGENT_PATCH_MAX_OPERATIONS,
   CMS_AGENT_PATCH_SCHEMA,
   CmsAgentPatchV1,
-  CmsPackageV1
+  CmsPackageV1,
+  toPackageHashInput
 } from '@/profile-cms/protocol/v1';
+import { createHash } from 'node:crypto';
+import { ArweaveFileUploader } from '@/arweave';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
 import {
@@ -59,6 +64,12 @@ type PackagesDbMock = Pick<
   | 'markValidating'
   | 'supersedePrimaryForProfile'
   | 'executeNativeQueriesInTransaction'
+  | 'updateStorageReceipt'
+>;
+
+type ArweaveUploaderMock = Pick<
+  ArweaveFileUploader,
+  'uploadFileWithTransactionId'
 >;
 
 type PointerEventsDbMock = Pick<
@@ -82,9 +93,13 @@ describe('ProfileCmsApiService', () => {
   let publishSignaturesDb: jest.Mocked<PublishSignaturesDbMock>;
   let identityFetcher: jest.Mocked<IdentityFetcherMock>;
   let publishSignatureVerifier: jest.Mock;
+  let arweaveUploader: jest.Mocked<ArweaveUploaderMock>;
   let service: ProfileCmsApiService;
+  let originalArweaveKey: string | undefined;
 
   beforeEach(() => {
+    originalArweaveKey = process.env.ARWEAVE_KEY;
+    process.env.ARWEAVE_KEY = '{"kty":"RSA"}';
     packagesDb = {
       getNextVersion: jest.fn(),
       insert: jest.fn(),
@@ -103,7 +118,8 @@ describe('ProfileCmsApiService', () => {
       markPublished: jest.fn(),
       markValidating: jest.fn(),
       supersedePrimaryForProfile: jest.fn(),
-      executeNativeQueriesInTransaction: jest.fn()
+      executeNativeQueriesInTransaction: jest.fn(),
+      updateStorageReceipt: jest.fn()
     };
     pointerEventsDb = {
       insert: jest.fn(),
@@ -134,14 +150,26 @@ describe('ProfileCmsApiService', () => {
     publishSignatureVerifier = jest.fn(async ({ request }) =>
       createSignatureVerification(request.signer_address)
     );
+    arweaveUploader = {
+      uploadFileWithTransactionId: jest.fn()
+    };
     service = new ProfileCmsApiService(
       packagesDb as unknown as ProfileCmsPackagesDb,
       identityFetcher as unknown as IdentityFetcher,
       pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
       publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
       new ProfileCmsStorageReceiptVerifier(),
-      publishSignatureVerifier
+      publishSignatureVerifier,
+      arweaveUploader as unknown as ArweaveFileUploader
     );
+  });
+
+  afterEach(() => {
+    if (originalArweaveKey === undefined) {
+      delete process.env.ARWEAVE_KEY;
+    } else {
+      process.env.ARWEAVE_KEY = originalArweaveKey;
+    }
   });
 
   it('saves a draft CMS package for the profile owner', async () => {
@@ -1174,6 +1202,229 @@ describe('ProfileCmsApiService', () => {
       )
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(packagesDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
+  describe('uploadToStorage', () => {
+    const arweaveTxId = 'a'.repeat(43);
+
+    it('uploads canonical JSON to Arweave and returns a valid receipt', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      expect(arweaveUploader.uploadFileWithTransactionId).toHaveBeenCalledTimes(
+        1
+      );
+      expect(arweaveUploader.uploadFileWithTransactionId).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'application/json'
+      );
+      expect(result.receipt).toMatchObject({
+        provider: 'arweave',
+        uri: `ar://${arweaveTxId}`,
+        content_hash: draft.package_hash,
+        provider_content_id: arweaveTxId,
+        canonical: true
+      });
+      expect(typeof result.receipt.recorded_at).toBe('string');
+      expect(packagesDb.updateStorageReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: draft.id,
+          storage_provider: 'arweave',
+          storage_uri: `ar://${arweaveTxId}`,
+          storage_content_hash: draft.package_hash,
+          storage_provider_content_id: arweaveTxId,
+          storage_canonical: true
+        }),
+        expect.objectContaining({ connection: expect.any(Object) })
+      );
+    });
+
+    it('uploads the exact canonical bytes whose sha256 reproduces the receipt content hash', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      const uploadedBytes = arweaveUploader.uploadFileWithTransactionId.mock
+        .calls[0][0] as Buffer;
+      const uploadedBytesSha256 = createHash('sha256')
+        .update(uploadedBytes)
+        .digest('hex');
+      expect(`sha256:${uploadedBytesSha256}`).toBe(result.receipt.content_hash);
+      expect(result.receipt.content_hash).toBe(draft.package_hash);
+      expect(uploadedBytes.toString('utf8')).toBe(
+        canonicalizeJson(toPackageHashInput(draft.cms_package as CmsPackageV1))
+      );
+    });
+
+    it('returns the concurrent writer receipt found under lock without persisting a duplicate', async () => {
+      const draft = createEntity();
+      const concurrentReceipt = {
+        provider: 'arweave' as const,
+        uri: `ar://${'b'.repeat(43)}`,
+        content_hash: draft.package_hash,
+        provider_content_id: 'b'.repeat(43),
+        canonical: true,
+        recorded_at: '2026-06-17T00:00:00.000Z'
+      };
+      const lockedByOtherWriter = createEntity({
+        cms_package: {
+          ...(draft.cms_package as CmsPackageV1),
+          storage: [
+            ...(draft.cms_package as CmsPackageV1).storage,
+            concurrentReceipt
+          ]
+        }
+      });
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(lockedByOtherWriter);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      expect(result.receipt).toEqual(concurrentReceipt);
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('fails with 502 when the uploader returns a malformed transaction id', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: 'https://arweave.net/not-a-valid-transaction-id',
+        transaction_id: 'not-a-valid-transaction-id'
+      });
+
+      const error = await service
+        .uploadToStorage(draft.id, ownerContext())
+        .catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      expect(error.getStatusCode()).toBe(502);
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('returns the existing canonical Arweave receipt without re-uploading', async () => {
+      const basePackage = createValidProfileCmsPackage();
+      const existingReceipt = {
+        provider: 'arweave' as const,
+        uri: `ar://${arweaveTxId}`,
+        content_hash: basePackage.integrity.package_hash,
+        provider_content_id: arweaveTxId,
+        canonical: true,
+        recorded_at: '2026-06-17T00:00:00.000Z'
+      };
+      const cmsPackage: CmsPackageV1 = {
+        ...basePackage,
+        storage: [...basePackage.storage, existingReceipt]
+      };
+      const draft = createEntity({ cms_package: cmsPackage });
+      packagesDb.findById.mockResolvedValue(draft);
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      expect(result.receipt).toEqual(existingReceipt);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload when the package is not in DRAFT status', async () => {
+      const published = createEntity({
+        status: ProfileCmsPackageStatus.PUBLISHED,
+        production_valid: true,
+        published_at: 1000
+      });
+      packagesDb.findById.mockResolvedValue(published);
+
+      await expect(
+        service.uploadToStorage(published.id, ownerContext())
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload for a caller who cannot manage the profile', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+
+      await expect(
+        service.uploadToStorage(draft.id, {
+          authenticationContext: AuthenticationContext.notAuthenticated()
+        })
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload when the stored package hash does not match the recomputed hash', async () => {
+      const draft = createEntity({
+        package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH
+      });
+      packagesDb.findById.mockResolvedValue(draft);
+
+      await expect(
+        service.uploadToStorage(draft.id, ownerContext())
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('fails cleanly without leaking internals when the uploader throws', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockRejectedValue(
+        new Error('connection reset by peer at 10.0.0.1:443')
+      );
+
+      const error = await service
+        .uploadToStorage(draft.id, ownerContext())
+        .catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      expect(error.getStatusCode()).toBe(502);
+      expect(error.message).not.toContain('10.0.0.1');
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload when ARWEAVE_KEY is not configured', async () => {
+      delete process.env.ARWEAVE_KEY;
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+
+      const error = await service
+        .uploadToStorage(draft.id, ownerContext())
+        .catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      expect(error.getStatusCode()).toBe(500);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
   });
 
   it('exports package storage receipts with pointer events', async () => {

@@ -30,6 +30,17 @@ export class ArweaveFileUploader {
     fileBuffer: Buffer,
     contentType: string
   ): Promise<{ url: string }> {
+    const { url } = await this.uploadFileWithTransactionId(
+      fileBuffer,
+      contentType
+    );
+    return { url };
+  }
+
+  public async uploadFileWithTransactionId(
+    fileBuffer: Buffer,
+    contentType: string
+  ): Promise<{ url: string; transaction_id: string }> {
     const { arweave, key: arweaveKey } = this.arweaveAndKeySupplier();
     const dataView = new Uint8Array(
       fileBuffer.buffer,
@@ -54,7 +65,7 @@ export class ArweaveFileUploader {
       );
     }
     const url = `https://arweave.net/${areweaveTransaction.id}`;
-    return { url };
+    return { url, transaction_id: areweaveTransaction.id };
   }
 }
 
