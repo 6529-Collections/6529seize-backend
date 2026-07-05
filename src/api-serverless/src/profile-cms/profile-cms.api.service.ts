@@ -48,11 +48,13 @@ import {
   profileCmsStorageReceiptVerifier
 } from '@/profile-cms/profile-cms-storage';
 import {
+  canonicalizeJson,
   cmsPackageSchema,
   CmsPackageV1,
   CmsStorageReceiptV1,
   CmsValidationResultV1,
   computeCmsPackageHash,
+  toPackageHashInput,
   validateCmsPackageV1
 } from '@/profile-cms/protocol/v1';
 import { RequestContext } from '@/request.context';
@@ -622,12 +624,7 @@ export class ProfileCmsApiService {
     this.assertDraftCanBePublished(entity);
 
     const cmsPackage = this.parsePackageOrThrow(entity.cms_package);
-    const recomputedPackageHash = computeCmsPackageHash(cmsPackage);
-    if (recomputedPackageHash !== entity.package_hash) {
-      throw new BadRequestException(
-        'CMS package hash does not match the stored draft; refusing to upload'
-      );
-    }
+    this.assertStoredPackageHashMatches(cmsPackage, entity);
 
     const existingReceipt = this.findCanonicalArweaveReceipt(
       cmsPackage,
@@ -637,10 +634,12 @@ export class ProfileCmsApiService {
       return { receipt: existingReceipt };
     }
 
-    const canonicalJson = JSON.stringify(cmsPackage);
-    const { id: transactionId } = await this.uploadCanonicalJsonToArweave(
-      Buffer.from(canonicalJson, 'utf8')
+    const canonicalBytes = Buffer.from(
+      canonicalizeJson(toPackageHashInput(cmsPackage)),
+      'utf8'
     );
+    const transactionId =
+      await this.uploadCanonicalJsonToArweave(canonicalBytes);
 
     const receipt: CmsStorageReceiptV1 = {
       provider: 'arweave',
@@ -651,9 +650,55 @@ export class ProfileCmsApiService {
       recorded_at: this.getCurrentIsoDate()
     };
 
-    await this.persistStorageReceipt(entity, cmsPackage, receipt, ctx);
+    return this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        const lockedEntity = await this.packagesDb.findByIdForUpdate(
+          entity.id,
+          txCtx
+        );
+        if (!lockedEntity) {
+          throw new NotFoundException(
+            `Profile CMS package ${entity.id} was not found`
+          );
+        }
+        this.assertDraftCanBePublished(lockedEntity);
+        const lockedPackage = this.parsePackageOrThrow(
+          lockedEntity.cms_package
+        );
+        this.assertStoredPackageHashMatches(lockedPackage, lockedEntity);
+        if (lockedEntity.package_hash !== entity.package_hash) {
+          throw new BadRequestException(
+            'CMS package hash does not match the stored draft; refusing to upload'
+          );
+        }
+        const concurrentReceipt = this.findCanonicalArweaveReceipt(
+          lockedPackage,
+          lockedEntity.package_hash
+        );
+        if (concurrentReceipt) {
+          return { receipt: concurrentReceipt };
+        }
+        await this.persistStorageReceipt(
+          lockedEntity,
+          lockedPackage,
+          receipt,
+          txCtx
+        );
+        return { receipt };
+      }
+    );
+  }
 
-    return { receipt };
+  private assertStoredPackageHashMatches(
+    cmsPackage: CmsPackageV1,
+    entity: ProfileCmsPackageEntity
+  ): void {
+    if (computeCmsPackageHash(cmsPackage) !== entity.package_hash) {
+      throw new BadRequestException(
+        'CMS package hash does not match the stored draft; refusing to upload'
+      );
+    }
   }
 
   private findCanonicalArweaveReceipt(
@@ -670,19 +715,20 @@ export class ProfileCmsApiService {
 
   private async uploadCanonicalJsonToArweave(
     fileBuffer: Buffer
-  ): Promise<{ id: string }> {
+  ): Promise<string> {
     if (!process.env.ARWEAVE_KEY) {
       throw new CustomApiCompliantException(
         500,
         'Arweave storage is not configured'
       );
     }
-    let url: string;
+    let transactionId: string;
     try {
-      ({ url } = await this.arweaveUploader.uploadFile(
-        fileBuffer,
-        'application/json'
-      ));
+      ({ transaction_id: transactionId } =
+        await this.arweaveUploader.uploadFileWithTransactionId(
+          fileBuffer,
+          'application/json'
+        ));
     } catch (error) {
       logger.error(`Arweave upload failed: ${error}`);
       throw new CustomApiCompliantException(
@@ -690,15 +736,16 @@ export class ProfileCmsApiService {
         'Failed to upload CMS package to Arweave storage'
       );
     }
-    const transactionId = extractArweaveTransactionIdFromUrl(url);
-    if (!transactionId) {
-      logger.error(`Arweave upload returned an unexpected URL: ${url}`);
+    if (!isLikelyArweaveTransactionId(transactionId)) {
+      logger.error(
+        `Arweave upload returned an unexpected transaction id: ${transactionId}`
+      );
       throw new CustomApiCompliantException(
         502,
         'Failed to upload CMS package to Arweave storage'
       );
     }
-    return { id: transactionId };
+    return transactionId;
   }
 
   private async persistStorageReceipt(
@@ -1378,9 +1425,8 @@ function normalizeWallet(wallet: string | null | undefined): string | null {
   return typeof wallet === 'string' ? wallet.toLowerCase() : null;
 }
 
-function extractArweaveTransactionIdFromUrl(url: string): string | null {
-  const match = /^https?:\/\/arweave\.net\/([A-Za-z0-9_-]{43})$/.exec(url);
-  return match ? match[1] : null;
+function isLikelyArweaveTransactionId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{43}$/.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

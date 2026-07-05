@@ -23,11 +23,14 @@ import { ProfileCmsPublishSignaturesDb } from '@/profile-cms/profile-cms-publish
 import { ProfileCmsStorageReceiptVerifier } from '@/profile-cms/profile-cms-storage';
 import { ProfileCmsPublishSignatureVerificationResult } from '@/profile-cms/profile-cms-signing';
 import {
+  canonicalizeJson,
   CMS_AGENT_PATCH_MAX_OPERATIONS,
   CMS_AGENT_PATCH_SCHEMA,
   CmsAgentPatchV1,
-  CmsPackageV1
+  CmsPackageV1,
+  toPackageHashInput
 } from '@/profile-cms/protocol/v1';
+import { createHash } from 'node:crypto';
 import { ArweaveFileUploader } from '@/arweave';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
@@ -64,7 +67,10 @@ type PackagesDbMock = Pick<
   | 'updateStorageReceipt'
 >;
 
-type ArweaveUploaderMock = Pick<ArweaveFileUploader, 'uploadFile'>;
+type ArweaveUploaderMock = Pick<
+  ArweaveFileUploader,
+  'uploadFileWithTransactionId'
+>;
 
 type PointerEventsDbMock = Pick<
   ProfileCmsPointerEventsDb,
@@ -145,7 +151,7 @@ describe('ProfileCmsApiService', () => {
       createSignatureVerification(request.signer_address)
     );
     arweaveUploader = {
-      uploadFile: jest.fn()
+      uploadFileWithTransactionId: jest.fn()
     };
     service = new ProfileCmsApiService(
       packagesDb as unknown as ProfileCmsPackagesDb,
@@ -1204,14 +1210,18 @@ describe('ProfileCmsApiService', () => {
     it('uploads canonical JSON to Arweave and returns a valid receipt', async () => {
       const draft = createEntity();
       packagesDb.findById.mockResolvedValue(draft);
-      arweaveUploader.uploadFile.mockResolvedValue({
-        url: `https://arweave.net/${arweaveTxId}`
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
       });
 
       const result = await service.uploadToStorage(draft.id, ownerContext());
 
-      expect(arweaveUploader.uploadFile).toHaveBeenCalledTimes(1);
-      expect(arweaveUploader.uploadFile).toHaveBeenCalledWith(
+      expect(arweaveUploader.uploadFileWithTransactionId).toHaveBeenCalledTimes(
+        1
+      );
+      expect(arweaveUploader.uploadFileWithTransactionId).toHaveBeenCalledWith(
         expect.any(Buffer),
         'application/json'
       );
@@ -1232,8 +1242,81 @@ describe('ProfileCmsApiService', () => {
           storage_provider_content_id: arweaveTxId,
           storage_canonical: true
         }),
-        expect.any(Object)
+        expect.objectContaining({ connection: expect.any(Object) })
       );
+    });
+
+    it('uploads the exact canonical bytes whose sha256 reproduces the receipt content hash', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      const uploadedBytes = arweaveUploader.uploadFileWithTransactionId.mock
+        .calls[0][0] as Buffer;
+      const uploadedBytesSha256 = createHash('sha256')
+        .update(uploadedBytes)
+        .digest('hex');
+      expect(`sha256:${uploadedBytesSha256}`).toBe(result.receipt.content_hash);
+      expect(result.receipt.content_hash).toBe(draft.package_hash);
+      expect(uploadedBytes.toString('utf8')).toBe(
+        canonicalizeJson(toPackageHashInput(draft.cms_package as CmsPackageV1))
+      );
+    });
+
+    it('returns the concurrent writer receipt found under lock without persisting a duplicate', async () => {
+      const draft = createEntity();
+      const concurrentReceipt = {
+        provider: 'arweave' as const,
+        uri: `ar://${'b'.repeat(43)}`,
+        content_hash: draft.package_hash,
+        provider_content_id: 'b'.repeat(43),
+        canonical: true,
+        recorded_at: '2026-06-17T00:00:00.000Z'
+      };
+      const lockedByOtherWriter = createEntity({
+        cms_package: {
+          ...(draft.cms_package as CmsPackageV1),
+          storage: [
+            ...(draft.cms_package as CmsPackageV1).storage,
+            concurrentReceipt
+          ]
+        }
+      });
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(lockedByOtherWriter);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      expect(result.receipt).toEqual(concurrentReceipt);
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('fails with 502 when the uploader returns a malformed transaction id', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: 'https://arweave.net/not-a-valid-transaction-id',
+        transaction_id: 'not-a-valid-transaction-id'
+      });
+
+      const error = await service
+        .uploadToStorage(draft.id, ownerContext())
+        .catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      expect(error.getStatusCode()).toBe(502);
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
     });
 
     it('returns the existing canonical Arweave receipt without re-uploading', async () => {
@@ -1256,7 +1339,9 @@ describe('ProfileCmsApiService', () => {
       const result = await service.uploadToStorage(draft.id, ownerContext());
 
       expect(result.receipt).toEqual(existingReceipt);
-      expect(arweaveUploader.uploadFile).not.toHaveBeenCalled();
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
       expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
     });
 
@@ -1271,7 +1356,9 @@ describe('ProfileCmsApiService', () => {
       await expect(
         service.uploadToStorage(published.id, ownerContext())
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(arweaveUploader.uploadFile).not.toHaveBeenCalled();
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
       expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
     });
 
@@ -1284,7 +1371,9 @@ describe('ProfileCmsApiService', () => {
           authenticationContext: AuthenticationContext.notAuthenticated()
         })
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(arweaveUploader.uploadFile).not.toHaveBeenCalled();
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
       expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
     });
 
@@ -1297,14 +1386,16 @@ describe('ProfileCmsApiService', () => {
       await expect(
         service.uploadToStorage(draft.id, ownerContext())
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(arweaveUploader.uploadFile).not.toHaveBeenCalled();
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
       expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
     });
 
     it('fails cleanly without leaking internals when the uploader throws', async () => {
       const draft = createEntity();
       packagesDb.findById.mockResolvedValue(draft);
-      arweaveUploader.uploadFile.mockRejectedValue(
+      arweaveUploader.uploadFileWithTransactionId.mockRejectedValue(
         new Error('connection reset by peer at 10.0.0.1:443')
       );
 
@@ -1329,7 +1420,9 @@ describe('ProfileCmsApiService', () => {
 
       expect(error).toBeInstanceOf(CustomApiCompliantException);
       expect(error.getStatusCode()).toBe(500);
-      expect(arweaveUploader.uploadFile).not.toHaveBeenCalled();
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
       expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
     });
   });
