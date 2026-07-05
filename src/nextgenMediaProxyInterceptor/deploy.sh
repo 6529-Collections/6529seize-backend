@@ -10,6 +10,10 @@ echo "Uploading new code to $function_name"
 aws lambda update-function-code --function-name "${function_name}" --zip-file fileb://dist/index.zip --region="${region}" > /dev/null
 sleep 10
 echo "New code uploaded to $function_name"
+echo "Setting runtime of $function_name to nodejs22.x"
+aws lambda update-function-configuration --function-name "${function_name}" --runtime nodejs22.x --region="${region}" > /dev/null
+sleep 10
+echo "Runtime of $function_name set to nodejs22.x"
 echo "Publishing new version of $function_name"
 aws lambda publish-version --function-name "${function_name}" --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)" --region="${region}" > /dev/null
 sleep 10
