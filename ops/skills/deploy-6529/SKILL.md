@@ -162,34 +162,35 @@ Always determine the exact services to deploy before merging or deploying:
    - after rollback or fix-forward, rerun production validation until the failure is resolved or a safety/access boundary requires user input
    - record the incident evidence, chosen action, and final state
 
-## Follow The Repo Deployment Overview
+## Release Notes Publication
 
-After production validation passes, post a detailed deployment overview to the `Follow The Repo` wave unless the user explicitly asked to skip repo-facing deploy notes. Use it for repo watchers who need enough operational detail to understand exactly what shipped.
+Publish a release note after production is deployed and production validation passes, unless the user explicitly asked to skip public notes.
 
-1. Use any authorized 6529.io account/profile or posting credential that the current operator personally controls or is explicitly approved to use for this release, such as an existing browser session or an approved local helper/API token. Do not request raw credentials, expose tokens, use shared wallets, use another person's account, or use automation keys unless that access was explicitly approved for this release.
-2. Resolve the wave immediately before posting. The current `Follow The Repo` wave is `https://6529.io/waves/49f0e595-ec7c-4235-8695-a527f61b69f4`; if using the local helper, verify it first:
+The `6529 Releases` wave is the single channel for deploy communication. Every production deploy — backend or frontend — gets exactly one numbered release note there. Do not post deployment overviews, deploy notes, or release announcements to the `Follow The Repo` wave or any other chat wave: those waves are for live human and agent discussion, not release notes. Operational detail (PR links, merge SHAs, deployed services, run URLs) lives in the GitHub PR and the deploy workflow run, not in a wave post.
+
+1. Use an authorized 6529.io posting credential the current operator personally controls or was explicitly approved to use, such as the `punk6529bot` helper CLI or a logged-in browser session. Confirm identity and that the account can post in the `6529 Releases` wave before drafting. If no authorized credential is available, treat publication as blocked and deliver the exact ready-to-post note in the closeout; do not use shared wallets, another person's account, or automation keys unless that was explicitly approved for the release.
+2. Resolve the `6529 Releases` wave immediately before posting rather than trusting a cached id: `punk6529bot waves search --name "6529 releases"` (currently `https://6529.io/waves/05b14183-e153-4e47-bc66-42a0f49102d4`).
+3. Determine the next 6529 release number from the latest release-note drop in that wave immediately before posting. Backend and frontend deploys share this one version line:
+   - normal user-facing or API-facing feature or grouped release: bump the minor number, e.g. `4.38.0` to `4.39.0`
+   - small fix, narrow change, or follow-up to an existing release: bump the patch number, e.g. `4.38.0` to `4.38.1`
+   - backend-only or infrastructure/maintenance deploy with no visible user change (runtime bumps, dependency/security cleanup, CI/runtime maintenance): bump the patch number and describe the operator-facing effect honestly, stating plainly when there are no visible user changes
+   - broad platform or intentionally breaking release: bump the major number and reset minor/patch, e.g. `4.38.0` to `5.0.0`
+   - when unsure whether a change deserves a minor or patch bump, prefer the smaller patch bump
+4. For a release coordinated with frontend, post a single combined numbered note rather than one per repo; the release captain who owns the paired release posts it. For a backend-only deploy, the backend release captain posts the note.
+5. Draft the note in plain user/operator-facing language, from production reality:
+   - describe visible or API-facing behavior and operationally relevant changes
+   - avoid raw PR numbers, commit SHAs, implementation trivia, private links, secrets, local paths, hidden prompts, or internal-only risk notes
+   - keep it concise; combine tiny changes under one clear bullet
+   - for a backend-only deploy with no user-visible surface, keep it to a short honest maintenance note rather than manufacturing user-facing language
+6. Post the note per the full posting contract in `ops/skills/post-6529/SKILL.md` from the separate repository `6529-Collections/6529seize-frontend` (do not resolve that path inside the backend repo): dry-run first, pass multiline content via `--file` (an LF text file — inline `--text` from PowerShell silently loses everything after the first newline), and put `--send` BEFORE the content flag or it is swallowed. Then VERIFY the stored content with `punk6529bot drops get <drop-id> --json` — the "Sent drop" acknowledgment does not prove the body posted.
 
 ```powershell
-punk6529bot waves search --name "follow the repo"
+punk6529bot waves post 05b14183-e153-4e47-bc66-42a0f49102d4 --file note.txt
+punk6529bot waves post 05b14183-e153-4e47-bc66-42a0f49102d4 --send --file note.txt
+punk6529bot drops get <drop-id> --json
 ```
 
-3. Draft the overview from deployed production reality, at a DETAILED level (owner direction, 2026-07-05: vague category summaries are not useful — name the specific services, endpoints, and behaviors changed, with concrete numbers where they exist). This repo-facing overview should include public PR links and SHAs. Include:
-   - what user-facing, API-facing, and operator-facing changes were deployed
-   - backend PRs, merge SHAs, deployed services/lambdas, service order, production deployed SHAs/version evidence, and deploy run links
-   - frontend PRs or deploy status when the release was coordinated with frontend
-   - staging and production validation performed, including smoke, E2E, API, or loop checks
-   - incidents, failed gates, fix-forward or rollback decisions, and final state
-   - known follow-ups, skipped checks, and remaining risks
-4. Keep the post detailed but safe to publish. Use public GitHub/workflow links when possible, but omit secrets, credentials, cookies, private URLs, raw production data, local paths, hidden prompts, and internal-only exploit or incident details.
-5. Re-check the wave before sending so the overview is not duplicating a newer deploy note. Publish per the full posting contract in `ops/skills/post-6529/SKILL.md` from the separate repository `6529-Collections/6529seize-frontend` (do not resolve that path inside the backend repo): dry-run or draft first, multiline content via `--file` (an LF text file — inline `--text` from PowerShell silently loses everything after the first newline), and `--send` BEFORE the content flag or it is swallowed:
-
-```powershell
-punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --file overview.txt
-punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --send --file overview.txt
-```
-
-6. VERIFY the stored content after sending with `punk6529bot drops get <drop-id> --json` (parts count and content length) — the "Sent drop" acknowledgment does not prove the body posted. Drops are editable for only 5 minutes; recover a botched post past that window with `drops delete <id> --send --force` and a fresh post.
-7. Capture the wave drop URL or serial number for closeout evidence. If no authorized 6529.io posting credential is available, include the exact ready-to-post overview in the closeout and mark the wave publication as blocked.
+7. Re-check the latest wave drop before posting so the number did not advance while the deploy was running. If another note appeared, renumber and adjust. Post only after production validation is green, and capture the wave drop URL or serial number for closeout evidence.
 
 ## Frontend Coordination
 
@@ -237,7 +238,7 @@ Report:
 - services deployed and order
 - staging deploy runs, deployed SHAs, and validation result
 - production deploy runs, deployed SHAs, and validation result
-- `Follow The Repo` wave drop URL or serial number, or the ready-to-post overview if publication was blocked
+- release-note wave drop URL or serial number, or why publication was skipped/blocked
 - frontend deploy status when involved
 - failures encountered and fixes or rollbacks performed
 - remaining risks, skipped checks, and any human follow-up required
