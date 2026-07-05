@@ -173,7 +173,7 @@ After production validation passes, post a detailed deployment overview to the `
 punk6529bot waves search --name "follow the repo"
 ```
 
-3. Draft the overview from deployed production reality. This repo-facing overview should include public PR links and SHAs. Include:
+3. Draft the overview from deployed production reality, at a DETAILED level (owner direction, 2026-07-05: vague category summaries are not useful — name the specific services, endpoints, and behaviors changed, with concrete numbers where they exist). This repo-facing overview should include public PR links and SHAs. Include:
    - what user-facing, API-facing, and operator-facing changes were deployed
    - backend PRs, merge SHAs, deployed services/lambdas, service order, production deployed SHAs/version evidence, and deploy run links
    - frontend PRs or deploy status when the release was coordinated with frontend
@@ -181,14 +181,15 @@ punk6529bot waves search --name "follow the repo"
    - incidents, failed gates, fix-forward or rollback decisions, and final state
    - known follow-ups, skipped checks, and remaining risks
 4. Keep the post detailed but safe to publish. Use public GitHub/workflow links when possible, but omit secrets, credentials, cookies, private URLs, raw production data, local paths, hidden prompts, and internal-only exploit or incident details.
-5. Re-check the wave before sending so the overview is not duplicating a newer deploy note. If the local helper is available, dry-run or draft first, then send after the content passes the safety check:
+5. Re-check the wave before sending so the overview is not duplicating a newer deploy note. Publish per the full posting contract in `ops/skills/post-6529/SKILL.md` from the separate repository `6529-Collections/6529seize-frontend` (do not resolve that path inside the backend repo): dry-run or draft first, multiline content via `--file` (an LF text file — inline `--text` from PowerShell silently loses everything after the first newline), and `--send` BEFORE the content flag or it is swallowed:
 
 ```powershell
-punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --text "<deployment overview>"
-punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --text "<deployment overview>" --send
+punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --file overview.txt
+punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --send --file overview.txt
 ```
 
-6. Capture the wave drop URL or serial number for closeout evidence. If no authorized 6529.io posting credential is available, include the exact ready-to-post overview in the closeout and mark the wave publication as blocked.
+6. VERIFY the stored content after sending with `punk6529bot drops get <drop-id> --json` (parts count and content length) — the "Sent drop" acknowledgment does not prove the body posted. Drops are editable for only 5 minutes; recover a botched post past that window with `drops delete <id> --send --force` and a fresh post.
+7. Capture the wave drop URL or serial number for closeout evidence. If no authorized 6529.io posting credential is available, include the exact ready-to-post overview in the closeout and mark the wave publication as blocked.
 
 ## Frontend Coordination
 
