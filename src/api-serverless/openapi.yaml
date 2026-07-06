@@ -5675,7 +5675,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+            pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
         - name: direction
           in: query
           required: false
@@ -7839,7 +7839,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+            pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
         - name: page
           in: query
           required: false
@@ -10956,7 +10956,7 @@ components:
         category:
           type: string
           maxLength: 100
-          pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
         amount:
           type: integer
           format: int64
@@ -10994,7 +10994,7 @@ components:
           type: string
           maxLength: 100
           minLength: 1
-          pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
     ApiChangeWaveRepRating:
       type: object
       required:
@@ -11008,7 +11008,7 @@ components:
           type: string
           maxLength: 100
           minLength: 1
-          pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
     ApiCicContributor:
       type: object
       required:
