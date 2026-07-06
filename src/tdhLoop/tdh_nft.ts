@@ -54,8 +54,9 @@ const findContractTDH = (
   tokenTdh: TokenTDH[],
   ranks: TokenTDHRank[]
 ): NftTDH[] => {
+  const ranksById = new Map(ranks.map((r) => [r.id, r]));
   return tokenTdh.map((t) => {
-    const rank = ranks.find((r) => r.id === t.id);
+    const rank = ranksById.get(t.id);
     return {
       consolidation_key: consolidationKey,
       contract: contract.toLowerCase(),

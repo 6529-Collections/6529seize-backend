@@ -39,7 +39,6 @@ export async function consolidateTDHForWallets(
   MEMES_COUNT: number
 ) {
   const consolidatedTdh: ConsolidatedTDH[] = [];
-  const processedWallets = new Set<string>();
   const allGradientsTDH: any[] = [];
   const allNextgenTDH: any[] = [];
 
@@ -66,125 +65,123 @@ export async function consolidateTDHForWallets(
       { consolidationKey: string; consolidationDisplay: string }
     >
   );
+  const tdhByConsolidationKey = new Map<string, TDHENS[]>();
   for (const tdhEntry of tdh) {
-    const wallet = tdhEntry.wallet;
-    const consolidationInfo = walletConsolidationInfos[wallet.toLowerCase()]!;
-    const display = consolidationInfo.consolidationDisplay;
-    const consolidationKey = consolidationInfo.consolidationKey;
+    const consolidationKey =
+      walletConsolidationInfos[tdhEntry.wallet.toLowerCase()]!.consolidationKey;
+    const group = tdhByConsolidationKey.get(consolidationKey);
+    if (group) {
+      group.push(tdhEntry);
+    } else {
+      tdhByConsolidationKey.set(consolidationKey, [tdhEntry]);
+    }
+  }
+
+  tdhByConsolidationKey.forEach((consolidatedWalletsTdh, consolidationKey) => {
+    const display = allConsolidationDisplays[consolidationKey]!;
     const consolidations = consolidationKey.split('-');
 
-    if (
-      !Array.from(processedWallets).some((pw) => equalIgnoreCase(wallet, pw))
-    ) {
-      const consolidatedWalletsTdh = [...tdh].filter((t) =>
-        consolidations.some((c) => equalIgnoreCase(c, t.wallet))
+    let totalTDH = 0;
+    let totalTDH__raw = 0;
+    let totalBalance = 0;
+
+    const memesData = createMemesData();
+
+    let gradientsTDH = 0;
+    let gradientsTDH__raw = 0;
+    let gradientsBalance = 0;
+    let nextgenTDH = 0;
+    let nextgenTDH__raw = 0;
+    let nextgenBalance = 0;
+    let consolidationMemes: any[] = [];
+    let consolidationGradients: any[] = [];
+    let consolidationNextgen: any[] = [];
+
+    consolidatedWalletsTdh.forEach((wTdh) => {
+      totalTDH += wTdh.tdh;
+      totalTDH__raw += wTdh.tdh__raw;
+      totalBalance += wTdh.balance;
+      memesData.memes_tdh += wTdh.memes_tdh;
+      memesData.memes_tdh__raw += wTdh.memes_tdh__raw;
+      memesData.memes_balance += wTdh.memes_balance;
+      gradientsTDH += wTdh.gradients_tdh;
+      gradientsTDH__raw += wTdh.gradients_tdh__raw;
+      gradientsBalance += wTdh.gradients_balance;
+      nextgenTDH += wTdh.nextgen_tdh;
+      nextgenTDH__raw += wTdh.nextgen_tdh__raw;
+      nextgenBalance += wTdh.nextgen_balance;
+      consolidationMemes = consolidateCards(consolidationMemes, wTdh.memes);
+      consolidationGradients = consolidateCards(
+        consolidationGradients,
+        wTdh.gradients
       );
-
-      let totalTDH = 0;
-      let totalTDH__raw = 0;
-      let totalBalance = 0;
-
-      const memesData = createMemesData();
-
-      let gradientsTDH = 0;
-      let gradientsTDH__raw = 0;
-      let gradientsBalance = 0;
-      let nextgenTDH = 0;
-      let nextgenTDH__raw = 0;
-      let nextgenBalance = 0;
-      let consolidationMemes: any[] = [];
-      let consolidationGradients: any[] = [];
-      let consolidationNextgen: any[] = [];
-
-      consolidatedWalletsTdh.forEach((wTdh) => {
-        totalTDH += wTdh.tdh;
-        totalTDH__raw += wTdh.tdh__raw;
-        totalBalance += wTdh.balance;
-        memesData.memes_tdh += wTdh.memes_tdh;
-        memesData.memes_tdh__raw += wTdh.memes_tdh__raw;
-        memesData.memes_balance += wTdh.memes_balance;
-        gradientsTDH += wTdh.gradients_tdh;
-        gradientsTDH__raw += wTdh.gradients_tdh__raw;
-        gradientsBalance += wTdh.gradients_balance;
-        nextgenTDH += wTdh.nextgen_tdh;
-        nextgenTDH__raw += wTdh.nextgen_tdh__raw;
-        nextgenBalance += wTdh.nextgen_balance;
-        consolidationMemes = consolidateCards(consolidationMemes, wTdh.memes);
-        consolidationGradients = consolidateCards(
-          consolidationGradients,
-          wTdh.gradients
-        );
-        consolidationNextgen = consolidateCards(
-          consolidationNextgen,
-          wTdh.nextgen
-        );
-      });
-
-      let memesCardSets = 0;
-      if (consolidationMemes.length == MEMES_COUNT) {
-        memesCardSets = Math.min(
-          ...[...consolidationMemes].map(function (o) {
-            return o.balance;
-          })
-        );
-      }
-
-      const unique_memes = consolidationMemes.length;
-
-      const genNaka = getGenesisAndNaka(consolidationMemes);
-
-      const consolidation: ConsolidatedTDH = {
-        date: new Date(),
-        consolidation_display: display,
-        consolidation_key: consolidationKey,
-        wallets: consolidations,
-        tdh_rank: 0, //assigned later
-        tdh_rank_memes: 0, //assigned later
-        tdh_rank_gradients: 0, //assigned later
-        tdh_rank_nextgen: 0, //assigned later
-        block: tdhEntry.block,
-        tdh: totalTDH,
-        boost: 0,
-        boosted_tdh: 0,
-        tdh__raw: totalTDH__raw,
-        balance: totalBalance,
-        memes_cards_sets: memesCardSets,
-        genesis: genNaka.genesis,
-        nakamoto: genNaka.naka,
-        unique_memes: unique_memes,
-        memes_tdh: memesData.memes_tdh,
-        memes_tdh__raw: memesData.memes_tdh__raw,
-        memes_balance: memesData.memes_balance,
-        boosted_memes_tdh: memesData.boosted_memes_tdh,
-        memes_ranks: memesData.memes_ranks,
-        memes: consolidationMemes,
-        boosted_gradients_tdh: 0,
-        gradients_tdh: gradientsTDH,
-        gradients_tdh__raw: gradientsTDH__raw,
-        gradients_balance: gradientsBalance,
-        gradients: consolidationGradients,
-        gradients_ranks: [],
-        boosted_nextgen_tdh: 0,
-        nextgen_tdh: nextgenTDH,
-        nextgen_tdh__raw: nextgenTDH__raw,
-        nextgen_balance: nextgenBalance,
-        nextgen: consolidationNextgen,
-        nextgen_ranks: [],
-        boost_breakdown: {},
-        boosted_tdh_rate: 0
-      };
-      consolidationGradients.forEach((wg) => {
-        allGradientsTDH.push(wg);
-      });
-      consolidationNextgen.forEach((wn) => {
-        allNextgenTDH.push(wn);
-      });
-      consolidatedTdh.push(consolidation);
-    }
-    consolidations.forEach((c) => {
-      processedWallets.add(c);
+      consolidationNextgen = consolidateCards(
+        consolidationNextgen,
+        wTdh.nextgen
+      );
     });
-  }
+
+    let memesCardSets = 0;
+    if (consolidationMemes.length == MEMES_COUNT) {
+      memesCardSets = Math.min(
+        ...consolidationMemes.map(function (o) {
+          return o.balance;
+        })
+      );
+    }
+
+    const unique_memes = consolidationMemes.length;
+
+    const genNaka = getGenesisAndNaka(consolidationMemes);
+
+    const consolidation: ConsolidatedTDH = {
+      date: new Date(),
+      consolidation_display: display,
+      consolidation_key: consolidationKey,
+      wallets: consolidations,
+      tdh_rank: 0, //assigned later
+      tdh_rank_memes: 0, //assigned later
+      tdh_rank_gradients: 0, //assigned later
+      tdh_rank_nextgen: 0, //assigned later
+      block: consolidatedWalletsTdh[0].block,
+      tdh: totalTDH,
+      boost: 0,
+      boosted_tdh: 0,
+      tdh__raw: totalTDH__raw,
+      balance: totalBalance,
+      memes_cards_sets: memesCardSets,
+      genesis: genNaka.genesis,
+      nakamoto: genNaka.naka,
+      unique_memes: unique_memes,
+      memes_tdh: memesData.memes_tdh,
+      memes_tdh__raw: memesData.memes_tdh__raw,
+      memes_balance: memesData.memes_balance,
+      boosted_memes_tdh: memesData.boosted_memes_tdh,
+      memes_ranks: memesData.memes_ranks,
+      memes: consolidationMemes,
+      boosted_gradients_tdh: 0,
+      gradients_tdh: gradientsTDH,
+      gradients_tdh__raw: gradientsTDH__raw,
+      gradients_balance: gradientsBalance,
+      gradients: consolidationGradients,
+      gradients_ranks: [],
+      boosted_nextgen_tdh: 0,
+      nextgen_tdh: nextgenTDH,
+      nextgen_tdh__raw: nextgenTDH__raw,
+      nextgen_balance: nextgenBalance,
+      nextgen: consolidationNextgen,
+      nextgen_ranks: [],
+      boost_breakdown: {},
+      boosted_tdh_rate: 0
+    };
+    consolidationGradients.forEach((wg) => {
+      allGradientsTDH.push(wg);
+    });
+    consolidationNextgen.forEach((wn) => {
+      allNextgenTDH.push(wn);
+    });
+    consolidatedTdh.push(consolidation);
+  });
 
   return {
     consolidatedTdh: consolidatedTdh,
@@ -201,59 +198,58 @@ export const consolidateMissingWallets = async (
   const tdhBlock = await fetchLatestTDHBlockNumber();
 
   for (const wallet of wallets) {
+    if (processedWallets.has(wallet.toLowerCase())) {
+      continue;
+    }
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
     const consolidationKey =
       consolidationTools.buildConsolidationKey(consolidations);
 
-    if (
-      !Array.from(processedWallets).some((pw) => equalIgnoreCase(wallet, pw))
-    ) {
-      processedWallets.add(wallet);
-      missingTdh.push({
-        date: new Date(),
-        consolidation_display: display,
-        consolidation_key: consolidationKey,
-        wallets: consolidations,
-        tdh_rank: 0,
-        tdh_rank_memes: 0,
-        tdh_rank_gradients: 0,
-        tdh_rank_nextgen: 0,
-        block: tdhBlock,
-        tdh: 0,
-        boost: 0,
-        boosted_tdh: 0,
-        tdh__raw: 0,
-        balance: 0,
-        memes_cards_sets: 0,
-        genesis: 0,
-        nakamoto: 0,
-        unique_memes: 0,
-        boosted_memes_tdh: 0,
-        memes_tdh: 0,
-        memes_tdh__raw: 0,
-        memes_balance: 0,
-        memes: [],
-        memes_ranks: [],
-        boosted_gradients_tdh: 0,
-        gradients_tdh: 0,
-        gradients_tdh__raw: 0,
-        gradients_balance: 0,
-        gradients: [],
-        gradients_ranks: [],
-        boosted_nextgen_tdh: 0,
-        nextgen_tdh: 0,
-        nextgen_tdh__raw: 0,
-        nextgen_balance: 0,
-        nextgen: [],
-        nextgen_ranks: [],
-        boost_breakdown: {},
-        boosted_tdh_rate: 0
-      });
-      consolidations.forEach((c) => {
-        processedWallets.add(c);
-      });
-    }
+    processedWallets.add(wallet.toLowerCase());
+    missingTdh.push({
+      date: new Date(),
+      consolidation_display: display,
+      consolidation_key: consolidationKey,
+      wallets: consolidations,
+      tdh_rank: 0,
+      tdh_rank_memes: 0,
+      tdh_rank_gradients: 0,
+      tdh_rank_nextgen: 0,
+      block: tdhBlock,
+      tdh: 0,
+      boost: 0,
+      boosted_tdh: 0,
+      tdh__raw: 0,
+      balance: 0,
+      memes_cards_sets: 0,
+      genesis: 0,
+      nakamoto: 0,
+      unique_memes: 0,
+      boosted_memes_tdh: 0,
+      memes_tdh: 0,
+      memes_tdh__raw: 0,
+      memes_balance: 0,
+      memes: [],
+      memes_ranks: [],
+      boosted_gradients_tdh: 0,
+      gradients_tdh: 0,
+      gradients_tdh__raw: 0,
+      gradients_balance: 0,
+      gradients: [],
+      gradients_ranks: [],
+      boosted_nextgen_tdh: 0,
+      nextgen_tdh: 0,
+      nextgen_tdh__raw: 0,
+      nextgen_balance: 0,
+      nextgen: [],
+      nextgen_ranks: [],
+      boost_breakdown: {},
+      boosted_tdh_rate: 0
+    });
+    consolidations.forEach((c) => {
+      processedWallets.add(c.toLowerCase());
+    });
   }
 
   return missingTdh;
@@ -315,11 +311,16 @@ export const consolidateTDH = async (
   );
 
   if (startingWallets) {
+    const consolidatedWallets = new Set<string>();
+    consolidatedBoostedTdh.forEach((c) => {
+      c.wallets.forEach((w: string) => {
+        if (w) {
+          consolidatedWallets.add(w.toLowerCase());
+        }
+      });
+    });
     const missingWallets = startingWallets?.filter(
-      (s) =>
-        !consolidatedBoostedTdh.some((c) =>
-          c.wallets.some((w: string) => equalIgnoreCase(w, s))
-        )
+      (s) => !s || !consolidatedWallets.has(s.toLowerCase())
     );
     const missingConsolidatedTdh =
       await consolidateMissingWallets(missingWallets);
@@ -329,14 +330,16 @@ export const consolidateTDH = async (
 
   let rankedTdh: ConsolidatedTDH[];
   if (startingWallets) {
+    const startingWalletsSet = new Set(
+      startingWallets.filter(Boolean).map((sw) => sw.toLowerCase())
+    );
+    const containsStartingWallet = (t: ConsolidatedTDH) =>
+      t.wallets.some(
+        (tw: string) => !!tw && startingWalletsSet.has(tw.toLowerCase())
+      );
     const allCurrentTdh = await fetchAllConsolidatedTdh();
     const allTdh = allCurrentTdh
-      .filter(
-        (t: ConsolidatedTDH) =>
-          !startingWallets.some((sw) =>
-            t.wallets.some((tw: string) => equalIgnoreCase(tw, sw))
-          )
-      )
+      .filter((t: ConsolidatedTDH) => !containsStartingWallet(t))
       .concat(consolidatedBoostedTdh);
     const allRankedTdh = await calculateRanks(
       allGradientsTDH,
@@ -346,9 +349,7 @@ export const consolidateTDH = async (
       NEXTGEN_NFTS
     );
     rankedTdh = allRankedTdh.filter((t: ConsolidatedTDH) =>
-      startingWallets.some((sw) =>
-        t.wallets.some((tw: string) => equalIgnoreCase(tw, sw))
-      )
+      containsStartingWallet(t)
     );
   } else {
     rankedTdh = await calculateRanks(

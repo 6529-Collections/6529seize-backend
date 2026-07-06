@@ -200,32 +200,25 @@ function assignRanks<T extends { id: number }>(
   );
 }
 
-function assignRanksByValue<T extends { id: number }>(
+export function assignRanksByValue<T extends { id: number }>(
   arr: T[],
   rankField: string,
   valueGetter: (item: T) => number,
   direction: 'asc' | 'desc' = 'desc'
 ) {
-  arr.forEach((item) => {
-    const itemValue = valueGetter(item);
-    const rank =
-      arr.filter((other) => {
-        const otherValue = valueGetter(other);
-
-        if (direction === 'asc') {
-          return (
-            otherValue < itemValue ||
-            (otherValue === itemValue && other.id < item.id)
-          );
-        } else {
-          return (
-            otherValue > itemValue ||
-            (otherValue === itemValue && other.id < item.id)
-          );
-        }
-      }).length + 1;
-
-    (item as any)[rankField] = rank;
+  // rank = 1 + number of strictly-better items, where "better" is
+  // (value per direction, then lower id). (value, id) is a total order, so
+  // sorting by it and assigning positions yields the same ranks as counting.
+  const sorted = [...arr].sort((a, b) => {
+    const aValue = valueGetter(a);
+    const bValue = valueGetter(b);
+    if (aValue !== bValue) {
+      return direction === 'asc' ? aValue - bValue : bValue - aValue;
+    }
+    return a.id - b.id;
+  });
+  sorted.forEach((item, index) => {
+    (item as any)[rankField] = index + 1;
   });
 }
 

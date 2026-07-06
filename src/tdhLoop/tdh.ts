@@ -929,6 +929,19 @@ export async function calculateRanks(
     return a;
   });
 
+  const gradientsRanksById = new Map<number, number>();
+  for (const rankedGradient of rankedGradientsTdh) {
+    if (rankedGradient.id !== null && rankedGradient.id !== undefined) {
+      gradientsRanksById.set(Number(rankedGradient.id), rankedGradient.rank);
+    }
+  }
+  const nextgenRanksById = new Map<number, number>();
+  for (const rankedNextgen of rankedNextgenTdh) {
+    if (rankedNextgen.id !== null && rankedNextgen.id !== undefined) {
+      nextgenRanksById.set(Number(rankedNextgen.id), rankedNextgen.rank);
+    }
+  }
+
   ADJUSTED_NFTS.forEach((nft) => {
     boostedTDH
       .filter(
@@ -970,40 +983,16 @@ export async function calculateRanks(
           if (gradient) {
             w.gradients_ranks.push({
               id: nft.id,
-              rank: rankedGradientsTdh.find((s) => s.id == nft.id)?.rank
+              rank: gradientsRanksById.get(Number(nft.id))
             });
           }
           return w;
         }
       });
-
-    if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
-      const wallets = [...boostedTDH].filter((w) =>
-        w.memes?.some((m: any) => m.id == nft.id)
-      );
-
-      wallets.sort((a, b) => {
-        const aNftBalance = a.memes.find((m: any) => m.id == nft.id).tdh;
-        const bNftBalance = b.memes.find((m: any) => m.id == nft.id).tdh;
-
-        if (aNftBalance > bNftBalance) {
-          return -1;
-        }
-        if (aNftBalance > bNftBalance) {
-          return -1;
-        } else if (aNftBalance < bNftBalance) {
-          return 1;
-        } else {
-          if (a.boosted_tdh > b.boosted_tdh) {
-            return -1;
-          }
-          return 1;
-        }
-      });
-    }
   });
 
   NEXTGEN_NFTS.forEach((nft) => {
+    const nextgenRank = nextgenRanksById.get(Number(nft.id));
     boostedTDH
       .filter((w) => w.nextgen?.some((n: any) => n.id == nft.id && n.tdh > 0))
       .forEach((w) => {
@@ -1011,7 +1000,7 @@ export async function calculateRanks(
         if (nextgen) {
           w.nextgen_ranks.push({
             id: nft.id,
-            rank: rankedNextgenTdh.find((s) => s.id == nft.id)?.rank
+            rank: nextgenRank
           });
         }
         return w;
