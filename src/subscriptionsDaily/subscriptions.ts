@@ -397,58 +397,126 @@ async function uploadFinalSubscriptions(
   };
 }
 
-export async function consolidateSubscriptions(addresses: Set<string>) {
-  const addressesFilter = Array.from(addresses)
+const CONSOLIDATION_LOOKUP_CHUNK_SIZE = 5000;
+
+async function fetchAffectedSubscriptions(
+  addressList: string[]
+): Promise<SubscriptionBalance[]> {
+  const addressesFilter = addressList
     .map(
-      (address) =>
-        `${SUBSCRIPTIONS_BALANCES_TABLE}.consolidation_key LIKE '%${address}%'`
+      (_, i) =>
+        `${SUBSCRIPTIONS_BALANCES_TABLE}.consolidation_key LIKE :addressPattern${i}`
     )
     .join(' OR ');
+  const addressesFilterParams = addressList.reduce(
+    (acc, address, i) => {
+      acc[`addressPattern${i}`] = `%${address}%`;
+      return acc;
+    },
+    {} as Record<string, string>
+  );
 
-  const affectedSubscriptions: SubscriptionBalance[] =
-    await sqlExecutor.execute(
-      `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
-    WHERE (${addressesFilter})`
+  return await sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+    WHERE (${addressesFilter})`,
+    addressesFilterParams
+  );
+}
+
+async function buildViewKeyByWallet(
+  walletPartsList: string[]
+): Promise<Map<string, string>> {
+  const viewKeyByWallet = new Map<string, string>();
+  for (
+    let i = 0;
+    i < walletPartsList.length;
+    i += CONSOLIDATION_LOOKUP_CHUNK_SIZE
+  ) {
+    const chunk = walletPartsList.slice(i, i + CONSOLIDATION_LOOKUP_CHUNK_SIZE);
+    const rows = await fetchWalletConsolidationKeysViewForWallet(chunk);
+    rows.forEach((row) => {
+      // the view's row shape is { address, consolidation_key }
+      const rowAddress = (row as unknown as { address: string }).address;
+      if (rowAddress && !viewKeyByWallet.has(rowAddress.toLowerCase())) {
+        viewKeyByWallet.set(rowAddress.toLowerCase(), row.consolidation_key);
+      }
+    });
+  }
+  return viewKeyByWallet;
+}
+
+async function buildTdhByKey(
+  candidateKeysList: string[]
+): Promise<Map<string, number>> {
+  const tdhByKey = new Map<string, number>();
+  for (
+    let i = 0;
+    i < candidateKeysList.length;
+    i += CONSOLIDATION_LOOKUP_CHUNK_SIZE
+  ) {
+    const chunk = candidateKeysList.slice(
+      i,
+      i + CONSOLIDATION_LOOKUP_CHUNK_SIZE
     );
+    const rows: { consolidation_key: string; boosted_tdh: number }[] =
+      await sqlExecutor.execute(
+        `SELECT consolidation_key, boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+        WHERE consolidation_key IN (:chunk)`,
+        { chunk }
+      );
+    rows.forEach((row) => {
+      if (row.consolidation_key && !tdhByKey.has(row.consolidation_key)) {
+        tdhByKey.set(row.consolidation_key, row.boosted_tdh ?? 0);
+      }
+    });
+  }
+  return tdhByKey;
+}
+
+export async function consolidateSubscriptions(addresses: Set<string>) {
+  const affectedSubscriptions = await fetchAffectedSubscriptions(
+    Array.from(addresses)
+  );
 
   logger.info(
     `[CONSOLIDATING SUBSCRIPTIONS] : [FOUND ${affectedSubscriptions.length} AFFECTED SUBSCRIPTIONS]`
   );
+
+  // prefetch view keys for every wallet part and TDH for every candidate key,
+  // instead of querying per wallet part inside the loop below
+  const allWalletParts = new Set<string>();
+  affectedSubscriptions.forEach((sub) => {
+    sub.consolidation_key.split('-').forEach((wallet) => {
+      if (wallet) {
+        allWalletParts.add(wallet);
+      }
+    });
+  });
+  const walletPartsList = Array.from(allWalletParts);
+  const viewKeyByWallet = await buildViewKeyByWallet(walletPartsList);
+
+  const candidateKeys = new Set<string>();
+  walletPartsList.forEach((wallet) => {
+    candidateKeys.add(viewKeyByWallet.get(wallet.toLowerCase()) ?? wallet);
+  });
+  const tdhByKey = await buildTdhByKey(Array.from(candidateKeys));
 
   const replaceConsolidations = new Map<string, string>();
 
   for (const sub of affectedSubscriptions) {
     const walletParts = sub.consolidation_key.split('-');
     for (const wallet of walletParts) {
-      let newConsolidationKey = wallet;
-      const consolidation = (
-        await fetchWalletConsolidationKeysViewForWallet([wallet])
-      )[0];
-      if (consolidation) {
-        newConsolidationKey = consolidation.consolidation_key;
-      }
+      const newConsolidationKey = wallet
+        ? (viewKeyByWallet.get(wallet.toLowerCase()) ?? wallet)
+        : wallet;
 
       const replaceConsolidation = replaceConsolidations.get(
         sub.consolidation_key
       );
 
       if (replaceConsolidation) {
-        const replaceTdh =
-          (
-            await sqlExecutor.execute(
-              `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-              WHERE consolidation_key = :replaceConsolidation`,
-              { replaceConsolidation }
-            )
-          )[0]?.boosted_tdh ?? 0;
-        const newTdh =
-          (
-            await sqlExecutor.execute(
-              `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-              WHERE consolidation_key = :newConsolidationKey`,
-              { newConsolidationKey }
-            )
-          )[0]?.boosted_tdh ?? 0;
+        const replaceTdh = tdhByKey.get(replaceConsolidation) ?? 0;
+        const newTdh = tdhByKey.get(newConsolidationKey) ?? 0;
         if (newTdh > replaceTdh) {
           replaceConsolidations.set(sub.consolidation_key, newConsolidationKey);
         } else {
