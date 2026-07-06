@@ -1,6 +1,7 @@
 import * as db from '../../db-api';
 import { ids } from '@/ids';
 
+import * as fs from 'node:fs';
 import * as http from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
@@ -1661,6 +1662,16 @@ async function initializeApp() {
   app.use(rootRouter);
 
   const swaggerDocument = YAML.load('openapi.yaml');
+  // Publish the raw, machine-readable spec at predictable URLs next to /docs so
+  // agents and tooling can fetch the contract directly instead of scraping the
+  // Swagger UI. llms.txt on 6529.io points here.
+  const openApiYamlRaw = fs.readFileSync('openapi.yaml', 'utf8');
+  app.get('/openapi.yaml', (_req: Request, res: Response) => {
+    res.type('application/yaml').send(openApiYamlRaw);
+  });
+  app.get('/openapi.json', (_req: Request, res: Response) => {
+    res.json(swaggerDocument);
+  });
   app.use(
     '/docs',
     SwaggerUI.serve,
