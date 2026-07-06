@@ -524,8 +524,8 @@ async function applyRepairPlanIfWet(
   const repairPlan = dedupeRepairPlan(
     mismatchResults.flatMap((result) => result.repairPlan)
   );
-  const tokenIds = new Set(
-    mismatchResults.map((result) => result.report.meme.id)
+  const reportsByTokenId = new Map(
+    mismatchResults.map((result) => [result.report.meme.id, result.report])
   );
   const affectedWallets = new Set(repairPlan.map((item) => item.wallet));
 
@@ -539,7 +539,7 @@ async function applyRepairPlanIfWet(
     await consolidateNftOwners(affectedWallets, false);
   }
 
-  await refreshNftSuppliesFromOwners(tokenIds);
+  await refreshNftSuppliesFromOwners(reportsByTokenId);
 }
 
 function dedupeRepairPlan(plan: OwnerRepairPlan[]): OwnerRepairPlan[] {
@@ -594,12 +594,27 @@ async function applyTargetedNftOwnerRepairPlan(
 }
 
 async function refreshNftSuppliesFromOwners(
-  tokenIds: Set<number>
+  reportsByTokenId: Map<number, MismatchReport>
 ): Promise<void> {
   const repo = getDataSource().getRepository(NFT);
 
-  for (const tokenId of Array.from(tokenIds).sort((a, b) => a - b)) {
+  for (const [tokenId, report] of Array.from(reportsByTokenId).sort(
+    ([a], [b]) => a - b
+  )) {
     const ownerSupply = await fetchNftOwnerSupply(tokenId);
+    const ownerBurntSupply = await fetchNftOwnerBurntSupply(tokenId);
+    const ownerComparison = buildComparisonGroup({
+      withBurntActual: ownerSupply,
+      burnt: ownerBurntSupply,
+      onChainSupply: report.onChainSupply
+    });
+    if (!matchesOnChain(ownerComparison)) {
+      logger.warn(
+        `[WET RUN] Skipping nfts.supply update for Meme #${tokenId}; nft_owners still differs from on-chain [owner_supply=${ownerSupply}] [owner_burnt=${ownerBurntSupply}] [onchain=${report.onChainSupply}]`
+      );
+      continue;
+    }
+
     const targetSupply = adjustNftsBurntSupply(tokenId, ownerSupply);
     const nft = await repo.findOne({
       where: {
@@ -642,6 +657,21 @@ async function fetchNftOwnerSupply(tokenId: number): Promise<number> {
     .select('SUM(owner.balance)', 'supply')
     .where('owner.contract = :contract', { contract: MEMES_CONTRACT })
     .andWhere('owner.token_id = :tokenId', { tokenId })
+    .getRawOne<{ supply: unknown }>();
+
+  return numbers.parseIntOrThrow(raw?.supply ?? 0);
+}
+
+async function fetchNftOwnerBurntSupply(tokenId: number): Promise<number> {
+  const raw = await getDataSource()
+    .getRepository(NFTOwner)
+    .createQueryBuilder('owner')
+    .select('SUM(owner.balance)', 'supply')
+    .where('owner.contract = :contract', { contract: MEMES_CONTRACT })
+    .andWhere('owner.token_id = :tokenId', { tokenId })
+    .andWhere('LOWER(owner.wallet) IN (:...burnAddresses)', {
+      burnAddresses: getBurnAddresses()
+    })
     .getRawOne<{ supply: unknown }>();
 
   return numbers.parseIntOrThrow(raw?.supply ?? 0);
