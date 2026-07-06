@@ -1,5 +1,6 @@
 import * as path from 'node:path';
-import * as dbMigrationsLoop from './dbMigrationsLoop';
+import * as customReplayLoop from './customReplayLoop';
+// import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { Logger } from './logging';
 
 const logger = Logger.get('BACKEND');
@@ -84,13 +85,19 @@ async function runRequestedLoopIfPresent() {
 async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await dbMigrationsLoop.handler(
+  // await dbMigrationsLoop.handler(
+  //   undefined as any,
+  //   undefined as any,
+  //   undefined as any
+  // );
+
+  await customReplayLoop.handler(
     undefined as any,
     undefined as any,
     undefined as any
   );
 
-  await runRequestedLoopIfPresent();
+  // await runRequestedLoopIfPresent();
 
   process.exit(0);
 }
