@@ -48,12 +48,12 @@ export async function fetchAllNftOwners(
     .createQueryBuilder('nftowner');
 
   if (contracts) {
-    queryBuilder.where('nftowner.contract IN (:...contracts)', {
+    queryBuilder.andWhere('nftowner.contract IN (:...contracts)', {
       contracts
     });
   }
   if (pk) {
-    queryBuilder.where(`nftowner.wallet IN (:...pk)`, {
+    queryBuilder.andWhere(`nftowner.wallet IN (:...pk)`, {
       pk
     });
   }
