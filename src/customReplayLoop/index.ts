@@ -1,6 +1,12 @@
-import { MEMES_CONTRACT } from '@/constants';
+import {
+  MEME_8_EDITION_BURN_ADJUSTMENT,
+  MEMES_CONTRACT,
+  NULL_ADDRESS,
+  NULL_ADDRESS_DEAD
+} from '@/constants';
 import { getDataSource } from '@/db';
 import { NFT } from '@/entities/INFT';
+import { ConsolidatedNFTOwner, NFTOwner } from '@/entities/INFTOwner';
 import { numbers } from '@/numbers';
 import { getRpcProvider } from '@/rpc-provider';
 import { ethers } from 'ethers';
@@ -17,7 +23,31 @@ const MEMES_SUPPLY_ABI = [
 ];
 const MEME_SUPPLY_CHECK_CONCURRENCY = 10;
 
-type MemeNftSupplyRow = Pick<NFT, 'id' | 'name' | 'supply'>;
+type MemeNftSupplyRow = Pick<NFT, 'id' | 'contract' | 'name' | 'supply'>;
+
+type OwnerSupplyRow = {
+  tokenId: unknown;
+  supply: unknown;
+};
+
+type MismatchReport = {
+  meme: MemeNftSupplyRow;
+  onChainSupply: number;
+  nftsSupply: SupplyComparisonGroup;
+  nftOwnersSupply: SupplyComparisonGroup;
+  consolidatedNftOwnersSupply: SupplyComparisonGroup;
+};
+
+type SupplyComparisonGroup = {
+  burnt: number;
+  withBurnt: SupplyComparison;
+  withoutBurnt: SupplyComparison;
+};
+
+type SupplyComparison = {
+  actual: number;
+  expected: number;
+};
 
 type MemeSupplyContract = {
   totalSupply(tokenId: number): Promise<unknown>;
@@ -28,19 +58,43 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     async () => {
       await replay();
     },
-    { logger, entities: [NFT], syncEntities: false }
+    {
+      logger,
+      entities: [NFT, NFTOwner, ConsolidatedNFTOwner],
+      syncEntities: false
+    }
   );
 });
 
 async function replay() {
-  const memes = await fetchMemeNfts();
+  const [
+    memes,
+    nftOwnerSupplies,
+    consolidatedNftOwnerSupplies,
+    nftOwnerBurntSupplies,
+    consolidatedNftOwnerBurntSupplies
+  ] =
+    await Promise.all([
+      fetchMemeNfts(),
+      fetchNftOwnerSupplies(),
+      fetchConsolidatedNftOwnerSupplies(),
+      fetchNftOwnerBurntSupplies(),
+      fetchConsolidatedNftOwnerBurntSupplies()
+    ]);
   const contract = getMemesSupplyContract(getRpcProvider());
   const limit = pLimit(MEME_SUPPLY_CHECK_CONCURRENCY);
 
   await Promise.all(
     memes.map((meme) =>
       limit(async () => {
-        await printMemeSupplyMismatch(meme, contract);
+        await printMemeSupplyMismatch(
+          meme,
+          contract,
+          nftOwnerSupplies,
+          consolidatedNftOwnerSupplies,
+          nftOwnerBurntSupplies,
+          consolidatedNftOwnerBurntSupplies
+        );
       })
     )
   );
@@ -50,10 +104,72 @@ async function fetchMemeNfts(): Promise<MemeNftSupplyRow[]> {
   return getDataSource()
     .getRepository(NFT)
     .createQueryBuilder('nft')
-    .select(['nft.id', 'nft.name', 'nft.supply'])
+    .select(['nft.id', 'nft.contract', 'nft.name', 'nft.supply'])
     .where('nft.contract = :contract', { contract: MEMES_CONTRACT })
     .orderBy('nft.id', 'ASC')
     .getMany();
+}
+
+async function fetchNftOwnerSupplies(): Promise<Map<number, number>> {
+  return fetchOwnerSupplies(NFTOwner);
+}
+
+async function fetchConsolidatedNftOwnerSupplies(): Promise<Map<number, number>> {
+  return fetchOwnerSupplies(ConsolidatedNFTOwner);
+}
+
+async function fetchNftOwnerBurntSupplies(): Promise<Map<number, number>> {
+  return fetchBurntSupplies(NFTOwner, 'wallet');
+}
+
+async function fetchConsolidatedNftOwnerBurntSupplies(): Promise<
+  Map<number, number>
+> {
+  return fetchBurntSupplies(ConsolidatedNFTOwner, 'consolidation_key');
+}
+
+async function fetchBurntSupplies(
+  EntityClass: typeof NFTOwner | typeof ConsolidatedNFTOwner,
+  ownerColumn: 'wallet' | 'consolidation_key'
+): Promise<Map<number, number>> {
+  const rows = await getDataSource()
+    .getRepository(EntityClass)
+    .createQueryBuilder('owner')
+    .select('owner.token_id', 'tokenId')
+    .addSelect('SUM(owner.balance)', 'supply')
+    .where('owner.contract = :contract', { contract: MEMES_CONTRACT })
+    .andWhere(`LOWER(owner.${ownerColumn}) IN (:...burnAddresses)`, {
+      burnAddresses: getBurnAddresses()
+    })
+    .groupBy('owner.token_id')
+    .getRawMany<OwnerSupplyRow>();
+
+  return new Map(
+    rows.map((row) => [
+      numbers.parseIntOrThrow(row.tokenId),
+      numbers.parseIntOrThrow(row.supply)
+    ])
+  );
+}
+
+async function fetchOwnerSupplies(
+  EntityClass: typeof NFTOwner | typeof ConsolidatedNFTOwner
+): Promise<Map<number, number>> {
+  const rows = await getDataSource()
+    .getRepository(EntityClass)
+    .createQueryBuilder('owner')
+    .select('owner.token_id', 'tokenId')
+    .addSelect('SUM(owner.balance)', 'supply')
+    .where('owner.contract = :contract', { contract: MEMES_CONTRACT })
+    .groupBy('owner.token_id')
+    .getRawMany<OwnerSupplyRow>();
+
+  return new Map(
+    rows.map((row) => [
+      numbers.parseIntOrThrow(row.tokenId),
+      numbers.parseIntOrThrow(row.supply)
+    ])
+  );
 }
 
 function getMemesSupplyContract(provider: ethers.Provider): MemeSupplyContract {
@@ -66,17 +182,130 @@ function getMemesSupplyContract(provider: ethers.Provider): MemeSupplyContract {
 
 async function printMemeSupplyMismatch(
   meme: MemeNftSupplyRow,
-  contract: MemeSupplyContract
+  contract: MemeSupplyContract,
+  nftOwnerSupplies: Map<number, number>,
+  consolidatedNftOwnerSupplies: Map<number, number>,
+  nftOwnerBurntSupplies: Map<number, number>,
+  consolidatedNftOwnerBurntSupplies: Map<number, number>
 ): Promise<void> {
   const onChainSupply = await fetchOnChainMemeSupply(contract, meme.id);
+  const nftOwnerBurntSupply = nftOwnerBurntSupplies.get(meme.id) ?? 0;
+  const nftsBurntSupply = adjustNftsBurntSupply(meme.id, nftOwnerBurntSupply);
+  const consolidatedNftOwnerBurntSupply =
+    consolidatedNftOwnerBurntSupplies.get(meme.id) ?? 0;
   const dbSupply = numbers.parseIntOrThrow(meme.supply);
+  const nftOwnersSupply = nftOwnerSupplies.get(meme.id) ?? 0;
+  const consolidatedNftOwnersSupply =
+    consolidatedNftOwnerSupplies.get(meme.id) ?? 0;
+  const report: MismatchReport = {
+    meme,
+    onChainSupply,
+    nftsSupply: buildComparisonGroup({
+      withBurntActual: dbSupply,
+      burnt: nftsBurntSupply,
+      onChainSupply
+    }),
+    nftOwnersSupply: buildComparisonGroup({
+      withBurntActual: nftOwnersSupply,
+      burnt: nftOwnerBurntSupply,
+      onChainSupply
+    }),
+    consolidatedNftOwnersSupply: buildComparisonGroup({
+      withBurntActual: consolidatedNftOwnersSupply,
+      burnt: consolidatedNftOwnerBurntSupply,
+      onChainSupply
+    })
+  };
 
-  if (onChainSupply !== dbSupply) {
-    const nameSuffix = meme.name ? ` [${meme.name}]` : '';
-    logger.info(
-      `[MISMATCH] Meme #${meme.id}${nameSuffix} [db_supply=${dbSupply}] [onchain_supply=${onChainSupply}]`
-    );
+  if (hasMismatch(report)) {
+    logger.info(formatMismatchReport(report));
   }
+}
+
+function getBurnAddresses(): string[] {
+  return [NULL_ADDRESS, NULL_ADDRESS_DEAD].map((address) =>
+    address.toLowerCase()
+  );
+}
+
+function adjustNftsBurntSupply(tokenId: number, supply: number): number {
+  if (tokenId === 8) {
+    return supply + MEME_8_EDITION_BURN_ADJUSTMENT;
+  }
+  return supply;
+}
+
+function buildComparisonGroup({
+  withBurntActual,
+  burnt,
+  onChainSupply
+}: {
+  withBurntActual: number;
+  burnt: number;
+  onChainSupply: number;
+}): SupplyComparisonGroup {
+  return {
+    burnt,
+    withBurnt: {
+      actual: withBurntActual,
+      expected: onChainSupply
+    },
+    withoutBurnt: {
+      actual: withBurntActual - burnt,
+      expected: onChainSupply
+    }
+  };
+}
+
+function hasMismatch(report: MismatchReport): boolean {
+  return [
+    report.nftsSupply,
+    report.nftOwnersSupply,
+    report.consolidatedNftOwnersSupply
+  ].some((group) => !matchesOnChain(group));
+}
+
+function matchesOnChain(group: SupplyComparisonGroup): boolean {
+  return !isMismatch(group.withBurnt) || !isMismatch(group.withoutBurnt);
+}
+
+function isMismatch(comparison: SupplyComparison): boolean {
+  return comparison.actual !== comparison.expected;
+}
+
+function formatMismatchReport(report: MismatchReport): string {
+  const name = report.meme.name ? ` - ${report.meme.name}` : '';
+  return [
+    `[MISMATCH] Meme #${report.meme.id}${name}`,
+    `  onchain_supply: ${report.onChainSupply}`,
+    formatSupplyGroup('nfts.supply', report.nftsSupply),
+    formatSupplyGroup('nft_owners balance sum', report.nftOwnersSupply),
+    formatSupplyGroup(
+      'nft_owners_consolidation balance sum',
+      report.consolidatedNftOwnersSupply
+    )
+  ].join('\n');
+}
+
+function formatSupplyGroup(
+  label: string,
+  group: SupplyComparisonGroup
+): string {
+  return [
+    `  ${label}:`,
+    `    including_burnt: ${formatSupplyComparison(group.withBurnt)} (burnt ${group.burnt})`,
+    `    excluding_burnt: ${formatSupplyComparison(group.withoutBurnt)}`
+  ].join('\n');
+}
+
+function formatSupplyComparison(comparison: SupplyComparison): string {
+  const { actual, expected } = comparison;
+  if (actual === expected) {
+    return `${actual} OK matches_onchain`;
+  }
+  return `${actual} differs_from_onchain expected=${expected} delta=${
+    actual - expected
+  }`;
 }
 
 async function fetchOnChainMemeSupply(
