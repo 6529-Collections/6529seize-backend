@@ -8,6 +8,7 @@ import { getDataSource } from '@/db';
 import { NFT } from '@/entities/INFT';
 import { ConsolidatedNFTOwner, NFTOwner } from '@/entities/INFTOwner';
 import { Transaction } from '@/entities/ITransaction';
+import { consolidateNftOwners } from '@/nftOwnersLoop/nft_owners';
 import { numbers } from '@/numbers';
 import { getRpcProvider } from '@/rpc-provider';
 import { ethers } from 'ethers';
@@ -22,11 +23,20 @@ const MEMES_SUPPLY_ABI = [
   'function totalSupply(uint256 tokenId) view returns (uint256)'
 ];
 
+type CustomReplayMode = 'dry' | 'wet';
+
+// Change to 'wet' only when you want this loop to apply the printed repair plan.
+const DEFAULT_CUSTOM_REPLAY_MODE: CustomReplayMode = 'dry';
+
 type MemeNftSupplyRow = Pick<NFT, 'id' | 'contract' | 'name' | 'supply'>;
 
 type OwnerSupplyRow = {
   tokenId: unknown;
   supply: unknown;
+};
+
+type MaxBlockRow = {
+  maxBlock: unknown;
 };
 
 type MismatchReport = {
@@ -62,6 +72,12 @@ type OwnerRepairPlan = {
   targetBalance: number;
 };
 
+type MismatchResult = {
+  report: MismatchReport;
+  ownerMismatches: OwnerBalanceMismatch[];
+  repairPlan: OwnerRepairPlan[];
+};
+
 type MemeSupplyContract = {
   totalSupply(tokenId: number): Promise<unknown>;
 };
@@ -80,6 +96,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function replay() {
+  const replayMode = getCustomReplayMode();
+  logger.info(`[MODE ${replayMode.toUpperCase()}]`);
+
   const [
     memes,
     nftOwnerSupplies,
@@ -95,17 +114,24 @@ async function replay() {
       fetchConsolidatedNftOwnerBurntSupplies()
     ]);
   const contract = getMemesSupplyContract(getRpcProvider());
+  const mismatchResults: MismatchResult[] = [];
 
   for (const meme of memes) {
-    await printMemeSupplyMismatch(
+    const result = await printMemeSupplyMismatch(
       meme,
       contract,
       nftOwnerSupplies,
       consolidatedNftOwnerSupplies,
       nftOwnerBurntSupplies,
-      consolidatedNftOwnerBurntSupplies
+      consolidatedNftOwnerBurntSupplies,
+      replayMode
     );
+    if (result) {
+      mismatchResults.push(result);
+    }
   }
+
+  await applyRepairPlanIfWet(replayMode, mismatchResults);
 }
 
 async function fetchMemeNfts(): Promise<MemeNftSupplyRow[]> {
@@ -194,8 +220,9 @@ async function printMemeSupplyMismatch(
   nftOwnerSupplies: Map<number, number>,
   consolidatedNftOwnerSupplies: Map<number, number>,
   nftOwnerBurntSupplies: Map<number, number>,
-  consolidatedNftOwnerBurntSupplies: Map<number, number>
-): Promise<void> {
+  consolidatedNftOwnerBurntSupplies: Map<number, number>,
+  replayMode: CustomReplayMode
+): Promise<MismatchResult | null> {
   const onChainSupply = await fetchOnChainMemeSupply(contract, meme.id);
   const nftOwnerBurntSupply = nftOwnerBurntSupplies.get(meme.id) ?? 0;
   const nftsBurntSupply = adjustNftsBurntSupply(meme.id, nftOwnerBurntSupply);
@@ -227,8 +254,20 @@ async function printMemeSupplyMismatch(
 
   if (hasMismatch(report)) {
     const ownerMismatches = await findNftOwnerBalanceMismatches(meme);
-    logger.info(formatMismatchReport(report, ownerMismatches));
+    const repairPlan = ownerMismatches.map((mismatch) =>
+      buildOwnerRepairPlan(report.meme.id, mismatch)
+    );
+    logger.info(
+      formatMismatchReport(report, ownerMismatches, repairPlan, replayMode)
+    );
+    return {
+      report,
+      ownerMismatches,
+      repairPlan
+    };
   }
+
+  return null;
 }
 
 async function findNftOwnerBalanceMismatches(
@@ -403,7 +442,9 @@ function isMismatch(comparison: SupplyComparison): boolean {
 
 function formatMismatchReport(
   report: MismatchReport,
-  ownerMismatches: OwnerBalanceMismatch[]
+  ownerMismatches: OwnerBalanceMismatch[],
+  repairPlan: OwnerRepairPlan[],
+  replayMode: CustomReplayMode
 ): string {
   const name = report.meme.name ? ` - ${report.meme.name}` : '';
   return [
@@ -416,11 +457,7 @@ function formatMismatchReport(
       report.consolidatedNftOwnersSupply
     ),
     formatOwnerBalanceMismatches(ownerMismatches),
-    formatDryRunRepairPlan(
-      ownerMismatches.map((mismatch) =>
-        buildDryRunRepairPlan(report.meme.id, mismatch)
-      )
-    )
+    formatRepairPlan(repairPlan, replayMode)
   ].join('\n');
 }
 
@@ -442,7 +479,7 @@ function formatOwnerBalanceMismatches(
   ].join('\n');
 }
 
-function buildDryRunRepairPlan(
+function buildOwnerRepairPlan(
   tokenId: number,
   mismatch: OwnerBalanceMismatch
 ): OwnerRepairPlan {
@@ -455,13 +492,18 @@ function buildDryRunRepairPlan(
   };
 }
 
-function formatDryRunRepairPlan(plan: OwnerRepairPlan[]): string {
+function formatRepairPlan(
+  plan: OwnerRepairPlan[],
+  replayMode: CustomReplayMode
+): string {
+  const prefix = replayMode === 'wet' ? 'wet_run' : 'dry_run';
+
   if (plan.length === 0) {
-    return '  dry_run nft_owners repair plan: no row changes planned';
+    return `  ${prefix} nft_owners repair plan: no row changes planned`;
   }
 
   return [
-    '  dry_run nft_owners repair plan:',
+    `  ${prefix} nft_owners repair plan:`,
     ...plan.map((item) => {
       if (item.action === 'DELETE') {
         return `    DELETE wallet=${item.wallet} token_id=${item.tokenId} current_balance=${item.currentBalance}`;
@@ -469,6 +511,163 @@ function formatDryRunRepairPlan(plan: OwnerRepairPlan[]): string {
       return `    UPSERT wallet=${item.wallet} token_id=${item.tokenId} balance=${item.targetBalance} current_balance=${item.currentBalance}`;
     })
   ].join('\n');
+}
+
+async function applyRepairPlanIfWet(
+  replayMode: CustomReplayMode,
+  mismatchResults: MismatchResult[]
+): Promise<void> {
+  if (replayMode !== 'wet') {
+    return;
+  }
+
+  const repairPlan = dedupeRepairPlan(
+    mismatchResults.flatMap((result) => result.repairPlan)
+  );
+  const tokenIds = new Set(
+    mismatchResults.map((result) => result.report.meme.id)
+  );
+  const affectedWallets = new Set(repairPlan.map((item) => item.wallet));
+
+  if (repairPlan.length === 0) {
+    logger.info('[WET RUN] No nft_owners row changes planned');
+  } else {
+    logger.info(
+      `[WET RUN] Applying targeted nft_owners repair [rows=${repairPlan.length}] [wallets=${affectedWallets.size}]`
+    );
+    await applyTargetedNftOwnerRepairPlan(repairPlan);
+    await consolidateNftOwners(affectedWallets, false);
+  }
+
+  await refreshNftSuppliesFromOwners(tokenIds);
+}
+
+function dedupeRepairPlan(plan: OwnerRepairPlan[]): OwnerRepairPlan[] {
+  return Array.from(
+    new Map(
+      plan.map((item) => [
+        `${item.wallet.toLowerCase()}-${item.tokenId}`,
+        {
+          ...item,
+          wallet: item.wallet.toLowerCase()
+        }
+      ])
+    ).values()
+  ).sort((a, b) => {
+    if (a.tokenId !== b.tokenId) {
+      return a.tokenId - b.tokenId;
+    }
+    return a.wallet.localeCompare(b.wallet);
+  });
+}
+
+async function applyTargetedNftOwnerRepairPlan(
+  repairPlan: OwnerRepairPlan[]
+): Promise<void> {
+  const blockReference = await fetchMaxTransactionBlockReference();
+
+  await getDataSource().transaction(async (manager) => {
+    const repo = manager.getRepository(NFTOwner);
+
+    for (const item of repairPlan) {
+      await repo.delete({
+        wallet: item.wallet,
+        contract: MEMES_CONTRACT,
+        token_id: item.tokenId
+      });
+    }
+
+    const upserts = repairPlan
+      .filter((item) => item.targetBalance > 0)
+      .map((item) => ({
+        wallet: item.wallet,
+        contract: MEMES_CONTRACT,
+        token_id: item.tokenId,
+        balance: item.targetBalance,
+        block_reference: blockReference
+      }));
+
+    if (upserts.length > 0) {
+      await repo.insert(upserts);
+    }
+  });
+}
+
+async function refreshNftSuppliesFromOwners(
+  tokenIds: Set<number>
+): Promise<void> {
+  const repo = getDataSource().getRepository(NFT);
+
+  for (const tokenId of Array.from(tokenIds).sort((a, b) => a - b)) {
+    const ownerSupply = await fetchNftOwnerSupply(tokenId);
+    const targetSupply = adjustNftsBurntSupply(tokenId, ownerSupply);
+    const nft = await repo.findOne({
+      where: {
+        contract: MEMES_CONTRACT,
+        id: tokenId
+      }
+    });
+
+    if (!nft) {
+      logger.warn(`[WET RUN] Meme #${tokenId} not found in nfts table`);
+      continue;
+    }
+
+    if (nft.supply === targetSupply) {
+      logger.info(
+        `[WET RUN] nfts.supply already correct for Meme #${tokenId} [supply=${targetSupply}]`
+      );
+      continue;
+    }
+
+    await repo.update(
+      {
+        contract: MEMES_CONTRACT,
+        id: tokenId
+      },
+      {
+        supply: targetSupply
+      }
+    );
+    logger.info(
+      `[WET RUN] Updated nfts.supply for Meme #${tokenId} [from=${nft.supply}] [to=${targetSupply}]`
+    );
+  }
+}
+
+async function fetchNftOwnerSupply(tokenId: number): Promise<number> {
+  const raw = await getDataSource()
+    .getRepository(NFTOwner)
+    .createQueryBuilder('owner')
+    .select('SUM(owner.balance)', 'supply')
+    .where('owner.contract = :contract', { contract: MEMES_CONTRACT })
+    .andWhere('owner.token_id = :tokenId', { tokenId })
+    .getRawOne<{ supply: unknown }>();
+
+  return numbers.parseIntOrThrow(raw?.supply ?? 0);
+}
+
+async function fetchMaxTransactionBlockReference(): Promise<number> {
+  const raw = await getDataSource()
+    .getRepository(Transaction)
+    .createQueryBuilder('tx')
+    .select('MAX(tx.block)', 'maxBlock')
+    .getRawOne<MaxBlockRow>();
+
+  return numbers.parseIntOrThrow(raw?.maxBlock ?? 0);
+}
+
+function getCustomReplayMode(): CustomReplayMode {
+  const envMode = process.env.CUSTOM_REPLAY_MODE?.trim().toLowerCase();
+  if (!envMode) {
+    return DEFAULT_CUSTOM_REPLAY_MODE;
+  }
+  if (envMode === 'dry' || envMode === 'wet') {
+    return envMode;
+  }
+  throw new Error(
+    `Invalid CUSTOM_REPLAY_MODE "${envMode}". Expected "dry" or "wet".`
+  );
 }
 
 function formatSupplyGroup(
