@@ -6,7 +6,7 @@ import {
 import {
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
-  findVolume,
+  findVolumesForContract,
   persistLabNFTS,
   persistNFTs
 } from '../db';
@@ -51,6 +51,7 @@ export const findNftMarketStats = async (contract: string) => {
   );
 
   const nfts = await getNFTsForContract(contract);
+  const volumesByTokenId = await findVolumesForContract(contract);
   const BATCH_SIZE = 50;
   const totalBatches = Math.ceil(nfts.length / BATCH_SIZE);
 
@@ -76,7 +77,7 @@ export const findNftMarketStats = async (contract: string) => {
           maker: null
         };
 
-        const volumes = await findVolume(nft.id, contract);
+        const volumes = volumesByTokenId.get(nft.id);
         updateNftVolumeStats(nft, volumes);
         updateNftMarketStats(nft, bestListing, bestOffer);
 
