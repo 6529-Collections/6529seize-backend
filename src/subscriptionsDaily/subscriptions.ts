@@ -226,16 +226,16 @@ async function createFinalSubscriptions(
 
     if (balance) {
       if (balance.balance >= MEMES_MINT_PRICE) {
-        await addFundedFinalSubscription(
+        const { finalSub, subscriptionLog } = await addFundedFinalSubscription(
           sub,
           balance,
           autoSub,
           eligibilityByKey,
           newMeme,
-          dateStr,
-          finalSubscriptions,
-          newSubscriptionLogs
+          dateStr
         );
+        finalSubscriptions.push(finalSub);
+        newSubscriptionLogs.push(subscriptionLog);
       } else {
         logger.info(
           `[INSUFFICIENT BALANCE FOR ${sub.consolidation_key}] : [SKIPPING]`
@@ -278,10 +278,11 @@ async function addFundedFinalSubscription(
   autoSub: SubscriptionMode | undefined,
   eligibilityByKey: Map<string, number>,
   newMeme: number,
-  dateStr: string,
-  finalSubscriptions: NFTFinalSubscription[],
-  newSubscriptionLogs: SubscriptionLog[]
-) {
+  dateStr: string
+): Promise<{
+  finalSub: NFTFinalSubscription;
+  subscriptionLog: SubscriptionLog;
+}> {
   let createdAt = sub.updated_at?.getTime() ?? Time.now().toMillis();
   if (autoSub) {
     createdAt = autoSub.updated_at?.getTime() ?? Time.now().toMillis();
@@ -322,15 +323,16 @@ async function addFundedFinalSubscription(
     phase_position: -1,
     redeemed_count: 0
   };
-  finalSubscriptions.push(finalSub);
   const logText = `Added to Final Subscription for Meme #${newMeme} on ${dateStr}`;
   const additionalInfo = `Airdrop Address: ${finalSub.airdrop_address} - Subscription Count: x${subscribedCount} - Balance: ${finalSub.balance} ETH`;
 
-  newSubscriptionLogs.push({
+  const subscriptionLog: SubscriptionLog = {
     consolidation_key: sub.consolidation_key,
     log: logText,
     additional_info: additionalInfo
-  });
+  };
+
+  return { finalSub, subscriptionLog };
 }
 
 export function resolveRequestedSubscriptionCount(

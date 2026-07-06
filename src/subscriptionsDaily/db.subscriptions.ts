@@ -115,11 +115,9 @@ export async function fetchSubscriptionEligibilityForKeys(
   consolidationKeys: string[]
 ): Promise<Map<string, number>> {
   const eligibility = new Map<string, number>();
-  const queryKeys = new Set<string>();
   consolidationKeys.forEach((key) => {
     if (key) {
       eligibility.set(key.toLowerCase(), 1);
-      queryKeys.add(key);
     }
   });
   if (eligibility.size === 0) {
@@ -135,7 +133,7 @@ export async function fetchSubscriptionEligibilityForKeys(
   }
 
   const seasonId = maxSeasonId[0].max_id;
-  const distinctKeys = Array.from(queryKeys);
+  const distinctKeys = Array.from(eligibility.keys());
 
   for (let i = 0; i < distinctKeys.length; i += ELIGIBILITY_KEYS_CHUNK_SIZE) {
     const chunk = distinctKeys.slice(i, i + ELIGIBILITY_KEYS_CHUNK_SIZE);

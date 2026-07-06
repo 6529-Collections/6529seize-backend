@@ -29,10 +29,10 @@ class MockSqlExecutor extends SqlExecutor {
     if (sql.includes('consolidation_key IN')) {
       const chunk: string[] = params?.chunk ?? [];
       return chunk
-        .filter((key) => this.setsByKey[key.toLowerCase()] !== undefined)
+        .filter((key) => this.setsByKey[key] !== undefined)
         .map((key) => ({
           consolidation_key: key,
-          sets: this.setsByKey[key.toLowerCase()]
+          sets: this.setsByKey[key]
         })) as T[];
     }
     throw new Error(`Unexpected query: ${sql}`);
@@ -80,8 +80,8 @@ describe('fetchSubscriptionEligibilityForKeys', () => {
     // one MAX query + one IN query for the three distinct keys
     expect(executor.queries).toHaveLength(2);
     expect(executor.queries[1].params?.chunk).toEqual([
-      '0xA-0xB',
-      '0xZERO',
+      '0xa-0xb',
+      '0xzero',
       '0xmissing'
     ]);
     expect(executor.queries[1].params?.seasonId).toBe(11);
