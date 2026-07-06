@@ -5,7 +5,10 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import { ratingsService } from '../../../rates/ratings.service';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
-import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
+import {
+  REP_CATEGORY_INVALID_MESSAGE,
+  REP_CATEGORY_PATTERN
+} from '../../../entities/IAbusivenessDetectionResult';
 import { WALLET_REGEX } from '@/constants';
 import { ApiBulkRepRequest } from '../generated/models/ApiBulkRepRequest';
 import { Timer } from '../../../time';
@@ -43,7 +46,7 @@ const BulkRepTargetSchema: Joi.ObjectSchema<ApiBulkRepTarget> =
       .max(100)
       .regex(REP_CATEGORY_PATTERN)
       .messages({
-        'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+        'string.pattern.base': REP_CATEGORY_INVALID_MESSAGE
       }),
     amount: Joi.number().integer().required()
   });

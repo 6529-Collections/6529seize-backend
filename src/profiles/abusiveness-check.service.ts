@@ -4,10 +4,8 @@ import {
 } from '../abusiveness/ai-based-abusiveness.detector';
 import { abusivenessCheckDb, AbusivenessCheckDb } from './abusiveness-check.db';
 import { BadRequestException } from '../exceptions';
-import {
-  AbusivenessDetectionResult,
-  REP_CATEGORY_PATTERN
-} from '../entities/IAbusivenessDetectionResult';
+import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
+import { explainRepCategoryViolation } from './rep-category-rules';
 import { discord, Discord, DiscordChannel } from '../discord';
 import { Logger } from '../logging';
 import { RequestContext } from '../request.context';
@@ -23,14 +21,11 @@ export class AbusivenessCheckService {
 
   async bulkCheckRepPhrases(phrases: string[], ctx: RequestContext) {
     const trimmedPhrases = phrases.map((p) => p.trim());
-    const invalidPhrase = trimmedPhrases.find(
-      (txt) =>
-        txt.length === 0 || txt.length > 100 || !REP_CATEGORY_PATTERN.exec(txt)
-    );
-    if (invalidPhrase) {
-      throw new BadRequestException(
-        `REP Category "${invalidPhrase}" doesn't match condition of being 1-100 characters or containing only letters, numbers, spaces, commas, punctuation, parentheses and single quotes.`
-      );
+    for (const txt of trimmedPhrases) {
+      const violation = explainRepCategoryViolation(txt);
+      if (violation) {
+        throw new BadRequestException(`REP category "${txt}": ${violation}`);
+      }
     }
     const existingResults = await this.abusivenessCheckDb.findResults(
       phrases,
@@ -67,13 +62,9 @@ export class AbusivenessCheckService {
 
   async checkRepPhrase(text: string): Promise<AbusivenessDetectionResult> {
     const txt = text.trim();
-    if (txt.length === 0 || txt.length > 100) {
-      throw new BadRequestException(`Text must be 1-100 characters`);
-    }
-    if (!REP_CATEGORY_PATTERN.exec(txt)) {
-      throw new BadRequestException(
-        `Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.`
-      );
+    const violation = explainRepCategoryViolation(txt);
+    if (violation) {
+      throw new BadRequestException(violation);
     }
     const existingResult = await this.abusivenessCheckDb.findResult(txt);
     if (existingResult) {

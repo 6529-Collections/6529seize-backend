@@ -8,7 +8,10 @@ import {
   LeaderboardParams,
   LeaderboardSort
 } from '../../../drops/drops.db';
-import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
+import {
+  REP_CATEGORY_INVALID_MESSAGE,
+  REP_CATEGORY_PATTERN
+} from '../../../entities/IAbusivenessDetectionResult';
 import { DROP_LOG_TYPES } from '../../../entities/IProfileActivityLog';
 import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { enums } from '../../../enums';
@@ -1346,7 +1349,7 @@ const WaveOutcomeSchema = Joi.object<ApiCreateWaveOutcome>({
       .max(100)
       .regex(REP_CATEGORY_PATTERN)
       .messages({
-        'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+        'string.pattern.base': REP_CATEGORY_INVALID_MESSAGE
       }),
     otherwise: Joi.optional().valid(null)
   }),

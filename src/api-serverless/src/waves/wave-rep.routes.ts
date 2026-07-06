@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
-import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
+import {
+  REP_CATEGORY_INVALID_MESSAGE,
+  REP_CATEGORY_PATTERN
+} from '@/entities/IAbusivenessDetectionResult';
 import { RateMatter } from '@/entities/IRating';
 import {
   BadRequestException,
@@ -276,7 +279,7 @@ const ChangeWaveRepRatingSchema: Joi.ObjectSchema<ApiChangeWaveRepRating> =
   Joi.object({
     amount: Joi.number().integer().required(),
     category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).messages({
-      'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+      'string.pattern.base': REP_CATEGORY_INVALID_MESSAGE
     })
   });
 
