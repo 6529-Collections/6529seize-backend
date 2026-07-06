@@ -33,14 +33,30 @@ describe(`AbusivenessCheckService`, () => {
 
   it(`should throw BadRequestException if text is empty`, async () => {
     await expect(abusivenessCheckService.checkRepPhrase('  ')).rejects.toThrow(
-      'Text must be 1-100 characters'
+      `Category can't be empty.`
     );
   });
 
   it(`should throw BadRequestException if text is longer than 100 characters`, async () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('r'.repeat(101))
-    ).rejects.toThrow('Text must be 1-100 characters');
+    ).rejects.toThrow('Category is 101 characters long - the maximum is 100.');
+  });
+
+  it(`should throw BadRequestException if text starts with a dash`, async () => {
+    await expect(
+      abusivenessCheckService.checkRepPhrase('-Unreliable')
+    ).rejects.toThrow(`Category can't start with a dash.`);
+  });
+
+  it(`should accept a non-leading dash`, async () => {
+    const input = 'state-of-the-art';
+    when(abusivenessCheckDb.findResult)
+      .calledWith(input)
+      .mockResolvedValue(anAbusivenessCheckResult);
+    await expect(
+      abusivenessCheckService.checkRepPhrase(input)
+    ).resolves.toEqual(anAbusivenessCheckResult);
   });
 
   it(`should return result from DB if it has result`, async () => {
@@ -86,7 +102,7 @@ describe(`AbusivenessCheckService`, () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('Hey\nyou')
     ).rejects.toThrow(
-      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      `Category contains disallowed characters: line break. Allowed characters are letters, numbers, spaces, dashes and , . ? ! ' ( ).`
     );
   });
 
@@ -94,7 +110,7 @@ describe(`AbusivenessCheckService`, () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('Hey\tyou')
     ).rejects.toThrow(
-      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      `Category contains disallowed characters: tab. Allowed characters are letters, numbers, spaces, dashes and , . ? ! ' ( ).`
     );
   });
 
@@ -102,7 +118,7 @@ describe(`AbusivenessCheckService`, () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('Hey%you')
     ).rejects.toThrow(
-      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      `Category contains disallowed characters: "%". Allowed characters are letters, numbers, spaces, dashes and , . ? ! ' ( ).`
     );
   });
 
