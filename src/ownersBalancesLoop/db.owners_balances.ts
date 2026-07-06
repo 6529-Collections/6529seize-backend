@@ -32,6 +32,15 @@ export async function fetchAllOwnerBalances(addresses?: string[]) {
   return await queryBuilder.getMany();
 }
 
+export async function fetchAllOwnerBalancesWallets(): Promise<string[]> {
+  const rows: { wallet: string }[] = await getDataSource()
+    .getRepository(OwnerBalances)
+    .createQueryBuilder('ownerBalances')
+    .select('ownerBalances.wallet', 'wallet')
+    .getRawMany();
+  return rows.map((r) => r.wallet);
+}
+
 export async function fetchAllOwnerBalancesMemes(addresses?: string[]) {
   const queryBuilder = getDataSource()
     .getRepository(OwnerBalancesMemes)

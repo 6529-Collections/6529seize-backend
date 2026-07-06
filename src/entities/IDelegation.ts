@@ -89,6 +89,7 @@ export interface DelegationEvent extends ConsolidationEvent {
 export class NFTDelegationBlock extends BlockEntity {}
 
 export interface WalletConsolidationKey {
-  wallet: string;
+  // matches the address_consolidation_keys view columns
+  address: string;
   consolidation_key: string;
 }
