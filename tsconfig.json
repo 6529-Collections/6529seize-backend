@@ -20,6 +20,9 @@
     "skipLibCheck": true,
     "strictPropertyInitialization": false
   },
+  "ts-node": {
+    "files": true
+  },
   "exclude": [
     "build",
     "jest.config",
