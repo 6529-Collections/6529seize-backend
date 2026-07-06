@@ -54,6 +54,14 @@ type OwnerBalanceMismatch = {
   transactionBalance: number;
 };
 
+type OwnerRepairPlan = {
+  action: 'DELETE' | 'UPSERT';
+  wallet: string;
+  tokenId: number;
+  currentBalance: number;
+  targetBalance: number;
+};
+
 type MemeSupplyContract = {
   totalSupply(tokenId: number): Promise<unknown>;
 };
@@ -407,7 +415,12 @@ function formatMismatchReport(
       'nft_owners_consolidation balance sum',
       report.consolidatedNftOwnersSupply
     ),
-    formatOwnerBalanceMismatches(ownerMismatches)
+    formatOwnerBalanceMismatches(ownerMismatches),
+    formatDryRunRepairPlan(
+      ownerMismatches.map((mismatch) =>
+        buildDryRunRepairPlan(report.meme.id, mismatch)
+      )
+    )
   ].join('\n');
 }
 
@@ -426,6 +439,35 @@ function formatOwnerBalanceMismatches(
           mismatch.transactionBalance
         } delta=${mismatch.dbBalance - mismatch.transactionBalance}`
     )
+  ].join('\n');
+}
+
+function buildDryRunRepairPlan(
+  tokenId: number,
+  mismatch: OwnerBalanceMismatch
+): OwnerRepairPlan {
+  return {
+    action: mismatch.transactionBalance > 0 ? 'UPSERT' : 'DELETE',
+    wallet: mismatch.owner,
+    tokenId,
+    currentBalance: mismatch.dbBalance,
+    targetBalance: mismatch.transactionBalance
+  };
+}
+
+function formatDryRunRepairPlan(plan: OwnerRepairPlan[]): string {
+  if (plan.length === 0) {
+    return '  dry_run nft_owners repair plan: no row changes planned';
+  }
+
+  return [
+    '  dry_run nft_owners repair plan:',
+    ...plan.map((item) => {
+      if (item.action === 'DELETE') {
+        return `    DELETE wallet=${item.wallet} token_id=${item.tokenId} current_balance=${item.currentBalance}`;
+      }
+      return `    UPSERT wallet=${item.wallet} token_id=${item.tokenId} balance=${item.targetBalance} current_balance=${item.currentBalance}`;
+    })
   ].join('\n');
 }
 
