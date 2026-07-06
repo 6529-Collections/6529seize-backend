@@ -13,13 +13,15 @@ import {
   NextGenTokenTrait
 } from '../entities/INextGen';
 import { Logger } from '../logging';
-import { EntityManager } from 'typeorm';
+import { EntityManager, In } from 'typeorm';
 import { NFTS_TABLE } from '@/constants';
 import { MINT_TYPE_TRAIT } from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_TOKENS');
 
 const mintTypeTraitLower = MINT_TYPE_TRAIT.toLowerCase();
+
+const TOKEN_TRAITS_CHUNK_SIZE = 5000;
 
 export async function refreshNextgenTokens(entityManager: EntityManager) {
   logger.info(`[REFRESHING NEXTGEN TOKENS]`);
@@ -149,14 +151,32 @@ async function processTokens(
 
   const traitCategories = new Set<string>();
   const traitCategoriesWithNone = new Set<string>();
-  for (const token of tokens) {
-    const tokenTraits = await entityManager
+
+  const tokenIds = tokens.map((token) => token.id);
+  const allTokenTraits: NextGenTokenTrait[] = [];
+  for (let i = 0; i < tokenIds.length; i += TOKEN_TRAITS_CHUNK_SIZE) {
+    const chunk = tokenIds.slice(i, i + TOKEN_TRAITS_CHUNK_SIZE);
+    const chunkTraits = await entityManager
       .getRepository(NextGenTokenTrait)
       .find({
         where: {
-          token_id: token.id
+          token_id: In(chunk)
         }
       });
+    allTokenTraits.push(...chunkTraits);
+  }
+  const dbTraitsPerToken = new Map<number, NextGenTokenTrait[]>();
+  allTokenTraits.forEach((tt) => {
+    const tokenTraitList = dbTraitsPerToken.get(tt.token_id);
+    if (tokenTraitList) {
+      tokenTraitList.push(tt);
+    } else {
+      dbTraitsPerToken.set(tt.token_id, [tt]);
+    }
+  });
+
+  for (const token of tokens) {
+    const tokenTraits = dbTraitsPerToken.get(token.id) ?? [];
 
     const filteredTokenTraits = tokenTraits.filter((tt) => {
       const traitLower = tt.trait.toLowerCase();
@@ -179,6 +199,11 @@ async function processTokens(
     traitCountPerToken.set(token.id, traitCount);
     traitsPerToken.set(token.id, filteredTokenTraits);
   }
+
+  const traitCountFrequencies = new Map<number, number>();
+  traitCountPerToken.forEach((tc) => {
+    traitCountFrequencies.set(tc, (traitCountFrequencies.get(tc) ?? 0) + 1);
+  });
 
   for (const token of tokens) {
     const filteredTokenTraits = traitsPerToken.get(token.id) || [];
@@ -221,9 +246,7 @@ async function processTokens(
     }
 
     const traitCount = traitCountPerToken.get(token.id) ?? 0;
-    const denominator = Array.from(traitCountPerToken.values()).filter(
-      (tc) => tc === traitCount
-    ).length;
+    const denominator = traitCountFrequencies.get(traitCount) ?? 0;
     const rarityScoreTraitCount = tokens.length / denominator + rarityScore;
 
     const rarityScoreTraitCountNormalisedAdjustement =
