@@ -6,7 +6,7 @@ import {
   NULL_ADDRESS
 } from '@/constants';
 import {
-  fetchAllOwnerBalances,
+  fetchAllOwnerBalancesWallets,
   fetchRefreshOutdatedBalances,
   getMaxOwnerBalancesBlockReference,
   persistConsolidatedOwnerBalances,
@@ -40,6 +40,7 @@ const logger = Logger.get('OWNER_BALANCES');
 
 const REFRESH_INTERVAL_BLOCKS = 7500;
 const REFRESH_ADDRESSES_LIMIT = 250;
+const CONSOLIDATION_KEYS_CHUNK_SIZE = 5000;
 
 const validateNftOwners = (
   owners: NFTOwner[],
@@ -150,8 +151,24 @@ export const updateOwnerBalances = async (reset?: boolean) => {
   const ownersBalancesMemesMap = new Map<string, OwnerBalancesMemes[]>();
   const deleteDelta = new Set<string>();
 
+  const ownersByWallet = new Map<string, NFTOwner[]>();
+  owners.forEach((o) => {
+    if (!o.wallet) {
+      return;
+    }
+    const walletKey = o.wallet.toLowerCase();
+    const walletOwners = ownersByWallet.get(walletKey);
+    if (walletOwners) {
+      walletOwners.push(o);
+    } else {
+      ownersByWallet.set(walletKey, [o]);
+    }
+  });
+
   addresses.forEach((address) => {
-    const ownedNfts = owners.filter((o) => equalIgnoreCase(o.wallet, address));
+    const ownedNfts = address
+      ? (ownersByWallet.get(address.toLowerCase()) ?? [])
+      : [];
     if (!ownedNfts.length) {
       deleteDelta.add(address);
       return;
@@ -356,8 +373,8 @@ export async function consolidateOwnerBalances(
   reset?: boolean
 ) {
   if (reset) {
-    const ownerBalances = await fetchAllOwnerBalances();
-    ownerBalances.forEach((o) => addresses.add(o.wallet));
+    const ownerBalanceWallets = await fetchAllOwnerBalancesWallets();
+    ownerBalanceWallets.forEach((wallet) => addresses.add(wallet));
   }
 
   logger.info(
@@ -384,40 +401,65 @@ export async function consolidateOwnerBalances(
   >();
   const deleteDelta = new Set<string>();
 
-  await Promise.all(
-    Array.from(addresses).map(async (address) => {
-      const consolidation = (
-        await fetchWalletConsolidationKeysViewForWallet([address])
-      )[0];
-
-      let consolidationKey: string;
-      let consolidationAddresses: string[] = [];
-      if (!consolidation) {
-        consolidationKey = address.toLowerCase();
-        consolidationAddresses.push(address.toLowerCase());
-      } else {
-        consolidationKey = consolidation.consolidation_key;
-        consolidationAddresses = consolidation.consolidation_key.split('-');
+  const addressArray = Array.from(addresses);
+  const consolidationKeyByAddress = new Map<string, string>();
+  for (let i = 0; i < addressArray.length; i += CONSOLIDATION_KEYS_CHUNK_SIZE) {
+    const chunk = addressArray.slice(i, i + CONSOLIDATION_KEYS_CHUNK_SIZE);
+    const rows = await fetchWalletConsolidationKeysViewForWallet(chunk);
+    rows.forEach((row) => {
+      if (
+        row.address &&
+        !consolidationKeyByAddress.has(row.address.toLowerCase())
+      ) {
+        consolidationKeyByAddress.set(
+          row.address.toLowerCase(),
+          row.consolidation_key
+        );
       }
+    });
+  }
 
-      const consolidatedBalances = await getConsolidatedBalances(
-        seasons,
-        allContracts,
-        consolidationKey,
-        consolidationAddresses
+  // multiple addresses can resolve to the same consolidation: compute each
+  // consolidation's balances once, not once per member address
+  const consolidationAddressesByKey = new Map<string, string[]>();
+  addressArray.forEach((address) => {
+    const viewConsolidationKey = consolidationKeyByAddress.get(
+      address.toLowerCase()
+    );
+    if (viewConsolidationKey === undefined) {
+      consolidationAddressesByKey.set(address.toLowerCase(), [
+        address.toLowerCase()
+      ]);
+    } else if (!consolidationAddressesByKey.has(viewConsolidationKey)) {
+      consolidationAddressesByKey.set(
+        viewConsolidationKey,
+        viewConsolidationKey.split('-')
       );
-      consolidatedOwnersBalancesMap.set(
-        consolidationKey,
-        consolidatedBalances.balance
-      );
-      consolidatedOwnersBalancesMemesMap.set(
-        consolidationKey,
-        consolidatedBalances.memes
-      );
-      consolidationAddresses.forEach((address) => {
-        deleteDelta.add(address);
-      });
-    })
+    }
+  });
+
+  await Promise.all(
+    Array.from(consolidationAddressesByKey.entries()).map(
+      async ([consolidationKey, consolidationAddresses]) => {
+        const consolidatedBalances = await getConsolidatedBalances(
+          seasons,
+          allContracts,
+          consolidationKey,
+          consolidationAddresses
+        );
+        consolidatedOwnersBalancesMap.set(
+          consolidationKey,
+          consolidatedBalances.balance
+        );
+        consolidatedOwnersBalancesMemesMap.set(
+          consolidationKey,
+          consolidatedBalances.memes
+        );
+        consolidationAddresses.forEach((address) => {
+          deleteDelta.add(address);
+        });
+      }
+    )
   );
 
   const consolidatedOwnersBalances = Array.from(
