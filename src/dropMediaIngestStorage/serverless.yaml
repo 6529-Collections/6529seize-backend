@@ -2,7 +2,7 @@ service: dropMediaIngestStorage
 
 provider:
   name: aws
-  runtime: nodejs20.x
+  runtime: nodejs22.x
   stage: ${opt:stage, 'staging'}
   logRetentionInDays: 60
 
