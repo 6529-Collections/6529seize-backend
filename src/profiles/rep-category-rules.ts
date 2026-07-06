@@ -5,7 +5,8 @@ const MAX_LENGTH = 100;
 // One character of the allowed alphabet, anywhere in the string. Kept in
 // sync with REP_CATEGORY_PATTERN (which additionally forbids a leading
 // dash); used to point out exactly which characters a rejected input used.
-const ALLOWED_CHAR = /^[\p{L}\p{N}?!,.'() -]$/u;
+// Constructor form: /.../u literals are TS1501 at the repo's es5 target.
+const ALLOWED_CHAR = new RegExp("^[\\p{L}\\p{N}?!,.'() -]$", 'u');
 
 const ALLOWED_CHARS_SUMMARY = `letters, numbers, spaces, dashes and , . ? ! ' ( )`;
 

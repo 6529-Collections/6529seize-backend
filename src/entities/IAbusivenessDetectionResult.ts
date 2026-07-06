@@ -25,7 +25,11 @@ export class AbusivenessDetectionResult {
 // formula-injection trigger in CSV exports and reads as a negative sign next
 // to signed rep amounts. Unicode dashes (en/em) stay disallowed. Total
 // length stays 1-100 (first char + up to 99 more).
-export const REP_CATEGORY_PATTERN =
-  /^[\p{L}\p{N}?!,.'() ][\p{L}\p{N}?!,.'() -]{0,99}$/u;
+// Constructor form (not a literal): the repo compiles at target es5, where
+// a /.../u literal is a TS1501 compile error; the runtime supports it fine.
+export const REP_CATEGORY_PATTERN = new RegExp(
+  "^[\\p{L}\\p{N}?!,.'() ][\\p{L}\\p{N}?!,.'() -]{0,99}$",
+  'u'
+);
 
 export const REP_CATEGORY_INVALID_MESSAGE = `Invalid category. Use 1-100 characters: letters, numbers, spaces, dashes and , . ? ! ' ( ). A dash can't be the first character.`;
