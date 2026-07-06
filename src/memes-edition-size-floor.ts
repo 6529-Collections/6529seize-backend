@@ -1,5 +1,10 @@
 import { getRpcUrl } from '@/alchemy';
-import { MEMES_CONTRACT } from '@/constants';
+import {
+  MANIFOLD_LAZY_CLAIM_ABI,
+  MANIFOLD_LAZY_CLAIM_CONTRACT,
+  MEMES_CONTRACT,
+  MEMES_EDITION_SIZE_FLOOR_CAP
+} from '@/constants';
 import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
 import { Time } from '@/time';
@@ -8,17 +13,8 @@ import pLimit from 'p-limit';
 
 const logger = Logger.get('MEMES_EDITION_SIZE_FLOOR');
 
-const MANIFOLD_LAZY_CLAIM_CONTRACT =
-  '0x26BBEA7803DcAc346D5F5f135b57Cf2c752A02bE';
-
-const MANIFOLD_LAZY_CLAIM_ABI = [
-  'function getClaimForToken(address creatorContractAddress, uint256 tokenId) view returns (uint256 instanceId, tuple(uint32 total, uint32 totalMax, uint32 walletMax, uint48 startDate, uint48 endDate, uint8 storageProtocol, bytes32 merkleRoot, string location, uint256 tokenId, uint256 cost, address payable paymentReceiver, address erc20, address signingAddress) claim)'
-];
-
 const MANIFOLD_CLAIM_FETCH_CONCURRENCY = 10;
 const MANIFOLD_CLAIM_FETCH_TIMEOUT_MS = Time.seconds(10).toMillis();
-
-export const MEMES_EDITION_SIZE_FLOOR_CAP = 310;
 
 export type MemeEditionSizeFloorMap = Record<number, number>;
 

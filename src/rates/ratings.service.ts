@@ -1,5 +1,5 @@
 import { Request } from 'express';
-import converter from 'json-2-csv';
+import { json2csv } from 'json-2-csv';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
 import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
@@ -555,7 +555,7 @@ export class RatingsService {
       ...it,
       snapshot_time: now.toMillis()
     }));
-    const csv = await converter.json2csvAsync(respWithTimes);
+    const csv = json2csv(respWithTimes);
     this.logger.info(`Uploading snapshot of ${matter} ratings to Arweave`);
     const { url } = await this.arweaveFileUploader.uploadFile(
       Buffer.from(csv),

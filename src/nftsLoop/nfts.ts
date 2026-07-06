@@ -1093,22 +1093,39 @@ export function calculateNftHodlRate(
   return rate;
 }
 
-export function getMemeTokenIdsForEditionSizeFloorRefresh(
-  nftMap: Map<string, { nft: Pick<NFT, 'contract' | 'id'> }>
-): number[] {
-  // Only the latest Meme's Manifold totalMax should still be mutable.
-  // Older Meme floors are treated as finalized once a newer Meme exists.
-  const latestMeme = Array.from(nftMap.values())
-    .map((entry) => entry.nft)
-    .filter((nft) => equalIgnoreCase(nft.contract, MEMES_CONTRACT))
-    .reduce<Pick<NFT, 'id'> | null>((latest, nft) => {
-      if (latest === null || nft.id > latest.id) {
-        return nft;
-      }
-      return latest;
-    }, null);
+const MEMES_EDITION_SIZE_FLOOR_REFRESH_WINDOW_MS = Time.days(30).toMillis();
 
-  return latestMeme ? [latestMeme.id] : [];
+export function getMemeTokenIdsForEditionSizeFloorRefresh(
+  nftMap: Map<string, { nft: Pick<NFT, 'contract' | 'id' | 'mint_date'> }>,
+  nowMillis: number = Time.currentMillis()
+): number[] {
+  // A Meme's Manifold totalMax is only mutable around its mint window. Refresh
+  // the latest Meme plus any Meme minted inside the refresh window, so a loop
+  // outage spanning a whole drop cannot leave that drop's floor stuck at its
+  // migration-backfilled supply once a newer Meme exists.
+  const memes = Array.from(nftMap.values())
+    .map((entry) => entry.nft)
+    .filter((nft) => equalIgnoreCase(nft.contract, MEMES_CONTRACT));
+
+  if (memes.length === 0) {
+    return [];
+  }
+
+  const refreshCutoff = nowMillis - MEMES_EDITION_SIZE_FLOOR_REFRESH_WINDOW_MS;
+  const latestMemeId = memes.reduce(
+    (latest, nft) => Math.max(latest, nft.id),
+    0
+  );
+
+  const tokenIds = new Set<number>([latestMemeId]);
+  for (const nft of memes) {
+    const mintMillis = nft.mint_date ? new Date(nft.mint_date).getTime() : NaN;
+    if (Number.isFinite(mintMillis) && mintMillis >= refreshCutoff) {
+      tokenIds.add(nft.id);
+    }
+  }
+
+  return Array.from(tokenIds).sort((a, b) => a - b);
 }
 
 async function populateMintStatsForEligibleNFTs(

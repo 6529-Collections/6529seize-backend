@@ -219,7 +219,7 @@ jobs:
           VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           aws lambda update-function-code --function-name  mediaResizerLoop --zip-file fileb://src/mediaResizerLoop/dist/index.zip
           sleep 10
-          aws lambda update-function-configuration --function-name mediaResizerLoop --description "$VERSION_DESCRIPTION"
+          aws lambda update-function-configuration --function-name mediaResizerLoop --runtime nodejs22.x --description "$VERSION_DESCRIPTION"
       - name: Deploy nextgenMediaProxyInterceptor
         if: github.event.inputs.service == 'nextgenMediaProxyInterceptor'
         run: |
