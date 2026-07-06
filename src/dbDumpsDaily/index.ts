@@ -7,7 +7,7 @@ import {
   TRANSACTIONS_TABLE
 } from '@/constants';
 import { sqlExecutor } from '../sql-executor';
-import converter from 'json-2-csv';
+import { json2csv } from 'json-2-csv';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { doInDbContext } from '../secrets';
 
@@ -38,7 +38,7 @@ async function dumpTable(tableName: string) {
 }
 
 async function dumpData(tableName: string, data: any) {
-  const csv = await converter.json2csvAsync(data);
+  const csv = json2csv(data);
 
   logger.info(
     `[TABLE ${tableName}] : [FOUND ${data.length} ROWS] : [UPLOADING TO S3]`

@@ -58,14 +58,18 @@ describe('getAnimationPaths', () => {
 });
 
 describe('NFT edition size floor calculations', () => {
-  it('refreshes the on-chain edition size floor only for the latest Meme', () => {
+  const NOW_MILLIS = new Date('2026-07-04T00:00:00Z').getTime();
+  const DAY_MILLIS = 24 * 60 * 60 * 1000;
+
+  it('refreshes only the latest Meme when older Memes are outside the refresh window', () => {
     const nftMap = new Map([
       [
         'memes-515',
         {
           nft: {
             contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
-            id: 515
+            id: 515,
+            mint_date: new Date(NOW_MILLIS - 45 * DAY_MILLIS)
           }
         }
       ],
@@ -74,7 +78,8 @@ describe('NFT edition size floor calculations', () => {
         {
           nft: {
             contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
-            id: 516
+            id: 516,
+            mint_date: new Date(NOW_MILLIS - 40 * DAY_MILLIS)
           }
         }
       ],
@@ -83,13 +88,74 @@ describe('NFT edition size floor calculations', () => {
         {
           nft: {
             contract: '0x0c58ef43ff3032005e472cb5709f8908acb00205',
-            id: 1000
+            id: 1000,
+            mint_date: new Date(NOW_MILLIS - DAY_MILLIS)
           }
         }
       ]
     ]);
 
-    expect(getMemeTokenIdsForEditionSizeFloorRefresh(nftMap)).toEqual([516]);
+    expect(
+      getMemeTokenIdsForEditionSizeFloorRefresh(nftMap, NOW_MILLIS)
+    ).toEqual([516]);
+  });
+
+  it('also refreshes non-latest Memes minted inside the refresh window', () => {
+    const nftMap = new Map([
+      [
+        'memes-514',
+        {
+          nft: {
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            id: 514,
+            mint_date: new Date(NOW_MILLIS - 60 * DAY_MILLIS)
+          }
+        }
+      ],
+      [
+        'memes-515',
+        {
+          nft: {
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            id: 515,
+            mint_date: new Date(NOW_MILLIS - 8 * DAY_MILLIS)
+          }
+        }
+      ],
+      [
+        'memes-516',
+        {
+          nft: {
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            id: 516,
+            mint_date: new Date(NOW_MILLIS - DAY_MILLIS)
+          }
+        }
+      ]
+    ]);
+
+    expect(
+      getMemeTokenIdsForEditionSizeFloorRefresh(nftMap, NOW_MILLIS)
+    ).toEqual([515, 516]);
+  });
+
+  it('still refreshes the latest Meme when its mint_date is missing', () => {
+    const nftMap = new Map([
+      [
+        'memes-516',
+        {
+          nft: {
+            contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+            id: 516,
+            mint_date: undefined
+          }
+        }
+      ]
+    ]);
+
+    expect(
+      getMemeTokenIdsForEditionSizeFloorRefresh(nftMap, NOW_MILLIS)
+    ).toEqual([516]);
   });
 
   it('uses resolved Meme floors and current supply for non-Memes', () => {

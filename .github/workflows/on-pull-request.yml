@@ -20,6 +20,24 @@ jobs:
           cache: 'npm'
       - name: Check package manager discipline
         run: node scripts/check-package-manager.mjs
+      - name: Activate pinned npm via Corepack
+        shell: bash
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          expected="$(node -p "String(require('./package.json').packageManager ?? '').split('npm@')[1]?.split('+')[0] ?? ''")"
+          if [[ -z "${expected}" ]]; then
+            echo "::error::package.json has no npm packageManager pin; the discipline check should have caught this."
+            exit 1
+          fi
+          corepack enable npm
+          corepack install
+          resolved="$(npm --version)"
+          echo "npm resolved to ${resolved} (pinned ${expected})"
+          if [[ "${resolved}" != "${expected}" ]]; then
+            echo "::error::Corepack did not activate the pinned npm (expected ${expected}, got ${resolved})."
+            exit 1
+          fi
       - name: Install dependencies
         run: npm i && pushd src/api-serverless && npm i && popd
       - name: Verify generated files are committed

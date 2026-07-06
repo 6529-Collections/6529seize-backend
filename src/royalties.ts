@@ -1,5 +1,5 @@
 import { fetchRoyalties, persistRoyaltiesUpload } from './db';
-import converter from 'json-2-csv';
+import { json2csv } from 'json-2-csv';
 import { Logger } from './logging';
 
 const logger = Logger.get('ROYALTIES');
@@ -93,7 +93,7 @@ async function uploadRoyalties(formattedDate: string, royalties: Royalty[]) {
     return 0;
   });
 
-  const csv = await converter.json2csvAsync(uploadArray);
+  const csv = json2csv(uploadArray);
 
   const arweaveKey = process.env.ARWEAVE_KEY
     ? JSON.parse(process.env.ARWEAVE_KEY)
