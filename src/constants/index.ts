@@ -2,9 +2,16 @@ import { Network } from '@/alchemy-sdk';
 
 export * from './db-tables';
 export * from './delegations';
+export * from './manifold';
 export * from './media';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
+
+// Upper bound applied to Manifold claim totalMax when deriving a Meme's
+// edition-size floor. Meme drops are sized at no more than 310 editions, so
+// any larger on-chain totalMax is a placeholder/unbounded claim value rather
+// than a real edition size (see nfts.edition_size_floor).
+export const MEMES_EDITION_SIZE_FLOOR_CAP = 310;
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
 export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';
 export const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';

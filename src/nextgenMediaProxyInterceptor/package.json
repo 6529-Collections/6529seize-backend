@@ -11,7 +11,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "esbuild": "^0.27.2"
+    "esbuild": "^0.28.1"
   },
-  "dependencies": {}
+  "packageManager": "npm@10.9.8"
 }
