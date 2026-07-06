@@ -19,9 +19,11 @@ import { withRetry } from './retry';
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
 const MEMES_SUPPLY_ABI = [
-  'function totalSupply(uint256 tokenId) view returns (uint256)'
+  'function totalSupply(uint256 tokenId) view returns (uint256)',
+  'function balanceOfBatch(address[] accounts, uint256[] ids) view returns (uint256[])'
 ];
 const MEME_SUPPLY_CHECK_CONCURRENCY = 10;
+const MEME_OWNER_BALANCE_CHECK_CHUNK_SIZE = 500;
 
 type MemeNftSupplyRow = Pick<NFT, 'id' | 'contract' | 'name' | 'supply'>;
 
@@ -49,8 +51,15 @@ type SupplyComparison = {
   expected: number;
 };
 
+type OwnerBalanceMismatch = {
+  owner: string;
+  dbBalance: number;
+  onChainBalance: number;
+};
+
 type MemeSupplyContract = {
   totalSupply(tokenId: number): Promise<unknown>;
+  balanceOfBatch(owners: string[], tokenIds: number[]): Promise<unknown[]>;
 };
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
@@ -219,13 +228,87 @@ async function printMemeSupplyMismatch(
 
   if (hasMismatch(report)) {
     logger.info(formatMismatchReport(report));
+    await printOwnerBalanceMismatches(meme, contract);
   }
+}
+
+async function printOwnerBalanceMismatches(
+  meme: MemeNftSupplyRow,
+  contract: MemeSupplyContract
+): Promise<void> {
+  const nftOwnerMismatches = await findNftOwnerBalanceMismatches(
+    meme,
+    contract
+  );
+
+  if (nftOwnerMismatches.length > 0) {
+    logger.info(
+      formatOwnerBalanceMismatchReport({
+        meme,
+        label: 'nft_owners wallet balance mismatches',
+        mismatches: nftOwnerMismatches
+      })
+    );
+  }
+}
+
+async function findNftOwnerBalanceMismatches(
+  meme: MemeNftSupplyRow,
+  contract: MemeSupplyContract
+): Promise<OwnerBalanceMismatch[]> {
+  const owners = await getDataSource().getRepository(NFTOwner).find({
+    where: {
+      contract: MEMES_CONTRACT,
+      token_id: meme.id
+    }
+  });
+  const activeOwners = owners.filter((owner) => !isBurnAddress(owner.wallet));
+  const onChainBalances = await fetchOnChainMemeBalances(
+    contract,
+    activeOwners.map((owner) => owner.wallet),
+    meme.id
+  );
+
+  return activeOwners
+    .map((owner, index) =>
+      buildOwnerBalanceMismatch({
+        owner: owner.wallet,
+        dbBalance: owner.balance,
+        onChainBalance: onChainBalances[index]
+      })
+    )
+    .filter(
+      (mismatch): mismatch is OwnerBalanceMismatch => mismatch !== null
+    );
+}
+
+function buildOwnerBalanceMismatch({
+  owner,
+  dbBalance,
+  onChainBalance
+}: {
+  owner: string;
+  dbBalance: number;
+  onChainBalance: number;
+}): OwnerBalanceMismatch | null {
+  if (dbBalance === onChainBalance) {
+    return null;
+  }
+  return {
+    owner,
+    dbBalance,
+    onChainBalance
+  };
 }
 
 function getBurnAddresses(): string[] {
   return [NULL_ADDRESS, NULL_ADDRESS_DEAD].map((address) =>
     address.toLowerCase()
   );
+}
+
+function isBurnAddress(address: string): boolean {
+  return getBurnAddresses().includes(address.toLowerCase());
 }
 
 function adjustNftsBurntSupply(tokenId: number, supply: number): number {
@@ -287,6 +370,28 @@ function formatMismatchReport(report: MismatchReport): string {
   ].join('\n');
 }
 
+function formatOwnerBalanceMismatchReport({
+  meme,
+  label,
+  mismatches
+}: {
+  meme: MemeNftSupplyRow;
+  label: string;
+  mismatches: OwnerBalanceMismatch[];
+}): string {
+  const name = meme.name ? ` - ${meme.name}` : '';
+  return [
+    `[OWNER MISMATCH] Meme #${meme.id}${name}`,
+    `  ${label}:`,
+    ...mismatches.map(
+      (mismatch) =>
+        `    ${mismatch.owner}: db=${mismatch.dbBalance} onchain=${
+          mismatch.onChainBalance
+        } delta=${mismatch.dbBalance - mismatch.onChainBalance}`
+    )
+  ].join('\n');
+}
+
 function formatSupplyGroup(
   label: string,
   group: SupplyComparisonGroup
@@ -321,4 +426,40 @@ async function fetchOnChainMemeSupply(
     throw new Error(`Invalid on-chain supply for Meme #${tokenId}`);
   }
   return supply;
+}
+
+async function fetchOnChainMemeBalances(
+  contract: MemeSupplyContract,
+  owners: string[],
+  tokenId: number
+): Promise<number[]> {
+  const balances: number[] = [];
+  for (
+    let start = 0;
+    start < owners.length;
+    start += MEME_OWNER_BALANCE_CHECK_CHUNK_SIZE
+  ) {
+    const ownerChunk = owners.slice(
+      start,
+      start + MEME_OWNER_BALANCE_CHECK_CHUNK_SIZE
+    );
+    const tokenIdChunk = ownerChunk.map(() => tokenId);
+    const rawBalances = await withRetry(
+      () => contract.balanceOfBatch(ownerChunk, tokenIdChunk),
+      {
+        attempts: 5,
+        minDelayMs: 500
+      }
+    );
+    balances.push(
+      ...rawBalances.map((rawBalance) => {
+        const balance = numbers.parseIntOrNull(rawBalance);
+        if (balance === null) {
+          throw new Error(`Invalid on-chain balance for Meme #${tokenId}`);
+        }
+        return balance;
+      })
+    );
+  }
+  return balances;
 }
