@@ -873,15 +873,17 @@ export async function persistMemesExtendedData(data: MemesExtendedData[]) {
   await AppDataSource.getRepository(MemesExtendedData).save(data);
 }
 
-export async function findVolume(
-  nft_id: number,
-  contract: string
-): Promise<{
+export interface NftVolumes {
   total_volume_last_24_hours: number;
   total_volume_last_7_days: number;
   total_volume_last_1_month: number;
   total_volume: number;
-}> {
+}
+
+export async function findVolume(
+  nft_id: number,
+  contract: string
+): Promise<NftVolumes> {
   const sql = `SELECT
       SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
       SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
@@ -894,6 +896,34 @@ export async function findVolume(
     contract: contract
   });
   return results[0];
+}
+
+export async function findVolumesForContract(
+  contract: string
+): Promise<Map<number, NftVolumes>> {
+  const sql = `SELECT
+      token_id,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) THEN value ELSE 0 END) AS total_volume_last_1_month,
+      SUM(value) AS total_volume
+    FROM ${TRANSACTIONS_TABLE}
+    WHERE contract =:contract
+    GROUP BY token_id;`;
+  const results: ({ token_id: number } & NftVolumes)[] =
+    await sqlExecutor.execute(sql, {
+      contract: contract
+    });
+  const volumesByTokenId = new Map<number, NftVolumes>();
+  results.forEach((row) => {
+    volumesByTokenId.set(Number(row.token_id), {
+      total_volume_last_24_hours: row.total_volume_last_24_hours,
+      total_volume_last_7_days: row.total_volume_last_7_days,
+      total_volume_last_1_month: row.total_volume_last_1_month,
+      total_volume: row.total_volume
+    });
+  });
+  return volumesByTokenId;
 }
 
 export async function persistNFTs(nfts: NFT[]) {

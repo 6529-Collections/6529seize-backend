@@ -51,6 +51,13 @@ import { findEnsForAddress } from '@/ens-lookup';
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
 
+let pfpS3Client: S3Client | undefined;
+
+function getPfpS3Client(): S3Client {
+  pfpS3Client ??= new S3Client({ region: 'eu-west-1' });
+  return pfpS3Client;
+}
+
 export class IdentitiesService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -283,7 +290,7 @@ export class IdentitiesService {
   }
 
   private async uploadPfpToS3(file: any, fileExtension: string) {
-    const s3 = new S3Client({ region: 'eu-west-1' });
+    const s3 = getPfpS3Client();
 
     const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
