@@ -11,9 +11,9 @@ import {
 import { Transaction } from '../entities/ITransaction';
 import {
   fetchAllSeasons,
+  fetchConsolidationGroupsForAddresses,
   fetchMaxTransactionsBlockNumber,
   fetchTransactionsAfterBlock,
-  fetchWalletConsolidationKeysViewForWallet,
   fetchWalletTransactions
 } from '../db';
 import { Logger } from '../logging';
@@ -285,39 +285,33 @@ export async function consolidateActivity(
   >();
   const deleteDelta = new Set<string>();
 
+  // one batched lookup for all addresses, then one computation per unique
+  // consolidation instead of one per member address
+  const consolidationGroups = await fetchConsolidationGroupsForAddresses(
+    Array.from(addresses)
+  );
+
   await Promise.all(
-    Array.from(addresses).map(async (address) => {
-      const consolidation = (
-        await fetchWalletConsolidationKeysViewForWallet([address])
-      )[0];
+    Array.from(consolidationGroups.entries()).map(
+      async ([consolidationKey, consolidationAddresses]) => {
+        const cActivity = await getConsolidatedActivity(
+          consolidationKey,
+          consolidationAddresses
+        );
+        consolidatedActivityMap.set(consolidationKey, cActivity);
 
-      let consolidationKey: string;
-      let consolidationAddresses: string[] = [];
-      if (!consolidation) {
-        consolidationKey = address.toLowerCase();
-        consolidationAddresses.push(address.toLowerCase());
-      } else {
-        consolidationKey = consolidation.consolidation_key;
-        consolidationAddresses = consolidation.consolidation_key.split('-');
+        const cMemesActivity = await getConsolidatedMemesActivity(
+          seasons,
+          consolidationKey,
+          consolidationAddresses
+        );
+        consolidatedMemesActivityMap.set(consolidationKey, cMemesActivity);
+
+        consolidationAddresses.forEach((address) => {
+          deleteDelta.add(address);
+        });
       }
-
-      const cActivity = await getConsolidatedActivity(
-        consolidationKey,
-        consolidationAddresses
-      );
-      consolidatedActivityMap.set(consolidationKey, cActivity);
-
-      const cMemesActivity = await getConsolidatedMemesActivity(
-        seasons,
-        consolidationKey,
-        consolidationAddresses
-      );
-      consolidatedMemesActivityMap.set(consolidationKey, cMemesActivity);
-
-      consolidationAddresses.forEach((address) => {
-        deleteDelta.add(address);
-      });
-    })
+    )
   );
 
   const consolidatedActivity = Array.from(consolidatedActivityMap.values());
