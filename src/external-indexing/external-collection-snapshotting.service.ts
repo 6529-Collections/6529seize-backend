@@ -157,6 +157,7 @@ export class ExternalCollectionSnapshottingService {
               );
               ids = await this.enumerateByOwnerOf(
                 erc721,
+                contract,
                 atBlock,
                 tokenByIndexZero,
                 log
@@ -165,6 +166,7 @@ export class ExternalCollectionSnapshottingService {
           } else {
             ids = await this.enumerateByOwnerOf(
               erc721,
+              contract,
               atBlock,
               tokenByIndexZero,
               log
@@ -298,6 +300,7 @@ export class ExternalCollectionSnapshottingService {
 
   private async enumerateByOwnerOf(
     erc721: Contract,
+    contractAddr: string,
     atBlock: number,
     startHint: bigint | null,
     log: Logger
@@ -334,6 +337,7 @@ export class ExternalCollectionSnapshottingService {
 
       const owners = await this.ownerOfProbeBatch(
         erc721,
+        contractAddr,
         chunkIds,
         atBlock,
         log
@@ -381,6 +385,7 @@ export class ExternalCollectionSnapshottingService {
 
   private async ownerOfProbeBatch(
     erc721: Contract,
+    contractAddr: string,
     tokenIds: bigint[],
     atBlock: number,
     log: Logger
@@ -397,7 +402,7 @@ export class ExternalCollectionSnapshottingService {
     const erc721Iface = new ethers.Interface(ERC721_ABI);
 
     const calls = tokenIds.map((tid) => ({
-      target: erc721.address,
+      target: contractAddr,
       callData: erc721Iface.encodeFunctionData('ownerOf', [tid])
     }));
 
