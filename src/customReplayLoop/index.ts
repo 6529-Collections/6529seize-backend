@@ -247,8 +247,8 @@ async function findNftOwnerBalanceMismatches(
     buildTransactionBalanceByWallet(transactions);
   const wallets = Array.from(
     new Set([
-      ...ownerBalanceByWallet.keys(),
-      ...transactionBalanceByWallet.keys()
+      ...Array.from(ownerBalanceByWallet.keys()),
+      ...Array.from(transactionBalanceByWallet.keys())
     ])
   ).sort((a, b) => a.localeCompare(b));
 
