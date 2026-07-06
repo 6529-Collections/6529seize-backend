@@ -2058,7 +2058,7 @@ paths:
         - Drops
       summary: Mark a drop and all subsequent drops in the wave as unread
       description: >-
-        Sets the user"s latest_read_timestamp to just before this drop"s
+        Sets the user's latest_read_timestamp to just before this drop's
         created_at, making this drop and all newer drops unread.
       operationId: markDropUnread
       parameters:
@@ -2080,7 +2080,7 @@ paths:
     get:
       tags:
         - Drops
-      summary: Get authenticated user"s unread direct-message drop count.
+      summary: Get authenticated user's unread direct-message drop count.
       operationId: getDmDropsUnread
       x-6529-router:
         enabled: true
@@ -3335,7 +3335,7 @@ paths:
     get:
       tags:
         - Identities
-      summary: Get authenticated user"s mute state for an identity.
+      summary: Get authenticated user's mute state for an identity.
       operationId: getIdentityMuteState
       parameters:
         - name: id
@@ -3466,7 +3466,7 @@ paths:
         - Memes
       summary: Get paginated Memes extended data
       description: >-
-        Returns Meme Card metadata joined with the card"s NFT market and TDH
+        Returns Meme Card metadata joined with the card's NFT market and TDH
         fields. `collection_size` is the total Meme Cards collection size.
         `ranked_collection_size`, when present, is the denominator for rank
         fields on rows included in TDH ranking. Rows not yet included in TDH
@@ -14582,13 +14582,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
-    ApiIdentityMuteState:
-      type: object
-      required:
-        - muted
-      properties:
-        muted:
-          type: boolean
     ApiIdentityOverview:
       type: object
       required:
@@ -14640,6 +14633,13 @@ components:
         - subscribed
       properties:
         subscribed:
+          type: boolean
+    ApiIdentityMuteState:
+      type: object
+      required:
+        - muted
+      properties:
+        muted:
           type: boolean
     ApiIdentitySubscriptionActions:
       type: object
