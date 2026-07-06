@@ -1,5 +1,5 @@
 import * as fc from 'fast-check';
-import { REP_CATEGORY_PATTERN } from '../entities/IAbusivenessDetectionResult';
+import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
 import { explainRepCategoryViolation } from './rep-category-rules';
 
 describe('explainRepCategoryViolation', () => {

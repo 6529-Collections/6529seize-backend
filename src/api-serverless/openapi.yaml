@@ -10898,7 +10898,7 @@ components:
           type: string
           maxLength: 100
           nullable: true
-          pattern: ^[a-zA-Z0-9?!,."() ]$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
           description: >-
             Category of the rating must be set when matter is REP and null if
             matter is CIC

@@ -4,7 +4,7 @@ import {
 } from '../abusiveness/ai-based-abusiveness.detector';
 import { abusivenessCheckDb, AbusivenessCheckDb } from './abusiveness-check.db';
 import { BadRequestException } from '../exceptions';
-import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
+import { AbusivenessDetectionResult } from '@/entities/IAbusivenessDetectionResult';
 import { explainRepCategoryViolation } from './rep-category-rules';
 import { discord, Discord, DiscordChannel } from '../discord';
 import { Logger } from '../logging';
