@@ -293,7 +293,7 @@ export async function sendIdentityNotificationsBatch(
     );
     failedIds.push(...(await handleSendResults(messages, results)));
   } catch (error) {
-    logger.error(`Failed to send notification messages: ${error}`);
+    logger.error(`F : ${error}`);
     failedIds.push(...messages.map((message) => message.input.notification_id));
   }
 
