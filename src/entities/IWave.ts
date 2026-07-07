@@ -198,6 +198,11 @@ export class WaveBase implements WaveBaseType {
 @Entity(WAVES_TABLE)
 @Index('idx_wave_serialno_id', ['serial_no', 'id'])
 @Index('idx_wave_parent_wave_id', ['parent_wave_id'])
+@Index('idx_wave_visibility_group_id', ['visibility_group_id'])
+@Index('idx_wave_admin_group_id', ['admin_group_id'])
+@Index('idx_wave_chat_group_id', ['chat_group_id'])
+@Index('idx_wave_participation_group_id', ['participation_group_id'])
+@Index('idx_wave_voting_group_id', ['voting_group_id'])
 export class WaveEntity extends WaveBase {
   @Column({ type: 'varchar', length: 100, unique: true, nullable: false })
   readonly id!: string;
