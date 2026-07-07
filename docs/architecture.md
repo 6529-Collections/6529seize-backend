@@ -102,9 +102,11 @@ flowchart TD
   end
 
   BackgroundWorkers["background Lambda runtime"] --> LambdaRuntime["doInDbContext runtime"]
+  DropVideoConversionInvokerLoop --> EnvOnlyRuntime["environment-only runtime"]
   LambdaRuntime --> MySQL
   LambdaRuntime --> Redis
   LambdaRuntime --> Ops["Sentry / CloudWatch / Discord"]
+  EnvOnlyRuntime --> Ops
 
   S3Uploader --> S3
   AttachmentsProcessor --> S3
@@ -193,7 +195,7 @@ flowchart TD
 
 The API Lambda is the public synchronous boundary. It initializes local config or AWS secrets, opens MySQL read/write pools, initializes Redis, configures Passport JWT authentication, registers all routers, and then serves HTTP through `serverless-http`. The same handler also branches on API Gateway WebSocket route keys for `$connect`, `$disconnect`, and `$default` messages.
 
-Background Lambdas use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. This gives loop jobs a consistent lifecycle and keeps each worker independently deployable.
+Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it loads config/secrets, filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections.
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
