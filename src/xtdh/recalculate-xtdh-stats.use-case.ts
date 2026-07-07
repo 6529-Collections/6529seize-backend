@@ -15,6 +15,9 @@ export class RecalculateXTdhStatsUseCase {
       const meta = await this.xtdhRepository.getStatsMetaOrNull(ctx);
       const slot = meta?.active_slot === 'a' ? 'b' : 'a';
       this.logger.info(`Indexing XTDH stats to slot ${slot}`);
+      // Rebuild the inactive slot from scratch before activating it. If SQS
+      // redelivers after a partial rebuild, the next run truncates/refills the
+      // same inactive slot again while readers remain on the prior active slot.
       this.logger.info(`Indexing grant stats`);
       await this.xtdhRepository.refillXTdhGrantStats(
         {
