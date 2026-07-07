@@ -600,7 +600,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
-  it('allows Tenor media links when chat links are disabled', () => {
+  it('allows GIF provider media links when chat links are disabled', () => {
     const useCase = createUseCaseWithMocks();
 
     expect(() =>
@@ -619,15 +619,38 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content:
+                'reaction https://media1.giphy.com/media/abc123/giphy.gif',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
   });
 
-  it('allows only configured Tenor file extensions in chat link allowlist', () => {
+  it('allows only configured GIF provider file extensions in chat link allowlist', () => {
     const useCase = createUseCaseWithMocks();
 
     for (const extension of ['gif', 'mp4', 'jpg', 'webp']) {
       expect(
         (useCase as any).isAllowedChatLink(
           `https://media.tenor.com/abc123/tenor.${extension}?item=1`
+        )
+      ).toBe(true);
+      expect(
+        (useCase as any).isAllowedChatLink(
+          `https://media1.giphy.com/media/abc123/giphy.${extension}?cid=1`
         )
       ).toBe(true);
     }
@@ -637,9 +660,19 @@ describe('CreateOrUpdateDropUseCase', () => {
           `https://media.tenor.com/abc123/tenor.${extension}`
         )
       ).toBe(false);
+      expect(
+        (useCase as any).isAllowedChatLink(
+          `https://media.giphy.com/media/abc123/giphy.${extension}`
+        )
+      ).toBe(false);
     }
     expect(
       (useCase as any).isAllowedChatLink('https://media.tenor.com/abc123/tenor')
+    ).toBe(false);
+    expect(
+      (useCase as any).isAllowedChatLink(
+        'https://media.giphy.com/media/abc/giphy'
+      )
     ).toBe(false);
   });
 
@@ -770,7 +803,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(wavesApiDb.insertMissingWaveReaderMetrics).not.toHaveBeenCalled();
   });
 
-  it('allows scheme-less Tenor candidates in chat link allowlist', () => {
+  it('allows scheme-less GIF provider candidates in chat link allowlist', () => {
     const useCase = createUseCaseWithMocks();
 
     expect(
@@ -781,12 +814,27 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toBe(true);
     expect(
       (useCase as any).isAllowedChatLink(
+        'media1.giphy.com/media/abc123/giphy.gif'
+      )
+    ).toBe(true);
+    expect(
+      (useCase as any).isAllowedChatLink(
+        '//media.giphy.com/media/abc123/giphy.gif'
+      )
+    ).toBe(true);
+    expect(
+      (useCase as any).isAllowedChatLink(
         'media.tenor.com.evil/abc123/tenor.gif'
+      )
+    ).toBe(false);
+    expect(
+      (useCase as any).isAllowedChatLink(
+        'media.giphy.com.evil/media/abc123/giphy.gif'
       )
     ).toBe(false);
   });
 
-  it('rejects mixed Tenor and non-Tenor links when chat links are disabled', () => {
+  it('rejects mixed GIF provider and non-provider links when chat links are disabled', () => {
     const useCase = createUseCaseWithMocks();
 
     expect(() =>
@@ -808,7 +856,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toThrow(`Chat drops with links are not allowed in this wave`);
   });
 
-  it('rejects Tenor lookalike links when chat links are disabled', () => {
+  it('rejects GIF provider lookalike links when chat links are disabled', () => {
     const useCase = createUseCaseWithMocks();
 
     expect(() =>
@@ -819,6 +867,24 @@ describe('CreateOrUpdateDropUseCase', () => {
           parts: [
             {
               content: 'fake https://media.tenor.com.evil/abc123/tenor.gif',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).toThrow(`Chat drops with links are not allowed in this wave`);
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content:
+                'fake https://media.giphy.com.evil/media/abc123/giphy.gif',
               quoted_drop: null,
               media: []
             }
