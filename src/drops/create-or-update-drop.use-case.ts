@@ -100,7 +100,8 @@ import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
-const ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
+const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
+const ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
 const ALL_GROUP_MENTION_REGEX = /(^|[^a-z0-9_@])@all(?![a-z0-9_@])/i;
 
 export function normalizeDropGroupMentions({
@@ -818,13 +819,22 @@ export class CreateOrUpdateDropUseCase {
       if (url.origin === CLOUDFRONT_LINK) {
         return true;
       }
-      return (
-        url.origin === TENOR_CHAT_LINK_ORIGIN &&
-        ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX.test(url.pathname)
-      );
+      return this.isAllowedGifProviderChatLink(url);
     } catch {
       return false;
     }
+  }
+
+  private isAllowedGifProviderChatLink(url: URL): boolean {
+    const hostname = url.hostname.toLowerCase();
+    const isAllowedGifProvider =
+      url.origin === TENOR_CHAT_LINK_ORIGIN ||
+      GIPHY_CHAT_LINK_HOST_REGEX.test(hostname);
+
+    return (
+      isAllowedGifProvider &&
+      ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX.test(url.pathname)
+    );
   }
 
   private normalizeChatLinkCandidate(candidate: string): string {
