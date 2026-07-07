@@ -16,6 +16,7 @@ type RetryOptions = {
   baseDelayMs?: number;
   logger?: Pick<Logger, 'warn'>;
   operation: string;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 export async function withNextgenDbLockRetry<T>(
@@ -37,7 +38,9 @@ export async function withNextgenDbLockRetry<T>(
       options.logger?.warn(
         `[NEXTGEN DB LOCK RETRY] [OPERATION ${options.operation}] [ATTEMPT ${attempt}/${attempts}] [ERROR ${errorMessage(error)}]`
       );
-      await sleep(retryDelayMs(attempt, options.baseDelayMs));
+      await (options.sleep ?? sleep)(
+        retryDelayMs(attempt, options.baseDelayMs)
+      );
     }
   }
 
@@ -62,8 +65,19 @@ export function isRetryableDbLockError(error: unknown): boolean {
 }
 
 function errorCandidates(error: unknown): DbErrorLike[] {
-  const root = toDbErrorLike(error);
-  return [root, toDbErrorLike(root.driverError), toDbErrorLike(root.cause)];
+  const candidates: DbErrorLike[] = [];
+  const seen = new Set<unknown>();
+  const visit = (candidate: unknown, depth: number) => {
+    if (depth > 5 || seen.has(candidate)) return;
+    seen.add(candidate);
+    const errorLike = toDbErrorLike(candidate);
+    candidates.push(errorLike);
+    visit(errorLike.driverError, depth + 1);
+    visit(errorLike.cause, depth + 1);
+  };
+
+  visit(error, 0);
+  return candidates;
 }
 
 function toDbErrorLike(error: unknown): DbErrorLike {
@@ -74,7 +88,6 @@ function toDbErrorLike(error: unknown): DbErrorLike {
 }
 
 function retryDelayMs(attempt: number, baseDelayMs?: number): number {
-  if (process.env.NODE_ENV === 'test') return 0;
   return (baseDelayMs ?? DEFAULT_BASE_DELAY_MS) * 2 ** (attempt - 1);
 }
 

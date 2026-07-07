@@ -1,3 +1,4 @@
+import { EntityManager } from 'typeorm';
 import { getDataSource } from '../db';
 import { NextGenCollection, NextGenToken } from '../entities/INextGen';
 import { Logger } from '../logging';
@@ -9,11 +10,12 @@ import {
 import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
 import { upsertToken } from './nextgen_core_events';
 import { refreshNextgenTokens } from './nextgen_tokens';
-import { withNextgenDbLockRetry } from './nextgen-db-lock-retry';
+import {
+  isRetryableDbLockError,
+  withNextgenDbLockRetry
+} from './nextgen-db-lock-retry';
 
 const logger = Logger.get('NEXTGEN_METADATA_REFRESH');
-
-const TOKEN_REFRESH_CONCURRENCY = 20;
 
 type TokenRefreshSuccess = {
   metadataLink: string;
@@ -38,44 +40,52 @@ export async function refreshNextgenMetadata() {
   logger.info(`[RUNNING]`);
   const dataSource = getDataSource();
   const network = getNextgenNetwork();
-  const collections = await fetchNextGenCollections(dataSource.manager);
-  const owners = await fetchAllNftOwners([
-    NEXTGEN_CORE_CONTRACT[network].toLowerCase()
-  ]);
-  const ownerByTokenId = new Map(
-    owners.map((owner) => [Number(owner.token_id), owner.wallet.toLowerCase()])
-  );
-
-  for (const collection of collections) {
-    logger.info(`[PROCESSING COLLECTION ${collection.id}]`);
-    const collectionTokens = await fetchNextGenTokensForCollection(
-      dataSource.manager,
-      collection
-    );
-    const tokenRefreshResults = await mapWithConcurrency(
-      collectionTokens,
-      TOKEN_REFRESH_CONCURRENCY,
-      async (token) =>
-        refreshToken(dataSource, collection, token, ownerByTokenId)
-    );
-
-    throwIfRefreshFailures(collection, tokenRefreshResults);
-  }
-
   await withNextgenDbLockRetry(
     async () =>
       await dataSource.transaction(async (entityManager) => {
+        const collections = await fetchNextGenCollections(entityManager);
+        const owners = await fetchAllNftOwners([
+          NEXTGEN_CORE_CONTRACT[network].toLowerCase()
+        ]);
+        const ownerByTokenId = new Map(
+          owners.map((owner) => [
+            Number(owner.token_id),
+            owner.wallet.toLowerCase()
+          ])
+        );
+
+        for (const collection of collections) {
+          logger.info(`[PROCESSING COLLECTION ${collection.id}]`);
+          const collectionTokens = await fetchNextGenTokensForCollection(
+            entityManager,
+            collection
+          );
+          const tokenRefreshResults: TokenRefreshResult[] = [];
+          for (const token of collectionTokens) {
+            tokenRefreshResults.push(
+              await refreshToken(
+                entityManager,
+                collection,
+                token,
+                ownerByTokenId
+              )
+            );
+          }
+
+          throwIfRefreshFailures(collection, tokenRefreshResults);
+        }
+
         await refreshNextgenTokens(entityManager);
       }),
     {
       logger,
-      operation: 'refresh-nextgen-token-scores'
+      operation: 'refresh-nextgen-metadata'
     }
   );
 }
 
 async function refreshToken(
-  dataSource: ReturnType<typeof getDataSource>,
+  entityManager: EntityManager,
   collection: NextGenCollection,
   token: NextGenToken,
   ownerByTokenId: Map<number, string>
@@ -83,26 +93,17 @@ async function refreshToken(
   const metadataLink = `${collection.base_uri}${token.id}`;
   const owner = ownerByTokenId.get(Number(token.id)) ?? token.owner;
   try {
-    await withNextgenDbLockRetry(
-      async () =>
-        await dataSource.transaction(async (entityManager) => {
-          await upsertToken(
-            entityManager,
-            collection,
-            token.id,
-            token.normalised_id,
-            owner,
-            token.mint_date,
-            token.mint_price,
-            token.burnt_date,
-            token.hodl_rate,
-            token.mint_data
-          );
-        }),
-      {
-        logger,
-        operation: `refresh-nextgen-token-${token.id}`
-      }
+    await upsertToken(
+      entityManager,
+      collection,
+      token.id,
+      token.normalised_id,
+      owner,
+      token.mint_date,
+      token.mint_price,
+      token.burnt_date,
+      token.hodl_rate,
+      token.mint_data
     );
     return {
       tokenId: token.id,
@@ -110,6 +111,9 @@ async function refreshToken(
       success: true
     };
   } catch (error: unknown) {
+    if (isRetryableDbLockError(error)) {
+      throw error;
+    }
     const errMsg = errorMessage(error);
     logger.error(
       `[TOKEN REFRESH FAILED] [COLLECTION ${collection.id}] [TOKEN ID ${token.id}] [METADATA LINK ${metadataLink}] [ERROR ${errMsg}]`
@@ -136,23 +140,4 @@ function throwIfRefreshFailures(
   throw new Error(
     `[COLLECTION ${collection.id}] Failed refreshing ${failures.length}/${results.length} tokens. First failure token ${firstFailure.tokenId} (${firstFailure.metadataLink}): ${firstFailure.error}`
   );
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(concurrency, items.length);
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      results[currentIndex] = await fn(items[currentIndex]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
 }
