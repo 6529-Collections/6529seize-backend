@@ -3,7 +3,10 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { UserGroupEntity } from '../entities/IUserGroup';
+import {
+  GroupBeneficiaryGrantMatchMode,
+  UserGroupEntity
+} from '../entities/IUserGroup';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
@@ -29,6 +32,12 @@ import { Time } from '../time';
 import { DbPoolName } from '../db-query.options';
 
 const mysql = require('mysql');
+
+export interface BeneficiaryGrantGroupCriteria {
+  readonly groupId: string;
+  readonly grantId: string;
+  readonly matchMode: GroupBeneficiaryGrantMatchMode;
+}
 
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async save(
@@ -68,7 +77,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             excluded_profile_group_id,
                                             is_private,
                                             is_direct_message,
-                                            is_beneficiary_of_grant_id)
+                                            is_beneficiary_of_grant_id,
+                                            is_beneficiary_of_grant_match_mode)
           values (:id,
                   :name,
                   :cic_min,
@@ -100,7 +110,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :excluded_profile_group_id,
                   :is_private,
                   :is_direct_message,
-                  :is_beneficiary_of_grant_id)
+                  :is_beneficiary_of_grant_id,
+                  :is_beneficiary_of_grant_match_mode)
     `,
       { ...entity },
       { wrappedConnection: connection }
@@ -893,6 +904,91 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     await this.db.execute(sql);
   }
 
+  async findBeneficiaryGrantGroupIdsForProfile(
+    param: {
+      beneficiaryGrantGroups: BeneficiaryGrantGroupCriteria[];
+      profileId: string;
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!param.beneficiaryGrantGroups.length) {
+      return [];
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->findBeneficiaryGrantGroupIdsForProfile`
+    );
+    try {
+      const requestedGroupsSql = param.beneficiaryGrantGroups
+        .map(
+          (group) => `
+            SELECT
+              ${mysql.escape(group.groupId)} AS group_id,
+              ${mysql.escape(group.grantId)} AS grant_id,
+              ${mysql.escape(group.matchMode)} AS match_mode
+          `
+        )
+        .join(' UNION ALL ');
+      const dbResults = await this.db.execute<{ group_id: string }>(
+        `
+              WITH requested_groups AS (
+                ${requestedGroupsSql}
+              )
+              SELECT DISTINCT group_id
+              FROM (
+                SELECT DISTINCT rg.group_id AS group_id
+                FROM requested_groups rg
+                  JOIN ${XTDH_GRANTS_TABLE} xg ON xg.id = rg.grant_id
+                  JOIN ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto ON eto.\`partition\` = xg.target_partition
+                  JOIN ${ADDRESS_CONSOLIDATION_KEY} ack ON ack.address = eto.owner
+                  JOIN ${IDENTITIES_TABLE} i ON i.consolidation_key = ack.consolidation_key
+                WHERE i.profile_id = :profileId
+                  AND xg.status = 'GRANTED'
+                  AND xg.token_mode = 'ALL'
+                  AND rg.match_mode = 'ANY_TOKEN'
+                UNION ALL
+                SELECT DISTINCT rg.group_id AS group_id
+                FROM requested_groups rg
+                  JOIN ${XTDH_GRANTS_TABLE} xg ON xg.id = rg.grant_id
+                  JOIN ${XTDH_GRANT_TOKENS_TABLE} xtk ON xg.token_mode = 'INCLUDE' AND xtk.tokenset_id = xg.tokenset_id AND xtk.target_partition = xg.target_partition
+                  JOIN ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto ON eto.\`partition\` = xg.target_partition AND eto.token_id = xtk.token_id
+                  JOIN ${ADDRESS_CONSOLIDATION_KEY} ack ON ack.address = eto.owner
+                  JOIN ${IDENTITIES_TABLE} i ON i.consolidation_key = ack.consolidation_key
+                WHERE i.profile_id = :profileId
+                  AND xg.status = 'GRANTED'
+                  AND xg.token_mode = 'INCLUDE'
+                  AND rg.match_mode = 'ANY_TOKEN'
+                UNION ALL
+                SELECT rg.group_id AS group_id
+                FROM requested_groups rg
+                  JOIN ${XTDH_GRANTS_TABLE} xg ON xg.id = rg.grant_id
+                  JOIN ${XTDH_GRANT_TOKENS_TABLE} xtk ON xg.token_mode = 'INCLUDE' AND xtk.tokenset_id = xg.tokenset_id AND xtk.target_partition = xg.target_partition
+                  JOIN ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto ON eto.\`partition\` = xg.target_partition AND eto.token_id = xtk.token_id
+                  JOIN ${ADDRESS_CONSOLIDATION_KEY} ack ON ack.address = eto.owner
+                  JOIN ${IDENTITIES_TABLE} i ON i.consolidation_key = ack.consolidation_key
+                WHERE i.profile_id = :profileId
+                  AND xg.status = 'GRANTED'
+                  AND xg.token_mode = 'INCLUDE'
+                  AND rg.match_mode = 'ALL_TOKENS'
+                GROUP BY rg.group_id, xg.tokenset_id, xg.target_partition
+                HAVING COUNT(DISTINCT eto.token_id) = (
+                  SELECT COUNT(DISTINCT all_tokens.token_id)
+                  FROM ${XTDH_GRANT_TOKENS_TABLE} all_tokens
+                  WHERE all_tokens.tokenset_id = xg.tokenset_id
+                    AND all_tokens.target_partition = xg.target_partition
+                )
+              ) eligible_groups
+          `,
+        { profileId: param.profileId },
+        { wrappedConnection: ctx.connection }
+      );
+      return dbResults.map((it) => it.group_id);
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findBeneficiaryGrantGroupIdsForProfile`
+      );
+    }
+  }
+
   async inWhichOfGrantsIsProfileBeneficiary(
     param: {
       beneficiaryGrantIds: string[];
@@ -918,7 +1014,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
               select
                   distinct xg.id as grant_id
               from ${XTDH_GRANTS_TABLE} xg
-                      join ${XTDH_GRANT_TOKENS_TABLE} xtk on xg.token_mode = 'INCLUDE' and xtk.tokenset_id = xg.tokenset_id
+                      join ${XTDH_GRANT_TOKENS_TABLE} xtk on xg.token_mode = 'INCLUDE' and xtk.tokenset_id = xg.tokenset_id and xtk.target_partition = xg.target_partition
                       join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.\`partition\` = xg.target_partition and eto.token_id = xtk.token_id
                       join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.address = eto.owner
                       join ${IDENTITIES_TABLE} i on i.consolidation_key = ack.consolidation_key

@@ -1,15 +1,18 @@
-import { UserGroupsService } from './user-groups.service';
+import { NewUserGroupEntity, UserGroupsService } from './user-groups.service';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
+  GroupBeneficiaryGrantMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
+import { XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { getRedisClient, WAVE_GROUPS_VERSION_CACHE_KEY } from '@/redis';
 import { Time } from '@/time';
 import * as mcache from 'memory-cache';
 import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import fc from 'fast-check';
+import { xTdhRepository } from '@/xtdh/xtdh.repository';
 
 jest.mock('@/redis', () => ({
   ...jest.requireActual('@/redis'),
@@ -69,8 +72,56 @@ function buildUserGroup(): UserGroupEntity {
     is_pure_profile_group: true,
     is_private: false,
     is_direct_message: false,
-    is_beneficiary_of_grant_id: null
+    is_beneficiary_of_grant_id: null,
+    is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ANY_TOKEN
   } as UserGroupEntity;
+}
+
+type SaveUserGroup = Omit<
+  NewUserGroupEntity,
+  'profile_group_id' | 'excluded_profile_group_id'
+> & {
+  addresses: string[];
+  excluded_addresses: string[];
+};
+
+function buildSaveUserGroup(
+  overrides: Partial<SaveUserGroup> = {}
+): SaveUserGroup {
+  return {
+    name: 'Group 1',
+    cic_min: null,
+    cic_max: null,
+    cic_user: null,
+    cic_direction: null,
+    rep_min: null,
+    rep_max: null,
+    rep_user: null,
+    rep_direction: null,
+    rep_category: null,
+    tdh_min: null,
+    tdh_max: null,
+    tdh_inclusion_strategy: GroupTdhInclusionStrategy.TDH,
+    level_min: null,
+    level_max: null,
+    visible: true,
+    owns_meme: false,
+    owns_meme_tokens: null,
+    owns_gradient: false,
+    owns_gradient_tokens: null,
+    owns_nextgen: false,
+    owns_nextgen_tokens: null,
+    owns_lab: false,
+    owns_lab_tokens: null,
+    is_private: false,
+    is_direct_message: false,
+    is_beneficiary_of_grant_id: null,
+    is_beneficiary_of_grant_match_mode:
+      GroupBeneficiaryGrantMatchMode.ANY_TOKEN,
+    addresses: [],
+    excluded_addresses: [],
+    ...overrides
+  };
 }
 
 function buildUserGroupsDbMock() {
@@ -91,7 +142,7 @@ function buildUserGroupsDbMock() {
   };
 }
 
-function buildService(userGroupsDb = buildUserGroupsDbMock()) {
+function buildService(userGroupsDb: unknown = buildUserGroupsDbMock()) {
   return new UserGroupsService(
     userGroupsDb as unknown as UserGroupsDb,
     {} as unknown as AbusivenessCheckService,
@@ -107,6 +158,60 @@ function isInvalidJson(value: string): boolean {
     return true;
   }
 }
+
+describe('UserGroupsService save validation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.restoreAllMocks();
+  });
+
+  function buildTransactionalDbMock() {
+    return {
+      executeNativeQueriesInTransaction: jest.fn(
+        async (callback: (connection: unknown) => Promise<unknown>) =>
+          callback({ id: 'connection' })
+      )
+    };
+  }
+
+  it('rejects all-token beneficiary grant matching without a grant', async () => {
+    const userGroupsDb = buildTransactionalDbMock();
+    const service = buildService(userGroupsDb as unknown as UserGroupsDb);
+
+    await expect(
+      service.save(
+        buildSaveUserGroup({
+          is_beneficiary_of_grant_match_mode:
+            GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+        }),
+        PROFILE_ID,
+        {}
+      )
+    ).rejects.toThrow('requires an xTDH grant');
+  });
+
+  it('rejects all-token beneficiary grant matching for full-collection grants', async () => {
+    jest.spyOn(xTdhRepository, 'getGrantById').mockResolvedValue({
+      token_mode: XTdhGrantTokenMode.ALL
+    } as any);
+    const userGroupsDb = buildTransactionalDbMock();
+    const service = buildService(userGroupsDb as unknown as UserGroupsDb);
+
+    await expect(
+      service.save(
+        buildSaveUserGroup({
+          is_beneficiary_of_grant_id: 'grant-1',
+          is_beneficiary_of_grant_match_mode:
+            GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+        }),
+        PROFILE_ID,
+        {}
+      )
+    ).rejects.toThrow(
+      'can only be used with grants that specify target tokens'
+    );
+  });
+});
 
 describe('UserGroupsService eligibility cache', () => {
   beforeEach(() => {

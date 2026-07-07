@@ -13,13 +13,28 @@ import { sqlExecutor } from '@/sql-executor';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import { mock } from 'ts-jest-mocker';
 import { IdentityEntity } from '@/entities/IIdentity';
-import { UserGroupEntity } from '@/entities/IUserGroup';
+import {
+  GroupBeneficiaryGrantMatchMode,
+  UserGroupEntity
+} from '@/entities/IUserGroup';
+import {
+  ADDRESS_CONSOLIDATION_KEY,
+  EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
+  XTDH_STATS_META_TABLE,
+  XTDH_GRANTS_TABLE,
+  XTDH_GRANT_TOKENS_TABLE
+} from '@/constants';
+import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
+import { Seed } from '@/tests/_setup/seed';
 
 const tdh10Identity = anIdentity({ tdh: 10 });
 const tdh20Identity = anIdentity({ tdh: 20 });
 
 const tdh11Identity1 = anIdentity({ tdh: 11 });
 const tdh11Identity2 = anIdentity({ tdh: 11 });
+const partialGrantTokenOwner = anIdentity({ tdh: 12 });
+const otherPartialGrantTokenOwner = anIdentity({ tdh: 13 });
+const fullGrantTokenOwner = anIdentity({ tdh: 14 });
 
 const profileGroupWithTdh11Identity1 = aProfileGroup({
   profile_group_id: randomUUID(),
@@ -57,6 +72,196 @@ const minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded = aUserGroup({
   tdh_min: 10
 });
 
+const partialGrantId = randomUUID();
+const partialGrantTokensetId = randomUUID();
+const fullOwnerGrantId = randomUUID();
+const fullOwnerGrantTokensetId = randomUUID();
+const fullCollectionGrantId = randomUUID();
+const fullCollectionGrantTokensetId = randomUUID();
+const externalContract = '0x1111111111111111111111111111111111111111';
+const externalPartition = `1:${externalContract}`;
+const fullOwnerExternalContract = '0x2222222222222222222222222222222222222222';
+const fullOwnerExternalPartition = `1:${fullOwnerExternalContract}`;
+
+const partialGrantAnyGroup = aUserGroup({
+  is_beneficiary_of_grant_id: partialGrantId,
+  is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ANY_TOKEN
+});
+const partialGrantAllGroup = aUserGroup({
+  is_beneficiary_of_grant_id: partialGrantId,
+  is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+});
+const fullOwnerGrantAllGroup = aUserGroup({
+  is_beneficiary_of_grant_id: fullOwnerGrantId,
+  is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+});
+const invalidFullCollectionGrantAllGroup = aUserGroup({
+  is_beneficiary_of_grant_id: fullCollectionGrantId,
+  is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+});
+
+function withAddressConsolidationKeys(identities: IdentityEntity[]): Seed {
+  return {
+    table: ADDRESS_CONSOLIDATION_KEY,
+    rows: identities.map((identity) => ({
+      address: identity.primary_address,
+      consolidation_key: identity.consolidation_key
+    }))
+  };
+}
+
+const withXtdhGrants: Seed = {
+  table: XTDH_GRANTS_TABLE,
+  rows: [
+    {
+      id: partialGrantId,
+      tokenset_id: partialGrantTokensetId,
+      replaced_grant_id: null,
+      grantor_id: tdh10Identity.profile_id,
+      target_chain: 1,
+      target_contract: externalContract,
+      target_partition: externalPartition,
+      token_mode: XTdhGrantTokenMode.INCLUDE,
+      created_at: 0,
+      updated_at: 0,
+      valid_from: 0,
+      valid_to: null,
+      rate: 1,
+      status: XTdhGrantStatus.GRANTED,
+      error_details: null,
+      is_irrevocable: false
+    },
+    {
+      id: fullOwnerGrantId,
+      tokenset_id: fullOwnerGrantTokensetId,
+      replaced_grant_id: null,
+      grantor_id: tdh10Identity.profile_id,
+      target_chain: 1,
+      target_contract: fullOwnerExternalContract,
+      target_partition: fullOwnerExternalPartition,
+      token_mode: XTdhGrantTokenMode.INCLUDE,
+      created_at: 0,
+      updated_at: 0,
+      valid_from: 0,
+      valid_to: null,
+      rate: 1,
+      status: XTdhGrantStatus.GRANTED,
+      error_details: null,
+      is_irrevocable: false
+    },
+    {
+      id: fullCollectionGrantId,
+      tokenset_id: fullCollectionGrantTokensetId,
+      replaced_grant_id: null,
+      grantor_id: tdh10Identity.profile_id,
+      target_chain: 1,
+      target_contract: fullOwnerExternalContract,
+      target_partition: fullOwnerExternalPartition,
+      token_mode: XTdhGrantTokenMode.ALL,
+      created_at: 0,
+      updated_at: 0,
+      valid_from: 0,
+      valid_to: null,
+      rate: 1,
+      status: XTdhGrantStatus.GRANTED,
+      error_details: null,
+      is_irrevocable: false
+    }
+  ]
+};
+
+const withXtdhGrantTokens: Seed = {
+  table: XTDH_GRANT_TOKENS_TABLE,
+  rows: [
+    {
+      tokenset_id: partialGrantTokensetId,
+      token_id: '1',
+      target_partition: externalPartition
+    },
+    {
+      tokenset_id: partialGrantTokensetId,
+      token_id: '2',
+      target_partition: externalPartition
+    },
+    {
+      tokenset_id: fullOwnerGrantTokensetId,
+      token_id: '10',
+      target_partition: fullOwnerExternalPartition
+    },
+    {
+      tokenset_id: fullOwnerGrantTokensetId,
+      token_id: '11',
+      target_partition: fullOwnerExternalPartition
+    }
+  ]
+};
+
+const withExternalOwnership: Seed = {
+  table: EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
+  rows: [
+    {
+      partition: externalPartition,
+      token_id: '1',
+      owner: partialGrantTokenOwner.primary_address,
+      since_block: 1,
+      since_time: 1,
+      sale_epoch_start_block: null,
+      sale_epoch_tx: null,
+      free_transfers_since_epoch: 0,
+      created_at: 0,
+      updated_at: 0
+    },
+    {
+      partition: externalPartition,
+      token_id: '2',
+      owner: otherPartialGrantTokenOwner.primary_address,
+      since_block: 1,
+      since_time: 1,
+      sale_epoch_start_block: null,
+      sale_epoch_tx: null,
+      free_transfers_since_epoch: 0,
+      created_at: 0,
+      updated_at: 0
+    },
+    {
+      partition: fullOwnerExternalPartition,
+      token_id: '10',
+      owner: fullGrantTokenOwner.primary_address,
+      since_block: 1,
+      since_time: 1,
+      sale_epoch_start_block: null,
+      sale_epoch_tx: null,
+      free_transfers_since_epoch: 0,
+      created_at: 0,
+      updated_at: 0
+    },
+    {
+      partition: fullOwnerExternalPartition,
+      token_id: '11',
+      owner: fullGrantTokenOwner.primary_address,
+      since_block: 1,
+      since_time: 1,
+      sale_epoch_start_block: null,
+      sale_epoch_tx: null,
+      free_transfers_since_epoch: 0,
+      created_at: 0,
+      updated_at: 0
+    }
+  ]
+};
+
+const withXtdhStatsMeta: Seed = {
+  table: XTDH_STATS_META_TABLE,
+  rows: [
+    {
+      id: 1,
+      active_slot: 'a',
+      as_of_midnight_ms: 0,
+      last_updated_at: new Date(0)
+    }
+  ]
+};
+
 describe('smth', () => {
   it('s', () => {});
 });
@@ -68,8 +273,20 @@ describeWithSeed(
       tdh10Identity,
       tdh20Identity,
       tdh11Identity1,
-      tdh11Identity2
+      tdh11Identity2,
+      partialGrantTokenOwner,
+      otherPartialGrantTokenOwner,
+      fullGrantTokenOwner
     ]),
+    withAddressConsolidationKeys([
+      partialGrantTokenOwner,
+      otherPartialGrantTokenOwner,
+      fullGrantTokenOwner
+    ]),
+    withXtdhGrants,
+    withXtdhGrantTokens,
+    withExternalOwnership,
+    withXtdhStatsMeta,
     withUserGroups([
       minTdh20Group,
       maxTdh10Group,
@@ -78,7 +295,11 @@ describeWithSeed(
       minTdh20AndTdh11Identity1Group,
       minTdh10AndTdh11Identity1ExcludedGroup,
       onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded,
-      minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded
+      minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded,
+      partialGrantAnyGroup,
+      partialGrantAllGroup,
+      fullOwnerGrantAllGroup,
+      invalidFullCollectionGrantAllGroup
     ]),
     withWaves(
       [
@@ -89,7 +310,11 @@ describeWithSeed(
         minTdh20AndTdh11Identity1Group,
         minTdh10AndTdh11Identity1ExcludedGroup,
         onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded,
-        minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded
+        minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded,
+        partialGrantAnyGroup,
+        partialGrantAllGroup,
+        fullOwnerGrantAllGroup,
+        invalidFullCollectionGrantAllGroup
       ].map((it) => {
         return aWave({ visibility_group_id: it.id });
       })
@@ -149,6 +374,22 @@ describeWithSeed(
         await expectIdentityToBeInExactGroups(tdh11Identity2, [
           minTdh10AndTdh11Identity1ExcludedGroup,
           minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded
+        ]);
+      });
+
+      it('grant token owner gets any-token grant group but not all-token grant group', async () => {
+        await expectIdentityToBeInExactGroups(partialGrantTokenOwner, [
+          minTdh10AndTdh11Identity1ExcludedGroup,
+          minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded,
+          partialGrantAnyGroup
+        ]);
+      });
+
+      it('full grant token owner gets all-token grant group', async () => {
+        await expectIdentityToBeInExactGroups(fullGrantTokenOwner, [
+          minTdh10AndTdh11Identity1ExcludedGroup,
+          minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded,
+          fullOwnerGrantAllGroup
         ]);
       });
     });
@@ -221,7 +462,14 @@ describeWithSeed(
       it('identities of minTdh10AndTdh11Identity1ExcludedGroup ', async () => {
         await expectGroupToContainExactIdentities(
           minTdh10AndTdh11Identity1ExcludedGroup,
-          [tdh10Identity, tdh20Identity, tdh11Identity2]
+          [
+            tdh10Identity,
+            tdh20Identity,
+            tdh11Identity2,
+            partialGrantTokenOwner,
+            otherPartialGrantTokenOwner,
+            fullGrantTokenOwner
+          ]
         );
       });
       it('identities of minTdh10AndTdh11Identity1ExcludedGroup ', async () => {
@@ -234,7 +482,38 @@ describeWithSeed(
       it('identities of minTdh10AndTdh11Identity1ExcludedGroup ', async () => {
         await expectGroupToContainExactIdentities(
           minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded,
-          [tdh10Identity, tdh20Identity, tdh11Identity2]
+          [
+            tdh10Identity,
+            tdh20Identity,
+            tdh11Identity2,
+            partialGrantTokenOwner,
+            otherPartialGrantTokenOwner,
+            fullGrantTokenOwner
+          ]
+        );
+      });
+
+      it('any-token grant group contains holders of any specified grant token', async () => {
+        await expectGroupToContainExactIdentities(partialGrantAnyGroup, [
+          partialGrantTokenOwner,
+          otherPartialGrantTokenOwner
+        ]);
+      });
+
+      it('all-token grant group excludes holders with only some grant tokens', async () => {
+        await expectGroupToContainExactIdentities(partialGrantAllGroup, []);
+      });
+
+      it('all-token grant group contains holders with all specified grant tokens', async () => {
+        await expectGroupToContainExactIdentities(fullOwnerGrantAllGroup, [
+          fullGrantTokenOwner
+        ]);
+      });
+
+      it('all-token match mode does not match full-collection grants', async () => {
+        await expectGroupToContainExactIdentities(
+          invalidFullCollectionGrantAllGroup,
+          []
         );
       });
     });
