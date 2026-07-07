@@ -64,6 +64,7 @@ import { ids } from '@/ids';
 import { collections } from '@/collections';
 import {
   clearWaveGroupsCache,
+  evictWaveGroupsEntityCache,
   getRedisClient,
   WAVE_GROUPS_CACHE_KEY,
   WAVE_GROUPS_VERSION_CACHE_KEY
@@ -211,9 +212,45 @@ export class UserGroupsService {
         }
       );
     await giveReadReplicaTimeToCatchUp();
-    await clearWaveGroupsCache();
+    if (this.isNewGroupEligibilityScopedToItsMembers(group)) {
+      // Inclusion-list-only group: every listed (and excluded) member already
+      // got an individual profile_group_changes bump when the list rows were
+      // inserted, and nobody outside the list can be affected. Skip the global
+      // version bump which would invalidate all profiles' eligibility caches.
+      await evictWaveGroupsEntityCache();
+    } else {
+      await clearWaveGroupsCache();
+    }
     await this.invalidateGroupsUserIsEligibleFor(createdBy);
     return savedEntity;
+  }
+
+  /**
+   * True if the new group's eligibility is fully determined by an explicit
+   * inclusion list (has addresses, no criteria conditions). An exclusions-only
+   * group means "everyone except X" and a criteria group can match anyone, so
+   * both of those can affect profiles outside any member list.
+   */
+  private isNewGroupEligibilityScopedToItsMembers(
+    group: Omit<
+      NewUserGroupEntity,
+      'profile_group_id' | 'excluded_profile_group_id'
+    > & {
+      addresses: string[];
+    }
+  ): boolean {
+    return (
+      group.addresses.length > 0 &&
+      !hasGroupGotAnyNonIdentityConditions({
+        ...group,
+        id: '',
+        created_at: new Date(),
+        created_by: '',
+        profile_group_id: null,
+        excluded_profile_group_id: null,
+        is_pure_profile_group: false
+      })
+    );
   }
 
   public async findOrCreateDirectMessageGroup(
@@ -1150,7 +1187,7 @@ export class UserGroupsService {
     },
     ctx: RequestContext
   ): Promise<ApiGroupFull> {
-    const updatedGroupEntity =
+    const { updatedGroup, replacedGroup } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
@@ -1158,13 +1195,14 @@ export class UserGroupsService {
             group_id,
             ctxWithConnection
           );
+          let oldGroupEntity: ApiGroupFull | null = null;
           if (old_version_id) {
             if (old_version_id === groupEntity.id) {
               throw new BadRequestException(
                 'Old version id should not be the same as the current'
               );
             }
-            const oldGroupEntity = await this.getByIdOrThrow(
+            oldGroupEntity = await this.getByIdOrThrow(
               old_version_id,
               ctxWithConnection
             );
@@ -1200,15 +1238,143 @@ export class UserGroupsService {
             { identityId: profile_id },
             ctxWithConnection
           );
-          return await this.getByIdOrThrow(
-            old_version_id ?? group_id,
-            ctxWithConnection
-          );
+          return {
+            updatedGroup: await this.getByIdOrThrow(
+              old_version_id ?? group_id,
+              ctxWithConnection
+            ),
+            replacedGroup: oldGroupEntity
+          };
         }
       );
     await giveReadReplicaTimeToCatchUp();
-    await clearWaveGroupsCache();
-    return updatedGroupEntity;
+    await this.invalidateEligibilityCachesAfterVisibilityChange(
+      updatedGroup,
+      replacedGroup
+    );
+    return updatedGroup;
+  }
+
+  /**
+   * With old_version_id the updated group takes over the replaced group's id,
+   * so waves referencing that id switch to the new membership. When both the
+   * updated and the replaced group are plain inclusion-list groups, only
+   * their listed members can gain or lose eligibility - bump exactly those
+   * members instead of doing the global version bump which would invalidate
+   * every profile's eligibility cache at once.
+   */
+  private async invalidateEligibilityCachesAfterVisibilityChange(
+    updatedGroup: ApiGroupFull,
+    replacedGroup: ApiGroupFull | null
+  ): Promise<void> {
+    const affectedGroups = [updatedGroup, replacedGroup].filter(
+      (it): it is ApiGroupFull => it !== null
+    );
+    const allScopedToMembers = affectedGroups.every((it) =>
+      this.isGroupEligibilityScopedToItsMembers(it)
+    );
+    if (!allScopedToMembers) {
+      await clearWaveGroupsCache();
+      return;
+    }
+    await evictWaveGroupsEntityCache();
+    await this.invalidateGroupMembersEligibility(
+      affectedGroups
+        .map((it) => it.group.identity_group_id)
+        .filter((it): it is string => it !== null)
+    );
+  }
+
+  /**
+   * True if the group's eligibility is fully determined by an explicit
+   * inclusion list: changes around such a group cannot affect any profile
+   * outside that list. Criteria groups, exclusion-only ("everyone except X")
+   * groups and no-condition ("everyone") groups can affect anyone, so they
+   * still require the global version bump.
+   */
+  private isGroupEligibilityScopedToItsMembers(group: ApiGroupFull): boolean {
+    const description = group.group;
+    return (
+      description.identity_group_id !== null &&
+      description.owns_nfts.length === 0 &&
+      description.tdh.min === null &&
+      description.tdh.max === null &&
+      description.level.min === null &&
+      description.level.max === null &&
+      description.rep.min === null &&
+      description.rep.max === null &&
+      description.rep.user_identity === null &&
+      description.rep.category === null &&
+      description.cic.min === null &&
+      description.cic.max === null &&
+      description.cic.user_identity === null &&
+      description.is_beneficiary_of_grant_id === null
+    );
+  }
+
+  private async invalidateGroupMembersEligibility(
+    identityGroupIds: string[]
+  ): Promise<void> {
+    const distinctIdentityGroupIds = collections.distinct(identityGroupIds);
+    if (!distinctIdentityGroupIds.length) {
+      return;
+    }
+    const memberProfileIdsByIdentityGroupId =
+      await this.userGroupsDb.findUserGroupsIdentityGroupProfileIds(
+        distinctIdentityGroupIds
+      );
+    const memberProfileIds = collections.distinct(
+      Object.values(memberProfileIdsByIdentityGroupId).flat()
+    );
+    if (memberProfileIds.length) {
+      await this.userGroupsDb.insertGroupChanges(memberProfileIds);
+    }
+  }
+
+  /**
+   * Call after a wave has been created or updated with the given group ids.
+   * Groups REMOVED from a wave need no invalidation at all: eligibility
+   * filters read the wave row fresh, and a group id lingering in someone's
+   * cached eligible-groups list simply stops matching anything.
+   */
+  public async onWaveRelatedGroupsChanged(
+    groupIds: (string | null | undefined)[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const distinctGroupIds = collections.distinct(
+      groupIds.filter((it): it is string => !!it)
+    );
+    if (!distinctGroupIds.length) {
+      await evictWaveGroupsEntityCache();
+      return;
+    }
+    const groupEntities = await this.userGroupsDb.getByIds(
+      distinctGroupIds,
+      ctx
+    );
+    const allScopedToMembers =
+      groupEntities.length === distinctGroupIds.length &&
+      groupEntities.every(
+        (it) =>
+          it.profile_group_id !== null &&
+          !hasGroupGotAnyNonIdentityConditions(it)
+      );
+    if (!allScopedToMembers) {
+      // Unknown, criteria-based or exclusion-only group in play: profiles
+      // outside any inclusion list may be affected, so keep the global bump.
+      await clearWaveGroupsCache();
+      return;
+    }
+    // Pure inclusion-list groups: non-members' eligibility is unchanged by a
+    // wave (re)using them, while members need these group ids to show up in
+    // their cached eligible-groups lists - a per-member bump achieves that
+    // without invalidating every other profile's cache.
+    await evictWaveGroupsEntityCache();
+    await this.invalidateGroupMembersEligibility(
+      groupEntities
+        .map((it) => it.profile_group_id)
+        .filter((it): it is string => it !== null)
+    );
   }
 
   private async doNameAbusivenessCheck(groupEntity: ApiGroupFull) {
