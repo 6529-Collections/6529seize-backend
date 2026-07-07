@@ -150,6 +150,7 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
+import { registerOpenApiSpecRoutes } from './openapi-spec-routes';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -1666,12 +1667,7 @@ async function initializeApp() {
   // agents and tooling can fetch the contract directly instead of scraping the
   // Swagger UI. llms.txt on 6529.io points here.
   const openApiYamlRaw = fs.readFileSync('openapi.yaml', 'utf8');
-  app.get('/openapi.yaml', (_req: Request, res: Response) => {
-    res.type('application/yaml').send(openApiYamlRaw);
-  });
-  app.get('/openapi.json', (_req: Request, res: Response) => {
-    res.json(swaggerDocument);
-  });
+  registerOpenApiSpecRoutes(app, openApiYamlRaw, swaggerDocument);
   app.use(
     '/docs',
     SwaggerUI.serve,
