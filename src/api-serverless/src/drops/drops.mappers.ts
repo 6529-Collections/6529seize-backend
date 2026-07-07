@@ -240,18 +240,20 @@ export class DropsMappers {
     const readContextProfileId = getWaveReadContextProfileId(
       effectiveAuthenticationContext
     );
-    const dWoW = await this.convertToDropsWithoutWaves(dropEntities, {
-      connection,
-      authenticationContext: effectiveAuthenticationContext
-    });
     const dropIds = dropEntities.map((it) => it.id);
     const waveIds = collections.distinct(dropEntities.map((it) => it.wave_id));
     const [
+      dWoW,
       waveOverviews,
       waveVotingCreditNftsByWaveId,
       pinnedWaveIds,
-      identityWaveIds
+      identityWaveIds,
+      group_ids_user_is_eligible_for
     ] = await Promise.all([
+      this.convertToDropsWithoutWaves(dropEntities, {
+        connection,
+        authenticationContext: effectiveAuthenticationContext
+      }),
       this.wavesApiDb.getWavesByDropIds(dropIds, connection),
       this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(waveIds, connection),
       this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
@@ -261,7 +263,10 @@ export class DropsMappers {
         },
         { connection }
       ),
-      profileWavesDb.findSelectedWaveIdsByWaveIds(waveIds, { connection })
+      profileWavesDb.findSelectedWaveIdsByWaveIds(waveIds, { connection }),
+      this.userGroupsService.getGroupsUserIsEligibleFor(
+        readContextProfileId ?? null
+      )
     ]);
     const waveDisplayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
@@ -273,10 +278,6 @@ export class DropsMappers {
           contextProfileId: readContextProfileId ?? null
         },
         connection
-      );
-    const group_ids_user_is_eligible_for =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        readContextProfileId ?? null
       );
     const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
       effectiveAuthenticationContext

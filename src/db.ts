@@ -873,15 +873,17 @@ export async function persistMemesExtendedData(data: MemesExtendedData[]) {
   await AppDataSource.getRepository(MemesExtendedData).save(data);
 }
 
-export async function findVolume(
-  nft_id: number,
-  contract: string
-): Promise<{
+export interface NftVolumes {
   total_volume_last_24_hours: number;
   total_volume_last_7_days: number;
   total_volume_last_1_month: number;
   total_volume: number;
-}> {
+}
+
+export async function findVolume(
+  nft_id: number,
+  contract: string
+): Promise<NftVolumes> {
   const sql = `SELECT
       SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
       SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
@@ -894,6 +896,34 @@ export async function findVolume(
     contract: contract
   });
   return results[0];
+}
+
+export async function findVolumesForContract(
+  contract: string
+): Promise<Map<number, NftVolumes>> {
+  const sql = `SELECT
+      token_id,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) THEN value ELSE 0 END) AS total_volume_last_1_month,
+      SUM(value) AS total_volume
+    FROM ${TRANSACTIONS_TABLE}
+    WHERE contract =:contract
+    GROUP BY token_id;`;
+  const results: ({ token_id: number } & NftVolumes)[] =
+    await sqlExecutor.execute(sql, {
+      contract: contract
+    });
+  const volumesByTokenId = new Map<number, NftVolumes>();
+  results.forEach((row) => {
+    volumesByTokenId.set(Number(row.token_id), {
+      total_volume_last_24_hours: row.total_volume_last_24_hours,
+      total_volume_last_7_days: row.total_volume_last_7_days,
+      total_volume_last_1_month: row.total_volume_last_1_month,
+      total_volume: row.total_volume
+    });
+  });
+  return volumesByTokenId;
 }
 
 export async function persistNFTs(nfts: NFT[]) {
@@ -1702,4 +1732,63 @@ export async function fetchWalletConsolidationKeysViewForWallet(
 ): Promise<WalletConsolidationKey[]> {
   const sql = `SELECT * FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address IN (:addresses)`;
   return await sqlExecutor.execute(sql, { addresses });
+}
+
+const CONSOLIDATION_KEY_ADDRESSES_CHUNK_SIZE = 5000;
+
+/**
+ * Resolves consolidations for all given addresses through the
+ * address_consolidation_keys view using chunked batch queries (instead of one
+ * query per address) and dedupes the result to one entry per consolidation:
+ * consolidation key -> member addresses (key.split('-')). Addresses missing
+ * from the view fall back to a singleton group keyed by the lowercased
+ * address, mirroring the per-address [0]-or-fallback logic used before.
+ * Group order follows the first appearance of a member in the input.
+ */
+export async function fetchConsolidationGroupsForAddresses(
+  addresses: string[]
+): Promise<Map<string, string[]>> {
+  const consolidationKeyByAddress = new Map<string, string>();
+  for (
+    let i = 0;
+    i < addresses.length;
+    i += CONSOLIDATION_KEY_ADDRESSES_CHUNK_SIZE
+  ) {
+    const chunk = addresses.slice(
+      i,
+      i + CONSOLIDATION_KEY_ADDRESSES_CHUNK_SIZE
+    );
+    const rows = await fetchWalletConsolidationKeysViewForWallet(chunk);
+    rows.forEach((row) => {
+      // the view's row shape is { address, consolidation_key }
+      const rowAddress = (row as unknown as { address: string }).address;
+      if (
+        rowAddress &&
+        !consolidationKeyByAddress.has(rowAddress.toLowerCase())
+      ) {
+        consolidationKeyByAddress.set(
+          rowAddress.toLowerCase(),
+          row.consolidation_key
+        );
+      }
+    });
+  }
+
+  const consolidationAddressesByKey = new Map<string, string[]>();
+  addresses.forEach((address) => {
+    const consolidationKey = consolidationKeyByAddress.get(
+      address.toLowerCase()
+    );
+    if (consolidationKey === undefined) {
+      consolidationAddressesByKey.set(address.toLowerCase(), [
+        address.toLowerCase()
+      ]);
+    } else if (!consolidationAddressesByKey.has(consolidationKey)) {
+      consolidationAddressesByKey.set(
+        consolidationKey,
+        consolidationKey.split('-')
+      );
+    }
+  });
+  return consolidationAddressesByKey;
 }

@@ -98,32 +98,59 @@ export async function persistNFTFinalSubscriptions(
 export async function fetchSubscriptionEligibility(
   consolidationKey: string
 ): Promise<number> {
+  const eligibility = await fetchSubscriptionEligibilityForKeys([
+    consolidationKey
+  ]);
+  return eligibility.get(consolidationKey.toLowerCase()) ?? 1;
+}
+
+const ELIGIBILITY_KEYS_CHUNK_SIZE = 5000;
+
+/**
+ * Eligible card-set count (min 1) per consolidation key, resolved with one
+ * MAX(season) query plus one chunked IN query instead of two queries per key.
+ * Keys of the returned map are lowercased.
+ */
+export async function fetchSubscriptionEligibilityForKeys(
+  consolidationKeys: string[]
+): Promise<Map<string, number>> {
+  const eligibility = new Map<string, number>();
+  consolidationKeys.forEach((key) => {
+    if (key) {
+      eligibility.set(key.toLowerCase(), 1);
+    }
+  });
+  if (eligibility.size === 0) {
+    return eligibility;
+  }
+
   const maxSeasonId = await sqlExecutor.execute<{ max_id: number }>(
     `SELECT MAX(id) as max_id FROM ${MEMES_SEASONS_TABLE}`
   );
 
   if (!maxSeasonId || maxSeasonId.length === 0 || !maxSeasonId[0].max_id) {
-    return 1;
+    return eligibility;
   }
 
   const seasonId = maxSeasonId[0].max_id;
+  const distinctKeys = Array.from(eligibility.keys());
 
-  const cardSetsResult = await sqlExecutor.execute<{
-    sets: number;
-  }>(
-    `SELECT sets FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
-     WHERE consolidation_key = :consolidationKey AND season = :seasonId`,
-    { consolidationKey, seasonId }
-  );
-
-  if (
-    !cardSetsResult ||
-    cardSetsResult.length === 0 ||
-    !cardSetsResult[0].sets ||
-    cardSetsResult[0].sets === 0
-  ) {
-    return 1;
+  for (let i = 0; i < distinctKeys.length; i += ELIGIBILITY_KEYS_CHUNK_SIZE) {
+    const chunk = distinctKeys.slice(i, i + ELIGIBILITY_KEYS_CHUNK_SIZE);
+    const cardSetsResult = await sqlExecutor.execute<{
+      consolidation_key: string;
+      sets: number;
+    }>(
+      `SELECT consolidation_key, sets FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}
+       WHERE consolidation_key IN (:chunk) AND season = :seasonId`,
+      { chunk, seasonId }
+    );
+    cardSetsResult.forEach((row) => {
+      if (row.consolidation_key && row.sets) {
+        eligibility.set(row.consolidation_key.toLowerCase(), row.sets);
+      }
+    });
   }
 
-  return cardSetsResult[0].sets;
+  return eligibility;
 }

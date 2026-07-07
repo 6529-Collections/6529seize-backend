@@ -7,7 +7,7 @@ import {
 import { env } from './env';
 import { Logger } from './logging';
 
-const DEFAULT_MESSAGE_GROUP_ID = 'default';
+export const DEFAULT_MESSAGE_GROUP_ID = 'default';
 
 export class SQS {
   private readonly logger = Logger.get(this.constructor.name);

@@ -13,13 +13,15 @@ import {
   NextGenTokenTrait
 } from '../entities/INextGen';
 import { Logger } from '../logging';
-import { EntityManager } from 'typeorm';
+import { EntityManager, In } from 'typeorm';
 import { NFTS_TABLE } from '@/constants';
 import { MINT_TYPE_TRAIT } from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_TOKENS');
 
 const mintTypeTraitLower = MINT_TYPE_TRAIT.toLowerCase();
+
+const TOKEN_TRAITS_CHUNK_SIZE = 5000;
 
 export async function refreshNextgenTokens(entityManager: EntityManager) {
   logger.info(`[REFRESHING NEXTGEN TOKENS]`);
@@ -60,16 +62,27 @@ async function processCollectionTraitScores(
   logger.info(
     `[PROCESSING TRAIT SCORES] : [COLLECTION ${collection.id}] : [TOKEN COUNT ${tokenCount}]`
   );
+  // per trait: how often each value occurs (map size = distinct value count)
+  const traitValueCounts = new Map<string, Map<string, number>>();
+  tokenTraits.forEach((tt) => {
+    let valueCounts = traitValueCounts.get(tt.trait);
+    if (!valueCounts) {
+      valueCounts = new Map<string, number>();
+      traitValueCounts.set(tt.trait, valueCounts);
+    }
+    valueCounts.set(tt.value, (valueCounts.get(tt.value) ?? 0) + 1);
+  });
+
   tokenTraits.forEach((tt) => {
     const name = tt.trait;
     const value = tt.value;
 
     tt.token_count = tokenCount;
 
-    const sharedKey = tokenTraits.filter((tt) => tt.trait === name);
-    tt.trait_count = new Set(sharedKey.map((item) => item.value)).size;
+    const valueCounts = traitValueCounts.get(name)!;
+    tt.trait_count = valueCounts.size;
 
-    tt.value_count = sharedKey.filter((tt) => tt.value === value).length;
+    tt.value_count = valueCounts.get(value) ?? 0;
 
     if (name.toLowerCase().startsWith(mintTypeTraitLower)) {
       tt.statistical_rarity = -1;
@@ -79,12 +92,9 @@ async function processCollectionTraitScores(
       tt.statistical_rarity_normalised = -1;
       tt.single_trait_rarity_score_normalised = -1;
     } else {
-      const sharedKeyValue = sharedKey.filter(
-        (tt) => tt.value === value
-      ).length;
+      const sharedKeyValue = tt.value_count;
 
-      const valuesCountForTrait = new Set(sharedKey.map((item) => item.value))
-        .size;
+      const valuesCountForTrait = valueCounts.size;
 
       const statisticalScore = sharedKeyValue / tokenCount;
       tt.statistical_rarity = statisticalScore;
@@ -141,14 +151,32 @@ async function processTokens(
 
   const traitCategories = new Set<string>();
   const traitCategoriesWithNone = new Set<string>();
-  for (const token of tokens) {
-    const tokenTraits = await entityManager
+
+  const tokenIds = tokens.map((token) => token.id);
+  const allTokenTraits: NextGenTokenTrait[] = [];
+  for (let i = 0; i < tokenIds.length; i += TOKEN_TRAITS_CHUNK_SIZE) {
+    const chunk = tokenIds.slice(i, i + TOKEN_TRAITS_CHUNK_SIZE);
+    const chunkTraits = await entityManager
       .getRepository(NextGenTokenTrait)
       .find({
         where: {
-          token_id: token.id
+          token_id: In(chunk)
         }
       });
+    allTokenTraits.push(...chunkTraits);
+  }
+  const dbTraitsPerToken = new Map<number, NextGenTokenTrait[]>();
+  allTokenTraits.forEach((tt) => {
+    const tokenTraitList = dbTraitsPerToken.get(tt.token_id);
+    if (tokenTraitList) {
+      tokenTraitList.push(tt);
+    } else {
+      dbTraitsPerToken.set(tt.token_id, [tt]);
+    }
+  });
+
+  for (const token of tokens) {
+    const tokenTraits = dbTraitsPerToken.get(token.id) ?? [];
 
     const filteredTokenTraits = tokenTraits.filter((tt) => {
       const traitLower = tt.trait.toLowerCase();
@@ -171,6 +199,11 @@ async function processTokens(
     traitCountPerToken.set(token.id, traitCount);
     traitsPerToken.set(token.id, filteredTokenTraits);
   }
+
+  const traitCountFrequencies = new Map<number, number>();
+  traitCountPerToken.forEach((tc) => {
+    traitCountFrequencies.set(tc, (traitCountFrequencies.get(tc) ?? 0) + 1);
+  });
 
   for (const token of tokens) {
     const filteredTokenTraits = traitsPerToken.get(token.id) || [];
@@ -213,9 +246,7 @@ async function processTokens(
     }
 
     const traitCount = traitCountPerToken.get(token.id) ?? 0;
-    const denominator = Array.from(traitCountPerToken.values()).filter(
-      (tc) => tc === traitCount
-    ).length;
+    const denominator = traitCountFrequencies.get(traitCount) ?? 0;
     const rarityScoreTraitCount = tokens.length / denominator + rarityScore;
 
     const rarityScoreTraitCountNormalisedAdjustement =
@@ -395,12 +426,21 @@ function calulateTokenRanks(
   startingTraits: NextGenTokenTrait[],
   field: string
 ) {
-  const categories = new Set<string>(startingTraits.map((tt) => tt.trait));
-
-  const rankedTokens = Array.from(categories).map((category) => {
-    const traits = startingTraits.filter((tt) => tt.trait === category);
-    return calculateTokenRanksForCategory(traits, field);
+  // group rows by trait in one pass; map insertion order matches the previous
+  // Set-of-categories first-appearance order, and rows keep array order
+  const traitsByCategory = new Map<string, NextGenTokenTrait[]>();
+  startingTraits.forEach((tt) => {
+    const categoryTraits = traitsByCategory.get(tt.trait);
+    if (categoryTraits) {
+      categoryTraits.push(tt);
+    } else {
+      traitsByCategory.set(tt.trait, [tt]);
+    }
   });
+
+  const rankedTokens = Array.from(traitsByCategory.values()).map((traits) =>
+    calculateTokenRanksForCategory(traits, field)
+  );
   return rankedTokens.flat();
 }
 
