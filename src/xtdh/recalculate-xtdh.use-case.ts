@@ -10,10 +10,26 @@ import {
   recalculateXTdhStatsUseCase,
   RecalculateXTdhStatsUseCase
 } from './recalculate-xtdh-stats.use-case';
-import { sqs } from '../sqs';
+import { DEFAULT_MESSAGE_GROUP_ID, sqs } from '../sqs';
 import { env } from '../env';
 import { appFeatures } from '../app-features';
 import { identityConsolidationEffects } from '../identity';
+import {
+  XTDH_LOOP_PHASE,
+  XTdhLoopMessage,
+  XTdhLoopPhase
+} from './xtdh-loop-phase';
+
+const MIN_STATS_ENQUEUE_REMAINING_MS = 15_000;
+
+interface HandleUniversePhaseOptions {
+  readonly messageGroupId?: string;
+  readonly getRemainingTimeInMillis?: () => number;
+}
+
+interface ActivateLoopOptions {
+  readonly messageGroupId?: string;
+}
 
 export class RecalculateXTdhUseCase {
   private readonly logger = Logger.get(this.constructor.name);
@@ -24,7 +40,26 @@ export class RecalculateXTdhUseCase {
     private readonly recalculateXTdhStats: RecalculateXTdhStatsUseCase
   ) {}
 
-  public async handle(ctx: RequestContext) {
+  public async handleUniversePhase(
+    ctx: RequestContext,
+    options: HandleUniversePhaseOptions = {}
+  ) {
+    if (ctx.connection) {
+      throw new Error(
+        `handleUniversePhase must own the transaction before enqueueing xTDH stats phase`
+      );
+    }
+    this.getRequiredXTdhLoopQueueUrl();
+    await this.recalculateXTdhUniverse(ctx);
+    this.assertEnoughTimeToEnqueueStats(options.getRemainingTimeInMillis);
+    await this.activateLoop(ctx, XTDH_LOOP_PHASE.STATS, options);
+  }
+
+  public async handleStatsPhase(ctx: RequestContext) {
+    await this.recalculateXTdhStats.handle(ctx);
+  }
+
+  private async recalculateXTdhUniverse(ctx: RequestContext) {
     if (ctx.connection) {
       await this.recalculateXTdh(ctx);
     } else {
@@ -33,7 +68,6 @@ export class RecalculateXTdhUseCase {
           await this.recalculateXTdh({ ...ctx, connection });
         }
       );
-      await this.recalculateXTdhStats.handle(ctx);
     }
   }
 
@@ -97,22 +131,65 @@ export class RecalculateXTdhUseCase {
     }
   }
 
-  public async activateLoop(ctx: RequestContext) {
+  public async activateLoop(
+    ctx: RequestContext,
+    phase: XTdhLoopPhase = XTDH_LOOP_PHASE.UNIVERSE,
+    options: ActivateLoopOptions = {}
+  ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->activateLoop`);
-      const xtdhLoopQueueUrl = env.getStringOrNull('XTDH_LOOP_QUEUE_URL');
+      const xtdhLoopQueueUrl =
+        phase === XTDH_LOOP_PHASE.STATS
+          ? this.getRequiredXTdhLoopQueueUrl()
+          : env.getStringOrNull('XTDH_LOOP_QUEUE_URL');
       if (!xtdhLoopQueueUrl) {
         this.logger.warn(
           `XTDH_LOOP_QUEUE_URL not configured. Skipping loop call.`
         );
       } else {
+        const messageGroupId =
+          options.messageGroupId ??
+          (phase === XTDH_LOOP_PHASE.STATS ? DEFAULT_MESSAGE_GROUP_ID : null);
         await sqs.send({
-          message: {},
-          queue: xtdhLoopQueueUrl
+          message: this.buildLoopMessage(phase),
+          queue: xtdhLoopQueueUrl,
+          ...(messageGroupId ? { messageGroupId } : {})
         });
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->activateLoop`);
+    }
+  }
+
+  private buildLoopMessage(phase: XTdhLoopPhase): XTdhLoopMessage {
+    return {
+      phase,
+      // Keep same-phase FIFO message bodies unique under content-based dedupe.
+      queued_at_ms: Date.now()
+    };
+  }
+
+  private getRequiredXTdhLoopQueueUrl(): string {
+    const xtdhLoopQueueUrl = env.getStringOrNull('XTDH_LOOP_QUEUE_URL');
+    if (!xtdhLoopQueueUrl) {
+      throw new Error(
+        `XTDH_LOOP_QUEUE_URL not configured. Can not enqueue xTDH stats phase.`
+      );
+    }
+    return xtdhLoopQueueUrl;
+  }
+
+  private assertEnoughTimeToEnqueueStats(
+    getRemainingTimeInMillis?: () => number
+  ) {
+    const remainingMs = getRemainingTimeInMillis?.();
+    if (
+      typeof remainingMs === 'number' &&
+      remainingMs < MIN_STATS_ENQUEUE_REMAINING_MS
+    ) {
+      throw new Error(
+        `Not enough Lambda time remaining to enqueue xTDH stats phase after universe phase.`
+      );
     }
   }
 }
