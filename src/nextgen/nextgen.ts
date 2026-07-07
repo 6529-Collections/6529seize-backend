@@ -11,6 +11,7 @@ import { getNextgenNetwork } from './nextgen_constants';
 import { Logger } from '../logging';
 import { processMissingMintData } from './nextgen_pending_mint_data';
 import { processMissingThumbnails } from './nextgen_pending_thumbnails';
+import { withNextgenDbLockRetry } from './nextgen-db-lock-retry';
 
 const logger = Logger.get('NEXTGEN_CONTRACT');
 
@@ -24,38 +25,57 @@ export async function findNextGenTransactions() {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  let endBlock = await alchemy.core.getBlockNumber();
+  const latestBlock = await alchemy.core.getBlockNumber();
   const dataSource = getDataSource();
-  await dataSource.transaction(async (entityManager) => {
-    const startBlock = await fetchNextGenLatestBlock(entityManager);
+  await withNextgenDbLockRetry(
+    async () =>
+      await dataSource.transaction(async (entityManager) => {
+        const startBlock = await fetchNextGenLatestBlock(entityManager);
 
-    let blockAdjusted = false;
-    const blockRange = endBlock - startBlock;
-    if (blockRange > BLOCK_THRESHOLD) {
-      endBlock = startBlock + BLOCK_THRESHOLD;
-      logger.info(
-        `[BLOCK RANGE TOO LARGE ${blockRange}] : [START BLOCK ${startBlock}] : [ADJUSTING TO ${endBlock} ] `
-      );
-      blockAdjusted = true;
+        let endBlock = latestBlock;
+        let blockAdjusted = false;
+        const blockRange = endBlock - startBlock;
+        if (blockRange > BLOCK_THRESHOLD) {
+          endBlock = startBlock + BLOCK_THRESHOLD;
+          logger.info(
+            `[BLOCK RANGE TOO LARGE ${blockRange}] : [START BLOCK ${startBlock}] : [ADJUSTING TO ${endBlock} ] `
+          );
+          blockAdjusted = true;
+        }
+
+        await findCoreTransactions(
+          entityManager,
+          alchemy,
+          startBlock,
+          endBlock
+        );
+        await findMinterTransactions(
+          entityManager,
+          alchemy,
+          startBlock,
+          endBlock
+        );
+        await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
+
+        const blockTimestamp = (await alchemy.core.getBlock(endBlock))
+          .timestamp;
+
+        const nextgenBlock: NextGenBlock = {
+          block: endBlock,
+          timestamp: blockTimestamp
+        };
+        await persistNextGenBlock(entityManager, nextgenBlock);
+
+        if (!blockAdjusted) {
+          await processPendingMetadataTokens(entityManager);
+          await processMissingMintData(entityManager);
+          await refreshNextgenTokens(entityManager);
+          await processMissingThumbnails(entityManager);
+        }
+      }),
+    {
+      logger,
+      operation: 'nextgen-contract-block-sync'
     }
-
-    await findCoreTransactions(entityManager, alchemy, startBlock, endBlock);
-    await findMinterTransactions(entityManager, alchemy, startBlock, endBlock);
-    await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
-
-    const blockTimestamp = (await alchemy.core.getBlock(endBlock)).timestamp;
-
-    const nextgenBlock: NextGenBlock = {
-      block: endBlock,
-      timestamp: blockTimestamp
-    };
-    await persistNextGenBlock(entityManager, nextgenBlock);
-
-    if (!blockAdjusted) {
-      await processPendingMetadataTokens(entityManager);
-      await processMissingMintData(entityManager);
-      await refreshNextgenTokens(entityManager);
-      await processMissingThumbnails(entityManager);
-    }
-  });
+  );
 }
