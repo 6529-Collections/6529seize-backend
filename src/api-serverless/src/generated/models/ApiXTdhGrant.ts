@@ -13,6 +13,7 @@
 import { ApiProfileMin } from '../models/ApiProfileMin';
 import { ApiXTdhGrantStatus } from '../models/ApiXTdhGrantStatus';
 import { ApiXTdhGrantTargetChain } from '../models/ApiXTdhGrantTargetChain';
+import { ApiXTdhGrantTargetTokenMode } from '../models/ApiXTdhGrantTargetTokenMode';
 import { HttpFile } from '../http/http';
 
 export class ApiXTdhGrant {
@@ -20,6 +21,7 @@ export class ApiXTdhGrant {
     'grantor': ApiProfileMin;
     'target_chain': ApiXTdhGrantTargetChain;
     'target_contract': string;
+    'target_token_mode'?: ApiXTdhGrantTargetTokenMode;
     'target_tokens_count': number;
     'target_collection_name': string | null;
     'created_at': number;
@@ -62,6 +64,12 @@ export class ApiXTdhGrant {
             "name": "target_contract",
             "baseName": "target_contract",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "target_token_mode",
+            "baseName": "target_token_mode",
+            "type": "ApiXTdhGrantTargetTokenMode",
             "format": ""
         },
         {

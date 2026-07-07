@@ -12216,6 +12216,8 @@ components:
         is_beneficiary_of_grant_id:
           type: string
           nullable: true
+        is_beneficiary_of_grant_match_mode:
+          $ref: "#/components/schemas/ApiGroupBeneficiaryGrantMatchMode"
     ApiCreateLegacyDesktopConnectionShareRequest:
       type: object
       properties:
@@ -14299,6 +14301,11 @@ components:
           type: boolean
         is_direct_message:
           type: boolean
+    ApiGroupBeneficiaryGrantMatchMode:
+      type: string
+      enum:
+        - ANY_TOKEN
+        - ALL_TOKENS
     ApiGroupCicFilter:
       type: object
       required:
@@ -14338,6 +14345,7 @@ components:
         - excluded_identity_group_id
         - excluded_identity_group_identities_count
         - is_beneficiary_of_grant_id
+        - is_beneficiary_of_grant_match_mode
         - is_beneficiary_of_grant
       properties:
         tdh:
@@ -14369,6 +14377,8 @@ components:
         is_beneficiary_of_grant_id:
           type: string
           nullable: true
+        is_beneficiary_of_grant_match_mode:
+          $ref: "#/components/schemas/ApiGroupBeneficiaryGrantMatchMode"
         is_beneficiary_of_grant:
           oneOf:
             - type: "null"
@@ -14625,6 +14635,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
+    ApiIdentityMuteState:
+      type: object
+      required:
+        - muted
+      properties:
+        muted:
+          type: boolean
     ApiIdentityOverview:
       type: object
       required:
@@ -14676,13 +14693,6 @@ components:
         - subscribed
       properties:
         subscribed:
-          type: boolean
-    ApiIdentityMuteState:
-      type: object
-      required:
-        - muted
-      properties:
-        muted:
           type: boolean
     ApiIdentitySubscriptionActions:
       type: object
@@ -20256,6 +20266,8 @@ components:
           $ref: "#/components/schemas/ApiXTdhGrantTargetChain"
         target_contract:
           type: string
+        target_token_mode:
+          $ref: "#/components/schemas/ApiXTdhGrantTargetTokenMode"
         target_tokens_count:
           type: number
           format: int64
@@ -20346,6 +20358,11 @@ components:
       type: string
       enum:
         - ETHEREUM_MAINNET
+    ApiXTdhGrantTargetTokenMode:
+      type: string
+      enum:
+        - ALL
+        - INCLUDE
     ApiXTdhGrantToken:
       type: object
       required:

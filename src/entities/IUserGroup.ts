@@ -7,6 +7,11 @@ export enum GroupTdhInclusionStrategy {
   BOTH = 'BOTH'
 }
 
+export enum GroupBeneficiaryGrantMatchMode {
+  ANY_TOKEN = 'ANY_TOKEN',
+  ALL_TOKENS = 'ALL_TOKENS'
+}
+
 const IS_PURE_PROFILE_GROUP_EXPRESSION = `
   profile_group_id IS NOT NULL
   AND excluded_profile_group_id IS NULL
@@ -115,6 +120,13 @@ export class UserGroupEntity {
   @Index('idx_beneficiary_grant')
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly is_beneficiary_of_grant_id!: string | null;
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: GroupBeneficiaryGrantMatchMode.ANY_TOKEN
+  })
+  readonly is_beneficiary_of_grant_match_mode!: GroupBeneficiaryGrantMatchMode;
 }
 
 export enum FilterDirection {
