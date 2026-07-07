@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs22.x
-  memorySize: 512
+  memorySize: 3072
   timeout: 900
   architecture: arm64
   logRetentionInDays: 60
