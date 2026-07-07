@@ -35,6 +35,13 @@ import {
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
+export type NextGenTokenMetadata = {
+  metadataLink: string;
+  metadataResponse: any;
+  name: string;
+  pending: boolean;
+};
+
 let alchemy: Alchemy;
 
 export async function findCoreEvents(
@@ -266,30 +273,68 @@ export async function upsertToken(
   hodlRate: number,
   mintData: string | undefined
 ) {
-  const metadataLink = `${collection.base_uri}${tokenId}`;
+  const metadata = await fetchNextGenTokenMetadata(collection, tokenId);
+  await persistTokenWithMetadata(
+    entityManager,
+    collection,
+    tokenId,
+    normalisedTokenId,
+    owner,
+    mintDate,
+    mintPrice,
+    burnDate,
+    hodlRate,
+    mintData,
+    metadata
+  );
+}
 
+export async function fetchNextGenTokenMetadata(
+  collection: NextGenCollection,
+  tokenId: number
+): Promise<NextGenTokenMetadata> {
+  const metadataLink = `${collection.base_uri}${tokenId}`;
   const metadataResponse: any = await fetchNextGenMetadata(metadataLink);
   const name = getRequiredMetadataName(metadataResponse, metadataLink);
-  const pending = name.toLowerCase().startsWith('pending');
+  return {
+    metadataLink,
+    metadataResponse,
+    name,
+    pending: name.toLowerCase().startsWith('pending')
+  };
+}
 
+export async function persistTokenWithMetadata(
+  entityManager: EntityManager,
+  collection: NextGenCollection,
+  tokenId: number,
+  normalisedTokenId: number,
+  owner: string,
+  mintDate: Date,
+  mintPrice: number,
+  burnDate: Date | undefined,
+  hodlRate: number,
+  mintData: string | undefined,
+  metadata: NextGenTokenMetadata
+) {
   const nextGenToken: NextGenToken = {
     id: tokenId,
     normalised_id: normalisedTokenId,
-    name,
+    name: metadata.name,
     collection_id: collection.id,
     collection_name: collection.name,
     mint_date: mintDate,
     mint_price: mintPrice,
-    metadata_url: metadataLink,
-    image_url: metadataResponse.image,
+    metadata_url: metadata.metadataLink,
+    image_url: metadata.metadataResponse.image,
     animation_url:
-      metadataResponse.image?.replace('/png/', '/html/') ??
-      metadataResponse.animation_url ??
-      metadataResponse.generator?.html ??
+      metadata.metadataResponse.image?.replace('/png/', '/html/') ??
+      metadata.metadataResponse.animation_url ??
+      metadata.metadataResponse.generator?.html ??
       null,
-    generator: metadataResponse.generator,
+    generator: metadata.metadataResponse.generator,
     owner: owner.toLowerCase(),
-    pending: pending,
+    pending: metadata.pending,
     burnt: !!burnDate,
     burnt_date: burnDate,
     hodl_rate: hodlRate,
@@ -298,12 +343,12 @@ export async function upsertToken(
 
   await persistNextGenToken(entityManager, nextGenToken);
 
-  if (metadataResponse.attributes) {
+  if (metadata.metadataResponse.attributes) {
     await processTraits(
       entityManager,
       tokenId,
       collection.id,
-      metadataResponse.attributes
+      metadata.metadataResponse.attributes
     );
   }
 }
