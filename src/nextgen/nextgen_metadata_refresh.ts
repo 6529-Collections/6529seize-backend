@@ -83,9 +83,9 @@ export async function refreshNextgenMetadata() {
     const permanentFailure = failures.find((failure) => !failure.retryable);
     if (permanentFailure) {
       throw refreshFailureError(
-        collection,
         failures,
-        tokenRefreshResults.length
+        tokenRefreshResults.length,
+        collection
       );
     }
 
@@ -201,29 +201,19 @@ function handleTransientFailures(
     return;
   }
 
-  throw refreshFailureErrorForFailures(failures, tokenCount);
+  throw refreshFailureError(failures, tokenCount);
 }
 
 function refreshFailureError(
-  collection: NextGenCollection,
   failures: TokenRefreshFailure[],
-  tokenCount: number
+  tokenCount: number,
+  collection?: NextGenCollection
 ): Error {
   const firstFailure =
     failures.find((failure) => !failure.retryable) ?? failures[0];
+  const collectionPrefix = collection ? `[COLLECTION ${collection.id}] ` : '';
   return new Error(
-    `[COLLECTION ${collection.id}] Failed refreshing ${failures.length}/${tokenCount} tokens. First failure token ${firstFailure.tokenId} (${firstFailure.metadataLink}): ${firstFailure.error}`
-  );
-}
-
-function refreshFailureErrorForFailures(
-  failures: TokenRefreshFailure[],
-  tokenCount: number
-): Error {
-  const firstFailure =
-    failures.find((failure) => !failure.retryable) ?? failures[0];
-  return new Error(
-    `Failed refreshing ${failures.length}/${tokenCount} tokens. First failure token ${firstFailure.tokenId} (${firstFailure.metadataLink}): ${firstFailure.error}`
+    `${collectionPrefix}Failed refreshing ${failures.length}/${tokenCount} tokens. First failure token ${firstFailure.tokenId} (${firstFailure.metadataLink}): ${firstFailure.error}`
   );
 }
 
@@ -244,6 +234,12 @@ function isTransientTokenFailure(error: unknown): boolean {
 }
 
 function isRetryableDbError(error: unknown): boolean {
+  if (
+    error == null ||
+    (typeof error !== 'object' && typeof error !== 'function')
+  ) {
+    return false;
+  }
   const dbError = error as {
     code?: unknown;
     errno?: unknown;

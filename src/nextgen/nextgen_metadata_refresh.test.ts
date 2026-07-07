@@ -192,6 +192,19 @@ describe('refreshNextgenMetadata', () => {
     expect(tokens.refreshNextgenTokens).not.toHaveBeenCalled();
   });
 
+  it('treats primitive thrown values as non-retryable failures', async () => {
+    jest
+      .spyOn(coreEvents, 'fetchNextGenTokenMetadata')
+      .mockRejectedValueOnce('plain failure')
+      .mockImplementation(async (collection, tokenId) =>
+        tokenMetadata(collection, tokenId)
+      );
+
+    await expect(refreshNextgenMetadata()).rejects.toThrow('plain failure');
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(tokens.refreshNextgenTokens).not.toHaveBeenCalled();
+  });
+
   it('bounds token refresh concurrency', async () => {
     const collectionTokens = Array.from({ length: 25 }, (_, index) =>
       nextgenToken(index + 1)
