@@ -147,7 +147,7 @@ flowchart TD
 | `subscriptionsTopUpLoop`             | Process subscription top-ups.                                     |
 | `discoverEnsLoop`                    | Discover ENS names.                                               |
 | `refreshEnsLoop`                     | Refresh known ENS names.                                          |
-| `ethPriceLoop`                       | Snapshot ETH price.                                               |
+| `ethPriceLoop`                       | Snapshot ETH price every five minutes.                            |
 | `mintAnnouncementsLoop`              | Publish mint announcements.                                       |
 | `artCurationNftWatchLoop`            | Watch curated NFT state.                                          |
 | `rememesLoop`                        | Refresh rememes S3 files and metadata.                            |
