@@ -8,13 +8,17 @@ import * as coreEvents from './nextgen_core_events';
 import * as tokens from './nextgen_tokens';
 
 describe('refreshNextgenMetadata', () => {
-  const logger = { info: jest.fn() } as any;
+  const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() } as any;
   const entityManager = {} as any;
   const dataSource = {
+    manager: entityManager,
     transaction: jest.fn(async (fn: any) => await fn(entityManager))
   } as any;
 
   beforeEach(() => {
+    dataSource.transaction.mockImplementation(
+      async (fn: any) => await fn(entityManager)
+    );
     jest.spyOn(db, 'getDataSource').mockReturnValue(dataSource);
     jest.spyOn(logging.Logger, 'get').mockReturnValue(logger);
     jest
@@ -60,7 +64,7 @@ describe('refreshNextgenMetadata', () => {
   it('updates all tokens and refreshes collection', async () => {
     await refreshNextgenMetadata();
 
-    expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    expect(dataSource.transaction).toHaveBeenCalledTimes(3);
     expect(coreEvents.upsertToken).toHaveBeenCalledTimes(2);
     expect(coreEvents.upsertToken).toHaveBeenCalledWith(
       entityManager,
@@ -87,5 +91,51 @@ describe('refreshNextgenMetadata', () => {
       'd2'
     );
     expect(tokens.refreshNextgenTokens).toHaveBeenCalledWith(entityManager);
+  });
+
+  it('retries token persistence deadlocks before recording a failure', async () => {
+    const deadlock = new Error(
+      'ER_LOCK_DEADLOCK: Deadlock found when trying to get lock; try restarting transaction'
+    ) as Error & { code: string };
+    deadlock.code = 'ER_LOCK_DEADLOCK';
+    jest
+      .spyOn(coreEvents, 'upsertToken')
+      .mockRejectedValueOnce(deadlock)
+      .mockResolvedValue(undefined);
+
+    await refreshNextgenMetadata();
+
+    expect(coreEvents.upsertToken).toHaveBeenCalledTimes(3);
+    expect(tokens.refreshNextgenTokens).toHaveBeenCalledWith(entityManager);
+  });
+
+  it('bounds token refresh concurrency', async () => {
+    const collectionTokens = Array.from({ length: 25 }, (_, index) => ({
+      id: index + 1,
+      normalised_id: `n${index + 1}`,
+      owner: `o${index + 1}`,
+      mint_date: `md${index + 1}`,
+      mint_price: `mp${index + 1}`,
+      burnt_date: `bd${index + 1}`,
+      hodl_rate: `hr${index + 1}`,
+      mint_data: `d${index + 1}`
+    }));
+    jest
+      .spyOn(nextgenDb, 'fetchNextGenTokensForCollection')
+      .mockResolvedValue(collectionTokens as any);
+
+    let active = 0;
+    let maxActive = 0;
+    jest.spyOn(coreEvents, 'upsertToken').mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+    });
+
+    await refreshNextgenMetadata();
+
+    expect(maxActive).toBeLessThanOrEqual(20);
+    expect(maxActive).toBeGreaterThan(1);
   });
 });
