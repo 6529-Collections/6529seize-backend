@@ -4,14 +4,7 @@ import {
 } from './nextgen-db-lock-retry';
 
 describe('nextgen db lock retry', () => {
-  const originalNodeEnv = process.env.NODE_ENV;
-
-  beforeEach(() => {
-    process.env.NODE_ENV = 'test';
-  });
-
   afterEach(() => {
-    process.env.NODE_ENV = originalNodeEnv;
     jest.resetAllMocks();
   });
 
@@ -24,6 +17,15 @@ describe('nextgen db lock retry', () => {
       })
     ).toBe(true);
     expect(
+      isRetryableDbLockError({
+        driverError: {
+          cause: {
+            cause: { errno: 1213 }
+          }
+        }
+      })
+    ).toBe(true);
+    expect(
       isRetryableDbLockError(
         new Error('Deadlock found when trying to get lock; try restarting')
       )
@@ -33,6 +35,9 @@ describe('nextgen db lock retry', () => {
 
   it('retries retryable failures and returns the successful result', async () => {
     const logger = { warn: jest.fn() };
+    const sleep = jest
+      .fn<Promise<void>, [number]>()
+      .mockResolvedValue(undefined);
     const operation = jest
       .fn<Promise<string>, []>()
       .mockRejectedValueOnce({ code: 'ER_LOCK_DEADLOCK' })
@@ -41,12 +46,14 @@ describe('nextgen db lock retry', () => {
     await expect(
       withNextgenDbLockRetry(operation, {
         logger,
-        operation: 'test'
+        operation: 'test',
+        sleep
       })
     ).resolves.toBe('ok');
 
     expect(operation).toHaveBeenCalledTimes(2);
     expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(250);
   });
 
   it('does not retry non-lock failures', async () => {

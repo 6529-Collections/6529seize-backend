@@ -64,7 +64,7 @@ describe('refreshNextgenMetadata', () => {
   it('updates all tokens and refreshes collection', async () => {
     await refreshNextgenMetadata();
 
-    expect(dataSource.transaction).toHaveBeenCalledTimes(3);
+    expect(dataSource.transaction).toHaveBeenCalledTimes(1);
     expect(coreEvents.upsertToken).toHaveBeenCalledTimes(2);
     expect(coreEvents.upsertToken).toHaveBeenCalledWith(
       entityManager,
@@ -106,10 +106,11 @@ describe('refreshNextgenMetadata', () => {
     await refreshNextgenMetadata();
 
     expect(coreEvents.upsertToken).toHaveBeenCalledTimes(3);
+    expect(dataSource.transaction).toHaveBeenCalledTimes(2);
     expect(tokens.refreshNextgenTokens).toHaveBeenCalledWith(entityManager);
   });
 
-  it('bounds token refresh concurrency', async () => {
+  it('processes token writes sequentially inside the metadata transaction', async () => {
     const collectionTokens = Array.from({ length: 25 }, (_, index) => ({
       id: index + 1,
       normalised_id: `n${index + 1}`,
@@ -135,7 +136,6 @@ describe('refreshNextgenMetadata', () => {
 
     await refreshNextgenMetadata();
 
-    expect(maxActive).toBeLessThanOrEqual(20);
-    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBe(1);
   });
 });

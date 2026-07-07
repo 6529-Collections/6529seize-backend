@@ -1,5 +1,4 @@
 import { Alchemy } from '@/alchemy-sdk';
-import { EntityManager } from 'typeorm';
 import { NextGenBlock } from '../entities/INextGen';
 import { findCoreEvents } from './nextgen_core_events';
 import { findCoreTransactions } from './nextgen_core_transactions';
@@ -26,25 +25,24 @@ export async function findNextGenTransactions() {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  let endBlock = await alchemy.core.getBlockNumber();
+  const latestBlock = await alchemy.core.getBlockNumber();
   const dataSource = getDataSource();
-  const startBlock = await fetchNextGenLatestBlock(dataSource.manager);
-
-  let blockAdjusted = false;
-  const blockRange = endBlock - startBlock;
-  if (blockRange > BLOCK_THRESHOLD) {
-    endBlock = startBlock + BLOCK_THRESHOLD;
-    logger.info(
-      `[BLOCK RANGE TOO LARGE ${blockRange}] : [START BLOCK ${startBlock}] : [ADJUSTING TO ${endBlock} ] `
-    );
-    blockAdjusted = true;
-  }
-
-  const blockTimestamp = (await alchemy.core.getBlock(endBlock)).timestamp;
-
   await withNextgenDbLockRetry(
     async () =>
       await dataSource.transaction(async (entityManager) => {
+        const startBlock = await fetchNextGenLatestBlock(entityManager);
+
+        let endBlock = latestBlock;
+        let blockAdjusted = false;
+        const blockRange = endBlock - startBlock;
+        if (blockRange > BLOCK_THRESHOLD) {
+          endBlock = startBlock + BLOCK_THRESHOLD;
+          logger.info(
+            `[BLOCK RANGE TOO LARGE ${blockRange}] : [START BLOCK ${startBlock}] : [ADJUSTING TO ${endBlock} ] `
+          );
+          blockAdjusted = true;
+        }
+
         await findCoreTransactions(
           entityManager,
           alchemy,
@@ -59,50 +57,25 @@ export async function findNextGenTransactions() {
         );
         await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
 
+        const blockTimestamp = (await alchemy.core.getBlock(endBlock))
+          .timestamp;
+
         const nextgenBlock: NextGenBlock = {
           block: endBlock,
           timestamp: blockTimestamp
         };
         await persistNextGenBlock(entityManager, nextgenBlock);
+
+        if (!blockAdjusted) {
+          await processPendingMetadataTokens(entityManager);
+          await processMissingMintData(entityManager);
+          await refreshNextgenTokens(entityManager);
+          await processMissingThumbnails(entityManager);
+        }
       }),
     {
       logger,
       operation: 'nextgen-contract-block-sync'
-    }
-  );
-
-  if (!blockAdjusted) {
-    await runPostProcessingTransaction(
-      'nextgen-pending-metadata',
-      processPendingMetadataTokens
-    );
-    await runPostProcessingTransaction(
-      'nextgen-missing-mint-data',
-      processMissingMintData
-    );
-    await runPostProcessingTransaction(
-      'nextgen-token-score-refresh',
-      refreshNextgenTokens
-    );
-    await runPostProcessingTransaction(
-      'nextgen-missing-thumbnails',
-      processMissingThumbnails
-    );
-  }
-}
-
-async function runPostProcessingTransaction(
-  operation: string,
-  processor: (entityManager: EntityManager) => Promise<void>
-): Promise<void> {
-  const dataSource = getDataSource();
-  await withNextgenDbLockRetry(
-    async () => {
-      await dataSource.transaction(processor);
-    },
-    {
-      logger,
-      operation
     }
   );
 }
