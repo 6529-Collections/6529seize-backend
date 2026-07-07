@@ -23,12 +23,11 @@ export class NextGenMetadataFetchError extends Error {
 export async function fetchNextGenMetadata(
   metadataLink: string
 ): Promise<Record<string, unknown>> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= METADATA_FETCH_ATTEMPTS; attempt++) {
+  let attempt = 1;
+  while (true) {
     try {
       return await fetchNextGenMetadataOnce(metadataLink);
     } catch (error: unknown) {
-      lastError = error;
       if (
         !isRetryableMetadataFetchError(error) ||
         attempt === METADATA_FETCH_ATTEMPTS
@@ -36,10 +35,9 @@ export async function fetchNextGenMetadata(
         throw error;
       }
       await sleep(retryDelayMs(attempt));
+      attempt += 1;
     }
   }
-
-  throw lastError;
 }
 
 async function fetchNextGenMetadataOnce(
@@ -99,7 +97,6 @@ function isRetryableStatus(status: number): boolean {
 }
 
 function retryDelayMs(attempt: number): number {
-  if (process.env.NODE_ENV === 'test') return 0;
   return METADATA_FETCH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
 }
 

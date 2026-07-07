@@ -2,7 +2,7 @@ import { getDataSource } from '../db';
 import { Logger } from '../logging';
 import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
 import { NextGenCollection, NextGenToken } from '../entities/INextGen';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import * as nextgenDb from './nextgen.db';
 import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
 import * as nextgenCoreEvents from './nextgen_core_events';
@@ -18,8 +18,12 @@ const MAX_TRANSIENT_FAILURES_TO_SKIP = 5;
 const MAX_TRANSIENT_FAILURE_RATIO_TO_SKIP = 0.01;
 
 type TokenRefreshSuccess = {
+  collection: NextGenCollection;
+  metadata: nextgenCoreEvents.NextGenTokenMetadata;
   metadataLink: string;
+  owner: string;
   success: true;
+  token: NextGenToken;
   tokenId: number;
 };
 
@@ -32,6 +36,11 @@ type TokenRefreshFailure = {
 };
 
 type TokenRefreshResult = TokenRefreshSuccess | TokenRefreshFailure;
+
+type CollectionRefreshPlan = {
+  collection: NextGenCollection;
+  tokens: TokenRefreshSuccess[];
+};
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -51,29 +60,49 @@ export async function refreshNextgenMetadata() {
     owners.map((owner) => [Number(owner.token_id), owner.wallet.toLowerCase()])
   );
 
+  const refreshPlans: CollectionRefreshPlan[] = [];
+  const transientFailures: TokenRefreshFailure[] = [];
+  let totalTokenCount = 0;
+
   for (const collection of collections) {
     logger.info(`[PROCESSING COLLECTION ${collection.id}]`);
     const collectionTokens = await nextgenDb.fetchNextGenTokensForCollection(
       dataSource.manager,
       collection
     );
+    totalTokenCount += collectionTokens.length;
     const tokenRefreshResults = await mapWithConcurrency(
       collectionTokens,
       TOKEN_REFRESH_CONCURRENCY,
-      async (token) =>
-        refreshToken(dataSource, collection, token, ownerByTokenId)
+      async (token) => fetchTokenMetadata(collection, token, ownerByTokenId)
     );
 
-    handleRefreshFailures(collection, tokenRefreshResults);
+    const failures = tokenRefreshResults.filter(
+      (result): result is TokenRefreshFailure => !result.success
+    );
+    const permanentFailure = failures.find((failure) => !failure.retryable);
+    if (permanentFailure) {
+      throw refreshFailureError(
+        collection,
+        failures,
+        tokenRefreshResults.length
+      );
+    }
+
+    transientFailures.push(...failures);
+    refreshPlans.push({
+      collection,
+      tokens: tokenRefreshResults.filter(
+        (result): result is TokenRefreshSuccess => result.success
+      )
+    });
   }
 
-  await dataSource.transaction(async (entityManager) => {
-    await nextgenTokens.refreshNextgenTokens(entityManager);
-  });
+  handleTransientFailures(transientFailures, totalTokenCount);
+  await runRefreshTransactionWithDbRetries(dataSource, refreshPlans);
 }
 
-async function refreshToken(
-  dataSource: DataSource,
+async function fetchTokenMetadata(
   collection: NextGenCollection,
   token: NextGenToken,
   ownerByTokenId: Map<number, string>
@@ -81,10 +110,17 @@ async function refreshToken(
   const metadataLink = `${collection.base_uri}${token.id}`;
   const owner = ownerByTokenId.get(Number(token.id)) ?? token.owner;
   try {
-    await refreshTokenWithDbRetries(dataSource, collection, token, owner);
+    const metadata = await nextgenCoreEvents.fetchNextGenTokenMetadata(
+      collection,
+      token.id
+    );
     return {
+      collection,
+      metadata,
+      metadataLink: metadata.metadataLink,
+      owner,
       tokenId: token.id,
-      metadataLink,
+      token,
       success: true
     };
   } catch (error: unknown) {
@@ -102,27 +138,14 @@ async function refreshToken(
   }
 }
 
-async function refreshTokenWithDbRetries(
+async function runRefreshTransactionWithDbRetries(
   dataSource: DataSource,
-  collection: NextGenCollection,
-  token: NextGenToken,
-  owner: string
+  refreshPlans: CollectionRefreshPlan[]
 ): Promise<void> {
   for (let attempt = 1; attempt <= TOKEN_REFRESH_DB_ATTEMPTS; attempt++) {
     try {
       await dataSource.transaction(async (entityManager) => {
-        await nextgenCoreEvents.upsertToken(
-          entityManager,
-          collection,
-          token.id,
-          token.normalised_id,
-          owner,
-          token.mint_date,
-          token.mint_price,
-          token.burnt_date,
-          token.hodl_rate,
-          token.mint_data
-        );
+        await persistRefreshPlans(entityManager, refreshPlans);
       });
       return;
     } catch (error: unknown) {
@@ -130,33 +153,77 @@ async function refreshTokenWithDbRetries(
         throw error;
       }
       logger.warn(
-        `[TOKEN REFRESH RETRY] [COLLECTION ${collection.id}] [TOKEN ID ${token.id}] [ATTEMPT ${attempt}/${TOKEN_REFRESH_DB_ATTEMPTS}] [ERROR ${errorMessage(error)}]`
+        `[REFRESH TRANSACTION RETRY] [ATTEMPT ${attempt}/${TOKEN_REFRESH_DB_ATTEMPTS}] [ERROR ${errorMessage(error)}]`
       );
       await sleep(tokenRefreshRetryDelayMs(attempt));
     }
   }
 }
 
-function handleRefreshFailures(
-  collection: NextGenCollection,
-  results: TokenRefreshResult[]
+async function persistRefreshPlans(
+  entityManager: EntityManager,
+  refreshPlans: CollectionRefreshPlan[]
+): Promise<void> {
+  for (const refreshPlan of refreshPlans) {
+    for (const tokenRefresh of refreshPlan.tokens) {
+      await nextgenCoreEvents.persistTokenWithMetadata(
+        entityManager,
+        tokenRefresh.collection,
+        tokenRefresh.token.id,
+        tokenRefresh.token.normalised_id,
+        tokenRefresh.owner,
+        tokenRefresh.token.mint_date,
+        tokenRefresh.token.mint_price,
+        tokenRefresh.token.burnt_date,
+        tokenRefresh.token.hodl_rate,
+        tokenRefresh.token.mint_data,
+        tokenRefresh.metadata
+      );
+    }
+  }
+  await nextgenTokens.refreshNextgenTokens(entityManager);
+}
+
+function handleTransientFailures(
+  failures: TokenRefreshFailure[],
+  tokenCount: number
 ): void {
-  const failures = results.filter(
-    (result): result is TokenRefreshFailure => !result.success
-  );
   if (failures.length === 0) return;
 
-  if (shouldSkipTransientFailures(failures, results.length)) {
-    logger.warn(
-      `[COLLECTION ${collection.id}] Skipping ${failures.length}/${results.length} transient token refresh failures`
+  if (shouldSkipTransientFailures(failures, tokenCount)) {
+    const skippedTokens = failures
+      .slice(0, 20)
+      .map((failure) => `${failure.tokenId}:${failure.metadataLink}`)
+      .join(',');
+    logger.error(
+      `[SKIPPING TRANSIENT TOKEN REFRESH FAILURES] [COUNT ${failures.length}/${tokenCount}] [TOKENS ${skippedTokens}]`
     );
     return;
   }
 
+  throw refreshFailureErrorForFailures(failures, tokenCount);
+}
+
+function refreshFailureError(
+  collection: NextGenCollection,
+  failures: TokenRefreshFailure[],
+  tokenCount: number
+): Error {
   const firstFailure =
     failures.find((failure) => !failure.retryable) ?? failures[0];
-  throw new Error(
-    `[COLLECTION ${collection.id}] Failed refreshing ${failures.length}/${results.length} tokens. First failure token ${firstFailure.tokenId} (${firstFailure.metadataLink}): ${firstFailure.error}`
+  return new Error(
+    `[COLLECTION ${collection.id}] Failed refreshing ${failures.length}/${tokenCount} tokens. First failure token ${firstFailure.tokenId} (${firstFailure.metadataLink}): ${firstFailure.error}`
+  );
+}
+
+function refreshFailureErrorForFailures(
+  failures: TokenRefreshFailure[],
+  tokenCount: number
+): Error {
+  const firstFailure =
+    failures.find((failure) => !failure.retryable) ?? failures[0];
+  return new Error(
+    `Failed refreshing ${failures.length}/${tokenCount} tokens. First failure token ${firstFailure.tokenId} (${firstFailure.metadataLink}): ${firstFailure.error}`
   );
 }
 
@@ -214,7 +281,6 @@ async function mapWithConcurrency<T, R>(
 }
 
 function tokenRefreshRetryDelayMs(attempt: number): number {
-  if (process.env.NODE_ENV === 'test') return 0;
   return TOKEN_REFRESH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
 }
 
