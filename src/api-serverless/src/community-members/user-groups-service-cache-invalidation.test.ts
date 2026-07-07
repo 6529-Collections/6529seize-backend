@@ -1,6 +1,8 @@
 import { NewUserGroupEntity, UserGroupsService } from './user-groups.service';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
+  GroupBeneficiaryGrantMatchMode,
+  GroupNftOwnershipMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
@@ -11,6 +13,7 @@ import {
 } from '@/redis';
 import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
+import { ApiGroupBeneficiaryGrantMatchMode } from '@/api/generated/models/ApiGroupBeneficiaryGrantMatchMode';
 import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
 import { ApiGroupTdhInclusionStrategy } from '@/api/generated/models/ApiGroupTdhInclusionStrategy';
 import { RequestContext } from '@/request.context';
@@ -55,16 +58,22 @@ function aNewGroup(overrides: Partial<NewGroupInput> = {}): NewGroupInput {
     level_max: null,
     owns_meme: false,
     owns_meme_tokens: null,
+    owns_meme_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
     owns_gradient: false,
     owns_gradient_tokens: null,
+    owns_gradient_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
     owns_nextgen: false,
     owns_nextgen_tokens: null,
+    owns_nextgen_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
     owns_lab: false,
     owns_lab_tokens: null,
+    owns_lab_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
     visible: true,
     is_private: false,
     is_direct_message: false,
     is_beneficiary_of_grant_id: null,
+    is_beneficiary_of_grant_match_mode:
+      GroupBeneficiaryGrantMatchMode.ANY_TOKEN,
     addresses: ['0x1', '0x2'],
     excluded_addresses: [],
     ...overrides
@@ -144,6 +153,8 @@ function anApiGroupFull(
       excluded_identity_group_id: null,
       excluded_identity_group_identities_count: 0,
       is_beneficiary_of_grant_id: null,
+      is_beneficiary_of_grant_match_mode:
+        ApiGroupBeneficiaryGrantMatchMode.AnyToken,
       is_beneficiary_of_grant: null,
       ...groupOverrides
     },

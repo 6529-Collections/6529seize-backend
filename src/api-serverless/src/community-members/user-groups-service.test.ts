@@ -1,13 +1,21 @@
 import { NewUserGroupEntity, UserGroupsService } from './user-groups.service';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import {
+  FilterDirection,
   GroupBeneficiaryGrantMatchMode,
   GroupNftOwnershipMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
 import { XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
-import { getRedisClient, WAVE_GROUPS_VERSION_CACHE_KEY } from '@/redis';
+import { RateMatter } from '@/entities/IRating';
+import { MEMES_CONTRACT } from '@/constants';
+import {
+  getRedisClient,
+  WAVE_GROUPS_CACHE_KEY,
+  WAVE_GROUPS_VERSION_CACHE_KEY
+} from '@/redis';
+import { SqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 import * as mcache from 'memory-cache';
 import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
@@ -39,7 +47,9 @@ function buildRedisMock(): RedisMock {
   };
 }
 
-function buildUserGroup(): UserGroupEntity {
+function buildUserGroup(
+  overrides: Partial<UserGroupEntity> = {}
+): UserGroupEntity {
   return {
     id: GROUP_ID,
     name: 'Group 1',
@@ -78,7 +88,9 @@ function buildUserGroup(): UserGroupEntity {
     is_private: false,
     is_direct_message: false,
     is_beneficiary_of_grant_id: null,
-    is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ANY_TOKEN
+    is_beneficiary_of_grant_match_mode:
+      GroupBeneficiaryGrantMatchMode.ANY_TOKEN,
+    ...overrides
   } as UserGroupEntity;
 }
 
@@ -147,7 +159,13 @@ function buildUserGroupsDbMock() {
     }),
     getByIds: jest.fn().mockResolvedValue([buildUserGroup()]),
     getGroupsUserIsEligibleByIdentity: jest.fn().mockResolvedValue([GROUP_ID]),
-    getGroupsUserIsExcludedFromByIdentity: jest.fn().mockResolvedValue([])
+    getGroupsUserIsExcludedFromByIdentity: jest.fn().mockResolvedValue([]),
+    getGivenCicAndRep: jest.fn().mockResolvedValue({ cic: 0, rep: 0 }),
+    getAllProfileOwnedTokensByProfileIdGroupedByContract: jest
+      .fn()
+      .mockResolvedValue({}),
+    getRatings: jest.fn().mockResolvedValue([]),
+    findBeneficiaryGrantGroupIdsForProfile: jest.fn().mockResolvedValue([])
   };
 }
 
@@ -471,5 +489,346 @@ describe('UserGroupsService eligibility cache', () => {
       [GROUP_ID]
     ]);
     expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the wave-group id scan when the wave-group entity blob is warm', async () => {
+    const waveGroup = buildUserGroup();
+    const redis = buildRedisMock();
+    redis.get.mockImplementation((key: string) => {
+      if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
+        return Promise.resolve('7');
+      }
+      if (key === WAVE_GROUPS_CACHE_KEY) {
+        return Promise.resolve(JSON.stringify([waveGroup]));
+      }
+      return Promise.resolve(null);
+    });
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+    const userGroupsDb = buildUserGroupsDbMock();
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+    expect(userGroupsDb.getAllWaveRelatedGroups).not.toHaveBeenCalled();
+    expect(userGroupsDb.getByIds).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalledWith(
+      WAVE_GROUPS_CACHE_KEY,
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it('scans wave-group ids and caches the entity blob when the blob is cold', async () => {
+    const waveGroup = buildUserGroup();
+    const redis = buildRedisMock();
+    redis.get.mockImplementation((key: string) => {
+      if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
+        return Promise.resolve('7');
+      }
+      return Promise.resolve(null);
+    });
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+    const userGroupsDb = buildUserGroupsDbMock();
+    userGroupsDb.getAllWaveRelatedGroups.mockResolvedValue([GROUP_ID]);
+    userGroupsDb.getByIds.mockResolvedValue([waveGroup]);
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+    expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
+    expect(userGroupsDb.getByIds).toHaveBeenCalledWith(
+      [GROUP_ID],
+      expect.anything()
+    );
+    expect(redis.set).toHaveBeenCalledWith(
+      WAVE_GROUPS_CACHE_KEY,
+      JSON.stringify([waveGroup]),
+      { EX: 60 }
+    );
+  });
+
+  it('returns peer-produced cache entry without sleeping when it is already present', async () => {
+    const sleepSpy = jest.spyOn(Time.prototype, 'sleep');
+    const redis = buildRedisMock();
+    let eligibleGroupsCacheReads = 0;
+    redis.get.mockImplementation((key: string) => {
+      if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
+        return Promise.resolve('7');
+      }
+      if (key === ELIGIBLE_GROUPS_CACHE_KEY) {
+        eligibleGroupsCacheReads++;
+        if (eligibleGroupsCacheReads === 1) {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(
+          JSON.stringify({
+            eligibleGroupIds: [GROUP_ID],
+            computedAtMillis: 3_000,
+            waveGroupsVersion: 7
+          })
+        );
+      }
+      return Promise.resolve(null);
+    });
+    redis.set.mockResolvedValueOnce(null);
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+    const userGroupsDb = buildUserGroupsDbMock();
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+    expect(sleepSpy).not.toHaveBeenCalled();
+    expect(eligibleGroupsCacheReads).toBe(2);
+    expect(userGroupsDb.getAllWaveRelatedGroups).not.toHaveBeenCalled();
+  });
+});
+
+describe('UserGroupsService eligibility computation semantics', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.restoreAllMocks();
+    mcache.clear();
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+  });
+
+  it('keeps the sequential elimination semantics across all criteria types', async () => {
+    // Sequential reference semantics: banned-by-identity split first, then
+    // simple metrics -> total sent cic/rep -> ownings -> granular ratings ->
+    // beneficiary grants; groups passing all checks come first, groups where
+    // the user is in by identity are appended last.
+    const tdhPass = buildUserGroup({
+      id: 'tdh-pass',
+      profile_group_id: null,
+      tdh_min: 10
+    });
+    const tdhFail = buildUserGroup({
+      id: 'tdh-fail',
+      profile_group_id: null,
+      tdh_min: 1000
+    });
+    const ownsPass = buildUserGroup({
+      id: 'owns-pass',
+      profile_group_id: null,
+      owns_meme: true,
+      owns_meme_tokens: JSON.stringify(['1'])
+    });
+    const ownsFail = buildUserGroup({
+      id: 'owns-fail',
+      profile_group_id: null,
+      owns_meme: true,
+      owns_meme_tokens: JSON.stringify(['999'])
+    });
+    const ownsAnyTokenPass = buildUserGroup({
+      id: 'owns-any-token-pass',
+      profile_group_id: null,
+      owns_meme: true,
+      owns_meme_tokens: JSON.stringify(['999', '1']),
+      owns_meme_tokens_match_mode: GroupNftOwnershipMatchMode.ANY_TOKEN
+    });
+    const sentRepPass = buildUserGroup({
+      id: 'sent-rep-pass',
+      profile_group_id: null,
+      rep_min: 5,
+      rep_direction: FilterDirection.Sent
+    });
+    const sentRepFail = buildUserGroup({
+      id: 'sent-rep-fail',
+      profile_group_id: null,
+      rep_min: 100,
+      rep_direction: FilterDirection.Sent
+    });
+    const repByUserPass = buildUserGroup({
+      id: 'rep-by-user-pass',
+      profile_group_id: null,
+      rep_min: 5,
+      rep_user: 'rater-x'
+    });
+    const repByUserFail = buildUserGroup({
+      id: 'rep-by-user-fail',
+      profile_group_id: null,
+      rep_min: 50,
+      rep_user: 'rater-x'
+    });
+    const grantPass = buildUserGroup({
+      id: 'grant-pass',
+      profile_group_id: null,
+      is_beneficiary_of_grant_id: 'grant-1'
+    });
+    const grantFail = buildUserGroup({
+      id: 'grant-fail',
+      profile_group_id: null,
+      is_beneficiary_of_grant_id: 'grant-2',
+      is_beneficiary_of_grant_match_mode:
+        GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+    });
+    const bannedGroup = buildUserGroup({
+      id: 'banned-group',
+      profile_group_id: null,
+      excluded_profile_group_id: 'excluded-pg',
+      tdh_min: 10
+    });
+    const byIdentityGroup = buildUserGroup({ id: 'by-identity-group' });
+    const exclusionOnlyGroup = buildUserGroup({
+      id: 'exclusion-only-group',
+      profile_group_id: null,
+      excluded_profile_group_id: 'excluded-pg-2'
+    });
+    const allGroups = [
+      tdhPass,
+      tdhFail,
+      ownsPass,
+      ownsFail,
+      ownsAnyTokenPass,
+      sentRepPass,
+      sentRepFail,
+      repByUserPass,
+      repByUserFail,
+      grantPass,
+      grantFail,
+      bannedGroup,
+      byIdentityGroup,
+      exclusionOnlyGroup
+    ];
+
+    const userGroupsDb = buildUserGroupsDbMock();
+    userGroupsDb.getAllWaveRelatedGroups.mockResolvedValue(
+      allGroups.map((it) => it.id)
+    );
+    userGroupsDb.getByIds.mockResolvedValue(allGroups);
+    userGroupsDb.getIdentityByProfileId.mockResolvedValue({
+      profile_id: PROFILE_ID,
+      rep: 0,
+      cic: 0,
+      tdh: 50,
+      xtdh: 0,
+      level_raw: 0
+    });
+    userGroupsDb.getGroupsUserIsEligibleByIdentity.mockResolvedValue([
+      byIdentityGroup.id
+    ]);
+    userGroupsDb.getGroupsUserIsExcludedFromByIdentity.mockResolvedValue([
+      bannedGroup.id
+    ]);
+    userGroupsDb.getGivenCicAndRep.mockResolvedValue({ cic: 0, rep: 10 });
+    userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract.mockResolvedValue(
+      { [MEMES_CONTRACT.toLowerCase()]: ['1', '2'] }
+    );
+    userGroupsDb.getRatings.mockResolvedValue([
+      {
+        rater_profile_id: 'rater-x',
+        matter_target_id: PROFILE_ID,
+        matter: RateMatter.REP,
+        matter_category: 'kindness',
+        rating: 10
+      }
+    ]);
+    userGroupsDb.findBeneficiaryGrantGroupIdsForProfile.mockResolvedValue([
+      'grant-pass'
+    ]);
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([
+      'tdh-pass',
+      'owns-pass',
+      'owns-any-token-pass',
+      'sent-rep-pass',
+      'rep-by-user-pass',
+      'grant-pass',
+      'exclusion-only-group',
+      'by-identity-group'
+    ]);
+
+    expect(userGroupsDb.getGivenCicAndRep).toHaveBeenCalledTimes(1);
+    expect(userGroupsDb.getGivenCicAndRep).toHaveBeenCalledWith(PROFILE_ID);
+    expect(
+      userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract
+    ).toHaveBeenCalledWith(PROFILE_ID, expect.anything());
+    expect(userGroupsDb.getRatings).toHaveBeenCalledTimes(1);
+    expect(userGroupsDb.getRatings).toHaveBeenCalledWith(
+      PROFILE_ID,
+      ['rater-x'],
+      []
+    );
+    expect(
+      userGroupsDb.findBeneficiaryGrantGroupIdsForProfile
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      userGroupsDb.findBeneficiaryGrantGroupIdsForProfile
+    ).toHaveBeenCalledWith(
+      {
+        beneficiaryGrantGroups: [
+          {
+            groupId: 'grant-pass',
+            grantId: 'grant-1',
+            matchMode: GroupBeneficiaryGrantMatchMode.ANY_TOKEN
+          },
+          {
+            groupId: 'grant-fail',
+            grantId: 'grant-2',
+            matchMode: GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+          }
+        ],
+        profileId: PROFILE_ID
+      },
+      expect.anything()
+    );
+  });
+
+  it('skips conditional per-profile fetches when no candidate group needs them', async () => {
+    const userGroupsDb = buildUserGroupsDbMock();
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+    expect(userGroupsDb.getGivenCicAndRep).not.toHaveBeenCalled();
+    expect(
+      userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract
+    ).not.toHaveBeenCalled();
+    expect(userGroupsDb.getRatings).not.toHaveBeenCalled();
+    expect(
+      userGroupsDb.findBeneficiaryGrantGroupIdsForProfile
+    ).not.toHaveBeenCalled();
+  });
+});
+
+describe('UserGroupsDb getAllProfileOwnedTokensByProfileIdGroupedByContract', () => {
+  it('groups plain token rows by lowercased contract with token ids as lowercase strings', async () => {
+    const execute = jest.fn().mockResolvedValue([
+      { contract: '0xABC', token_id: 1 },
+      { contract: '0xabc', token_id: 'TOKEN-2' },
+      { contract: '0xDeF', token_id: 42 }
+    ]);
+    const db = new UserGroupsDb(() => ({ execute }) as unknown as SqlExecutor);
+
+    const result =
+      await db.getAllProfileOwnedTokensByProfileIdGroupedByContract(
+        PROFILE_ID,
+        {}
+      );
+
+    expect(result).toEqual({
+      '0xabc': ['1', 'token-2'],
+      '0xdef': ['42']
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    const sql = execute.mock.calls[0][0] as string;
+    expect(sql.toLowerCase()).not.toContain('group_concat');
+    expect(execute).toHaveBeenCalledWith(
+      expect.any(String),
+      { profileId: PROFILE_ID },
+      { wrappedConnection: undefined }
+    );
   });
 });
