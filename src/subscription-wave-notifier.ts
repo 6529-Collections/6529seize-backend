@@ -11,6 +11,7 @@ import { SubscriptionTopUp } from '@/entities/ISubscription';
 import { env } from '@/env';
 import { identitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
+import { PROFILE_HANDLE_REGEX } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 
@@ -21,12 +22,26 @@ const SUBSCRIPTIONS_BOT_PROFILE_ID_ENV = 'SUBSCRIPTIONS_BOT_PROFILE_ID';
 const SUBSCRIPTIONS_ADMIN_HANDLES_ENV = 'SUBSCRIPTIONS_ADMIN_HANDLES';
 
 function sanitizeMentionHandle(handle: string): string {
-  return handle
-    .trim()
-    .replace(/^@\[/, '')
-    .replace(/]$/, '')
-    .replace(/^@/, '')
-    .trim();
+  const trimmed = handle.trim();
+  const bracketMention = /^@?\[([^\]]+)]$/.exec(trimmed);
+  const withoutMentionSyntax = bracketMention?.[1] ?? trimmed.replace(/^@/, '');
+  const sanitized = withoutMentionSyntax.trim();
+  return PROFILE_HANDLE_REGEX.test(sanitized) ? sanitized : '';
+}
+
+function normalizeMentionHandles(handles: string[]): string[] {
+  const normalizedHandles: string[] = [];
+  const seenHandles = new Set<string>();
+  for (const handle of handles) {
+    const sanitized = sanitizeMentionHandle(handle);
+    const normalizedHandle = sanitized.toLowerCase();
+    if (!sanitized || seenHandles.has(normalizedHandle)) {
+      continue;
+    }
+    seenHandles.add(normalizedHandle);
+    normalizedHandles.push(sanitized);
+  }
+  return normalizedHandles;
 }
 
 export function getSubscriptionAdminHandles(): string[] {
@@ -34,7 +49,7 @@ export function getSubscriptionAdminHandles(): string[] {
   if (!rawHandles) {
     return [];
   }
-  return rawHandles.split(/[;,]/).map(sanitizeMentionHandle).filter(Boolean);
+  return normalizeMentionHandles(rawHandles.split(/[;,]/));
 }
 
 function buildMentionLine(handles: string[]): string {
@@ -193,6 +208,7 @@ async function postSubscriptionWaveDropBestEffort({
   }
 
   try {
+    const normalizedMentionedUsers = normalizeMentionHandles(mentionedUsers);
     const pendingPushNotificationIds =
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -203,6 +219,14 @@ async function postSubscriptionWaveDropBestEffort({
           if (!botIdentity) {
             logger.warn(
               `[SKIPPING WAVE NOTIFICATION] [BOT PROFILE ${botProfileId} NOT FOUND]`
+            );
+            return [];
+          }
+          const authorIdentity =
+            botIdentity.handle ?? botIdentity.primary_address;
+          if (!authorIdentity) {
+            logger.warn(
+              `[SKIPPING WAVE NOTIFICATION] [BOT PROFILE ${botProfileId} HAS NO AUTHOR IDENTITY]`
             );
             return [];
           }
@@ -221,10 +245,12 @@ async function postSubscriptionWaveDropBestEffort({
               }
             ],
             referenced_nfts: [],
-            mentioned_users: mentionedUsers.map((handle) => ({ handle })),
+            mentioned_users: normalizedMentionedUsers.map((handle) => ({
+              handle
+            })),
             mentioned_waves: [],
             metadata: [],
-            author_identity: botIdentity.handle ?? botIdentity.primary_address,
+            author_identity: authorIdentity,
             author_id: botProfileId,
             drop_type: DropType.CHAT,
             mentioned_groups: [],

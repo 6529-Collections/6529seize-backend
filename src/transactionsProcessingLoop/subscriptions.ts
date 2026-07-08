@@ -35,6 +35,23 @@ import {
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
+type SubscriptionWaveNotification =
+  | {
+      kind: 'no-subscription-found';
+      airdropAddress: string;
+      transactionLink: string;
+    }
+  | {
+      kind: 'no-balance-found';
+      consolidationKey: string;
+      transactionLink: string;
+    }
+  | {
+      kind: 'insufficient-balance';
+      consolidationKey: string;
+      transactionLink: string;
+    };
+
 export const redeemSubscriptions = async (reset?: boolean) => {
   const blockRepo = getDataSource().getRepository(
     TransactionsProcessedSubscriptionsBlock
@@ -75,9 +92,10 @@ export const redeemSubscriptions = async (reset?: boolean) => {
 
   logger.info(`[${airdrops.length} AIRDROPS TO PROCESS]`);
 
+  const waveNotifications: SubscriptionWaveNotification[] = [];
   await getDataSource().transaction(async (entityManager) => {
     for (const drop of airdrops) {
-      await processAirdrop(drop, entityManager);
+      waveNotifications.push(...(await processAirdrop(drop, entityManager)));
     }
     const transactionBlockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
@@ -85,24 +103,29 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     await persistBlock(transactionBlockRepo, maxBlockTransaction);
     logger.info(`[BLOCK ${maxBlockTransaction.block} PERSISTED]`);
   });
+
+  await sendSubscriptionWaveNotifications(waveNotifications);
 };
 
 export async function processAirdrop(
   transaction: Transaction,
   entityManager: EntityManager
-) {
+): Promise<SubscriptionWaveNotification[]> {
+  const waveNotifications: SubscriptionWaveNotification[] = [];
   const validation = await validateNonSubscriptionAirdrop(
     transaction,
     entityManager
   );
 
   if (validation.valid) {
-    return;
+    return waveNotifications;
   }
 
   for (let i = 0; i < transaction.token_count; i++) {
-    await processSubscription(transaction, entityManager);
+    await processSubscription(transaction, entityManager, waveNotifications);
   }
+
+  return waveNotifications;
 }
 
 export async function validateNonSubscriptionAirdrop(
@@ -196,7 +219,8 @@ export async function validateNonSubscriptionAirdrop(
 
 async function processSubscription(
   transaction: Transaction,
-  entityManager: EntityManager
+  entityManager: EntityManager,
+  waveNotifications: SubscriptionWaveNotification[]
 ) {
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
@@ -211,10 +235,7 @@ async function processSubscription(
   )[0];
 
   if (!finalSubscription) {
-    const transactionLink = ethTools.toEtherScanTransactionLink(
-      1,
-      transaction.transaction
-    );
+    const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
     logger.warn(message);
     await sendDiscordUpdate(
@@ -223,7 +244,8 @@ async function processSubscription(
       'Subscriptions',
       'warn'
     );
-    await sendNoSubscriptionFoundWaveWarning({
+    waveNotifications.push({
+      kind: 'no-subscription-found',
       airdropAddress: transaction.to_address,
       transactionLink
     });
@@ -235,10 +257,7 @@ async function processSubscription(
     entityManager
   );
   if (!balance) {
-    const transactionLink = ethTools.toEtherScanTransactionLink(
-      1,
-      transaction.transaction
-    );
+    const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
     logger.error(message);
     await sendDiscordUpdate(
@@ -247,7 +266,8 @@ async function processSubscription(
       'Subscriptions',
       'error'
     );
-    await sendNoBalanceFoundWaveError({
+    waveNotifications.push({
+      kind: 'no-balance-found',
       consolidationKey: finalSubscription.consolidation_key,
       transactionLink
     });
@@ -256,10 +276,7 @@ async function processSubscription(
       balance: 0
     };
   } else if (MEMES_MINT_PRICE > balance.balance) {
-    const transactionLink = ethTools.toEtherScanTransactionLink(
-      1,
-      transaction.transaction
-    );
+    const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
     logger.error(message);
     await sendDiscordUpdate(
@@ -268,7 +285,8 @@ async function processSubscription(
       'Subscriptions',
       'error'
     );
-    await sendInsufficientBalanceWaveError({
+    waveNotifications.push({
+      kind: 'insufficient-balance',
       consolidationKey: finalSubscription.consolidation_key,
       transactionLink
     });
@@ -321,4 +339,36 @@ async function processSubscription(
   await entityManager
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);
+}
+
+function buildTransactionLink(transactionHash: string): string {
+  const chainId = parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1');
+  return ethTools.toEtherScanTransactionLink(chainId, transactionHash);
+}
+
+async function sendSubscriptionWaveNotifications(
+  notifications: SubscriptionWaveNotification[]
+): Promise<void> {
+  for (const notification of notifications) {
+    switch (notification.kind) {
+      case 'no-subscription-found':
+        await sendNoSubscriptionFoundWaveWarning({
+          airdropAddress: notification.airdropAddress,
+          transactionLink: notification.transactionLink
+        });
+        break;
+      case 'no-balance-found':
+        await sendNoBalanceFoundWaveError({
+          consolidationKey: notification.consolidationKey,
+          transactionLink: notification.transactionLink
+        });
+        break;
+      case 'insufficient-balance':
+        await sendInsufficientBalanceWaveError({
+          consolidationKey: notification.consolidationKey,
+          transactionLink: notification.transactionLink
+        });
+        break;
+    }
+  }
 }
