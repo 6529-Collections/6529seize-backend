@@ -56,6 +56,7 @@ import publicWavesRoutes from './waves/waves-public.routes';
 import wavesRoutes from './waves/waves.routes';
 import xtdhRoutes from './xtdh/xtdh.routes';
 import nftLinksRoutes from './nft-links/nft-links.routes';
+import ciPipelineAlertRoutes from './ci-pipeline-alerts/ci-pipeline-alert.routes';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
@@ -726,7 +727,11 @@ async function initializeApp() {
       verify: (req: any, _res: any, buf: Buffer) => {
         // Store raw body only for webhook endpoints that need signature verification
         const url = (req.url ?? '').split('?')[0];
-        if (url === '/gh-hooks' || url === '/dev-alerts') {
+        if (
+          url === '/gh-hooks' ||
+          url === '/dev-alerts' ||
+          url === '/ci-pipeline-alerts'
+        ) {
           req.rawBody = buf;
         }
       }
@@ -1570,6 +1575,7 @@ async function initializeApp() {
   });
 
   rootRouter.use('/deploy', deployRoutes);
+  rootRouter.use('/ci-pipeline-alerts', ciPipelineAlertRoutes);
 
   rootRouter.get('/health/ui', async (req, res) => {
     const healthData = await getHealthData();
