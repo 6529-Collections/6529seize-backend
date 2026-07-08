@@ -16,6 +16,7 @@ import {
   getLevelFromScore
 } from '@/profiles/profile-level';
 import {
+  GroupBeneficiaryGrantMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
@@ -32,6 +33,7 @@ import { ApiChangeGroupVisibility } from '@/api/generated/models/ApiChangeGroupV
 import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
 import { ApiGroupFilterDirection } from '@/api/generated/models/ApiGroupFilterDirection';
 import { ApiGroupDescription } from '@/api/generated/models/ApiGroupDescription';
+import { ApiGroupBeneficiaryGrantMatchMode } from '@/api/generated/models/ApiGroupBeneficiaryGrantMatchMode';
 import {
   ApiGroupOwnsNft,
   ApiGroupOwnsNftNameEnum
@@ -105,6 +107,8 @@ const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES = 4;
 const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS = 75;
 const eligibleGroupsPromisesByProfileId = new Map<string, Promise<string[]>>();
 const logger = Logger.get('USER_GROUPS_SERVICE');
+const DEFAULT_BENEFICIARY_GRANT_MATCH_MODE =
+  GroupBeneficiaryGrantMatchMode.ANY_TOKEN;
 
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
@@ -166,6 +170,18 @@ export class UserGroupsService {
             '-' +
             ids.uniqueShortId();
           const beneficiaryOfGrantId = group.is_beneficiary_of_grant_id;
+          const beneficiaryGrantMatchMode =
+            group.is_beneficiary_of_grant_match_mode ??
+            DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
+          if (
+            !beneficiaryOfGrantId &&
+            beneficiaryGrantMatchMode ===
+              GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+          ) {
+            throw new BadRequestException(
+              `Beneficiary grant match mode ALL_TOKENS requires an xTDH grant`
+            );
+          }
           if (beneficiaryOfGrantId) {
             const grantEntity = await xTdhRepository.getGrantById(
               beneficiaryOfGrantId,
@@ -174,6 +190,15 @@ export class UserGroupsService {
             if (!grantEntity) {
               throw new NotFoundException(
                 `Can't create group based on grant ${beneficiaryOfGrantId} as it doesn't exist`
+              );
+            }
+            if (
+              beneficiaryGrantMatchMode ===
+                GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
+              grantEntity.token_mode !== XTdhGrantTokenMode.INCLUDE
+            ) {
+              throw new BadRequestException(
+                `Beneficiary grant match mode ALL_TOKENS can only be used with grants that specify target tokens`
               );
             }
           }
@@ -276,7 +301,8 @@ export class UserGroupsService {
       visible: true,
       is_private: true,
       is_direct_message: true,
-      is_beneficiary_of_grant_id: null
+      is_beneficiary_of_grant_id: null,
+      is_beneficiary_of_grant_match_mode: DEFAULT_BENEFICIARY_GRANT_MATCH_MODE
     };
 
     return await this.save(userGroup, creatorProfile.id!, ctx, true);
@@ -444,16 +470,22 @@ export class UserGroupsService {
       ctx.timer,
       'whichOfGivenGroupsIsUserEligibleFor->eliminateGroupsByBeneficiaryGrants',
       async () => {
-        const beneficiaryGrantIds = groups
-          .map((group) => group.is_beneficiary_of_grant_id)
-          .filter((it) => !!it) as string[];
-        if (!beneficiaryGrantIds.length) {
+        const beneficiaryGrantGroups = groups
+          .filter((group) => !!group.is_beneficiary_of_grant_id)
+          .map((group) => ({
+            groupId: group.id,
+            grantId: group.is_beneficiary_of_grant_id!,
+            matchMode:
+              group.is_beneficiary_of_grant_match_mode ??
+              DEFAULT_BENEFICIARY_GRANT_MATCH_MODE
+          }));
+        if (!beneficiaryGrantGroups.length) {
           return groups;
         }
-        const grantsWhereProfileIsBeneficiary =
-          await this.userGroupsDb.inWhichOfGrantsIsProfileBeneficiary(
+        const groupIdsWhereProfileIsBeneficiary =
+          await this.userGroupsDb.findBeneficiaryGrantGroupIdsForProfile(
             {
-              beneficiaryGrantIds,
+              beneficiaryGrantGroups,
               profileId: profile.profile_id
             },
             ctx
@@ -461,9 +493,7 @@ export class UserGroupsService {
         return groups.filter(
           (group) =>
             !group.is_beneficiary_of_grant_id ||
-            grantsWhereProfileIsBeneficiary.includes(
-              group.is_beneficiary_of_grant_id
-            )
+            groupIdsWhereProfileIsBeneficiary.includes(group.id)
         );
       }
     );
@@ -1283,7 +1313,9 @@ export class UserGroupsService {
           owns_nfts: [],
           identity_group_id: null,
           excluded_identity_group_id: null,
-          is_beneficiary_of_grant_id: null
+          is_beneficiary_of_grant_id: null,
+          is_beneficiary_of_grant_match_mode:
+            ApiGroupBeneficiaryGrantMatchMode.AnyToken
         },
         null,
         ctx
@@ -1364,6 +1396,10 @@ export class UserGroupsService {
     const params: Record<string, any> = {};
     const beneficiaryOwnersPart = this.getBeneficiaryOwnersPart(
       group.is_beneficiary_of_grant_id,
+      enums.resolve(
+        GroupBeneficiaryGrantMatchMode,
+        group.is_beneficiary_of_grant_match_mode
+      ) ?? DEFAULT_BENEFICIARY_GRANT_MATCH_MODE,
       params
     );
     const repPart = this.getRepPart(group, params);
@@ -1550,11 +1586,43 @@ export class UserGroupsService {
 
   private getBeneficiaryOwnersPart(
     is_beneficiary_of_grant_id: string | null,
+    matchMode: GroupBeneficiaryGrantMatchMode,
     params: Record<string, any>
   ): string | null {
     if (!is_beneficiary_of_grant_id) {
       return null;
     }
+    const includeGrantBeneficiaries =
+      matchMode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+        ? `
+      select
+          i.profile_id as beneficiary_id
+      from ${XTDH_GRANTS_TABLE} xg
+               join ${XTDH_GRANT_TOKENS_TABLE} xtk on xg.token_mode = '${XTdhGrantTokenMode.INCLUDE}' and xtk.tokenset_id = xg.tokenset_id and xtk.target_partition = xg.target_partition
+               join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.\`partition\` = xg.target_partition and eto.token_id = xtk.token_id
+               join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.address = eto.owner
+               join ${IDENTITIES_TABLE} i on i.consolidation_key = ack.consolidation_key
+      where xg.status = '${XTdhGrantStatus.GRANTED}' and xg.token_mode = '${XTdhGrantTokenMode.INCLUDE}'
+        and xg.id = :is_beneficiary_of_grant_id
+      group by i.profile_id, xg.tokenset_id, xg.target_partition
+      having count(distinct eto.token_id) = (
+        select count(distinct all_tokens.token_id)
+        from ${XTDH_GRANT_TOKENS_TABLE} all_tokens
+        where all_tokens.tokenset_id = xg.tokenset_id
+          and all_tokens.target_partition = xg.target_partition
+      )
+      `
+        : `
+      select
+          distinct i.profile_id as beneficiary_id
+      from ${XTDH_GRANTS_TABLE} xg
+               join ${XTDH_GRANT_TOKENS_TABLE} xtk on xg.token_mode = '${XTdhGrantTokenMode.INCLUDE}' and xtk.tokenset_id = xg.tokenset_id and xtk.target_partition = xg.target_partition
+               join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.\`partition\` = xg.target_partition and eto.token_id = xtk.token_id
+               join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.address = eto.owner
+               join ${IDENTITIES_TABLE} i on i.consolidation_key = ack.consolidation_key
+      where xg.status = '${XTdhGrantStatus.GRANTED}' and xg.token_mode = '${XTdhGrantTokenMode.INCLUDE}'
+        and xg.id = :is_beneficiary_of_grant_id
+      `;
     const beneficiariesPart = `
       beneficiaries as (select
           distinct i.profile_id as beneficiary_id
@@ -1564,16 +1632,13 @@ export class UserGroupsService {
                join ${XTDH_GRANTS_TABLE} xg on xg.target_partition = eto.\`partition\`
       where xg.status = '${XTdhGrantStatus.GRANTED}' and xg.token_mode = '${XTdhGrantTokenMode.ALL}'
         and xg.id = :is_beneficiary_of_grant_id
+        ${
+          matchMode === GroupBeneficiaryGrantMatchMode.ANY_TOKEN
+            ? ''
+            : 'and 1 = 0'
+        }
       union all
-      select
-          distinct i.profile_id as beneficiary_id
-      from ${XTDH_GRANTS_TABLE} xg
-               join ${XTDH_GRANT_TOKENS_TABLE} xtk on xg.token_mode = 'INCLUDE' and xtk.tokenset_id = xg.tokenset_id
-               join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.\`partition\` = xg.target_partition and eto.token_id = xtk.token_id
-               join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.address = eto.owner
-               join ${IDENTITIES_TABLE} i on i.consolidation_key = ack.consolidation_key
-      where xg.status = '${XTdhGrantStatus.GRANTED}' and xg.token_mode = '${XTdhGrantTokenMode.INCLUDE}'
-        and xg.id = :is_beneficiary_of_grant_id)
+      ${includeGrantBeneficiaries})
     `;
     params['is_beneficiary_of_grant_id'] = is_beneficiary_of_grant_id;
     return beneficiariesPart;
@@ -1964,6 +2029,11 @@ export class UserGroupsService {
           groupsIdentityGroupsIdsAndIdentityCounts[it.id]
             ?.excluded_identity_count ?? 0,
         is_beneficiary_of_grant_id: it.is_beneficiary_of_grant_id,
+        is_beneficiary_of_grant_match_mode: enums.resolveOrThrow(
+          ApiGroupBeneficiaryGrantMatchMode,
+          it.is_beneficiary_of_grant_match_mode ??
+            DEFAULT_BENEFICIARY_GRANT_MATCH_MODE
+        ),
         is_beneficiary_of_grant:
           grantsApiModels.find((g) => g.id === it.is_beneficiary_of_grant_id) ??
           null

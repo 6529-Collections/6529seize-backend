@@ -1,4 +1,5 @@
 import {
+  GroupBeneficiaryGrantMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '../../entities/IUserGroup';
@@ -44,7 +45,8 @@ const aDefaultUserGroup: BaseUserGroup = {
   created_by: randomUUID(),
   profile_group_id: null,
   excluded_profile_group_id: null,
-  is_beneficiary_of_grant_id: null
+  is_beneficiary_of_grant_id: null,
+  is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ANY_TOKEN
 };
 
 export function aUserGroup(

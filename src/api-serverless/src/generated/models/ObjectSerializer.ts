@@ -184,6 +184,7 @@ export * from '../models/ApiGlobalRepCategoryWaveOverview';
 export * from '../models/ApiGlobalRepCategoryWaveRef';
 export * from '../models/ApiGlobalRepCategoryWavesPage';
 export * from '../models/ApiGroup';
+export * from '../models/ApiGroupBeneficiaryGrantMatchMode';
 export * from '../models/ApiGroupCicFilter';
 export * from '../models/ApiGroupDescription';
 export * from '../models/ApiGroupFilterDirection';
@@ -448,6 +449,7 @@ export * from '../models/ApiXTdhGlobalStats';
 export * from '../models/ApiXTdhGrant';
 export * from '../models/ApiXTdhGrantStatus';
 export * from '../models/ApiXTdhGrantTargetChain';
+export * from '../models/ApiXTdhGrantTargetTokenMode';
 export * from '../models/ApiXTdhGrantToken';
 export * from '../models/ApiXTdhGrantTokensPage';
 export * from '../models/ApiXTdhGrantUpdateRequest';
@@ -584,7 +586,7 @@ import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropPollRequest } from '../models/ApiCreateDropPollRequest';
 import { ApiCreateDropRequest                 } from '../models/ApiCreateDropRequest';
 import { ApiCreateGroup } from '../models/ApiCreateGroup';
-import { ApiCreateGroupDescription } from '../models/ApiCreateGroupDescription';
+import { ApiCreateGroupDescription          } from '../models/ApiCreateGroupDescription';
 import { ApiCreateLegacyDesktopConnectionShareRequest , ApiCreateLegacyDesktopConnectionShareRequestClientTypeEnum     } from '../models/ApiCreateLegacyDesktopConnectionShareRequest';
 import { ApiCreateLegacyDesktopConnectionShareResponse } from '../models/ApiCreateLegacyDesktopConnectionShareResponse';
 import { ApiCreateMediaUploadUrlRequest   } from '../models/ApiCreateMediaUploadUrlRequest';
@@ -694,8 +696,9 @@ import { ApiGlobalRepCategoryWaveOverview } from '../models/ApiGlobalRepCategory
 import { ApiGlobalRepCategoryWaveRef } from '../models/ApiGlobalRepCategoryWaveRef';
 import { ApiGlobalRepCategoryWavesPage } from '../models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroup } from '../models/ApiGroup';
+import { ApiGroupBeneficiaryGrantMatchMode } from '../models/ApiGroupBeneficiaryGrantMatchMode';
 import { ApiGroupCicFilter     } from '../models/ApiGroupCicFilter';
-import { ApiGroupDescription } from '../models/ApiGroupDescription';
+import { ApiGroupDescription             } from '../models/ApiGroupDescription';
 import { ApiGroupFilterDirection } from '../models/ApiGroupFilterDirection';
 import { ApiGroupFull } from '../models/ApiGroupFull';
 import { ApiGroupLevelFilter } from '../models/ApiGroupLevelFilter';
@@ -955,9 +958,10 @@ import { ApiXTdhContribution } from '../models/ApiXTdhContribution';
 import { ApiXTdhContributionsPage } from '../models/ApiXTdhContributionsPage';
 import { ApiXTdhCreateGrant       } from '../models/ApiXTdhCreateGrant';
 import { ApiXTdhGlobalStats } from '../models/ApiXTdhGlobalStats';
-import { ApiXTdhGrant                } from '../models/ApiXTdhGrant';
+import { ApiXTdhGrant                 } from '../models/ApiXTdhGrant';
 import { ApiXTdhGrantStatus } from '../models/ApiXTdhGrantStatus';
 import { ApiXTdhGrantTargetChain } from '../models/ApiXTdhGrantTargetChain';
+import { ApiXTdhGrantTargetTokenMode } from '../models/ApiXTdhGrantTargetTokenMode';
 import { ApiXTdhGrantToken } from '../models/ApiXTdhGrantToken';
 import { ApiXTdhGrantTokensPage } from '../models/ApiXTdhGrantTokensPage';
 import { ApiXTdhGrantUpdateRequest } from '../models/ApiXTdhGrantUpdateRequest';
@@ -1058,6 +1062,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiDropSubscriptionTargetAction",
     "ApiDropType",
     "ApiFeedItemType",
+    "ApiGroupBeneficiaryGrantMatchMode",
     "ApiGroupFilterDirection",
     "ApiGroupOwnsNftNameEnum",
     "ApiGroupTdhInclusionStrategy",
@@ -1128,6 +1133,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiWavesV2ListType",
     "ApiXTdhGrantStatus",
     "ApiXTdhGrantTargetChain",
+    "ApiXTdhGrantTargetTokenMode",
     "CreateWalletAuthSession201ResponseClientTypeEnum",
     "LogoutWalletAuthSessionRequestClientTypeEnum",
     "MintingClaimAnimationDetailsFormatEnum",

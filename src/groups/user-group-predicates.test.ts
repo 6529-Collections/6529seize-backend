@@ -42,6 +42,7 @@ import {
 } from './user-group-predicates';
 import {
   FilterDirection,
+  GroupBeneficiaryGrantMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '../entities/IUserGroup';
@@ -112,7 +113,8 @@ function aGroup({
   owns_lab_tokens,
   profile_group_id,
   excluded_profile_group_id,
-  is_beneficiary_of_grant_id
+  is_beneficiary_of_grant_id,
+  is_beneficiary_of_grant_match_mode
 }: {
   cic_min?: number | null;
   cic_max?: number | null;
@@ -139,6 +141,7 @@ function aGroup({
   profile_group_id?: string | null;
   excluded_profile_group_id?: string | null;
   is_beneficiary_of_grant_id?: string | null;
+  is_beneficiary_of_grant_match_mode?: GroupBeneficiaryGrantMatchMode;
 }): UserGroupEntity {
   return withDerivedFields({
     id: 'a-group-id',
@@ -173,7 +176,10 @@ function aGroup({
     visible: true,
     is_private: false,
     is_direct_message: false,
-    is_beneficiary_of_grant_id: is_beneficiary_of_grant_id ?? null
+    is_beneficiary_of_grant_id: is_beneficiary_of_grant_id ?? null,
+    is_beneficiary_of_grant_match_mode:
+      is_beneficiary_of_grant_match_mode ??
+      GroupBeneficiaryGrantMatchMode.ANY_TOKEN
   });
 }
 

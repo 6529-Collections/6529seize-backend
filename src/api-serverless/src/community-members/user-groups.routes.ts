@@ -20,6 +20,7 @@ import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
 import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
 import {
   FilterDirection,
+  GroupBeneficiaryGrantMatchMode,
   GroupTdhInclusionStrategy
 } from '../../../entities/IUserGroup';
 import {
@@ -34,6 +35,7 @@ import { enums } from '../../../enums';
 import { collections } from '../../../collections';
 import { WALLET_REGEX } from '@/constants';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
+import { ApiGroupBeneficiaryGrantMatchMode } from '../generated/models/ApiGroupBeneficiaryGrantMatchMode';
 
 const router = asyncRouter();
 
@@ -183,6 +185,9 @@ router.post(
     const ownsNextgen = apiUserGroup.group.owns_nfts.find(
       (it) => it.name === ApiGroupOwnsNftNameEnum.Nextgen
     );
+    const beneficiaryGrantMatchMode =
+      apiUserGroup.group.is_beneficiary_of_grant_match_mode ??
+      ApiGroupBeneficiaryGrantMatchMode.AnyToken;
     const isPrivate = apiUserGroup.is_private ?? false;
     const userGroup: Omit<
       NewUserGroupEntity,
@@ -243,7 +248,11 @@ router.post(
       is_private: isPrivate,
       is_direct_message: false,
       is_beneficiary_of_grant_id:
-        apiUserGroup.group.is_beneficiary_of_grant_id ?? null
+        apiUserGroup.group.is_beneficiary_of_grant_id ?? null,
+      is_beneficiary_of_grant_match_mode: enums.resolveOrThrow(
+        GroupBeneficiaryGrantMatchMode,
+        beneficiaryGrantMatchMode
+      )
     };
     const response = await userGroupsService.save(userGroup, savingProfileId, {
       authenticationContext,
@@ -361,6 +370,11 @@ const GroupCicFilterSchema: Joi.ObjectSchema<ApiGroupCicFilter> =
     user_identity: NullableStringSchema
   });
 
+const GroupBeneficiaryGrantMatchModeSchema: Joi.StringSchema = Joi.string()
+  .valid(...Object.values(ApiGroupBeneficiaryGrantMatchMode))
+  .optional()
+  .default(ApiGroupBeneficiaryGrantMatchMode.AnyToken);
+
 const GroupOwnsNftSchema: Joi.ObjectSchema<ApiGroupOwnsNft> =
   Joi.object<ApiGroupOwnsNft>({
     name: Joi.string()
@@ -387,7 +401,8 @@ const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription> =
       .allow(null)
       .default([])
       .max(20000),
-    is_beneficiary_of_grant_id: Joi.string().optional()
+    is_beneficiary_of_grant_id: Joi.string().optional(),
+    is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchModeSchema
   });
 
 const NewUserGroupSchema = Joi.object<ApiCreateGroup>({

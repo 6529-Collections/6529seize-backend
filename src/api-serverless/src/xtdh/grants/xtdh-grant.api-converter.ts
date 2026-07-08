@@ -14,6 +14,7 @@ import { BadRequestException } from '../../../../exceptions';
 import { ApiXTdhCreateGrant } from '../../generated/models/ApiXTdhCreateGrant';
 import { ApiXTdhGrant } from '../../generated/models/ApiXTdhGrant';
 import { ApiXTdhGrantTargetChain } from '../../generated/models/ApiXTdhGrantTargetChain';
+import { ApiXTdhGrantTargetTokenMode } from '../../generated/models/ApiXTdhGrantTargetTokenMode';
 import { ApiXTdhGrantStatus } from '../../generated/models/ApiXTdhGrantStatus';
 import {
   xTdhRepository,
@@ -78,30 +79,38 @@ export class XTdhGrantApiConverter {
       grantorIds,
       ctx
     );
-    return models.map<ApiXTdhGrant>((model) => ({
-      id: model.id,
-      grantor: grantorIdentities[model.grantor_id],
-      target_chain: this.resolveApiTargetChainFromModelValue({
-        chainId: model.target_chain,
-        grantId: model.id
-      }),
-      target_contract: model.target_contract,
-      target_tokens_count: model.target_token_count,
+    return models.map<ApiXTdhGrant>((model) => {
+      const targetTokenMode = enums.resolve(
+        ApiXTdhGrantTargetTokenMode,
+        model.token_mode
+      );
 
-      rate: model.rate,
-      status: this.resolveApiStatusFromModelValue({
-        grantId: model.id,
-        status: model.status
-      }),
-      target_collection_name: model.target_collection_name,
-      error_details: model.error_details,
-      created_at: model.created_at.toMillis(),
-      updated_at: model.updated_at.toMillis(),
-      valid_from: model.valid_from?.toMillis() ?? null,
-      valid_to: model.valid_to?.toMillis() ?? null,
-      is_irrevocable: model.is_irrevocable,
-      total_granted: model.total_granted
-    }));
+      return {
+        id: model.id,
+        grantor: grantorIdentities[model.grantor_id],
+        target_chain: this.resolveApiTargetChainFromModelValue({
+          chainId: model.target_chain,
+          grantId: model.id
+        }),
+        target_contract: model.target_contract,
+        ...(targetTokenMode ? { target_token_mode: targetTokenMode } : {}),
+        target_tokens_count: model.target_token_count,
+
+        rate: model.rate,
+        status: this.resolveApiStatusFromModelValue({
+          grantId: model.id,
+          status: model.status
+        }),
+        target_collection_name: model.target_collection_name,
+        error_details: model.error_details,
+        created_at: model.created_at.toMillis(),
+        updated_at: model.updated_at.toMillis(),
+        valid_from: model.valid_from?.toMillis() ?? null,
+        valid_to: model.valid_to?.toMillis() ?? null,
+        is_irrevocable: model.is_irrevocable,
+        total_granted: model.total_granted
+      };
+    });
   }
 
   private resolveTargetChainFromApiValue(

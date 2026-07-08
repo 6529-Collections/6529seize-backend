@@ -1,5 +1,9 @@
 import { Time } from '../time';
-import { XTdhGrantEntity, XTdhGrantStatus } from '../entities/IXTdhGrant';
+import {
+  XTdhGrantEntity,
+  XTdhGrantStatus,
+  XTdhGrantTokenMode
+} from '../entities/IXTdhGrant';
 
 export interface CreateXTdhGrantCommand {
   target_chain: number;
@@ -16,6 +20,7 @@ export interface XTdhGrantModel {
   target_chain: number;
   target_contract: string;
   target_collection_name: string | null;
+  token_mode: XTdhGrantTokenMode;
   target_token_count: number;
   valid_to: Time | null;
   valid_from: Time | null;
@@ -42,6 +47,7 @@ export function fromXTdhGrantEntityToModel(
     target_chain: entity.target_chain,
     target_contract: entity.target_contract,
     target_collection_name: metadata.target_collection_name,
+    token_mode: entity.token_mode,
     target_token_count: metadata.target_token_count,
     valid_from:
       entity.valid_from === null ? null : Time.millis(entity.valid_from),
