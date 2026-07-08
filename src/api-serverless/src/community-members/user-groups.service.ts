@@ -889,6 +889,11 @@ export class UserGroupsService {
       )
     ) {
       this.putEligibleGroupsMemoryCache(profileId, redisCacheEntry, ttlSec);
+      this.logEligibilityRead({
+        profileId,
+        level: 'redis',
+        resultCount: redisCacheEntry.eligibleGroupIds.length
+      });
       return redisCacheEntry.eligibleGroupIds;
     }
 
@@ -905,10 +910,16 @@ export class UserGroupsService {
         timer
       });
       if (waitedCacheEntry) {
+        this.logEligibilityRead({
+          profileId,
+          level: 'lock_wait',
+          resultCount: waitedCacheEntry.eligibleGroupIds.length
+        });
         return waitedCacheEntry.eligibleGroupIds;
       }
     }
 
+    const computeStartMillis = Time.currentMillis();
     const results = await this.computeGroupsUserIsEligibleFor(profileId, timer);
     const computedAtMillis = Time.currentMillis();
     const latestProfileGroupChangeMillisAfterCompute = await this.timeAsync(
@@ -922,6 +933,13 @@ export class UserGroupsService {
         latestProfileGroupChangeMillisAfterCompute
       )
     ) {
+      this.logEligibilityRead({
+        profileId,
+        level: 'computed',
+        computeMs: computedAtMillis - computeStartMillis,
+        resultCount: results.length,
+        cached: false
+      });
       return results;
     }
 
@@ -937,7 +955,26 @@ export class UserGroupsService {
       ttlSec,
       timer
     );
+    this.logEligibilityRead({
+      profileId,
+      level: 'computed',
+      computeMs: computedAtMillis - computeStartMillis,
+      resultCount: results.length,
+      cached: true
+    });
     return results;
+  }
+
+  private logEligibilityRead(param: {
+    readonly profileId: string;
+    readonly level: 'redis' | 'lock_wait' | 'computed';
+    readonly computeMs?: number;
+    readonly resultCount: number;
+    readonly cached?: boolean;
+  }) {
+    // Memory-cache hits are deliberately not logged: they are the dominant
+    // path and would flood the logs without adding attribution value.
+    logger.info(`[ELIGIBILITY_READ] ${JSON.stringify(param)}`);
   }
 
   private hasProfileGroupChangeAdvanced(
