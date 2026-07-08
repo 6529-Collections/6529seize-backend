@@ -10,11 +10,13 @@
  * Do not edit the class manually.
  */
 
+import { ApiGroupNftOwnershipMatchMode } from '../models/ApiGroupNftOwnershipMatchMode';
 import { HttpFile } from '../http/http';
 
 export class ApiGroupOwnsNft {
     'name': ApiGroupOwnsNftNameEnum;
     'tokens': Array<string>;
+    'match_mode'?: ApiGroupNftOwnershipMatchMode;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,6 +33,12 @@ export class ApiGroupOwnsNft {
             "name": "tokens",
             "baseName": "tokens",
             "type": "Array<string>",
+            "format": ""
+        },
+        {
+            "name": "match_mode",
+            "baseName": "match_mode",
+            "type": "ApiGroupNftOwnershipMatchMode",
             "format": ""
         }    ];
 

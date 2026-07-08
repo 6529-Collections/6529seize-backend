@@ -1,5 +1,6 @@
 import {
   FilterDirection,
+  GroupNftOwnershipMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '../entities/IUserGroup';
@@ -13,6 +14,8 @@ import { NEXTGEN_CORE_CONTRACT } from '../nextgen/nextgen_constants';
 import { Network } from '@/alchemy-sdk';
 import { numbers } from '../numbers';
 import { assertUnreachable } from '../assertions';
+
+const DEFAULT_NFT_OWNERSHIP_MATCH_MODE = GroupNftOwnershipMatchMode.ALL_TOKENS;
 
 export const isRatingOutOfBounds = ({
   min,
@@ -71,10 +74,12 @@ export const isAnyGroupByOwningsCriteria = (groups: UserGroupEntity[]) => {
 export const isProfileHavingContractTokenOwningsMisMatch = ({
   neededContract,
   neededTokensString,
+  matchMode,
   ownings
 }: {
   neededContract: string;
   neededTokensString: string | null;
+  matchMode?: GroupNftOwnershipMatchMode | null;
   ownings: Record<string, string[]>;
 }): boolean => {
   const profilesCollectionOwnings = ownings[neededContract.toLowerCase()] ?? [];
@@ -84,10 +89,19 @@ export const isProfileHavingContractTokenOwningsMisMatch = ({
   const neededTokens = (
     neededTokensString ? JSON.parse(neededTokensString) : []
   ) as string[];
-  return (
-    neededTokens.length !== 0 &&
-    !!neededTokens.find((it) => !profilesCollectionOwnings.includes(it))
-  );
+  if (neededTokens.length === 0) {
+    return false;
+  }
+  const profilesCollectionOwningsSet = new Set(profilesCollectionOwnings);
+  const resolvedMatchMode = matchMode ?? DEFAULT_NFT_OWNERSHIP_MATCH_MODE;
+  switch (resolvedMatchMode) {
+    case GroupNftOwnershipMatchMode.ALL_TOKENS:
+      return neededTokens.some((it) => !profilesCollectionOwningsSet.has(it));
+    case GroupNftOwnershipMatchMode.ANY_TOKEN:
+      return neededTokens.every((it) => !profilesCollectionOwningsSet.has(it));
+    default:
+      return assertUnreachable(resolvedMatchMode);
+  }
 };
 
 export const isProfileViolatingOwnsNextGenCriteria = (
@@ -99,6 +113,7 @@ export const isProfileViolatingOwnsNextGenCriteria = (
     isProfileHavingContractTokenOwningsMisMatch({
       neededContract: NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET],
       neededTokensString: entity.owns_nextgen_tokens,
+      matchMode: entity.owns_nextgen_tokens_match_mode,
       ownings
     })
   );
@@ -113,6 +128,7 @@ export const isProfileViolatingGradientCriteria = (
     isProfileHavingContractTokenOwningsMisMatch({
       neededContract: GRADIENT_CONTRACT,
       neededTokensString: entity.owns_gradient_tokens,
+      matchMode: entity.owns_gradient_tokens_match_mode,
       ownings
     })
   );
@@ -127,6 +143,7 @@ export const isProfileViolatingLabCriteria = (
     isProfileHavingContractTokenOwningsMisMatch({
       neededContract: MEMELAB_CONTRACT,
       neededTokensString: entity.owns_lab_tokens,
+      matchMode: entity.owns_lab_tokens_match_mode,
       ownings
     })
   );
@@ -141,6 +158,7 @@ export const isProfileViolatingMemesCriteria = (
     isProfileHavingContractTokenOwningsMisMatch({
       neededContract: MEMES_CONTRACT,
       neededTokensString: entity.owns_meme_tokens,
+      matchMode: entity.owns_meme_tokens_match_mode,
       ownings
     })
   );

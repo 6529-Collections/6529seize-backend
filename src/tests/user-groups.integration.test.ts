@@ -15,17 +15,22 @@ import { mock } from 'ts-jest-mocker';
 import { IdentityEntity } from '@/entities/IIdentity';
 import {
   GroupBeneficiaryGrantMatchMode,
+  GroupNftOwnershipMatchMode,
   UserGroupEntity
 } from '@/entities/IUserGroup';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
-  XTDH_STATS_META_TABLE,
+  MEMES_CONTRACT,
+  NFT_OWNERS_TABLE,
+  XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE,
-  XTDH_GRANT_TOKENS_TABLE
+  XTDH_STATS_META_TABLE
 } from '@/constants';
 import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { Seed } from '@/tests/_setup/seed';
+import { ApiGroupNftOwnershipMatchMode } from '@/api/generated/models/ApiGroupNftOwnershipMatchMode';
+import { ApiGroupOwnsNftNameEnum } from '@/api/generated/models/ApiGroupOwnsNft';
 
 const tdh10Identity = anIdentity({ tdh: 10 });
 const tdh20Identity = anIdentity({ tdh: 20 });
@@ -35,6 +40,8 @@ const tdh11Identity2 = anIdentity({ tdh: 11 });
 const partialGrantTokenOwner = anIdentity({ tdh: 12 });
 const otherPartialGrantTokenOwner = anIdentity({ tdh: 13 });
 const fullGrantTokenOwner = anIdentity({ tdh: 14 });
+const oneMemeTokenOwner = anIdentity({ tdh: 0 });
+const allMemeTokensOwner = anIdentity({ tdh: 0 });
 
 const profileGroupWithTdh11Identity1 = aProfileGroup({
   profile_group_id: randomUUID(),
@@ -98,6 +105,16 @@ const fullOwnerGrantAllGroup = aUserGroup({
 const invalidFullCollectionGrantAllGroup = aUserGroup({
   is_beneficiary_of_grant_id: fullCollectionGrantId,
   is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+});
+const memeSpecificAnyGroup = aUserGroup({
+  owns_meme: true,
+  owns_meme_tokens: JSON.stringify(['100', '201', '325']),
+  owns_meme_tokens_match_mode: GroupNftOwnershipMatchMode.ANY_TOKEN
+});
+const memeSpecificAllGroup = aUserGroup({
+  owns_meme: true,
+  owns_meme_tokens: JSON.stringify(['100', '201', '325']),
+  owns_meme_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS
 });
 
 function withAddressConsolidationKeys(identities: IdentityEntity[]): Seed {
@@ -262,6 +279,30 @@ const withXtdhStatsMeta: Seed = {
   ]
 };
 
+const withInternalNftOwnership: Seed = {
+  table: NFT_OWNERS_TABLE,
+  rows: [
+    {
+      wallet: oneMemeTokenOwner.primary_address,
+      contract: MEMES_CONTRACT,
+      token_id: 100,
+      balance: 1,
+      block_reference: 1,
+      created_at: new Date(0),
+      updated_at: new Date(0)
+    },
+    ...[100, 201, 325].map((tokenId) => ({
+      wallet: allMemeTokensOwner.primary_address,
+      contract: MEMES_CONTRACT,
+      token_id: tokenId,
+      balance: 1,
+      block_reference: 1,
+      created_at: new Date(0),
+      updated_at: new Date(0)
+    }))
+  ]
+};
+
 describe('smth', () => {
   it('s', () => {});
 });
@@ -276,16 +317,21 @@ describeWithSeed(
       tdh11Identity2,
       partialGrantTokenOwner,
       otherPartialGrantTokenOwner,
-      fullGrantTokenOwner
+      fullGrantTokenOwner,
+      oneMemeTokenOwner,
+      allMemeTokensOwner
     ]),
     withAddressConsolidationKeys([
       partialGrantTokenOwner,
       otherPartialGrantTokenOwner,
-      fullGrantTokenOwner
+      fullGrantTokenOwner,
+      oneMemeTokenOwner,
+      allMemeTokensOwner
     ]),
     withXtdhGrants,
     withXtdhGrantTokens,
     withExternalOwnership,
+    withInternalNftOwnership,
     withXtdhStatsMeta,
     withUserGroups([
       minTdh20Group,
@@ -299,7 +345,9 @@ describeWithSeed(
       partialGrantAnyGroup,
       partialGrantAllGroup,
       fullOwnerGrantAllGroup,
-      invalidFullCollectionGrantAllGroup
+      invalidFullCollectionGrantAllGroup,
+      memeSpecificAnyGroup,
+      memeSpecificAllGroup
     ]),
     withWaves(
       [
@@ -436,7 +484,9 @@ describeWithSeed(
 
       it('identities of maxTdh10Group ', async () => {
         await expectGroupToContainExactIdentities(maxTdh10Group, [
-          tdh10Identity
+          tdh10Identity,
+          oneMemeTokenOwner,
+          allMemeTokensOwner
         ]);
       });
 
@@ -515,6 +565,36 @@ describeWithSeed(
           invalidFullCollectionGrantAllGroup,
           []
         );
+      });
+
+      it('any-token meme group contains holders of at least one specified token', async () => {
+        await expectGroupToContainExactIdentities(memeSpecificAnyGroup, [
+          oneMemeTokenOwner,
+          allMemeTokensOwner
+        ]);
+      });
+
+      it('reloaded any-token meme group preserves the persisted match mode', async () => {
+        const reloadedGroup = await userGroupsService.getByIdOrThrow(
+          memeSpecificAnyGroup.id,
+          {}
+        );
+
+        expect(reloadedGroup.group.owns_nfts).toContainEqual({
+          name: ApiGroupOwnsNftNameEnum.Memes,
+          tokens: ['100', '201', '325'],
+          match_mode: ApiGroupNftOwnershipMatchMode.AnyToken
+        });
+        await expectGroupToContainExactIdentities(memeSpecificAnyGroup, [
+          oneMemeTokenOwner,
+          allMemeTokensOwner
+        ]);
+      });
+
+      it('all-token meme group contains only holders of every specified token', async () => {
+        await expectGroupToContainExactIdentities(memeSpecificAllGroup, [
+          allMemeTokensOwner
+        ]);
       });
     });
 

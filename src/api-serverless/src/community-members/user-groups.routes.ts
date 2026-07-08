@@ -21,6 +21,7 @@ import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
 import {
   FilterDirection,
   GroupBeneficiaryGrantMatchMode,
+  GroupNftOwnershipMatchMode,
   GroupTdhInclusionStrategy
 } from '../../../entities/IUserGroup';
 import {
@@ -36,8 +37,12 @@ import { collections } from '../../../collections';
 import { WALLET_REGEX } from '@/constants';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 import { ApiGroupBeneficiaryGrantMatchMode } from '../generated/models/ApiGroupBeneficiaryGrantMatchMode';
+import { ApiGroupNftOwnershipMatchMode } from '../generated/models/ApiGroupNftOwnershipMatchMode';
 
 const router = asyncRouter();
+
+const DEFAULT_NFT_OWNERSHIP_MATCH_MODE =
+  ApiGroupNftOwnershipMatchMode.AllTokens;
 
 export interface SearchUserGroupsQuery {
   group_name: string | null;
@@ -188,6 +193,13 @@ router.post(
     const beneficiaryGrantMatchMode =
       apiUserGroup.group.is_beneficiary_of_grant_match_mode ??
       ApiGroupBeneficiaryGrantMatchMode.AnyToken;
+    const resolveNftOwnershipMatchMode = (
+      ownsNft: ApiGroupOwnsNft | undefined
+    ) =>
+      enums.resolveOrThrow(
+        GroupNftOwnershipMatchMode,
+        ownsNft?.match_mode ?? DEFAULT_NFT_OWNERSHIP_MATCH_MODE
+      );
     const isPrivate = apiUserGroup.is_private ?? false;
     const userGroup: Omit<
       NewUserGroupEntity,
@@ -233,13 +245,18 @@ router.post(
       owns_meme_tokens: ownsMemes?.tokens
         ? JSON.stringify(ownsMemes.tokens)
         : null,
+      owns_meme_tokens_match_mode: resolveNftOwnershipMatchMode(ownsMemes),
       owns_gradient_tokens: ownsGradient?.tokens
         ? JSON.stringify(ownsGradient.tokens)
         : null,
+      owns_gradient_tokens_match_mode:
+        resolveNftOwnershipMatchMode(ownsGradient),
       owns_lab_tokens: ownsLab?.tokens ? JSON.stringify(ownsLab.tokens) : null,
+      owns_lab_tokens_match_mode: resolveNftOwnershipMatchMode(ownsLab),
       owns_nextgen_tokens: ownsNextgen?.tokens
         ? JSON.stringify(ownsNextgen.tokens)
         : null,
+      owns_nextgen_tokens_match_mode: resolveNftOwnershipMatchMode(ownsNextgen),
       addresses: apiUserGroup.group.identity_addresses?.length
         ? apiUserGroup.group.identity_addresses
         : [],
@@ -375,12 +392,18 @@ const GroupBeneficiaryGrantMatchModeSchema: Joi.StringSchema = Joi.string()
   .optional()
   .default(ApiGroupBeneficiaryGrantMatchMode.AnyToken);
 
+const GroupNftOwnershipMatchModeSchema: Joi.StringSchema = Joi.string()
+  .valid(...Object.values(ApiGroupNftOwnershipMatchMode))
+  .optional()
+  .default(DEFAULT_NFT_OWNERSHIP_MATCH_MODE);
+
 const GroupOwnsNftSchema: Joi.ObjectSchema<ApiGroupOwnsNft> =
   Joi.object<ApiGroupOwnsNft>({
     name: Joi.string()
       .valid(...Object.values(ApiGroupOwnsNftNameEnum))
       .required(),
-    tokens: Joi.array().required().items(Joi.string()).allow(null)
+    tokens: Joi.array().required().items(Joi.string()).allow(null),
+    match_mode: GroupNftOwnershipMatchModeSchema
   });
 
 const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription> =
