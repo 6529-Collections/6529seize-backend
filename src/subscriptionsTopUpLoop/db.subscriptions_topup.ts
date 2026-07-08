@@ -25,7 +25,7 @@ const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   const processedTopUps: SubscriptionTopUp[] = [];
-  const alreadyProcessedTopUpHashes = new Set<string>();
+  const alreadyProcessedTopUpHashes: string[] = [];
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -43,7 +43,9 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           'Subscriptions',
           'warn'
         );
-        alreadyProcessedTopUpHashes.add(topUp.hash);
+        if (!alreadyProcessedTopUpHashes.includes(topUp.hash)) {
+          alreadyProcessedTopUpHashes.push(topUp.hash);
+        }
 
         continue;
       }
