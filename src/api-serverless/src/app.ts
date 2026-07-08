@@ -727,10 +727,13 @@ async function initializeApp() {
       verify: (req: any, _res: any, buf: Buffer) => {
         // Store raw body only for webhook endpoints that need signature verification
         const url = (req.url ?? '').split('?')[0];
+        const isCiPipelineAlertsPath =
+          url === '/ci-pipeline-alerts' ||
+          url.startsWith('/ci-pipeline-alerts/');
         if (
           url === '/gh-hooks' ||
           url === '/dev-alerts' ||
-          url === '/ci-pipeline-alerts'
+          isCiPipelineAlertsPath
         ) {
           req.rawBody = buf;
         }

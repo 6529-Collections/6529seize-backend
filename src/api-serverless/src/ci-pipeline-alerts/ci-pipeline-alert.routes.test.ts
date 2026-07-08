@@ -119,4 +119,32 @@ describe('ci pipeline alert routes', () => {
       })
     );
   });
+
+  it('builds distinct dedupe keys for different alert payload details', () => {
+    const common = {
+      repo: '6529-core',
+      workflow: 'Build 6529 Desktop',
+      status: 'failure' as const,
+      run_id: '99',
+      title: '6529 Desktop - Build failed',
+      environment: 'Production',
+      service: 'desktop'
+    };
+
+    expect(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        run_url:
+          'https://github.com/6529-Collections/6529-core/actions/runs/99',
+        description: 'first failure'
+      })
+    ).not.toEqual(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        run_url:
+          'https://github.com/6529-Collections/6529-core/actions/runs/99/attempts/2',
+        description: 'retry failure'
+      })
+    );
+  });
 });

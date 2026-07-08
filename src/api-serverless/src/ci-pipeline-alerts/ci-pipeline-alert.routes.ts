@@ -151,8 +151,12 @@ export function buildCiPipelineAlertDedupeKey(
         request.repo,
         request.workflow,
         request.run_id,
+        request.run_url,
         request.status,
         request.title,
+        request.description ?? '',
+        request.sha ?? '',
+        request.branch ?? '',
         request.environment ?? '',
         request.service ?? ''
       ])
@@ -180,39 +184,44 @@ router.post(
       CiPipelineAlertRequestSchema
     );
     const redis = getRedisClient();
+    if (!redis) {
+      logger.error('Rejected CI pipeline alert: Redis dedupe is unavailable');
+      return res.status(503).send({
+        error: 'CI pipeline alert dedupe unavailable'
+      });
+    }
+
     const cacheKey = buildCiPipelineAlertDedupeKey(request);
     const processingKey = `${cacheKey}:processing`;
     let lockAcquired = false;
 
-    if (redis) {
-      const alreadyProcessed = await redis.get(cacheKey);
-      if (alreadyProcessed) {
-        logger.info(`Duplicate CI pipeline alert ${cacheKey}, skipping`);
-        return res.send({});
-      }
-      const lockWasSet = await redis.set(processingKey, '1', {
-        NX: true,
-        EX: CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS
-      });
-      if (!lockWasSet) {
-        logger.info(`CI pipeline alert ${cacheKey} is already processing`);
-        return res.send({});
-      }
-      lockAcquired = true;
+    const alreadyProcessed = await redis.get(cacheKey);
+    if (alreadyProcessed) {
+      logger.info(`Duplicate CI pipeline alert ${cacheKey}, skipping`);
+      return res.send({});
     }
+    const lockWasSet = await redis.set(processingKey, '1', {
+      NX: true,
+      EX: CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS
+    });
+    if (!lockWasSet) {
+      logger.info(`CI pipeline alert ${cacheKey} is already processing`);
+      return res.status(409).send({
+        error: 'CI pipeline alert is already processing'
+      });
+    }
+    lockAcquired = true;
 
     try {
       await ciPipelineAlertService.postAlert(request, {
         timer: Timer.getFromRequest(req)
       });
-      if (redis) {
-        await redis.set(cacheKey, '1', {
-          EX: CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS
-        });
-      }
+      await redis.set(cacheKey, '1', {
+        EX: CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS
+      });
       return res.send({});
     } finally {
-      if (redis && lockAcquired) {
+      if (lockAcquired) {
         try {
           await redis.del(processingKey);
         } catch (err) {

@@ -45,7 +45,7 @@ function normalizeOptionalValue(
   value: string | null | undefined
 ): string | null {
   const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
+  return trimmed || null;
 }
 
 function parseProfileIds(value: string | null): string[] {
@@ -178,40 +178,29 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     mentions: MentionedProfile[]
   ): string {
-    const lines = [`[${request.status.toUpperCase()}] ${request.title}`, ''];
-
-    if (mentions.length) {
-      lines.push(
-        `cc ${mentions.map((mention) => `@[${mention.handle}]`).join(' ')}`
-      );
-      lines.push('');
-    }
+    const mentionHandles = mentions
+      .map((mention) => '@[' + mention.handle + ']')
+      .join(' ');
+    const mentionLines = mentions.length ? [`cc ${mentionHandles}`, ''] : [];
 
     const description = normalizeOptionalValue(request.description);
-    if (description) {
-      lines.push(description);
-      lines.push('');
-    }
-
-    lines.push(`Repo: ${request.repo}`);
-    lines.push(`Workflow: ${request.workflow}`);
     const environment = normalizeOptionalValue(request.environment);
-    if (environment) {
-      lines.push(`Environment: ${environment}`);
-    }
     const service = normalizeOptionalValue(request.service);
-    if (service) {
-      lines.push(`Service: ${service}`);
-    }
     const branch = normalizeOptionalValue(request.branch);
-    if (branch) {
-      lines.push(`Branch: ${branch}`);
-    }
     const sha = normalizeOptionalValue(request.sha);
-    if (sha) {
-      lines.push(`Commit: ${sha}`);
-    }
-    lines.push(`Run: ${request.run_url}`);
+    const lines = [
+      `[${request.status.toUpperCase()}] ${request.title}`,
+      '',
+      ...mentionLines,
+      ...(description ? [description, ''] : []),
+      `Repo: ${request.repo}`,
+      `Workflow: ${request.workflow}`,
+      ...(environment ? [`Environment: ${environment}`] : []),
+      ...(service ? [`Service: ${service}`] : []),
+      ...(branch ? [`Branch: ${branch}`] : []),
+      ...(sha ? [`Commit: ${sha}`] : []),
+      `Run: ${request.run_url}`
+    ];
 
     return truncate(lines.join('\n'), MAX_DROP_CONTENT_LENGTH);
   }
