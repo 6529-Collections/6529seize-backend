@@ -12,9 +12,17 @@ type PostGitHubDropOptions = {
   readonly title?: string;
   readonly body?: string;
 };
+type SessionNonceResponse = {
+  readonly signable_message: string;
+  readonly server_signature: string;
+};
+type LoginResponse = {
+  readonly token: string;
+};
 
 const PULL_REQUEST_SUMMARY_MAX_LENGTH = 1000;
 const PULL_REQUEST_PROMPT_BODY_MAX_LENGTH = 12000;
+const GITHUB_WEBHOOK_AUTH_CLIENT_TYPE = 'native';
 
 export class GitHubIssueDropService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -55,39 +63,46 @@ export class GitHubIssueDropService {
   ): Promise<string> {
     const API_BASE_URL =
       env.getStringOrNull('API_BASE_URL') ?? 'https://api.6529.io';
-    const nonceResp = await fetch(
-      `${API_BASE_URL}/api/auth/nonce?signer_address=${clientAddress}&short_nonce=true`,
+    const sessionNonceUrl = this.buildApiUrl(
+      API_BASE_URL,
+      '/api/auth/session-nonce',
       {
-        headers: { accept: 'application/json' },
-        method: 'GET'
+        signer_address: clientAddress,
+        client_type: GITHUB_WEBHOOK_AUTH_CLIENT_TYPE
       }
     );
+    const nonceResp = await fetch(sessionNonceUrl, {
+      headers: { accept: 'application/json' },
+      method: 'GET'
+    });
 
     if (!nonceResp.ok) {
       throw new Error(
-        `Failed to get nonce: ${nonceResp.status} ${nonceResp.statusText}`
+        `Failed to get session nonce: ${nonceResp.status} ${nonceResp.statusText}`
       );
     }
 
-    const { nonce, server_signature } = await nonceResp.json();
+    const { signable_message, server_signature } =
+      (await nonceResp.json()) as SessionNonceResponse;
 
-    const signedNonce = await wallet.signMessage(nonce);
+    const signedNonce = await wallet.signMessage(signable_message);
 
-    const loginResp = await fetch(
-      `${API_BASE_URL}/api/auth/login?signer_address=${clientAddress}`,
-      {
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json'
-        },
-        method: 'POST',
-        body: JSON.stringify({
-          client_address: clientAddress,
-          client_signature: signedNonce,
-          server_signature
-        })
-      }
-    );
+    const loginUrl = this.buildApiUrl(API_BASE_URL, '/api/auth/login', {
+      signer_address: clientAddress
+    });
+    const loginResp = await fetch(loginUrl, {
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json'
+      },
+      method: 'POST',
+      body: JSON.stringify({
+        client_address: clientAddress,
+        client_signature: signedNonce,
+        server_signature,
+        is_safe_wallet: false
+      })
+    });
 
     if (!loginResp.ok) {
       throw new Error(
@@ -95,8 +110,20 @@ export class GitHubIssueDropService {
       );
     }
 
-    const { token } = await loginResp.json();
+    const { token } = (await loginResp.json()) as LoginResponse;
     return token;
+  }
+
+  private buildApiUrl(
+    apiBaseUrl: string,
+    path: string,
+    query: Record<string, string>
+  ): string {
+    const url = new URL(path, apiBaseUrl);
+    Object.entries(query).forEach(([key, value]) => {
+      url.searchParams.set(key, value);
+    });
+    return url.toString();
   }
 
   private async buildDropContent({
