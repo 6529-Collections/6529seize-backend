@@ -12,6 +12,11 @@ export enum GroupBeneficiaryGrantMatchMode {
   ALL_TOKENS = 'ALL_TOKENS'
 }
 
+export enum GroupNftOwnershipMatchMode {
+  ANY_TOKEN = 'ANY_TOKEN',
+  ALL_TOKENS = 'ALL_TOKENS'
+}
+
 const IS_PURE_PROFILE_GROUP_EXPRESSION = `
   profile_group_id IS NOT NULL
   AND excluded_profile_group_id IS NULL
@@ -86,18 +91,46 @@ export class UserGroupEntity {
   readonly owns_meme!: boolean | null;
   @Column({ type: 'json', nullable: true })
   readonly owns_meme_tokens!: string | null;
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: GroupNftOwnershipMatchMode.ALL_TOKENS
+  })
+  readonly owns_meme_tokens_match_mode!: GroupNftOwnershipMatchMode;
   @Column({ type: 'boolean' })
   readonly owns_gradient!: boolean | null;
   @Column({ type: 'json', nullable: true })
   readonly owns_gradient_tokens!: string | null;
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: GroupNftOwnershipMatchMode.ALL_TOKENS
+  })
+  readonly owns_gradient_tokens_match_mode!: GroupNftOwnershipMatchMode;
   @Column({ type: 'boolean' })
   readonly owns_nextgen!: boolean | null;
   @Column({ type: 'json', nullable: true })
   readonly owns_nextgen_tokens!: string | null;
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: GroupNftOwnershipMatchMode.ALL_TOKENS
+  })
+  readonly owns_nextgen_tokens_match_mode!: GroupNftOwnershipMatchMode;
   @Column({ type: 'boolean' })
   readonly owns_lab!: boolean | null;
   @Column({ type: 'json', nullable: true })
   readonly owns_lab_tokens!: string | null;
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: GroupNftOwnershipMatchMode.ALL_TOKENS
+  })
+  readonly owns_lab_tokens_match_mode!: GroupNftOwnershipMatchMode;
   @Column({ type: 'varchar', length: 50, nullable: true })
   readonly profile_group_id!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })

@@ -14390,6 +14390,11 @@ components:
           type: number
           format: int64
           nullable: true
+    ApiGroupNftOwnershipMatchMode:
+      type: string
+      enum:
+        - ANY_TOKEN
+        - ALL_TOKENS
     ApiGroupOwnsNft:
       type: object
       required:
@@ -14407,6 +14412,8 @@ components:
           type: array
           items:
             type: string
+        match_mode:
+          $ref: "#/components/schemas/ApiGroupNftOwnershipMatchMode"
     ApiGroupRepFilter:
       type: object
       required:

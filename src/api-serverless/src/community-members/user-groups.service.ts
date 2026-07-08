@@ -17,6 +17,7 @@ import {
 } from '@/profiles/profile-level';
 import {
   GroupBeneficiaryGrantMatchMode,
+  GroupNftOwnershipMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
@@ -34,6 +35,7 @@ import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
 import { ApiGroupFilterDirection } from '@/api/generated/models/ApiGroupFilterDirection';
 import { ApiGroupDescription } from '@/api/generated/models/ApiGroupDescription';
 import { ApiGroupBeneficiaryGrantMatchMode } from '@/api/generated/models/ApiGroupBeneficiaryGrantMatchMode';
+import { ApiGroupNftOwnershipMatchMode } from '@/api/generated/models/ApiGroupNftOwnershipMatchMode';
 import {
   ApiGroupOwnsNft,
   ApiGroupOwnsNftNameEnum
@@ -109,6 +111,7 @@ const eligibleGroupsPromisesByProfileId = new Map<string, Promise<string[]>>();
 const logger = Logger.get('USER_GROUPS_SERVICE');
 const DEFAULT_BENEFICIARY_GRANT_MATCH_MODE =
   GroupBeneficiaryGrantMatchMode.ANY_TOKEN;
+const DEFAULT_NFT_OWNERSHIP_MATCH_MODE = GroupNftOwnershipMatchMode.ALL_TOKENS;
 
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
@@ -293,9 +296,13 @@ export class UserGroupsService {
       owns_lab: false,
       owns_nextgen: false,
       owns_meme_tokens: null,
+      owns_meme_tokens_match_mode: DEFAULT_NFT_OWNERSHIP_MATCH_MODE,
       owns_gradient_tokens: null,
+      owns_gradient_tokens_match_mode: DEFAULT_NFT_OWNERSHIP_MATCH_MODE,
       owns_lab_tokens: null,
+      owns_lab_tokens_match_mode: DEFAULT_NFT_OWNERSHIP_MATCH_MODE,
       owns_nextgen_tokens: null,
+      owns_nextgen_tokens_match_mode: DEFAULT_NFT_OWNERSHIP_MATCH_MODE,
       addresses: allAddresses,
       excluded_addresses: [],
       visible: true,
@@ -1505,15 +1512,29 @@ export class UserGroupsService {
       const ownsSpecificTokens =
         tokenOwnerships.map((it) => it.tokens).flat().length > 0;
       if (ownsSpecificTokens) {
-        nftPart += ` 
-            ${viewName} as (SELECT profile_id
-                              FROM ${viewName}_s1
-                                       JOIN (SELECT token_id
+        const criteriaTokensSql = `(SELECT token_id
                                              FROM community_groups,
                                                   JSON_TABLE(community_groups.${comGroupFieldName}, '$[*]'
                                                              COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
                                              WHERE community_groups.id =
-                                                   :user_group_id) AS criteria_tokens
+                                                   :user_group_id)`;
+        const matchMode =
+          enums.resolve(
+            GroupNftOwnershipMatchMode,
+            tokenOwnerships.find((it) => it.tokens.length > 0)?.match_mode
+          ) ?? DEFAULT_NFT_OWNERSHIP_MATCH_MODE;
+        if (matchMode === GroupNftOwnershipMatchMode.ANY_TOKEN) {
+          nftPart += `
+            ${viewName} as (SELECT distinct ${viewName}_s1.profile_id
+                              FROM ${viewName}_s1
+                                       JOIN ${criteriaTokensSql} AS criteria_tokens
+                                            ON ${viewName}_s1.token_id = criteria_tokens.token_id)
+       `;
+        } else {
+          nftPart += `
+            ${viewName} as (SELECT profile_id
+                              FROM ${viewName}_s1
+                                       JOIN ${criteriaTokensSql} AS criteria_tokens
                                             ON ${viewName}_s1.token_id = criteria_tokens.token_id
                               GROUP BY profile_id
                               HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(*)
@@ -1524,6 +1545,7 @@ export class UserGroupsService {
                                                                                           COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
                                                                              WHERE community_groups.id = :user_group_id))
        `;
+        }
       } else {
         nftPart += ` 
             ${viewName} as (SELECT distinct profile_id FROM ${viewName}_s1)
@@ -1991,7 +2013,12 @@ export class UserGroupsService {
                 name: ApiGroupOwnsNftNameEnum.Memes,
                 tokens: it.owns_meme_tokens
                   ? JSON.parse(it.owns_meme_tokens)
-                  : []
+                  : [],
+                match_mode: enums.resolveOrThrow(
+                  ApiGroupNftOwnershipMatchMode,
+                  it.owns_meme_tokens_match_mode ??
+                    DEFAULT_NFT_OWNERSHIP_MATCH_MODE
+                )
               }
             : null,
           it.owns_gradient
@@ -1999,7 +2026,12 @@ export class UserGroupsService {
                 name: ApiGroupOwnsNftNameEnum.Gradients,
                 tokens: it.owns_gradient_tokens
                   ? JSON.parse(it.owns_gradient_tokens)
-                  : []
+                  : [],
+                match_mode: enums.resolveOrThrow(
+                  ApiGroupNftOwnershipMatchMode,
+                  it.owns_gradient_tokens_match_mode ??
+                    DEFAULT_NFT_OWNERSHIP_MATCH_MODE
+                )
               }
             : null,
           it.owns_nextgen
@@ -2007,13 +2039,25 @@ export class UserGroupsService {
                 name: ApiGroupOwnsNftNameEnum.Nextgen,
                 tokens: it.owns_nextgen_tokens
                   ? JSON.parse(it.owns_nextgen_tokens)
-                  : []
+                  : [],
+                match_mode: enums.resolveOrThrow(
+                  ApiGroupNftOwnershipMatchMode,
+                  it.owns_nextgen_tokens_match_mode ??
+                    DEFAULT_NFT_OWNERSHIP_MATCH_MODE
+                )
               }
             : null,
           it.owns_lab
             ? {
                 name: ApiGroupOwnsNftNameEnum.Memelab,
-                tokens: it.owns_lab_tokens ? JSON.parse(it.owns_lab_tokens) : []
+                tokens: it.owns_lab_tokens
+                  ? JSON.parse(it.owns_lab_tokens)
+                  : [],
+                match_mode: enums.resolveOrThrow(
+                  ApiGroupNftOwnershipMatchMode,
+                  it.owns_lab_tokens_match_mode ??
+                    DEFAULT_NFT_OWNERSHIP_MATCH_MODE
+                )
               }
             : null
         ].filter((it) => !!it) as ApiGroupOwnsNft[],
