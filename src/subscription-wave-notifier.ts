@@ -77,7 +77,7 @@ export function buildDailySubscriptionsWaveMessage({
   uploadLink: string;
 }): string {
   return [
-    `📋 Published provisional list of Subscriptions for [The Memes Card #${memeId}](https://${seizeDomain}.io/the-memes/${memeId})`,
+    `📋 Published provisional list of Subscriptions for [The Memes #${memeId}](https://${seizeDomain}.io/the-memes/${memeId})`,
     '',
     'View on 6529.io:',
     `https://${seizeDomain}.io/open-data/meme-subscriptions`,

@@ -76,7 +76,7 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        '📋 Published provisional list of Subscriptions for [The Memes Card #312](https://6529.io/the-memes/312)',
+        '📋 Published provisional list of Subscriptions for [The Memes #312](https://6529.io/the-memes/312)',
         '',
         'View on 6529.io:',
         'https://6529.io/open-data/meme-subscriptions',
@@ -245,7 +245,7 @@ describe('subscription wave notifier message formatting', () => {
     );
     const dropModel = (createOrUpdateDrop.execute as jest.Mock).mock
       .calls[0][0];
-    expect(dropModel.parts[0].content).toContain('The Memes Card #312');
+    expect(dropModel.parts[0].content).toContain('The Memes #312');
     expect(dropsDb.updateHideLinkPreview).toHaveBeenCalledWith(
       {
         drop_id: 'drop-1',
