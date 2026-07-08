@@ -29,6 +29,8 @@ import {
 } from '@/constants';
 import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { Seed } from '@/tests/_setup/seed';
+import { ApiGroupNftOwnershipMatchMode } from '@/api/generated/models/ApiGroupNftOwnershipMatchMode';
+import { ApiGroupOwnsNftNameEnum } from '@/api/generated/models/ApiGroupOwnsNft';
 
 const tdh10Identity = anIdentity({ tdh: 10 });
 const tdh20Identity = anIdentity({ tdh: 20 });
@@ -566,6 +568,23 @@ describeWithSeed(
       });
 
       it('any-token meme group contains holders of at least one specified token', async () => {
+        await expectGroupToContainExactIdentities(memeSpecificAnyGroup, [
+          oneMemeTokenOwner,
+          allMemeTokensOwner
+        ]);
+      });
+
+      it('reloaded any-token meme group preserves the persisted match mode', async () => {
+        const reloadedGroup = await userGroupsService.getByIdOrThrow(
+          memeSpecificAnyGroup.id,
+          {}
+        );
+
+        expect(reloadedGroup.group.owns_nfts).toContainEqual({
+          name: ApiGroupOwnsNftNameEnum.Memes,
+          tokens: ['100', '201', '325'],
+          match_mode: ApiGroupNftOwnershipMatchMode.AnyToken
+        });
         await expectGroupToContainExactIdentities(memeSpecificAnyGroup, [
           oneMemeTokenOwner,
           allMemeTokensOwner
