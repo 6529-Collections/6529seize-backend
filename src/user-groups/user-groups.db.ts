@@ -908,8 +908,12 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async insertGroupChanges(profileIds: string[]) {
     if (!profileIds.length) return null;
     const currentMillis = Time.currentMillis();
-    const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${profileIds.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
-    await this.db.execute(sql);
+    const chunkSize = 1000;
+    for (let i = 0; i < profileIds.length; i += chunkSize) {
+      const chunk = profileIds.slice(i, i + chunkSize);
+      const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${chunk.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
+      await this.db.execute(sql);
+    }
   }
 
   async findBeneficiaryGrantGroupIdsForProfile(
