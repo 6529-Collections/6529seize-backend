@@ -200,6 +200,37 @@ describe('buildUpdatesForClaimPatch', () => {
     expect(updates.name).toBe('updated-name');
     expect(updates.metadata_location).toBeNull();
   });
+
+  it('trims metadata fields and attributes before persistence', async () => {
+    const body: MintingClaimUpdateRequest = {
+      description: '  Loom  description  ',
+      name: ' The Loom ',
+      external_url: '   ',
+      attributes: [
+        {
+          trait_type: ' Artist ',
+          value: '  Digital  Artist  ',
+          display_type: 'text'
+        }
+      ]
+    };
+
+    const updates = await buildUpdatesForClaimPatch(body, baseClaim(), false);
+
+    expect(updates).toMatchObject({
+      description: 'Loom  description',
+      name: 'The Loom',
+      external_url: null,
+      attributes: [
+        {
+          trait_type: 'Artist',
+          value: 'Digital  Artist',
+          display_type: 'text'
+        }
+      ],
+      metadata_location: null
+    });
+  });
 });
 
 describe('patchMintingClaim', () => {

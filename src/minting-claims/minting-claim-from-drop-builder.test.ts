@@ -61,4 +61,49 @@ describe('buildMintingClaimRowFromDrop', () => {
       ])
     );
   });
+
+  it('trims dirty drop metadata while preserving internal whitespace', () => {
+    const metadatas: DropMetadataEntity[] = [
+      {
+        data_key: ' title ',
+        data_value: ' The Loom '
+      },
+      {
+        data_key: ' description ',
+        data_value: '  Loom  description  '
+      },
+      {
+        data_key: ' artist ',
+        data_value: '  Digital  Artist  '
+      },
+      {
+        data_key: ' custom trait ',
+        data_value: '  inner  spacing  '
+      }
+    ] as DropMetadataEntity[];
+
+    const row = buildMintingClaimRowFromDrop(
+      'drop-1',
+      MEMES_CONTRACT,
+      519,
+      [],
+      metadatas,
+      15
+    );
+
+    expect(row.name).toBe('The Loom');
+    expect(row.description).toBe('Loom  description');
+    expect(row.attributes).toEqual(
+      expect.arrayContaining([
+        {
+          trait_type: 'Artist',
+          value: 'Digital  Artist'
+        },
+        {
+          trait_type: 'Custom trait',
+          value: 'inner  spacing'
+        }
+      ])
+    );
+  });
 });

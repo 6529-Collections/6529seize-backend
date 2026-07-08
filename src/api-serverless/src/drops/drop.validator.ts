@@ -120,8 +120,8 @@ function validateFuturePollClosingTime(
 }
 
 const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
-  data_key: Joi.string().min(1).max(500).required(),
-  data_value: Joi.string().min(1).required()
+  data_key: Joi.string().trim().min(1).max(500).required(),
+  data_value: Joi.string().trim().min(1).required()
 })
   .custom(validateDropMetadataValue)
   .messages({
@@ -178,7 +178,13 @@ const NewDropPollSchema: Joi.ObjectSchema<ApiCreateDropPollRequest> =
   });
 
 const baseDropFieldsValidators = {
-  title: Joi.string().optional().max(250).default(null).allow(null),
+  title: Joi.string()
+    .trim()
+    .optional()
+    .max(250)
+    .empty('')
+    .default(null)
+    .allow(null),
   parts: Joi.array().required().items(NewDropPartSchema).min(1),
   referenced_nfts: Joi.array()
     .optional()

@@ -195,7 +195,7 @@ const StrictMintingClaimUpdateRequestSchema = Joi.object({
   description: Joi.string().optional(),
   name: Joi.string().optional(),
   image_url: Joi.string().allow(null).optional(),
-  external_url: Joi.string().allow(null).optional(),
+  external_url: Joi.string().allow(null, '').optional(),
   attributes: Joi.array().items(MintingClaimAttributeSchema).optional(),
   animation_url: Joi.string().allow(null).optional()
 });

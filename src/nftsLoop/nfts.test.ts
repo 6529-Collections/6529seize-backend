@@ -2,6 +2,7 @@ import { getAnimationPaths } from '@/nftsLoop/nft-animation-paths';
 import {
   calculateNftHodlRate,
   getMemeTokenIdsForEditionSizeFloorRefresh,
+  normalizeMetadataNameForNft,
   resolveNftEditionSizeFloor
 } from '@/nftsLoop/nfts';
 
@@ -54,6 +55,12 @@ describe('getAnimationPaths', () => {
     ).toEqual({
       animation: 'https://example.com/interactive/index.html'
     });
+  });
+});
+
+describe('normalizeMetadataNameForNft', () => {
+  it('trims NFT metadata names without changing internal whitespace', () => {
+    expect(normalizeMetadataNameForNft(' The  Loom ')).toBe('The  Loom');
   });
 });
 
