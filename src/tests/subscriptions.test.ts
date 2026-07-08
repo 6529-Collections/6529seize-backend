@@ -550,10 +550,8 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      const waveNotifications = await processAirdrop(
-        transaction,
-        entityManager
-      );
+      const waveNotifications: any[] = [];
+      await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
@@ -624,10 +622,8 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      const waveNotifications = await processAirdrop(
-        transaction,
-        entityManager
-      );
+      const waveNotifications: any[] = [];
+      await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
@@ -679,10 +675,8 @@ describe('SubscriptionTests', () => {
       redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      const waveNotifications = await processAirdrop(
-        transaction,
-        entityManager
-      );
+      const waveNotifications: any[] = [];
+      await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(

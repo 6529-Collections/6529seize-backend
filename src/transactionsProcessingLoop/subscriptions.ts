@@ -95,7 +95,7 @@ export const redeemSubscriptions = async (reset?: boolean) => {
   const waveNotifications: SubscriptionWaveNotification[] = [];
   await getDataSource().transaction(async (entityManager) => {
     for (const drop of airdrops) {
-      waveNotifications.push(...(await processAirdrop(drop, entityManager)));
+      await processAirdrop(drop, entityManager, waveNotifications);
     }
     const transactionBlockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
@@ -109,23 +109,21 @@ export const redeemSubscriptions = async (reset?: boolean) => {
 
 export async function processAirdrop(
   transaction: Transaction,
-  entityManager: EntityManager
-): Promise<SubscriptionWaveNotification[]> {
-  const waveNotifications: SubscriptionWaveNotification[] = [];
+  entityManager: EntityManager,
+  waveNotifications: SubscriptionWaveNotification[] = []
+): Promise<void> {
   const validation = await validateNonSubscriptionAirdrop(
     transaction,
     entityManager
   );
 
   if (validation.valid) {
-    return waveNotifications;
+    return;
   }
 
   for (let i = 0; i < transaction.token_count; i++) {
     await processSubscription(transaction, entityManager, waveNotifications);
   }
-
-  return waveNotifications;
 }
 
 export async function validateNonSubscriptionAirdrop(
@@ -342,7 +340,10 @@ async function processSubscription(
 }
 
 function buildTransactionLink(transactionHash: string): string {
-  const chainId = parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1');
+  const chainId = Number.parseInt(
+    process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1',
+    10
+  );
   return ethTools.toEtherScanTransactionLink(chainId, transactionHash);
 }
 

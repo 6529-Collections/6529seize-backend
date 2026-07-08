@@ -43,9 +43,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           'Subscriptions',
           'warn'
         );
-        if (!alreadyProcessedTopUpHashes.includes(topUp.hash)) {
-          alreadyProcessedTopUpHashes.push(topUp.hash);
-        }
+        addUniqueTopUpHash(alreadyProcessedTopUpHashes, topUp.hash);
 
         continue;
       }
@@ -177,4 +175,10 @@ async function isTopUpProcessed(
     .where('topup.hash = :hash', { hash })
     .getExists();
   return exists;
+}
+
+function addUniqueTopUpHash(hashes: string[], hash: string): void {
+  if (!hashes.includes(hash)) {
+    hashes.push(hash);
+  }
 }
