@@ -43,6 +43,7 @@ import {
 import {
   FilterDirection,
   GroupBeneficiaryGrantMatchMode,
+  GroupNftOwnershipMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '../entities/IUserGroup';
@@ -105,12 +106,16 @@ function aGroup({
   level_max,
   owns_meme,
   owns_meme_tokens,
+  owns_meme_tokens_match_mode,
   owns_gradient,
   owns_gradient_tokens,
+  owns_gradient_tokens_match_mode,
   owns_nextgen,
   owns_nextgen_tokens,
+  owns_nextgen_tokens_match_mode,
   owns_lab,
   owns_lab_tokens,
+  owns_lab_tokens_match_mode,
   profile_group_id,
   excluded_profile_group_id,
   is_beneficiary_of_grant_id,
@@ -132,12 +137,16 @@ function aGroup({
   level_max?: number | null;
   owns_meme?: boolean | null;
   owns_meme_tokens?: string | null;
+  owns_meme_tokens_match_mode?: GroupNftOwnershipMatchMode;
   owns_gradient?: boolean | null;
   owns_gradient_tokens?: string | null;
+  owns_gradient_tokens_match_mode?: GroupNftOwnershipMatchMode;
   owns_nextgen?: boolean | null;
   owns_nextgen_tokens?: string | null;
+  owns_nextgen_tokens_match_mode?: GroupNftOwnershipMatchMode;
   owns_lab?: boolean | null;
   owns_lab_tokens?: string | null;
+  owns_lab_tokens_match_mode?: GroupNftOwnershipMatchMode;
   profile_group_id?: string | null;
   excluded_profile_group_id?: string | null;
   is_beneficiary_of_grant_id?: string | null;
@@ -163,12 +172,20 @@ function aGroup({
     level_max: level_max ?? null,
     owns_meme: owns_meme ?? null,
     owns_meme_tokens: owns_meme_tokens ?? null,
+    owns_meme_tokens_match_mode:
+      owns_meme_tokens_match_mode ?? GroupNftOwnershipMatchMode.ALL_TOKENS,
     owns_gradient: owns_gradient ?? null,
     owns_gradient_tokens: owns_gradient_tokens ?? null,
+    owns_gradient_tokens_match_mode:
+      owns_gradient_tokens_match_mode ?? GroupNftOwnershipMatchMode.ALL_TOKENS,
     owns_nextgen: owns_nextgen ?? null,
     owns_nextgen_tokens: owns_nextgen_tokens ?? null,
+    owns_nextgen_tokens_match_mode:
+      owns_nextgen_tokens_match_mode ?? GroupNftOwnershipMatchMode.ALL_TOKENS,
     owns_lab: owns_lab ?? null,
     owns_lab_tokens: owns_lab_tokens ?? null,
+    owns_lab_tokens_match_mode:
+      owns_lab_tokens_match_mode ?? GroupNftOwnershipMatchMode.ALL_TOKENS,
     profile_group_id: profile_group_id ?? null,
     excluded_profile_group_id: excluded_profile_group_id ?? null,
     created_at: Time.millis(0).toDate(),
@@ -473,6 +490,26 @@ describe('UserGroupPredicates', () => {
         })
       ).toBe(true);
     });
+    it('should return false when profile has got one of the given tokens and any-token mode is used', () => {
+      expect(
+        isProfileHavingContractTokenOwningsMisMatch({
+          neededContract: '0x0',
+          neededTokensString: '["one", "three"]',
+          matchMode: GroupNftOwnershipMatchMode.ANY_TOKEN,
+          ownings: { '0x0': ['one', 'two'], '0x1': ['three'] }
+        })
+      ).toBe(false);
+    });
+    it('should return true when profile has got none of the given tokens and any-token mode is used', () => {
+      expect(
+        isProfileHavingContractTokenOwningsMisMatch({
+          neededContract: '0x0',
+          neededTokensString: '["three", "four"]',
+          matchMode: GroupNftOwnershipMatchMode.ANY_TOKEN,
+          ownings: { '0x0': ['one', 'two'], '0x1': ['three'] }
+        })
+      ).toBe(true);
+    });
     it('should return false when profile has got all of the required tokens and more', () => {
       expect(
         isProfileHavingContractTokenOwningsMisMatch({
@@ -645,6 +682,20 @@ describe('UserGroupPredicates', () => {
       expect(
         isProfileViolatingMemesCriteria(
           aGroup({ owns_meme: true, owns_meme_tokens: '["two"]' }),
+          {
+            [MEMES_CONTRACT.toLowerCase()]: ['one', 'two']
+          }
+        )
+      ).toBe(false);
+    });
+    it('should return false when group needs any of the meme tokens, and one required token is owned', () => {
+      expect(
+        isProfileViolatingMemesCriteria(
+          aGroup({
+            owns_meme: true,
+            owns_meme_tokens: '["two", "three"]',
+            owns_meme_tokens_match_mode: GroupNftOwnershipMatchMode.ANY_TOKEN
+          }),
           {
             [MEMES_CONTRACT.toLowerCase()]: ['one', 'two']
           }

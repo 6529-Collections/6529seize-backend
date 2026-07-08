@@ -190,6 +190,7 @@ export * from '../models/ApiGroupDescription';
 export * from '../models/ApiGroupFilterDirection';
 export * from '../models/ApiGroupFull';
 export * from '../models/ApiGroupLevelFilter';
+export * from '../models/ApiGroupNftOwnershipMatchMode';
 export * from '../models/ApiGroupOwnsNft';
 export * from '../models/ApiGroupRepFilter';
 export * from '../models/ApiGroupTdhFilter';
@@ -702,7 +703,8 @@ import { ApiGroupDescription             } from '../models/ApiGroupDescription';
 import { ApiGroupFilterDirection } from '../models/ApiGroupFilterDirection';
 import { ApiGroupFull } from '../models/ApiGroupFull';
 import { ApiGroupLevelFilter } from '../models/ApiGroupLevelFilter';
-import { ApiGroupOwnsNft, ApiGroupOwnsNftNameEnum    } from '../models/ApiGroupOwnsNft';
+import { ApiGroupNftOwnershipMatchMode } from '../models/ApiGroupNftOwnershipMatchMode';
+import { ApiGroupOwnsNft, ApiGroupOwnsNftNameEnum     } from '../models/ApiGroupOwnsNft';
 import { ApiGroupRepFilter      } from '../models/ApiGroupRepFilter';
 import { ApiGroupTdhFilter    } from '../models/ApiGroupTdhFilter';
 import { ApiGroupTdhInclusionStrategy } from '../models/ApiGroupTdhInclusionStrategy';
@@ -1064,6 +1066,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiFeedItemType",
     "ApiGroupBeneficiaryGrantMatchMode",
     "ApiGroupFilterDirection",
+    "ApiGroupNftOwnershipMatchMode",
     "ApiGroupOwnsNftNameEnum",
     "ApiGroupTdhInclusionStrategy",
     "ApiIdentitySubscriptionTargetAction",

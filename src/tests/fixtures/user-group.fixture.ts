@@ -1,5 +1,6 @@
 import {
   GroupBeneficiaryGrantMatchMode,
+  GroupNftOwnershipMatchMode,
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '../../entities/IUserGroup';
@@ -35,9 +36,13 @@ const aDefaultUserGroup: BaseUserGroup = {
   owns_lab: false,
   owns_nextgen: false,
   owns_meme_tokens: null,
+  owns_meme_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
   owns_gradient_tokens: null,
+  owns_gradient_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
   owns_lab_tokens: null,
+  owns_lab_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
   owns_nextgen_tokens: null,
+  owns_nextgen_tokens_match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS,
   visible: true,
   is_private: false,
   is_direct_message: true,
