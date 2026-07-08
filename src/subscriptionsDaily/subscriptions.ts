@@ -30,6 +30,7 @@ import {
 import { Logger } from '../logging';
 import { getMaxMemeId } from '../nftsLoop/db.nfts';
 import { sendDiscordUpdate } from '../notifier-discord';
+import { sendDailySubscriptionsWaveUpdate } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
@@ -71,6 +72,11 @@ export async function updateSubscriptions() {
     'Subscriptions',
     'info'
   );
+  await sendDailySubscriptionsWaveUpdate({
+    memeId: nextMemeId,
+    seizeDomain,
+    uploadLink
+  });
 }
 
 async function populateAutoSubscriptionsForMemeId(

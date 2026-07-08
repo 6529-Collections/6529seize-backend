@@ -19,6 +19,7 @@ import {
 } from '../entities/ISubscription';
 import { Transaction } from '../entities/ITransaction';
 import {
+  redeemSubscriptions,
   processAirdrop,
   validateNonSubscriptionAirdrop
 } from '../transactionsProcessingLoop/subscriptions';
@@ -31,6 +32,28 @@ jest.mock('../notifier-discord', () => ({
   sendDiscordUpdate: jest.fn()
 }));
 
+jest.mock('../db', () => ({
+  fetchMaxTransactionByBlockNumber: jest.fn(),
+  getDataSource: jest.fn()
+}));
+
+jest.mock('../transactionsProcessingLoop/db.transactions_processing', () => ({
+  getLastProcessingBlock: jest.fn(),
+  persistBlock: jest.fn()
+}));
+
+jest.mock('../sql-executor', () => ({
+  sqlExecutor: {
+    execute: jest.fn()
+  }
+}));
+
+jest.mock('../subscription-wave-notifier', () => ({
+  sendInsufficientBalanceWaveError: jest.fn(),
+  sendNoBalanceFoundWaveError: jest.fn(),
+  sendNoSubscriptionFoundWaveWarning: jest.fn()
+}));
+
 jest.mock('../subscriptionsDaily/db.subscriptions', () => ({
   fetchSubscriptionBalanceForConsolidationKey: jest.fn()
 }));
@@ -38,10 +61,28 @@ jest.mock('../subscriptionsDaily/db.subscriptions', () => ({
 const { sendDiscordUpdate: mockSendDiscordUpdate } = jest.requireMock(
   '../notifier-discord'
 );
+const {
+  getDataSource: mockGetDataSource,
+  fetchMaxTransactionByBlockNumber: mockFetchMaxTransactionByBlockNumber
+} = jest.requireMock('../db');
+const {
+  getLastProcessingBlock: mockGetLastProcessingBlock,
+  persistBlock: mockPersistBlock
+} = jest.requireMock(
+  '../transactionsProcessingLoop/db.transactions_processing'
+);
+const { sqlExecutor: mockSqlExecutor } = jest.requireMock('../sql-executor');
+const {
+  sendInsufficientBalanceWaveError: mockSendInsufficientBalanceWaveError,
+  sendNoBalanceFoundWaveError: mockSendNoBalanceFoundWaveError,
+  sendNoSubscriptionFoundWaveWarning: mockSendNoSubscriptionFoundWaveWarning
+} = jest.requireMock('../subscription-wave-notifier');
 const { fetchSubscriptionBalanceForConsolidationKey: mockFetchBalance } =
   jest.requireMock('../subscriptionsDaily/db.subscriptions');
 
 describe('SubscriptionTests', () => {
+  const originalSubscriptionsChainId = process.env.SUBSCRIPTIONS_CHAIN_ID;
+
   let entityManager: Mock<EntityManager>;
   let subscriptionBalanceRepo: Mock<Repository<SubscriptionBalance>>;
   let redeemedSubscriptionRepo: Mock<Repository<RedeemedSubscription>>;
@@ -68,6 +109,14 @@ describe('SubscriptionTests', () => {
     }) as any;
 
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    if (originalSubscriptionsChainId === undefined) {
+      delete process.env.SUBSCRIPTIONS_CHAIN_ID;
+    } else {
+      process.env.SUBSCRIPTIONS_CHAIN_ID = originalSubscriptionsChainId;
+    }
   });
 
   describe('validateNonSubscriptionAirdrop', () => {
@@ -453,6 +502,7 @@ describe('SubscriptionTests', () => {
     });
 
     it('user subscribed for 2, gets token_count 3 - should fail even if enough balance', async () => {
+      process.env.SUBSCRIPTIONS_CHAIN_ID = '11155111';
       const transaction = buildTransaction(
         NULL_ADDRESS,
         '0x123',
@@ -500,7 +550,8 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      const waveNotifications: any[] = [];
+      await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
@@ -510,10 +561,18 @@ describe('SubscriptionTests', () => {
 
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
         'https://test-discord-webhook',
-        expect.stringContaining('No subscription found'),
+        expect.stringContaining(
+          `https://sepolia.etherscan.io/tx/${transaction.transaction}`
+        ),
         'Subscriptions',
         'warn'
       );
+      expect(waveNotifications).toContainEqual({
+        kind: 'no-subscription-found',
+        airdropAddress: transaction.to_address,
+        transactionLink: `https://sepolia.etherscan.io/tx/${transaction.transaction}`
+      });
+      expect(mockSendNoSubscriptionFoundWaveWarning).not.toHaveBeenCalled();
     });
 
     it('user subscribed for 2, gets token_count 2 but not enough balance - should fail', async () => {
@@ -563,7 +622,8 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      const waveNotifications: any[] = [];
+      await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
@@ -572,6 +632,12 @@ describe('SubscriptionTests', () => {
         'Subscriptions',
         'error'
       );
+      expect(waveNotifications).toContainEqual({
+        kind: 'insufficient-balance',
+        consolidationKey,
+        transactionLink: `https://etherscan.io/tx/${transaction.transaction}`
+      });
+      expect(mockSendInsufficientBalanceWaveError).not.toHaveBeenCalled();
 
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(2);
@@ -609,7 +675,8 @@ describe('SubscriptionTests', () => {
       redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      const waveNotifications: any[] = [];
+      await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
@@ -618,6 +685,12 @@ describe('SubscriptionTests', () => {
         'Subscriptions',
         'error'
       );
+      expect(waveNotifications).toContainEqual({
+        kind: 'no-balance-found',
+        consolidationKey,
+        transactionLink: `https://etherscan.io/tx/${transaction.transaction}`
+      });
+      expect(mockSendNoBalanceFoundWaveError).not.toHaveBeenCalled();
 
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(1);
       const balanceSave = subscriptionBalanceRepo.save.mock.calls[0][0];
@@ -721,6 +794,52 @@ describe('SubscriptionTests', () => {
       expect(redeemedSaves[1][0].count).toBe(2);
       expect(redeemedSaves[2][0].consolidation_key).toBe(consolidationKey2);
       expect(redeemedSaves[2][0].count).toBe(1);
+    });
+  });
+
+  describe('redeemSubscriptions', () => {
+    it('flushes wave notifications after the processing transaction commits', async () => {
+      process.env.SUBSCRIPTIONS_CHAIN_ID = '11155111';
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        '0x123',
+        MEMES_CONTRACT,
+        generateRandomTokenId(),
+        1
+      );
+      const blockRepo = mock(Repository) as any;
+      let transactionCallbackCompleted = false;
+
+      mockGetDataSource.mockReturnValue({
+        getRepository: jest.fn(() => blockRepo),
+        transaction: jest.fn(
+          async (callback: (manager: EntityManager) => any) => {
+            await callback(entityManager);
+            expect(
+              mockSendNoSubscriptionFoundWaveWarning
+            ).not.toHaveBeenCalled();
+            transactionCallbackCompleted = true;
+          }
+        )
+      });
+      mockFetchMaxTransactionByBlockNumber.mockResolvedValue({
+        ...transaction,
+        block: 2
+      });
+      mockGetLastProcessingBlock.mockResolvedValue(1);
+      mockPersistBlock.mockResolvedValue(undefined);
+      mockSqlExecutor.execute.mockResolvedValue([transaction]);
+      whenRequestDistribution(entityManager, transaction, undefined);
+      whenRequestSubscription(entityManager, transaction, undefined, 1);
+
+      await redeemSubscriptions();
+
+      expect(transactionCallbackCompleted).toBe(true);
+      expect(mockSendNoSubscriptionFoundWaveWarning).toHaveBeenCalledTimes(1);
+      expect(mockSendNoSubscriptionFoundWaveWarning).toHaveBeenCalledWith({
+        airdropAddress: transaction.to_address,
+        transactionLink: `https://sepolia.etherscan.io/tx/${transaction.transaction}`
+      });
     });
   });
 });

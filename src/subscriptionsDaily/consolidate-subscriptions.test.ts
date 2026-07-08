@@ -21,6 +21,10 @@ jest.mock('../notifier-discord', () => ({
   sendDiscordUpdate: jest.fn()
 }));
 
+jest.mock('../subscription-wave-notifier', () => ({
+  sendDailySubscriptionsWaveUpdate: jest.fn()
+}));
+
 jest.mock('../arweave', () => ({
   arweaveFileUploader: { uploadFile: jest.fn() }
 }));
