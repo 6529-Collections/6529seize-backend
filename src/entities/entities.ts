@@ -71,6 +71,8 @@ export { IdentityEntity } from './IIdentity';
 export { IdentityMuteEntity } from './IIdentityMute';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
+export { MembershipRefreshRequestEntity } from './IMembershipRefreshRequest';
+export { MembershipWatermarkEntity } from './IMembershipWatermark';
 export { MintingClaimEntity } from './IMintingClaim';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
@@ -175,6 +177,7 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
+export { UserGroupMemberEntity } from './IUserGroupMember';
 export {
   WaveArchiveEntity,
   WaveDecisionPauseEntity,
