@@ -39,6 +39,22 @@ function getNonEmptyString(
     : null;
 }
 
+function removeLeadingSlashes(value: string): string {
+  let startIndex = 0;
+  while (startIndex < value.length && value[startIndex] === '/') {
+    startIndex++;
+  }
+  return value.slice(startIndex);
+}
+
+function removeTrailingSlashes(value: string): string {
+  let endIndex = value.length;
+  while (endIndex > 0 && value[endIndex - 1] === '/') {
+    endIndex--;
+  }
+  return value.slice(0, endIndex);
+}
+
 export class GitHubIssueDropService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -158,13 +174,12 @@ export class GitHubIssueDropService {
     const parsedMessage =
       parseStructuredWalletSignatureMessage(signableMessage);
     if (
-      !parsedMessage ||
-      parsedMessage.kind !== 'authentication' ||
-      parsedMessage.action !== 'login' ||
-      parsedMessage.domain !== GITHUB_WEBHOOK_AUTH_CLIENT_TYPE ||
-      parsedMessage.sessionType !== GITHUB_WEBHOOK_AUTH_CLIENT_TYPE ||
-      parsedMessage.wallet !== clientAddress.toLowerCase() ||
-      parsedMessage.expirationTime.getTime() <= Date.now()
+      parsedMessage?.kind !== 'authentication' ||
+      parsedMessage?.action !== 'login' ||
+      parsedMessage?.domain !== GITHUB_WEBHOOK_AUTH_CLIENT_TYPE ||
+      parsedMessage?.sessionType !== GITHUB_WEBHOOK_AUTH_CLIENT_TYPE ||
+      parsedMessage?.wallet !== clientAddress.toLowerCase() ||
+      parsedMessage?.expirationTime.getTime() <= Date.now()
     ) {
       throw new Error('Invalid session nonce response');
     }
@@ -189,8 +204,8 @@ export class GitHubIssueDropService {
     query: Record<string, string>
   ): string {
     const url = new URL(apiBaseUrl);
-    const basePath = url.pathname.replace(/\/+$/, '');
-    const nextPath = path.replace(/^\/+/, '');
+    const basePath = removeTrailingSlashes(url.pathname);
+    const nextPath = removeLeadingSlashes(path);
     url.pathname = [basePath, nextPath].filter(Boolean).join('/');
     Object.entries(query).forEach(([key, value]) => {
       url.searchParams.set(key, value);
