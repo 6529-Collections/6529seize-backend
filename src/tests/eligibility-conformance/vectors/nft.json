@@ -1,0 +1,289 @@
+[
+  {
+    "name": "nft-collection-flag-only",
+    "dimension": "nft",
+    "description": "A truthy owns-flag with no token list requires owning at least one token of that collection (spec §7.1).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "memes", "token_id": "100" }
+    ],
+    "groups": [
+      { "id": "g-owns-meme", "owns_meme": true },
+      { "id": "g-owns-gradient", "owns_gradient": true }
+    ],
+    "expected": { "eligible_group_ids": ["g-owns-meme"] }
+  },
+  {
+    "name": "nft-empty-ownings-never-eligible",
+    "dimension": "nft",
+    "description": "Owning zero tokens of the flagged collection fails the criterion regardless of the match mode or token list (spec §7.1 rule 1).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "groups": [
+      {
+        "id": "g-any-mode",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-all-mode",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ALL_TOKENS"
+      },
+      { "id": "g-flag-only", "owns_meme": true }
+    ],
+    "expected": { "eligible_group_ids": [] }
+  },
+  {
+    "name": "nft-all-tokens-full-set",
+    "dimension": "nft",
+    "description": "ALL_TOKENS (the default match mode) requires owning every listed token (spec §7.2).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "memes", "token_id": "100" },
+      { "owner": "subject", "collection": "memes", "token_id": "201" },
+      { "owner": "subject", "collection": "memes", "token_id": "325" }
+    ],
+    "groups": [
+      {
+        "id": "g-all-owned",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100", "201", "325"],
+        "owns_meme_tokens_match_mode": "ALL_TOKENS"
+      },
+      {
+        "id": "g-one-missing",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100", "201", "325", "999"],
+        "owns_meme_tokens_match_mode": "ALL_TOKENS"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-all-owned"] }
+  },
+  {
+    "name": "nft-all-tokens-partial",
+    "dimension": "nft",
+    "description": "Partial ownership fails ALL_TOKENS; the exact owned subset passes (spec §7.2). Also exercises the default match mode (omitted = ALL_TOKENS).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "memes", "token_id": "100" },
+      { "owner": "subject", "collection": "memes", "token_id": "201" }
+    ],
+    "groups": [
+      {
+        "id": "g-needs-three",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100", "201", "325"]
+      },
+      {
+        "id": "g-needs-two",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100", "201"]
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-needs-two"] }
+  },
+  {
+    "name": "nft-any-token",
+    "dimension": "nft",
+    "description": "ANY_TOKEN passes when at least one listed token is owned (spec §7.2).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "memes", "token_id": "100" }
+    ],
+    "groups": [
+      {
+        "id": "g-any-hit",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100", "201", "325"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-any-miss",
+        "owns_meme": true,
+        "owns_meme_tokens": ["201", "325"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-any-hit"] }
+  },
+  {
+    "name": "nft-single-token-list-modes-coincide",
+    "dimension": "nft",
+    "description": "For single-token lists ANY_TOKEN and ALL_TOKENS coincide (spec §7.2), shown on the gradient collection.",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "gradient", "token_id": "7" }
+    ],
+    "groups": [
+      {
+        "id": "g-any-7",
+        "owns_gradient": true,
+        "owns_gradient_tokens": ["7"],
+        "owns_gradient_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-all-7",
+        "owns_gradient": true,
+        "owns_gradient_tokens": ["7"],
+        "owns_gradient_tokens_match_mode": "ALL_TOKENS"
+      },
+      {
+        "id": "g-any-8",
+        "owns_gradient": true,
+        "owns_gradient_tokens": ["8"],
+        "owns_gradient_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-all-8",
+        "owns_gradient": true,
+        "owns_gradient_tokens": ["8"],
+        "owns_gradient_tokens_match_mode": "ALL_TOKENS"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-any-7", "g-all-7"] }
+  },
+  {
+    "name": "nft-empty-token-list-means-any-token",
+    "dimension": "nft",
+    "description": "A null or empty token list means any token of the collection counts, in either match mode (spec §7.1 rule 2), shown on the meme lab collection.",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "lab", "token_id": "5" }
+    ],
+    "groups": [
+      { "id": "g-null-list", "owns_lab": true },
+      {
+        "id": "g-empty-list-all",
+        "owns_lab": true,
+        "owns_lab_tokens": [],
+        "owns_lab_tokens_match_mode": "ALL_TOKENS"
+      },
+      {
+        "id": "g-empty-list-any",
+        "owns_lab": true,
+        "owns_lab_tokens": [],
+        "owns_lab_tokens_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-null-list", "g-empty-list-all", "g-empty-list-any"]
+    }
+  },
+  {
+    "name": "nft-nextgen-collection",
+    "dimension": "nft",
+    "description": "NextGen ownership resolves against the mainnet NextGen core contract (spec §7).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "nextgen", "token_id": "10" }
+    ],
+    "groups": [
+      {
+        "id": "g-all-10",
+        "owns_nextgen": true,
+        "owns_nextgen_tokens": ["10"],
+        "owns_nextgen_tokens_match_mode": "ALL_TOKENS"
+      },
+      {
+        "id": "g-any-11",
+        "owns_nextgen": true,
+        "owns_nextgen_tokens": ["11"],
+        "owns_nextgen_tokens_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-all-10"] }
+  },
+  {
+    "name": "nft-multi-collection-and",
+    "dimension": "nft",
+    "description": "Multiple flagged collections are ANDed, each with its own token list and match mode (spec §7.1).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "memes", "token_id": "100" },
+      { "owner": "subject", "collection": "gradient", "token_id": "7" }
+    ],
+    "groups": [
+      {
+        "id": "g-meme-and-gradient",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "owns_gradient": true,
+        "owns_gradient_tokens": ["7"],
+        "owns_gradient_tokens_match_mode": "ALL_TOKENS"
+      },
+      {
+        "id": "g-meme-and-lab",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "owns_lab": true
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-meme-and-gradient"] }
+  },
+  {
+    "name": "nft-all-tokens-duplicate-list-divergence",
+    "dimension": "nft",
+    "description": "Degenerate ALL_TOKENS list with a duplicated token id: spec uses set semantics (owning the token suffices); SQL counts JSON rows including duplicates and can never be satisfied.",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "nft_ownings": [
+      { "owner": "subject", "collection": "memes", "token_id": "100" }
+    ],
+    "groups": [
+      {
+        "id": "g-duplicate-list",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100", "100"],
+        "owns_meme_tokens_match_mode": "ALL_TOKENS"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-duplicate-list"] },
+    "known_divergence": {
+      "sql": [
+        {
+          "group_id": "g-duplicate-list",
+          "sql_eligible": false,
+          "divergence": "D-8",
+          "note": "SQL HAVING compares 1 distinct owned token against 2 JSON list rows; spec treats the list as a set (eligibility-spec.md §7.2, §12 D-8)"
+        }
+      ]
+    }
+  },
+  {
+    "name": "nft-consolidated-second-wallet",
+    "dimension": "nft",
+    "description": "Ownership is resolved across the identity's whole consolidation: a token held by a secondary consolidated wallet counts (spec §7).",
+    "identities": [{ "id": "subject", "extra_wallets": 1 }],
+    "subject": "subject",
+    "nft_ownings": [
+      {
+        "owner": "subject",
+        "collection": "memes",
+        "token_id": "100",
+        "wallet_index": 1
+      }
+    ],
+    "groups": [
+      {
+        "id": "g-any-100",
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-any-100"] }
+  }
+]

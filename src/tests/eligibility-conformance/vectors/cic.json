@@ -1,0 +1,142 @@
+[
+  {
+    "name": "cic-total-received-boundary",
+    "dimension": "cic",
+    "description": "Total received CIC compares the identity's aggregate cic (sum over all raters, negatives included) with inclusive bounds (spec §6).",
+    "identities": [{ "id": "subject", "cic": 7 }, { "id": "alice" }, { "id": "bob" }],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "alice", "target": "subject", "matter": "CIC", "rating": 10 },
+      { "rater": "bob", "target": "subject", "matter": "CIC", "rating": -3 }
+    ],
+    "groups": [
+      { "id": "g-min-7", "cic_min": 7 },
+      { "id": "g-min-8", "cic_min": 8 }
+    ],
+    "expected": { "eligible_group_ids": ["g-min-7"] }
+  },
+  {
+    "name": "cic-total-received-negative-window",
+    "dimension": "cic",
+    "description": "CIC can be negative; bounds are signed and inclusive (spec §6).",
+    "identities": [{ "id": "subject", "cic": -3 }, { "id": "bob" }],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "bob", "target": "subject", "matter": "CIC", "rating": -3 }
+    ],
+    "groups": [
+      { "id": "g-max-neg3", "cic_max": -3 },
+      { "id": "g-max-neg4", "cic_max": -4 }
+    ],
+    "expected": { "eligible_group_ids": ["g-max-neg3"] }
+  },
+  {
+    "name": "cic-total-sent-direction-divergence",
+    "dimension": "cic",
+    "description": "Total CIC with direction SENT: spec sums CIC the profile has given; the SQL builder ignores cic_direction without a cic_user and always aggregates received CIC.",
+    "identities": [{ "id": "subject", "cic": 0 }, { "id": "alice", "cic": 10 }],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "subject", "target": "alice", "matter": "CIC", "rating": 10 }
+    ],
+    "groups": [{ "id": "g-sent-min-5", "cic_min": 5, "cic_direction": "SENT" }],
+    "expected": { "eligible_group_ids": ["g-sent-min-5"] },
+    "known_divergence": {
+      "sql": [
+        {
+          "group_id": "g-sent-min-5",
+          "sql_eligible": false,
+          "divergence": "D-6",
+          "note": "SQL forces the received direction when cic_user is null, so the subject's sent CIC of 10 is invisible to it (eligibility-spec.md §6, §12 D-6)"
+        }
+      ]
+    }
+  },
+  {
+    "name": "cic-by-user-received",
+    "dimension": "cic",
+    "description": "By-user CIC counts only the configured counterparty's rating (spec §6).",
+    "identities": [{ "id": "subject", "cic": 52 }, { "id": "alice" }, { "id": "bob" }],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "alice", "target": "subject", "matter": "CIC", "rating": 2 },
+      { "rater": "bob", "target": "subject", "matter": "CIC", "rating": 50 }
+    ],
+    "groups": [
+      { "id": "g-alice-exact-2", "cic_user": "alice", "cic_min": 2, "cic_max": 2 },
+      { "id": "g-alice-min-3", "cic_user": "alice", "cic_min": 3 }
+    ],
+    "expected": { "eligible_group_ids": ["g-alice-exact-2"] }
+  },
+  {
+    "name": "cic-by-user-sent-negative",
+    "dimension": "cic",
+    "description": "By-user CIC with direction SENT and a negative rating; zero-valued inner bounds are respected on both engines when a counterparty is set (spec §6).",
+    "identities": [{ "id": "subject", "cic": 0 }, { "id": "alice", "cic": -4 }],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "subject", "target": "alice", "matter": "CIC", "rating": -4 }
+    ],
+    "groups": [
+      { "id": "g-sent-max-neg4", "cic_user": "alice", "cic_direction": "SENT", "cic_max": -4 },
+      { "id": "g-sent-min-0", "cic_user": "alice", "cic_direction": "SENT", "cic_min": 0 }
+    ],
+    "expected": { "eligible_group_ids": ["g-sent-max-neg4"] }
+  },
+  {
+    "name": "cic-by-user-negative-min-no-ratings-divergence",
+    "dimension": "cic",
+    "description": "By-user CIC with a negative minimum and no ratings from that user: spec evaluates 0 >= -10 (eligible); SQL requires a rating row to exist.",
+    "identities": [{ "id": "subject", "cic": 0 }, { "id": "alice" }],
+    "subject": "subject",
+    "groups": [{ "id": "g-alice-min-neg10", "cic_user": "alice", "cic_min": -10 }],
+    "expected": { "eligible_group_ids": ["g-alice-min-neg10"] },
+    "known_divergence": {
+      "sql": [
+        {
+          "group_id": "g-alice-min-neg10",
+          "sql_eligible": false,
+          "divergence": "D-4",
+          "note": "SQL admits only profiles with >=1 non-zero CIC rating row from the user; spec compares the zero default 0 >= -10 (eligibility-spec.md §6, §12 D-4)"
+        }
+      ]
+    }
+  },
+  {
+    "name": "cic-min-zero-divergence",
+    "dimension": "cic",
+    "description": "cic_min 0 is a real bound per spec (rejects negative CIC) but the SQL builder drops zero bounds via truthiness.",
+    "identities": [{ "id": "subject", "cic": -3 }, { "id": "bob" }],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "bob", "target": "subject", "matter": "CIC", "rating": -3 }
+    ],
+    "groups": [{ "id": "g-min-0", "cic_min": 0 }],
+    "expected": { "eligible_group_ids": [] },
+    "known_divergence": {
+      "sql": [
+        {
+          "group_id": "g-min-0",
+          "sql_eligible": true,
+          "divergence": "D-3",
+          "note": "SQL builder drops the falsy cic_min 0 bound; spec enforces -3 < 0 (eligibility-spec.md §6, §12 D-3)"
+        }
+      ]
+    }
+  },
+  {
+    "name": "cic-by-user-nonzero-required",
+    "dimension": "cic",
+    "description": "By-user CIC with both bounds null requires a non-zero rating from that user (spec §1.2, §6); engines agree.",
+    "identities": [{ "id": "subject", "cic": -1 }, { "id": "alice" }, { "id": "bob" }],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "alice", "target": "subject", "matter": "CIC", "rating": -1 }
+    ],
+    "groups": [
+      { "id": "g-alice-nobounds", "cic_user": "alice" },
+      { "id": "g-bob-nobounds", "cic_user": "bob" }
+    ],
+    "expected": { "eligible_group_ids": ["g-alice-nobounds"] }
+  }
+]
