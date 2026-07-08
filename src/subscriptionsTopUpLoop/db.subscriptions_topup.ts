@@ -13,6 +13,10 @@ import {
 import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
 import { sendDiscordUpdate } from '../notifier-discord';
+import {
+  sendProcessedTopUpWaveWarning,
+  sendSubscriptionTopUpWaveUpdate
+} from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
@@ -21,6 +25,7 @@ const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   const processedTopUps: SubscriptionTopUp[] = [];
+  const alreadyProcessedTopUpHashes: string[] = [];
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -38,6 +43,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           'Subscriptions',
           'warn'
         );
+        alreadyProcessedTopUpHashes.push(topUp.hash);
 
         continue;
       }
@@ -85,6 +91,10 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
     }
   });
 
+  for (const hash of alreadyProcessedTopUpHashes) {
+    await sendProcessedTopUpWaveWarning(hash);
+  }
+
   for (const topUp of processedTopUps) {
     const seizeDomain =
       process.env.NODE_ENV === 'development' ? 'staging.6529' : '6529';
@@ -101,6 +111,11 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       'Subscription Top Up',
       'success'
     );
+    await sendSubscriptionTopUpWaveUpdate({
+      topUp,
+      seizeDomain,
+      etherscanLink: link
+    });
   }
 }
 

@@ -20,6 +20,11 @@ import { TransactionsProcessedSubscriptionsBlock } from '../entities/ITransactio
 import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
 import { sendDiscordUpdate } from '../notifier-discord';
+import {
+  sendInsufficientBalanceWaveError,
+  sendNoBalanceFoundWaveError,
+  sendNoSubscriptionFoundWaveWarning
+} from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { fetchSubscriptionBalanceForConsolidationKey } from '../subscriptionsDaily/db.subscriptions';
@@ -206,12 +211,11 @@ async function processSubscription(
   )[0];
 
   if (!finalSubscription) {
-    const message = `No subscription found for airdrop address: ${
-      transaction.to_address
-    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+    const transactionLink = ethTools.toEtherScanTransactionLink(
       1,
       transaction.transaction
-    )}`;
+    );
+    const message = `No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
     logger.warn(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -219,6 +223,10 @@ async function processSubscription(
       'Subscriptions',
       'warn'
     );
+    await sendNoSubscriptionFoundWaveWarning({
+      airdropAddress: transaction.to_address,
+      transactionLink
+    });
     return;
   }
 
@@ -227,12 +235,11 @@ async function processSubscription(
     entityManager
   );
   if (!balance) {
-    const message = `No balance found for consolidation key: ${
-      finalSubscription.consolidation_key
-    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+    const transactionLink = ethTools.toEtherScanTransactionLink(
       1,
       transaction.transaction
-    )}`;
+    );
+    const message = `No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -240,17 +247,20 @@ async function processSubscription(
       'Subscriptions',
       'error'
     );
+    await sendNoBalanceFoundWaveError({
+      consolidationKey: finalSubscription.consolidation_key,
+      transactionLink
+    });
     balance = {
       consolidation_key: finalSubscription.consolidation_key,
       balance: 0
     };
   } else if (MEMES_MINT_PRICE > balance.balance) {
-    const message = `Insufficient balance for consolidation key: ${
-      finalSubscription.consolidation_key
-    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+    const transactionLink = ethTools.toEtherScanTransactionLink(
       1,
       transaction.transaction
-    )}`;
+    );
+    const message = `Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -258,6 +268,10 @@ async function processSubscription(
       'Subscriptions',
       'error'
     );
+    await sendInsufficientBalanceWaveError({
+      consolidationKey: finalSubscription.consolidation_key,
+      transactionLink
+    });
   }
 
   let balanceAfter = balance.balance - MEMES_MINT_PRICE;

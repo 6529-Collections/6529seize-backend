@@ -31,6 +31,12 @@ jest.mock('../notifier-discord', () => ({
   sendDiscordUpdate: jest.fn()
 }));
 
+jest.mock('../subscription-wave-notifier', () => ({
+  sendInsufficientBalanceWaveError: jest.fn(),
+  sendNoBalanceFoundWaveError: jest.fn(),
+  sendNoSubscriptionFoundWaveWarning: jest.fn()
+}));
+
 jest.mock('../subscriptionsDaily/db.subscriptions', () => ({
   fetchSubscriptionBalanceForConsolidationKey: jest.fn()
 }));
