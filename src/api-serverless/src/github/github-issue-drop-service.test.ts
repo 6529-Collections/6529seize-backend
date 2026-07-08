@@ -8,6 +8,8 @@ jest.mock('node-fetch', () => jest.fn());
 const PRIVATE_KEY =
   '0x59c6995e998f97a5a0044966f094538423616ff67a53e886e68660d054d60f1a';
 const CLIENT_ADDRESS = new Wallet(PRIVATE_KEY).address;
+const ISSUED_AT = new Date(Date.now() - 1_000).toISOString();
+const EXPIRATION_TIME = new Date(Date.now() + 5 * 60 * 1_000).toISOString();
 const SIGNABLE_MESSAGE = [
   '6529 Authentication',
   'Version: 2',
@@ -16,8 +18,8 @@ const SIGNABLE_MESSAGE = [
   'Session Type: native',
   `Wallet: ${CLIENT_ADDRESS}`,
   'Chain ID: 1',
-  'Issued At: 2026-01-01T00:00:00.000Z',
-  'Expiration Time: 2026-01-01T00:05:00.000Z',
+  `Issued At: ${ISSUED_AT}`,
+  `Expiration Time: ${EXPIRATION_TIME}`,
   'Nonce: github-auth-nonce',
   'Action: login',
   'Purpose: Sign this message to authenticate with 6529.'
@@ -87,6 +89,22 @@ function getLoginBody(): LoginRequestBody {
   return JSON.parse(request.body) as LoginRequestBody;
 }
 
+function mockSuccessfulAuth(fetchMock: jest.MockedFunction<typeof fetch>) {
+  fetchMock
+    .mockResolvedValueOnce(
+      createJsonResponse({
+        signable_message: SIGNABLE_MESSAGE,
+        server_signature: 'server-signature'
+      }) as never
+    )
+    .mockResolvedValueOnce(
+      createJsonResponse({
+        token: 'auth-token'
+      }) as never
+    )
+    .mockResolvedValueOnce(createJsonResponse({}) as never);
+}
+
 describe('GitHubIssueDropService', () => {
   const fetchMock = jest.mocked(fetch);
   let aiPrompter: jest.Mocked<AiPrompter>;
@@ -105,19 +123,7 @@ describe('GitHubIssueDropService', () => {
     aiPrompter = {
       promptAndGetReply: jest.fn()
     };
-    fetchMock
-      .mockResolvedValueOnce(
-        createJsonResponse({
-          signable_message: SIGNABLE_MESSAGE,
-          server_signature: 'server-signature'
-        }) as never
-      )
-      .mockResolvedValueOnce(
-        createJsonResponse({
-          token: 'auth-token'
-        }) as never
-      )
-      .mockResolvedValueOnce(createJsonResponse({}) as never);
+    mockSuccessfulAuth(fetchMock);
   });
 
   afterEach(() => {
@@ -215,6 +221,67 @@ describe('GitHubIssueDropService', () => {
         }
       ]
     });
+  });
+
+  it('preserves path prefixes from API_BASE_URL when building API requests', async () => {
+    process.env.API_BASE_URL = 'https://api.test/base/';
+
+    await new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+      ISSUE_URL,
+      'issue',
+      {
+        action: 'opened'
+      }
+    );
+
+    expect(getFetchUrl(0).pathname).toBe('/base/api/auth/session-nonce');
+    expect(getFetchUrl(1).pathname).toBe('/base/api/auth/login');
+    expect(getFetchUrl(2).pathname).toBe('/base/api/drops');
+  });
+
+  it('rejects malformed session nonce responses before signing', async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse({
+        server_signature: 'server-signature'
+      }) as never
+    );
+
+    await expect(
+      new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        {
+          action: 'opened'
+        }
+      )
+    ).rejects.toThrow('Invalid session nonce response');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects malformed login responses before posting the drop', async () => {
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          signable_message: SIGNABLE_MESSAGE,
+          server_signature: 'server-signature'
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({ refresh_token: 'ignored' }) as never
+      );
+
+    await expect(
+      new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        {
+          action: 'opened'
+        }
+      )
+    ).rejects.toThrow('Invalid login response');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('posts non-merged GitHub events without asking AI for a summary', async () => {
