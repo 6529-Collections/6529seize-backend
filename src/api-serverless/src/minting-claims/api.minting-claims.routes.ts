@@ -164,7 +164,7 @@ const ClaimsListQuerySchema = Joi.object({
 });
 
 const MintingClaimAttributeSchema = Joi.object({
-  trait_type: Joi.string().required(),
+  trait_type: Joi.string().trim().min(1).required(),
   value: Joi.alternatives()
     .try(Joi.string().allow(''), Joi.number())
     .required(),

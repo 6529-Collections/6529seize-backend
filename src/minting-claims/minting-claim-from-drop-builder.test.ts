@@ -79,6 +79,10 @@ describe('buildMintingClaimRowFromDrop', () => {
       {
         data_key: ' custom trait ',
         data_value: '  inner  spacing  '
+      },
+      {
+        data_key: ' empty ',
+        data_value: '   '
       }
     ] as DropMetadataEntity[];
 
@@ -103,6 +107,13 @@ describe('buildMintingClaimRowFromDrop', () => {
           trait_type: 'Custom trait',
           value: 'inner  spacing'
         }
+      ])
+    );
+    expect(row.attributes).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          trait_type: 'Empty'
+        })
       ])
     );
   });

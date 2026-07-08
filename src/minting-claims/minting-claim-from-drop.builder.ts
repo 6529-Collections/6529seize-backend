@@ -126,6 +126,7 @@ function buildAttributes(
   const attrs: MintingClaimAttribute[] = [];
 
   for (const m of metadatas) {
+    if (m.data_key === '' || m.data_value === '') continue;
     if (METADATA_KEYS_SKIP.has(m.data_key)) continue;
     const traitType =
       DATA_KEY_TO_TRAIT_TYPE[m.data_key] ??

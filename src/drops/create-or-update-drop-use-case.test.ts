@@ -179,11 +179,17 @@ describe('CreateOrUpdateDropUseCase', () => {
         {
           data_key: ' artist ',
           data_value: '  6529er  '
+        },
+        {
+          data_key: ' empty ',
+          data_value: '   '
         }
       ]
     };
 
-    expect(sanitizeDropStructuredFields(model)).toMatchObject({
+    const sanitized = sanitizeDropStructuredFields(model);
+
+    expect(sanitized).toMatchObject({
       title: 'The Loom',
       parts: [
         {
@@ -197,6 +203,30 @@ describe('CreateOrUpdateDropUseCase', () => {
         }
       ]
     });
+    expect(sanitized.metadata).toHaveLength(1);
+    expect(model.metadata[0]).toMatchObject({
+      data_key: ' artist ',
+      data_value: '  6529er  '
+    });
+  });
+
+  it('keeps identity nomination pre-resolution best-effort for empty metadata after trimming', async () => {
+    const useCase = createUseCase({ existingNominations: [] });
+
+    await expect(
+      useCase.preResolveIdentityNomination(
+        {
+          ...createIdentitySubmissionModel('   '),
+          metadata: [
+            {
+              data_key: ' identity ',
+              data_value: '   '
+            }
+          ]
+        },
+        {}
+      )
+    ).resolves.toBeNull();
   });
 
   async function verifyIdentitySubmissionDuplicates(

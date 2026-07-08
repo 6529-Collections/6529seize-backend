@@ -60,8 +60,26 @@ function normalizeOptionalUrl(value: string | null | undefined): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
-function trimStringField(value: string): string {
-  return value.trim();
+function trimRequiredStringField(value: string, fieldName: string): string {
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    throw new BadRequestException(`${fieldName} is required`);
+  }
+  return trimmed;
+}
+
+function trimAttributeTraitType(
+  sanitized: Record<string, unknown>,
+  fieldName: 'trait_type' | 'traitType'
+): void {
+  if (typeof sanitized[fieldName] !== 'string') {
+    return;
+  }
+  const trimmed = sanitized[fieldName].trim();
+  if (trimmed === '') {
+    throw new BadRequestException('attribute trait_type is required');
+  }
+  sanitized[fieldName] = trimmed;
 }
 
 function sanitizeMintingClaimAttribute(attribute: unknown): unknown {
@@ -73,12 +91,8 @@ function sanitizeMintingClaimAttribute(attribute: unknown): unknown {
   }
 
   const sanitized = { ...(attribute as Record<string, unknown>) };
-  if (typeof sanitized.trait_type === 'string') {
-    sanitized.trait_type = sanitized.trait_type.trim();
-  }
-  if (typeof sanitized.traitType === 'string') {
-    sanitized.traitType = sanitized.traitType.trim();
-  }
+  trimAttributeTraitType(sanitized, 'trait_type');
+  trimAttributeTraitType(sanitized, 'traitType');
   if (typeof sanitized.value === 'string') {
     sanitized.value = sanitized.value.trim();
   }
@@ -90,6 +104,14 @@ function sanitizeMintingClaimAttributes(attributes: unknown): unknown {
     return attributes;
   }
   return attributes.map(sanitizeMintingClaimAttribute);
+}
+
+function getMintingClaimAttributeTraitType(attribute: unknown): unknown {
+  if (typeof attribute !== 'object' || attribute == null) {
+    return null;
+  }
+  const record = attribute as { trait_type?: unknown; traitType?: unknown };
+  return record.trait_type ?? record.traitType ?? null;
 }
 
 function validateRequestedSeason(
@@ -117,10 +139,7 @@ function extractSeasonFromAttributes(attributes: unknown): number | null {
   }
 
   const seasonAttribute = attributes.find((attribute) => {
-    if (typeof attribute !== 'object' || attribute == null) {
-      return false;
-    }
-    const traitType = (attribute as { trait_type?: unknown }).trait_type;
+    const traitType = getMintingClaimAttributeTraitType(attribute);
     return traitType === TYPE_SEASON_TRAIT;
   }) as { value?: unknown } | undefined;
 
@@ -152,10 +171,7 @@ function normalizeAttributesWithSeason(
   }
 
   const filtered = attributes.filter((attribute) => {
-    if (typeof attribute !== 'object' || attribute == null) {
-      return true;
-    }
-    const traitType = (attribute as { trait_type?: unknown }).trait_type;
+    const traitType = getMintingClaimAttributeTraitType(attribute);
     return traitType !== TYPE_SEASON_TRAIT;
   });
 
@@ -292,12 +308,15 @@ export async function buildUpdatesForClaimPatch(
   let animationUrlChanged = false;
 
   if (body.description !== undefined) {
-    updates.description = trimStringField(body.description);
+    updates.description = trimRequiredStringField(
+      body.description,
+      'description'
+    );
     shouldResetMetadataLocation = true;
   }
 
   if (body.name !== undefined) {
-    updates.name = trimStringField(body.name);
+    updates.name = trimRequiredStringField(body.name, 'name');
     shouldResetMetadataLocation = true;
   }
 
