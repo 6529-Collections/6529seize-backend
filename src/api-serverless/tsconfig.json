@@ -22,7 +22,6 @@
     ".vscode/**/*"
   ],
   "ts-node": {
-    "files": true,
     "require": ["tsconfig-paths/register"]
   },
   "emitDecoratorMetadata": true,

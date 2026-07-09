@@ -135,6 +135,38 @@ safe_file_name() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
 }
 
+json_string() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+is_integer() {
+  [[ "$1" =~ ^-?[0-9]+$ ]]
+}
+
+is_unsigned_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+is_safe_column_name() {
+  [[ "$1" =~ ^[A-Za-z0-9_]+$ ]]
+}
+
+require_unsigned_config() {
+  local name="$1"
+  local value="$2"
+  is_unsigned_integer "$value" || die "$name must be an unsigned integer"
+}
+
+validate_port_config() {
+  local name="$1"
+  local value="$2"
+  require_unsigned_config "$name" "$value"
+  [[ "$value" -ge 1 && "$value" -le 65535 ]] || die "$name must be between 1 and 65535"
+}
+
 parse_args() {
   MODE="sync"
   YES="false"
@@ -170,12 +202,15 @@ load_config() {
   ENV_FILE="${ENV_FILE:-.env.staging-db.local}"
   [[ -f "$ENV_FILE" ]] || die "Missing $ENV_FILE"
 
+  # This file is sourced as shell, so it must be trusted local-only config.
   # shellcheck disable=SC1090
   source "$ENV_FILE"
 
-  : "${STAGING_DB_NAME:?Missing STAGING_DB_NAME in $ENV_FILE}"
-  : "${STAGING_DB_USER_READ:?Missing STAGING_DB_USER_READ in $ENV_FILE}"
-  : "${STAGING_DB_PASS_READ:?Missing STAGING_DB_PASS_READ in $ENV_FILE}"
+  if [[ "$MODE" != "restore" ]]; then
+    : "${STAGING_DB_NAME:?Missing STAGING_DB_NAME in $ENV_FILE}"
+    : "${STAGING_DB_USER_READ:?Missing STAGING_DB_USER_READ in $ENV_FILE}"
+    : "${STAGING_DB_PASS_READ:?Missing STAGING_DB_PASS_READ in $ENV_FILE}"
+  fi
 
   STAGING_DB_TUNNEL_HOST="${STAGING_DB_TUNNEL_HOST:-127.0.0.1}"
   STAGING_DB_TUNNEL_PORT="${STAGING_DB_TUNNEL_PORT:-3307}"
@@ -195,6 +230,15 @@ load_config() {
   CHUNK_TABLE_MIN_MB="${CHUNK_TABLE_MIN_MB:-512}"
   CHUNK_RANGE_SIZE="${CHUNK_RANGE_SIZE:-500000}"
   CHUNK_COLUMN_OVERRIDES="${CHUNK_COLUMN_OVERRIDES:-historic_tdh_consolidation:block:distinct;tdh:block:distinct;tdh_history:block:distinct}"
+
+  validate_port_config STAGING_DB_TUNNEL_PORT "$STAGING_DB_TUNNEL_PORT"
+  validate_port_config STAGING_DB_PORT "$STAGING_DB_PORT"
+  require_unsigned_config DOCKER_READY_TIMEOUT_SECONDS "$DOCKER_READY_TIMEOUT_SECONDS"
+  require_unsigned_config RETRY_SLEEP_SECONDS "$RETRY_SLEEP_SECONDS"
+  require_unsigned_config DUMP_MAX_ATTEMPTS "$DUMP_MAX_ATTEMPTS"
+  require_unsigned_config CHUNK_TABLE_MIN_MB "$CHUNK_TABLE_MIN_MB"
+  require_unsigned_config CHUNK_RANGE_SIZE "$CHUNK_RANGE_SIZE"
+  [[ "$CHUNK_RANGE_SIZE" -gt 0 ]] || die "CHUNK_RANGE_SIZE must be greater than 0"
 
   CHUNK_TABLE_MIN_BYTES=$((CHUNK_TABLE_MIN_MB * 1024 * 1024))
 
@@ -233,11 +277,16 @@ prepare_workspace() {
   umask 077
   mkdir -p "$DUMP_DIR/tables" "$DUMP_DIR/logs"
 
-  MYSQL_BIN="$(find_mysql_client mysql MYSQL_BIN)"
-  MYSQLDUMP_BIN="$(find_mysql_client mysqldump MYSQLDUMP_BIN)"
   require_cmd gzip
   require_cmd gunzip
   require_cmd docker
+
+  if [[ "$MODE" == "restore" ]]; then
+    return 0
+  fi
+
+  MYSQL_BIN="$(find_mysql_client mysql MYSQL_BIN)"
+  MYSQLDUMP_BIN="$(find_mysql_client mysqldump MYSQLDUMP_BIN)"
 
   STAGING_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/staging-db-client.XXXXXX")"
   STAGING_CNF="$STAGING_TMP_DIR/staging-db-client.cnf"
@@ -297,12 +346,18 @@ start_ssm_tunnel_if_configured() {
   fi
 
   local tunnel_log="$DUMP_DIR/logs/ssm-tunnel.log"
+  local parameters
+  parameters="$(printf '{"host":[%s],"portNumber":[%s],"localPortNumber":[%s]}' \
+    "$(json_string "$STAGING_DB_HOST_READ")" \
+    "$(json_string "$STAGING_DB_PORT")" \
+    "$(json_string "$STAGING_DB_TUNNEL_PORT")")"
+
   log "Starting SSM tunnel on ${STAGING_DB_TUNNEL_HOST}:${STAGING_DB_TUNNEL_PORT} -> ${STAGING_DB_HOST_READ}:${STAGING_DB_PORT}"
   aws ssm start-session \
     --region "$STAGING_AWS_REGION" \
     --target "$STAGING_SSM_TARGET" \
     --document-name AWS-StartPortForwardingSessionToRemoteHost \
-    --parameters "{\"host\":[\"$STAGING_DB_HOST_READ\"],\"portNumber\":[\"$STAGING_DB_PORT\"],\"localPortNumber\":[\"$STAGING_DB_TUNNEL_PORT\"]}" \
+    --parameters "$parameters" \
     > "$tunnel_log" 2>&1 &
   SSM_PID=$!
 
@@ -415,6 +470,23 @@ schema_columns_from_dump() {
   ' > "$output_file"
 }
 
+strip_mysql_definers() {
+  sed -E 's/DEFINER=`[^`]*`@`[^`]*`//g; s/DEFINER=[^[:space:]]+//g'
+}
+
+dump_schema_sql_once() {
+  mysqldump_staging \
+    --single-transaction \
+    --routines \
+    --triggers \
+    --events \
+    --no-data \
+    --default-character-set=utf8mb4 \
+    --set-gtid-purged=OFF \
+    --no-tablespaces \
+    "$STAGING_DB_NAME" | strip_mysql_definers
+}
+
 move_to_stale_dir() {
   local stale_dir="$1"
   local path="$2"
@@ -505,17 +577,7 @@ dump_schema_once() {
 
   rm -f "$current_file" "$current_columns_file"
 
-  atomic_gzip_dump "$current_file" \
-    mysqldump_staging \
-      --single-transaction \
-      --routines \
-      --triggers \
-      --events \
-      --no-data \
-      --default-character-set=utf8mb4 \
-      --set-gtid-purged=OFF \
-      --no-tablespaces \
-      "$STAGING_DB_NAME"
+  atomic_gzip_dump "$current_file" dump_schema_sql_once
 
   schema_columns_from_dump "$current_file" "$current_columns_file"
 
@@ -565,18 +627,23 @@ write_table_list() {
 
 table_data_bytes() {
   local table="$1"
-  local schema_literal table_literal
+  local schema_literal table_literal bytes
   schema_literal="$(sql_string_literal "$STAGING_DB_NAME")"
   table_literal="$(sql_string_literal "$table")"
-  mysql_staging -e "SELECT COALESCE(data_length, 0) FROM information_schema.tables WHERE table_schema = $schema_literal AND table_name = $table_literal;"
+  bytes="$(mysql_staging -e "SELECT COALESCE(data_length, 0) FROM information_schema.tables WHERE table_schema = $schema_literal AND table_name = $table_literal;")" || return 1
+  if ! is_unsigned_integer "$bytes"; then
+    log "Unexpected non-numeric table size for $table: $bytes"
+    return 1
+  fi
+  printf '%s\n' "$bytes"
 }
 
 single_numeric_primary_key() {
   local table="$1"
-  local schema_literal table_literal
+  local schema_literal table_literal column_name
   schema_literal="$(sql_string_literal "$STAGING_DB_NAME")"
   table_literal="$(sql_string_literal "$table")"
-  mysql_staging -e "
+  column_name="$(mysql_staging -e "
     SELECT COALESCE(MAX(c.column_name), '')
     FROM information_schema.key_column_usage k
     JOIN information_schema.columns c
@@ -589,24 +656,34 @@ single_numeric_primary_key() {
     GROUP BY k.table_schema, k.table_name
     HAVING COUNT(*) = 1
        AND MAX(c.data_type IN ('tinyint', 'smallint', 'mediumint', 'int', 'integer', 'bigint')) = 1;
-  " | head -n 1
+  " | head -n 1)" || return 1
+  if [[ -n "$column_name" ]] && ! is_safe_column_name "$column_name"; then
+    log "Unexpected primary key column name for $table: $column_name"
+    return 1
+  fi
+  printf '%s\n' "$column_name"
 }
 
 numeric_column_exists() {
   local table="$1"
   local column="$2"
-  local schema_literal table_literal column_literal
+  local schema_literal table_literal column_literal count
   schema_literal="$(sql_string_literal "$STAGING_DB_NAME")"
   table_literal="$(sql_string_literal "$table")"
   column_literal="$(sql_string_literal "$column")"
-  [[ "$(mysql_staging -e "
+  count="$(mysql_staging -e "
     SELECT COUNT(*)
     FROM information_schema.columns
     WHERE table_schema = $schema_literal
       AND table_name = $table_literal
       AND column_name = $column_literal
       AND data_type IN ('tinyint', 'smallint', 'mediumint', 'int', 'integer', 'bigint');
-  ")" == "1" ]]
+  ")" || return 1
+  if ! is_unsigned_integer "$count"; then
+    log "Unexpected numeric-column check result for $table.$column: $count"
+    return 1
+  fi
+  [[ "$count" == "1" ]]
 }
 
 configured_chunk_spec() {
@@ -637,11 +714,17 @@ configured_chunk_spec() {
 table_min_max_column() {
   local table="$1"
   local column="$2"
-  local schema_id table_id column_id
+  local schema_id table_id column_id min_max min_value max_value
   schema_id="$(sql_identifier "$STAGING_DB_NAME")"
   table_id="$(sql_identifier "$table")"
   column_id="$(sql_identifier "$column")"
-  mysql_staging -e "SELECT COALESCE(MIN($column_id), 0), COALESCE(MAX($column_id), -1) FROM $schema_id.$table_id;"
+  min_max="$(mysql_staging -e "SELECT COALESCE(MIN($column_id), 0), COALESCE(MAX($column_id), -1) FROM $schema_id.$table_id;")" || return 1
+  read -r min_value max_value <<< "$min_max"
+  if ! is_integer "$min_value" || ! is_integer "$max_value"; then
+    log "Unexpected min/max values for $table.$column: $min_max"
+    return 1
+  fi
+  printf '%s\t%s\n' "$min_value" "$max_value"
 }
 
 dump_whole_table_once() {
@@ -683,6 +766,11 @@ dump_chunk_once() {
   local column_id
   column_id="$(sql_identifier "$column")"
 
+  if ! is_integer "$start" || ! is_integer "$end"; then
+    log "Invalid chunk range for $table.$column: $start-$end"
+    return 1
+  fi
+
   if validated_gzip_exists "$final_file"; then
     return 0
   fi
@@ -711,6 +799,39 @@ dump_chunk() {
   run_with_retries "Dump table $table chunk $column $start-$end" dump_chunk_once "$table" "$column" "$start" "$end" "$final_file"
 }
 
+dump_null_chunk_once() {
+  local table="$1"
+  local column="$2"
+  local final_file="$3"
+  local column_id
+  column_id="$(sql_identifier "$column")"
+
+  if validated_gzip_exists "$final_file"; then
+    return 0
+  fi
+
+  atomic_gzip_dump "$final_file" \
+    mysqldump_staging \
+      --single-transaction \
+      --quick \
+      --skip-triggers \
+      --no-create-info \
+      --complete-insert \
+      --hex-blob \
+      --default-character-set=utf8mb4 \
+      --set-gtid-purged=OFF \
+      --no-tablespaces \
+      --where="$column_id IS NULL" \
+      "$STAGING_DB_NAME" "$table"
+}
+
+dump_null_chunk() {
+  local table="$1"
+  local column="$2"
+  local final_file="$3"
+  run_with_retries "Dump table $table chunk $column IS NULL" dump_null_chunk_once "$table" "$column" "$final_file"
+}
+
 dump_range_chunked_table() {
   local table="$1"
   local column="$2"
@@ -729,6 +850,13 @@ dump_range_chunked_table() {
   min_max="$(table_min_max_column "$table" "$column")"
   min_pk="$(printf '%s\n' "$min_max" | awk '{print $1}')"
   max_pk="$(printf '%s\n' "$min_max" | awk '{print $2}')"
+
+  if ! is_integer "$min_pk" || ! is_integer "$max_pk"; then
+    log "Invalid min/max values for $table.$column: $min_max"
+    return 1
+  fi
+
+  dump_null_chunk "$table" "$column" "$chunk_dir/null.sql.gz"
 
   if [[ -z "$min_pk" || -z "$max_pk" || "$max_pk" -lt "$min_pk" ]]; then
     log "Table $table is empty; marking chunked table complete"
@@ -759,7 +887,7 @@ table_distinct_numeric_values() {
   schema_id="$(sql_identifier "$STAGING_DB_NAME")"
   table_id="$(sql_identifier "$table")"
   column_id="$(sql_identifier "$column")"
-  mysql_staging -e "SELECT DISTINCT $column_id FROM $schema_id.$table_id ORDER BY $column_id;"
+  mysql_staging -e "SELECT DISTINCT $column_id FROM $schema_id.$table_id WHERE $column_id IS NOT NULL ORDER BY $column_id;"
 }
 
 dump_distinct_chunk_once() {
@@ -769,6 +897,11 @@ dump_distinct_chunk_once() {
   local final_file="$4"
   local column_id
   column_id="$(sql_identifier "$column")"
+
+  if ! is_integer "$value"; then
+    log "Invalid distinct chunk value for $table.$column: $value"
+    return 1
+  fi
 
   if validated_gzip_exists "$final_file"; then
     return 0
@@ -815,14 +948,17 @@ dump_distinct_chunked_table() {
   rm -f "$DUMP_DIR/tables/${safe_table}.sql.gz.tmp"
   mkdir -p "$chunk_dir"
 
-  if [[ ! -s "$values_file" ]]; then
-    table_distinct_numeric_values "$table" "$column" > "$values_file.tmp"
-    mv "$values_file.tmp" "$values_file"
-  fi
+  table_distinct_numeric_values "$table" "$column" > "$values_file.tmp" || return 1
+  mv "$values_file.tmp" "$values_file"
 
   log "Chunking $table by distinct $column values from $values_file"
+  dump_null_chunk "$table" "$column" "$chunk_dir/null.sql.gz"
   while IFS=$'\t' read -r value; do
     [[ -n "$value" ]] || continue
+    if ! is_integer "$value"; then
+      log "Invalid distinct chunk value for $table.$column: $value"
+      return 1
+    fi
     final_file="$(printf '%s/%020d.sql.gz' "$chunk_dir" "$value")"
     dump_distinct_chunk "$table" "$column" "$value" "$final_file"
   done < "$values_file"
@@ -856,7 +992,7 @@ table_dump_complete() {
 
 dump_table_once() {
   local table="$1"
-  local bytes chunk_spec chunk_column chunk_mode pk
+  local bytes chunk_spec chunk_column chunk_mode
 
   if table_dump_complete "$table"; then
     log "Table $table already complete"
@@ -934,12 +1070,9 @@ validate_complete_dump() {
 restore_sql_gzip() {
   local file="$1"
   log "Importing $file"
-  gunzip -c "$file" | docker compose exec -T "$LOCAL_DB_SERVICE" \
-    mysql \
-      --max_allowed_packet=1G \
-      -u"$LOCAL_DB_ROOT_USER" \
-      -p"$LOCAL_DB_ROOT_PASS" \
-      "$LOCAL_DB_NAME"
+  gunzip -c "$file" | local_mysql \
+    --max_allowed_packet=1G \
+    "$LOCAL_DB_NAME"
 }
 
 docker_is_ready() {
@@ -971,6 +1104,38 @@ ensure_docker_ready() {
   die "Docker daemon did not become ready after ${DOCKER_READY_TIMEOUT_SECONDS}s. Start Docker Desktop and re-run."
 }
 
+local_mysql() {
+  docker compose exec -T \
+    -e MYSQL_PWD="$LOCAL_DB_ROOT_PASS" \
+    "$LOCAL_DB_SERVICE" \
+    mysql \
+      -u"$LOCAL_DB_ROOT_USER" \
+      "$@"
+}
+
+local_db_service_is_ready() {
+  local_mysql -e 'SELECT 1' >/dev/null 2>&1
+}
+
+ensure_local_db_service_ready() {
+  ensure_docker_ready
+
+  log "Starting local Docker MySQL service $LOCAL_DB_SERVICE"
+  docker compose up -d "$LOCAL_DB_SERVICE"
+
+  local waited=0
+  while [[ "$waited" -lt "$DOCKER_READY_TIMEOUT_SECONDS" ]]; do
+    if local_db_service_is_ready; then
+      log "Local Docker MySQL service is ready"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+
+  die "Local Docker MySQL service $LOCAL_DB_SERVICE did not become ready after ${DOCKER_READY_TIMEOUT_SECONDS}s."
+}
+
 restore_local_db() {
   validate_complete_dump
 
@@ -982,20 +1147,18 @@ restore_local_db() {
     die "Refusing to drop local DB. Re-run with --yes or set CONFIRM_REPLACE_LOCAL_DB=$LOCAL_DB_NAME"
   fi
 
-  ensure_docker_ready
+  ensure_local_db_service_ready
 
   log "Replacing local Docker MySQL database $LOCAL_DB_NAME"
-  docker compose exec -T "$LOCAL_DB_SERVICE" \
-    mysql \
-      -u"$LOCAL_DB_ROOT_USER" \
-      -p"$LOCAL_DB_ROOT_PASS" \
-      -e "DROP DATABASE IF EXISTS \`$LOCAL_DB_NAME\`; CREATE DATABASE \`$LOCAL_DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+  local local_db_id
+  local_db_id="$(sql_identifier "$LOCAL_DB_NAME")"
+  local_mysql -e "DROP DATABASE IF EXISTS $local_db_id; CREATE DATABASE $local_db_id CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 
   restore_sql_gzip "$DUMP_DIR/schema.sql.gz"
 
-  find "$DUMP_DIR/tables" -type f -name '*.sql.gz' | sort | while IFS= read -r dump_file; do
+  while IFS= read -r dump_file; do
     restore_sql_gzip "$dump_file"
-  done
+  done < <(find "$DUMP_DIR/tables" -type f -name '*.sql.gz' | sort)
 
   log "Local database restore complete"
 }
