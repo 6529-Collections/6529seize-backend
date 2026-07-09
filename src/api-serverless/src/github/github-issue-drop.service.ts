@@ -4,6 +4,7 @@ import { Wallet } from 'ethers';
 import fetch from 'node-fetch';
 import { env } from '../../../env';
 import { Logger } from '../../../logging';
+import { parseStructuredWalletSignatureMessage } from '../wallet-signatures/structured-wallet-signatures';
 import { GitHubWebhookAction } from './github-webhook-event';
 
 type GitHubDropTargetKind = 'issue' | 'pull request';
@@ -12,9 +13,48 @@ type PostGitHubDropOptions = {
   readonly title?: string;
   readonly body?: string;
 };
+type SessionNonceResponse = {
+  readonly signable_message: string;
+  readonly server_signature: string;
+};
+type LoginResponse = {
+  readonly token: string;
+};
 
 const PULL_REQUEST_SUMMARY_MAX_LENGTH = 1000;
 const PULL_REQUEST_PROMPT_BODY_MAX_LENGTH = 12000;
+// Must match the session-v2 client type expected by structured native auth.
+const GITHUB_WEBHOOK_AUTH_CLIENT_TYPE = 'native';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getNonEmptyString(
+  value: Record<string, unknown>,
+  field: string
+): string | null {
+  const fieldValue = value[field];
+  return typeof fieldValue === 'string' && fieldValue.trim().length > 0
+    ? fieldValue
+    : null;
+}
+
+function removeLeadingSlashes(value: string): string {
+  let startIndex = 0;
+  while (startIndex < value.length && value[startIndex] === '/') {
+    startIndex++;
+  }
+  return value.slice(startIndex);
+}
+
+function removeTrailingSlashes(value: string): string {
+  let endIndex = value.length;
+  while (endIndex > 0 && value[endIndex - 1] === '/') {
+    endIndex--;
+  }
+  return value.slice(0, endIndex);
+}
 
 export class GitHubIssueDropService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -55,39 +95,48 @@ export class GitHubIssueDropService {
   ): Promise<string> {
     const API_BASE_URL =
       env.getStringOrNull('API_BASE_URL') ?? 'https://api.6529.io';
-    const nonceResp = await fetch(
-      `${API_BASE_URL}/api/auth/nonce?signer_address=${clientAddress}&short_nonce=true`,
+    const sessionNonceUrl = this.buildApiUrl(
+      API_BASE_URL,
+      '/api/auth/session-nonce',
       {
-        headers: { accept: 'application/json' },
-        method: 'GET'
+        signer_address: clientAddress,
+        client_type: GITHUB_WEBHOOK_AUTH_CLIENT_TYPE
       }
     );
+    const nonceResp = await fetch(sessionNonceUrl, {
+      headers: { accept: 'application/json' },
+      method: 'GET'
+    });
 
     if (!nonceResp.ok) {
       throw new Error(
-        `Failed to get nonce: ${nonceResp.status} ${nonceResp.statusText}`
+        `Failed to get session nonce: ${nonceResp.status} ${nonceResp.statusText}`
       );
     }
 
-    const { nonce, server_signature } = await nonceResp.json();
-
-    const signedNonce = await wallet.signMessage(nonce);
-
-    const loginResp = await fetch(
-      `${API_BASE_URL}/api/auth/login?signer_address=${clientAddress}`,
-      {
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json'
-        },
-        method: 'POST',
-        body: JSON.stringify({
-          client_address: clientAddress,
-          client_signature: signedNonce,
-          server_signature
-        })
-      }
+    const sessionNonce = this.getValidatedSessionNonceResponse(
+      await nonceResp.json(),
+      clientAddress
     );
+
+    const signedNonce = await wallet.signMessage(sessionNonce.signable_message);
+
+    const loginUrl = this.buildApiUrl(API_BASE_URL, '/api/auth/login', {
+      signer_address: clientAddress
+    });
+    const loginResp = await fetch(loginUrl, {
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json'
+      },
+      method: 'POST',
+      body: JSON.stringify({
+        client_address: clientAddress,
+        client_signature: signedNonce,
+        server_signature: sessionNonce.server_signature,
+        is_safe_wallet: false
+      })
+    });
 
     if (!loginResp.ok) {
       throw new Error(
@@ -95,8 +144,74 @@ export class GitHubIssueDropService {
       );
     }
 
-    const { token } = await loginResp.json();
-    return token;
+    return this.getValidatedLoginResponse(await loginResp.json()).token;
+  }
+
+  private getValidatedSessionNonceResponse(
+    payload: unknown,
+    clientAddress: string
+  ): SessionNonceResponse {
+    if (!isRecord(payload)) {
+      throw new Error('Invalid session nonce response');
+    }
+
+    const signableMessage = getNonEmptyString(payload, 'signable_message');
+    const serverSignature = getNonEmptyString(payload, 'server_signature');
+    if (!signableMessage || !serverSignature) {
+      throw new Error('Invalid session nonce response');
+    }
+
+    this.assertExpectedSessionNonceMessage(signableMessage, clientAddress);
+    return {
+      signable_message: signableMessage,
+      server_signature: serverSignature
+    };
+  }
+
+  private assertExpectedSessionNonceMessage(
+    signableMessage: string,
+    clientAddress: string
+  ): void {
+    const parsedMessage =
+      parseStructuredWalletSignatureMessage(signableMessage);
+    if (
+      parsedMessage?.kind !== 'authentication' ||
+      parsedMessage?.action !== 'login' ||
+      parsedMessage?.domain !== GITHUB_WEBHOOK_AUTH_CLIENT_TYPE ||
+      parsedMessage?.sessionType !== GITHUB_WEBHOOK_AUTH_CLIENT_TYPE ||
+      parsedMessage?.wallet !== clientAddress.toLowerCase() ||
+      parsedMessage?.expirationTime.getTime() <= Date.now()
+    ) {
+      throw new Error('Invalid session nonce response');
+    }
+  }
+
+  private getValidatedLoginResponse(payload: unknown): LoginResponse {
+    if (!isRecord(payload)) {
+      throw new Error('Invalid login response');
+    }
+
+    const token = getNonEmptyString(payload, 'token');
+    if (!token) {
+      throw new Error('Invalid login response');
+    }
+
+    return { token };
+  }
+
+  private buildApiUrl(
+    apiBaseUrl: string,
+    path: string,
+    query: Record<string, string>
+  ): string {
+    const url = new URL(apiBaseUrl);
+    const basePath = removeTrailingSlashes(url.pathname);
+    const nextPath = removeLeadingSlashes(path);
+    url.pathname = [basePath, nextPath].filter(Boolean).join('/');
+    Object.entries(query).forEach(([key, value]) => {
+      url.searchParams.set(key, value);
+    });
+    return url.toString();
   }
 
   private async buildDropContent({
@@ -222,8 +337,9 @@ export class GitHubIssueDropService {
     };
     const API_BASE_URL =
       env.getStringOrNull('API_BASE_URL') ?? 'https://api.6529.io';
+    const createDropUrl = this.buildApiUrl(API_BASE_URL, '/api/drops', {});
 
-    const resp = await fetch(`${API_BASE_URL}/api/drops`, {
+    const resp = await fetch(createDropUrl, {
       method: 'POST',
       headers: {
         accept: 'application/json',
