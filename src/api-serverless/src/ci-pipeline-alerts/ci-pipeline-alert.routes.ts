@@ -80,6 +80,10 @@ export function computeCiPipelineAlertSignature({
     .digest('hex');
 }
 
+function getCiPipelineAlertSecret(): string {
+  return env.getStringOrThrow('CI_PIPELINES_ALERT_SECRET');
+}
+
 export function verifyCiPipelineAlertSignature(
   req: Request
 ): SignatureVerificationResult {
@@ -126,7 +130,7 @@ export function verifyCiPipelineAlertSignature(
   }
 
   const expectedSignature = computeCiPipelineAlertSignature({
-    secret: env.getStringOrThrow('CI_PIPELINES_WEBHOOK_SECRET'),
+    secret: getCiPipelineAlertSecret(),
     timestamp,
     rawBody
   });

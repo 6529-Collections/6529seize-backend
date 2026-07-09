@@ -48,21 +48,42 @@ function normalizeOptionalValue(
   return trimmed || null;
 }
 
-function parseProfileIds(value: string | null): string[] {
+function parseProfileHandles(value: string | null): string[] {
   if (!value) {
     return [];
   }
-  const seen = new Set<string>();
+  const seenNormalizedHandles = new Set<string>();
   return value
     .split(',')
-    .map((profileId) => profileId.trim())
-    .filter((profileId) => {
-      if (!profileId || seen.has(profileId)) {
+    .map((handle) => normalizeConfiguredHandle(handle))
+    .filter((handle) => {
+      const normalizedHandle = handle.toLowerCase();
+      if (!handle || seenNormalizedHandles.has(normalizedHandle)) {
         return false;
       }
-      seen.add(profileId);
+      seenNormalizedHandles.add(normalizedHandle);
       return true;
     });
+}
+
+function normalizeConfiguredHandle(value: string): string {
+  const trimmed = value.trim();
+  const bracketMention = trimmed.match(/^@\[([^\]]+)\]$/u);
+  if (bracketMention) {
+    return bracketMention[1].trim();
+  }
+  return trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
+}
+
+function normalizeTargetEnvironment(value: string | null | undefined) {
+  const normalizedValue = normalizeOptionalValue(value)?.toLowerCase();
+  if (normalizedValue === 'staging') {
+    return 'staging';
+  }
+  if (normalizedValue === 'prod' || normalizedValue === 'production') {
+    return 'prod';
+  }
+  return null;
 }
 
 export class CiPipelineAlertService {
@@ -77,7 +98,7 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     ctx: RequestContext
   ): Promise<void> {
-    const waveId = env.getStringOrThrow('CI_PIPELINES_WAVE_ID');
+    const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const mentions =
       request.status === 'failure'
@@ -106,30 +127,51 @@ export class CiPipelineAlertService {
   private async resolveFailureMentions(
     ctx: RequestContext
   ): Promise<MentionedProfile[]> {
-    const profileIds = parseProfileIds(
-      env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_IDS')
+    const configuredHandles = parseProfileHandles(
+      env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES')
     );
-    if (!profileIds.length) {
+    if (!configuredHandles.length) {
       return [];
     }
 
-    const handlesByProfileId =
-      await this.identitiesRepository.getProfileHandlesByIds(profileIds, ctx);
-    const missingProfileIds = profileIds.filter(
-      (profileId) => !handlesByProfileId[profileId]
+    const profileIdsByHandle = await this.identitiesRepository.getIdsByHandles(
+      configuredHandles,
+      ctx.connection
     );
-    if (missingProfileIds.length) {
+    const mentionsByNormalizedHandle = new Map(
+      Object.entries(profileIdsByHandle).map(([handle, profileId]) => [
+        handle.toLowerCase(),
+        {
+          profileId,
+          handle
+        }
+      ])
+    );
+    const missingHandles = configuredHandles.filter(
+      (handle) => !mentionsByNormalizedHandle.has(handle.toLowerCase())
+    );
+    if (missingHandles.length) {
       this.logger.warn(
-        `Skipping CI pipeline alert mentions with missing handles: ${missingProfileIds.join(', ')}`
+        `Skipping CI pipeline alert mentions with missing profiles: ${missingHandles.join(', ')}`
       );
     }
 
-    return profileIds
-      .map((profileId) => ({
-        profileId,
-        handle: handlesByProfileId[profileId]
-      }))
-      .filter((mention): mention is MentionedProfile => !!mention.handle);
+    return configuredHandles
+      .map((handle) => mentionsByNormalizedHandle.get(handle.toLowerCase()))
+      .filter((mention): mention is MentionedProfile => !!mention);
+  }
+
+  private resolveWaveId(request: CiPipelineAlertRequest): string {
+    const targetEnvironment = normalizeTargetEnvironment(request.environment);
+    if (targetEnvironment === 'staging') {
+      return env.getStringOrThrow('CI_PIPELINES_STAGING_WAVE_ID');
+    }
+    if (targetEnvironment === 'prod') {
+      return env.getStringOrThrow('CI_PIPELINES_PROD_WAVE_ID');
+    }
+    throw new Error(
+      `Unsupported CI pipeline alert environment: ${request.environment ?? 'missing'}`
+    );
   }
 
   private buildCreateDropRequest({

@@ -248,29 +248,16 @@ jobs:
           content: '@everyone'
           color: 0xff0000
 
-      - name: Notify staging CI wave about failure
-        if: failure() && github.event.inputs.environment == 'staging'
+      - name: Notify CI wave about failure
+        if: failure()
         continue-on-error: true
         env:
-          CI_PIPELINES_WAVE_WEBHOOK_URL_STAGING: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_URL_STAGING }}
-          CI_PIPELINES_WAVE_WEBHOOK_SECRET_STAGING: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_SECRET_STAGING }}
-          CI_PIPELINES_TARGET_ENV: staging
+          CI_PIPELINES_ALERT_URL: \${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: \${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_TARGET_ENV: \${{ github.event.inputs.environment }}
           CI_PIPELINES_STATUS: failure
           CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
-          CI_PIPELINES_ENVIRONMENT: staging
-          CI_PIPELINES_SERVICE: \${{ github.event.inputs.service }}
-        run: node scripts/notify-ci-wave.mjs
-
-      - name: Notify production CI wave about failure
-        if: failure() && github.event.inputs.environment == 'prod'
-        continue-on-error: true
-        env:
-          CI_PIPELINES_WAVE_WEBHOOK_URL_PROD: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_URL_PROD }}
-          CI_PIPELINES_WAVE_WEBHOOK_SECRET_PROD: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_SECRET_PROD }}
-          CI_PIPELINES_TARGET_ENV: prod
-          CI_PIPELINES_STATUS: failure
-          CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
-          CI_PIPELINES_ENVIRONMENT: prod
+          CI_PIPELINES_ENVIRONMENT: \${{ github.event.inputs.environment }}
           CI_PIPELINES_SERVICE: \${{ github.event.inputs.service }}
         run: node scripts/notify-ci-wave.mjs
 
@@ -283,29 +270,16 @@ jobs:
           title: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline complete
           color: 0x00ff00
 
-      - name: Notify staging CI wave about success
-        if: success() && github.event.inputs.environment == 'staging'
+      - name: Notify CI wave about success
+        if: success()
         continue-on-error: true
         env:
-          CI_PIPELINES_WAVE_WEBHOOK_URL_STAGING: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_URL_STAGING }}
-          CI_PIPELINES_WAVE_WEBHOOK_SECRET_STAGING: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_SECRET_STAGING }}
-          CI_PIPELINES_TARGET_ENV: staging
+          CI_PIPELINES_ALERT_URL: \${{ vars.CI_PIPELINES_ALERT_URL }}
+          CI_PIPELINES_ALERT_SECRET: \${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_TARGET_ENV: \${{ github.event.inputs.environment }}
           CI_PIPELINES_STATUS: success
           CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline complete
-          CI_PIPELINES_ENVIRONMENT: staging
-          CI_PIPELINES_SERVICE: \${{ github.event.inputs.service }}
-        run: node scripts/notify-ci-wave.mjs
-
-      - name: Notify production CI wave about success
-        if: success() && github.event.inputs.environment == 'prod'
-        continue-on-error: true
-        env:
-          CI_PIPELINES_WAVE_WEBHOOK_URL_PROD: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_URL_PROD }}
-          CI_PIPELINES_WAVE_WEBHOOK_SECRET_PROD: \${{ secrets.CI_PIPELINES_WAVE_WEBHOOK_SECRET_PROD }}
-          CI_PIPELINES_TARGET_ENV: prod
-          CI_PIPELINES_STATUS: success
-          CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline complete
-          CI_PIPELINES_ENVIRONMENT: prod
+          CI_PIPELINES_ENVIRONMENT: \${{ github.event.inputs.environment }}
           CI_PIPELINES_SERVICE: \${{ github.event.inputs.service }}
         run: node scripts/notify-ci-wave.mjs
 `;

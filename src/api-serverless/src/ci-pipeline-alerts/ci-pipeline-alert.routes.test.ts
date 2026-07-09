@@ -83,19 +83,19 @@ function makeResponse() {
 }
 
 describe('ci pipeline alert routes', () => {
-  let originalSecret: string | undefined;
+  let originalAlertSecret: string | undefined;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    originalSecret = process.env.CI_PIPELINES_WEBHOOK_SECRET;
-    process.env.CI_PIPELINES_WEBHOOK_SECRET = 'test-secret';
+    originalAlertSecret = process.env.CI_PIPELINES_ALERT_SECRET;
+    process.env.CI_PIPELINES_ALERT_SECRET = 'test-secret';
   });
 
   afterEach(() => {
-    if (originalSecret === undefined) {
-      delete process.env.CI_PIPELINES_WEBHOOK_SECRET;
+    if (originalAlertSecret === undefined) {
+      delete process.env.CI_PIPELINES_ALERT_SECRET;
     } else {
-      process.env.CI_PIPELINES_WEBHOOK_SECRET = originalSecret;
+      process.env.CI_PIPELINES_ALERT_SECRET = originalAlertSecret;
     }
   });
 

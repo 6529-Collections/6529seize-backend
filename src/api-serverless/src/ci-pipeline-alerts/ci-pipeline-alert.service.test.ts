@@ -6,7 +6,7 @@ jest.mock('@/api/drops/drop-creation.api.service', () => ({
 
 jest.mock('@/identities/identities.db', () => ({
   identitiesDb: {
-    getProfileHandlesByIds: jest.fn()
+    getIdsByHandles: jest.fn()
   }
 }));
 
@@ -30,26 +30,28 @@ const baseRequest = {
 describe('CiPipelineAlertService', () => {
   let originalEnv: Record<string, string | undefined>;
   let dropCreationApiService: { createDrop: jest.Mock };
-  let identitiesRepository: { getProfileHandlesByIds: jest.Mock };
+  let identitiesRepository: { getIdsByHandles: jest.Mock };
 
   beforeEach(() => {
     originalEnv = {
-      CI_PIPELINES_WAVE_ID: process.env.CI_PIPELINES_WAVE_ID,
+      CI_PIPELINES_STAGING_WAVE_ID: process.env.CI_PIPELINES_STAGING_WAVE_ID,
+      CI_PIPELINES_PROD_WAVE_ID: process.env.CI_PIPELINES_PROD_WAVE_ID,
       CI_PIPELINES_BOT_PROFILE_ID: process.env.CI_PIPELINES_BOT_PROFILE_ID,
-      CI_PIPELINES_FAILURE_MENTION_PROFILE_IDS:
-        process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_IDS
+      CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES:
+        process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES
     };
-    process.env.CI_PIPELINES_WAVE_ID = 'wave-1';
+    process.env.CI_PIPELINES_STAGING_WAVE_ID = 'staging-wave';
+    process.env.CI_PIPELINES_PROD_WAVE_ID = 'prod-wave';
     process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
-    process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_IDS =
-      'profile-1, profile-2, profile-1, missing-profile';
+    process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES =
+      '@alice, @[Bob], alice, missing';
     dropCreationApiService = {
       createDrop: jest.fn().mockResolvedValue({})
     };
     identitiesRepository = {
-      getProfileHandlesByIds: jest.fn().mockResolvedValue({
-        'profile-1': 'alice',
-        'profile-2': 'bob'
+      getIdsByHandles: jest.fn().mockResolvedValue({
+        alice: 'profile-1',
+        Bob: 'profile-2'
       })
     };
   });
@@ -69,19 +71,20 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService as any,
       identitiesRepository as any
     );
+    const ctx = { connection: {} };
 
-    await service.postAlert(baseRequest, {});
+    await service.postAlert(baseRequest, ctx as any);
 
-    expect(identitiesRepository.getProfileHandlesByIds).toHaveBeenCalledWith(
-      ['profile-1', 'profile-2', 'missing-profile'],
-      {}
+    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith(
+      ['alice', 'Bob', 'missing'],
+      ctx.connection
     );
     expect(dropCreationApiService.createDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         authorId: 'bot-profile',
         representativeId: 'bot-profile',
         createDropRequest: expect.objectContaining({
-          wave_id: 'wave-1',
+          wave_id: 'prod-wave',
           title: 'CI failure: Seize PROD WEB DEPLOY: CI pipeline is broken!!!',
           mentioned_users: [
             {
@@ -90,12 +93,12 @@ describe('CiPipelineAlertService', () => {
             },
             {
               mentioned_profile_id: 'profile-2',
-              handle_in_content: 'bob'
+              handle_in_content: 'Bob'
             }
           ],
           parts: [
             expect.objectContaining({
-              content: expect.stringContaining('cc @[alice] @[bob]')
+              content: expect.stringContaining('cc @[alice] @[Bob]')
             })
           ]
         })
@@ -108,7 +111,7 @@ describe('CiPipelineAlertService', () => {
     );
   });
 
-  it('posts successes without resolving or adding mentions', async () => {
+  it('routes staging successes without resolving or adding mentions', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
@@ -118,15 +121,17 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         status: 'success',
-        title: 'Seize PROD WEB DEPLOY: CI pipeline complete'
+        title: 'Seize Lambda staging api DEPLOY CI pipeline complete',
+        environment: 'staging'
       },
       {}
     );
 
-    expect(identitiesRepository.getProfileHandlesByIds).not.toHaveBeenCalled();
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
     expect(dropCreationApiService.createDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         createDropRequest: expect.objectContaining({
+          wave_id: 'staging-wave',
           mentioned_users: [],
           parts: [
             expect.objectContaining({
