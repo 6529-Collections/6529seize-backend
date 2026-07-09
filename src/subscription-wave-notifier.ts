@@ -67,6 +67,22 @@ function buildSubscriptionsUrl(seizeDomain: string, wallet: string): string {
   return `https://${seizeDomain}.io/${wallet}/subscriptions`;
 }
 
+function buildMarkdownLink(label: string, url: string): string {
+  return `[${label}](${url})`;
+}
+
+function buildViewLinksLine(
+  primaryUrl: string,
+  secondaryLabel: string,
+  secondaryUrl: string
+): string {
+  return `View on ${buildMarkdownLink('6529.io', primaryUrl)} | ${buildMarkdownLink(secondaryLabel, secondaryUrl)}`;
+}
+
+function buildTransactionLine(transactionLink: string): string {
+  return `Transaction: ${buildMarkdownLink('Etherscan', transactionLink)}`;
+}
+
 export function buildDailySubscriptionsWaveMessage({
   memeId,
   seizeDomain,
@@ -79,11 +95,11 @@ export function buildDailySubscriptionsWaveMessage({
   return [
     `📋 Published provisional list of Subscriptions for [The Memes #${memeId}](https://${seizeDomain}.io/the-memes/${memeId})`,
     '',
-    'View on 6529.io:',
-    `https://${seizeDomain}.io/open-data/meme-subscriptions`,
-    '',
-    'View on Arweave:',
-    uploadLink
+    buildViewLinksLine(
+      `https://${seizeDomain}.io/open-data/meme-subscriptions`,
+      'Arweave',
+      uploadLink
+    )
   ].join('\n');
 }
 
@@ -116,11 +132,11 @@ export function buildSubscriptionTopUpWaveMessage({
   }
   lines.push(
     '',
-    'View on 6529.io:',
-    buildSubscriptionsUrl(seizeDomain, topUp.from_wallet),
-    '',
-    'View on Etherscan:',
-    etherscanLink
+    buildViewLinksLine(
+      buildSubscriptionsUrl(seizeDomain, topUp.from_wallet),
+      'Etherscan',
+      etherscanLink
+    )
   );
   return lines.join('\n');
 }
@@ -140,8 +156,7 @@ export function buildNoSubscriptionFoundWaveMessage({
       '',
       airdropAddress,
       '',
-      'Transaction:',
-      transactionLink
+      buildTransactionLine(transactionLink)
     ].join('\n'),
     adminHandles
   );
@@ -162,8 +177,7 @@ export function buildNoBalanceFoundWaveMessage({
       '',
       consolidationKey,
       '',
-      'Transaction:',
-      transactionLink
+      buildTransactionLine(transactionLink)
     ].join('\n'),
     adminHandles
   );
@@ -184,8 +198,7 @@ export function buildInsufficientBalanceWaveMessage({
       '',
       consolidationKey,
       '',
-      'Transaction:',
-      transactionLink
+      buildTransactionLine(transactionLink)
     ].join('\n'),
     adminHandles
   );
