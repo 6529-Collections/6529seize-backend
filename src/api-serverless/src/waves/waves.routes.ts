@@ -18,7 +18,6 @@ import {
   NotFoundException
 } from '../../../exceptions';
 import { numbers } from '../../../numbers';
-import { clearWaveGroupsCache } from '../../../redis';
 import { RequestContext } from '../../../request.context';
 import { Time, Timer } from '../../../time';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -276,7 +275,16 @@ router.post(
       requestContext
     );
     await giveReadReplicaTimeToCatchUp();
-    await clearWaveGroupsCache();
+    await userGroupsService.onWaveRelatedGroupsChanged(
+      [
+        request.visibility.scope.group_id,
+        request.participation.scope.group_id,
+        request.chat.scope.group_id,
+        request.voting.scope.group_id,
+        request.wave.admin_group?.group_id
+      ],
+      requestContext
+    );
     res.send(wave);
   }
 );
