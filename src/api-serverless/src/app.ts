@@ -56,7 +56,7 @@ import publicWavesRoutes from './waves/waves-public.routes';
 import wavesRoutes from './waves/waves.routes';
 import xtdhRoutes from './xtdh/xtdh.routes';
 import nftLinksRoutes from './nft-links/nft-links.routes';
-import ciPipelineAlertRoutes from './ci-pipeline-alerts/ci-pipeline-alert.routes';
+import ciPipelineAlertRoutes from '@/api/ci-pipeline-alerts/ci-pipeline-alert.routes';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
