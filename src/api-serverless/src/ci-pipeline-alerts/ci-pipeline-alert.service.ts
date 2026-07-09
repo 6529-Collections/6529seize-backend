@@ -91,6 +91,13 @@ function formatStatusVerb(status: CiPipelineAlertStatus): string {
   return status === 'success' ? 'Succeeded' : 'Failed';
 }
 
+function formatAlertHeading(request: CiPipelineAlertRequest): string {
+  return truncate(
+    `[${formatEnvironmentLabel(request.environment)}] Deploy ${formatStatusVerb(request.status)}`,
+    MAX_DROP_TITLE_LENGTH
+  );
+}
+
 function formatEnvironmentLabel(value: string | null | undefined): string {
   const targetEnvironment = normalizeTargetEnvironment(value);
   return (
@@ -267,10 +274,7 @@ export class CiPipelineAlertService {
   }): ApiCreateDropRequest {
     const content = this.formatContent(request, mentions);
     return {
-      title: truncate(
-        `[${formatEnvironmentLabel(request.environment)}] Deploy ${formatStatusVerb(request.status)}`,
-        MAX_DROP_TITLE_LENGTH
-      ),
+      title: null,
       drop_type: ApiDropType.Chat,
       parts: [
         {
@@ -305,12 +309,15 @@ export class CiPipelineAlertService {
     const mentionHandles = mentions
       .map((mention) => '@[' + mention.handle + ']')
       .join(' ');
-    const mentionLines = mentions.length ? [`cc ${mentionHandles}`, ''] : [];
+    const mentionLines = mentions.length ? [`cc ${mentionHandles}`] : [];
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
     const lines = [
+      formatAlertHeading(request),
+      '',
       ...mentionLines,
+      ...(mentionLines.length ? [''] : []),
       `Service: ${formatServiceLabel(request)}`,
       `Workflow: ${request.workflow}`,
       ...(branch ? [`Branch: ${branch}`] : []),

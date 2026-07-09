@@ -90,7 +90,7 @@ describe('CiPipelineAlertService', () => {
         representativeId: 'bot-profile',
         createDropRequest: expect.objectContaining({
           wave_id: 'prod-wave',
-          title: '[PROD] Deploy Failed',
+          title: null,
           mentioned_users: [
             {
               mentioned_profile_id: 'profile-1',
@@ -105,6 +105,8 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
+                  '[PROD] Deploy Failed',
+                  '',
                   'cc @[ALICE] @[Bob]',
                   '',
                   'Service: Frontend - web',
@@ -158,12 +160,14 @@ describe('CiPipelineAlertService', () => {
       expect.objectContaining({
         createDropRequest: expect.objectContaining({
           wave_id: 'staging-wave',
-          title: '[STAGING] Deploy Succeeded',
+          title: null,
           mentioned_users: [],
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
                 [
+                  '[STAGING] Deploy Succeeded',
+                  '',
                   'Service: Frontend - web',
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
@@ -177,6 +181,25 @@ describe('CiPipelineAlertService', () => {
       }),
       expect.anything()
     );
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toBe(
+      [
+        '[STAGING] Deploy Succeeded',
+        '',
+        'Service: Frontend - web',
+        'Workflow: Web Deploy - PROD',
+        'Branch: main',
+        'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
+        'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+      ].join('\n')
+    );
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+        .startsWith('\n')
+    ).toBe(false);
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
