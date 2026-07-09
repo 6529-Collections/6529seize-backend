@@ -193,33 +193,18 @@ export class CiPipelineAlertService {
     const authenticationContext =
       AuthenticationContext.fromProfileId(botProfileId);
 
-    const createdDrop = await this.dropCreationApiService.createDrop(
+    await this.dropCreationApiService.createDrop(
       {
         createDropRequest,
         authorId: botProfileId,
-        representativeId: botProfileId
+        representativeId: botProfileId,
+        hideLinkPreview: true
       },
       {
         ...ctx,
         authenticationContext
       }
     );
-    try {
-      await this.dropCreationApiService.toggleHideLinkPreview(
-        {
-          dropId: createdDrop.id,
-          hideLinkPreview: true
-        },
-        {
-          ...ctx,
-          authenticationContext
-        }
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Failed to hide CI pipeline alert link previews for drop ${createdDrop.id}: ${err}`
-      );
-    }
   }
 
   private async resolveFailureMentions(): Promise<MentionedProfile[]> {
@@ -294,13 +279,7 @@ export class CiPipelineAlertService {
       })),
       mentioned_groups: [],
       referenced_nfts: [],
-      metadata: [
-        { data_key: 'source', data_value: 'github-actions' },
-        { data_key: 'repo', data_value: request.repo },
-        { data_key: 'workflow', data_value: request.workflow },
-        { data_key: 'run_id', data_value: request.run_id },
-        { data_key: 'status', data_value: request.status }
-      ],
+      metadata: [],
       signature: null,
       is_safe_signature: false,
       wave_id: waveId

@@ -228,11 +228,19 @@ describe('DropCreationApiService.createDrop', () => {
       {
         createDropRequest: {} as never,
         authorId: 'author-profile',
-        representativeId: 'author-profile'
+        representativeId: 'author-profile',
+        hideLinkPreview: true
       },
       { timer: undefined } as never
     );
 
+    expect(createOrUpdateDrop.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hide_link_preview: true
+      }),
+      false,
+      expect.anything()
+    );
     expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
     expect(order).toEqual([
       'transaction',
