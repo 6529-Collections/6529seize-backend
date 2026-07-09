@@ -76,14 +76,15 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService as any,
       identitiesRepository as any
     );
-    const ctx = { connection: {} };
+    const ctx = {};
 
     await service.postAlert(baseRequest, ctx as any);
 
-    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith(
-      ['alice', 'Bob', 'missing'],
-      ctx.connection
-    );
+    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
+      'alice',
+      'Bob',
+      'missing'
+    ]);
     expect(dropCreationApiService.createDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         authorId: 'bot-profile',
@@ -204,6 +205,40 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
     ).not.toContain('cc @[');
+    expect(dropCreationApiService.toggleHideLinkPreview).toHaveBeenCalledWith(
+      {
+        dropId: 'drop-1',
+        hideLinkPreview: true
+      },
+      expect.objectContaining({
+        authenticationContext: expect.objectContaining({
+          authenticatedProfileId: 'bot-profile'
+        })
+      })
+    );
+  });
+
+  it('still succeeds when hiding link previews fails after drop creation', async () => {
+    dropCreationApiService.toggleHideLinkPreview.mockRejectedValue(
+      new Error('preview unavailable')
+    );
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await expect(
+      service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          environment: 'staging'
+        },
+        {}
+      )
+    ).resolves.toBeUndefined();
+
+    expect(dropCreationApiService.createDrop).toHaveBeenCalledTimes(1);
     expect(dropCreationApiService.toggleHideLinkPreview).toHaveBeenCalledWith(
       {
         dropId: 'drop-1',

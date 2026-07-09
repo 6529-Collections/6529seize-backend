@@ -183,9 +183,7 @@ export class CiPipelineAlertService {
     const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const mentions =
-      request.status === 'failure'
-        ? await this.resolveFailureMentions(ctx)
-        : [];
+      request.status === 'failure' ? await this.resolveFailureMentions() : [];
 
     const createDropRequest = this.buildCreateDropRequest({
       request,
@@ -206,21 +204,25 @@ export class CiPipelineAlertService {
         authenticationContext
       }
     );
-    await this.dropCreationApiService.toggleHideLinkPreview(
-      {
-        dropId: createdDrop.id,
-        hideLinkPreview: true
-      },
-      {
-        ...ctx,
-        authenticationContext
-      }
-    );
+    try {
+      await this.dropCreationApiService.toggleHideLinkPreview(
+        {
+          dropId: createdDrop.id,
+          hideLinkPreview: true
+        },
+        {
+          ...ctx,
+          authenticationContext
+        }
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to hide CI pipeline alert link previews for drop ${createdDrop.id}: ${err}`
+      );
+    }
   }
 
-  private async resolveFailureMentions(
-    ctx: RequestContext
-  ): Promise<MentionedProfile[]> {
+  private async resolveFailureMentions(): Promise<MentionedProfile[]> {
     const configuredHandles = parseProfileHandles(
       env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES')
     );
@@ -228,10 +230,8 @@ export class CiPipelineAlertService {
       return [];
     }
 
-    const profileIdsByHandle = await this.identitiesRepository.getIdsByHandles(
-      configuredHandles,
-      ctx.connection
-    );
+    const profileIdsByHandle =
+      await this.identitiesRepository.getIdsByHandles(configuredHandles);
     const mentionsByNormalizedHandle = new Map(
       Object.entries(profileIdsByHandle).map(([handle, profileId]) => [
         handle.toLowerCase(),
