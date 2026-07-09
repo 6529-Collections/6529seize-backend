@@ -228,7 +228,8 @@ router.post(
         authorId: authorProfileId,
         representativeId: authenticationContext.isAuthenticatedAsProxy()
           ? authenticationContext.roleProfileId!
-          : authorProfileId
+          : authorProfileId,
+        hideLinkPreview: newDrop.hide_link_preview
       },
       { timer, authenticationContext }
     );

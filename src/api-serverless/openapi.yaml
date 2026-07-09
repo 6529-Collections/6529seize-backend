@@ -12122,6 +12122,11 @@ components:
             $ref: "#/components/schemas/ApiDropGroupMention"
         poll:
           $ref: "#/components/schemas/ApiCreateDropPollRequest"
+        hide_link_preview:
+          type: boolean
+          description: >-
+            When true, create the drop with generated external link previews
+            hidden.
     ApiCreateGroup:
       type: object
       required:

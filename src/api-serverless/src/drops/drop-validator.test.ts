@@ -211,6 +211,17 @@ describe('NewDropSchema', () => {
     });
   });
 
+  it('accepts hidden link previews on create requests', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      hide_link_preview: true
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.hide_link_preview).toBe(true);
+  });
+
   it('accepts anonymous polls for chat drops', () => {
     const result = NewDropSchema.validate({
       ...createDropWithMetadata('artist', 'Artist'),

@@ -28,6 +28,7 @@ export class ApiCreateDropRequest {
     'is_additional_action_promised'?: boolean;
     'mentioned_groups'?: Array<ApiDropGroupMention>;
     'poll'?: ApiCreateDropPollRequest;
+    'hide_link_preview'?: boolean;
     'title'?: string | null;
     'parts': Array<ApiCreateDropPart>;
     'referenced_nfts': Array<ApiDropReferencedNFT>;
@@ -84,6 +85,12 @@ export class ApiCreateDropRequest {
             "name": "poll",
             "baseName": "poll",
             "type": "ApiCreateDropPollRequest",
+            "format": ""
+        },
+        {
+            "name": "hide_link_preview",
+            "baseName": "hide_link_preview",
+            "type": "boolean",
             "format": ""
         },
         {
@@ -154,5 +161,4 @@ export class ApiCreateDropRequest {
     public constructor() {
     }
 }
-
 
