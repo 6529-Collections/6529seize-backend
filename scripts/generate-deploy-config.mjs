@@ -254,6 +254,7 @@ jobs:
         env:
           CI_PIPELINES_ALERT_URL: \${{ vars.CI_PIPELINES_ALERT_URL }}
           CI_PIPELINES_ALERT_SECRET: \${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: \${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
           CI_PIPELINES_TARGET_ENV: \${{ github.event.inputs.environment }}
           CI_PIPELINES_STATUS: failure
           CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
@@ -276,6 +277,7 @@ jobs:
         env:
           CI_PIPELINES_ALERT_URL: \${{ vars.CI_PIPELINES_ALERT_URL }}
           CI_PIPELINES_ALERT_SECRET: \${{ secrets.CI_PIPELINES_ALERT_SECRET }}
+          CI_PIPELINES_ALERT_API_AUTH: \${{ secrets.CI_PIPELINES_ALERT_API_AUTH }}
           CI_PIPELINES_TARGET_ENV: \${{ github.event.inputs.environment }}
           CI_PIPELINES_STATUS: success
           CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline complete
