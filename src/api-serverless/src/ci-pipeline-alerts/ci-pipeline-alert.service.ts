@@ -91,6 +91,13 @@ function formatStatusVerb(status: CiPipelineAlertStatus): string {
   return status === 'success' ? 'Succeeded' : 'Failed';
 }
 
+function formatAlertHeading(request: CiPipelineAlertRequest): string {
+  return truncate(
+    `[${formatEnvironmentLabel(request.environment)}] Deploy ${formatStatusVerb(request.status)}`,
+    MAX_DROP_TITLE_LENGTH
+  );
+}
+
 function formatEnvironmentLabel(value: string | null | undefined): string {
   const targetEnvironment = normalizeTargetEnvironment(value);
   return (
@@ -134,7 +141,12 @@ function getGithubRepoUrl(request: CiPipelineAlertRequest): string | null {
 }
 
 function formatMarkdownLink(label: string, url: string): string {
-  return `[${label.replace(/\[/g, '\\[').replace(/\]/g, '\\]')}](${url})`;
+  const escapedLabel = label
+    .split('[')
+    .join(String.raw`\[`)
+    .split(']')
+    .join(String.raw`\]`);
+  return `[${escapedLabel}](${url})`;
 }
 
 function formatCommit(request: CiPipelineAlertRequest): string | null {
@@ -171,9 +183,7 @@ export class CiPipelineAlertService {
     const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const mentions =
-      request.status === 'failure'
-        ? await this.resolveFailureMentions(ctx)
-        : [];
+      request.status === 'failure' ? await this.resolveFailureMentions() : [];
 
     const createDropRequest = this.buildCreateDropRequest({
       request,
@@ -194,21 +204,25 @@ export class CiPipelineAlertService {
         authenticationContext
       }
     );
-    await this.dropCreationApiService.toggleHideLinkPreview(
-      {
-        dropId: createdDrop.id,
-        hideLinkPreview: true
-      },
-      {
-        ...ctx,
-        authenticationContext
-      }
-    );
+    try {
+      await this.dropCreationApiService.toggleHideLinkPreview(
+        {
+          dropId: createdDrop.id,
+          hideLinkPreview: true
+        },
+        {
+          ...ctx,
+          authenticationContext
+        }
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to hide CI pipeline alert link previews for drop ${createdDrop.id}: ${err}`
+      );
+    }
   }
 
-  private async resolveFailureMentions(
-    ctx: RequestContext
-  ): Promise<MentionedProfile[]> {
+  private async resolveFailureMentions(): Promise<MentionedProfile[]> {
     const configuredHandles = parseProfileHandles(
       env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES')
     );
@@ -216,10 +230,8 @@ export class CiPipelineAlertService {
       return [];
     }
 
-    const profileIdsByHandle = await this.identitiesRepository.getIdsByHandles(
-      configuredHandles,
-      ctx.connection
-    );
+    const profileIdsByHandle =
+      await this.identitiesRepository.getIdsByHandles(configuredHandles);
     const mentionsByNormalizedHandle = new Map(
       Object.entries(profileIdsByHandle).map(([handle, profileId]) => [
         handle.toLowerCase(),
@@ -267,10 +279,7 @@ export class CiPipelineAlertService {
   }): ApiCreateDropRequest {
     const content = this.formatContent(request, mentions);
     return {
-      title: truncate(
-        `[${formatEnvironmentLabel(request.environment)}] Deploy ${formatStatusVerb(request.status)}`,
-        MAX_DROP_TITLE_LENGTH
-      ),
+      title: null,
       drop_type: ApiDropType.Chat,
       parts: [
         {
@@ -305,12 +314,15 @@ export class CiPipelineAlertService {
     const mentionHandles = mentions
       .map((mention) => '@[' + mention.handle + ']')
       .join(' ');
-    const mentionLines = mentions.length ? [`cc ${mentionHandles}`, ''] : [];
+    const mentionLines = mentions.length ? [`cc ${mentionHandles}`] : [];
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
     const lines = [
+      formatAlertHeading(request),
+      '',
       ...mentionLines,
+      ...(mentionLines.length ? [''] : []),
       `Service: ${formatServiceLabel(request)}`,
       `Workflow: ${request.workflow}`,
       ...(branch ? [`Branch: ${branch}`] : []),

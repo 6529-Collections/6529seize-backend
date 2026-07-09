@@ -76,21 +76,22 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService as any,
       identitiesRepository as any
     );
-    const ctx = { connection: {} };
+    const ctx = {};
 
     await service.postAlert(baseRequest, ctx as any);
 
-    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith(
-      ['alice', 'Bob', 'missing'],
-      ctx.connection
-    );
+    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
+      'alice',
+      'Bob',
+      'missing'
+    ]);
     expect(dropCreationApiService.createDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         authorId: 'bot-profile',
         representativeId: 'bot-profile',
         createDropRequest: expect.objectContaining({
           wave_id: 'prod-wave',
-          title: '[PROD] Deploy Failed',
+          title: null,
           mentioned_users: [
             {
               mentioned_profile_id: 'profile-1',
@@ -105,6 +106,8 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
+                  '[PROD] Deploy Failed',
+                  '',
                   'cc @[ALICE] @[Bob]',
                   '',
                   'Service: Frontend - web',
@@ -158,12 +161,14 @@ describe('CiPipelineAlertService', () => {
       expect.objectContaining({
         createDropRequest: expect.objectContaining({
           wave_id: 'staging-wave',
-          title: '[STAGING] Deploy Succeeded',
+          title: null,
           mentioned_users: [],
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
                 [
+                  '[STAGING] Deploy Succeeded',
+                  '',
                   'Service: Frontend - web',
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
@@ -180,7 +185,60 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
+    ).toBe(
+      [
+        '[STAGING] Deploy Succeeded',
+        '',
+        'Service: Frontend - web',
+        'Workflow: Web Deploy - PROD',
+        'Branch: main',
+        'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
+        'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+      ].join('\n')
+    );
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest.parts[0].content.startsWith(
+        '\n'
+      )
+    ).toBe(false);
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
     ).not.toContain('cc @[');
+    expect(dropCreationApiService.toggleHideLinkPreview).toHaveBeenCalledWith(
+      {
+        dropId: 'drop-1',
+        hideLinkPreview: true
+      },
+      expect.objectContaining({
+        authenticationContext: expect.objectContaining({
+          authenticatedProfileId: 'bot-profile'
+        })
+      })
+    );
+  });
+
+  it('still succeeds when hiding link previews fails after drop creation', async () => {
+    dropCreationApiService.toggleHideLinkPreview.mockRejectedValue(
+      new Error('preview unavailable')
+    );
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await expect(
+      service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          environment: 'staging'
+        },
+        {}
+      )
+    ).resolves.toBeUndefined();
+
+    expect(dropCreationApiService.createDrop).toHaveBeenCalledTimes(1);
     expect(dropCreationApiService.toggleHideLinkPreview).toHaveBeenCalledWith(
       {
         dropId: 'drop-1',
