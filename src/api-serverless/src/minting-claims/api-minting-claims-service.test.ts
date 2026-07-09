@@ -11,6 +11,7 @@ import {
   computeImageDetails
 } from '@/minting-claims/media-inspector';
 import {
+  fetchMaxSeasonId,
   fetchMintingClaimByClaimId,
   updateMintingClaim
 } from '@/api/minting-claims/api.minting-claims.db';
@@ -85,9 +86,13 @@ describe('buildUpdatesForClaimPatch', () => {
     computeAnimationDetailsVideo as jest.MockedFunction<
       typeof computeAnimationDetailsVideo
     >;
+  const fetchMaxSeasonIdMock = fetchMaxSeasonId as jest.MockedFunction<
+    typeof fetchMaxSeasonId
+  >;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    fetchMaxSeasonIdMock.mockResolvedValue(14);
   });
 
   it('clears image_location when image_url changes', async () => {
@@ -199,6 +204,85 @@ describe('buildUpdatesForClaimPatch', () => {
     expect(updates.edition_size).toBe(500);
     expect(updates.name).toBe('updated-name');
     expect(updates.metadata_location).toBeNull();
+  });
+
+  it('trims metadata fields and attributes before persistence', async () => {
+    const body: MintingClaimUpdateRequest = {
+      description: '  Loom  description  ',
+      name: ' The Loom ',
+      external_url: '   ',
+      attributes: [
+        {
+          trait_type: ' Artist ',
+          value: '  Digital  Artist  ',
+          display_type: 'text'
+        }
+      ]
+    };
+
+    const updates = await buildUpdatesForClaimPatch(body, baseClaim(), false);
+
+    expect(updates).toMatchObject({
+      description: 'Loom  description',
+      name: 'The Loom',
+      external_url: null,
+      attributes: [
+        {
+          trait_type: 'Artist',
+          value: 'Digital  Artist',
+          display_type: 'text'
+        }
+      ],
+      metadata_location: null
+    });
+  });
+
+  it('rejects name and description that are empty after trimming', async () => {
+    await expect(
+      buildUpdatesForClaimPatch({ name: '   ' }, baseClaim(), false)
+    ).rejects.toThrow('name is required');
+
+    await expect(
+      buildUpdatesForClaimPatch({ description: '   ' }, baseClaim(), false)
+    ).rejects.toThrow('description is required');
+  });
+
+  it('rejects attribute trait_type that is empty after trimming', async () => {
+    await expect(
+      buildUpdatesForClaimPatch(
+        {
+          attributes: [
+            {
+              trait_type: '   ',
+              value: 'value'
+            }
+          ]
+        },
+        baseClaim(),
+        false
+      )
+    ).rejects.toThrow('attribute trait_type is required');
+  });
+
+  it('normalizes camelCase traitType when extracting MEMES season attributes', async () => {
+    const body = {
+      attributes: [
+        {
+          traitType: ' Type - Season ',
+          value: ' 15 '
+        }
+      ]
+    } as unknown as MintingClaimUpdateRequest;
+
+    const updates = await buildUpdatesForClaimPatch(body, baseClaim(), true);
+
+    expect(updates.attributes).toEqual([
+      {
+        trait_type: 'Type - Season',
+        value: 15,
+        display_type: 'number'
+      }
+    ]);
   });
 });
 

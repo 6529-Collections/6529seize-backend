@@ -60,6 +60,60 @@ function normalizeOptionalUrl(value: string | null | undefined): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
+function trimRequiredStringField(value: string, fieldName: string): string {
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    throw new BadRequestException(`${fieldName} is required`);
+  }
+  return trimmed;
+}
+
+function trimAttributeTraitType(
+  sanitized: Record<string, unknown>,
+  fieldName: 'trait_type' | 'traitType'
+): void {
+  if (typeof sanitized[fieldName] !== 'string') {
+    return;
+  }
+  const trimmed = sanitized[fieldName].trim();
+  if (trimmed === '') {
+    throw new BadRequestException('attribute trait_type is required');
+  }
+  sanitized[fieldName] = trimmed;
+}
+
+function sanitizeMintingClaimAttribute(attribute: unknown): unknown {
+  if (attribute == null || typeof attribute !== 'object') {
+    return attribute;
+  }
+  if (Array.isArray(attribute)) {
+    return attribute;
+  }
+
+  const sanitized = { ...(attribute as Record<string, unknown>) };
+  trimAttributeTraitType(sanitized, 'trait_type');
+  trimAttributeTraitType(sanitized, 'traitType');
+  if (typeof sanitized.value === 'string') {
+    sanitized.value = sanitized.value.trim();
+  }
+  return sanitized;
+}
+
+function sanitizeMintingClaimAttributes(attributes: unknown): unknown {
+  if (!Array.isArray(attributes)) {
+    return attributes;
+  }
+  return attributes.map(sanitizeMintingClaimAttribute);
+}
+
+function getMintingClaimAttributeTraitType(attribute: unknown): unknown {
+  if (typeof attribute !== 'object' || attribute == null) {
+    return null;
+  }
+  const record = attribute as { trait_type?: unknown; traitType?: unknown };
+  return record.trait_type ?? record.traitType ?? null;
+}
+
 function validateRequestedSeason(
   requestedSeason: number,
   maxSeason: number
@@ -85,10 +139,7 @@ function extractSeasonFromAttributes(attributes: unknown): number | null {
   }
 
   const seasonAttribute = attributes.find((attribute) => {
-    if (typeof attribute !== 'object' || attribute == null) {
-      return false;
-    }
-    const traitType = (attribute as { trait_type?: unknown }).trait_type;
+    const traitType = getMintingClaimAttributeTraitType(attribute);
     return traitType === TYPE_SEASON_TRAIT;
   }) as { value?: unknown } | undefined;
 
@@ -120,10 +171,7 @@ function normalizeAttributesWithSeason(
   }
 
   const filtered = attributes.filter((attribute) => {
-    if (typeof attribute !== 'object' || attribute == null) {
-      return true;
-    }
-    const traitType = (attribute as { trait_type?: unknown }).trait_type;
+    const traitType = getMintingClaimAttributeTraitType(attribute);
     return traitType !== TYPE_SEASON_TRAIT;
   });
 
@@ -220,11 +268,12 @@ async function applyAttributesFromBody(
   }
 
   if (!isMemesContract) {
-    updates.attributes = body.attributes;
+    updates.attributes = sanitizeMintingClaimAttributes(body.attributes);
     return true;
   }
 
-  const requestedSeason = extractSeasonFromAttributes(body.attributes);
+  const sanitizedAttributes = sanitizeMintingClaimAttributes(body.attributes);
+  const requestedSeason = extractSeasonFromAttributes(sanitizedAttributes);
   if (requestedSeason == null) {
     throw new BadRequestException(
       `attributes must include a numeric "${TYPE_SEASON_TRAIT}" trait for MEMES contract`
@@ -237,7 +286,7 @@ async function applyAttributesFromBody(
   );
 
   updates.attributes = normalizeAttributesWithSeason(
-    body.attributes,
+    sanitizedAttributes,
     validatedSeason
   );
 
@@ -259,12 +308,15 @@ export async function buildUpdatesForClaimPatch(
   let animationUrlChanged = false;
 
   if (body.description !== undefined) {
-    updates.description = body.description;
+    updates.description = trimRequiredStringField(
+      body.description,
+      'description'
+    );
     shouldResetMetadataLocation = true;
   }
 
   if (body.name !== undefined) {
-    updates.name = body.name;
+    updates.name = trimRequiredStringField(body.name, 'name');
     shouldResetMetadataLocation = true;
   }
 
@@ -279,7 +331,7 @@ export async function buildUpdatesForClaimPatch(
   }
 
   if (body.external_url !== undefined) {
-    updates.external_url = body.external_url;
+    updates.external_url = normalizeOptionalUrl(body.external_url);
     shouldResetMetadataLocation = true;
   }
 

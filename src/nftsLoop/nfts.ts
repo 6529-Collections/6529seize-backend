@@ -649,6 +649,10 @@ function validateMetadata(metadata: any) {
   }
 }
 
+export function normalizeMetadataNameForNft(name: unknown): string | null {
+  return typeof name === 'string' ? name.trim() : null;
+}
+
 function shouldStopDiscovery(msg: string): boolean {
   const lower = msg.toLowerCase();
   return (
@@ -698,7 +702,7 @@ async function buildBaseNft(
     mint_date: mintDate,
     mint_price: mintPrice,
     supply: tokenType === TokenType.ERC721 ? 1 : 0,
-    name: metadata.name,
+    name: normalizeMetadataNameForNft(metadata.name) ?? '',
     collection: config.collection,
     token_type: tokenType,
     description: text.replaceEmojisWithHex(metadata.description),
@@ -800,7 +804,7 @@ function rehydrateFromMetadata(entry: NftProcessingEntry) {
     findAttr(metadata, 'SEIZE ARTIST PROFILE') ?? nft.artist_seize_handle ?? '';
 
   // core fields
-  nft.name = metadata.name ?? nft.name ?? '';
+  nft.name = normalizeMetadataNameForNft(metadata.name) ?? nft.name ?? '';
   nft.description = text.replaceEmojisWithHex(metadata.description ?? '');
   nft.artist = artist;
   nft.artist_seize_handle = artistSeizeHandle;

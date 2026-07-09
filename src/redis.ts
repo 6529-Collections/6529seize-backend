@@ -223,6 +223,21 @@ export async function clearWaveGroupsCache() {
   ]);
 }
 
+/**
+ * Evicts only the shared wave-groups entity blob. Unlike
+ * clearWaveGroupsCache, this does NOT bump WAVE_GROUPS_VERSION_CACHE_KEY,
+ * which would invalidate every profile's cached eligible-groups entry at
+ * once. Use this when everyone whose eligibility could have changed has
+ * already been (or will be) invalidated individually via
+ * profile_group_changes.
+ */
+export async function evictWaveGroupsEntityCache() {
+  if (!redis) {
+    return;
+  }
+  await redis.del(WAVE_GROUPS_CACHE_KEY);
+}
+
 export function getRedisClient(): Redis | null {
   return redis || null;
 }

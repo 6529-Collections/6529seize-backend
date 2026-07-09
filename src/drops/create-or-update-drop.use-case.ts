@@ -189,6 +189,25 @@ type ResolvedMentionedUsers = Readonly<{
   mentionedUserIds: string[];
 }>;
 
+export function sanitizeDropStructuredFields(
+  model: CreateOrUpdateDropModel
+): CreateOrUpdateDropModel {
+  const title = model.title?.trim() ?? null;
+  return {
+    ...model,
+    title: title === '' ? null : title,
+    metadata: model.metadata
+      .map((metadata) => ({
+        ...metadata,
+        data_key: metadata.data_key.trim(),
+        data_value: metadata.data_value.trim()
+      }))
+      .filter(
+        (metadata) => metadata.data_key !== '' && metadata.data_value !== ''
+      )
+  };
+}
+
 export class CreateOrUpdateDropUseCase {
   public constructor(
     private readonly dropsDb: DropsDb,
@@ -256,11 +275,11 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions?: boolean;
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+    let resolvedModel = sanitizeDropStructuredFields(model);
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
-    const authorId = model.author_id;
-    const proxyIdNecessary = !!model.proxy_identity && !model.proxy_id;
+    let authorId = resolvedModel.author_id;
     if (!authorId) {
-      const authorIdentity = model.author_identity;
+      const authorIdentity = resolvedModel.author_identity;
       const resolvedAuthorId =
         await identityFetcher.getProfileIdByIdentityKeyOrThrow(
           {
@@ -268,19 +287,11 @@ export class CreateOrUpdateDropUseCase {
           },
           {}
         );
-      return this.execute(
-        { ...model, author_id: resolvedAuthorId },
-        isDescriptionDrop,
-        {
-          timer,
-          connection,
-          preResolvedIdentityNomination,
-          bypassChatLinkRestrictions,
-          bypassChatSlowModeRestrictions
-        }
-      );
-    } else if (proxyIdNecessary) {
-      const proxyIdentity = model.proxy_identity;
+      resolvedModel = { ...resolvedModel, author_id: resolvedAuthorId };
+      authorId = resolvedAuthorId;
+    }
+    if (!!resolvedModel.proxy_identity && !resolvedModel.proxy_id) {
+      const proxyIdentity = resolvedModel.proxy_identity;
       const resolvedProxyId =
         await identityFetcher.getProfileIdByIdentityKeyOrThrow(
           {
@@ -296,22 +307,12 @@ export class CreateOrUpdateDropUseCase {
         });
       if (!hasRequiredProxyAction) {
         throw new BadRequestException(
-          `Identity ${model.author_identity} hasn't allowed identity ${model.proxy_identity} to create drops on it's behalf`
+          `Identity ${resolvedModel.author_identity} hasn't allowed identity ${resolvedModel.proxy_identity} to create drops on it's behalf`
         );
       }
-      return this.execute(
-        { ...model, proxy_id: resolvedProxyId },
-        isDescriptionDrop,
-        {
-          timer,
-          connection,
-          preResolvedIdentityNomination,
-          bypassChatLinkRestrictions,
-          bypassChatSlowModeRestrictions
-        }
-      );
+      resolvedModel = { ...resolvedModel, proxy_id: resolvedProxyId };
     }
-    return await this.createOrUpdateDrop(model, isDescriptionDrop, {
+    return await this.createOrUpdateDrop(resolvedModel, isDescriptionDrop, {
       timer,
       connection,
       preResolvedIdentityNomination,
@@ -324,15 +325,16 @@ export class CreateOrUpdateDropUseCase {
     model: CreateOrUpdateDropModel,
     { timer }: { timer?: Timer }
   ): Promise<PreResolvedEnsIdentityNomination | null> {
+    const sanitizedModel = sanitizeDropStructuredFields(model);
     timer?.start(
       `${CreateOrUpdateDropUseCase.name}->preResolveIdentityNomination`
     );
     try {
-      if (model.drop_type !== DropType.PARTICIPATORY) {
+      if (sanitizedModel.drop_type !== DropType.PARTICIPATORY) {
         return null;
       }
 
-      const identityMetadatas = model.metadata.filter(
+      const identityMetadatas = sanitizedModel.metadata.filter(
         (it) => it.data_key === 'identity'
       );
       if (identityMetadatas.length !== 1) {

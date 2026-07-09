@@ -730,18 +730,19 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(
       'userGroupsDb->getAllProfileOwnedTokensByProfileIdGroupedByContract'
     );
+    // Plain row select grouped in JS instead of GROUP_CONCAT, which silently
+    // truncates at group_concat_max_len for identities with many tokens.
     const result = await this.db
       .execute<{
         contract: string;
-        token_ids: string;
+        token_id: string | number;
       }>(
         `
-        select o.contract as contract, group_concat(o.token_id separator ',') as token_ids
+        select o.contract as contract, o.token_id as token_id
         from ${IDENTITIES_TABLE} i
                  join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.consolidation_key = i.consolidation_key
                  join ${NFT_OWNERS_TABLE} o on o.wallet = ack.address
         where i.profile_id = :profileId
-        group by 1
         `,
         { profileId },
         { wrappedConnection: ctx.connection }
@@ -749,9 +750,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .then((res) =>
         res.reduce(
           (acc, it) => {
-            acc[it.contract.toLowerCase()] = it.token_ids
-              .split(',')
-              .map((k) => k.toLowerCase());
+            const contract = it.contract.toLowerCase();
+            const tokenIds = acc[contract] ?? [];
+            tokenIds.push(`${it.token_id}`.toLowerCase());
+            acc[contract] = tokenIds;
             return acc;
           },
           {} as Record<string, string[]>
@@ -908,8 +910,12 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async insertGroupChanges(profileIds: string[]) {
     if (!profileIds.length) return null;
     const currentMillis = Time.currentMillis();
-    const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${profileIds.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
-    await this.db.execute(sql);
+    const chunkSize = 1000;
+    for (let i = 0; i < profileIds.length; i += chunkSize) {
+      const chunk = profileIds.slice(i, i + chunkSize);
+      const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${chunk.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
+      await this.db.execute(sql);
+    }
   }
 
   async findBeneficiaryGrantGroupIdsForProfile(

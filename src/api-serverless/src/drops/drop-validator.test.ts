@@ -38,6 +38,38 @@ describe('NewDropSchema', () => {
     expect(result.error).toBeUndefined();
   });
 
+  it('normalizes structured fields without trimming freeform part content', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata(' artist ', '  6529er  '),
+      title: '  The Loom  ',
+      parts: [
+        {
+          content: '  keep chat text as typed  ',
+          media: [],
+          attachments: []
+        }
+      ]
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.title).toBe('The Loom');
+    expect(result.value.parts[0].content).toBe('  keep chat text as typed  ');
+    expect(result.value.metadata[0]).toMatchObject({
+      data_key: 'artist',
+      data_value: '6529er'
+    });
+  });
+
+  it('rejects metadata fields that are empty after trimming', () => {
+    const result = NewDropSchema.validate(
+      createDropWithMetadata(' artist ', '   ')
+    );
+
+    expect(result.error?.message).toContain(
+      '"metadata[0].data_value" is not allowed to be empty'
+    );
+  });
+
   it('rejects metadata keys over 500 characters', () => {
     const result = NewDropSchema.validate(
       createDropWithMetadata('a'.repeat(501), 'value')
