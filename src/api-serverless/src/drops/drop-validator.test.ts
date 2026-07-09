@@ -58,6 +58,14 @@ describe('NewDropSchema', () => {
       data_key: 'artist',
       data_value: '6529er'
     });
+
+    const emptyTitleResult = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', '6529er'),
+      title: '   '
+    });
+
+    expect(emptyTitleResult.error).toBeUndefined();
+    expect(emptyTitleResult.value.title).toBeNull();
   });
 
   it('rejects metadata fields that are empty after trimming', () => {
