@@ -1,5 +1,4 @@
-/// <reference path="../../typeorm-index-options.d.ts" />
-
+import type {} from '../../typeorm-index-options';
 import { app, ensureInitialized } from './app';
 import * as sentryContext from '../../sentry.context';
 import type {
