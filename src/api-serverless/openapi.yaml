@@ -12126,7 +12126,9 @@ components:
           type: boolean
           description: >-
             When true, create the drop with generated external link previews
-            hidden.
+            hidden. Omit or set to false to leave previews visible.
+            Signature-required drops must include this field in the signed
+            payload when present.
     ApiCreateGroup:
       type: object
       required:

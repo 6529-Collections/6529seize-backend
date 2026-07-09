@@ -28,6 +28,9 @@ export class ApiCreateDropRequest {
     'is_additional_action_promised'?: boolean;
     'mentioned_groups'?: Array<ApiDropGroupMention>;
     'poll'?: ApiCreateDropPollRequest;
+    /**
+    * When true, create the drop with generated external link previews hidden. Omit or set to false to leave previews visible. Signature-required drops must include this field in the signed payload when present.
+    */
     'hide_link_preview'?: boolean;
     'title'?: string | null;
     'parts': Array<ApiCreateDropPart>;
@@ -161,4 +164,5 @@ export class ApiCreateDropRequest {
     public constructor() {
     }
 }
+
 

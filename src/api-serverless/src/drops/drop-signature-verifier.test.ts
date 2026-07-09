@@ -145,6 +145,24 @@ describe('DropSignatureVerifier', () => {
     ).resolves.toBe(true);
   });
 
+  it.each([true, false])(
+    'accepts structured drop signatures with hide_link_preview=%s',
+    async (hideLinkPreview) => {
+      const drop = await signDropAsStructuredMessage({
+        ...createDrop(),
+        hide_link_preview: hideLinkPreview
+      });
+
+      await expect(
+        verifier.isDropSignedByAnyOfGivenWallets({
+          wallets: [wallet.address],
+          drop,
+          termsOfService
+        })
+      ).resolves.toBe(true);
+    }
+  );
+
   it('accepts structured drop signatures from unregistered client domains', async () => {
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '6529.io';
     const drop = await signDropAsStructuredMessage(

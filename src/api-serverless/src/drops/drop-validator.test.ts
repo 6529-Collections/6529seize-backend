@@ -211,15 +211,28 @@ describe('NewDropSchema', () => {
     });
   });
 
-  it('accepts hidden link previews on create requests', () => {
+  it.each([true, false])(
+    'accepts hide_link_preview=%s on create requests',
+    (hideLinkPreview) => {
+      const result = NewDropSchema.validate({
+        ...createDropWithMetadata('artist', 'Artist'),
+        drop_type: ApiDropType.Chat,
+        hide_link_preview: hideLinkPreview
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.value.hide_link_preview).toBe(hideLinkPreview);
+    }
+  );
+
+  it('keeps hidden link preview unset when omitted on create requests', () => {
     const result = NewDropSchema.validate({
       ...createDropWithMetadata('artist', 'Artist'),
-      drop_type: ApiDropType.Chat,
-      hide_link_preview: true
+      drop_type: ApiDropType.Chat
     });
 
     expect(result.error).toBeUndefined();
-    expect(result.value.hide_link_preview).toBe(true);
+    expect(result.value.hide_link_preview).toBeUndefined();
   });
 
   it('accepts anonymous polls for chat drops', () => {
