@@ -686,6 +686,28 @@ numeric_column_exists() {
   [[ "$count" == "1" ]]
 }
 
+column_allows_null() {
+  local table="$1"
+  local column="$2"
+  local schema_literal table_literal column_literal count
+  schema_literal="$(sql_string_literal "$STAGING_DB_NAME")"
+  table_literal="$(sql_string_literal "$table")"
+  column_literal="$(sql_string_literal "$column")"
+  count="$(mysql_staging -e "
+    SELECT COUNT(*)
+    FROM information_schema.columns
+    WHERE table_schema = $schema_literal
+      AND table_name = $table_literal
+      AND column_name = $column_literal
+      AND is_nullable = 'YES';
+  ")" || return 1
+  if ! is_unsigned_integer "$count"; then
+    log "Unexpected nullable-column check result for $table.$column: $count"
+    return 1
+  fi
+  [[ "$count" == "1" ]]
+}
+
 configured_chunk_spec() {
   local table="$1"
   local spec spec_table spec_column spec_mode
@@ -856,12 +878,14 @@ dump_range_chunked_table() {
     return 1
   fi
 
-  dump_null_chunk "$table" "$column" "$chunk_dir/null.sql.gz"
-
   if [[ -z "$min_pk" || -z "$max_pk" || "$max_pk" -lt "$min_pk" ]]; then
     log "Table $table is empty; marking chunked table complete"
     : > "$done_file"
     return 0
+  fi
+
+  if column_allows_null "$table" "$column"; then
+    dump_null_chunk "$table" "$column" "$chunk_dir/null.sql.gz"
   fi
 
   log "Chunking $table by $column from $min_pk to $max_pk in ranges of $CHUNK_RANGE_SIZE"
@@ -952,7 +976,9 @@ dump_distinct_chunked_table() {
   mv "$values_file.tmp" "$values_file"
 
   log "Chunking $table by distinct $column values from $values_file"
-  dump_null_chunk "$table" "$column" "$chunk_dir/null.sql.gz"
+  if column_allows_null "$table" "$column"; then
+    dump_null_chunk "$table" "$column" "$chunk_dir/null.sql.gz"
+  fi
   while IFS=$'\t' read -r value; do
     [[ -n "$value" ]] || continue
     if ! is_integer "$value"; then
