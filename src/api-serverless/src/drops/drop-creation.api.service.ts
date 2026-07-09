@@ -81,11 +81,13 @@ export class DropCreationApiService {
     {
       createDropRequest,
       authorId,
-      representativeId
+      representativeId,
+      hideLinkPreview
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
+      hideLinkPreview?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -96,26 +98,33 @@ export class DropCreationApiService {
       authorId,
       proxyId
     });
+    const createModel: typeof model =
+      hideLinkPreview === undefined
+        ? model
+        : {
+            ...model,
+            hide_link_preview: hideLinkPreview
+          };
     const preResolvedIdentityNomination =
-      await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
+      await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
     const { drop, pendingPushNotificationIds } =
       await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           return await this.createDropWithGivenConnection(
-            { model, authorId, preResolvedIdentityNomination },
+            { model: createModel, authorId, preResolvedIdentityNomination },
             normalizeCreateDropPollRequest(createDropRequest.poll),
             { timer: ctx.timer!, connection }
           );
         }
       );
     await waveScoreService.requestWaveScoreRefreshBestEffort(
-      [model.wave_id],
+      [createModel.wave_id],
       WaveScoreDirtyRefreshReason.DROP_CHANGED,
       ctx
     );
-    await invalidateWaveUnreadCacheForWave(model.wave_id);
+    await invalidateWaveUnreadCacheForWave(createModel.wave_id);
     await this.sendPendingPushNotifications({
       dropId: drop.id,
       pendingPushNotificationIds
