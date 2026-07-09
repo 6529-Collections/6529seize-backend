@@ -51,6 +51,16 @@ type SignatureVerificationResult =
       readonly statusCode: number;
     };
 
+type CiPipelineAlertRedis = NonNullable<ReturnType<typeof getRedisClient>>;
+
+interface CiPipelineAlertProcessingState {
+  readonly cacheKey: string;
+  readonly processingKey: string;
+  readonly redis: CiPipelineAlertRedis | null;
+  readonly lockAcquired: boolean;
+  readonly shouldSkip: boolean;
+}
+
 function timingSafeEqualHex(a: string, b: string): boolean {
   const aBuffer = Buffer.from(a, 'hex');
   const bBuffer = Buffer.from(b, 'hex');
@@ -173,6 +183,126 @@ export function buildCiPipelineAlertDedupeKey(
   return `ci-pipeline-alert:${hash}`;
 }
 
+async function prepareCiPipelineAlertProcessing(
+  request: CiPipelineAlertRequest
+): Promise<CiPipelineAlertProcessingState> {
+  const cacheKey = buildCiPipelineAlertDedupeKey(request);
+  const processingKey = `${cacheKey}:processing`;
+  const redis = getRedisClient();
+
+  if (!redis) {
+    logger.warn(
+      `Redis dedupe is unavailable for CI pipeline alert ${cacheKey}; posting without dedupe`
+    );
+    return {
+      cacheKey,
+      processingKey,
+      redis: null,
+      lockAcquired: false,
+      shouldSkip: false
+    };
+  }
+
+  try {
+    const alreadyProcessed = await redis.get(cacheKey);
+    if (alreadyProcessed) {
+      logger.info(`Duplicate CI pipeline alert ${cacheKey}, skipping`);
+      return {
+        cacheKey,
+        processingKey,
+        redis,
+        lockAcquired: false,
+        shouldSkip: true
+      };
+    }
+
+    const lockWasSet = await redis.set(processingKey, '1', {
+      NX: true,
+      EX: CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS
+    });
+    if (!lockWasSet) {
+      logger.info(`CI pipeline alert ${cacheKey} is already processing`);
+      return {
+        cacheKey,
+        processingKey,
+        redis,
+        lockAcquired: false,
+        shouldSkip: true
+      };
+    }
+
+    return {
+      cacheKey,
+      processingKey,
+      redis,
+      lockAcquired: true,
+      shouldSkip: false
+    };
+  } catch (err) {
+    logger.warn(
+      `Failed to use Redis dedupe for CI pipeline alert ${cacheKey}; posting without dedupe: ${err}`
+    );
+    return {
+      cacheKey,
+      processingKey,
+      redis,
+      lockAcquired: false,
+      shouldSkip: false
+    };
+  }
+}
+
+async function markCiPipelineAlertProcessed(
+  redis: CiPipelineAlertRedis,
+  cacheKey: string
+): Promise<void> {
+  try {
+    await redis.set(cacheKey, '1', {
+      EX: CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS
+    });
+  } catch (err) {
+    logger.warn(
+      `Failed to mark CI pipeline alert ${cacheKey} as processed: ${err}`
+    );
+  }
+}
+
+async function releaseCiPipelineAlertProcessingLock(
+  redis: CiPipelineAlertRedis,
+  processingKey: string
+): Promise<void> {
+  try {
+    await redis.del(processingKey);
+  } catch (err) {
+    logger.warn(
+      `Failed to release CI pipeline alert processing lock ${processingKey}: ${err}`
+    );
+  }
+}
+
+async function postCiPipelineAlert(
+  request: CiPipelineAlertRequest,
+  processingState: CiPipelineAlertProcessingState,
+  req: Request
+): Promise<void> {
+  const { cacheKey, lockAcquired, processingKey, redis } = processingState;
+
+  try {
+    await ciPipelineAlertService.postAlert(request, {
+      timer: Timer.getFromRequest(req)
+    });
+    if (redis && lockAcquired) {
+      await markCiPipelineAlertProcessed(redis, cacheKey);
+    }
+  } catch (err) {
+    logger.error(`Failed to post CI pipeline alert ${cacheKey}: ${err}`);
+  } finally {
+    if (redis && lockAcquired) {
+      await releaseCiPipelineAlertProcessingLock(redis, processingKey);
+    }
+  }
+}
+
 router.post(
   '/',
   async (
@@ -191,66 +321,12 @@ router.post(
       req.body,
       CiPipelineAlertRequestSchema
     );
-    const cacheKey = buildCiPipelineAlertDedupeKey(request);
-    const processingKey = `${cacheKey}:processing`;
-    const redis = getRedisClient();
-    let lockAcquired = false;
-
-    if (!redis) {
-      logger.warn(
-        `Redis dedupe is unavailable for CI pipeline alert ${cacheKey}; posting without dedupe`
-      );
-    } else {
-      try {
-        const alreadyProcessed = await redis.get(cacheKey);
-        if (alreadyProcessed) {
-          logger.info(`Duplicate CI pipeline alert ${cacheKey}, skipping`);
-          return res.send({});
-        }
-        const lockWasSet = await redis.set(processingKey, '1', {
-          NX: true,
-          EX: CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS
-        });
-        if (!lockWasSet) {
-          logger.info(`CI pipeline alert ${cacheKey} is already processing`);
-          return res.send({});
-        }
-        lockAcquired = true;
-      } catch (err) {
-        logger.warn(
-          `Failed to use Redis dedupe for CI pipeline alert ${cacheKey}; posting without dedupe: ${err}`
-        );
-      }
+    const processingState = await prepareCiPipelineAlertProcessing(request);
+    if (processingState.shouldSkip) {
+      return res.send({});
     }
 
-    try {
-      await ciPipelineAlertService.postAlert(request, {
-        timer: Timer.getFromRequest(req)
-      });
-      if (redis && lockAcquired) {
-        try {
-          await redis.set(cacheKey, '1', {
-            EX: CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS
-          });
-        } catch (err) {
-          logger.warn(
-            `Failed to mark CI pipeline alert ${cacheKey} as processed: ${err}`
-          );
-        }
-      }
-    } catch (err) {
-      logger.error(`Failed to post CI pipeline alert ${cacheKey}: ${err}`);
-    } finally {
-      if (redis && lockAcquired) {
-        try {
-          await redis.del(processingKey);
-        } catch (err) {
-          logger.warn(
-            `Failed to release CI pipeline alert processing lock ${processingKey}: ${err}`
-          );
-        }
-      }
-    }
+    await postCiPipelineAlert(request, processingState, req);
     return res.send({});
   }
 );

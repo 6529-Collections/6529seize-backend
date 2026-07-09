@@ -68,7 +68,7 @@ function parseProfileHandles(value: string | null): string[] {
 
 function normalizeConfiguredHandle(value: string): string {
   const trimmed = value.trim();
-  const bracketMention = trimmed.match(/^@\[([^\]]+)\]$/u);
+  const bracketMention = /^@\[([^\]]+)\]$/.exec(trimmed);
   if (bracketMention) {
     return bracketMention[1].trim();
   }
