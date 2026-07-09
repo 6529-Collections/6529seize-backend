@@ -1,4 +1,5 @@
 import { AiPrompter } from '@/abusiveness/ai-prompter';
+import { Wallet, verifyMessage } from 'ethers';
 import fetch from 'node-fetch';
 import { GitHubIssueDropService } from './github-issue-drop.service';
 
@@ -6,6 +7,10 @@ jest.mock('node-fetch', () => jest.fn());
 
 const PRIVATE_KEY =
   '0x59c6995e998f97a5a0044966f094538423616ff67a53e886e68660d054d60f1a';
+const CLIENT_ADDRESS = new Wallet(PRIVATE_KEY).address;
+const ISSUED_AT = new Date(Date.now() - 1_000).toISOString();
+const EXPIRATION_TIME = new Date(Date.now() + 5 * 60 * 1_000).toISOString();
+const SIGNABLE_MESSAGE = buildSignableMessage();
 const PR_URL = 'https://github.com/6529-Collections/test/pull/456';
 const ISSUE_URL = 'https://github.com/6529-Collections/test/issues/123';
 
@@ -19,10 +24,41 @@ type MockResponse = {
 
 type CreateDropRequestBody = {
   wave_id: string;
+  signer_address: string;
   parts: Array<{
     content: string;
   }>;
 };
+
+type LoginRequestBody = {
+  client_address: string;
+  client_signature: string;
+  server_signature: string;
+  is_safe_wallet: boolean;
+};
+
+function buildSignableMessage({
+  action = 'login',
+  expirationTime = EXPIRATION_TIME
+}: {
+  action?: string;
+  expirationTime?: string;
+} = {}): string {
+  return [
+    '6529 Authentication',
+    'Version: 2',
+    'Audience: api.test',
+    'Domain: native',
+    'Session Type: native',
+    `Wallet: ${CLIENT_ADDRESS}`,
+    'Chain ID: 1',
+    `Issued At: ${ISSUED_AT}`,
+    `Expiration Time: ${expirationTime}`,
+    'Nonce: github-auth-nonce',
+    `Action: ${action}`,
+    'Purpose: Sign this message to authenticate with 6529.'
+  ].join('\n');
+}
 
 function createJsonResponse(jsonPayload: unknown): MockResponse {
   return {
@@ -44,6 +80,41 @@ function getCreateDropBody(): CreateDropRequestBody {
   return JSON.parse(request.body) as CreateDropRequestBody;
 }
 
+function getFetchUrl(callIndex: number): URL {
+  const call = jest.mocked(fetch).mock.calls[callIndex];
+  if (!call) {
+    throw new Error(`Expected fetch call ${callIndex}`);
+  }
+
+  return new URL(String(call[0]));
+}
+
+function getLoginBody(): LoginRequestBody {
+  const loginCall = jest.mocked(fetch).mock.calls[1];
+  if (!loginCall) {
+    throw new Error('Expected login request');
+  }
+
+  const request = loginCall[1] as { body: string };
+  return JSON.parse(request.body) as LoginRequestBody;
+}
+
+function mockSuccessfulAuth(fetchMock: jest.MockedFunction<typeof fetch>) {
+  fetchMock
+    .mockResolvedValueOnce(
+      createJsonResponse({
+        signable_message: SIGNABLE_MESSAGE,
+        server_signature: 'server-signature'
+      }) as never
+    )
+    .mockResolvedValueOnce(
+      createJsonResponse({
+        token: 'auth-token'
+      }) as never
+    )
+    .mockResolvedValueOnce(createJsonResponse({}) as never);
+}
+
 describe('GitHubIssueDropService', () => {
   const fetchMock = jest.mocked(fetch);
   let aiPrompter: jest.Mocked<AiPrompter>;
@@ -62,19 +133,7 @@ describe('GitHubIssueDropService', () => {
     aiPrompter = {
       promptAndGetReply: jest.fn()
     };
-    fetchMock
-      .mockResolvedValueOnce(
-        createJsonResponse({
-          nonce: 'nonce',
-          server_signature: 'server-signature'
-        }) as never
-      )
-      .mockResolvedValueOnce(
-        createJsonResponse({
-          token: 'auth-token'
-        }) as never
-      )
-      .mockResolvedValueOnce(createJsonResponse({}) as never);
+    mockSuccessfulAuth(fetchMock);
   });
 
   afterEach(() => {
@@ -116,12 +175,144 @@ describe('GitHubIssueDropService', () => {
     );
     expect(getCreateDropBody()).toMatchObject({
       wave_id: 'wave-1',
+      signer_address: CLIENT_ADDRESS,
       parts: [
         {
           content: `${PR_URL}\n\nMembers can now read clearer release notes about user-facing changes.`
         }
       ]
     });
+  });
+
+  it('uses session-v2 structured auth before posting the drop', async () => {
+    await new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+      ISSUE_URL,
+      'issue',
+      {
+        action: 'reopened'
+      }
+    );
+
+    const sessionNonceUrl = getFetchUrl(0);
+    expect(sessionNonceUrl.pathname).toBe('/api/auth/session-nonce');
+    expect(sessionNonceUrl.searchParams.get('signer_address')).toBe(
+      CLIENT_ADDRESS
+    );
+    expect(sessionNonceUrl.searchParams.get('client_type')).toBe('native');
+    expect(sessionNonceUrl.searchParams.get('short_nonce')).toBeNull();
+
+    const loginUrl = getFetchUrl(1);
+    expect(loginUrl.pathname).toBe('/api/auth/login');
+    expect(loginUrl.searchParams.get('signer_address')).toBe(CLIENT_ADDRESS);
+
+    const loginBody = getLoginBody();
+    expect(loginBody).toMatchObject({
+      client_address: CLIENT_ADDRESS,
+      server_signature: 'server-signature',
+      is_safe_wallet: false
+    });
+    expect(
+      verifyMessage(SIGNABLE_MESSAGE, loginBody.client_signature).toLowerCase()
+    ).toBe(CLIENT_ADDRESS.toLowerCase());
+
+    const createDropUrl = getFetchUrl(2);
+    expect(createDropUrl.pathname).toBe('/api/drops');
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({
+      headers: expect.objectContaining({
+        authorization: 'Bearer auth-token'
+      })
+    });
+    expect(getCreateDropBody()).toMatchObject({
+      wave_id: 'wave-1',
+      signer_address: CLIENT_ADDRESS,
+      parts: [
+        {
+          content: ISSUE_URL
+        }
+      ]
+    });
+  });
+
+  it('preserves path prefixes from API_BASE_URL when building API requests', async () => {
+    process.env.API_BASE_URL = 'https://api.test/base/';
+
+    await new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+      ISSUE_URL,
+      'issue',
+      {
+        action: 'opened'
+      }
+    );
+
+    expect(getFetchUrl(0).pathname).toBe('/base/api/auth/session-nonce');
+    expect(getFetchUrl(1).pathname).toBe('/base/api/auth/login');
+    expect(getFetchUrl(2).pathname).toBe('/base/api/drops');
+  });
+
+  it('rejects malformed session nonce responses before signing', async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse({
+        server_signature: 'server-signature'
+      }) as never
+    );
+
+    await expect(
+      new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        {
+          action: 'opened'
+        }
+      )
+    ).rejects.toThrow('Invalid session nonce response');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects session nonce messages for unexpected auth context', async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse({
+        signable_message: buildSignableMessage({ action: 'link' }),
+        server_signature: 'server-signature'
+      }) as never
+    );
+
+    await expect(
+      new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        {
+          action: 'opened'
+        }
+      )
+    ).rejects.toThrow('Invalid session nonce response');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects malformed login responses before posting the drop', async () => {
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          signable_message: SIGNABLE_MESSAGE,
+          server_signature: 'server-signature'
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({ refresh_token: 'ignored' }) as never
+      );
+
+    await expect(
+      new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        {
+          action: 'opened'
+        }
+      )
+    ).rejects.toThrow('Invalid login response');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('posts non-merged GitHub events without asking AI for a summary', async () => {
@@ -136,6 +327,7 @@ describe('GitHubIssueDropService', () => {
     expect(aiPrompter.promptAndGetReply).not.toHaveBeenCalled();
     expect(getCreateDropBody()).toMatchObject({
       wave_id: 'wave-1',
+      signer_address: CLIENT_ADDRESS,
       parts: [
         {
           content: ISSUE_URL
