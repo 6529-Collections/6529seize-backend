@@ -311,6 +311,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const waveId = newDropEntity.wave_id;
     const replyToDropId = newDropEntity.reply_to_drop_id;
     const newDropSerialNo = newDropEntity.serial_no;
+    const hideLinkPreview = newDropEntity.hide_link_preview ?? false;
     const now = Time.currentMillis();
     await Promise.all([
       this.db.execute(
@@ -370,6 +371,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                      parts_count,
                                      signature,
                                      is_additional_action_promised,
+                                     hide_link_preview,
                                      reply_to_drop_id,
                                      reply_to_part_id${
                                        newDropSerialNo !== null
@@ -386,11 +388,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  :parts_count,
                  :signature,
                  :is_additional_action_promised,
+                 :hide_link_preview,
                  :reply_to_drop_id,
                  :reply_to_part_id
               ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
 
-        { ...newDropEntity },
+        { ...newDropEntity, hide_link_preview: hideLinkPreview },
         { wrappedConnection: connection }
       )
     ]);
