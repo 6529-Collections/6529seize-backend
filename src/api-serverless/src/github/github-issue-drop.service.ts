@@ -23,6 +23,7 @@ type LoginResponse = {
 
 const PULL_REQUEST_SUMMARY_MAX_LENGTH = 1000;
 const PULL_REQUEST_PROMPT_BODY_MAX_LENGTH = 12000;
+// Must match the session-v2 client type expected by structured native auth.
 const GITHUB_WEBHOOK_AUTH_CLIENT_TYPE = 'native';
 
 function isRecord(value: unknown): value is Record<string, unknown> {

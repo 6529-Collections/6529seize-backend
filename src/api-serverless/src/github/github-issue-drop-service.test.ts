@@ -10,20 +10,7 @@ const PRIVATE_KEY =
 const CLIENT_ADDRESS = new Wallet(PRIVATE_KEY).address;
 const ISSUED_AT = new Date(Date.now() - 1_000).toISOString();
 const EXPIRATION_TIME = new Date(Date.now() + 5 * 60 * 1_000).toISOString();
-const SIGNABLE_MESSAGE = [
-  '6529 Authentication',
-  'Version: 2',
-  'Audience: api.test',
-  'Domain: native',
-  'Session Type: native',
-  `Wallet: ${CLIENT_ADDRESS}`,
-  'Chain ID: 1',
-  `Issued At: ${ISSUED_AT}`,
-  `Expiration Time: ${EXPIRATION_TIME}`,
-  'Nonce: github-auth-nonce',
-  'Action: login',
-  'Purpose: Sign this message to authenticate with 6529.'
-].join('\n');
+const SIGNABLE_MESSAGE = buildSignableMessage();
 const PR_URL = 'https://github.com/6529-Collections/test/pull/456';
 const ISSUE_URL = 'https://github.com/6529-Collections/test/issues/123';
 
@@ -49,6 +36,29 @@ type LoginRequestBody = {
   server_signature: string;
   is_safe_wallet: boolean;
 };
+
+function buildSignableMessage({
+  action = 'login',
+  expirationTime = EXPIRATION_TIME
+}: {
+  action?: string;
+  expirationTime?: string;
+} = {}): string {
+  return [
+    '6529 Authentication',
+    'Version: 2',
+    'Audience: api.test',
+    'Domain: native',
+    'Session Type: native',
+    `Wallet: ${CLIENT_ADDRESS}`,
+    'Chain ID: 1',
+    `Issued At: ${ISSUED_AT}`,
+    `Expiration Time: ${expirationTime}`,
+    'Nonce: github-auth-nonce',
+    `Action: ${action}`,
+    'Purpose: Sign this message to authenticate with 6529.'
+  ].join('\n');
+}
 
 function createJsonResponse(jsonPayload: unknown): MockResponse {
   return {
@@ -243,6 +253,27 @@ describe('GitHubIssueDropService', () => {
     fetchMock.mockReset();
     fetchMock.mockResolvedValueOnce(
       createJsonResponse({
+        server_signature: 'server-signature'
+      }) as never
+    );
+
+    await expect(
+      new GitHubIssueDropService(aiPrompter).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        {
+          action: 'opened'
+        }
+      )
+    ).rejects.toThrow('Invalid session nonce response');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects session nonce messages for unexpected auth context', async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse({
+        signable_message: buildSignableMessage({ action: 'link' }),
         server_signature: 'server-signature'
       }) as never
     );
