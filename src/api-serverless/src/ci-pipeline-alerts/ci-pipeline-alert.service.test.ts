@@ -19,9 +19,10 @@ const baseRequest = {
   title: 'Seize PROD WEB DEPLOY: CI pipeline is broken!!!',
   description: 'abc123 - Fix deploy',
   run_id: '12345',
+  run_number: '6082',
   run_url:
     'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
-  sha: 'abc123',
+  sha: 'abc1234567890',
   branch: 'main',
   environment: 'production',
   service: 'web'
@@ -85,7 +86,7 @@ describe('CiPipelineAlertService', () => {
         representativeId: 'bot-profile',
         createDropRequest: expect.objectContaining({
           wave_id: 'prod-wave',
-          title: 'CI failure: Seize PROD WEB DEPLOY: CI pipeline is broken!!!',
+          title: '[PROD] Deploy Failed',
           mentioned_users: [
             {
               mentioned_profile_id: 'profile-1',
@@ -98,7 +99,17 @@ describe('CiPipelineAlertService', () => {
           ],
           parts: [
             expect.objectContaining({
-              content: expect.stringContaining('cc @[ALICE] @[Bob]')
+              content: expect.stringContaining(
+                [
+                  'cc @[ALICE] @[Bob]',
+                  '',
+                  'Service: Frontend - web',
+                  'Workflow: Web Deploy - PROD',
+                  'Branch: main',
+                  'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
+                  'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+                ].join('\n')
+              )
             })
           ]
         })
@@ -132,15 +143,28 @@ describe('CiPipelineAlertService', () => {
       expect.objectContaining({
         createDropRequest: expect.objectContaining({
           wave_id: 'staging-wave',
+          title: '[STAGING] Deploy Succeeded',
           mentioned_users: [],
           parts: [
             expect.objectContaining({
-              content: expect.not.stringContaining('cc @[')
+              content: expect.stringContaining(
+                [
+                  'Service: Frontend - web',
+                  'Workflow: Web Deploy - PROD',
+                  'Branch: main',
+                  'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
+                  'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+                ].join('\n')
+              )
             })
           ]
         })
       }),
       expect.anything()
     );
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).not.toContain('cc @[');
   });
 });
