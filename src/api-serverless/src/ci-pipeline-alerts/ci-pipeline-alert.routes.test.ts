@@ -16,6 +16,7 @@ jest.mock('./ci-pipeline-alert.service', () => ({
   }
 }));
 
+import fc from 'fast-check';
 import { getRedisClient } from '@/redis';
 import {
   buildCiPipelineAlertDedupeKey,
@@ -83,6 +84,57 @@ function makeResponse() {
   return res as any;
 }
 
+const alertTextCharacters =
+  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split('');
+const alertTextArbitrary = fc
+  .array(fc.constantFrom(...alertTextCharacters), {
+    minLength: 1,
+    maxLength: 40
+  })
+  .map((chars) => chars.join(''));
+
+const optionalAlertTextArbitrary = fc.option(alertTextArbitrary, { nil: null });
+
+const ciPipelineAlertChangedFields = [
+  'repo',
+  'workflow',
+  'run_id',
+  'run_url',
+  'status',
+  'title',
+  'description',
+  'sha',
+  'branch',
+  'environment',
+  'service'
+] as const;
+
+const ciPipelineAlertRequestArbitrary = fc
+  .record({
+    repo: alertTextArbitrary,
+    workflow: alertTextArbitrary,
+    status: fc.constantFrom('success' as const, 'failure' as const),
+    title: alertTextArbitrary,
+    run_id: alertTextArbitrary,
+    run_number: optionalAlertTextArbitrary,
+    run_url: alertTextArbitrary.map(
+      (runId) =>
+        `https://github.com/6529-Collections/repo/actions/runs/${runId}`
+    ),
+    description: optionalAlertTextArbitrary,
+    sha: optionalAlertTextArbitrary,
+    branch: optionalAlertTextArbitrary,
+    environment: fc.constantFrom('staging', 'prod', 'production'),
+    service: optionalAlertTextArbitrary
+  })
+  .map((request) => ({
+    ...request,
+    repo: `6529-${request.repo}`,
+    workflow: `workflow-${request.workflow}`,
+    title: `title-${request.title}`,
+    run_id: `run-${request.run_id}`
+  }));
+
 describe('ci pipeline alert routes', () => {
   let originalAlertSecret: string | undefined;
 
@@ -120,6 +172,36 @@ describe('ci pipeline alert routes', () => {
         })
       )
     ).toEqual({ ok: true });
+  });
+
+  it('verifies arbitrary signed alert payloads within timestamp skew', () => {
+    fc.assert(
+      fc.property(
+        ciPipelineAlertRequestArbitrary,
+        fc.integer({ min: -250, max: 250 }),
+        (payload, timestampOffsetSeconds) => {
+          const rawBody = Buffer.from(JSON.stringify(payload));
+          const timestamp = (
+            Math.floor(Date.now() / 1000) + timestampOffsetSeconds
+          ).toString();
+          const signature = computeCiPipelineAlertSignature({
+            secret: 'test-secret',
+            timestamp,
+            rawBody
+          });
+
+          expect(
+            verifyCiPipelineAlertSignature(
+              makeRequest({
+                rawBody,
+                timestamp,
+                signature: `sha256=${signature}`
+              })
+            )
+          ).toEqual({ ok: true });
+        }
+      )
+    );
   });
 
   it('rejects expired signatures', () => {
@@ -194,6 +276,37 @@ describe('ci pipeline alert routes', () => {
           'https://github.com/6529-Collections/6529-core/actions/runs/99/attempts/2',
         description: 'retry failure'
       })
+    );
+  });
+
+  it('builds distinct dedupe keys for arbitrary changed alert fields', () => {
+    const changedFieldArbitrary = fc.constantFrom(
+      ...ciPipelineAlertChangedFields
+    );
+
+    fc.assert(
+      fc.property(
+        ciPipelineAlertRequestArbitrary,
+        changedFieldArbitrary,
+        alertTextArbitrary,
+        (request, changedField, nextValue) => {
+          const currentValue = request[changedField] ?? '';
+          const changedValue =
+            changedField === 'status'
+              ? request.status === 'success'
+                ? 'failure'
+                : 'success'
+              : `${currentValue}${nextValue}`;
+          const changedRequest = {
+            ...request,
+            [changedField]: changedValue
+          };
+
+          expect(buildCiPipelineAlertDedupeKey(changedRequest)).not.toBe(
+            buildCiPipelineAlertDedupeKey(request)
+          );
+        }
+      )
     );
   });
 
