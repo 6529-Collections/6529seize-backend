@@ -196,9 +196,9 @@ describe('CiPipelineAlertService', () => {
       ].join('\n')
     );
     expect(
-      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
-        .parts[0].content
-        .startsWith('\n')
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest.parts[0].content.startsWith(
+        '\n'
+      )
     ).toBe(false);
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest

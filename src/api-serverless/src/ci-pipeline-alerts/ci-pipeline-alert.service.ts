@@ -141,7 +141,12 @@ function getGithubRepoUrl(request: CiPipelineAlertRequest): string | null {
 }
 
 function formatMarkdownLink(label: string, url: string): string {
-  return `[${label.replace(/\[/g, '\\[').replace(/\]/g, '\\]')}](${url})`;
+  const escapedLabel = label
+    .split('[')
+    .join(String.raw`\[`)
+    .split(']')
+    .join(String.raw`\]`);
+  return `[${escapedLabel}](${url})`;
 }
 
 function formatCommit(request: CiPipelineAlertRequest): string | null {
