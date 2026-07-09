@@ -4,6 +4,7 @@ import { XTDH_GRANTS_TABLE } from '@/constants';
 @Entity(XTDH_GRANTS_TABLE)
 @Index(['target_chain', 'target_contract'])
 @Index(['status', 'valid_from', 'target_partition'])
+@Index('idx_status_target_partition', ['status', 'target_partition'])
 export class XTdhGrantEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly id: string;
