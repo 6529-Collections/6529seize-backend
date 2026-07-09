@@ -57,6 +57,7 @@ function makeAlertRequest(body: Record<string, unknown> = {}) {
     run_id: '123',
     run_url:
       'https://github.com/6529-Collections/6529seize-backend/actions/runs/123',
+    environment: 'production',
     ...body
   };
   const rawBody = Buffer.from(JSON.stringify(requestBody));
@@ -198,7 +199,9 @@ describe('ci pipeline alert routes', () => {
 
   it('posts alerts without Redis dedupe when Redis is unavailable', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
-    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(undefined);
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
+      undefined
+    );
     const res = makeResponse();
 
     await ciPipelineAlertHandler(makeAlertRequest(), res);
@@ -206,6 +209,28 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.send).toHaveBeenCalledWith({});
+  });
+
+  it('rejects signed alert payloads with missing environments', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    const res = makeResponse();
+
+    await expect(
+      ciPipelineAlertHandler(makeAlertRequest({ environment: undefined }), res)
+    ).rejects.toThrow('"environment" is required');
+
+    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+  });
+
+  it('rejects signed alert payloads with unsupported environments', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    const res = makeResponse();
+
+    await expect(
+      ciPipelineAlertHandler(makeAlertRequest({ environment: 'sandbox' }), res)
+    ).rejects.toThrow('"environment" must be one of');
+
+    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
   it('acknowledges in-flight duplicate alerts without returning an error', async () => {

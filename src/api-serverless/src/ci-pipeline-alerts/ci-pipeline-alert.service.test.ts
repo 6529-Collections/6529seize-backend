@@ -50,7 +50,7 @@ describe('CiPipelineAlertService', () => {
     };
     identitiesRepository = {
       getIdsByHandles: jest.fn().mockResolvedValue({
-        alice: 'profile-1',
+        ALICE: 'profile-1',
         Bob: 'profile-2'
       })
     };
@@ -89,7 +89,7 @@ describe('CiPipelineAlertService', () => {
           mentioned_users: [
             {
               mentioned_profile_id: 'profile-1',
-              handle_in_content: 'alice'
+              handle_in_content: 'ALICE'
             },
             {
               mentioned_profile_id: 'profile-2',
@@ -98,7 +98,7 @@ describe('CiPipelineAlertService', () => {
           ],
           parts: [
             expect.objectContaining({
-              content: expect.stringContaining('cc @[alice] @[Bob]')
+              content: expect.stringContaining('cc @[ALICE] @[Bob]')
             })
           ]
         })

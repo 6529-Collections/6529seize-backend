@@ -35,7 +35,11 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .required(),
     sha: Joi.string().trim().max(100).allow(null, '').optional(),
     branch: Joi.string().trim().max(200).allow(null, '').optional(),
-    environment: Joi.string().trim().max(100).allow(null, '').optional(),
+    environment: Joi.string()
+      .trim()
+      .lowercase()
+      .valid('staging', 'prod', 'production')
+      .required(),
     service: Joi.string().trim().max(200).allow(null, '').optional()
   }).unknown(false);
 
