@@ -35,7 +35,7 @@ interface MentionedProfile {
 const MAX_DROP_CONTENT_LENGTH = 30000;
 const MAX_DROP_TITLE_LENGTH = 250;
 
-function truncate(value: string, maxLength: number): string {
+export function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
   }
@@ -49,7 +49,7 @@ function normalizeOptionalValue(
   return trimmed || null;
 }
 
-function parseProfileHandles(value: string | null): string[] {
+export function parseProfileHandles(value: string | null): string[] {
   if (!value) {
     return [];
   }
@@ -67,7 +67,7 @@ function parseProfileHandles(value: string | null): string[] {
     });
 }
 
-function normalizeConfiguredHandle(value: string): string {
+export function normalizeConfiguredHandle(value: string): string {
   const trimmed = value.trim();
   const bracketMention = /^@\[([^\]]+)\]$/.exec(trimmed);
   if (bracketMention) {
@@ -76,7 +76,7 @@ function normalizeConfiguredHandle(value: string): string {
   return trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
 }
 
-function normalizeTargetEnvironment(value: string | null | undefined) {
+export function normalizeTargetEnvironment(value: string | null | undefined) {
   const normalizedValue = normalizeOptionalValue(value)?.toLowerCase();
   if (normalizedValue === 'staging') {
     return 'staging';
@@ -140,12 +140,24 @@ function getGithubRepoUrl(request: CiPipelineAlertRequest): string | null {
   }
 }
 
-function formatMarkdownLink(label: string, url: string): string {
-  const escapedLabel = label
-    .split('[')
-    .join(String.raw`\[`)
-    .split(']')
-    .join(String.raw`\]`);
+function replaceAllLiteral(
+  value: string,
+  searchValue: string,
+  replaceValue: string
+): string {
+  return (
+    value as string & {
+      replaceAll(searchValue: string, replaceValue: string): string;
+    }
+  ).replaceAll(searchValue, replaceValue);
+}
+
+export function formatMarkdownLink(label: string, url: string): string {
+  const escapedLabel = replaceAllLiteral(
+    replaceAllLiteral(label, '[', String.raw`\[`),
+    ']',
+    String.raw`\]`
+  );
   return `[${escapedLabel}](${url})`;
 }
 

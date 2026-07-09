@@ -10,7 +10,15 @@ jest.mock('@/identities/identities.db', () => ({
   }
 }));
 
-import { CiPipelineAlertService } from './ci-pipeline-alert.service';
+import fc from 'fast-check';
+import {
+  CiPipelineAlertService,
+  formatMarkdownLink,
+  normalizeConfiguredHandle,
+  normalizeTargetEnvironment,
+  parseProfileHandles,
+  truncate
+} from './ci-pipeline-alert.service';
 
 const baseRequest = {
   repo: '6529seize-frontend',
@@ -69,6 +77,107 @@ describe('CiPipelineAlertService', () => {
         process.env[name] = value;
       }
     }
+  });
+
+  it('keeps truncated arbitrary content within the target length', () => {
+    fc.assert(
+      fc.property(
+        fc.string(),
+        fc.integer({ min: 3, max: 120 }),
+        (value, maxLength) => {
+          const truncated = truncate(value, maxLength);
+
+          expect(truncated.length).toBeLessThanOrEqual(maxLength);
+          if (value.length <= maxLength) {
+            expect(truncated).toBe(value);
+          } else {
+            expect(truncated).toBe(`${value.slice(0, maxLength - 3)}...`);
+          }
+        }
+      )
+    );
+  });
+
+  it('escapes arbitrary markdown link labels', () => {
+    fc.assert(
+      fc.property(fc.string(), fc.string(), (label, url) => {
+        const escapedLabel = label
+          .split('[')
+          .join(String.raw`\[`)
+          .split(']')
+          .join(String.raw`\]`);
+
+        expect(formatMarkdownLink(label, url)).toBe(
+          `[${escapedLabel}](${url})`
+        );
+      })
+    );
+  });
+
+  it('normalizes arbitrary configured profile handles', () => {
+    const handleCharacters =
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split(
+        ''
+      );
+    const handleArbitrary = fc
+      .array(fc.constantFrom(...handleCharacters), {
+        minLength: 1,
+        maxLength: 30
+      })
+      .map((chars) => chars.join(''));
+
+    fc.assert(
+      fc.property(handleArbitrary, (handle) => {
+        expect(normalizeConfiguredHandle(` @${handle} `)).toBe(handle);
+        expect(normalizeConfiguredHandle(` @[${handle}] `)).toBe(handle);
+      })
+    );
+  });
+
+  it('dedupes arbitrary configured profile handles case-insensitively', () => {
+    const handleCharacters =
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split(
+        ''
+      );
+    const handleArbitrary = fc
+      .array(fc.constantFrom(...handleCharacters), {
+        minLength: 1,
+        maxLength: 20
+      })
+      .map((chars) => chars.join(''));
+
+    fc.assert(
+      fc.property(fc.array(handleArbitrary, { maxLength: 20 }), (handles) => {
+        const input = handles
+          .flatMap((handle) => [` @${handle} `, ` @[${handle.toUpperCase()}] `])
+          .join(',');
+        const parsedHandles = parseProfileHandles(input);
+        const normalizedHandles = parsedHandles.map((handle) =>
+          handle.toLowerCase()
+        );
+
+        expect(new Set(normalizedHandles).size).toBe(parsedHandles.length);
+        for (const parsedHandle of parsedHandles) {
+          expect(parsedHandle).not.toMatch(/^@/);
+        }
+      })
+    );
+  });
+
+  it('normalizes arbitrary target environment casing and spacing', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom('staging', 'prod', 'production'),
+        fc.constantFrom('', ' ', '  ', '\t', '\n'),
+        fc.constantFrom('', ' ', '  ', '\t', '\n'),
+        (environment, prefixWhitespace, suffixWhitespace) => {
+          const paddedEnvironment = `${prefixWhitespace}${environment.toUpperCase()}${suffixWhitespace}`;
+          const expected = environment === 'production' ? 'prod' : environment;
+
+          expect(normalizeTargetEnvironment(paddedEnvironment)).toBe(expected);
+        }
+      )
+    );
   });
 
   it('posts failures with configured profile mentions', async () => {
