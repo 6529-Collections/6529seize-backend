@@ -19,6 +19,7 @@ export interface CiPipelineAlertRequest {
   readonly title: string;
   readonly description?: string | null;
   readonly run_id: string;
+  readonly run_number?: string | null;
   readonly run_url: string;
   readonly sha?: string | null;
   readonly branch?: string | null;
@@ -84,6 +85,75 @@ function normalizeTargetEnvironment(value: string | null | undefined) {
     return 'prod';
   }
   return null;
+}
+
+function formatStatusVerb(status: CiPipelineAlertStatus): string {
+  return status === 'success' ? 'Succeeded' : 'Failed';
+}
+
+function formatEnvironmentLabel(value: string | null | undefined): string {
+  const targetEnvironment = normalizeTargetEnvironment(value);
+  return (
+    targetEnvironment ??
+    normalizeOptionalValue(value) ??
+    'ci'
+  ).toUpperCase();
+}
+
+function formatRepoLabel(repo: string): string {
+  const repoName = repo.split('/').pop() ?? repo;
+  if (repoName === '6529seize-backend') {
+    return 'Backend';
+  }
+  if (repoName === '6529seize-frontend') {
+    return 'Frontend';
+  }
+  if (repoName === '6529-core') {
+    return 'Core';
+  }
+  return repoName;
+}
+
+function formatServiceLabel(request: CiPipelineAlertRequest): string {
+  const repoLabel = formatRepoLabel(request.repo);
+  const service = normalizeOptionalValue(request.service);
+  return service ? `${repoLabel} - ${service}` : repoLabel;
+}
+
+function getGithubRepoUrl(request: CiPipelineAlertRequest): string | null {
+  try {
+    const runUrl = new URL(request.run_url);
+    const [owner, repo] = runUrl.pathname.split('/').filter(Boolean);
+    if (!owner || !repo) {
+      return null;
+    }
+    return `${runUrl.origin}/${owner}/${repo}`;
+  } catch {
+    return null;
+  }
+}
+
+function formatMarkdownLink(label: string, url: string): string {
+  return `[${label.replace(/\[/g, '\\[').replace(/\]/g, '\\]')}](${url})`;
+}
+
+function formatCommit(request: CiPipelineAlertRequest): string | null {
+  const sha = normalizeOptionalValue(request.sha);
+  if (!sha) {
+    return null;
+  }
+  const shortSha = sha.slice(0, 8);
+  const repoUrl = getGithubRepoUrl(request);
+  return repoUrl
+    ? formatMarkdownLink(shortSha, `${repoUrl}/commit/${sha}`)
+    : shortSha;
+}
+
+function formatRun(request: CiPipelineAlertRequest): string {
+  const runLabel = normalizeOptionalValue(request.run_number)
+    ? `#${normalizeOptionalValue(request.run_number)}`
+    : `#${request.run_id}`;
+  return formatMarkdownLink(runLabel, request.run_url);
 }
 
 export class CiPipelineAlertService {
@@ -186,7 +256,7 @@ export class CiPipelineAlertService {
     const content = this.formatContent(request, mentions);
     return {
       title: truncate(
-        `CI ${request.status}: ${request.title}`,
+        `[${formatEnvironmentLabel(request.environment)}] Deploy ${formatStatusVerb(request.status)}`,
         MAX_DROP_TITLE_LENGTH
       ),
       drop_type: ApiDropType.Chat,
@@ -225,23 +295,15 @@ export class CiPipelineAlertService {
       .join(' ');
     const mentionLines = mentions.length ? [`cc ${mentionHandles}`, ''] : [];
 
-    const description = normalizeOptionalValue(request.description);
-    const environment = normalizeOptionalValue(request.environment);
-    const service = normalizeOptionalValue(request.service);
     const branch = normalizeOptionalValue(request.branch);
-    const sha = normalizeOptionalValue(request.sha);
+    const commit = formatCommit(request);
     const lines = [
-      `[${request.status.toUpperCase()}] ${request.title}`,
-      '',
       ...mentionLines,
-      ...(description ? [description, ''] : []),
-      `Repo: ${request.repo}`,
+      `Service: ${formatServiceLabel(request)}`,
       `Workflow: ${request.workflow}`,
-      ...(environment ? [`Environment: ${environment}`] : []),
-      ...(service ? [`Service: ${service}`] : []),
       ...(branch ? [`Branch: ${branch}`] : []),
-      ...(sha ? [`Commit: ${sha}`] : []),
-      `Run: ${request.run_url}`
+      ...(commit ? [`Commit: ${commit}`] : []),
+      `Run: ${formatRun(request)}`
     ];
 
     return truncate(lines.join('\n'), MAX_DROP_CONTENT_LENGTH);

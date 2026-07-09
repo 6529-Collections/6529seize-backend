@@ -28,6 +28,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
     title: Joi.string().trim().min(1).max(250).required(),
     description: Joi.string().trim().max(5000).allow(null, '').optional(),
     run_id: Joi.string().trim().min(1).max(100).required(),
+    run_number: Joi.string().trim().max(100).allow(null, '').optional(),
     run_url: Joi.string()
       .trim()
       .uri({ scheme: ['http', 'https'] })
