@@ -180,8 +180,10 @@ export class CiPipelineAlertService {
       waveId,
       mentions
     });
+    const authenticationContext =
+      AuthenticationContext.fromProfileId(botProfileId);
 
-    await this.dropCreationApiService.createDrop(
+    const createdDrop = await this.dropCreationApiService.createDrop(
       {
         createDropRequest,
         authorId: botProfileId,
@@ -189,7 +191,17 @@ export class CiPipelineAlertService {
       },
       {
         ...ctx,
-        authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
+        authenticationContext
+      }
+    );
+    await this.dropCreationApiService.toggleHideLinkPreview(
+      {
+        dropId: createdDrop.id,
+        hideLinkPreview: true
+      },
+      {
+        ...ctx,
+        authenticationContext
       }
     );
   }
