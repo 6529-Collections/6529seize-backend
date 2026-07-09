@@ -1536,6 +1536,7 @@ export class CreateOrUpdateDropUseCase {
           serial_no: serialNo,
           drop_type: model.drop_type,
           signature: model.signature,
+          hide_link_preview: model.hide_link_preview,
           is_additional_action_promised: model.is_additional_action_promised
         },
         connection

@@ -11,6 +11,7 @@ export interface CreateOrUpdateDropModel {
   readonly mentioned_users: DropMentionedUserModel[];
   readonly mentioned_waves: DropMentionedWaveModel[];
   readonly metadata: DropMetadataModel[];
+  readonly hide_link_preview?: boolean;
   readonly author_identity: string;
   readonly author_id?: string;
   readonly proxy_identity?: string;
