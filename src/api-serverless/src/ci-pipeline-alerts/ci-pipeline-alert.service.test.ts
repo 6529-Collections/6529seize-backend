@@ -30,7 +30,10 @@ const baseRequest = {
 
 describe('CiPipelineAlertService', () => {
   let originalEnv: Record<string, string | undefined>;
-  let dropCreationApiService: { createDrop: jest.Mock };
+  let dropCreationApiService: {
+    createDrop: jest.Mock;
+    toggleHideLinkPreview: jest.Mock;
+  };
   let identitiesRepository: { getIdsByHandles: jest.Mock };
 
   beforeEach(() => {
@@ -47,7 +50,8 @@ describe('CiPipelineAlertService', () => {
     process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES =
       '@alice, @[Bob], alice, missing';
     dropCreationApiService = {
-      createDrop: jest.fn().mockResolvedValue({})
+      createDrop: jest.fn().mockResolvedValue({ id: 'drop-1' }),
+      toggleHideLinkPreview: jest.fn().mockResolvedValue({})
     };
     identitiesRepository = {
       getIdsByHandles: jest.fn().mockResolvedValue({
@@ -120,6 +124,17 @@ describe('CiPipelineAlertService', () => {
         })
       })
     );
+    expect(dropCreationApiService.toggleHideLinkPreview).toHaveBeenCalledWith(
+      {
+        dropId: 'drop-1',
+        hideLinkPreview: true
+      },
+      expect.objectContaining({
+        authenticationContext: expect.objectContaining({
+          authenticatedProfileId: 'bot-profile'
+        })
+      })
+    );
   });
 
   it('routes staging successes without resolving or adding mentions', async () => {
@@ -166,5 +181,16 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
     ).not.toContain('cc @[');
+    expect(dropCreationApiService.toggleHideLinkPreview).toHaveBeenCalledWith(
+      {
+        dropId: 'drop-1',
+        hideLinkPreview: true
+      },
+      expect.objectContaining({
+        authenticationContext: expect.objectContaining({
+          authenticatedProfileId: 'bot-profile'
+        })
+      })
+    );
   });
 });
