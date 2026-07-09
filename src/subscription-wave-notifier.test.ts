@@ -78,11 +78,7 @@ describe('subscription wave notifier message formatting', () => {
       [
         '📋 Published provisional list of Subscriptions for [The Memes #312](https://6529.io/the-memes/312)',
         '',
-        'View on 6529.io:',
-        'https://6529.io/open-data/meme-subscriptions',
-        '',
-        'View on Arweave:',
-        'https://arweave.net/subscriptions'
+        'View on [6529.io](https://6529.io/open-data/meme-subscriptions) | [Arweave](https://arweave.net/subscriptions)'
       ].join('\n')
     );
   });
@@ -124,11 +120,7 @@ describe('subscription wave notifier message formatting', () => {
         '',
         'Profile: @[6529er]',
         '',
-        'View on 6529.io:',
-        'https://6529.io/0x1234/subscriptions',
-        '',
-        'View on Etherscan:',
-        'https://etherscan.io/tx/0xabc'
+        'View on [6529.io](https://6529.io/0x1234/subscriptions) | [Etherscan](https://etherscan.io/tx/0xabc)'
       ].join('\n')
     );
   });
@@ -149,8 +141,7 @@ describe('subscription wave notifier message formatting', () => {
         '',
         '0xairdrop',
         '',
-        'Transaction:',
-        transactionLink,
+        `Transaction: [Etherscan](${transactionLink})`,
         '',
         '@[admin1] @[admin2]'
       ].join('\n')
@@ -167,8 +158,7 @@ describe('subscription wave notifier message formatting', () => {
         '',
         '0xkey',
         '',
-        'Transaction:',
-        transactionLink,
+        `Transaction: [Etherscan](${transactionLink})`,
         '',
         '@[admin1] @[admin2]'
       ].join('\n')
@@ -185,8 +175,7 @@ describe('subscription wave notifier message formatting', () => {
         '',
         '0xkey',
         '',
-        'Transaction:',
-        transactionLink,
+        `Transaction: [Etherscan](${transactionLink})`,
         '',
         '@[admin1] @[admin2]'
       ].join('\n')
