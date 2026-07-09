@@ -399,8 +399,10 @@ function resolveAnimationContentTypeForUpload({
 function normalizeAttributesForArweave(attributes: unknown): unknown[] {
   if (!Array.isArray(attributes)) return [];
   return attributes.map((a: any) => {
-    const traitType = a.trait_type ?? a.traitType;
-    const value = a.value;
+    const rawTraitType = a.trait_type ?? a.traitType;
+    const traitType =
+      typeof rawTraitType === 'string' ? rawTraitType.trim() : rawTraitType;
+    const value = typeof a.value === 'string' ? a.value.trim() : a.value;
     const existingDisplayType = a.display_type ?? a.displayType ?? undefined;
     const existingMaxValue = a.max_value ?? a.maxValue ?? undefined;
 
@@ -412,7 +414,10 @@ function normalizeAttributesForArweave(attributes: unknown): unknown[] {
     ) {
       displayType = existingDisplayType ?? 'boost_percentage';
       maxValue = existingMaxValue ?? 100;
-    } else if (ARWEAVE_TYPE_NUMBER_TRAITS.has(traitType)) {
+    } else if (
+      typeof traitType === 'string' &&
+      ARWEAVE_TYPE_NUMBER_TRAITS.has(traitType)
+    ) {
       displayType = existingDisplayType ?? 'number';
     } else if (traitType === 'Artist') {
       displayType = existingDisplayType ?? 'text';
@@ -426,7 +431,8 @@ function normalizeAttributesForArweave(attributes: unknown): unknown[] {
     }
     if (
       displayType === 'boost_percentage' ||
-      ARWEAVE_TYPE_NUMBER_TRAITS.has(traitType)
+      (typeof traitType === 'string' &&
+        ARWEAVE_TYPE_NUMBER_TRAITS.has(traitType))
     ) {
       const out: Record<string, unknown> = {
         display_type: displayType,
@@ -484,7 +490,7 @@ function getMemeNameFromAttributes(attributes: unknown): string {
   if (!Array.isArray(attributes))
     throw new BadRequestException('Claim has no attributes');
   const memeNameAttr = attributes.find(
-    (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
+    (a: any) => getTrimmedTraitType(a) === MEME_NAME_TRAIT
   );
   const value = memeNameAttr?.value;
   if (value == null || typeof value !== 'string' || value.trim() === '') {
@@ -501,8 +507,7 @@ function extractSeasonFromAttributes(attributes: unknown): number | null {
   }
 
   const seasonAttribute = attributes.find(
-    (attribute: any) =>
-      (attribute?.trait_type ?? attribute?.traitType) === TYPE_SEASON_TRAIT
+    (attribute: any) => getTrimmedTraitType(attribute) === TYPE_SEASON_TRAIT
   ) as { value?: unknown } | undefined;
 
   if (!seasonAttribute) {
@@ -530,7 +535,7 @@ function attributesWithTypeTraits(
   claimId: number
 ): unknown[] {
   const filtered = rawAttributes.filter((a: any) => {
-    const tt = a.trait_type ?? a.traitType;
+    const tt = getTrimmedTraitType(a);
     return (
       tt !== TYPE_MEME_TRAIT &&
       tt !== TYPE_SEASON_TRAIT &&
@@ -562,11 +567,12 @@ function attributesWithTypeTraits(
 }
 
 function filterMemesAttributesToKnownTraits(attributes: unknown[]): unknown[] {
-  return attributes.filter((attribute: any) =>
-    MEMES_REQUIRED_FINAL_ATTRIBUTE_TRAITS.has(
-      attribute?.trait_type ?? attribute?.traitType
-    )
-  );
+  return attributes.filter((attribute: any) => {
+    const traitType = getTrimmedTraitType(attribute);
+    return (
+      traitType !== null && MEMES_REQUIRED_FINAL_ATTRIBUTE_TRAITS.has(traitType)
+    );
+  });
 }
 
 async function uploadClaimMetadataToArweave(
@@ -628,8 +634,8 @@ function buildArweaveMetadataPayload(
 
   const metadata: Record<string, unknown> = {
     created_by: ARWEAVE_METADATA_CREATED_BY,
-    description: claim.description ?? '',
-    name: claim.name,
+    description: claim.description?.trim() ?? '',
+    name: claim.name.trim(),
     attributes
   };
   const externalUrl = claim.external_url?.trim();
@@ -676,7 +682,7 @@ function validateAttributes(raw: unknown, requireMemeName: boolean): string[] {
   if (hasInvalidItems) issues.push('Attributes (invalid items)');
   if (requireMemeName) {
     const hasMemeName = raw.some(
-      (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
+      (a: any) => getTrimmedTraitType(a) === MEME_NAME_TRAIT
     );
     if (!hasMemeName) issues.push('Meme Name Attribute');
   }
@@ -684,11 +690,16 @@ function validateAttributes(raw: unknown, requireMemeName: boolean): string[] {
 }
 
 function getTraitType(attribute: any): string | null {
-  const traitType = attribute?.trait_type ?? attribute?.traitType;
-  if (typeof traitType !== 'string' || traitType.trim() === '') {
+  const traitType = getTrimmedTraitType(attribute);
+  if (traitType === null || traitType === '') {
     return null;
   }
   return traitType;
+}
+
+function getTrimmedTraitType(attribute: any): string | null {
+  const traitType = attribute?.trait_type ?? attribute?.traitType;
+  return typeof traitType === 'string' ? traitType.trim() : null;
 }
 
 function appendMemesFinalAttributeSchemaIssues(

@@ -19,6 +19,7 @@ import { CLOUDFRONT_LINK } from '@/constants';
 import {
   CreateOrUpdateDropUseCase,
   normalizeDropGroupMentions,
+  sanitizeDropStructuredFields,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 
@@ -162,6 +163,71 @@ describe('CreateOrUpdateDropUseCase', () => {
       ...overrides
     };
   }
+
+  it('sanitizes structured drop fields without touching part content', () => {
+    const model = {
+      ...createChatDropModel(),
+      title: '  The Loom  ',
+      parts: [
+        {
+          content: '  keep chat text as typed  ',
+          quoted_drop: null,
+          media: []
+        }
+      ],
+      metadata: [
+        {
+          data_key: ' artist ',
+          data_value: '  6529er  '
+        },
+        {
+          data_key: ' empty ',
+          data_value: '   '
+        }
+      ]
+    };
+
+    const sanitized = sanitizeDropStructuredFields(model);
+
+    expect(sanitized).toMatchObject({
+      title: 'The Loom',
+      parts: [
+        {
+          content: '  keep chat text as typed  '
+        }
+      ],
+      metadata: [
+        {
+          data_key: 'artist',
+          data_value: '6529er'
+        }
+      ]
+    });
+    expect(sanitized.metadata).toHaveLength(1);
+    expect(model.metadata[0]).toMatchObject({
+      data_key: ' artist ',
+      data_value: '  6529er  '
+    });
+  });
+
+  it('keeps identity nomination pre-resolution best-effort for empty metadata after trimming', async () => {
+    const useCase = createUseCase({ existingNominations: [] });
+
+    await expect(
+      useCase.preResolveIdentityNomination(
+        {
+          ...createIdentitySubmissionModel('   '),
+          metadata: [
+            {
+              data_key: ' identity ',
+              data_value: '   '
+            }
+          ]
+        },
+        {}
+      )
+    ).resolves.toBeNull();
+  });
 
   async function verifyIdentitySubmissionDuplicates(
     useCase: CreateOrUpdateDropUseCase

@@ -110,12 +110,23 @@ function attrValue(dataKey: string, dataValue: string): string | number {
   return dataValue;
 }
 
+function trimDropMetadata(
+  metadatas: DropMetadataEntity[]
+): DropMetadataEntity[] {
+  return metadatas.map((metadata) => ({
+    ...metadata,
+    data_key: metadata.data_key.trim(),
+    data_value: metadata.data_value.trim()
+  }));
+}
+
 function buildAttributes(
   metadatas: DropMetadataEntity[]
 ): MintingClaimAttribute[] {
   const attrs: MintingClaimAttribute[] = [];
 
   for (const m of metadatas) {
+    if (m.data_key === '' || m.data_value === '') continue;
     if (METADATA_KEYS_SKIP.has(m.data_key)) continue;
     const traitType =
       DATA_KEY_TO_TRAIT_TYPE[m.data_key] ??
@@ -209,11 +220,17 @@ export function buildMintingClaimRowFromDrop(
       `Invalid seasonId: ${seasonId}. Expected a positive integer`
     );
   }
-  const attributes = upsertSeasonTrait(buildAttributes(metadatas), seasonId);
-  const title = metadatas.find((m) => m.data_key === 'title')?.data_value ?? '';
+  const sanitizedMetadatas = trimDropMetadata(metadatas);
+  const attributes = upsertSeasonTrait(
+    buildAttributes(sanitizedMetadatas),
+    seasonId
+  );
+  const title =
+    sanitizedMetadatas.find((m) => m.data_key === 'title')?.data_value ?? '';
   const description =
-    metadatas.find((m) => m.data_key === 'description')?.data_value ?? '';
-  const additionalMedia = parseAdditionalMedia(metadatas);
+    sanitizedMetadatas.find((m) => m.data_key === 'description')?.data_value ??
+    '';
+  const additionalMedia = parseAdditionalMedia(sanitizedMetadatas);
   const previewImageUrl = additionalMedia?.preview_image ?? null;
 
   const htmlMedia = medias.find(
