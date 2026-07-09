@@ -8,6 +8,8 @@
     "backend:dev": "NODE_ENV=development node build/backend.js",
     "api:dev": "NODE_ENV=development node src/api-serverless/dist/index.js",
     "backend:prod": "NODE_ENV=production node build/backend.js",
+    "db:staging:resume": "STAGING_SSM_TARGET=i-059d5adda6cc33b90 STAGING_AWS_REGION=eu-west-1 STAGING_DB_TUNNEL_PORT=3307 bash scripts/sync-staging-db-local.sh --yes",
+    "db:staging:fresh": "STAGING_SSM_TARGET=i-059d5adda6cc33b90 STAGING_AWS_REGION=eu-west-1 STAGING_DB_TUNNEL_PORT=3307 bash scripts/sync-staging-db-local.sh --fresh --yes",
     "generate:deploy-config": "node scripts/generate-deploy-config.mjs",
     "prebuild": "npm run generate:deploy-config",
     "build": "rimraf ./build && jest && NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json",
