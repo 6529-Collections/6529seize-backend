@@ -29,6 +29,7 @@ import { RATINGS_TABLE } from '@/constants';
   'rater_profile_id',
   'rating'
 ])
+@Index('idx_ratings_6', ['rater_profile_id', 'matter', 'rating'])
 export class Rating {
   @PrimaryColumn({ type: 'varchar', length: 50, collation: 'utf8_bin' })
   rater_profile_id!: string;

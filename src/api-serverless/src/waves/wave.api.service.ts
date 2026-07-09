@@ -76,7 +76,6 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { wavesMappers, WavesMappers } from './waves.mappers';
-import { clearWaveGroupsCache } from '../../../redis';
 import {
   metricsRecorder,
   MetricsRecorder
@@ -579,7 +578,16 @@ export class WaveApiService {
     );
     await invalidateWaveUnreadCacheForWave(createdWave.id);
     await giveReadReplicaTimeToCatchUp();
-    await clearWaveGroupsCache();
+    await this.userGroupsService.onWaveRelatedGroupsChanged(
+      [
+        createWaveRequest.visibility.scope.group_id,
+        createWaveRequest.participation.scope.group_id,
+        createWaveRequest.chat.scope.group_id,
+        createWaveRequest.voting.scope.group_id,
+        createWaveRequest.wave.admin_group?.group_id
+      ],
+      ctx
+    );
     await sendIdentityPushNotifications(pendingPushNotificationIds);
     timer.stop(`${this.constructor.name}->createWave`);
     return createdWave;
