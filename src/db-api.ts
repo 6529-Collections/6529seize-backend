@@ -907,9 +907,10 @@ async function fetchPaginatedTransactions(
   const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
   const orderBy =
     'block DESC, transaction DESC, from_address DESC, to_address DESC, contract DESC, token_id DESC';
+  const limitPart = pageSize > 0 ? `LIMIT ${pageSize}` : '';
   let dataSql = `SELECT ${fields} FROM ${TRANSACTIONS_TABLE} ${joins} ${
     filters.filters
-  } order by ${orderBy} ${pageSize > 0 ? `LIMIT ${pageSize}` : ''}`;
+  } order by ${orderBy} ${limitPart}`;
   if (page > 1) {
     dataSql += ` OFFSET ${pageSize * (page - 1)}`;
   }
