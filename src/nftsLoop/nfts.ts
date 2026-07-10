@@ -649,6 +649,55 @@ function validateMetadata(metadata: any) {
   }
 }
 
+function trimMetadataStringForNft(value: unknown): string | null {
+  return typeof value === 'string' ? value.trim() : null;
+}
+
+export function normalizeMetadataNameForNft(name: unknown): string | null {
+  return trimMetadataStringForNft(name);
+}
+
+function normalizeMetadataDescriptionForNft(description: unknown): string {
+  return trimMetadataStringForNft(description) ?? '';
+}
+
+function normalizeMetadataAttributeForNft(attribute: MetaAttr): MetaAttr {
+  if (!isPlainObject(attribute)) {
+    return attribute;
+  }
+
+  return {
+    ...attribute,
+    trait_type:
+      typeof attribute.trait_type === 'string'
+        ? attribute.trait_type.trim()
+        : attribute.trait_type,
+    value:
+      typeof attribute.value === 'string'
+        ? attribute.value.trim()
+        : attribute.value
+  };
+}
+
+export function normalizeMetadataStructuredFieldsForNft(metadata: Meta): Meta {
+  if (!metadata || !isPlainObject(metadata)) {
+    return metadata;
+  }
+
+  return {
+    ...metadata,
+    name:
+      typeof metadata.name === 'string' ? metadata.name.trim() : metadata.name,
+    description:
+      typeof metadata.description === 'string'
+        ? metadata.description.trim()
+        : metadata.description,
+    attributes: Array.isArray(metadata.attributes)
+      ? metadata.attributes.map(normalizeMetadataAttributeForNft)
+      : metadata.attributes
+  };
+}
+
 function shouldStopDiscovery(msg: string): boolean {
   const lower = msg.toLowerCase();
   return (
@@ -666,23 +715,27 @@ async function buildBaseNft(
   metadata: any,
   EntityClass: typeof NFT | typeof LabNFT
 ): Promise<NFT | LabNFT> {
-  const format = metadata.image_details?.format ?? 'WEBP';
+  const normalizedMetadata = normalizeMetadataStructuredFieldsForNft(
+    metadata
+  ) as MetaObject;
+  const format = normalizedMetadata.image_details?.format ?? 'WEBP';
   const tokenPathOriginal = `${contract}/${id}.${format}`;
   const tokenPath = getTokenPath(contract, id, format);
   const { animation, compressedAnimation } = getAnimationPaths(
     contract,
     id,
-    metadata.animation ?? metadata.animation_url,
-    metadata.animation_details
+    normalizedMetadata.animation ?? normalizedMetadata.animation_url,
+    normalizedMetadata.animation_details
   );
 
   const artist =
-    metadata.attributes?.find((a: any) => a.trait_type === 'Artist')?.value ??
+    normalizedMetadata.attributes?.find((a: any) => a.trait_type === 'Artist')
+      ?.value ??
     config.artist ??
     '';
 
   const artistSeizeHandle =
-    metadata.attributes?.find(
+    normalizedMetadata.attributes?.find(
       (a: any) => a.trait_type?.toUpperCase() === 'SEIZE ARTIST PROFILE'
     )?.value ??
     config.artistSeizeHandle ??
@@ -698,20 +751,22 @@ async function buildBaseNft(
     mint_date: mintDate,
     mint_price: mintPrice,
     supply: tokenType === TokenType.ERC721 ? 1 : 0,
-    name: metadata.name,
+    name: normalizeMetadataNameForNft(normalizedMetadata.name) ?? '',
     collection: config.collection,
     token_type: tokenType,
-    description: text.replaceEmojisWithHex(metadata.description),
+    description: text.replaceEmojisWithHex(
+      normalizeMetadataDescriptionForNft(normalizedMetadata.description)
+    ),
     artist,
     artist_seize_handle: artistSeizeHandle,
-    uri: metadata.uri ?? '',
+    uri: normalizedMetadata.uri ?? '',
     icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
     thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
     scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
     image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
     compressed_animation: compressedAnimation,
     animation: animation,
-    metadata,
+    metadata: normalizedMetadata,
     floor_price: 0,
     floor_price_from: null,
     market_cap: 0,
@@ -747,6 +802,7 @@ type MetaObject = {
   attributes?: MetaAttr[];
   name?: string;
   description?: string;
+  uri?: string;
 };
 
 type Meta = MetaObject | null | undefined;
@@ -778,8 +834,9 @@ function findAttr(md: NonNullable<Meta>, name: string): string | undefined {
 
 function rehydrateFromMetadata(entry: NftProcessingEntry) {
   const { nft } = entry;
-  const metadata: Meta = nft.metadata;
+  const metadata = normalizeMetadataStructuredFieldsForNft(nft.metadata);
   if (!metadata) return;
+  nft.metadata = metadata;
 
   // media paths
   const format: MediaFormat = metadata.image_details?.format ?? 'WEBP';
@@ -800,8 +857,10 @@ function rehydrateFromMetadata(entry: NftProcessingEntry) {
     findAttr(metadata, 'SEIZE ARTIST PROFILE') ?? nft.artist_seize_handle ?? '';
 
   // core fields
-  nft.name = metadata.name ?? nft.name ?? '';
-  nft.description = text.replaceEmojisWithHex(metadata.description ?? '');
+  nft.name = normalizeMetadataNameForNft(metadata.name) ?? nft.name ?? '';
+  nft.description = text.replaceEmojisWithHex(
+    normalizeMetadataDescriptionForNft(metadata.description)
+  );
   nft.artist = artist;
   nft.artist_seize_handle = artistSeizeHandle;
   nft.icon = `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`;

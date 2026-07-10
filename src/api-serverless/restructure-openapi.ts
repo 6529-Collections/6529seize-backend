@@ -59,10 +59,7 @@ if (data.components?.schemas) {
 }
 
 // Convert to YAML
-let yamlString = yaml.dump(data, { indent: 2 });
-
-// Replace single quotes with double quotes
-yamlString = yamlString.replace(/'/g, '"');
+const yamlString = yaml.dump(data, { indent: 2, quotingType: '"' });
 
 // Write the sorted and formatted YAML back to the file
 fs.writeFileSync(filePath, yamlString, 'utf8');

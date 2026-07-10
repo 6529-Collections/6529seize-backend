@@ -64,8 +64,7 @@ export async function updateSubscriptions() {
   const seizeDomain =
     process.env.NODE_ENV === 'development' ? 'staging.6529' : '6529';
   let discordMessage = `📋 Published provisional list of Subscriptions for The Memes #${nextMemeId}`;
-  discordMessage += ` \n\n[View on 6529.io] \nhttps://${seizeDomain}.io/open-data/meme-subscriptions`;
-  discordMessage += ` \n\n[View on Arweave] \n${uploadLink}`;
+  discordMessage += ` \n\nView on [6529.io](https://${seizeDomain}.io/open-data/meme-subscriptions) | [Arweave](${uploadLink})`;
   await sendDiscordUpdate(
     process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
     discordMessage,

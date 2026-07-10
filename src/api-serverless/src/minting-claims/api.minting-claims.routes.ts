@@ -164,7 +164,7 @@ const ClaimsListQuerySchema = Joi.object({
 });
 
 const MintingClaimAttributeSchema = Joi.object({
-  trait_type: Joi.string().required(),
+  trait_type: Joi.string().trim().min(1).required(),
   value: Joi.alternatives()
     .try(Joi.string().allow(''), Joi.number())
     .required(),
@@ -195,7 +195,7 @@ const StrictMintingClaimUpdateRequestSchema = Joi.object({
   description: Joi.string().optional(),
   name: Joi.string().optional(),
   image_url: Joi.string().allow(null).optional(),
-  external_url: Joi.string().allow(null).optional(),
+  external_url: Joi.string().allow(null, '').optional(),
   attributes: Joi.array().items(MintingClaimAttributeSchema).optional(),
   animation_url: Joi.string().allow(null).optional()
 });
