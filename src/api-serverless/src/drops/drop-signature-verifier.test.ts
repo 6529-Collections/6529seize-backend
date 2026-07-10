@@ -109,6 +109,15 @@ describe('DropSignatureVerifier', () => {
     };
   }
 
+  const signatureStrategies: Array<{
+    name: string;
+    sign: (drop: ApiCreateDropRequest) => Promise<ApiCreateDropRequest>;
+  }> = [
+    { name: 'text hash', sign: signDropAsText },
+    { name: 'raw hash byte', sign: signDropAsRawHashBytes },
+    { name: 'structured', sign: signDropAsStructuredMessage }
+  ];
+
   it('accepts current text hash signatures', async () => {
     const drop = await signDropAsText(createDrop());
 
@@ -144,6 +153,43 @@ describe('DropSignatureVerifier', () => {
       })
     ).resolves.toBe(true);
   });
+
+  it.each([true, false])(
+    'accepts structured drop signatures with hide_link_preview=%s',
+    async (hideLinkPreview) => {
+      const drop = await signDropAsStructuredMessage({
+        ...createDrop(),
+        hide_link_preview: hideLinkPreview
+      });
+
+      await expect(
+        verifier.isDropSignedByAnyOfGivenWallets({
+          wallets: [wallet.address],
+          drop,
+          termsOfService
+        })
+      ).resolves.toBe(true);
+    }
+  );
+
+  it.each(signatureStrategies)(
+    'rejects $name signatures when hide_link_preview is added after signing',
+    async ({ sign }) => {
+      const signedDrop = await sign(createDrop());
+      const tamperedDrop = {
+        ...signedDrop,
+        hide_link_preview: true
+      };
+
+      await expect(
+        verifier.isDropSignedByAnyOfGivenWallets({
+          wallets: [wallet.address],
+          drop: tamperedDrop,
+          termsOfService
+        })
+      ).resolves.toBe(false);
+    }
+  );
 
   it('accepts structured drop signatures from unregistered client domains', async () => {
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '6529.io';
