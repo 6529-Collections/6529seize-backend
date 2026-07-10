@@ -169,8 +169,8 @@ describe('redis cache eviction helpers', () => {
     await redisModule.initRedis();
     const updated = await redisModule.redisCompareAndSetJson(
       'transaction-count',
-      { count: 1 },
-      { count: 2 },
+      'revision-1',
+      { revision: 'revision-2', count: 2 },
       Time.minutes(5)
     );
 
@@ -179,10 +179,9 @@ describe('redis cache eviction helpers', () => {
     expect(evalScript).toHaveBeenCalledWith(expect.any(String), {
       keys: ['transaction-count'],
       arguments: [
-        JSON.stringify({ count: 1 }),
-        JSON.stringify({ count: 2 }),
-        '300',
-        '__SEIZE_REDIS_VALUE_MISSING__'
+        'revision-1',
+        JSON.stringify({ revision: 'revision-2', count: 2 }),
+        '300'
       ]
     });
   });
@@ -199,9 +198,28 @@ describe('redis cache eviction helpers', () => {
       redisModule.redisCompareAndSetJson(
         'transaction-count',
         null,
-        { count: 1 },
+        { revision: 'revision-1', count: 1 },
         Time.minutes(5)
       )
     ).resolves.toBe(false);
+  });
+
+  it('rejects fractional TTL seconds before evaluating the script', async () => {
+    const evalScript = jest.fn();
+    mockRedisClient({ scan: jest.fn(), eval: evalScript });
+    const redisModule = await import('./redis');
+    const { Time } = await import('./time');
+
+    await redisModule.initRedis();
+
+    await expect(
+      redisModule.redisCompareAndSetJson(
+        'transaction-count',
+        null,
+        { revision: 'revision-1' },
+        Time.millis(1_500)
+      )
+    ).rejects.toThrow('positive whole seconds');
+    expect(evalScript).not.toHaveBeenCalled();
   });
 });

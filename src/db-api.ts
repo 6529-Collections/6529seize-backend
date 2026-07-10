@@ -42,7 +42,7 @@ import {
 import { getConsolidationsSql } from './sql_helpers';
 
 import { Nft } from '@/alchemy-sdk';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as mysql from 'mysql';
 import {
   DEFAULT_PAGE_SIZE,
@@ -93,10 +93,16 @@ const MAX_TRANSACTION_PAGE = 10_000;
 
 interface TransactionCountCacheEntry {
   readonly version: number;
+  readonly revision: string;
   readonly count: number;
   readonly latestBlock: number;
   readonly latestBlockCount: number;
   readonly fullyRefreshedAt: number;
+}
+
+interface TransactionCountCacheReadResult {
+  readonly entry: TransactionCountCacheEntry | null;
+  readonly revisionToReplace: string | null;
 }
 
 interface FullTransactionCountQueryRow {
@@ -985,9 +991,8 @@ async function fetchTransactionCount(
     };
   }
 
-  const cached = countCacheKey
-    ? await readTransactionCountCache(countCacheKey)
-    : null;
+  const cacheRead = await readTransactionCountCache(countCacheKey);
+  const cached = cacheRead.entry;
   const needsFullRefresh =
     !cached ||
     Date.now() - cached.fullyRefreshedAt >=
@@ -998,10 +1003,15 @@ async function fetchTransactionCount(
       const checkpoint = await executeFullTransactionCountQuery(filters);
       const updatedEntry: TransactionCountCacheEntry = {
         version: TRANSACTION_COUNT_CACHE_VERSION,
+        revision: randomUUID(),
         ...checkpoint,
         fullyRefreshedAt: Date.now()
       };
-      await writeTransactionCountCache(countCacheKey, cached, updatedEntry);
+      await writeTransactionCountCache(
+        countCacheKey,
+        cacheRead.revisionToReplace,
+        updatedEntry
+      );
       return {
         count: checkpoint.count,
         source: cached ? 'cache_rebase' : 'cache_seed',
@@ -1027,9 +1037,14 @@ async function fetchTransactionCount(
     );
     const updatedEntry: TransactionCountCacheEntry = {
       ...cached,
-      ...checkpoint
+      ...checkpoint,
+      revision: randomUUID()
     };
-    await writeTransactionCountCache(countCacheKey, cached, updatedEntry);
+    await writeTransactionCountCache(
+      countCacheKey,
+      cached.revision,
+      updatedEntry
+    );
     return {
       count: updatedEntry.count,
       source: 'cache_increment',
@@ -1168,31 +1183,42 @@ function getTransactionCountCacheKey({
 
 async function readTransactionCountCache(
   key: string
-): Promise<TransactionCountCacheEntry | null> {
+): Promise<TransactionCountCacheReadResult> {
   try {
     const entry = await redisGet<unknown>(key);
-    return isTransactionCountCacheEntry(entry) ? entry : null;
+    return {
+      entry: isTransactionCountCacheEntry(entry) ? entry : null,
+      revisionToReplace: getRedisRevision(entry)
+    };
   } catch (error) {
     logger.warn('[TRANSACTION_COUNT_CACHE_READ_FAILED]', error);
-    return null;
+    return { entry: null, revisionToReplace: null };
   }
 }
 
 async function writeTransactionCountCache(
   key: string,
-  expected: TransactionCountCacheEntry | null,
+  expectedRevision: string | null,
   entry: TransactionCountCacheEntry
 ): Promise<void> {
   try {
     await redisCompareAndSetJson(
       key,
-      expected,
+      expectedRevision,
       entry,
       TRANSACTION_COUNT_CACHE_TTL
     );
   } catch (error) {
     logger.warn('[TRANSACTION_COUNT_CACHE_WRITE_FAILED]', error);
   }
+}
+
+function getRedisRevision(value: unknown): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const revision = (value as Record<string, unknown>).revision;
+  return typeof revision === 'string' && revision.length > 0 ? revision : null;
 }
 
 function isTransactionCountCacheEntry(
@@ -1204,6 +1230,8 @@ function isTransactionCountCacheEntry(
   const entry = value as Record<string, unknown>;
   return (
     entry.version === TRANSACTION_COUNT_CACHE_VERSION &&
+    typeof entry.revision === 'string' &&
+    entry.revision.length > 0 &&
     typeof entry.count === 'number' &&
     entry.count >= 0 &&
     typeof entry.latestBlock === 'number' &&

@@ -111,9 +111,45 @@ describe('fetchTransactions', () => {
       null,
       expect.objectContaining({
         version: 2,
+        revision: expect.any(String),
         count: 250,
         latestBlock: 123,
         latestBlockCount: 3
+      }),
+      expect.anything()
+    );
+  });
+
+  it('replaces an invalid cached entry using its revision', async () => {
+    redisGetMock.mockResolvedValue({
+      version: 1,
+      revision: 'invalid-entry-revision',
+      count: -1
+    });
+    jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql: string) => {
+        const normalizedSql = normalizeSql(sql);
+        if (normalizedSql.includes('sum(count(1)) over () as count')) {
+          return [{ count: 1, latest_block: 123, latest_block_count: 1 }];
+        }
+        if (normalizedSql.startsWith('select transactions.*')) {
+          return [];
+        }
+        throw new Error(`Unexpected SQL: ${normalizedSql}`);
+      });
+
+    await expect(
+      fetchTransactions(100, 1, undefined, MEMES_CONTRACT, undefined, null)
+    ).resolves.toEqual({ count: 1, page: 1, next: null, data: [] });
+
+    expect(redisCompareAndSetJsonMock).toHaveBeenCalledWith(
+      expect.any(String),
+      'invalid-entry-revision',
+      expect.objectContaining({
+        version: 2,
+        revision: expect.any(String),
+        count: 1
       }),
       expect.anything()
     );
@@ -123,6 +159,7 @@ describe('fetchTransactions', () => {
     const fullyRefreshedAt = Date.now();
     const cached = {
       version: 2,
+      revision: 'revision-before-increment',
       count: 250,
       latestBlock: 123,
       latestBlockCount: 3,
@@ -165,14 +202,56 @@ describe('fetchTransactions', () => {
     expect(executeSpy).toHaveBeenCalledTimes(2);
     expect(redisCompareAndSetJsonMock).toHaveBeenCalledWith(
       expect.any(String),
-      cached,
-      {
+      cached.revision,
+      expect.objectContaining({
         version: 2,
+        revision: expect.any(String),
         count: 253,
         latestBlock: 130,
         latestBlockCount: 2,
         fullyRefreshedAt
-      },
+      }),
+      expect.anything()
+    );
+  });
+
+  it('returns the reconciled count when a concurrent cache writer wins', async () => {
+    const cached = {
+      version: 2,
+      revision: 'revision-before-conflict',
+      count: 250,
+      latestBlock: 123,
+      latestBlockCount: 3,
+      fullyRefreshedAt: Date.now()
+    };
+    redisGetMock.mockResolvedValue(cached);
+    redisCompareAndSetJsonMock.mockResolvedValue(false);
+    jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql: string) => {
+        const normalizedSql = normalizeSql(sql);
+        if (normalizedSql.includes('count(1) as block_count')) {
+          return [{ block: 123, block_count: 4 }];
+        }
+        if (normalizedSql.startsWith('select transactions.*')) {
+          return [];
+        }
+        throw new Error(`Unexpected SQL: ${normalizedSql}`);
+      });
+
+    await expect(
+      fetchTransactions(100, 1, undefined, MEMES_CONTRACT, undefined, null)
+    ).resolves.toEqual({ count: 251, page: 1, next: null, data: [] });
+
+    expect(redisCompareAndSetJsonMock).toHaveBeenCalledWith(
+      expect.any(String),
+      cached.revision,
+      expect.objectContaining({
+        revision: expect.any(String),
+        count: 251,
+        latestBlock: 123,
+        latestBlockCount: 4
+      }),
       expect.anything()
     );
   });
@@ -180,6 +259,7 @@ describe('fetchTransactions', () => {
   it('periodically rebases a cached count to include historical backfills', async () => {
     const cached = {
       version: 2,
+      revision: 'revision-before-rebase',
       count: 250,
       latestBlock: 123,
       latestBlockCount: 3,
@@ -212,9 +292,10 @@ describe('fetchTransactions', () => {
     expect(executeSpy).toHaveBeenCalledTimes(2);
     expect(redisCompareAndSetJsonMock).toHaveBeenCalledWith(
       expect.any(String),
-      cached,
+      cached.revision,
       expect.objectContaining({
         version: 2,
+        revision: expect.any(String),
         count: 275,
         latestBlock: 140,
         latestBlockCount: 2,
@@ -347,6 +428,7 @@ describe('fetchTransactions', () => {
   it('uses a stale cached count if incremental reconciliation fails', async () => {
     redisGetMock.mockResolvedValue({
       version: 2,
+      revision: 'revision-before-failure',
       count: 250,
       latestBlock: 123,
       latestBlockCount: 3,
