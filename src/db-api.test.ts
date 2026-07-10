@@ -1,16 +1,16 @@
 import { addRememe, fetchTransactions } from '@/db-api';
 import { MEMES_CONTRACT } from '@/constants';
 import { ApiTransaction } from '@/api/generated/models/ApiTransaction';
-import { redisGet, redisSetJson } from '@/redis';
+import { redisCompareAndSetJson, redisGet } from '@/redis';
 import { sqlExecutor } from '@/sql-executor';
 
 jest.mock('@/redis', () => ({
-  redisGet: jest.fn(),
-  redisSetJson: jest.fn()
+  redisCompareAndSetJson: jest.fn(),
+  redisGet: jest.fn()
 }));
 
 const redisGetMock = jest.mocked(redisGet);
-const redisSetJsonMock = jest.mocked(redisSetJson);
+const redisCompareAndSetJsonMock = jest.mocked(redisCompareAndSetJson);
 
 describe('addRememe', () => {
   afterEach(() => {
@@ -56,7 +56,7 @@ describe('addRememe', () => {
 describe('fetchTransactions', () => {
   beforeEach(() => {
     redisGetMock.mockReset().mockResolvedValue(null);
-    redisSetJsonMock.mockReset().mockResolvedValue(undefined);
+    redisCompareAndSetJsonMock.mockReset().mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -64,27 +64,36 @@ describe('fetchTransactions', () => {
   });
 
   it('uses index-compatible ordering and seeds the API count cache', async () => {
-    const transaction = { transaction: '0xtx' } as ApiTransaction;
+    const firstTransaction = { transaction: '0xtx1' } as ApiTransaction;
+    const secondTransaction = { transaction: '0xtx2' } as ApiTransaction;
     const executeSpy = jest
       .spyOn(sqlExecutor, 'execute')
-      .mockImplementation(async (sql: string) => {
-        const normalizedSql = normalizeSql(sql);
-        if (normalizedSql.includes('count(1) as count')) {
-          return [{ count: 250, latest_block: 123 }];
+      .mockImplementation(
+        async (sql: string, params?: Record<string, unknown>) => {
+          const normalizedSql = normalizeSql(sql);
+          if (normalizedSql.includes('sum(count(1)) over () as count')) {
+            return [{ count: 250, latest_block: 123, latest_block_count: 3 }];
+          }
+          if (normalizedSql.startsWith('select transactions.*')) {
+            expect(params).toEqual(
+              expect.objectContaining({
+                transactionLimit: 2,
+                transactionOffset: 0
+              })
+            );
+            return [firstTransaction, secondTransaction];
+          }
+          throw new Error(`Unexpected SQL: ${normalizedSql}`);
         }
-        if (normalizedSql.startsWith('select transactions.*')) {
-          return [transaction];
-        }
-        throw new Error(`Unexpected SQL: ${normalizedSql}`);
-      });
+      );
 
     await expect(
-      fetchTransactions(100, 1, undefined, MEMES_CONTRACT, undefined, null)
+      fetchTransactions(1, 1, undefined, MEMES_CONTRACT, undefined, null)
     ).resolves.toEqual({
       count: 250,
       page: 1,
       next: 'true',
-      data: [transaction]
+      data: [firstTransaction]
     });
 
     const executedSql = executeSpy.mock.calls.map(([sql]) => normalizeSql(sql));
@@ -94,38 +103,48 @@ describe('fetchTransactions', () => {
     expect(dataSql).toContain(
       'order by block desc, transaction desc, from_address desc, to_address desc, contract desc, token_id desc'
     );
-    expect(redisSetJsonMock).toHaveBeenCalledWith(
+    expect(dataSql).toContain(
+      'limit :transactionlimit offset :transactionoffset'
+    );
+    expect(redisCompareAndSetJsonMock).toHaveBeenCalledWith(
       expect.stringContaining('__SEIZE_TRANSACTION_COUNT_'),
+      null,
       expect.objectContaining({
-        version: 1,
+        version: 2,
         count: 250,
-        latestBlock: 123
+        latestBlock: 123,
+        latestBlockCount: 3
       }),
       expect.anything()
     );
   });
 
-  it('increments a cached count using only newer matching blocks', async () => {
+  it('recounts the boundary block and uses compare-and-set for increments', async () => {
     const fullyRefreshedAt = Date.now();
-    redisGetMock.mockResolvedValue({
-      version: 1,
+    const cached = {
+      version: 2,
       count: 250,
       latestBlock: 123,
+      latestBlockCount: 3,
       fullyRefreshedAt
-    });
+    };
+    redisGetMock.mockResolvedValue(cached);
     const executeSpy = jest
       .spyOn(sqlExecutor, 'execute')
       .mockImplementation(
         async (sql: string, params?: Record<string, unknown>) => {
           const normalizedSql = normalizeSql(sql);
-          if (normalizedSql.includes('count(1) as count')) {
+          if (normalizedSql.includes('count(1) as block_count')) {
             expect(normalizedSql).toContain(
-              'transactions.block > :countafterblock'
+              'transactions.block >= :countfromblock'
             );
             expect(params).toEqual(
-              expect.objectContaining({ countAfterBlock: 123 })
+              expect.objectContaining({ countFromBlock: 123 })
             );
-            return [{ count: 4, latest_block: 130 }];
+            return [
+              { block: 123, block_count: 4 },
+              { block: 130, block_count: 2 }
+            ];
           }
           if (normalizedSql.startsWith('select transactions.*')) {
             return [];
@@ -137,19 +156,21 @@ describe('fetchTransactions', () => {
     await expect(
       fetchTransactions(100, 2, undefined, MEMES_CONTRACT, undefined, 'sales')
     ).resolves.toEqual({
-      count: 254,
+      count: 253,
       page: 2,
-      next: 'true',
+      next: null,
       data: []
     });
 
     expect(executeSpy).toHaveBeenCalledTimes(2);
-    expect(redisSetJsonMock).toHaveBeenCalledWith(
+    expect(redisCompareAndSetJsonMock).toHaveBeenCalledWith(
       expect.any(String),
+      cached,
       {
-        version: 1,
-        count: 254,
+        version: 2,
+        count: 253,
         latestBlock: 130,
+        latestBlockCount: 2,
         fullyRefreshedAt
       },
       expect.anything()
@@ -157,19 +178,21 @@ describe('fetchTransactions', () => {
   });
 
   it('periodically rebases a cached count to include historical backfills', async () => {
-    redisGetMock.mockResolvedValue({
-      version: 1,
+    const cached = {
+      version: 2,
       count: 250,
       latestBlock: 123,
+      latestBlockCount: 3,
       fullyRefreshedAt: Date.now() - 7 * 60 * 60 * 1000
-    });
+    };
+    redisGetMock.mockResolvedValue(cached);
     const executeSpy = jest
       .spyOn(sqlExecutor, 'execute')
       .mockImplementation(async (sql: string) => {
         const normalizedSql = normalizeSql(sql);
-        if (normalizedSql.includes('count(1) as count')) {
-          expect(normalizedSql).not.toContain('block > :countafterblock');
-          return [{ count: 275, latest_block: 140 }];
+        if (normalizedSql.includes('sum(count(1)) over () as count')) {
+          expect(normalizedSql).not.toContain('block >= :countfromblock');
+          return [{ count: 275, latest_block: 140, latest_block_count: 2 }];
         }
         if (normalizedSql.startsWith('select transactions.*')) {
           return [];
@@ -182,17 +205,19 @@ describe('fetchTransactions', () => {
     ).resolves.toEqual({
       count: 275,
       page: 1,
-      next: 'true',
+      next: null,
       data: []
     });
 
     expect(executeSpy).toHaveBeenCalledTimes(2);
-    expect(redisSetJsonMock).toHaveBeenCalledWith(
+    expect(redisCompareAndSetJsonMock).toHaveBeenCalledWith(
       expect.any(String),
+      cached,
       expect.objectContaining({
-        version: 1,
+        version: 2,
         count: 275,
         latestBlock: 140,
+        latestBlockCount: 2,
         fullyRefreshedAt: expect.any(Number)
       }),
       expect.anything()
@@ -226,8 +251,123 @@ describe('fetchTransactions', () => {
     });
 
     expect(redisGetMock).not.toHaveBeenCalled();
-    expect(redisSetJsonMock).not.toHaveBeenCalled();
+    expect(redisCompareAndSetJsonMock).not.toHaveBeenCalled();
     expect(executeSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('normalizes mixed-case filters before SQL and cache identity generation', async () => {
+    const executeSpy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql: string) => {
+        const normalizedSql = normalizeSql(sql);
+        if (normalizedSql.includes('sum(count(1)) over () as count')) {
+          expect(normalizedSql).toContain('where value > 0');
+          return [{ count: 1, latest_block: 123, latest_block_count: 1 }];
+        }
+        if (normalizedSql.startsWith('select transactions.*')) {
+          return [];
+        }
+        throw new Error(`Unexpected SQL: ${normalizedSql}`);
+      });
+
+    await fetchTransactions(
+      100,
+      1,
+      undefined,
+      MEMES_CONTRACT,
+      undefined,
+      'Sales'
+    );
+
+    expect(executeSpy).toHaveBeenCalledTimes(2);
+    expect(redisGetMock).toHaveBeenCalledWith(
+      expect.stringContaining('__SEIZE_TRANSACTION_COUNT_')
+    );
+  });
+
+  it('caps oversized pagination before binding limit and offset', async () => {
+    const executeSpy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(
+        async (sql: string, params?: Record<string, unknown>) => {
+          const normalizedSql = normalizeSql(sql);
+          if (normalizedSql.includes('sum(count(1)) over () as count')) {
+            return [];
+          }
+          if (normalizedSql.startsWith('select transactions.*')) {
+            expect(params).toEqual(
+              expect.objectContaining({
+                transactionLimit: 101,
+                transactionOffset: 999_900
+              })
+            );
+            return [];
+          }
+          throw new Error(`Unexpected SQL: ${normalizedSql}`);
+        }
+      );
+
+    await expect(
+      fetchTransactions(
+        Number.MAX_SAFE_INTEGER,
+        Number.MAX_SAFE_INTEGER,
+        undefined,
+        MEMES_CONTRACT,
+        undefined,
+        null
+      )
+    ).resolves.toEqual({ count: 0, page: 10_000, next: null, data: [] });
+
+    expect(executeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps serving live rows when Redis read and write operations fail', async () => {
+    redisGetMock.mockRejectedValue(new Error('Redis read failed'));
+    redisCompareAndSetJsonMock.mockRejectedValue(
+      new Error('Redis write failed')
+    );
+    jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql: string) => {
+        const normalizedSql = normalizeSql(sql);
+        if (normalizedSql.includes('sum(count(1)) over () as count')) {
+          return [{ count: 1, latest_block: 123, latest_block_count: 1 }];
+        }
+        if (normalizedSql.startsWith('select transactions.*')) {
+          return [];
+        }
+        throw new Error(`Unexpected SQL: ${normalizedSql}`);
+      });
+
+    await expect(
+      fetchTransactions(100, 1, undefined, MEMES_CONTRACT, undefined, null)
+    ).resolves.toEqual({ count: 1, page: 1, next: null, data: [] });
+  });
+
+  it('uses a stale cached count if incremental reconciliation fails', async () => {
+    redisGetMock.mockResolvedValue({
+      version: 2,
+      count: 250,
+      latestBlock: 123,
+      latestBlockCount: 3,
+      fullyRefreshedAt: Date.now()
+    });
+    jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql: string) => {
+        const normalizedSql = normalizeSql(sql);
+        if (normalizedSql.includes('count(1) as block_count')) {
+          throw new Error('Database count failed');
+        }
+        if (normalizedSql.startsWith('select transactions.*')) {
+          return [];
+        }
+        throw new Error(`Unexpected SQL: ${normalizedSql}`);
+      });
+
+    await expect(
+      fetchTransactions(100, 1, undefined, MEMES_CONTRACT, undefined, null)
+    ).resolves.toEqual({ count: 250, page: 1, next: null, data: [] });
   });
 });
 

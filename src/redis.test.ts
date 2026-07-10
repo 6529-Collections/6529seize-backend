@@ -26,23 +26,26 @@ describe('redis cache eviction helpers', () => {
     scan,
     del = jest.fn().mockResolvedValue(undefined),
     connect = jest.fn().mockResolvedValue(undefined),
-    on = jest.fn()
+    on = jest.fn(),
+    eval: evalScript = jest.fn()
   }: {
     scan: jest.Mock;
     del?: jest.Mock;
     connect?: jest.Mock;
     on?: jest.Mock;
+    eval?: jest.Mock;
   }) {
     jest.doMock('redis', () => ({
       createClient: jest.fn(() => ({
         scan,
         del,
         connect,
-        on
+        on,
+        eval: evalScript
       }))
     }));
 
-    return { scan, del, connect, on };
+    return { scan, del, connect, on, eval: evalScript };
   }
 
   it('stops scanning when redis returns the terminal cursor as a string', async () => {
@@ -152,5 +155,53 @@ describe('redis cache eviction helpers', () => {
     if (!result.success) {
       expect(String(result.error)).toContain('Timed out after 1ms');
     }
+  });
+
+  it('atomically replaces the expected JSON value with a TTL', async () => {
+    const evalScript = jest.fn().mockResolvedValue(1);
+    const { connect } = mockRedisClient({
+      scan: jest.fn(),
+      eval: evalScript
+    });
+    const redisModule = await import('./redis');
+    const { Time } = await import('./time');
+
+    await redisModule.initRedis();
+    const updated = await redisModule.redisCompareAndSetJson(
+      'transaction-count',
+      { count: 1 },
+      { count: 2 },
+      Time.minutes(5)
+    );
+
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(updated).toBe(true);
+    expect(evalScript).toHaveBeenCalledWith(expect.any(String), {
+      keys: ['transaction-count'],
+      arguments: [
+        JSON.stringify({ count: 1 }),
+        JSON.stringify({ count: 2 }),
+        '300',
+        '__SEIZE_REDIS_VALUE_MISSING__'
+      ]
+    });
+  });
+
+  it('reports a compare-and-set conflict without overwriting the cache', async () => {
+    const evalScript = jest.fn().mockResolvedValue(0);
+    mockRedisClient({ scan: jest.fn(), eval: evalScript });
+    const redisModule = await import('./redis');
+    const { Time } = await import('./time');
+
+    await redisModule.initRedis();
+
+    await expect(
+      redisModule.redisCompareAndSetJson(
+        'transaction-count',
+        null,
+        { count: 1 },
+        Time.minutes(5)
+      )
+    ).resolves.toBe(false);
   });
 });

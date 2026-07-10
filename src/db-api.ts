@@ -45,6 +45,7 @@ import { Nft } from '@/alchemy-sdk';
 import { createHash } from 'node:crypto';
 import * as mysql from 'mysql';
 import {
+  DEFAULT_PAGE_SIZE,
   NFTSearchResult,
   PaginatedResponse
 } from './api-serverless/src/api-constants';
@@ -62,7 +63,7 @@ import {
 import { consolidationTools } from './consolidation-tools';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { numbers } from './numbers';
-import { redisGet, redisSetJson } from './redis';
+import { redisCompareAndSetJson, redisGet } from './redis';
 import {
   CustomTypeCaster,
   execNativeTransactionally,
@@ -84,20 +85,35 @@ const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 
 const logger = Logger.get('DB_API');
 
-const TRANSACTION_COUNT_CACHE_VERSION = 1;
+const TRANSACTION_COUNT_CACHE_VERSION = 2;
 const TRANSACTION_COUNT_CACHE_TTL = Time.days(7);
 const TRANSACTION_COUNT_FULL_REFRESH_INTERVAL = Time.hours(6);
+const MAX_TRANSACTION_PAGE_SIZE = 100;
+const MAX_TRANSACTION_PAGE = 10_000;
 
 interface TransactionCountCacheEntry {
   readonly version: number;
   readonly count: number;
   readonly latestBlock: number;
+  readonly latestBlockCount: number;
   readonly fullyRefreshedAt: number;
 }
 
-interface TransactionCountQueryRow {
+interface FullTransactionCountQueryRow {
   readonly count: number | string;
   readonly latest_block: number | string;
+  readonly latest_block_count: number | string;
+}
+
+interface IncrementalTransactionCountQueryRow {
+  readonly block: number | string;
+  readonly block_count: number | string;
+}
+
+interface TransactionCountCheckpoint {
+  readonly count: number;
+  readonly latestBlock: number;
+  readonly latestBlockCount: number;
 }
 
 interface TransactionCountResult {
@@ -106,6 +122,7 @@ interface TransactionCountResult {
     | 'cache_increment'
     | 'cache_rebase'
     | 'cache_seed'
+    | 'cache_stale_fallback'
     | 'exact_uncached';
   readonly elapsedMs: number;
 }
@@ -874,7 +891,12 @@ export async function fetchTransactions(
   nfts: string | undefined,
   type_filter: string | null | undefined
 ): Promise<ApiTransactionPage> {
-  const filters = await getTransactionFilters(wallets, nfts, type_filter);
+  const normalizedTypeFilter = type_filter?.toLowerCase();
+  const filters = await getTransactionFilters(
+    wallets,
+    nfts,
+    normalizedTypeFilter
+  );
   if (!filters) {
     return returnEmpty();
   }
@@ -891,10 +913,16 @@ export async function fetchTransactions(
     wallets,
     contracts,
     nfts,
-    typeFilter: type_filter
+    typeFilter: normalizedTypeFilter
   });
+  const pagination = normalizeTransactionPagination(pageSize, page);
 
-  return fetchPaginatedTransactions(pageSize, page, filters, countCacheKey);
+  return fetchPaginatedTransactions(
+    pagination.pageSize,
+    pagination.page,
+    filters,
+    countCacheKey
+  );
 }
 
 async function fetchPaginatedTransactions(
@@ -907,19 +935,20 @@ async function fetchPaginatedTransactions(
   const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
   const orderBy =
     'block DESC, transaction DESC, from_address DESC, to_address DESC, contract DESC, token_id DESC';
-  const limitPart = pageSize > 0 ? `LIMIT ${pageSize}` : '';
-  let dataSql = `SELECT ${fields} FROM ${TRANSACTIONS_TABLE} ${joins} ${
+  const dataSql = `SELECT ${fields} FROM ${TRANSACTIONS_TABLE} ${joins} ${
     filters.filters
-  } order by ${orderBy} ${limitPart}`;
-  if (page > 1) {
-    dataSql += ` OFFSET ${pageSize * (page - 1)}`;
-  }
+  } order by ${orderBy} LIMIT :transactionLimit OFFSET :transactionOffset`;
+  const dataParams = {
+    ...filters.params,
+    transactionLimit: pageSize + 1,
+    transactionOffset: pageSize * (page - 1)
+  };
 
   const requestStartedAt = Date.now();
   const countPromise = fetchTransactionCount(filters, countCacheKey);
   const dataStartedAt = Date.now();
   const dataPromise = sqlExecutor
-    .execute<ApiTransaction>(dataSql, filters.params)
+    .execute<ApiTransaction>(dataSql, dataParams)
     .then((data) => ({ data, elapsedMs: Date.now() - dataStartedAt }));
   const [countResult, dataResult] = await Promise.all([
     countPromise,
@@ -937,8 +966,8 @@ async function fetchPaginatedTransactions(
   return {
     count: countResult.count,
     page,
-    next: pageSize > 0 && countResult.count > pageSize * page ? 'true' : null,
-    data: dataResult.data
+    next: dataResult.data.length > pageSize ? 'true' : null,
+    data: dataResult.data.slice(0, pageSize)
   };
 }
 
@@ -947,6 +976,15 @@ async function fetchTransactionCount(
   countCacheKey: string | null
 ): Promise<TransactionCountResult> {
   const startedAt = Date.now();
+  if (!countCacheKey) {
+    const count = await executeExactTransactionCountQuery(filters);
+    return {
+      count,
+      source: 'exact_uncached',
+      elapsedMs: Date.now() - startedAt
+    };
+  }
+
   const cached = countCacheKey
     ? await readTransactionCountCache(countCacheKey)
     : null;
@@ -956,72 +994,148 @@ async function fetchTransactionCount(
       TRANSACTION_COUNT_FULL_REFRESH_INTERVAL.toMillis();
 
   if (needsFullRefresh) {
-    const countRow = await executeTransactionCountQuery(filters, null);
-    if (countCacheKey) {
-      await writeTransactionCountCache(countCacheKey, {
+    try {
+      const checkpoint = await executeFullTransactionCountQuery(filters);
+      const updatedEntry: TransactionCountCacheEntry = {
         version: TRANSACTION_COUNT_CACHE_VERSION,
-        count: Number(countRow.count),
-        latestBlock: Number(countRow.latest_block),
+        ...checkpoint,
         fullyRefreshedAt: Date.now()
-      });
+      };
+      await writeTransactionCountCache(countCacheKey, cached, updatedEntry);
+      return {
+        count: checkpoint.count,
+        source: cached ? 'cache_rebase' : 'cache_seed',
+        elapsedMs: Date.now() - startedAt
+      };
+    } catch (error) {
+      if (cached) {
+        logger.warn('[TRANSACTION_COUNT_REBASE_FAILED_USING_STALE]', error);
+        return cachedTransactionCountFallback(cached, startedAt);
+      }
+      throw error;
     }
-    let source: TransactionCountResult['source'] = 'exact_uncached';
-    if (countCacheKey) {
-      source = cached ? 'cache_rebase' : 'cache_seed';
-    }
-    return {
-      count: Number(countRow.count),
-      source,
-      elapsedMs: Date.now() - startedAt
-    };
   }
 
-  // Transaction discovery persists complete blocks. Counting only rows after
-  // this checkpoint therefore keeps active contract/filter totals exact while
-  // avoiding a full historical scan on every API request. The periodic rebase
-  // above self-heals rare manual backfills into older blocks.
-  const countRow = await executeTransactionCountQuery(
-    filters,
-    cached.latestBlock
+  try {
+    // Recount the checkpoint block as well as newer blocks. Replacing the
+    // cached boundary count makes delayed rows in the same block visible and
+    // keeps concurrent calculations idempotent. The Redis compare-and-set
+    // below prevents a slower request from overwriting a newer checkpoint.
+    const checkpoint = await executeIncrementalTransactionCountQuery(
+      filters,
+      cached
+    );
+    const updatedEntry: TransactionCountCacheEntry = {
+      ...cached,
+      ...checkpoint
+    };
+    await writeTransactionCountCache(countCacheKey, cached, updatedEntry);
+    return {
+      count: updatedEntry.count,
+      source: 'cache_increment',
+      elapsedMs: Date.now() - startedAt
+    };
+  } catch (error) {
+    logger.warn('[TRANSACTION_COUNT_INCREMENT_FAILED_USING_STALE]', error);
+    return cachedTransactionCountFallback(cached, startedAt);
+  }
+}
+
+async function executeExactTransactionCountQuery(filters: {
+  filters: string;
+  params: Record<string, unknown>;
+}): Promise<number> {
+  const countSql = `
+    SELECT COUNT(1) as count
+    FROM ${TRANSACTIONS_TABLE}
+    ${filters.filters}
+  `;
+  return sqlExecutor
+    .execute<{ count: number | string }>(countSql, filters.params)
+    .then((rows) => Number(rows[0].count));
+}
+
+async function executeFullTransactionCountQuery(filters: {
+  filters: string;
+  params: Record<string, unknown>;
+}): Promise<TransactionCountCheckpoint> {
+  const countSql = `
+    SELECT
+      ${TRANSACTIONS_TABLE}.block as latest_block,
+      COUNT(1) as latest_block_count,
+      SUM(COUNT(1)) OVER () as count
+    FROM ${TRANSACTIONS_TABLE}
+    ${filters.filters}
+    GROUP BY ${TRANSACTIONS_TABLE}.block
+    ORDER BY ${TRANSACTIONS_TABLE}.block DESC
+    LIMIT 1
+  `;
+  const row = await sqlExecutor
+    .execute<FullTransactionCountQueryRow>(countSql, filters.params)
+    .then((rows) => rows[0]);
+  return row
+    ? {
+        count: Number(row.count),
+        latestBlock: Number(row.latest_block),
+        latestBlockCount: Number(row.latest_block_count)
+      }
+    : { count: 0, latestBlock: 0, latestBlockCount: 0 };
+}
+
+async function executeIncrementalTransactionCountQuery(
+  filters: { filters: string; params: Record<string, unknown> },
+  cached: TransactionCountCacheEntry
+): Promise<TransactionCountCheckpoint> {
+  const countFilters = constructFilters(
+    filters.filters,
+    `${TRANSACTIONS_TABLE}.block >= :countFromBlock`
   );
-  const updatedEntry: TransactionCountCacheEntry = {
-    ...cached,
-    count: cached.count + Number(countRow.count),
-    latestBlock: Number(countRow.latest_block)
-  };
-  await writeTransactionCountCache(countCacheKey!, updatedEntry);
+  const countSql = `
+    SELECT
+      ${TRANSACTIONS_TABLE}.block as block,
+      COUNT(1) as block_count
+    FROM ${TRANSACTIONS_TABLE}
+    ${countFilters}
+    GROUP BY ${TRANSACTIONS_TABLE}.block
+    ORDER BY ${TRANSACTIONS_TABLE}.block ASC
+  `;
+  const rows = await sqlExecutor.execute<IncrementalTransactionCountQueryRow>(
+    countSql,
+    { ...filters.params, countFromBlock: cached.latestBlock }
+  );
+  const boundaryRow = rows.find(
+    (row) => Number(row.block) === cached.latestBlock
+  );
+  if (
+    !boundaryRow ||
+    Number(boundaryRow.block_count) < cached.latestBlockCount
+  ) {
+    // The transactions table is append-only. A missing or smaller boundary
+    // can only be a temporarily lagging replica, so never regress the cached
+    // checkpoint. The next request will reconcile it again.
+    return cached;
+  }
+  const countedFromBoundary = rows.reduce(
+    (total, row) => total + Number(row.block_count),
+    0
+  );
+  const latestRow = rows.at(-1);
   return {
-    count: updatedEntry.count,
-    source: 'cache_increment',
-    elapsedMs: Date.now() - startedAt
+    count: cached.count - cached.latestBlockCount + countedFromBoundary,
+    latestBlock: latestRow ? Number(latestRow.block) : cached.latestBlock,
+    latestBlockCount: latestRow ? Number(latestRow.block_count) : 0
   };
 }
 
-async function executeTransactionCountQuery(
-  filters: { filters: string; params: Record<string, unknown> },
-  countAfterBlock: number | null
-): Promise<TransactionCountQueryRow> {
-  const isIncremental = countAfterBlock !== null;
-  const countFilters = isIncremental
-    ? constructFilters(
-        filters.filters,
-        `${TRANSACTIONS_TABLE}.block > :countAfterBlock`
-      )
-    : filters.filters;
-  const latestBlockFallback = isIncremental ? ':countAfterBlock' : '0';
-  const countSql = `
-    SELECT
-      COUNT(1) as count,
-      COALESCE(MAX(${TRANSACTIONS_TABLE}.block), ${latestBlockFallback}) as latest_block
-    FROM ${TRANSACTIONS_TABLE}
-    ${countFilters}
-  `;
-  const params = isIncremental
-    ? { ...filters.params, countAfterBlock }
-    : filters.params;
-  return sqlExecutor
-    .execute<TransactionCountQueryRow>(countSql, params)
-    .then((rows) => rows[0]);
+function cachedTransactionCountFallback(
+  cached: TransactionCountCacheEntry,
+  startedAt: number
+): TransactionCountResult {
+  return {
+    count: cached.count,
+    source: 'cache_stale_fallback',
+    elapsedMs: Date.now() - startedAt
+  };
 }
 
 function getTransactionCountCacheKey({
@@ -1044,7 +1158,7 @@ function getTransactionCountCacheKey({
     .sort((a, b) => a.localeCompare(b));
   const cacheIdentity = JSON.stringify({
     contracts: cacheContracts,
-    filter: typeFilter?.toLowerCase() ?? 'all'
+    filter: typeFilter ?? 'all'
   });
   const digest = createHash('sha256').update(cacheIdentity).digest('hex');
   return `__SEIZE_TRANSACTION_COUNT_${
@@ -1066,10 +1180,16 @@ async function readTransactionCountCache(
 
 async function writeTransactionCountCache(
   key: string,
+  expected: TransactionCountCacheEntry | null,
   entry: TransactionCountCacheEntry
 ): Promise<void> {
   try {
-    await redisSetJson(key, entry, TRANSACTION_COUNT_CACHE_TTL);
+    await redisCompareAndSetJson(
+      key,
+      expected,
+      entry,
+      TRANSACTION_COUNT_CACHE_TTL
+    );
   } catch (error) {
     logger.warn('[TRANSACTION_COUNT_CACHE_WRITE_FAILED]', error);
   }
@@ -1088,9 +1208,26 @@ function isTransactionCountCacheEntry(
     entry.count >= 0 &&
     typeof entry.latestBlock === 'number' &&
     entry.latestBlock >= 0 &&
+    typeof entry.latestBlockCount === 'number' &&
+    entry.latestBlockCount >= 0 &&
     typeof entry.fullyRefreshedAt === 'number' &&
     entry.fullyRefreshedAt > 0
   );
+}
+
+function normalizeTransactionPagination(
+  pageSize: number,
+  page: number
+): { readonly pageSize: number; readonly page: number } {
+  const normalizedPageSize =
+    Number.isSafeInteger(pageSize) && pageSize > 0
+      ? Math.min(pageSize, MAX_TRANSACTION_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE;
+  const normalizedPage =
+    Number.isSafeInteger(page) && page > 0
+      ? Math.min(page, MAX_TRANSACTION_PAGE)
+      : 1;
+  return { pageSize: normalizedPageSize, page: normalizedPage };
 }
 
 export async function fetchGradientTdh(pageSize: number, page: number) {

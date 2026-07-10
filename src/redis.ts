@@ -91,6 +91,40 @@ export async function redisSetJson<T>(
   }
 }
 
+export async function redisCompareAndSetJson<T>(
+  key: string,
+  expected: T | null,
+  value: T,
+  ttl: Time
+): Promise<boolean> {
+  if (!redis) {
+    return false;
+  }
+  const missingValueMarker = '__SEIZE_REDIS_VALUE_MISSING__';
+  const result = await redis.eval(
+    `
+      local current = redis.call('GET', KEYS[1])
+      if ARGV[1] == ARGV[4] then
+        if current then return 0 end
+      elseif current ~= ARGV[1] then
+        return 0
+      end
+      redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+      return 1
+    `,
+    {
+      keys: [key],
+      arguments: [
+        expected === null ? missingValueMarker : JSON.stringify(expected),
+        JSON.stringify(value),
+        String(ttl.toSeconds()),
+        missingValueMarker
+      ]
+    }
+  );
+  return Number(result) === 1;
+}
+
 export async function evictKeyFromRedisCache(key: string): Promise<any> {
   if (!redis) {
     return;
