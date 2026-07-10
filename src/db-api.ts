@@ -1035,6 +1035,9 @@ async function fetchTransactionCount(
       filters,
       cached
     );
+    if (!checkpoint) {
+      return cachedTransactionCountFallback(cached, startedAt);
+    }
     const updatedEntry: TransactionCountCacheEntry = {
       ...cached,
       ...checkpoint,
@@ -1100,7 +1103,7 @@ async function executeFullTransactionCountQuery(filters: {
 async function executeIncrementalTransactionCountQuery(
   filters: { filters: string; params: Record<string, unknown> },
   cached: TransactionCountCacheEntry
-): Promise<TransactionCountCheckpoint> {
+): Promise<TransactionCountCheckpoint | null> {
   const countFilters = constructFilters(
     filters.filters,
     `${TRANSACTIONS_TABLE}.block >= :countFromBlock`
@@ -1128,17 +1131,17 @@ async function executeIncrementalTransactionCountQuery(
     // The transactions table is append-only. A missing or smaller boundary
     // can only be a temporarily lagging replica, so never regress the cached
     // checkpoint. The next request will reconcile it again.
-    return cached;
+    return null;
   }
   const countedFromBoundary = rows.reduce(
     (total, row) => total + Number(row.block_count),
     0
   );
-  const latestRow = rows.at(-1);
+  const latestRow = rows[rows.length - 1];
   return {
     count: cached.count - cached.latestBlockCount + countedFromBoundary,
-    latestBlock: latestRow ? Number(latestRow.block) : cached.latestBlock,
-    latestBlockCount: latestRow ? Number(latestRow.block_count) : 0
+    latestBlock: Number(latestRow.block),
+    latestBlockCount: Number(latestRow.block_count)
   };
 }
 

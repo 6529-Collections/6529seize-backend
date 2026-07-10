@@ -256,6 +256,35 @@ describe('fetchTransactions', () => {
     );
   });
 
+  it('does not rotate the revision when the read replica misses the boundary', async () => {
+    redisGetMock.mockResolvedValue({
+      version: 2,
+      revision: 'stable-revision',
+      count: 250,
+      latestBlock: 123,
+      latestBlockCount: 3,
+      fullyRefreshedAt: Date.now()
+    });
+    jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql: string) => {
+        const normalizedSql = normalizeSql(sql);
+        if (normalizedSql.includes('count(1) as block_count')) {
+          return [];
+        }
+        if (normalizedSql.startsWith('select transactions.*')) {
+          return [];
+        }
+        throw new Error(`Unexpected SQL: ${normalizedSql}`);
+      });
+
+    await expect(
+      fetchTransactions(100, 1, undefined, MEMES_CONTRACT, undefined, null)
+    ).resolves.toEqual({ count: 250, page: 1, next: null, data: [] });
+
+    expect(redisCompareAndSetJsonMock).not.toHaveBeenCalled();
+  });
+
   it('periodically rebases a cached count to include historical backfills', async () => {
     const cached = {
       version: 2,
