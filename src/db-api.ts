@@ -42,6 +42,7 @@ import {
 import { getConsolidationsSql } from './sql_helpers';
 
 import { Nft } from '@/alchemy-sdk';
+import { createHash } from 'node:crypto';
 import * as mysql from 'mysql';
 import {
   NFTSearchResult,
@@ -61,6 +62,7 @@ import {
 import { consolidationTools } from './consolidation-tools';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { numbers } from './numbers';
+import { redisGet, redisSetJson } from './redis';
 import {
   CustomTypeCaster,
   execNativeTransactionally,
@@ -81,6 +83,32 @@ let write_pool: mysql.Pool;
 const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 
 const logger = Logger.get('DB_API');
+
+const TRANSACTION_COUNT_CACHE_VERSION = 1;
+const TRANSACTION_COUNT_CACHE_TTL = Time.days(7);
+const TRANSACTION_COUNT_FULL_REFRESH_INTERVAL = Time.hours(6);
+
+interface TransactionCountCacheEntry {
+  readonly version: number;
+  readonly count: number;
+  readonly latestBlock: number;
+  readonly fullyRefreshedAt: number;
+}
+
+interface TransactionCountQueryRow {
+  readonly count: number | string;
+  readonly latest_block: number | string;
+}
+
+interface TransactionCountResult {
+  readonly count: number;
+  readonly source:
+    | 'cache_increment'
+    | 'cache_rebase'
+    | 'cache_seed'
+    | 'exact_uncached';
+  readonly elapsedMs: number;
+}
 
 export async function connect() {
   if (read_pool && write_pool) {
@@ -743,15 +771,15 @@ export async function resolveEns(walletsStr: string) {
 }
 
 async function getTransactionFilters(
-  wallets: string,
-  nfts: string,
-  type_filter: string
+  wallets: string | undefined,
+  nfts: string | undefined,
+  type_filter: string | null | undefined
 ): Promise<{
   filters: string;
-  params: any;
+  params: Record<string, unknown>;
 } | null> {
   let filters = '';
-  const params: any = {};
+  const params: Record<string, unknown> = {};
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length == 0) {
@@ -841,10 +869,10 @@ export async function fetchLabTransactions(
 export async function fetchTransactions(
   pageSize: number,
   page: number,
-  wallets: string,
-  contracts: string,
-  nfts: string,
-  type_filter: string
+  wallets: string | undefined,
+  contracts: string | undefined,
+  nfts: string | undefined,
+  type_filter: string | null | undefined
 ): Promise<ApiTransactionPage> {
   const filters = await getTransactionFilters(wallets, nfts, type_filter);
   if (!filters) {
@@ -859,31 +887,208 @@ export async function fetchTransactions(
     filters.params.contracts = contracts.split(',');
   }
 
-  return fetchPaginatedTransactions(pageSize, page, filters);
+  const countCacheKey = getTransactionCountCacheKey({
+    wallets,
+    contracts,
+    nfts,
+    typeFilter: type_filter
+  });
+
+  return fetchPaginatedTransactions(pageSize, page, filters, countCacheKey);
 }
 
 async function fetchPaginatedTransactions(
   pageSize: number,
   page: number,
-  filters: { filters: string; params: any }
-) {
+  filters: { filters: string; params: Record<string, unknown> },
+  countCacheKey: string | null
+): Promise<ApiTransactionPage> {
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
   const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
-
   const orderBy =
-    'block DESC, transaction DESC, contract DESC, token_id DESC, from_address DESC, to_address DESC';
+    'block DESC, transaction DESC, from_address DESC, to_address DESC, contract DESC, token_id DESC';
+  let dataSql = `SELECT ${fields} FROM ${TRANSACTIONS_TABLE} ${joins} ${
+    filters.filters
+  } order by ${orderBy} ${pageSize > 0 ? `LIMIT ${pageSize}` : ''}`;
+  if (page > 1) {
+    dataSql += ` OFFSET ${pageSize * (page - 1)}`;
+  }
 
-  return fetchPaginated<ApiTransaction>(
-    TRANSACTIONS_TABLE,
-    filters.params,
-    orderBy,
-    pageSize,
+  const requestStartedAt = Date.now();
+  const countPromise = fetchTransactionCount(filters, countCacheKey);
+  const dataStartedAt = Date.now();
+  const dataPromise = sqlExecutor
+    .execute<ApiTransaction>(dataSql, filters.params)
+    .then((data) => ({ data, elapsedMs: Date.now() - dataStartedAt }));
+  const [countResult, dataResult] = await Promise.all([
+    countPromise,
+    dataPromise
+  ]);
+  const totalElapsedMs = Date.now() - requestStartedAt;
+  logger.info(
+    `[TRANSACTION_PAGINATION_TIMING] [COUNT_SOURCE ${
+      countResult.source
+    }] [COUNT_MS ${countResult.elapsedMs}] [DATA_MS ${
+      dataResult.elapsedMs
+    }] [TOTAL_MS ${totalElapsedMs}]`
+  );
+
+  return {
+    count: countResult.count,
     page,
-    filters.filters,
-    fields,
-    joins,
-    undefined,
-    { skipJoinsOnCountQuery: true }
+    next: pageSize > 0 && countResult.count > pageSize * page ? 'true' : null,
+    data: dataResult.data
+  };
+}
+
+async function fetchTransactionCount(
+  filters: { filters: string; params: Record<string, unknown> },
+  countCacheKey: string | null
+): Promise<TransactionCountResult> {
+  const startedAt = Date.now();
+  const cached = countCacheKey
+    ? await readTransactionCountCache(countCacheKey)
+    : null;
+  const needsFullRefresh =
+    !cached ||
+    Date.now() - cached.fullyRefreshedAt >=
+      TRANSACTION_COUNT_FULL_REFRESH_INTERVAL.toMillis();
+
+  if (needsFullRefresh) {
+    const countRow = await executeTransactionCountQuery(filters, null);
+    if (countCacheKey) {
+      await writeTransactionCountCache(countCacheKey, {
+        version: TRANSACTION_COUNT_CACHE_VERSION,
+        count: Number(countRow.count),
+        latestBlock: Number(countRow.latest_block),
+        fullyRefreshedAt: Date.now()
+      });
+    }
+    let source: TransactionCountResult['source'] = 'exact_uncached';
+    if (countCacheKey) {
+      source = cached ? 'cache_rebase' : 'cache_seed';
+    }
+    return {
+      count: Number(countRow.count),
+      source,
+      elapsedMs: Date.now() - startedAt
+    };
+  }
+
+  // Transaction discovery persists complete blocks. Counting only rows after
+  // this checkpoint therefore keeps active contract/filter totals exact while
+  // avoiding a full historical scan on every API request. The periodic rebase
+  // above self-heals rare manual backfills into older blocks.
+  const countRow = await executeTransactionCountQuery(
+    filters,
+    cached.latestBlock
+  );
+  const updatedEntry: TransactionCountCacheEntry = {
+    ...cached,
+    count: cached.count + Number(countRow.count),
+    latestBlock: Number(countRow.latest_block)
+  };
+  await writeTransactionCountCache(countCacheKey!, updatedEntry);
+  return {
+    count: updatedEntry.count,
+    source: 'cache_increment',
+    elapsedMs: Date.now() - startedAt
+  };
+}
+
+async function executeTransactionCountQuery(
+  filters: { filters: string; params: Record<string, unknown> },
+  countAfterBlock: number | null
+): Promise<TransactionCountQueryRow> {
+  const isIncremental = countAfterBlock !== null;
+  const countFilters = isIncremental
+    ? constructFilters(
+        filters.filters,
+        `${TRANSACTIONS_TABLE}.block > :countAfterBlock`
+      )
+    : filters.filters;
+  const latestBlockFallback = isIncremental ? ':countAfterBlock' : '0';
+  const countSql = `
+    SELECT
+      COUNT(1) as count,
+      COALESCE(MAX(${TRANSACTIONS_TABLE}.block), ${latestBlockFallback}) as latest_block
+    FROM ${TRANSACTIONS_TABLE}
+    ${countFilters}
+  `;
+  const params = isIncremental
+    ? { ...filters.params, countAfterBlock }
+    : filters.params;
+  return sqlExecutor
+    .execute<TransactionCountQueryRow>(countSql, params)
+    .then((rows) => rows[0]);
+}
+
+function getTransactionCountCacheKey({
+  wallets,
+  contracts,
+  nfts,
+  typeFilter
+}: {
+  readonly wallets: string | undefined;
+  readonly contracts: string | undefined;
+  readonly nfts: string | undefined;
+  readonly typeFilter: string | null | undefined;
+}): string | null {
+  if (wallets || nfts) {
+    return null;
+  }
+  const cacheContracts = (contracts ?? '')
+    .split(',')
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  const cacheIdentity = JSON.stringify({
+    contracts: cacheContracts,
+    filter: typeFilter?.toLowerCase() ?? 'all'
+  });
+  const digest = createHash('sha256').update(cacheIdentity).digest('hex');
+  return `__SEIZE_TRANSACTION_COUNT_${
+    process.env.NODE_ENV ?? 'unknown'
+  }__${TRANSACTION_COUNT_CACHE_VERSION}__${digest}`;
+}
+
+async function readTransactionCountCache(
+  key: string
+): Promise<TransactionCountCacheEntry | null> {
+  try {
+    const entry = await redisGet<unknown>(key);
+    return isTransactionCountCacheEntry(entry) ? entry : null;
+  } catch (error) {
+    logger.warn('[TRANSACTION_COUNT_CACHE_READ_FAILED]', error);
+    return null;
+  }
+}
+
+async function writeTransactionCountCache(
+  key: string,
+  entry: TransactionCountCacheEntry
+): Promise<void> {
+  try {
+    await redisSetJson(key, entry, TRANSACTION_COUNT_CACHE_TTL);
+  } catch (error) {
+    logger.warn('[TRANSACTION_COUNT_CACHE_WRITE_FAILED]', error);
+  }
+}
+
+function isTransactionCountCacheEntry(
+  value: unknown
+): value is TransactionCountCacheEntry {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const entry = value as Record<string, unknown>;
+  return (
+    entry.version === TRANSACTION_COUNT_CACHE_VERSION &&
+    typeof entry.count === 'number' &&
+    entry.count >= 0 &&
+    typeof entry.latestBlock === 'number' &&
+    entry.latestBlock >= 0 &&
+    typeof entry.fullyRefreshedAt === 'number' &&
+    entry.fullyRefreshedAt > 0
   );
 }
 
