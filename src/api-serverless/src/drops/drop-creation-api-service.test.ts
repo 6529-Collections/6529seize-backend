@@ -160,95 +160,105 @@ describe('DropCreationApiService.createDrop', () => {
     jest.clearAllMocks();
   });
 
-  it('invalidates unread cache after the drop transaction commits', async () => {
-    const connection = {} as any;
-    const order: string[] = [];
-    const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn(
-        async (callback: (connection: unknown) => Promise<unknown>) => {
-          order.push('transaction');
-          const result = await callback(connection);
-          order.push('committed');
-          return result;
+  it.each([true, false])(
+    'persists explicit hideLinkPreview=%s before invalidating unread cache',
+    async (hideLinkPreview) => {
+      const connection = {} as any;
+      const order: string[] = [];
+      const dropsDb = {
+        executeNativeQueriesInTransaction: jest.fn(
+          async (callback: (connection: unknown) => Promise<unknown>) => {
+            order.push('transaction');
+            const result = await callback(connection);
+            order.push('committed');
+            return result;
+          }
+        )
+      };
+      const dropsMappers = {
+        createDropApiToUseCaseModel: jest.fn().mockReturnValue({
+          wave_id: 'wave-1',
+          drop_type: DropType.CHAT
+        })
+      };
+      const createOrUpdateDrop = {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        execute: jest.fn().mockImplementation(async () => {
+          order.push('drop-written');
+          return {
+            drop_id: 'drop-1',
+            pending_push_notification_ids: []
+          };
+        })
+      };
+      const dropPollsApiService = {
+        createPollForDrop: jest.fn().mockResolvedValue(undefined)
+      };
+      const dropsService = {
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1'
+        })
+      };
+      const wsListenersNotifier = {
+        notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+      };
+      const dropNftLinksDb = {
+        findByDropId: jest.fn().mockResolvedValue([])
+      };
+      const service = new DropCreationApiService(
+        dropsService as never,
+        dropsDb as never,
+        dropsMappers as never,
+        createOrUpdateDrop as never,
+        {} as never,
+        wsListenersNotifier as never,
+        dropNftLinksDb as never,
+        {} as never,
+        dropPollsApiService as never
+      );
+      jest
+        .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+        .mockResolvedValue(undefined);
+      (invalidateWaveUnreadCacheForWave as jest.Mock).mockImplementationOnce(
+        async () => {
+          order.push('unread-cache-invalidated');
         }
-      )
-    };
-    const dropsMappers = {
-      createDropApiToUseCaseModel: jest.fn().mockReturnValue({
-        wave_id: 'wave-1',
-        drop_type: DropType.CHAT
-      })
-    };
-    const createOrUpdateDrop = {
-      preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
-      execute: jest.fn().mockImplementation(async () => {
-        order.push('drop-written');
-        return {
-          drop_id: 'drop-1',
-          pending_push_notification_ids: []
-        };
-      })
-    };
-    const dropPollsApiService = {
-      createPollForDrop: jest.fn().mockResolvedValue(undefined)
-    };
-    const dropsService = {
-      findDropByIdOrThrow: jest.fn().mockResolvedValue({
-        id: 'drop-1',
-        wave_id: 'wave-1'
-      })
-    };
-    const wsListenersNotifier = {
-      notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
-    };
-    const dropNftLinksDb = {
-      findByDropId: jest.fn().mockResolvedValue([])
-    };
-    const service = new DropCreationApiService(
-      dropsService as never,
-      dropsDb as never,
-      dropsMappers as never,
-      createOrUpdateDrop as never,
-      {} as never,
-      wsListenersNotifier as never,
-      dropNftLinksDb as never,
-      {} as never,
-      dropPollsApiService as never
-    );
-    jest
-      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
-      .mockResolvedValue(undefined);
-    (invalidateWaveUnreadCacheForWave as jest.Mock).mockImplementationOnce(
-      async () => {
-        order.push('unread-cache-invalidated');
-      }
-    );
+      );
 
-    await service.createDrop(
-      {
-        createDropRequest: {} as never,
-        authorId: 'author-profile',
-        representativeId: 'author-profile',
-        hideLinkPreview: true
-      },
-      { timer: undefined } as never
-    );
+      await service.createDrop(
+        {
+          createDropRequest: { hide_link_preview: hideLinkPreview } as never,
+          authorId: 'author-profile',
+          representativeId: 'author-profile',
+          hideLinkPreview
+        },
+        { timer: undefined } as never
+      );
 
-    expect(createOrUpdateDrop.execute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hide_link_preview: true
-      }),
-      false,
-      expect.anything()
-    );
-    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
-    expect(order).toEqual([
-      'transaction',
-      'drop-written',
-      'committed',
-      'unread-cache-invalidated'
-    ]);
-  });
+      expect(dropsMappers.createDropApiToUseCaseModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          request: expect.objectContaining({
+            hide_link_preview: hideLinkPreview
+          })
+        })
+      );
+      expect(createOrUpdateDrop.execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hide_link_preview: hideLinkPreview
+        }),
+        false,
+        expect.anything()
+      );
+      expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
+      expect(order).toEqual([
+        'transaction',
+        'drop-written',
+        'committed',
+        'unread-cache-invalidated'
+      ]);
+    }
+  );
 
   it('waits for pending push notifications to be enqueued before resolving', async () => {
     const connection = {} as any;

@@ -234,7 +234,8 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
       is: ApiDropType.Chat,
       then: NewDropPollSchema.optional(),
       otherwise: Joi.forbidden()
-    })
+    }),
+    hide_link_preview: Joi.boolean().optional()
   }
 );
 

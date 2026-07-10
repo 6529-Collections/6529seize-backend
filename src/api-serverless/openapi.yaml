@@ -12162,6 +12162,13 @@ components:
             $ref: "#/components/schemas/ApiDropGroupMention"
         poll:
           $ref: "#/components/schemas/ApiCreateDropPollRequest"
+        hide_link_preview:
+          type: boolean
+          description: >-
+            When true, create the drop with generated external link previews
+            hidden. Omit or set to false to leave previews visible.
+            Signature-required drops must include this field in the signed
+            payload when present.
     ApiCreateGroup:
       type: object
       required:

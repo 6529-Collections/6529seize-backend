@@ -46,4 +46,38 @@ describe('DropHasher', () => {
       })
     );
   });
+
+  it('hide link preview affects the hash when present', () => {
+    expect(
+      dropHasher.hash({
+        drop: aDrop,
+        termsOfService: null
+      })
+    ).not.toBe(
+      dropHasher.hash({
+        drop: { ...aDrop, hide_link_preview: true },
+        termsOfService: null
+      })
+    );
+  });
+
+  it('ignores undefined hide link preview but hashes explicit false', () => {
+    const baseHash = dropHasher.hash({
+      drop: aDrop,
+      termsOfService: null
+    });
+
+    expect(
+      dropHasher.hash({
+        drop: { ...aDrop, hide_link_preview: undefined },
+        termsOfService: null
+      })
+    ).toBe(baseHash);
+    expect(
+      dropHasher.hash({
+        drop: { ...aDrop, hide_link_preview: false },
+        termsOfService: null
+      })
+    ).not.toBe(baseHash);
+  });
 });
