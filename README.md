@@ -152,6 +152,19 @@ Examples:
 
 If you run `ghdeploy` from an unsupported folder, it fails with a clear error instead of guessing.
 
+### 0.5 Staging DB Local Sync
+
+This repo includes local tooling to build a resumable staging MySQL dump and restore it into the local Docker MySQL service.
+
+Common commands:
+
+```bash
+npm run db:staging:resume
+npm run db:staging:fresh
+```
+
+See [docs/staging-db-local-sync.md](docs/staging-db-local-sync.md) for setup, AWS credential behavior, restore-only usage, restart recovery, and troubleshooting.
+
 ## 1. Backend
 
 ### 1.1 Install
