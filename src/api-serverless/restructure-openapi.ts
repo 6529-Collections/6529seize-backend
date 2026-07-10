@@ -59,7 +59,7 @@ if (data.components?.schemas) {
 }
 
 // Convert to YAML
-const yamlString = yaml.dump(data, { indent: 2 });
+const yamlString = yaml.dump(data, { indent: 2, quotingType: '"' });
 
 // Write the sorted and formatted YAML back to the file
 fs.writeFileSync(filePath, yamlString, 'utf8');
