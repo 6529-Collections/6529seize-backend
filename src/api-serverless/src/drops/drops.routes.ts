@@ -220,6 +220,7 @@ router.post(
       reply_to: newDrop.reply_to,
       drop_type: newDrop.drop_type,
       signature: newDrop.signature,
+      hide_link_preview: newDrop.hide_link_preview,
       is_additional_action_promised: newDrop.is_additional_action_promised
     };
     const createdDrop = await dropCreationService.createDrop(

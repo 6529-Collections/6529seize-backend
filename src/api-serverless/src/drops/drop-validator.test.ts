@@ -1,5 +1,5 @@
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
-import { NewDropSchema } from '@/api/drops/drop.validator';
+import { NewDropSchema, UpdateDropSchema } from '@/api/drops/drop.validator';
 
 describe('NewDropSchema', () => {
   const futureTimestamp = Date.now() + 60_000;
@@ -225,6 +225,20 @@ describe('NewDropSchema', () => {
     }
   );
 
+  it.each([true, false])(
+    'accepts hide_link_preview=%s on participatory create requests',
+    (hideLinkPreview) => {
+      const result = NewDropSchema.validate({
+        ...createDropWithMetadata('artist', 'Artist'),
+        hide_link_preview: hideLinkPreview
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.value.drop_type).toBe(ApiDropType.Participatory);
+      expect(result.value.hide_link_preview).toBe(hideLinkPreview);
+    }
+  );
+
   it('keeps hidden link preview unset when omitted on create requests', () => {
     const result = NewDropSchema.validate({
       ...createDropWithMetadata('artist', 'Artist'),
@@ -361,6 +375,31 @@ describe('NewDropSchema', () => {
 
     expect(result.error?.message).toContain(
       'poll closing_time must be in the future'
+    );
+  });
+});
+
+describe('UpdateDropSchema', () => {
+  it('rejects hide_link_preview because preview visibility updates use the dedicated endpoint', () => {
+    const result = UpdateDropSchema.validate({
+      title: 'Updated',
+      parts: [
+        {
+          content: 'Updated content',
+          media: [],
+          attachments: []
+        }
+      ],
+      referenced_nfts: [],
+      mentioned_users: [],
+      mentioned_waves: [],
+      metadata: [],
+      signature: null,
+      hide_link_preview: true
+    });
+
+    expect(result.error?.message).toContain(
+      '"hide_link_preview" is not allowed'
     );
   });
 });
