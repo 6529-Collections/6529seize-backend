@@ -109,6 +109,15 @@ describe('DropSignatureVerifier', () => {
     };
   }
 
+  const signatureStrategies: Array<{
+    name: string;
+    sign: (drop: ApiCreateDropRequest) => Promise<ApiCreateDropRequest>;
+  }> = [
+    { name: 'text hash', sign: signDropAsText },
+    { name: 'raw hash byte', sign: signDropAsRawHashBytes },
+    { name: 'structured', sign: signDropAsStructuredMessage }
+  ];
+
   it('accepts current text hash signatures', async () => {
     const drop = await signDropAsText(createDrop());
 
@@ -160,6 +169,25 @@ describe('DropSignatureVerifier', () => {
           termsOfService
         })
       ).resolves.toBe(true);
+    }
+  );
+
+  it.each(signatureStrategies)(
+    'rejects $name signatures when hide_link_preview is added after signing',
+    async ({ sign }) => {
+      const signedDrop = await sign(createDrop());
+      const tamperedDrop = {
+        ...signedDrop,
+        hide_link_preview: true
+      };
+
+      await expect(
+        verifier.isDropSignedByAnyOfGivenWallets({
+          wallets: [wallet.address],
+          drop: tamperedDrop,
+          termsOfService
+        })
+      ).resolves.toBe(false);
     }
   );
 

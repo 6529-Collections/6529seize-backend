@@ -1,5 +1,5 @@
-import { DropHasher } from '../api-serverless/src/drops/drop-hasher';
-import { ApiCreateDropRequest } from '../api-serverless/src/generated/models/ApiCreateDropRequest';
+import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
+import { DropHasher } from '@/api/drops/drop-hasher';
 
 describe('DropHasher', () => {
   const dropHasher = new DropHasher();
