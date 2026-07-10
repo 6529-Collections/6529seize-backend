@@ -8,6 +8,8 @@
     "backend:dev": "NODE_ENV=development node build/backend.js",
     "api:dev": "NODE_ENV=development node src/api-serverless/dist/index.js",
     "backend:prod": "NODE_ENV=production node build/backend.js",
+    "db:staging:resume": "bash scripts/sync-staging-db-local.sh --yes",
+    "db:staging:fresh": "bash scripts/sync-staging-db-local.sh --fresh --yes",
     "generate:deploy-config": "node scripts/generate-deploy-config.mjs",
     "prebuild": "npm run generate:deploy-config",
     "build": "rimraf ./build && jest && NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json",

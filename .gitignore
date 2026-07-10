@@ -14,3 +14,4 @@ src/*/.serverless-offline
 *.zip
 *.ignore
 /temp
+.staging-db-dump/

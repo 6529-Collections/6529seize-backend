@@ -91,6 +91,58 @@ export async function redisSetJson<T>(
   }
 }
 
+/**
+ * Replaces revisioned JSON only when the stored revision still matches.
+ * A null expected revision seeds absent or unrevisioned/corrupt values, while
+ * preserving any valid concurrent revisioned write.
+ */
+export async function redisCompareAndSetJson<
+  T extends { readonly revision: string }
+>(
+  key: string,
+  expectedRevision: string | null,
+  value: T,
+  ttl: Time
+): Promise<boolean> {
+  const ttlSeconds = ttl.toSeconds();
+  if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds <= 0) {
+    throw new Error('Redis compare-and-set TTL must be positive whole seconds');
+  }
+  if (!redis) {
+    return false;
+  }
+  const result = await redis.eval(
+    `
+      local current = redis.call('GET', KEYS[1])
+      if ARGV[1] == '' then
+        if current then
+          local decodedSuccessfully, decoded = pcall(cjson.decode, current)
+          if decodedSuccessfully and type(decoded) == 'table' and type(decoded.revision) == 'string' and decoded.revision ~= '' then
+            return 0
+          end
+        end
+      else
+        if not current then return 0 end
+        local decodedSuccessfully, decoded = pcall(cjson.decode, current)
+        if not decodedSuccessfully or type(decoded) ~= 'table' or decoded.revision ~= ARGV[1] then
+          return 0
+        end
+      end
+      redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+      return 1
+    `,
+    {
+      keys: [key],
+      arguments: [
+        expectedRevision ?? '',
+        JSON.stringify(value),
+        String(ttlSeconds)
+      ]
+    }
+  );
+  return Number(result) === 1;
+}
+
 export async function evictKeyFromRedisCache(key: string): Promise<any> {
   if (!redis) {
     return;
