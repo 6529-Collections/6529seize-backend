@@ -103,4 +103,43 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context).toBeNull();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it('finds a previous production run when run_number is missing', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: { get: jest.fn().mockReturnValue(null) },
+        json: jest.fn().mockResolvedValue({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Web Deploy - PROD',
+              display_title: 'Web Deploy - PROD',
+              head_sha: 'previous-sha',
+              run_number: 44
+            }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: { get: jest.fn().mockReturnValue(null) },
+        json: jest.fn().mockResolvedValue({ commits: [], total_commits: 0 })
+      });
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request
+    );
+
+    expect(context).toEqual({
+      previous_sha: 'previous-sha',
+      current_sha: 'abc123',
+      pull_requests: []
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });

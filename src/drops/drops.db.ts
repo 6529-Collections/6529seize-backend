@@ -1295,6 +1295,27 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async findDropIdByMetadata(
+    {
+      waveId,
+      dataKey,
+      dataValue
+    }: { waveId: string; dataKey: string; dataValue: string },
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const result = await this.db.execute<{ drop_id: string }>(
+      `select drop_id
+       from ${DROP_METADATA_TABLE}
+       where wave_id = :waveId
+         and data_key = :dataKey
+         and data_value = :dataValue
+       limit 1`,
+      { waveId, dataKey, dataValue },
+      { wrappedConnection: ctx.connection }
+    );
+    return result[0]?.drop_id ?? null;
+  }
+
   async findDropIdsWithMetadata(
     dropIds: string[],
     ctx: RequestContext

@@ -95,7 +95,8 @@ function parseServices(value: unknown): string[] {
 function buildDedupeKey(request: ReleaseNoteGenerationRequest): string {
   const repo = request.repo.replace(/[^a-zA-Z0-9_.-]/g, '-');
   const group = request.release_group_id.replace(/[^a-zA-Z0-9_.-]/g, '-');
-  return `release-note:${repo}:${group}:${request.sha}`;
+  const sha = request.sha.replace(/[^a-zA-Z0-9_.-]/g, '-');
+  return `release-note:${repo}:${group}:${sha}`;
 }
 
 export async function isReleaseGroupComplete(

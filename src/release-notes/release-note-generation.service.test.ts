@@ -1,6 +1,7 @@
 import { AiPrompter } from '@/abusiveness/ai-prompter';
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
 import { IdentitiesDb } from '@/identities/identities.db';
+import { DropsDb } from '@/drops/drops.db';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import {
   GitHubReleaseContext,
@@ -49,6 +50,12 @@ const context: GitHubReleaseContext = {
   ]
 };
 
+function createDropsRepository(existingDropId: string | null = null): DropsDb {
+  return {
+    findDropIdByMetadata: jest.fn().mockResolvedValue(existingDropId)
+  } as unknown as DropsDb;
+}
+
 describe('ReleaseNoteGenerationService', () => {
   const originalBotProfileId = process.env.CI_PIPELINES_BOT_PROFILE_ID;
   const originalWaveId = process.env.CI_RELEASES_WAVE_ID;
@@ -96,7 +103,8 @@ describe('ReleaseNoteGenerationService', () => {
       { promptAndGetReply } as AiPrompter,
       { createDrop } as unknown as DropCreationApiService,
       { getIdsByHandles } as unknown as IdentitiesDb,
-      { alice: 'alice6529' }
+      { alice: 'alice6529' },
+      createDropsRepository()
     );
 
     await service.generateAndPost(request, {});
@@ -111,6 +119,12 @@ describe('ReleaseNoteGenerationService', () => {
         hideLinkPreview: true,
         createDropRequest: expect.objectContaining({
           wave_id: 'releases-wave',
+          metadata: [
+            {
+              data_key: 'release_note_id',
+              data_value: expect.stringMatching(/^[0-9a-f]{64}$/)
+            }
+          ],
           mentioned_users: [
             {
               mentioned_profile_id: 'alice-profile',
@@ -120,7 +134,7 @@ describe('ReleaseNoteGenerationService', () => {
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
-                '- Made notification delivery more reliable. — @[alice6529] ([PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42))'
+                '- [PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - @[alice6529]'
               )
             })
           ]
@@ -150,7 +164,9 @@ describe('ReleaseNoteGenerationService', () => {
           .mockResolvedValue(JSON.stringify({ pull_requests: [] }))
       },
       { createDrop: jest.fn() } as unknown as DropCreationApiService,
-      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb
+      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
+      undefined,
+      createDropsRepository()
     );
 
     await expect(service.generateAndPost(request, {})).rejects.toThrow(
@@ -182,7 +198,8 @@ describe('ReleaseNoteGenerationService', () => {
       {
         getIdsByHandles: jest.fn().mockResolvedValue({})
       } as unknown as IdentitiesDb,
-      {}
+      {},
+      createDropsRepository()
     );
 
     await service.generateAndPost(request, {});
@@ -192,5 +209,25 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).not.toContain('[details]');
     expect(content).not.toContain('@[mallory]');
     expect(content).not.toContain('*bold*');
+  });
+
+  it('skips generation when the release drop already exists', async () => {
+    const getReleaseContext = jest.fn();
+    const promptAndGetReply = jest.fn();
+    const createDrop = jest.fn();
+    const service = new ReleaseNoteGenerationService(
+      { getReleaseContext } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
+      undefined,
+      createDropsRepository('existing-drop')
+    );
+
+    await service.generateAndPost(request, {});
+
+    expect(getReleaseContext).not.toHaveBeenCalled();
+    expect(promptAndGetReply).not.toHaveBeenCalled();
+    expect(createDrop).not.toHaveBeenCalled();
   });
 });

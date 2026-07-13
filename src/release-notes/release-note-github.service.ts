@@ -324,7 +324,9 @@ export class ReleaseNoteGitHubService {
     const payload = await this.api<GitHubWorkflowRunsResponse>(
       `/repos/${repository}/actions/runs?status=success&branch=${branch}&per_page=${PAGE_SIZE}`
     );
-    const currentRunNumber = Number(request.run_number);
+    const currentRunNumber = request.run_number
+      ? Number(request.run_number)
+      : null;
 
     return (
       payload.workflow_runs?.find(
@@ -332,7 +334,8 @@ export class ReleaseNoteGitHubService {
           String(run.id) !== request.run_id &&
           run.head_sha !== request.sha &&
           run.name === request.workflow &&
-          (!Number.isFinite(currentRunNumber) ||
+          (currentRunNumber === null ||
+            !Number.isFinite(currentRunNumber) ||
             run.run_number < currentRunNumber) &&
           isMatchingProductionRun(run, request)
       ) ?? null

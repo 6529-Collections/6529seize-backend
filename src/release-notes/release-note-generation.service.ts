@@ -10,6 +10,8 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { dropsDb, DropsDb } from '@/drops/drops.db';
+import { createHash } from 'node:crypto';
 import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
 import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
 import {
@@ -41,6 +43,7 @@ const MAX_COMMIT_MESSAGE_LENGTH = 500;
 const MAX_CHANGED_FILES = 300;
 const MAX_SUMMARY_LENGTH = 600;
 const MAX_RELEASE_CONTEXT_LENGTH = 200000;
+const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -77,6 +80,18 @@ function formatMarkdownLink(label: string, url: string): string {
 
 function getRepoName(repo: string): string {
   return repo.split('/').pop() ?? repo;
+}
+
+function buildReleaseNotePublicationId(
+  request: ReleaseNoteGenerationRequest
+): string {
+  return createHash('sha256')
+    .update(request.repo)
+    .update('\0')
+    .update(request.release_group_id)
+    .update('\0')
+    .update(request.sha)
+    .digest('hex');
 }
 
 function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
@@ -130,13 +145,31 @@ export class ReleaseNoteGenerationService {
     private readonly identitiesRepository: IdentitiesDb,
     private readonly contributorsConfig: Readonly<
       Record<string, string>
-    > = GITHUB_TO_6529_HANDLES
+    > = GITHUB_TO_6529_HANDLES,
+    private readonly dropsRepository: DropsDb = dropsDb
   ) {}
 
   public async generateAndPost(
     request: ReleaseNoteGenerationRequest,
     ctx: RequestContext
   ): Promise<void> {
+    const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
+    const waveId = env.getStringOrThrow('CI_RELEASES_WAVE_ID');
+    const publicationId = buildReleaseNotePublicationId(request);
+    const existingDropId = await this.dropsRepository.findDropIdByMetadata(
+      {
+        waveId,
+        dataKey: RELEASE_NOTE_ID_METADATA_KEY,
+        dataValue: publicationId
+      },
+      ctx
+    );
+    if (existingDropId) {
+      this.logger.info(
+        `Skipping release note ${publicationId}; drop ${existingDropId} already exists`
+      );
+      return;
+    }
     const context = await this.githubService.getReleaseContext(request);
     if (!context) {
       this.logger.info(
@@ -157,12 +190,13 @@ export class ReleaseNoteGenerationService {
     );
     const generatedNotes = this.parseGeneratedNotes(reply, context);
     const contributors = await this.resolveContributors(context.pull_requests);
-    const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const createDropRequest = this.buildCreateDropRequest({
       request,
       context,
       generatedNotes,
-      contributors
+      contributors,
+      publicationId,
+      waveId
     });
 
     await this.dropCreationApiService.createDrop(
@@ -303,12 +337,16 @@ export class ReleaseNoteGenerationService {
     request,
     context,
     generatedNotes,
-    contributors
+    contributors,
+    publicationId,
+    waveId
   }: {
     readonly request: ReleaseNoteGenerationRequest;
     readonly context: GitHubReleaseContext;
     readonly generatedNotes: GeneratedReleaseNote[];
     readonly contributors: ContributorResolution;
+    readonly publicationId: string;
+    readonly waveId: string;
   }): ApiCreateDropRequest {
     const contextsByNumber = new Map(
       context.pull_requests.map((pullRequest) => [
@@ -329,8 +367,8 @@ export class ReleaseNoteGenerationService {
         `PR #${note.number}`,
         pullRequest.url
       );
-      const formattedCredits = credits ? `${credits} ` : '';
-      return `- ${note.summary} — ${formattedCredits}(${pullRequestLink})`;
+      const contributorSuffix = credits ? ` - ${credits}` : '';
+      return `- ${pullRequestLink}: ${note.summary}${contributorSuffix}`;
     });
     const isBackend = getRepoName(request.repo) === '6529seize-backend';
     const serviceLines =
@@ -357,10 +395,15 @@ export class ReleaseNoteGenerationService {
       })),
       mentioned_groups: [],
       referenced_nfts: [],
-      metadata: [],
+      metadata: [
+        {
+          data_key: RELEASE_NOTE_ID_METADATA_KEY,
+          data_value: publicationId
+        }
+      ],
       signature: null,
       is_safe_signature: false,
-      wave_id: env.getStringOrThrow('CI_RELEASES_WAVE_ID')
+      wave_id: waveId
     };
   }
 

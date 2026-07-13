@@ -429,6 +429,7 @@ main() {
 
   ensure_command git
   ensure_command gh
+  ensure_command node
   open_tty
   trap cleanup_on_exit EXIT
   trap handle_interrupt INT TERM

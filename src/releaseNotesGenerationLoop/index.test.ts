@@ -155,4 +155,23 @@ describe('processRequest', () => {
       'release-note:6529seize-backend:backend-release:abc123:processing'
     );
   });
+
+  it('sanitizes the deployed SHA in Redis keys', async () => {
+    const redis = buildRedis(['api', 'worker']);
+
+    await processRequest(
+      { ...request, sha: 'abc:123' },
+      {
+        redis: redis as any,
+        generateAndPost: jest.fn().mockResolvedValue(undefined)
+      }
+    );
+
+    expect(redis.set).toHaveBeenNthCalledWith(
+      1,
+      'release-note:6529seize-backend:backend-release:abc-123:processing',
+      '1',
+      { NX: true, EX: 1200 }
+    );
+  });
 });
