@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE
@@ -19,6 +19,9 @@ export class WaveDecisionEntity {
 }
 
 @Entity(WAVES_DECISION_WINNER_DROPS_TABLE)
+@Index('wave_decision_winner_drops_meme_card_id_unique', ['meme_card_id'], {
+  unique: true
+})
 export class WaveDecisionWinnerDropEntity {
   @PrimaryColumn({ type: 'bigint', nullable: false })
   readonly decision_time!: number;
@@ -37,6 +40,9 @@ export class WaveDecisionWinnerDropEntity {
 
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string;
+
+  @Column({ type: 'int', unsigned: true, nullable: true })
+  readonly meme_card_id?: number | null;
 }
 
 export interface WaveDecisionWinnerDropWithSaleEntity extends WaveDecisionWinnerDropEntity {

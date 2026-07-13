@@ -850,7 +850,7 @@ import { ApiSessionWebResponse    , ApiSessionWebResponseClientTypeEnum   } from
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
 import { ApiSetProfileWaveRequest } from '../models/ApiSetProfileWaveRequest';
 import { ApiStartMultipartMediaUploadResponse     } from '../models/ApiStartMultipartMediaUploadResponse';
-import { ApiSubmissionDropContext       } from '../models/ApiSubmissionDropContext';
+import { ApiSubmissionDropContext        } from '../models/ApiSubmissionDropContext';
 import { ApiSubmissionDropStatus } from '../models/ApiSubmissionDropStatus';
 import { ApiSubmissionDropVoting } from '../models/ApiSubmissionDropVoting';
 import { ApiSubmissionDropVotingContextProfileContext } from '../models/ApiSubmissionDropVotingContextProfileContext';
