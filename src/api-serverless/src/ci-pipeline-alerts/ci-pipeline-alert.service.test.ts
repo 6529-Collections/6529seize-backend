@@ -217,7 +217,9 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[PROD] Deploy Failed',
+                  '[PROD] Seize PROD WEB DEPLOY: CI pipeline is broken!!! ❌',
+                  '',
+                  'abc123 - Fix deploy',
                   '',
                   'cc @[ALICE] @[Bob]',
                   '',
@@ -270,7 +272,9 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[STAGING] Deploy Succeeded',
+                  '[STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+                  '',
+                  'abc123 - Fix deploy',
                   '',
                   'Service: Frontend - web',
                   'Workflow: Web Deploy - PROD',
@@ -290,7 +294,9 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[STAGING] Deploy Succeeded',
+        '[STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+        '',
+        'abc123 - Fix deploy',
         '',
         'Service: Frontend - web',
         'Workflow: Web Deploy - PROD',
@@ -309,5 +315,42 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).not.toContain('cc @[');
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
+  });
+
+  it('formats desktop alerts with the product label and existing emoji', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        status: 'success',
+        title: 'Desktop Publish completed 🚀',
+        description:
+          'Production v0.3.11 publish completed with S3 and Arweave links published and CloudFront invalidated.',
+        branch: 'v0.3.11',
+        service: 'desktop'
+      },
+      {}
+    );
+
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain(
+      [
+        '[PROD] Desktop Publish completed 🚀 ✅',
+        '',
+        'Production v0.3.11 publish completed with S3 and Arweave links published and CloudFront invalidated.',
+        '',
+        'Service: 6529 Desktop',
+        'Workflow: Publish',
+        'Branch: v0.3.11'
+      ].join('\n')
+    );
   });
 });
