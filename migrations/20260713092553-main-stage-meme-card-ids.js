@@ -11,7 +11,7 @@ function parsePositiveInteger(value, label) {
 exports.up = async function(db) {
   var mainStageWaveId = process.env.MAIN_STAGE_WAVE_ID;
   if (!mainStageWaveId) {
-    throw new Error('MAIN_STAGE_WAVE_ID is required for the Meme card backfill');
+    return;
   }
   var anchors = await db.runSql(
     `select wd.drop_id, mc.claim_id

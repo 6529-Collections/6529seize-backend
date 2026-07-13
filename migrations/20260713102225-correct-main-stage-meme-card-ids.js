@@ -11,7 +11,7 @@ function parsePositiveInteger(value, label) {
 exports.up = async function(db) {
   var mainStageWaveId = process.env.MAIN_STAGE_WAVE_ID;
   if (!mainStageWaveId) {
-    throw new Error('MAIN_STAGE_WAVE_ID is required for the Meme card correction');
+    return;
   }
 
   await db.runSql(
