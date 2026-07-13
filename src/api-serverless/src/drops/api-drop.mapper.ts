@@ -163,7 +163,10 @@ export class ApiDropMapper {
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
       const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
-      const competitionDropContexts = mainStageWaveId
+      // mapDrops only enriches entities that its caller has already authorized
+      // for this response. These flags are display metadata, never access
+      // control; the lazy full-entry endpoint performs its own wave check.
+      const visibleCompetitionDropContexts = mainStageWaveId
         ? entities.filter((drop) => drop.wave_id !== mainStageWaveId)
         : entities;
 
@@ -225,7 +228,7 @@ export class ApiDropMapper {
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.findAuthorWaveParticipationByDropContexts(
-          competitionDropContexts,
+          visibleCompetitionDropContexts,
           ctx
         ),
         this.dropsDb.getDropPartOnes(dropIds, ctx),

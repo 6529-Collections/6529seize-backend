@@ -181,7 +181,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         `
           select wave_id,
                  author_id,
-                 max(case when drop_type = :participant_type then 1 else 0 end) as is_participant,
+                 max(case when drop_type in (:participant_type, :winner_type) then 1 else 0 end) as is_participant,
                  max(case when drop_type = :winner_type then 1 else 0 end) as is_winner
           from ${DROPS_TABLE}
           where wave_id in (:wave_ids)

@@ -77,7 +77,9 @@ describe('DropsDb', () => {
     });
     expect(execute).toHaveBeenCalledTimes(1);
     const [sql, params, options] = execute.mock.calls[0];
-    expect(sql).toContain('max(case when drop_type = :participant_type');
+    expect(sql).toContain(
+      'max(case when drop_type in (:participant_type, :winner_type)'
+    );
     expect(sql).toContain('max(case when drop_type = :winner_type');
     expect(sql).toContain('wave_id in (:wave_ids)');
     expect(sql).toContain('author_id in (:author_ids)');
@@ -91,6 +93,39 @@ describe('DropsDb', () => {
       winner_type: DropType.WINNER
     });
     expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
+  it('treats a promoted winner row as both participant and winner', async () => {
+    const execute = jest.fn().mockResolvedValue([
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        is_participant: 1,
+        is_winner: 1
+      }
+    ]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findAuthorWaveParticipationByDropContexts(
+      [{ wave_id: 'wave-1', author_id: 'author-1' }],
+      {
+        connection: { connection: {} } as any,
+        timer: undefined
+      }
+    );
+
+    expect(result['wave-1']?.['author-1']).toEqual({
+      is_participant: true,
+      is_winner: true
+    });
+    expect(execute.mock.calls[0]?.[0]).toContain(
+      'drop_type in (:participant_type, :winner_type)'
+    );
   });
 
   it('does not query participation for an empty drop context list', async () => {
