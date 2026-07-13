@@ -403,10 +403,28 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
         `update ${WAVES_DECISION_WINNER_DROPS_TABLE}
          set meme_card_id = :memeCardId
          where wave_id = :mainStageWaveId
-           and drop_id = :dropId`,
+           and drop_id = :dropId
+           and (meme_card_id is null or meme_card_id = :memeCardId)`,
         { dropId, memeCardId, mainStageWaveId },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
+      const rows = await this.db.execute<{ meme_card_id: number | null }>(
+        `select meme_card_id
+         from ${WAVES_DECISION_WINNER_DROPS_TABLE}
+         where wave_id = :mainStageWaveId
+           and drop_id = :dropId`,
+        { dropId, mainStageWaveId },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      const persistedMemeCardId = rows[0]?.meme_card_id;
+      if (Number(persistedMemeCardId) !== memeCardId) {
+        throw new Error(
+          `Cannot assign Meme card ${memeCardId} to drop ${dropId}: ` +
+            (persistedMemeCardId == null
+              ? 'Main Stage winner not found'
+              : `already assigned to Meme card ${persistedMemeCardId}`)
+        );
+      }
     } finally {
       ctx.timer?.stop(timerName);
     }
