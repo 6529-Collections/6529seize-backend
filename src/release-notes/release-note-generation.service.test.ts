@@ -1,0 +1,155 @@
+import { AiPrompter } from '@/abusiveness/ai-prompter';
+import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
+import { IdentitiesDb } from '@/identities/identities.db';
+import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
+import {
+  GitHubReleaseContext,
+  ReleaseNoteGitHubService
+} from './release-note-github.service';
+import { ReleaseNoteGenerationService } from './release-note-generation.service';
+
+const request: ReleaseNoteGenerationRequest = {
+  repo: '6529-Collections/6529seize-backend',
+  workflow: 'Deploy a service',
+  run_id: '123',
+  run_number: '45',
+  run_url:
+    'https://github.com/6529-Collections/6529seize-backend/actions/runs/123',
+  sha: 'current-sha',
+  branch: 'main',
+  environment: 'prod',
+  service: 'api',
+  prompt: 'Return JSON release notes.',
+  release_group_id: 'backend-release',
+  release_group_services: ['api', 'pushNotificationsHandler'],
+  deployed_at: '2026-07-13T11:38:00.000Z'
+};
+
+const context: GitHubReleaseContext = {
+  previous_sha: 'previous-sha',
+  current_sha: 'current-sha',
+  pull_requests: [
+    {
+      number: 42,
+      url: 'https://github.com/6529-Collections/6529seize-backend/pull/42',
+      title: 'Improve notifications',
+      body: 'Makes notification delivery more reliable.',
+      contributors: ['Alice'],
+      commit_messages: ['Improve notifications'],
+      changed_files: [
+        {
+          filename: 'src/api-serverless/src/notifications/routes.ts',
+          additions: 10,
+          deletions: 2,
+          changes: 12
+        }
+      ],
+      candidate_services: ['api']
+    }
+  ]
+};
+
+describe('ReleaseNoteGenerationService', () => {
+  const originalBotProfileId = process.env.CI_PIPELINES_BOT_PROFILE_ID;
+  const originalWaveId = process.env.CI_RELEASES_WAVE_ID;
+
+  beforeEach(() => {
+    process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
+    process.env.CI_RELEASES_WAVE_ID = 'releases-wave';
+  });
+
+  afterAll(() => {
+    if (originalBotProfileId === undefined) {
+      delete process.env.CI_PIPELINES_BOT_PROFILE_ID;
+    } else {
+      process.env.CI_PIPELINES_BOT_PROFILE_ID = originalBotProfileId;
+    }
+    if (originalWaveId === undefined) {
+      delete process.env.CI_RELEASES_WAVE_ID;
+    } else {
+      process.env.CI_RELEASES_WAVE_ID = originalWaveId;
+    }
+  });
+
+  it('renders validated summaries, service labels, PR links, and 6529 mentions', async () => {
+    const getReleaseContext = jest.fn().mockResolvedValue(context);
+    const promptAndGetReply = jest.fn().mockResolvedValue(
+      JSON.stringify({
+        pull_requests: [
+          {
+            number: 42,
+            summary: 'Made notification delivery more reliable.'
+          }
+        ]
+      })
+    );
+    const createDrop = jest.fn().mockResolvedValue({});
+    const getIdsByHandles = jest
+      .fn()
+      .mockResolvedValue({ alice6529: 'alice-profile' });
+    const service = new ReleaseNoteGenerationService(
+      { getReleaseContext } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      { getIdsByHandles } as unknown as IdentitiesDb,
+      { alice: 'alice6529' }
+    );
+
+    await service.generateAndPost(request, {});
+
+    expect(promptAndGetReply).toHaveBeenCalledWith(
+      expect.stringContaining('<release_context>')
+    );
+    expect(createDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorId: 'bot-profile',
+        representativeId: 'bot-profile',
+        hideLinkPreview: true,
+        createDropRequest: expect.objectContaining({
+          wave_id: 'releases-wave',
+          mentioned_users: [
+            {
+              mentioned_profile_id: 'alice-profile',
+              handle_in_content: 'alice6529'
+            }
+          ],
+          parts: [
+            expect.objectContaining({
+              content: expect.stringContaining(
+                '- Made notification delivery more reliable. — @[alice6529] ([PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42))'
+              )
+            })
+          ]
+        })
+      }),
+      expect.any(Object)
+    );
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).toContain(
+      'Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+    );
+    expect(content).toContain(
+      'Services affected: api, pushNotificationsHandler'
+    );
+  });
+
+  it('rejects a model response that omits a pull request', async () => {
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue(context)
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest
+          .fn()
+          .mockResolvedValue(JSON.stringify({ pull_requests: [] }))
+      },
+      { createDrop: jest.fn() } as unknown as DropCreationApiService,
+      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb
+    );
+
+    await expect(service.generateAndPost(request, {})).rejects.toThrow(
+      'did not include every pull request'
+    );
+  });
+});

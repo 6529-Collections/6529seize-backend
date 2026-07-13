@@ -41,7 +41,19 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .lowercase()
       .valid('staging', 'prod', 'production')
       .required(),
-    service: Joi.string().trim().max(200).allow(null, '').optional()
+    service: Joi.string().trim().max(200).allow(null, '').optional(),
+    release_notes_prompt: Joi.string()
+      .trim()
+      .max(20000)
+      .allow(null, '')
+      .optional(),
+    release_group_id: Joi.string().trim().max(200).allow(null, '').optional(),
+    release_group_services: Joi.array()
+      .items(Joi.string().trim().min(1).max(200))
+      .min(1)
+      .max(100)
+      .optional(),
+    deployed_at: Joi.string().isoDate().allow(null, '').optional()
   }).unknown(false);
 
 type SignatureVerificationResult =

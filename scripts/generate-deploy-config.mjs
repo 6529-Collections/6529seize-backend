@@ -69,6 +69,14 @@ ${indent(yamlList(['staging', 'prod']))}
         default: ${config.default_service}
         options:
 ${indent(yamlList(serviceNames))}
+      release_group_id:
+        type: string
+        description: 'Optional shared release id for grouped service deploys'
+        required: false
+      release_group_services:
+        type: string
+        description: 'Optional comma-separated services in the release group'
+        required: false
 
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
@@ -283,6 +291,9 @@ jobs:
           CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline complete
           CI_PIPELINES_ENVIRONMENT: \${{ github.event.inputs.environment }}
           CI_PIPELINES_SERVICE: \${{ github.event.inputs.service }}
+          CI_RELEASE_NOTES_PROMPT_PATH: ops/release-notes/release-notes.prompt.md
+          CI_RELEASE_GROUP_ID: \${{ github.event.inputs.release_group_id }}
+          CI_RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
         run: node scripts/notify-ci-wave.mjs
 `;
 }

@@ -43,6 +43,7 @@ describe('CiPipelineAlertService', () => {
     toggleHideLinkPreview: jest.Mock;
   };
   let identitiesRepository: { getIdsByHandles: jest.Mock };
+  let releaseNotesQueue: { enqueueBestEffort: jest.Mock };
 
   beforeEach(() => {
     originalEnv = {
@@ -66,6 +67,9 @@ describe('CiPipelineAlertService', () => {
         ALICE: 'profile-1',
         Bob: 'profile-2'
       })
+    };
+    releaseNotesQueue = {
+      enqueueBestEffort: jest.fn().mockResolvedValue(undefined)
     };
   });
 
@@ -317,6 +321,47 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).not.toContain('cc @[');
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
+  });
+
+  it('enqueues release-note generation after posting an eligible production success', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        release_notes_prompt: 'Generate release notes.',
+        release_group_id: 'frontend-release',
+        release_group_services: ['web'],
+        deployed_at: '2026-07-13T11:38:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith({
+      repo: baseRequest.repo,
+      workflow: baseRequest.workflow,
+      run_id: baseRequest.run_id,
+      run_number: baseRequest.run_number,
+      run_url: baseRequest.run_url,
+      sha: baseRequest.sha,
+      branch: baseRequest.branch,
+      environment: 'prod',
+      service: baseRequest.service,
+      prompt: 'Generate release notes.',
+      release_group_id: 'frontend-release',
+      release_group_services: ['web'],
+      deployed_at: '2026-07-13T11:38:00.000Z'
+    });
+    expect(
+      dropCreationApiService.createDrop.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      releaseNotesQueue.enqueueBestEffort.mock.invocationCallOrder[0]
+    );
   });
 
   it('formats desktop alerts with the product label and existing emoji', async () => {
