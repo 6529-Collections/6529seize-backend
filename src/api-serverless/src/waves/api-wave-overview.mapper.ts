@@ -572,6 +572,7 @@ export class ApiWaveOverviewMapper {
           groupIdsUserIsEligibleFor.includes(wave.chat_group_id)) &&
         nextDropAllowed === undefined,
       unread_drops: unreadDropsCount,
+      subwave_unread_drops: followedSubwaveContext?.subwave_unread_drops ?? 0,
       followed_subwaves_count:
         followedSubwaveContext?.followed_subwaves_count ?? 0,
       hidden_followed_subwave_unread_drops:
