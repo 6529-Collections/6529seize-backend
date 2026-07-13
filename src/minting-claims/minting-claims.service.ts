@@ -27,7 +27,10 @@ import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
 import { env } from '@/env';
-import { waveDecisionsDb, WaveDecisionsDb } from '@/waves/wave-decisions.db';
+import {
+  memeCardDropMappingsDb,
+  MemeCardDropMappingsDb
+} from '@/minting-claims/meme-card-drop-mappings.db';
 
 const MEME_CALENDAR_API_BASE = 'https://6529.io/api/meme-calendar';
 const MEME_CALENDAR_TIMEOUT_MS = 10_000;
@@ -132,7 +135,7 @@ export class MintingClaimsService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly mintingClaimsDb: MintingClaimsDb,
-    private readonly waveDecisionsDb: WaveDecisionsDb,
+    private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
     private readonly mainStageWaveId: string | null
   ) {}
 
@@ -187,7 +190,7 @@ export class MintingClaimsService {
     const enriched = await this.enrichRowWithComputedDetails(row);
     await this.mintingClaimsDb.createMintingClaim([enriched], ctx);
     if (this.mainStageWaveId) {
-      await this.waveDecisionsDb.setMemeCardIdForDrop(
+      await this.memeCardDropMappingsDb.setMemeCardIdForDrop(
         dropId,
         nextClaimId,
         this.mainStageWaveId,
@@ -312,6 +315,6 @@ export class MintingClaimsService {
 export const mintingClaimsService = new MintingClaimsService(
   dropsDb,
   mintingClaimsDb,
-  waveDecisionsDb,
+  memeCardDropMappingsDb,
   env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );

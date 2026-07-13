@@ -95,6 +95,10 @@ import {
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
 import { waveDecisionsDb, WaveDecisionsDb } from '@/waves/wave-decisions.db';
+import {
+  memeCardDropMappingsDb,
+  MemeCardDropMappingsDb
+} from '@/minting-claims/meme-card-drop-mappings.db';
 import { env } from '@/env';
 
 type VoteRangeByDropId = Record<
@@ -127,6 +131,7 @@ export class ApiDropMapper {
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly waveDecisionsDb: WaveDecisionsDb,
+    private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
     private readonly mainStageWaveId: string | null
   ) {}
 
@@ -297,9 +302,8 @@ export class ApiDropMapper {
           : Promise.resolve({} as Record<string, number>),
         this.dropPollsDb.findPollsByDropIds(dropIds, ctx),
         this.mainStageWaveId && mainStageWinnerDropIds.length
-          ? this.waveDecisionsDb.findMemeCardIdsByDropIds(
+          ? this.memeCardDropMappingsDb.findMemeCardIdsByDropIds(
               mainStageWinnerDropIds,
-              this.mainStageWaveId,
               ctx
             )
           : Promise.resolve({} as Record<string, number>)
@@ -886,5 +890,6 @@ export const apiDropMapper = new ApiDropMapper(
   nftLinksDb,
   nftLinkResolvingService,
   waveDecisionsDb,
+  memeCardDropMappingsDb,
   env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );

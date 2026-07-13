@@ -111,7 +111,8 @@ function createMapper() {
   const nftLinkResolvingService = {
     refreshStaleTrackingForUrls: jest.fn().mockResolvedValue(undefined)
   };
-  const waveDecisionsDb = {
+  const waveDecisionsDb = {};
+  const memeCardDropMappingsDb = {
     findMemeCardIdsByDropIds: jest.fn().mockResolvedValue({})
   };
 
@@ -134,6 +135,7 @@ function createMapper() {
       nftLinksDb as any,
       nftLinkResolvingService as any,
       waveDecisionsDb as any,
+      memeCardDropMappingsDb as any,
       'main-stage-wave'
     ),
     deps: {
@@ -153,7 +155,8 @@ function createMapper() {
       dropNftLinksDb,
       nftLinksDb,
       nftLinkResolvingService,
-      waveDecisionsDb
+      waveDecisionsDb,
+      memeCardDropMappingsDb
     }
   };
 }
@@ -644,7 +647,7 @@ describe('ApiDropMapper', () => {
         forbid_negative_votes: false
       }
     });
-    deps.waveDecisionsDb.findMemeCardIdsByDropIds.mockResolvedValue({
+    deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds.mockResolvedValue({
       'main-stage-winner': 521
     });
 
@@ -652,11 +655,9 @@ describe('ApiDropMapper', () => {
       authenticationContext: AuthenticationContext.notAuthenticated()
     });
 
-    expect(deps.waveDecisionsDb.findMemeCardIdsByDropIds).toHaveBeenCalledWith(
-      ['main-stage-winner'],
-      'main-stage-wave',
-      expect.any(Object)
-    );
+    expect(
+      deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds
+    ).toHaveBeenCalledWith(['main-stage-winner'], expect.any(Object));
     expect(result['main-stage-winner'].submission_context).toMatchObject({
       status: ApiSubmissionDropStatus.Winner,
       meme_card_id: 521
