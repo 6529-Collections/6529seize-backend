@@ -1,5 +1,7 @@
 'use strict';
 
+/* global exports, process */
+
 function parsePositiveInteger(value, label) {
   var parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1) {

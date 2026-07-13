@@ -1,5 +1,7 @@
 'use strict';
 
+/* global exports */
+
 function ignoreMysqlError(promise, ignoredCodes) {
   return promise.catch(function(error) {
     if (error && ignoredCodes.indexOf(error.code) !== -1) {
@@ -18,7 +20,7 @@ exports.up = function(db) {
   ).then(function() {
     return ignoreMysqlError(
       db.runSql(
-        'ALTER TABLE wave_decision_winner_drops ADD UNIQUE INDEX wave_decision_winner_drops_meme_card_id_unique (meme_card_id), ALGORITHM=INPLACE, LOCK=NONE'
+        'ALTER TABLE wave_decision_winner_drops ADD UNIQUE INDEX wave_decision_winner_drops_meme_card_id_unique (meme_card_id)'
       ),
       ['ER_DUP_KEYNAME']
     );
