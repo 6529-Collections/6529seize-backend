@@ -60,8 +60,14 @@ function normalizeSummary(value: unknown): string | null {
 
 function parseJsonReply(reply: string): unknown {
   const trimmed = reply.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  return JSON.parse(fenced?.[1] ?? trimmed);
+  if (!trimmed.startsWith('```')) {
+    return JSON.parse(trimmed);
+  }
+  const contentStart = trimmed.indexOf('\n');
+  if (contentStart < 0 || !trimmed.endsWith('```')) {
+    throw new TypeError('Invalid fenced release notes response');
+  }
+  return JSON.parse(trimmed.slice(contentStart + 1, -3).trim());
 }
 
 function formatMarkdownLink(label: string, url: string): string {
@@ -86,7 +92,7 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
   );
   const deployedAt = new Date(request.deployed_at);
   if (Number.isNaN(deployedAt.getTime())) {
-    throw new Error(`Invalid release deployed_at ${request.deployed_at}`);
+    throw new TypeError(`Invalid release deployed_at ${request.deployed_at}`);
   }
   const formattedDate = new Intl.DateTimeFormat('en-US', {
     month: 'short',
@@ -323,7 +329,8 @@ export class ReleaseNoteGenerationService {
         `PR #${note.number}`,
         pullRequest.url
       );
-      return `- ${note.summary} — ${credits ? `${credits} ` : ''}(${pullRequestLink})`;
+      const formattedCredits = credits ? `${credits} ` : '';
+      return `- ${note.summary} — ${formattedCredits}(${pullRequestLink})`;
     });
     const isBackend = getRepoName(request.repo) === '6529seize-backend';
     const serviceLines =

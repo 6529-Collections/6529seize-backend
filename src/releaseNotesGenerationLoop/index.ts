@@ -1,7 +1,10 @@
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
 import { releaseNoteGenerationService } from '@/release-notes/release-note-generation.service';
-import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
+import {
+  RELEASE_NOTE_DEPLOYED_AT_PATTERN,
+  ReleaseNoteGenerationRequest
+} from '@/release-notes/release-note-generation-queue';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import type { SQSHandler } from 'aws-lambda';
@@ -31,7 +34,7 @@ function requireTimestamp(
 ): string {
   const value = requireString(payload, field);
   if (
-    !/T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
+    !RELEASE_NOTE_DEPLOYED_AT_PATTERN.test(value) ||
     Number.isNaN(new Date(value).getTime())
   ) {
     throw new Error(
@@ -73,7 +76,7 @@ export function parseReleaseNoteMessage(
 
 function parseServices(value: unknown): string[] {
   if (!Array.isArray(value)) {
-    throw new Error(
+    throw new TypeError(
       'Invalid release note message: release_group_services is required'
     );
   }
@@ -117,8 +120,8 @@ export async function isReleaseGroupComplete(
     completedServices.has(expectedService)
   );
   if (!isComplete) {
-    logger.info(
-      `Release group ${request.release_group_id} is waiting for ${request.release_group_services.filter((expectedService) => !completedServices.has(expectedService)).join(', ')}`
+    logger.warn(
+      `Release group ${request.release_group_id} is incomplete and will not publish until these services succeed: ${request.release_group_services.filter((expectedService) => !completedServices.has(expectedService)).join(', ')}`
     );
   }
   return isComplete;

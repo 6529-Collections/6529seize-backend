@@ -75,14 +75,14 @@ describe('ReleaseNoteGenerationService', () => {
     const getReleaseContext = jest.fn().mockResolvedValue(context);
     const getReleasePrompt = jest.fn().mockResolvedValue('Repository prompt.');
     const promptAndGetReply = jest.fn().mockResolvedValue(
-      JSON.stringify({
+      `\`\`\`json\n${JSON.stringify({
         pull_requests: [
           {
             number: 42,
             summary: 'Made notification delivery more reliable.'
           }
         ]
-      })
+      })}\n\`\`\``
     );
     const createDrop = jest.fn().mockResolvedValue({});
     const getIdsByHandles = jest

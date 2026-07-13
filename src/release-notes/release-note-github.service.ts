@@ -75,10 +75,18 @@ export interface GitHubReleaseContext {
   readonly pull_requests: ReleasePullRequestContext[];
 }
 
+interface AggregatedPullRequest {
+  readonly pullRequest: GitHubPullRequest;
+  readonly commitMessages: Set<string>;
+  readonly contributors: Set<string>;
+}
+
 const MAX_COMPARE_PAGES = 3;
 const MAX_FILE_PAGES = 3;
 const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
+const FRONTEND_REPO = '6529seize-frontend';
+const FRONTEND_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
 const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
 const MAX_PULL_REQUESTS = 100;
 const MAX_TOTAL_CHANGED_FILES = 3000;
@@ -101,14 +109,54 @@ function normalizeBranch(branch: string | null | undefined): string {
   return trimmed || 'main';
 }
 
-function isMatchingBackendRun(
+function isMatchingProductionRun(
   run: GitHubWorkflowRun,
   request: ReleaseNoteGenerationRequest
 ): boolean {
-  if (getRepoName(request.repo) !== BACKEND_REPO) {
-    return true;
+  const repoName = getRepoName(request.repo);
+  if (repoName === BACKEND_REPO) {
+    return run.display_title.endsWith(' to prod');
   }
-  return run.display_title.endsWith(' to prod');
+  if (repoName === FRONTEND_REPO) {
+    return (
+      request.workflow === FRONTEND_PRODUCTION_WORKFLOW &&
+      run.name === FRONTEND_PRODUCTION_WORKFLOW
+    );
+  }
+  return false;
+}
+
+function mergeAssociatedPullRequests(
+  pullRequests: Map<number, AggregatedPullRequest>,
+  branch: string,
+  commit: GitHubCommit,
+  associatedPullRequests: GitHubPullRequest[]
+): void {
+  for (const pullRequest of associatedPullRequests) {
+    if (!pullRequest.merged_at || pullRequest.base?.ref !== branch) {
+      continue;
+    }
+    const existing = pullRequests.get(pullRequest.number) ?? {
+      pullRequest,
+      commitMessages: new Set<string>(),
+      contributors: new Set<string>()
+    };
+    const contributors = [
+      pullRequest.user?.login?.trim(),
+      commit.author?.login?.trim()
+    ].filter((login): login is string => Boolean(login));
+    contributors.forEach((login) => existing.contributors.add(login));
+    const message = commit.commit?.message?.trim();
+    if (message) {
+      existing.commitMessages.add(message);
+    }
+    pullRequests.set(pullRequest.number, existing);
+    if (pullRequests.size > MAX_PULL_REQUESTS) {
+      throw new Error(
+        `Release range exceeds maximum of ${MAX_PULL_REQUESTS} pull requests`
+      );
+    }
+  }
 }
 
 function collectCandidateServices(
@@ -286,7 +334,7 @@ export class ReleaseNoteGitHubService {
           run.name === request.workflow &&
           (!Number.isFinite(currentRunNumber) ||
             run.run_number < currentRunNumber) &&
-          isMatchingBackendRun(run, request)
+          isMatchingProductionRun(run, request)
       ) ?? null
     );
   }
@@ -339,14 +387,35 @@ export class ReleaseNoteGitHubService {
     commits: GitHubCommit[],
     deployedServices: string[]
   ): Promise<ReleasePullRequestContext[]> {
-    const pullRequests = new Map<
-      number,
-      {
-        pullRequest: GitHubPullRequest;
-        commitMessages: Set<string>;
-        contributors: Set<string>;
-      }
-    >();
+    const pullRequests = await this.collectPullRequests(
+      repository,
+      branch,
+      commits
+    );
+    const contexts = await this.buildPullRequestContexts(
+      repository,
+      Array.from(pullRequests.values()),
+      deployedServices
+    );
+    const totalChangedFiles = contexts.reduce(
+      (total, context) => total + context.changed_files.length,
+      0
+    );
+    if (totalChangedFiles > MAX_TOTAL_CHANGED_FILES) {
+      throw new Error(
+        `Release context exceeds maximum of ${MAX_TOTAL_CHANGED_FILES} changed files`
+      );
+    }
+
+    return contexts.sort((a, b) => a.number - b.number);
+  }
+
+  private async collectPullRequests(
+    repository: string,
+    branch: string,
+    commits: GitHubCommit[]
+  ): Promise<Map<number, AggregatedPullRequest>> {
+    const pullRequests = new Map<number, AggregatedPullRequest>();
 
     for (
       let index = 0;
@@ -362,82 +431,69 @@ export class ReleaseNoteGitHubService {
         )
       );
       for (let batchIndex = 0; batchIndex < commitBatch.length; batchIndex++) {
-        const commit = commitBatch[batchIndex];
-        for (const pullRequest of associatedBatch[batchIndex]) {
-          if (!pullRequest.merged_at || pullRequest.base?.ref !== branch) {
-            continue;
-          }
-          const existing = pullRequests.get(pullRequest.number) ?? {
-            pullRequest,
-            commitMessages: new Set<string>(),
-            contributors: new Set<string>()
-          };
-          const pullRequestAuthor = pullRequest.user?.login?.trim();
-          const commitAuthor = commit.author?.login?.trim();
-          if (pullRequestAuthor) {
-            existing.contributors.add(pullRequestAuthor);
-          }
-          if (commitAuthor) {
-            existing.contributors.add(commitAuthor);
-          }
-          const message = commit.commit?.message?.trim();
-          if (message) {
-            existing.commitMessages.add(message);
-          }
-          pullRequests.set(pullRequest.number, existing);
-          if (pullRequests.size > MAX_PULL_REQUESTS) {
-            throw new Error(
-              `Release range exceeds maximum of ${MAX_PULL_REQUESTS} pull requests`
-            );
-          }
-        }
+        mergeAssociatedPullRequests(
+          pullRequests,
+          branch,
+          commitBatch[batchIndex],
+          associatedBatch[batchIndex]
+        );
       }
     }
 
-    const pullRequestValues = Array.from(pullRequests.values());
+    return pullRequests;
+  }
+
+  private async buildPullRequestContexts(
+    repository: string,
+    pullRequests: AggregatedPullRequest[],
+    deployedServices: string[]
+  ): Promise<ReleasePullRequestContext[]> {
     const contexts: ReleasePullRequestContext[] = [];
     for (
       let index = 0;
-      index < pullRequestValues.length;
+      index < pullRequests.length;
       index += MAX_GITHUB_CONCURRENCY
     ) {
       const contextBatch = await Promise.all(
-        pullRequestValues
+        pullRequests
           .slice(index, index + MAX_GITHUB_CONCURRENCY)
-          .map(async ({ pullRequest, commitMessages, contributors }) => {
-            const files = await this.getPullRequestFiles(
+          .map((pullRequest) =>
+            this.buildPullRequestContext(
               repository,
-              pullRequest.number
-            );
-            return {
-              number: pullRequest.number,
-              url: pullRequest.html_url,
-              title: pullRequest.title,
-              body: pullRequest.body,
-              contributors: Array.from(contributors),
-              commit_messages: Array.from(commitMessages),
-              changed_files: files,
-              candidate_services: collectCandidateServices(
-                repository,
-                files,
-                deployedServices
-              )
-            };
-          })
+              pullRequest,
+              deployedServices
+            )
+          )
       );
       contexts.push(...contextBatch);
     }
-    const totalChangedFiles = contexts.reduce(
-      (total, context) => total + context.changed_files.length,
-      0
-    );
-    if (totalChangedFiles > MAX_TOTAL_CHANGED_FILES) {
-      throw new Error(
-        `Release context exceeds maximum of ${MAX_TOTAL_CHANGED_FILES} changed files`
-      );
-    }
+    return contexts;
+  }
 
-    return contexts.sort((a, b) => a.number - b.number);
+  private async buildPullRequestContext(
+    repository: string,
+    aggregate: AggregatedPullRequest,
+    deployedServices: string[]
+  ): Promise<ReleasePullRequestContext> {
+    const { pullRequest, commitMessages, contributors } = aggregate;
+    const files = await this.getPullRequestFiles(
+      repository,
+      pullRequest.number
+    );
+    return {
+      number: pullRequest.number,
+      url: pullRequest.html_url,
+      title: pullRequest.title,
+      body: pullRequest.body,
+      contributors: Array.from(contributors),
+      commit_messages: Array.from(commitMessages),
+      changed_files: files,
+      candidate_services: collectCandidateServices(
+        repository,
+        files,
+        deployedServices
+      )
+    };
   }
 
   private async getPullRequestFiles(

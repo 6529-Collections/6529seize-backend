@@ -74,4 +74,33 @@ describe('ReleaseNoteGitHubService', () => {
     ).rejects.toThrow('Unsupported release notes prompt');
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('does not use a frontend non-production run as the release baseline', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { get: jest.fn().mockReturnValue(null) },
+      json: jest.fn().mockResolvedValue({
+        workflow_runs: [
+          {
+            id: 122,
+            name: 'Deploy Staging',
+            display_title: 'Deploy Staging',
+            head_sha: 'previous-sha',
+            run_number: 44
+          }
+        ]
+      })
+    });
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      workflow: 'Deploy Staging',
+      run_number: '45'
+    });
+
+    expect(context).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
 });

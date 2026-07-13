@@ -8,6 +8,7 @@ import { Timer } from '@/time';
 import { asyncRouter } from '@/api/async.router';
 import { ApiResponse } from '@/api/api-response';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
 import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
@@ -56,7 +57,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .optional(),
     deployed_at: Joi.string()
       .isoDate()
-      .pattern(/T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/)
+      .pattern(RELEASE_NOTE_DEPLOYED_AT_PATTERN)
       .strict()
       .allow(null, '')
       .optional()
