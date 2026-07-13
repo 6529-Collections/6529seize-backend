@@ -101,6 +101,37 @@ const betaSubwave = aWave(
   { id: 'wave-sub-beta', serial_no: 12, name: 'Beta Subwave' }
 );
 
+const unfollowedUnreadSubwave = aWave(
+  {
+    created_by: author.profile_id!,
+    parent_wave_id: parentWave.id
+  },
+  { id: 'wave-sub-unfollowed', serial_no: 101, name: 'Unfollowed Subwave' }
+);
+
+const unfollowedOnlyParentWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  {
+    id: 'wave-unfollowed-only-parent',
+    serial_no: 102,
+    name: 'Unfollowed Only Parent'
+  }
+);
+
+const unfollowedOnlySubwave = aWave(
+  {
+    created_by: author.profile_id!,
+    parent_wave_id: unfollowedOnlyParentWave.id
+  },
+  {
+    id: 'wave-unfollowed-only-child',
+    serial_no: 103,
+    name: 'Unfollowed Only Child'
+  }
+);
+
 const hiddenParentWave = aWave(
   {
     created_by: author.profile_id!,
@@ -548,11 +579,14 @@ describeWithSeed(
 describeWithSeed(
   'WavesApiDb followed subwave overview containers',
   [
-    withIdentities([author]),
+    withIdentities([author, unreadReader]),
     withWaves([
       parentWave,
       alphaSubwave,
       betaSubwave,
+      unfollowedUnreadSubwave,
+      unfollowedOnlyParentWave,
+      unfollowedOnlySubwave,
       hiddenParentWave,
       publicSubwaveOfHiddenParent,
       followedRootWave,
@@ -684,6 +718,18 @@ describeWithSeed(
           reader_id: author.profile_id!,
           latest_read_timestamp: 800,
           muted: true
+        },
+        {
+          wave_id: unfollowedUnreadSubwave.id,
+          reader_id: author.profile_id!,
+          latest_read_timestamp: 800,
+          muted: false
+        },
+        {
+          wave_id: unfollowedOnlySubwave.id,
+          reader_id: author.profile_id!,
+          latest_read_timestamp: 800,
+          muted: false
         }
       ]
     },
@@ -723,6 +769,34 @@ describeWithSeed(
           wave_id: betaSubwave.id,
           author_id: author.profile_id!,
           created_at: 1000,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'unfollowed-subwave-unread-drop',
+          wave_id: unfollowedUnreadSubwave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 950,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'unfollowed-only-subwave-unread-drop',
+          wave_id: unfollowedOnlySubwave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 975,
           updated_at: null,
           title: null,
           parts_count: 1,
@@ -790,7 +864,7 @@ describeWithSeed(
       ]);
     });
 
-    it('summarizes hidden followed subwave activity and unread counts', async () => {
+    it('summarizes followed activity and all visible subwave unread counts', async () => {
       const contexts =
         await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
           {
@@ -804,8 +878,29 @@ describeWithSeed(
       expect(contexts[parentWave.id]).toEqual({
         followed_subwaves_count: 2,
         latest_followed_subwave_activity_timestamp: 900,
+        subwave_unread_drops: 1,
         hidden_followed_subwave_unread_drops: 2,
         first_hidden_followed_subwave_unread_drop_serial_no: expect.any(Number)
+      });
+    });
+
+    it('returns subwave unread counts when no child is followed', async () => {
+      const contexts =
+        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+          {
+            identityId: author.profile_id!,
+            parentWaveIds: [unfollowedOnlyParentWave.id],
+            eligibleGroups: []
+          },
+          ctx
+        );
+
+      expect(contexts[unfollowedOnlyParentWave.id]).toEqual({
+        followed_subwaves_count: 0,
+        latest_followed_subwave_activity_timestamp: null,
+        subwave_unread_drops: 1,
+        hidden_followed_subwave_unread_drops: 0,
+        first_hidden_followed_subwave_unread_drop_serial_no: null
       });
     });
 
@@ -959,6 +1054,7 @@ describeWithSeed(
       expect(contexts[mutedContainerParentWave.id]).toEqual({
         followed_subwaves_count: 1,
         latest_followed_subwave_activity_timestamp: null,
+        subwave_unread_drops: 0,
         hidden_followed_subwave_unread_drops: 0,
         first_hidden_followed_subwave_unread_drop_serial_no: null
       });
