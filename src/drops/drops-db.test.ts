@@ -19,6 +19,12 @@ describe('DropsDb', () => {
     const connection = {};
     const execute = jest.fn().mockResolvedValue([
       {
+        wave_id: 'wave-2',
+        author_id: 'author-1',
+        is_participant: 1,
+        is_winner: 0
+      },
+      {
         wave_id: 'wave-1',
         author_id: 'author-1',
         is_participant: 1,
@@ -26,9 +32,9 @@ describe('DropsDb', () => {
       },
       {
         wave_id: 'wave-2',
-        author_id: 'author-2',
+        author_id: 'author-outside-requested-pair',
         is_participant: 1,
-        is_winner: 0
+        is_winner: 1
       }
     ]);
     const repo = new DropsDb(
@@ -42,6 +48,7 @@ describe('DropsDb', () => {
       [
         { wave_id: 'wave-1', author_id: 'author-1' },
         { wave_id: 'wave-1', author_id: 'author-1' },
+        { wave_id: 'wave-2', author_id: 'author-1' },
         { wave_id: 'wave-2', author_id: 'author-2' }
       ],
       {
@@ -58,30 +65,72 @@ describe('DropsDb', () => {
         }
       },
       'wave-2': {
-        'author-2': {
+        'author-1': {
           is_participant: true,
+          is_winner: false
+        },
+        'author-2': {
+          is_participant: false,
           is_winner: false
         }
       }
     });
     expect(execute).toHaveBeenCalledTimes(1);
     const [sql, params, options] = execute.mock.calls[0];
-    expect(sql).toContain(
-      'select :waveId0 as wave_id, :authorId0 as author_id'
-    );
-    expect(sql).toContain(
-      'select :waveId1 as wave_id, :authorId1 as author_id'
-    );
-    expect(sql).toContain("participant.drop_type = 'PARTICIPATORY'");
-    expect(sql).toContain("winner.drop_type = 'WINNER'");
-    expect(sql).toContain('exists(');
+    expect(sql).toContain('max(case when drop_type = :participant_type');
+    expect(sql).toContain('max(case when drop_type = :winner_type');
+    expect(sql).toContain('wave_id in (:wave_ids)');
+    expect(sql).toContain('author_id in (:author_ids)');
+    expect(sql).toContain('group by wave_id, author_id');
+    expect(sql).not.toContain('exists(');
+    expect(sql).not.toContain('union all');
     expect(params).toEqual({
-      waveId0: 'wave-1',
-      authorId0: 'author-1',
-      waveId1: 'wave-2',
-      authorId1: 'author-2'
+      wave_ids: ['wave-1', 'wave-2'],
+      author_ids: ['author-1', 'author-2'],
+      participant_type: DropType.PARTICIPATORY,
+      winner_type: DropType.WINNER
     });
     expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
+  it('does not query participation for an empty drop context list', async () => {
+    const execute = jest.fn();
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findAuthorWaveParticipationByDropContexts([], {
+      connection: { connection: {} } as any,
+      timer: undefined
+    });
+
+    expect(result).toEqual({});
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('hard deletes drops so removed entries cannot affect participation flags', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue(undefined);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.deleteDropEntity('drop-1', {
+      connection: { connection } as any,
+      timer: undefined
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      `delete from ${DROPS_TABLE} where id = :dropId`,
+      { dropId: 'drop-1' },
+      { wrappedConnection: { connection } }
+    );
   });
 
   it('pages full competition drops for one author in one wave', async () => {

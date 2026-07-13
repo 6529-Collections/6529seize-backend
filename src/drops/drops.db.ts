@@ -157,58 +157,58 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         authorIdsByWave.set(dropContext.wave_id, authorIds);
       }
 
-      const params: Record<string, string> = {};
-      const contextRows: string[] = [];
-      let pairIndex = 0;
-      for (const [waveId, authorIds] of Array.from(authorIdsByWave.entries())) {
-        for (const authorId of Array.from(authorIds)) {
-          const waveIdParam = `waveId${pairIndex}`;
-          const authorIdParam = `authorId${pairIndex}`;
-          params[waveIdParam] = waveId;
-          params[authorIdParam] = authorId;
-          contextRows.push(
-            `select :${waveIdParam} as wave_id, :${authorIdParam} as author_id`
-          );
-          pairIndex++;
+      const result: AuthorWaveParticipationByWave = {};
+      const authorIds = new Set<string>();
+      for (const [waveId, waveAuthorIds] of Array.from(
+        authorIdsByWave.entries()
+      )) {
+        result[waveId] = {};
+        for (const authorId of Array.from(waveAuthorIds)) {
+          authorIds.add(authorId);
+          result[waveId][authorId] = {
+            is_participant: false,
+            is_winner: false
+          };
         }
       }
 
       const rows = await this.db.execute<{
         wave_id: string;
         author_id: string;
-        is_participant: boolean | number;
-        is_winner: boolean | number;
+        is_participant: number;
+        is_winner: number;
       }>(
         `
-          select contexts.wave_id,
-                 contexts.author_id,
-                 exists(
-                   select 1 from ${DROPS_TABLE} participant
-                   where participant.wave_id = contexts.wave_id
-                     and participant.drop_type = '${DropType.PARTICIPATORY}'
-                     and participant.author_id = contexts.author_id
-                 ) as is_participant,
-                 exists(
-                   select 1 from ${DROPS_TABLE} winner
-                   where winner.wave_id = contexts.wave_id
-                     and winner.drop_type = '${DropType.WINNER}'
-                     and winner.author_id = contexts.author_id
-                 ) as is_winner
-          from (${contextRows.join(' union all ')}) contexts
+          select wave_id,
+                 author_id,
+                 max(case when drop_type = :participant_type then 1 else 0 end) as is_participant,
+                 max(case when drop_type = :winner_type then 1 else 0 end) as is_winner
+          from ${DROPS_TABLE}
+          where wave_id in (:wave_ids)
+            and author_id in (:author_ids)
+            and drop_type in (:participant_type, :winner_type)
+          group by wave_id, author_id
         `,
-        params,
+        {
+          wave_ids: Array.from(authorIdsByWave.keys()),
+          author_ids: Array.from(authorIds),
+          participant_type: DropType.PARTICIPATORY,
+          winner_type: DropType.WINNER
+        },
         { wrappedConnection: ctx.connection }
       );
 
-      return rows.reduce<AuthorWaveParticipationByWave>((result, row) => {
-        const participationByAuthor = result[row.wave_id] ?? {};
-        participationByAuthor[row.author_id] = {
+      for (const row of rows) {
+        const requestedParticipation = result[row.wave_id]?.[row.author_id];
+        if (!requestedParticipation) {
+          continue;
+        }
+        result[row.wave_id][row.author_id] = {
           is_participant: Boolean(row.is_participant),
           is_winner: Boolean(row.is_winner)
         };
-        result[row.wave_id] = participationByAuthor;
-        return result;
-      }, {});
+      }
+      return result;
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->findAuthorWaveParticipationByDropContexts`

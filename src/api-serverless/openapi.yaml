@@ -9469,8 +9469,8 @@ paths:
         - WavesV2
       summary: Get one author's competition drops in a wave
       description: >-
-        Lazily returns full participatory or winner drops for one author after
-        a wave-scoped competition badge is opened.
+        Lazily returns full participatory or winner drops for one author after a
+        wave-scoped competition badge is opened.
       operationId: getWaveCompetitionDropsV2
       x-6529-router:
         enabled: true
@@ -9489,6 +9489,7 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
             maxLength: 100
         - name: drop_type
           in: query
@@ -12993,9 +12994,6 @@ components:
           nullable: true
         winning_context:
           $ref: "#/components/schemas/ApiDropWinningContext"
-        voting_open:
-          type: boolean
-          description: Whether voting is currently open for this submission.
         wave:
           $ref: "#/components/schemas/ApiWaveMin"
         reply_to:
@@ -13929,9 +13927,6 @@ components:
           nullable: true
         winning_context:
           $ref: "#/components/schemas/ApiDropWinningContext"
-        voting_open:
-          type: boolean
-          description: Whether voting is currently open for this submission.
         reply_to:
           $ref: "#/components/schemas/ApiReplyToDropResponse"
         author:
