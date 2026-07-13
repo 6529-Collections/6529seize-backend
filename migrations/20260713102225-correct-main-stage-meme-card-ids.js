@@ -11,8 +11,16 @@ function parsePositiveInteger(value, label) {
 exports.up = async function(db) {
   var mainStageWaveId = process.env.MAIN_STAGE_WAVE_ID;
   if (!mainStageWaveId) {
-    throw new Error('MAIN_STAGE_WAVE_ID is required for the Meme card backfill');
+    throw new Error('MAIN_STAGE_WAVE_ID is required for the Meme card correction');
   }
+
+  await db.runSql(
+    `update wave_decision_winner_drops
+     set meme_card_id = null
+     where wave_id <> ? and meme_card_id is not null`,
+    [mainStageWaveId]
+  );
+
   var anchors = await db.runSql(
     `select wd.drop_id, mc.claim_id
      from wave_decision_winner_drops wd
@@ -24,6 +32,7 @@ exports.up = async function(db) {
   if (!anchors.length) {
     return;
   }
+
   var winners = await db.runSql(
     `select drop_id, decision_time, ranking, meme_card_id
      from wave_decision_winner_drops
@@ -32,14 +41,14 @@ exports.up = async function(db) {
     [mainStageWaveId]
   );
   if (!winners.length) {
-    throw new Error('No Main Stage winners found for backfill');
+    throw new Error('No Main Stage winners found for correction');
   }
 
   var seenDecisionTimes = new Set();
   var winnerIndexes = new Map();
   winners.forEach(function(winner, index) {
     if (Number(winner.ranking) !== 1) {
-      throw new Error('Main Stage backfill requires exactly one rank-1 winner per decision');
+      throw new Error('Main Stage correction requires exactly one rank-1 winner per decision');
     }
     var decisionTime = String(winner.decision_time);
     if (seenDecisionTimes.has(decisionTime)) {
