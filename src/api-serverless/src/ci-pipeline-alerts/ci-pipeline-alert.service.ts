@@ -104,7 +104,7 @@ function sanitizeAlertText(value: string): string {
 }
 
 function formatAlertHeading(request: CiPipelineAlertRequest): string {
-  const environmentPrefix = `[${formatEnvironmentLabel(request.environment)}] `;
+  const environmentPrefix = formatEnvironmentPrefix(request.environment);
   const statusEmoji = formatStatusEmoji(request.status);
   const statusSuffix = ` ${statusEmoji}`;
   const title = sanitizeAlertText(
@@ -118,6 +118,13 @@ function formatAlertHeading(request: CiPipelineAlertRequest): string {
     MAX_DROP_TITLE_LENGTH - environmentPrefix.length - statusSuffix.length
   );
   return `${environmentPrefix}${truncatedTitle}${statusSuffix}`;
+}
+
+function formatEnvironmentPrefix(value: string | null | undefined): string {
+  const environmentLabel = formatEnvironmentLabel(value);
+  const stagingEmoji =
+    normalizeTargetEnvironment(value) === 'staging' ? ' 🚧' : '';
+  return `[${environmentLabel}${stagingEmoji}] `;
 }
 
 function formatEnvironmentLabel(value: string | null | undefined): string {

@@ -274,7 +274,7 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+                  '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
                   '',
                   'abc123 - Fix deploy',
                   '',
@@ -296,7 +296,7 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+        '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
         '',
         'abc123 - Fix deploy',
         '',
