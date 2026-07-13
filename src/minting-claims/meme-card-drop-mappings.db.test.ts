@@ -5,6 +5,7 @@ import {
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import fc from 'fast-check';
 import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
@@ -32,6 +33,20 @@ describe('MemeCardDropMappingsDb', () => {
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE}`);
     expect(params).toEqual({ dropIds: ['drop-1', 'drop-2'] });
+  });
+
+  it('checks whether a drop is a winner in the configured Main Stage wave', async () => {
+    const execute = jest.fn().mockResolvedValue([{ found: 1 }]);
+    const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.isMainStageWinnerDrop('drop-1', 'main-stage-wave', ctx)
+    ).resolves.toBe(true);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('wave_id = :mainStageWaveId'),
+      { dropId: 'drop-1', mainStageWaveId: 'main-stage-wave' },
+      { wrappedConnection: ctx.connection }
+    );
   });
 
   it('requires runtime mapping writes to share the caller transaction', async () => {
@@ -109,6 +124,56 @@ describe('MemeCardDropMappingsDb', () => {
       'Cannot assign Meme card 521 to drop drop-1: Main Stage winner not found'
     );
   });
+
+  it('preserves mapping outcomes across generated IDs and conflict types', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uuid(),
+        fc.integer({ min: 1, max: 1_000_000 }),
+        fc.constantFrom('exact', 'drop-conflict', 'card-conflict', 'missing'),
+        async (dropId, memeCardId, outcome) => {
+          const otherDropId = `${dropId}-other`;
+          const existingMemeCardId = memeCardId + 1;
+          const rows =
+            outcome === 'exact'
+              ? [{ drop_id: dropId, meme_card_id: memeCardId }]
+              : outcome === 'drop-conflict'
+                ? [{ drop_id: dropId, meme_card_id: existingMemeCardId }]
+                : outcome === 'card-conflict'
+                  ? [{ drop_id: otherDropId, meme_card_id: memeCardId }]
+                  : [];
+          const execute = jest
+            .fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce(rows);
+          const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
+          const promise = repo.setMemeCardIdForDrop(
+            dropId,
+            memeCardId,
+            'main-stage-wave',
+            ctx
+          );
+
+          if (outcome === 'exact') {
+            await expect(promise).resolves.toBeUndefined();
+          } else if (outcome === 'drop-conflict') {
+            await expect(promise).rejects.toThrow(
+              `already assigned to Meme card ${existingMemeCardId}`
+            );
+          } else if (outcome === 'card-conflict') {
+            await expect(promise).rejects.toThrow(
+              `already assigned to drop ${otherDropId}`
+            );
+          } else {
+            await expect(promise).rejects.toThrow(
+              'Main Stage winner not found'
+            );
+          }
+        }
+      ),
+      { numRuns: 40 }
+    );
+  });
 });
 
 describeWithSeed(
@@ -165,6 +230,31 @@ describeWithSeed(
               { timer: undefined, connection }
             )
           ).rejects.toThrow('Main Stage winner not found');
+        }
+      );
+    });
+
+    it('translates a real drop-side unique conflict', async () => {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx: RequestContext = { timer: undefined, connection };
+          await memeCardDropMappingsDb.setMemeCardIdForDrop(
+            'main-stage-drop',
+            520,
+            'main-stage-wave',
+            ctx
+          );
+
+          await expect(
+            memeCardDropMappingsDb.setMemeCardIdForDrop(
+              'main-stage-drop',
+              521,
+              'main-stage-wave',
+              ctx
+            )
+          ).rejects.toThrow(
+            'Cannot assign Meme card 521 to drop main-stage-drop: already assigned to Meme card 520'
+          );
         }
       );
     });

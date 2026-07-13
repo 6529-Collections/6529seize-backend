@@ -1,3 +1,5 @@
+import fc from 'fast-check';
+
 const migration = require('../../migrations/20260713150000-backfill-meme-card-drop-mappings');
 
 describe('Meme card drop mappings backfill migration', () => {
@@ -60,6 +62,69 @@ describe('Meme card drop mappings backfill migration', () => {
       521: 'drop-2',
       522: 'drop-3'
     });
+  });
+
+  it('preserves the sequential winner-to-card relationship for any valid anchor', async () => {
+    process.env.MAIN_STAGE_WAVE_ID = 'main-stage-wave';
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 10 }),
+        fc.integer({ min: 1, max: 1_000_000 }),
+        fc.nat(),
+        async (winnerCount, firstMemeCardId, anchorSeed) => {
+          const anchorIndex = anchorSeed % winnerCount;
+          const winners = Array.from({ length: winnerCount }, (_, index) => ({
+            drop_id: `drop-${index}`,
+            decision_time: index + 1,
+            ranking: 1
+          }));
+          const mappings = new Map<number, string>();
+          const runSql = jest.fn(
+            async (sql: string, params?: unknown[]): Promise<unknown[]> => {
+              if (sql.includes('join minting_claims')) {
+                return [
+                  {
+                    drop_id: winners[anchorIndex].drop_id,
+                    claim_id: firstMemeCardId + anchorIndex
+                  }
+                ];
+              }
+              if (sql.includes('select drop_id, decision_time, ranking')) {
+                return winners;
+              }
+              if (sql.includes('insert into meme_card_drop_mappings')) {
+                mappings.set(Number(params?.[0]), String(params?.[1]));
+                return [];
+              }
+              if (sql.includes('from meme_card_drop_mappings')) {
+                const memeCardId = Number(params?.[0]);
+                const dropId = String(params?.[1]);
+                return Array.from(mappings, ([id, mappedDropId]) => ({
+                  meme_card_id: id,
+                  drop_id: mappedDropId
+                })).filter(
+                  (mapping) =>
+                    mapping.meme_card_id === memeCardId ||
+                    mapping.drop_id === dropId
+                );
+              }
+              throw new Error(`Unexpected SQL: ${sql}`);
+            }
+          );
+
+          await migration.up({ runSql });
+
+          expect(Array.from(mappings.entries())).toEqual(
+            winners.map((winner, index) => [
+              firstMemeCardId + index,
+              winner.drop_id
+            ])
+          );
+        }
+      ),
+      { numRuns: 40 }
+    );
   });
 
   it('fails before writing when claim anchors imply different sequences', async () => {

@@ -189,7 +189,14 @@ export class MintingClaimsService {
     );
     const enriched = await this.enrichRowWithComputedDetails(row);
     await this.mintingClaimsDb.createMintingClaim([enriched], ctx);
-    if (this.mainStageWaveId) {
+    if (
+      this.mainStageWaveId &&
+      (await this.memeCardDropMappingsDb.isMainStageWinnerDrop(
+        dropId,
+        this.mainStageWaveId,
+        ctx
+      ))
+    ) {
       await this.memeCardDropMappingsDb.setMemeCardIdForDrop(
         dropId,
         nextClaimId,

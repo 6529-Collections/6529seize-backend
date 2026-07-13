@@ -111,7 +111,6 @@ function createMapper() {
   const nftLinkResolvingService = {
     refreshStaleTrackingForUrls: jest.fn().mockResolvedValue(undefined)
   };
-  const waveDecisionsDb = {};
   const memeCardDropMappingsDb = {
     findMemeCardIdsByDropIds: jest.fn().mockResolvedValue({})
   };
@@ -134,7 +133,6 @@ function createMapper() {
       dropNftLinksDb as any,
       nftLinksDb as any,
       nftLinkResolvingService as any,
-      waveDecisionsDb as any,
       memeCardDropMappingsDb as any,
       'main-stage-wave'
     ),
@@ -155,7 +153,6 @@ function createMapper() {
       dropNftLinksDb,
       nftLinksDb,
       nftLinkResolvingService,
-      waveDecisionsDb,
       memeCardDropMappingsDb
     }
   };

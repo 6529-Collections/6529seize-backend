@@ -10,7 +10,43 @@ interface MemeCardDropMappingRow {
   readonly drop_id: string;
 }
 
+function isDuplicateEntryError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ER_DUP_ENTRY'
+  );
+}
+
 export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
+  private assertExactMapping(
+    rows: MemeCardDropMappingRow[],
+    dropId: string,
+    memeCardId: number
+  ): void {
+    if (
+      rows.some(
+        (row) =>
+          row.drop_id === dropId && Number(row.meme_card_id) === memeCardId
+      )
+    ) {
+      return;
+    }
+    const dropMapping = rows.find((row) => row.drop_id === dropId);
+    const cardMapping = rows.find(
+      (row) => Number(row.meme_card_id) === memeCardId
+    );
+    const reason = dropMapping
+      ? `already assigned to Meme card ${dropMapping.meme_card_id}`
+      : cardMapping
+        ? `already assigned to drop ${cardMapping.drop_id}`
+        : 'Main Stage winner not found';
+    throw new Error(
+      `Cannot assign Meme card ${memeCardId} to drop ${dropId}: ${reason}`
+    );
+  }
+
   async findMemeCardIdsByDropIds(
     dropIds: string[],
     ctx: RequestContext
@@ -37,6 +73,22 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async isMainStageWinnerDrop(
+    dropId: string,
+    mainStageWaveId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const rows = await this.db.execute<{ found: number }>(
+      `select 1 as found
+       from ${WAVES_DECISION_WINNER_DROPS_TABLE}
+       where wave_id = :mainStageWaveId and drop_id = :dropId
+       limit 1`,
+      { dropId, mainStageWaveId },
+      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+    );
+    return rows.length > 0;
+  }
+
   async setMemeCardIdForDrop(
     dropId: string,
     memeCardId: number,
@@ -49,17 +101,23 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->setMemeCardIdForDrop`;
     try {
       ctx.timer?.start(timerName);
-      await this.db.execute(
-        `insert into ${MEME_CARD_DROP_MAPPINGS_TABLE} (meme_card_id, drop_id)
-         select :memeCardId, winner.drop_id
-         from ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
-         where winner.wave_id = :mainStageWaveId
-           and winner.drop_id = :dropId
-         on duplicate key update
-           drop_id = ${MEME_CARD_DROP_MAPPINGS_TABLE}.drop_id`,
-        { dropId, memeCardId, mainStageWaveId },
-        { wrappedConnection: ctx.connection }
-      );
+      try {
+        await this.db.execute(
+          `insert into ${MEME_CARD_DROP_MAPPINGS_TABLE} (meme_card_id, drop_id)
+           select :memeCardId, winner.drop_id
+           from ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
+           where winner.wave_id = :mainStageWaveId
+             and winner.drop_id = :dropId
+           on duplicate key update
+             drop_id = ${MEME_CARD_DROP_MAPPINGS_TABLE}.drop_id`,
+          { dropId, memeCardId, mainStageWaveId },
+          { wrappedConnection: ctx.connection }
+        );
+      } catch (error) {
+        if (!isDuplicateEntryError(error)) {
+          throw error;
+        }
+      }
       const rows = await this.db.execute<MemeCardDropMappingRow>(
         `select meme_card_id, drop_id
          from ${MEME_CARD_DROP_MAPPINGS_TABLE}
@@ -67,34 +125,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
         { dropId, memeCardId },
         { wrappedConnection: ctx.connection }
       );
-      if (
-        rows.some(
-          (row) =>
-            row.drop_id === dropId && Number(row.meme_card_id) === memeCardId
-        )
-      ) {
-        return;
-      }
-      const dropMapping = rows.find((row) => row.drop_id === dropId);
-      if (dropMapping) {
-        throw new Error(
-          `Cannot assign Meme card ${memeCardId} to drop ${dropId}: ` +
-            `already assigned to Meme card ${dropMapping.meme_card_id}`
-        );
-      }
-      const cardMapping = rows.find(
-        (row) => Number(row.meme_card_id) === memeCardId
-      );
-      if (cardMapping) {
-        throw new Error(
-          `Cannot assign Meme card ${memeCardId} to drop ${dropId}: ` +
-            `already assigned to drop ${cardMapping.drop_id}`
-        );
-      }
-      throw new Error(
-        `Cannot assign Meme card ${memeCardId} to drop ${dropId}: ` +
-          'Main Stage winner not found'
-      );
+      this.assertExactMapping(rows, dropId, memeCardId);
     } finally {
       ctx.timer?.stop(timerName);
     }

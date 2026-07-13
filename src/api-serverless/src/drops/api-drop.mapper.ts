@@ -94,7 +94,6 @@ import {
   nftLinkResolvingService,
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
-import { waveDecisionsDb, WaveDecisionsDb } from '@/waves/wave-decisions.db';
 import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
@@ -130,7 +129,6 @@ export class ApiDropMapper {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
-    private readonly waveDecisionsDb: WaveDecisionsDb,
     private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
     private readonly mainStageWaveId: string | null
   ) {}
@@ -889,7 +887,6 @@ export const apiDropMapper = new ApiDropMapper(
   dropNftLinksDb,
   nftLinksDb,
   nftLinkResolvingService,
-  waveDecisionsDb,
   memeCardDropMappingsDb,
   env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );
