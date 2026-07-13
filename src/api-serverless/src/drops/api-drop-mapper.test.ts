@@ -56,6 +56,7 @@ function createMapper() {
     findProfileHandlesByIds: jest.fn().mockResolvedValue({})
   };
   const dropsDb = {
+    findAuthorWaveParticipationByDropContexts: jest.fn().mockResolvedValue({}),
     getDropPartOnes: jest.fn().mockResolvedValue({}),
     getDropPartOneMedia: jest.fn().mockResolvedValue({}),
     findReferencedNftsByDropIds: jest.fn().mockResolvedValue([]),
@@ -153,6 +154,50 @@ function createMapper() {
 }
 
 describe('ApiDropMapper', () => {
+  it('attaches participation for the author in the drop wave', async () => {
+    const { mapper, deps } = createMapper();
+    const drop = makeDrop();
+    deps.dropsDb.findAuthorWaveParticipationByDropContexts.mockResolvedValue({
+      'wave-1': {
+        'author-1': {
+          is_participant: true,
+          is_winner: true
+        }
+      }
+    });
+
+    const result = await mapper.mapDrops([drop], {});
+
+    expect(result['drop-1']?.author.wave_participation).toEqual({
+      is_participant: true,
+      is_winner: true
+    });
+    expect(
+      deps.dropsDb.findAuthorWaveParticipationByDropContexts
+    ).toHaveBeenCalledWith([drop], {});
+  });
+
+  it('omits wave participation metadata and its query context in Main Stage', async () => {
+    const previousMainStageWaveId = process.env.MAIN_STAGE_WAVE_ID;
+    process.env.MAIN_STAGE_WAVE_ID = 'wave-1';
+    try {
+      const { mapper, deps } = createMapper();
+
+      const result = await mapper.mapDrops([makeDrop()], {});
+
+      expect(result['drop-1']?.author.wave_participation).toBeUndefined();
+      expect(
+        deps.dropsDb.findAuthorWaveParticipationByDropContexts
+      ).toHaveBeenCalledWith([], {});
+    } finally {
+      if (previousMainStageWaveId === undefined) {
+        delete process.env.MAIN_STAGE_WAVE_ID;
+      } else {
+        process.env.MAIN_STAGE_WAVE_ID = previousMainStageWaveId;
+      }
+    }
+  });
+
   it('maps part one content and omits missing optional fields', async () => {
     const { mapper, deps } = createMapper();
     const drop = makeDrop({ hide_link_preview: true });

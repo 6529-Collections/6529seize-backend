@@ -822,6 +822,27 @@ export type GetWavesV2Request = Request<
   Record<string, never>
 >;
 
+export interface GetWaveCompetitionDropsV2PathParams {
+  "id": string;
+}
+
+export interface GetWaveCompetitionDropsV2Query {
+  "author_id": string;
+  "drop_type": "PARTICIPATORY" | "WINNER";
+  "page"?: number;
+  "page_size"?: number;
+}
+
+export type GetWaveCompetitionDropsV2Response = ApiDropV2PageWithoutCount;
+
+export type GetWaveCompetitionDropsV2Request = Request<
+  GetWaveCompetitionDropsV2PathParams,
+  ApiResponse<GetWaveCompetitionDropsV2Response>,
+  never,
+  GetWaveCompetitionDropsV2Query,
+  Record<string, never>
+>;
+
 export interface ListWaveCurationDropsV2PathParams {
   "id": string;
   "curation_id": string;
