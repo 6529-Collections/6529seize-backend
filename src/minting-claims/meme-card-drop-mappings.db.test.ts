@@ -3,6 +3,7 @@ import {
   WAVES_DECISION_WINNER_DROPS_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
+import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
   memeCardDropMappingsDb,
@@ -10,7 +11,10 @@ import {
 } from './meme-card-drop-mappings.db';
 
 describe('MemeCardDropMappingsDb', () => {
-  const ctx: RequestContext = { timer: undefined };
+  const ctx: RequestContext = {
+    timer: undefined,
+    connection: {} as RequestContext['connection']
+  };
 
   it('returns mapped Meme card IDs by drop ID', async () => {
     const execute = jest.fn().mockResolvedValue([
@@ -28,6 +32,18 @@ describe('MemeCardDropMappingsDb', () => {
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE}`);
     expect(params).toEqual({ dropIds: ['drop-1', 'drop-2'] });
+  });
+
+  it('requires runtime mapping writes to share the caller transaction', async () => {
+    const execute = jest.fn();
+    const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.setMemeCardIdForDrop('drop-1', 521, 'main-stage-wave', {
+        timer: undefined
+      })
+    ).rejects.toThrow('Meme card mappings can only be saved in a transaction');
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('inserts a mapping only for a configured Main Stage winner', async () => {
@@ -111,39 +127,46 @@ describeWithSeed(
     ]
   },
   () => {
-    const ctx: RequestContext = { timer: undefined };
-
     it('persists an idempotent one-to-one Main Stage mapping', async () => {
-      await memeCardDropMappingsDb.setMemeCardIdForDrop(
-        'main-stage-drop',
-        521,
-        'main-stage-wave',
-        ctx
-      );
-      await memeCardDropMappingsDb.setMemeCardIdForDrop(
-        'main-stage-drop',
-        521,
-        'main-stage-wave',
-        ctx
-      );
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx: RequestContext = { timer: undefined, connection };
+          await memeCardDropMappingsDb.setMemeCardIdForDrop(
+            'main-stage-drop',
+            521,
+            'main-stage-wave',
+            ctx
+          );
+          await memeCardDropMappingsDb.setMemeCardIdForDrop(
+            'main-stage-drop',
+            521,
+            'main-stage-wave',
+            ctx
+          );
 
-      await expect(
-        memeCardDropMappingsDb.findMemeCardIdsByDropIds(
-          ['main-stage-drop'],
-          ctx
-        )
-      ).resolves.toEqual({ 'main-stage-drop': 521 });
+          await expect(
+            memeCardDropMappingsDb.findMemeCardIdsByDropIds(
+              ['main-stage-drop'],
+              ctx
+            )
+          ).resolves.toEqual({ 'main-stage-drop': 521 });
+        }
+      );
     });
 
     it('does not map a winner from another wave', async () => {
-      await expect(
-        memeCardDropMappingsDb.setMemeCardIdForDrop(
-          'main-stage-drop',
-          521,
-          'other-wave',
-          ctx
-        )
-      ).rejects.toThrow('Main Stage winner not found');
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await expect(
+            memeCardDropMappingsDb.setMemeCardIdForDrop(
+              'main-stage-drop',
+              521,
+              'other-wave',
+              { timer: undefined, connection }
+            )
+          ).rejects.toThrow('Main Stage winner not found');
+        }
+      );
     });
   }
 );

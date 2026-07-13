@@ -43,6 +43,9 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     mainStageWaveId: string,
     ctx: RequestContext
   ): Promise<void> {
+    if (!ctx.connection) {
+      throw new Error('Meme card mappings can only be saved in a transaction');
+    }
     const timerName = `${this.constructor.name}->setMemeCardIdForDrop`;
     try {
       ctx.timer?.start(timerName);
@@ -55,14 +58,14 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
          on duplicate key update
            drop_id = ${MEME_CARD_DROP_MAPPINGS_TABLE}.drop_id`,
         { dropId, memeCardId, mainStageWaveId },
-        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        { wrappedConnection: ctx.connection }
       );
       const rows = await this.db.execute<MemeCardDropMappingRow>(
         `select meme_card_id, drop_id
          from ${MEME_CARD_DROP_MAPPINGS_TABLE}
          where drop_id = :dropId or meme_card_id = :memeCardId`,
         { dropId, memeCardId },
-        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        { wrappedConnection: ctx.connection }
       );
       if (
         rows.some(
