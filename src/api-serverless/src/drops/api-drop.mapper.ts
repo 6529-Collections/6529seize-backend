@@ -17,6 +17,7 @@ import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
 import { collections } from '@/collections';
 import { enums } from '@/enums';
+import { env } from '@/env';
 import { numbers } from '@/numbers';
 import { DropReplyPreview, dropsDb, DropsDb } from '@/drops/drops.db';
 import { dropNftLinksDb, DropNftLinksDb } from '@/drops/drop-nft-links.db';
@@ -32,6 +33,7 @@ import { ApiDropReactionCounter } from '@/api/generated/models/ApiDropReactionCo
 import { ApiDropReferencedNFT } from '@/api/generated/models/ApiDropReferencedNFT';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2ContextProfileContext } from '@/api/generated/models/ApiDropV2ContextProfileContext';
+import { ApiIdentityWaveParticipation } from '@/api/generated/models/ApiIdentityWaveParticipation';
 import { ApiMentionedWaveV2 } from '@/api/generated/models/ApiMentionedWaveV2';
 import { ApiReplyToDropV2 } from '@/api/generated/models/ApiReplyToDropV2';
 import { ApiSubmissionDropContext } from '@/api/generated/models/ApiSubmissionDropContext';
@@ -95,7 +97,6 @@ import {
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
 import { waveDecisionsDb, WaveDecisionsDb } from '@/waves/wave-decisions.db';
-import { env } from '@/env';
 
 type VoteRangeByDropId = Record<
   string,
@@ -173,6 +174,12 @@ export class ApiDropMapper {
             )
             .map((drop) => drop.id)
         : [];
+      // mapDrops only enriches entities that its caller has already authorized
+      // for this response. These flags are display metadata, never access
+      // control; the lazy full-entry endpoint performs its own wave check.
+      const visibleCompetitionDropContexts = this.mainStageWaveId
+        ? entities.filter((drop) => drop.wave_id !== this.mainStageWaveId)
+        : entities;
 
       const dropAttachmentsPromise =
         this.attachmentsDb.getDropPartOneAttachments(dropIds, ctx);
@@ -205,6 +212,7 @@ export class ApiDropMapper {
 
       const [
         authorsById,
+        authorWaveParticipationByWave,
         partOnes,
         partOneMedia,
         dropAttachments,
@@ -231,6 +239,10 @@ export class ApiDropMapper {
         memeCardIdsByDropId
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
+        this.dropsDb.findAuthorWaveParticipationByDropContexts(
+          visibleCompetitionDropContexts,
+          ctx
+        ),
         this.dropsDb.getDropPartOnes(dropIds, ctx),
         this.dropsDb.getDropPartOneMedia(dropIds, ctx),
         dropAttachmentsPromise,
@@ -315,9 +327,23 @@ export class ApiDropMapper {
 
       return entities.reduce(
         (acc, drop) => {
+          const participation = authorWaveParticipationByWave[drop.wave_id]?.[
+            drop.author_id
+          ] ?? {
+            is_participant: false,
+            is_winner: false
+          };
+          const waveParticipation: ApiIdentityWaveParticipation = {
+            is_participant: participation.is_participant,
+            is_winner: participation.is_winner
+          };
+          const author = authorsById[drop.author_id];
           acc[drop.id] = this.mapDrop({
             drop,
-            author: authorsById[drop.author_id],
+            author:
+              this.mainStageWaveId && drop.wave_id === this.mainStageWaveId
+                ? author
+                : { ...author, wave_participation: waveParticipation },
             partOne: partOnes[drop.id],
             partOneMedia: partOneMedia[drop.id] ?? [],
             dropAttachments: dropAttachments[drop.id] ?? [],
