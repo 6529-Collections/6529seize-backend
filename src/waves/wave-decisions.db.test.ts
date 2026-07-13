@@ -183,6 +183,45 @@ describe('WaveDecisionsDb decision filters', () => {
       is_additional_action_promised: true
     });
   });
+
+  it('returns Meme card IDs scoped to the configured Main Stage wave', async () => {
+    const execute = jest.fn().mockResolvedValue([
+      { drop_id: 'drop-1', meme_card_id: 520 },
+      { drop_id: 'drop-2', meme_card_id: 521 }
+    ]);
+    const repo = new WaveDecisionsDb(() => ({ execute }) as any);
+
+    const result = await repo.findMemeCardIdsByDropIds(
+      ['drop-1', 'drop-2'],
+      'main-stage-wave',
+      ctx
+    );
+
+    expect(result).toEqual({ 'drop-1': 520, 'drop-2': 521 });
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(`from ${WAVES_DECISION_WINNER_DROPS_TABLE}`);
+    expect(sql).toContain('wave_id = :mainStageWaveId');
+    expect(params).toEqual({
+      dropIds: ['drop-1', 'drop-2'],
+      mainStageWaveId: 'main-stage-wave'
+    });
+  });
+
+  it('writes a Meme card ID only for the configured Main Stage wave', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new WaveDecisionsDb(() => ({ execute }) as any);
+
+    await repo.setMemeCardIdForDrop('drop-1', 521, 'main-stage-wave', ctx);
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(`update ${WAVES_DECISION_WINNER_DROPS_TABLE}`);
+    expect(sql).toContain('wave_id = :mainStageWaveId');
+    expect(params).toEqual({
+      dropId: 'drop-1',
+      memeCardId: 521,
+      mainStageWaveId: 'main-stage-wave'
+    });
+  });
 });
 
 describeWithSeed(

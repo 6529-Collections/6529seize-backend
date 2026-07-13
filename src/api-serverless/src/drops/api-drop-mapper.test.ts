@@ -111,6 +111,9 @@ function createMapper() {
   const nftLinkResolvingService = {
     refreshStaleTrackingForUrls: jest.fn().mockResolvedValue(undefined)
   };
+  const waveDecisionsDb = {
+    findMemeCardIdsByDropIds: jest.fn().mockResolvedValue({})
+  };
 
   return {
     mapper: new ApiDropMapper(
@@ -129,7 +132,9 @@ function createMapper() {
       dropPollsDb as any,
       dropNftLinksDb as any,
       nftLinksDb as any,
-      nftLinkResolvingService as any
+      nftLinkResolvingService as any,
+      waveDecisionsDb as any,
+      'main-stage-wave'
     ),
     deps: {
       identityFetcher,
@@ -147,7 +152,8 @@ function createMapper() {
       dropPollsDb,
       dropNftLinksDb,
       nftLinksDb,
-      nftLinkResolvingService
+      nftLinkResolvingService,
+      waveDecisionsDb
     }
   };
 }
@@ -595,6 +601,68 @@ describe('ApiDropMapper', () => {
     });
     expect(result['drop-null'].submission_context).not.toHaveProperty(
       'is_additional_action_promised'
+    );
+  });
+
+  it('maps Meme card IDs only for winners in the configured Main Stage wave', async () => {
+    const { mapper, deps } = createMapper();
+    const mainStageWinner = makeDrop({
+      id: 'main-stage-winner',
+      wave_id: 'main-stage-wave',
+      drop_type: DropType.WINNER
+    });
+    const otherWinner = makeDrop({
+      id: 'other-winner',
+      wave_id: 'other-wave',
+      drop_type: DropType.WINNER
+    });
+    deps.dropVotingDb.getDropV2SubmissionVotingSummaries.mockResolvedValue({
+      'main-stage-winner': {
+        drop_id: 'main-stage-winner',
+        status: DropType.WINNER,
+        is_open: false,
+        total_votes_given: 10,
+        current_calculated_vote: 10,
+        predicted_final_vote: 10,
+        voters_count: 2,
+        place: 1,
+        over_threshold_since_ms: null,
+        won_at: 1_000,
+        forbid_negative_votes: false
+      },
+      'other-winner': {
+        drop_id: 'other-winner',
+        status: DropType.WINNER,
+        is_open: false,
+        total_votes_given: 5,
+        current_calculated_vote: 5,
+        predicted_final_vote: 5,
+        voters_count: 1,
+        place: 1,
+        over_threshold_since_ms: null,
+        won_at: 2_000,
+        forbid_negative_votes: false
+      }
+    });
+    deps.waveDecisionsDb.findMemeCardIdsByDropIds.mockResolvedValue({
+      'main-stage-winner': 521
+    });
+
+    const result = await mapper.mapDrops([mainStageWinner, otherWinner], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(deps.waveDecisionsDb.findMemeCardIdsByDropIds).toHaveBeenCalledWith(
+      ['main-stage-winner'],
+      'main-stage-wave',
+      expect.any(Object)
+    );
+    expect(result['main-stage-winner'].submission_context).toMatchObject({
+      status: ApiSubmissionDropStatus.Winner,
+      meme_card_id: 521
+    });
+    expect(result['other-winner'].submission_context).not.toHaveProperty(
+      'meme_card_id'
     );
   });
 

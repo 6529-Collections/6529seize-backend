@@ -94,6 +94,8 @@ import {
   nftLinkResolvingService,
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
+import { waveDecisionsDb, WaveDecisionsDb } from '@/waves/wave-decisions.db';
+import { env } from '@/env';
 
 type VoteRangeByDropId = Record<
   string,
@@ -123,7 +125,9 @@ export class ApiDropMapper {
     private readonly dropPollsDb: DropPollsDb,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
-    private readonly nftLinkResolvingService: NftLinkResolvingService
+    private readonly nftLinkResolvingService: NftLinkResolvingService,
+    private readonly waveDecisionsDb: WaveDecisionsDb,
+    private readonly mainStageWaveId: string | null
   ) {}
 
   public async mapDrops(
@@ -160,6 +164,15 @@ export class ApiDropMapper {
       const winnerDropIds = submissionEntities
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
+      const mainStageWinnerDropIds = this.mainStageWaveId
+        ? submissionEntities
+            .filter(
+              (drop) =>
+                drop.drop_type === DropType.WINNER &&
+                drop.wave_id === this.mainStageWaveId
+            )
+            .map((drop) => drop.id)
+        : [];
 
       const dropAttachmentsPromise =
         this.attachmentsDb.getDropPartOneAttachments(dropIds, ctx);
@@ -214,7 +227,8 @@ export class ApiDropMapper {
         submissionVotingSummaries,
         votingRanges,
         winningDropsRatingsByVoter,
-        pollsByDropId
+        pollsByDropId,
+        memeCardIdsByDropId
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.getDropPartOnes(dropIds, ctx),
@@ -281,7 +295,14 @@ export class ApiDropMapper {
               ctx
             )
           : Promise.resolve({} as Record<string, number>),
-        this.dropPollsDb.findPollsByDropIds(dropIds, ctx)
+        this.dropPollsDb.findPollsByDropIds(dropIds, ctx),
+        this.mainStageWaveId && mainStageWinnerDropIds.length
+          ? this.waveDecisionsDb.findMemeCardIdsByDropIds(
+              mainStageWinnerDropIds,
+              this.mainStageWaveId,
+              ctx
+            )
+          : Promise.resolve({} as Record<string, number>)
       ]);
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
@@ -322,6 +343,7 @@ export class ApiDropMapper {
             votingRanges,
             winningDropsRatingsByVoter,
             poll: pollsByDropId[drop.id],
+            memeCardId: memeCardIdsByDropId[drop.id],
             contextProfileId
           });
           return acc;
@@ -359,6 +381,7 @@ export class ApiDropMapper {
     votingRanges,
     winningDropsRatingsByVoter,
     poll,
+    memeCardId,
     contextProfileId
   }: {
     drop: DropEntity;
@@ -386,6 +409,7 @@ export class ApiDropMapper {
     votingRanges: VoteRangeByDropId;
     winningDropsRatingsByVoter: Record<string, number>;
     poll?: DropPollWithOptions;
+    memeCardId?: number;
     contextProfileId: string | null;
   }): ApiDropV2 {
     const apiDrop: ApiDropV2 = {
@@ -494,7 +518,8 @@ export class ApiDropMapper {
         votingRanges,
         winningDropsRatingsByVoter,
         contextProfileId,
-        hasMetadata
+        hasMetadata,
+        memeCardId
       });
     }
     if (poll) {
@@ -544,7 +569,8 @@ export class ApiDropMapper {
     votingRanges,
     winningDropsRatingsByVoter,
     contextProfileId,
-    hasMetadata
+    hasMetadata,
+    memeCardId
   }: {
     drop: DropEntity;
     votingSummary: DropSubmissionVotingSummary;
@@ -552,6 +578,7 @@ export class ApiDropMapper {
     winningDropsRatingsByVoter: Record<string, number>;
     contextProfileId: string | null;
     hasMetadata: boolean;
+    memeCardId?: number;
   }): ApiSubmissionDropContext {
     const voting: ApiSubmissionDropVoting = {
       is_open: votingSummary.is_open,
@@ -587,6 +614,9 @@ export class ApiDropMapper {
     }
     if (votingSummary.won_at !== null) {
       submissionContext.won_at = votingSummary.won_at;
+    }
+    if (drop.drop_type === DropType.WINNER && memeCardId !== undefined) {
+      submissionContext.meme_card_id = memeCardId;
     }
     return submissionContext;
   }
@@ -854,5 +884,7 @@ export const apiDropMapper = new ApiDropMapper(
   dropPollsDb,
   dropNftLinksDb,
   nftLinksDb,
-  nftLinkResolvingService
+  nftLinkResolvingService,
+  waveDecisionsDb,
+  env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );
