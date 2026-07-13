@@ -46,7 +46,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: release-note-generation
-        VisibilityTimeout: 360
+        VisibilityTimeout: 900
         RedrivePolicy:
           deadLetterTargetArn:
             Fn::GetAtt: [ReleaseNoteGenerationDLQ, Arn]

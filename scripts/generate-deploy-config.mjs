@@ -71,11 +71,11 @@ ${indent(yamlList(['staging', 'prod']))}
 ${indent(yamlList(serviceNames))}
       release_group_id:
         type: string
-        description: 'Optional shared release id for grouped service deploys'
+        description: 'Internal ghdeploy value; leave blank for manual deploys'
         required: false
       release_group_services:
         type: string
-        description: 'Optional comma-separated services in the release group'
+        description: 'Internal ghdeploy value; leave blank for manual deploys'
         required: false
 
 env:

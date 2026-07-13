@@ -42,9 +42,10 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .valid('staging', 'prod', 'production')
       .required(),
     service: Joi.string().trim().max(200).allow(null, '').optional(),
-    release_notes_prompt: Joi.string()
+    release_notes_prompt_path: Joi.string()
       .trim()
-      .max(20000)
+      .max(300)
+      .pattern(/^[a-zA-Z0-9._/-]+$/)
       .allow(null, '')
       .optional(),
     release_group_id: Joi.string().trim().max(200).allow(null, '').optional(),
@@ -53,7 +54,12 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .min(1)
       .max(100)
       .optional(),
-    deployed_at: Joi.string().isoDate().allow(null, '').optional()
+    deployed_at: Joi.string()
+      .isoDate()
+      .pattern(/T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/)
+      .strict()
+      .allow(null, '')
+      .optional()
   }).unknown(false);
 
 type SignatureVerificationResult =

@@ -334,7 +334,7 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         status: 'success',
-        release_notes_prompt: 'Generate release notes.',
+        release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
         release_group_id: 'frontend-release',
         release_group_services: ['web'],
         deployed_at: '2026-07-13T11:38:00.000Z'
@@ -352,7 +352,7 @@ describe('CiPipelineAlertService', () => {
       branch: baseRequest.branch,
       environment: 'prod',
       service: baseRequest.service,
-      prompt: 'Generate release notes.',
+      prompt_path: 'ops/release-notes/release-notes.prompt.md',
       release_group_id: 'frontend-release',
       release_group_services: ['web'],
       deployed_at: '2026-07-13T11:38:00.000Z'
@@ -362,6 +362,28 @@ describe('CiPipelineAlertService', () => {
     ).toBeLessThan(
       releaseNotesQueue.enqueueBestEffort.mock.invocationCallOrder[0]
     );
+  });
+
+  it('does not enqueue an unreviewed repository prompt path', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        release_notes_prompt_path: 'unreviewed.prompt.md',
+        release_group_id: 'frontend-release',
+        release_group_services: ['web'],
+        deployed_at: '2026-07-13T11:38:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
   });
 
   it('formats desktop alerts with the product label and existing emoji', async () => {

@@ -19,7 +19,7 @@ const request: ReleaseNoteGenerationRequest = {
   branch: 'main',
   environment: 'prod',
   service: 'api',
-  prompt: 'Return JSON release notes.',
+  prompt_path: 'ops/release-notes/release-notes.prompt.md',
   release_group_id: 'backend-release',
   release_group_services: ['api', 'pushNotificationsHandler'],
   deployed_at: '2026-07-13T11:38:00.000Z'
@@ -73,6 +73,7 @@ describe('ReleaseNoteGenerationService', () => {
 
   it('renders validated summaries, service labels, PR links, and 6529 mentions', async () => {
     const getReleaseContext = jest.fn().mockResolvedValue(context);
+    const getReleasePrompt = jest.fn().mockResolvedValue('Repository prompt.');
     const promptAndGetReply = jest.fn().mockResolvedValue(
       JSON.stringify({
         pull_requests: [
@@ -88,7 +89,10 @@ describe('ReleaseNoteGenerationService', () => {
       .fn()
       .mockResolvedValue({ alice6529: 'alice-profile' });
     const service = new ReleaseNoteGenerationService(
-      { getReleaseContext } as unknown as ReleaseNoteGitHubService,
+      {
+        getReleaseContext,
+        getReleasePrompt
+      } as unknown as ReleaseNoteGitHubService,
       { promptAndGetReply } as AiPrompter,
       { createDrop } as unknown as DropCreationApiService,
       { getIdsByHandles } as unknown as IdentitiesDb,
@@ -137,7 +141,8 @@ describe('ReleaseNoteGenerationService', () => {
   it('rejects a model response that omits a pull request', async () => {
     const service = new ReleaseNoteGenerationService(
       {
-        getReleaseContext: jest.fn().mockResolvedValue(context)
+        getReleaseContext: jest.fn().mockResolvedValue(context),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
       } as unknown as ReleaseNoteGitHubService,
       {
         promptAndGetReply: jest
@@ -151,5 +156,41 @@ describe('ReleaseNoteGenerationService', () => {
     await expect(service.generateAndPost(request, {})).rejects.toThrow(
       'did not include every pull request'
     );
+  });
+
+  it('neutralizes model-supplied markdown and mention syntax', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue(context),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 42,
+                summary:
+                  'Improved delivery with [details](https://example.com), @[mallory], and *bold* text.'
+              }
+            ]
+          })
+        )
+      },
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {}
+    );
+
+    await service.generateAndPost(request, {});
+
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).not.toContain('[details]');
+    expect(content).not.toContain('@[mallory]');
+    expect(content).not.toContain('*bold*');
   });
 });

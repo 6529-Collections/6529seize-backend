@@ -1,7 +1,8 @@
-import fetch, { Response } from 'node-fetch';
+import fetch from 'node-fetch';
 import deployConfig from '@/config/deploy-services.json';
 import { env } from '@/env';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
+import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
 
 interface GitHubWorkflowRun {
   readonly id: number;
@@ -28,6 +29,12 @@ interface GitHubCommit {
 interface GitHubCompareResponse {
   readonly commits?: GitHubCommit[];
   readonly total_commits?: number;
+}
+
+interface GitHubContentResponse {
+  readonly type?: string;
+  readonly encoding?: string;
+  readonly content?: string;
 }
 
 interface GitHubPullRequest {
@@ -68,10 +75,18 @@ export interface GitHubReleaseContext {
   readonly pull_requests: ReleasePullRequestContext[];
 }
 
-const MAX_COMPARE_PAGES = 10;
+const MAX_COMPARE_PAGES = 3;
 const MAX_FILE_PAGES = 3;
 const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
+const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
+const MAX_PULL_REQUESTS = 100;
+const MAX_TOTAL_CHANGED_FILES = 3000;
+const MAX_PROMPT_LENGTH = 20000;
+const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
+const GITHUB_REQUEST_TIMEOUT_MS = 15000;
+const MAX_GITHUB_ATTEMPTS = 2;
+const MAX_GITHUB_CONCURRENCY = 5;
 
 function normalizeRepository(repo: string): string {
   return repo.includes('/') ? repo : `6529-Collections/${repo}`;
@@ -135,22 +150,91 @@ function collectCandidateServices(
 export class ReleaseNoteGitHubService {
   private readonly apiBaseUrl = 'https://api.github.com';
 
-  private async api(path: string): Promise<Response> {
+  private async api<T>(path: string): Promise<T> {
     const token = env.getStringOrThrow('RELEASE_NOTES_GITHUB_TOKEN');
-    const response = await fetch(`${this.apiBaseUrl}${path}`, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'User-Agent': '6529-release-notes',
-        'X-GitHub-Api-Version': '2022-11-28'
+    for (let attempt = 1; attempt <= MAX_GITHUB_ATTEMPTS; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        GITHUB_REQUEST_TIMEOUT_MS
+      );
+      try {
+        const response = await fetch(`${this.apiBaseUrl}${path}`, {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${token}`,
+            'User-Agent': '6529-release-notes',
+            'X-GitHub-Api-Version': '2022-11-28'
+          },
+          redirect: 'error',
+          size: MAX_GITHUB_RESPONSE_BYTES,
+          signal: controller.signal
+        });
+        const retryAfter = Number(response.headers.get('retry-after'));
+        const isRateLimited =
+          response.status === 429 ||
+          (response.status === 403 &&
+            response.headers.get('x-ratelimit-remaining') === '0');
+        if (
+          isRateLimited &&
+          attempt < MAX_GITHUB_ATTEMPTS &&
+          Number.isFinite(retryAfter) &&
+          retryAfter > 0 &&
+          retryAfter <= 5
+        ) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, retryAfter * 1000)
+          );
+          continue;
+        }
+        if (!response.ok) {
+          throw new Error(
+            `GitHub release context request failed: ${response.status} ${response.statusText}`
+          );
+        }
+        return (await response.json()) as T;
+      } finally {
+        clearTimeout(timeoutId);
       }
-    });
-    if (!response.ok) {
+    }
+    throw new Error('GitHub release context request exhausted retries');
+  }
+
+  public async getReleasePrompt(
+    request: ReleaseNoteGenerationRequest
+  ): Promise<string> {
+    if (!isAllowedReleaseNotesPrompt(request.repo, request.prompt_path)) {
       throw new Error(
-        `GitHub release context request failed: ${response.status} ${response.statusText}`
+        `Unsupported release notes prompt ${request.prompt_path} for ${request.repo}`
       );
     }
-    return response;
+    const repository = normalizeRepository(request.repo);
+    const promptPath = request.prompt_path
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    const payload = await this.api<GitHubContentResponse>(
+      `/repos/${repository}/contents/${promptPath}?ref=${encodeURIComponent(request.sha)}`
+    );
+    if (
+      payload.type !== 'file' ||
+      payload.encoding !== 'base64' ||
+      !payload.content
+    ) {
+      throw new Error(
+        `Invalid release notes prompt response for ${repository}`
+      );
+    }
+    const prompt = Buffer.from(
+      payload.content.replace(/\s+/g, ''),
+      'base64'
+    ).toString('utf8');
+    if (!prompt.trim() || prompt.length > MAX_PROMPT_LENGTH) {
+      throw new Error(
+        `Release notes prompt for ${repository} must be 1-${MAX_PROMPT_LENGTH} characters`
+      );
+    }
+    return prompt.trim();
   }
 
   public async getReleaseContext(
@@ -189,10 +273,9 @@ export class ReleaseNoteGitHubService {
     request: ReleaseNoteGenerationRequest
   ): Promise<GitHubWorkflowRun | null> {
     const branch = encodeURIComponent(normalizeBranch(request.branch));
-    const response = await this.api(
+    const payload = await this.api<GitHubWorkflowRunsResponse>(
       `/repos/${repository}/actions/runs?status=success&branch=${branch}&per_page=${PAGE_SIZE}`
     );
-    const payload = (await response.json()) as GitHubWorkflowRunsResponse;
     const currentRunNumber = Number(request.run_number);
 
     return (
@@ -216,17 +299,34 @@ export class ReleaseNoteGitHubService {
     const commits: GitHubCommit[] = [];
 
     for (let page = 1; page <= MAX_COMPARE_PAGES; page++) {
-      const response = await this.api(
+      const payload = await this.api<GitHubCompareResponse>(
         `/repos/${repository}/compare/${encodeURIComponent(previousSha)}...${encodeURIComponent(currentSha)}?per_page=${PAGE_SIZE}&page=${page}`
       );
-      const payload = (await response.json()) as GitHubCompareResponse;
       const pageCommits = payload.commits ?? [];
+      const totalCommits = payload.total_commits;
+      if (typeof totalCommits === 'number' && totalCommits > MAX_COMMITS) {
+        throw new Error(
+          `Release range contains ${totalCommits} commits; maximum is ${MAX_COMMITS}`
+        );
+      }
       commits.push(...pageCommits);
+      if (commits.length > MAX_COMMITS) {
+        throw new Error(
+          `Release range exceeds maximum of ${MAX_COMMITS} commits`
+        );
+      }
       if (
         pageCommits.length < PAGE_SIZE ||
-        commits.length >= (payload.total_commits ?? 0)
+        (typeof totalCommits === 'number' &&
+          totalCommits > 0 &&
+          commits.length >= totalCommits)
       ) {
-        break;
+        return commits;
+      }
+      if (page === MAX_COMPARE_PAGES) {
+        throw new Error(
+          `Release range exceeds pagination maximum of ${MAX_COMMITS} commits`
+        );
       }
     }
 
@@ -248,61 +348,94 @@ export class ReleaseNoteGitHubService {
       }
     >();
 
-    for (const commit of commits) {
-      const response = await this.api(
-        `/repos/${repository}/commits/${encodeURIComponent(commit.sha)}/pulls`
+    for (
+      let index = 0;
+      index < commits.length;
+      index += MAX_GITHUB_CONCURRENCY
+    ) {
+      const commitBatch = commits.slice(index, index + MAX_GITHUB_CONCURRENCY);
+      const associatedBatch = await Promise.all(
+        commitBatch.map((commit) =>
+          this.api<GitHubPullRequest[]>(
+            `/repos/${repository}/commits/${encodeURIComponent(commit.sha)}/pulls`
+          )
+        )
       );
-      const associatedPullRequests =
-        (await response.json()) as GitHubPullRequest[];
-      for (const pullRequest of associatedPullRequests) {
-        if (!pullRequest.merged_at || pullRequest.base?.ref !== branch) {
-          continue;
+      for (let batchIndex = 0; batchIndex < commitBatch.length; batchIndex++) {
+        const commit = commitBatch[batchIndex];
+        for (const pullRequest of associatedBatch[batchIndex]) {
+          if (!pullRequest.merged_at || pullRequest.base?.ref !== branch) {
+            continue;
+          }
+          const existing = pullRequests.get(pullRequest.number) ?? {
+            pullRequest,
+            commitMessages: new Set<string>(),
+            contributors: new Set<string>()
+          };
+          const pullRequestAuthor = pullRequest.user?.login?.trim();
+          const commitAuthor = commit.author?.login?.trim();
+          if (pullRequestAuthor) {
+            existing.contributors.add(pullRequestAuthor);
+          }
+          if (commitAuthor) {
+            existing.contributors.add(commitAuthor);
+          }
+          const message = commit.commit?.message?.trim();
+          if (message) {
+            existing.commitMessages.add(message);
+          }
+          pullRequests.set(pullRequest.number, existing);
+          if (pullRequests.size > MAX_PULL_REQUESTS) {
+            throw new Error(
+              `Release range exceeds maximum of ${MAX_PULL_REQUESTS} pull requests`
+            );
+          }
         }
-        const existing = pullRequests.get(pullRequest.number) ?? {
-          pullRequest,
-          commitMessages: new Set<string>(),
-          contributors: new Set<string>()
-        };
-        const pullRequestAuthor = pullRequest.user?.login?.trim();
-        const commitAuthor = commit.author?.login?.trim();
-        if (pullRequestAuthor) {
-          existing.contributors.add(pullRequestAuthor);
-        }
-        if (commitAuthor) {
-          existing.contributors.add(commitAuthor);
-        }
-        const message = commit.commit?.message?.trim();
-        if (message) {
-          existing.commitMessages.add(message);
-        }
-        pullRequests.set(pullRequest.number, existing);
       }
     }
 
-    const contexts = await Promise.all(
-      Array.from(pullRequests.values()).map(
-        async ({ pullRequest, commitMessages, contributors }) => {
-          const files = await this.getPullRequestFiles(
-            repository,
-            pullRequest.number
-          );
-          return {
-            number: pullRequest.number,
-            url: pullRequest.html_url,
-            title: pullRequest.title,
-            body: pullRequest.body,
-            contributors: Array.from(contributors),
-            commit_messages: Array.from(commitMessages),
-            changed_files: files,
-            candidate_services: collectCandidateServices(
+    const pullRequestValues = Array.from(pullRequests.values());
+    const contexts: ReleasePullRequestContext[] = [];
+    for (
+      let index = 0;
+      index < pullRequestValues.length;
+      index += MAX_GITHUB_CONCURRENCY
+    ) {
+      const contextBatch = await Promise.all(
+        pullRequestValues
+          .slice(index, index + MAX_GITHUB_CONCURRENCY)
+          .map(async ({ pullRequest, commitMessages, contributors }) => {
+            const files = await this.getPullRequestFiles(
               repository,
-              files,
-              deployedServices
-            )
-          };
-        }
-      )
+              pullRequest.number
+            );
+            return {
+              number: pullRequest.number,
+              url: pullRequest.html_url,
+              title: pullRequest.title,
+              body: pullRequest.body,
+              contributors: Array.from(contributors),
+              commit_messages: Array.from(commitMessages),
+              changed_files: files,
+              candidate_services: collectCandidateServices(
+                repository,
+                files,
+                deployedServices
+              )
+            };
+          })
+      );
+      contexts.push(...contextBatch);
+    }
+    const totalChangedFiles = contexts.reduce(
+      (total, context) => total + context.changed_files.length,
+      0
     );
+    if (totalChangedFiles > MAX_TOTAL_CHANGED_FILES) {
+      throw new Error(
+        `Release context exceeds maximum of ${MAX_TOTAL_CHANGED_FILES} changed files`
+      );
+    }
 
     return contexts.sort((a, b) => a.number - b.number);
   }
@@ -313,13 +446,17 @@ export class ReleaseNoteGitHubService {
   ): Promise<GitHubPullRequestFile[]> {
     const files: GitHubPullRequestFile[] = [];
     for (let page = 1; page <= MAX_FILE_PAGES; page++) {
-      const response = await this.api(
+      const pageFiles = await this.api<GitHubPullRequestFile[]>(
         `/repos/${repository}/pulls/${pullRequestNumber}/files?per_page=${PAGE_SIZE}&page=${page}`
       );
-      const pageFiles = (await response.json()) as GitHubPullRequestFile[];
       files.push(...pageFiles);
       if (pageFiles.length < PAGE_SIZE) {
         break;
+      }
+      if (page === MAX_FILE_PAGES) {
+        throw new Error(
+          `Pull request ${pullRequestNumber} exceeds maximum of ${MAX_FILE_PAGES * PAGE_SIZE} changed files`
+        );
       }
     }
     return files;

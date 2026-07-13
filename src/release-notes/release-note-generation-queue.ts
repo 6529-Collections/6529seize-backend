@@ -13,7 +13,7 @@ export interface ReleaseNoteGenerationRequest {
   readonly branch?: string | null;
   readonly environment: string;
   readonly service?: string | null;
-  readonly prompt: string;
+  readonly prompt_path: string;
   readonly release_group_id: string;
   readonly release_group_services: string[];
   readonly deployed_at: string;

@@ -40,6 +40,7 @@ const MAX_COMMIT_MESSAGES = 25;
 const MAX_COMMIT_MESSAGE_LENGTH = 500;
 const MAX_CHANGED_FILES = 300;
 const MAX_SUMMARY_LENGTH = 600;
+const MAX_RELEASE_CONTEXT_LENGTH = 200000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -49,7 +50,11 @@ function normalizeSummary(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
-  const summary = value.replace(/\s+/g, ' ').trim();
+  const summary = value
+    .replace(/\s+/g, ' ')
+    .replace(/@\[/g, '@(')
+    .replace(/[[\]`*_~]/g, '')
+    .trim();
   return summary ? summary.slice(0, MAX_SUMMARY_LENGTH) : null;
 }
 
@@ -139,9 +144,10 @@ export class ReleaseNoteGenerationService {
       );
       return;
     }
+    const repositoryPrompt = await this.githubService.getReleasePrompt(request);
 
     const reply = await this.aiPrompter.promptAndGetReply(
-      this.buildPrompt(request.prompt, context)
+      this.buildPrompt(repositoryPrompt, context)
     );
     const generatedNotes = this.parseGeneratedNotes(reply, context);
     const contributors = await this.resolveContributors(context.pull_requests);
@@ -171,12 +177,18 @@ export class ReleaseNoteGenerationService {
     repositoryPrompt: string,
     context: GitHubReleaseContext
   ): string {
+    const serializedContext = JSON.stringify(sanitizeContext(context));
+    if (serializedContext.length > MAX_RELEASE_CONTEXT_LENGTH) {
+      throw new Error(
+        `Release context exceeds maximum of ${MAX_RELEASE_CONTEXT_LENGTH} characters`
+      );
+    }
     return [
       repositoryPrompt.trim(),
       '',
       'Release metadata follows between <release_context> tags.',
       '<release_context>',
-      JSON.stringify(sanitizeContext(context)),
+      serializedContext,
       '</release_context>'
     ].join('\n');
   }

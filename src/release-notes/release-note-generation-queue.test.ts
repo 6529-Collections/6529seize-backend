@@ -15,7 +15,7 @@ function buildRequest(): ReleaseNoteGenerationRequest {
     sha: 'abc123',
     environment: 'prod',
     service: 'api',
-    prompt: 'Generate release notes.',
+    prompt_path: 'ops/release-notes/release-notes.prompt.md',
     release_group_id: 'release-group',
     release_group_services: ['api'],
     deployed_at: '2026-07-13T11:38:00.000Z'

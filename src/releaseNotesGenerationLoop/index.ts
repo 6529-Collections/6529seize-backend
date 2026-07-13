@@ -8,8 +8,9 @@ import type { SQSHandler } from 'aws-lambda';
 
 const logger = Logger.get('RELEASE_NOTES_GENERATION_LOOP');
 const RELEASE_NOTE_DEDUPE_TTL_SECONDS = 90 * 24 * 60 * 60;
-const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 360;
-const RELEASE_GROUP_TTL_SECONDS = 24 * 60 * 60;
+const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 20 * 60;
+const RELEASE_GROUP_TTL_SECONDS = RELEASE_NOTE_DEDUPE_TTL_SECONDS;
+type ReleaseNotesRedis = NonNullable<ReturnType<typeof getRedisClient>>;
 
 function requireString(
   payload: Record<string, unknown>,
@@ -22,6 +23,22 @@ function requireString(
     );
   }
   return value.trim();
+}
+
+function requireTimestamp(
+  payload: Record<string, unknown>,
+  field: keyof ReleaseNoteGenerationRequest
+): string {
+  const value = requireString(payload, field);
+  if (
+    !/T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
+    Number.isNaN(new Date(value).getTime())
+  ) {
+    throw new Error(
+      `Invalid release note message: ${String(field)} must be a full ISO timestamp`
+    );
+  }
+  return value;
 }
 
 export function parseReleaseNoteMessage(
@@ -47,10 +64,10 @@ export function parseReleaseNoteMessage(
     branch: optionalString('branch'),
     environment: requireString(payload, 'environment'),
     service: optionalString('service'),
-    prompt: requireString(payload, 'prompt'),
+    prompt_path: requireString(payload, 'prompt_path'),
     release_group_id: requireString(payload, 'release_group_id'),
     release_group_services: parseServices(payload.release_group_services),
-    deployed_at: requireString(payload, 'deployed_at')
+    deployed_at: requireTimestamp(payload, 'deployed_at')
   };
 }
 
@@ -78,17 +95,12 @@ function buildDedupeKey(request: ReleaseNoteGenerationRequest): string {
   return `release-note:${repo}:${group}:${request.sha}`;
 }
 
-async function isReleaseGroupComplete(
-  request: ReleaseNoteGenerationRequest
+export async function isReleaseGroupComplete(
+  request: ReleaseNoteGenerationRequest,
+  redis: ReleaseNotesRedis
 ): Promise<boolean> {
   if (request.release_group_services.length === 1) {
     return true;
-  }
-  const redis = getRedisClient();
-  if (!redis) {
-    throw new Error(
-      `Redis is required to coordinate grouped release ${request.release_group_id}`
-    );
   }
   const service = request.service?.trim();
   if (!service || !request.release_group_services.includes(service)) {
@@ -112,43 +124,54 @@ async function isReleaseGroupComplete(
   return isComplete;
 }
 
-async function processRequest(request: ReleaseNoteGenerationRequest) {
-  if (!(await isReleaseGroupComplete(request))) {
-    return;
+export async function processRequest(
+  request: ReleaseNoteGenerationRequest,
+  dependencies?: {
+    readonly redis?: ReleaseNotesRedis | null;
+    readonly generateAndPost?: typeof releaseNoteGenerationService.generateAndPost;
   }
-  const redis = getRedisClient();
+) {
+  const redis =
+    dependencies && Object.prototype.hasOwnProperty.call(dependencies, 'redis')
+      ? dependencies.redis
+      : getRedisClient();
+  if (!redis) {
+    throw new Error(
+      `Redis is required to deduplicate release ${request.release_group_id}`
+    );
+  }
   const dedupeKey = buildDedupeKey(request);
   const processingKey = `${dedupeKey}:processing`;
-  let lockAcquired = false;
-
-  if (redis) {
-    const alreadyProcessed = await redis.get(dedupeKey);
-    if (alreadyProcessed) {
-      logger.info(`Skipping duplicate release note ${dedupeKey}`);
-      return;
-    }
-    lockAcquired =
-      (await redis.set(processingKey, '1', {
-        NX: true,
-        EX: RELEASE_NOTE_PROCESSING_TTL_SECONDS
-      })) !== null;
-    if (!lockAcquired) {
-      logger.info(`Release note ${dedupeKey} is already processing`);
-      return;
-    }
+  const alreadyProcessed = await redis.get(dedupeKey);
+  if (alreadyProcessed) {
+    logger.info(`Skipping duplicate release note ${dedupeKey}`);
+    return;
+  }
+  if (!(await isReleaseGroupComplete(request, redis))) {
+    return;
+  }
+  const lockAcquired =
+    (await redis.set(processingKey, '1', {
+      NX: true,
+      EX: RELEASE_NOTE_PROCESSING_TTL_SECONDS
+    })) !== null;
+  if (!lockAcquired) {
+    logger.info(`Release note ${dedupeKey} is already processing`);
+    return;
   }
 
   try {
-    await releaseNoteGenerationService.generateAndPost(request, {});
-    if (redis) {
-      await redis.set(dedupeKey, '1', {
-        EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
-      });
-    }
+    const generateAndPost =
+      dependencies?.generateAndPost ??
+      releaseNoteGenerationService.generateAndPost.bind(
+        releaseNoteGenerationService
+      );
+    await generateAndPost(request, {});
+    await redis.set(dedupeKey, '1', {
+      EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
+    });
   } finally {
-    if (redis && lockAcquired) {
-      await redis.del(processingKey);
-    }
+    await redis.del(processingKey);
   }
 }
 
