@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import {
   DROPS_TABLE,
+  IDENTITY_MUTES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   PINNED_WAVES_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
@@ -44,6 +45,15 @@ const unreadReader = anIdentity(
     profile_id: 'profile-unread-reader',
     primary_address: 'wallet-unread-reader',
     handle: 'unread-reader'
+  }
+);
+const mutedUnreadReader = anIdentity(
+  {},
+  {
+    consolidation_key: 'identity-muted-unread-reader',
+    profile_id: 'profile-muted-unread-reader',
+    primary_address: 'wallet-muted-unread-reader',
+    handle: 'muted-unread-reader'
   }
 );
 
@@ -579,7 +589,7 @@ describeWithSeed(
 describeWithSeed(
   'WavesApiDb followed subwave overview containers',
   [
-    withIdentities([author, unreadReader]),
+    withIdentities([author, unreadReader, mutedUnreadReader]),
     withWaves([
       parentWave,
       alphaSubwave,
@@ -705,6 +715,16 @@ describeWithSeed(
       ]
     },
     {
+      table: IDENTITY_MUTES_TABLE,
+      rows: [
+        {
+          muter_id: author.profile_id!,
+          muted_identity_id: mutedUnreadReader.profile_id!,
+          created_at: 1
+        }
+      ]
+    },
+    {
       table: WAVE_READER_METRICS_TABLE,
       rows: [
         {
@@ -755,6 +775,34 @@ describeWithSeed(
           wave_id: alphaSubwave.id,
           author_id: author.profile_id!,
           created_at: 900,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'alpha-other-author-unread-drop',
+          wave_id: alphaSubwave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 875,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'alpha-muted-author-unread-drop',
+          wave_id: alphaSubwave.id,
+          author_id: mutedUnreadReader.profile_id!,
+          created_at: 880,
           updated_at: null,
           title: null,
           parts_count: 1,
@@ -878,8 +926,8 @@ describeWithSeed(
       expect(contexts[parentWave.id]).toEqual({
         followed_subwaves_count: 2,
         latest_followed_subwave_activity_timestamp: 900,
-        subwave_unread_drops: 1,
-        hidden_followed_subwave_unread_drops: 2,
+        subwave_unread_drops: 2,
+        hidden_followed_subwave_unread_drops: 1,
         first_hidden_followed_subwave_unread_drop_serial_no: expect.any(Number)
       });
     });

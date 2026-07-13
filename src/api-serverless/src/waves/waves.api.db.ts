@@ -1714,8 +1714,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         parentWaveIds,
         eligibleGroups,
         getValue: async () => {
-          // Keep hidden unread live so wave-reader-metric invalidations are
-          // visible immediately; only coalesce identical concurrent reads.
+          // Unread is not persistently cached. Equivalent concurrent reads are
+          // coalesced only until this query settles, so read and mute changes
+          // are visible on the next request.
           return this.db.execute<HiddenFollowedSubwaveUnreadRow>(
             `
               select
@@ -1727,10 +1728,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   end
                 ) as subwave_unread_drops,
                 count(
-                  case when child_follow.id is not null then d.id end
+                  case
+                    when child_follow.id is not null
+                      and d.author_id != :identityId
+                      and muted_author.id is null
+                      then d.id
+                  end
                 ) as hidden_followed_subwave_unread_drops,
                 min(
-                  case when child_follow.id is not null then d.serial_no end
+                  case
+                    when child_follow.id is not null
+                      and d.author_id != :identityId
+                      and muted_author.id is null
+                      then d.serial_no
+                  end
                 ) as first_hidden_followed_subwave_unread_drop_serial_no
               from ${WAVES_TABLE} child
               join ${WAVES_TABLE} parent
