@@ -87,13 +87,18 @@ export function normalizeTargetEnvironment(value: string | null | undefined) {
   return null;
 }
 
-function formatStatusVerb(status: CiPipelineAlertStatus): string {
-  return status === 'success' ? 'Succeeded' : 'Failed';
+function formatStatusEmoji(status: CiPipelineAlertStatus): string {
+  return status === 'success' ? '✅' : '❌';
 }
 
 function formatAlertHeading(request: CiPipelineAlertRequest): string {
+  const title = normalizeOptionalValue(request.title) ?? request.workflow;
+  const statusEmoji = formatStatusEmoji(request.status);
+  const titleWithStatus = title.includes(statusEmoji)
+    ? title
+    : `${title} ${statusEmoji}`;
   return truncate(
-    `[${formatEnvironmentLabel(request.environment)}] Deploy ${formatStatusVerb(request.status)}`,
+    `[${formatEnvironmentLabel(request.environment)}] ${titleWithStatus}`,
     MAX_DROP_TITLE_LENGTH
   );
 }
@@ -124,6 +129,9 @@ function formatRepoLabel(repo: string): string {
 function formatServiceLabel(request: CiPipelineAlertRequest): string {
   const repoLabel = formatRepoLabel(request.repo);
   const service = normalizeOptionalValue(request.service);
+  if (repoLabel === 'Core' && service?.toLowerCase().startsWith('desktop')) {
+    return '6529 Desktop';
+  }
   return service ? `${repoLabel} - ${service}` : repoLabel;
 }
 
@@ -309,9 +317,11 @@ export class CiPipelineAlertService {
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
+    const description = normalizeOptionalValue(request.description);
     const lines = [
       formatAlertHeading(request),
       '',
+      ...(description ? [description, ''] : []),
       ...mentionLines,
       ...(mentionLines.length ? [''] : []),
       `Service: ${formatServiceLabel(request)}`,
