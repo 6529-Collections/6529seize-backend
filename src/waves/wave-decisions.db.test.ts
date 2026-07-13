@@ -208,19 +208,45 @@ describe('WaveDecisionsDb decision filters', () => {
   });
 
   it('writes a Meme card ID only for the configured Main Stage wave', async () => {
-    const execute = jest.fn().mockResolvedValue([]);
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([{ meme_card_id: 521 }]);
     const repo = new WaveDecisionsDb(() => ({ execute }) as any);
 
     await repo.setMemeCardIdForDrop('drop-1', 521, 'main-stage-wave', ctx);
 
-    const [sql, params] = execute.mock.calls[0];
-    expect(sql).toContain(`update ${WAVES_DECISION_WINNER_DROPS_TABLE}`);
-    expect(sql).toContain('wave_id = :mainStageWaveId');
-    expect(params).toEqual({
+    const [updateSql, updateParams] = execute.mock.calls[0];
+    expect(updateSql).toContain(`update ${WAVES_DECISION_WINNER_DROPS_TABLE}`);
+    expect(updateSql).toContain('wave_id = :mainStageWaveId');
+    expect(updateSql).toContain(
+      '(meme_card_id is null or meme_card_id = :memeCardId)'
+    );
+    expect(updateParams).toEqual({
       dropId: 'drop-1',
       memeCardId: 521,
       mainStageWaveId: 'main-stage-wave'
     });
+    const [selectSql, selectParams] = execute.mock.calls[1];
+    expect(selectSql).toContain('select meme_card_id');
+    expect(selectParams).toEqual({
+      dropId: 'drop-1',
+      mainStageWaveId: 'main-stage-wave'
+    });
+  });
+
+  it('rejects a conflicting existing Meme card assignment', async () => {
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce({ affectedRows: 0 })
+      .mockResolvedValueOnce([{ meme_card_id: 520 }]);
+    const repo = new WaveDecisionsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.setMemeCardIdForDrop('drop-1', 521, 'main-stage-wave', ctx)
+    ).rejects.toThrow(
+      'Cannot assign Meme card 521 to drop drop-1: already assigned to Meme card 520'
+    );
   });
 });
 

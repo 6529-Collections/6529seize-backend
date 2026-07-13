@@ -956,6 +956,9 @@ export class DropsMappers {
           sale_time: dropWinDecision.sale_time,
           sale_price: dropWinDecision.sale_price,
           sale_price_currency: dropWinDecision.sale_price_currency,
+          ...(dropWinDecision.meme_card_id != null
+            ? { meme_card_id: dropWinDecision.meme_card_id }
+            : {}),
           awards: dropWinDecision.prizes.map((prize) => ({
             type: enums.resolveOrThrow(ApiWaveOutcomeType, prize.type),
             subtype:
