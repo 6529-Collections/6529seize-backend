@@ -91,6 +91,16 @@ export interface DropReplyPreview {
   readonly author_pfp: string | null;
 }
 
+export interface AuthorWaveParticipation {
+  readonly is_participant: boolean;
+  readonly is_winner: boolean;
+}
+
+export type AuthorWaveParticipationByWave = Record<
+  string,
+  Record<string, AuthorWaveParticipation>
+>;
+
 export class DropsDb extends LazyDbAccessCompatibleService {
   private getDropEntitySelectFields(alias: string): string {
     return [
@@ -126,6 +136,121 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async findAuthorWaveParticipationByDropContexts(
+    dropContexts: Pick<DropEntity, 'wave_id' | 'author_id'>[],
+    ctx: RequestContext
+  ): Promise<AuthorWaveParticipationByWave> {
+    if (!dropContexts.length) {
+      return {};
+    }
+
+    ctx.timer?.start(
+      `${this.constructor.name}->findAuthorWaveParticipationByDropContexts`
+    );
+    try {
+      const authorIdsByWave = new Map<string, Set<string>>();
+      for (const dropContext of dropContexts) {
+        const authorIds = authorIdsByWave.get(dropContext.wave_id) ?? new Set();
+        authorIds.add(dropContext.author_id);
+        authorIdsByWave.set(dropContext.wave_id, authorIds);
+      }
+
+      const params: Record<string, string> = {};
+      const contextRows: string[] = [];
+      let pairIndex = 0;
+      for (const [waveId, authorIds] of Array.from(authorIdsByWave.entries())) {
+        for (const authorId of Array.from(authorIds)) {
+          const waveIdParam = `waveId${pairIndex}`;
+          const authorIdParam = `authorId${pairIndex}`;
+          params[waveIdParam] = waveId;
+          params[authorIdParam] = authorId;
+          contextRows.push(
+            `select :${waveIdParam} as wave_id, :${authorIdParam} as author_id`
+          );
+          pairIndex++;
+        }
+      }
+
+      const rows = await this.db.execute<{
+        wave_id: string;
+        author_id: string;
+        is_participant: boolean | number;
+        is_winner: boolean | number;
+      }>(
+        `
+          select contexts.wave_id,
+                 contexts.author_id,
+                 exists(
+                   select 1 from ${DROPS_TABLE} participant
+                   where participant.wave_id = contexts.wave_id
+                     and participant.drop_type = '${DropType.PARTICIPATORY}'
+                     and participant.author_id = contexts.author_id
+                 ) as is_participant,
+                 exists(
+                   select 1 from ${DROPS_TABLE} winner
+                   where winner.wave_id = contexts.wave_id
+                     and winner.drop_type = '${DropType.WINNER}'
+                     and winner.author_id = contexts.author_id
+                 ) as is_winner
+          from (${contextRows.join(' union all ')}) contexts
+        `,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+
+      return rows.reduce<AuthorWaveParticipationByWave>((result, row) => {
+        const participationByAuthor = result[row.wave_id] ?? {};
+        participationByAuthor[row.author_id] = {
+          is_participant: Boolean(row.is_participant),
+          is_winner: Boolean(row.is_winner)
+        };
+        result[row.wave_id] = participationByAuthor;
+        return result;
+      }, {});
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findAuthorWaveParticipationByDropContexts`
+      );
+    }
+  }
+
+  async findWaveCompetitionDropsByAuthor(
+    {
+      wave_id,
+      author_id,
+      drop_type,
+      limit,
+      offset
+    }: {
+      readonly wave_id: string;
+      readonly author_id: string;
+      readonly drop_type: DropType.PARTICIPATORY | DropType.WINNER;
+      readonly limit: number;
+      readonly offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    const timerLabel = `${this.constructor.name}->findWaveCompetitionDropsByAuthor`;
+    ctx.timer?.start(timerLabel);
+    try {
+      return await this.db.execute<DropEntity>(
+        `
+          select *
+          from ${DROPS_TABLE}
+          where wave_id = :wave_id
+            and author_id = :author_id
+            and drop_type = :drop_type
+          order by created_at asc, serial_no asc, id asc
+          limit :limit offset :offset
+        `,
+        { wave_id, author_id, drop_type, limit, offset },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
   }
 
   async getDropPartOnes(

@@ -15,6 +15,116 @@ import { DropType } from '@/entities/IDrop';
 import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
+  it('groups active and winning submissions by author and wave', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue([
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        is_participant: 1,
+        is_winner: 1
+      },
+      {
+        wave_id: 'wave-2',
+        author_id: 'author-2',
+        is_participant: 1,
+        is_winner: 0
+      }
+    ]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findAuthorWaveParticipationByDropContexts(
+      [
+        { wave_id: 'wave-1', author_id: 'author-1' },
+        { wave_id: 'wave-1', author_id: 'author-1' },
+        { wave_id: 'wave-2', author_id: 'author-2' }
+      ],
+      {
+        connection: { connection } as any,
+        timer: undefined
+      }
+    );
+
+    expect(result).toEqual({
+      'wave-1': {
+        'author-1': {
+          is_participant: true,
+          is_winner: true
+        }
+      },
+      'wave-2': {
+        'author-2': {
+          is_participant: true,
+          is_winner: false
+        }
+      }
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain(
+      'select :waveId0 as wave_id, :authorId0 as author_id'
+    );
+    expect(sql).toContain(
+      'select :waveId1 as wave_id, :authorId1 as author_id'
+    );
+    expect(sql).toContain("participant.drop_type = 'PARTICIPATORY'");
+    expect(sql).toContain("winner.drop_type = 'WINNER'");
+    expect(sql).toContain('exists(');
+    expect(params).toEqual({
+      waveId0: 'wave-1',
+      authorId0: 'author-1',
+      waveId1: 'wave-2',
+      authorId1: 'author-2'
+    });
+    expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
+  it('pages full competition drops for one author in one wave', async () => {
+    const connection = {};
+    const drops = [{ id: 'entry-1' }, { id: 'entry-2' }];
+    const execute = jest.fn().mockResolvedValue(drops);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findWaveCompetitionDropsByAuthor(
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        drop_type: DropType.PARTICIPATORY,
+        limit: 51,
+        offset: 50
+      },
+      {
+        connection: { connection } as any,
+        timer: undefined
+      }
+    );
+
+    expect(result).toBe(drops);
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain('wave_id = :wave_id');
+    expect(sql).toContain('author_id = :author_id');
+    expect(sql).toContain('drop_type = :drop_type');
+    expect(sql).toContain('limit :limit offset :offset');
+    expect(params).toEqual({
+      wave_id: 'wave-1',
+      author_id: 'author-1',
+      drop_type: DropType.PARTICIPATORY,
+      limit: 51,
+      offset: 50
+    });
+    expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
   it('applies a bounded metrics delta when a drop is deleted', async () => {
     const connection = {};
     const execute = jest.fn().mockResolvedValue([]);
