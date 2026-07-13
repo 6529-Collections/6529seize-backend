@@ -34,12 +34,17 @@ interface MentionedProfile {
 
 const MAX_DROP_CONTENT_LENGTH = 30000;
 const MAX_DROP_TITLE_LENGTH = 250;
+const MAX_ALERT_DESCRIPTION_LENGTH = 5000;
 
 export function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
   }
-  return `${value.slice(0, maxLength - 3)}...`;
+  const requestedEnd = maxLength - 3;
+  const sliceEnd = /[\uD800-\uDBFF]/.test(value.charAt(requestedEnd - 1))
+    ? requestedEnd - 1
+    : requestedEnd;
+  return `${value.slice(0, sliceEnd)}...`;
 }
 
 function normalizeOptionalValue(
@@ -87,15 +92,39 @@ export function normalizeTargetEnvironment(value: string | null | undefined) {
   return null;
 }
 
-function formatStatusVerb(status: CiPipelineAlertStatus): string {
-  return status === 'success' ? 'Succeeded' : 'Failed';
+function formatStatusEmoji(status: CiPipelineAlertStatus): string {
+  return status === 'success' ? '✅' : '❌';
+}
+
+function sanitizeAlertText(value: string): string {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/[[\]<>]/g, (character) => `\\${character}`)
+    .trim();
 }
 
 function formatAlertHeading(request: CiPipelineAlertRequest): string {
-  return truncate(
-    `[${formatEnvironmentLabel(request.environment)}] Deploy ${formatStatusVerb(request.status)}`,
-    MAX_DROP_TITLE_LENGTH
+  const environmentPrefix = formatEnvironmentPrefix(request.environment);
+  const statusEmoji = formatStatusEmoji(request.status);
+  const statusSuffix = ` ${statusEmoji}`;
+  const title = sanitizeAlertText(
+    normalizeOptionalValue(request.title) ?? request.workflow
+  )
+    .replace(/[✅❌]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const truncatedTitle = truncate(
+    title,
+    MAX_DROP_TITLE_LENGTH - environmentPrefix.length - statusSuffix.length
   );
+  return `${environmentPrefix}${truncatedTitle}${statusSuffix}`;
+}
+
+function formatEnvironmentPrefix(value: string | null | undefined): string {
+  const environmentLabel = formatEnvironmentLabel(value);
+  const stagingEmoji =
+    normalizeTargetEnvironment(value) === 'staging' ? ' 🚧' : '';
+  return `[${environmentLabel}${stagingEmoji}] `;
 }
 
 function formatEnvironmentLabel(value: string | null | undefined): string {
@@ -124,6 +153,9 @@ function formatRepoLabel(repo: string): string {
 function formatServiceLabel(request: CiPipelineAlertRequest): string {
   const repoLabel = formatRepoLabel(request.repo);
   const service = normalizeOptionalValue(request.service);
+  if (repoLabel === 'Core' && service?.toLowerCase() === 'desktop') {
+    return '6529 Desktop';
+  }
   return service ? `${repoLabel} - ${service}` : repoLabel;
 }
 
@@ -309,9 +341,14 @@ export class CiPipelineAlertService {
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
+    const description = normalizeOptionalValue(request.description);
+    const formattedDescription = description
+      ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
+      : null;
     const lines = [
       formatAlertHeading(request),
       '',
+      ...(formattedDescription ? [formattedDescription, ''] : []),
       ...mentionLines,
       ...(mentionLines.length ? [''] : []),
       `Service: ${formatServiceLabel(request)}`,

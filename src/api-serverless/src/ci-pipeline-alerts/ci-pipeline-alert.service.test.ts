@@ -91,7 +91,9 @@ describe('CiPipelineAlertService', () => {
           if (value.length <= maxLength) {
             expect(truncated).toBe(value);
           } else {
-            expect(truncated).toBe(`${value.slice(0, maxLength - 3)}...`);
+            expect(truncated.endsWith('...')).toBe(true);
+            expect(value.startsWith(truncated.slice(0, -3))).toBe(true);
+            expect(truncated.slice(0, -3)).not.toMatch(/[\uD800-\uDBFF]$/);
           }
         }
       )
@@ -217,7 +219,9 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[PROD] Deploy Failed',
+                  '[PROD] Seize PROD WEB DEPLOY: CI pipeline is broken!!! ❌',
+                  '',
+                  'abc123 - Fix deploy',
                   '',
                   'cc @[ALICE] @[Bob]',
                   '',
@@ -270,7 +274,9 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[STAGING] Deploy Succeeded',
+                  '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+                  '',
+                  'abc123 - Fix deploy',
                   '',
                   'Service: Frontend - web',
                   'Workflow: Web Deploy - PROD',
@@ -290,7 +296,9 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[STAGING] Deploy Succeeded',
+        '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+        '',
+        'abc123 - Fix deploy',
         '',
         'Service: Frontend - web',
         'Workflow: Web Deploy - PROD',
@@ -309,5 +317,131 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).not.toContain('cc @[');
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
+  });
+
+  it('formats desktop alerts with the product label and existing emoji', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        status: 'success',
+        title: 'Desktop Publish completed 🚀',
+        description:
+          'Production v0.3.11 publish completed with S3 and Arweave links published and CloudFront invalidated.',
+        branch: 'v0.3.11',
+        service: 'desktop',
+        run_url:
+          'https://github.com/6529-Collections/6529-core/actions/runs/12345'
+      },
+      {}
+    );
+
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toBe(
+      [
+        '[PROD] Desktop Publish completed 🚀 ✅',
+        '',
+        'Production v0.3.11 publish completed with S3 and Arweave links published and CloudFront invalidated.',
+        '',
+        'Service: 6529 Desktop',
+        'Workflow: Publish',
+        'Branch: v0.3.11',
+        'Commit: [abc12345](https://github.com/6529-Collections/6529-core/commit/abc1234567890)',
+        'Run: [#6082](https://github.com/6529-Collections/6529-core/actions/runs/12345)'
+      ].join('\n')
+    );
+  });
+
+  it.each([null, ''])(
+    'falls back to the workflow for title %p',
+    async (title) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as any,
+        identitiesRepository as any
+      );
+
+      await service.postAlert({ ...baseRequest, title } as any, {});
+
+      expect(
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest.parts[0].content.startsWith(
+          '[PROD] Web Deploy - PROD ❌'
+        )
+      ).toBe(true);
+    }
+  );
+
+  it('normalizes conflicting status emojis', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      { ...baseRequest, title: 'Build succeeded ✅ ❌', status: 'success' },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    expect(content.startsWith('[PROD] Build succeeded ✅')).toBe(true);
+    expect(content.startsWith('[PROD] Build succeeded ✅ ❌')).toBe(false);
+  });
+
+  it('preserves the outcome and run metadata when text is long', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        title: `${'a'.repeat(234)}🚀${'a'.repeat(20)}`,
+        description: `[details](${'https://example.com/'}${'b'.repeat(30000)})`
+      },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    const heading = content.split('\n')[0];
+    expect(heading.endsWith('❌')).toBe(true);
+    expect(heading.length).toBeLessThanOrEqual(250);
+    expect(Buffer.from(heading, 'utf8').toString('utf8')).toBe(heading);
+    expect(content).toContain(
+      'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+    );
+    expect(content).toContain('\\[details\\](');
+  });
+
+  it('only applies the desktop product label to the exact service', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        service: 'desktop-canary'
+      },
+      {}
+    );
+
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Service: Core - desktop-canary');
   });
 });
