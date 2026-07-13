@@ -406,6 +406,53 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async updateStorageReceipt(
+    fields: {
+      readonly id: string;
+      readonly cms_package: unknown;
+      readonly storage_receipts: unknown;
+      readonly storage_provider: string | null;
+      readonly storage_uri: string | null;
+      readonly storage_content_hash: string | null;
+      readonly storage_provider_content_id: string | null;
+      readonly storage_recorded_at: string | null;
+      readonly storage_pinned: boolean | null;
+      readonly storage_canonical: boolean | null;
+      readonly updated_at: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timedExecute(
+      'updateStorageReceipt',
+      `update ${PROFILE_CMS_PACKAGES_TABLE}
+       set cms_package = :cms_package,
+           storage_receipts = :storage_receipts,
+           storage_provider = :storage_provider,
+           storage_uri = :storage_uri,
+           storage_content_hash = :storage_content_hash,
+           storage_provider_content_id = :storage_provider_content_id,
+           storage_recorded_at = :storage_recorded_at,
+           storage_pinned = :storage_pinned,
+           storage_canonical = :storage_canonical,
+           updated_at = :updated_at
+       where id = :id`,
+      {
+        id: fields.id,
+        cms_package: JSON.stringify(fields.cms_package),
+        storage_receipts: JSON.stringify(fields.storage_receipts),
+        storage_provider: fields.storage_provider,
+        storage_uri: fields.storage_uri,
+        storage_content_hash: fields.storage_content_hash,
+        storage_provider_content_id: fields.storage_provider_content_id,
+        storage_recorded_at: fields.storage_recorded_at,
+        storage_pinned: nullableBooleanParam(fields.storage_pinned),
+        storage_canonical: nullableBooleanParam(fields.storage_canonical),
+        updated_at: fields.updated_at
+      },
+      ctx
+    );
+  }
+
   async archive(id: string, now: number, ctx: RequestContext): Promise<void> {
     await this.timedExecute(
       'archive',
