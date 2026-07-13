@@ -1,5 +1,4 @@
 import { AiPrompter } from '@/abusiveness/ai-prompter';
-import { openAiPrompter } from '@/abusiveness/open-ai.prompter';
 import { AuthenticationContext } from '@/auth-context';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
@@ -12,6 +11,7 @@ import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
+import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
 import {
   GitHubReleaseContext,
   releaseNoteGitHubService,
@@ -381,7 +381,7 @@ export class ReleaseNoteGenerationService {
 
 export const releaseNoteGenerationService = new ReleaseNoteGenerationService(
   releaseNoteGitHubService,
-  openAiPrompter,
+  releaseNotesBedrockPrompter,
   dropCreationService,
   identitiesDb
 );
