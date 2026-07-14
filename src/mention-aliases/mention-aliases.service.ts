@@ -34,6 +34,7 @@ export class MentionAliasesService {
     const normalized = this.validateInput(input);
     const id = randomUUID();
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
+      await this.db.lockOwnerProfile(ownerProfileId, connection);
       const count = await this.db.countByOwner(ownerProfileId, connection);
       if (count >= MAX_MENTION_ALIASES_PER_PROFILE) {
         throw new BadRequestException(
@@ -47,15 +48,24 @@ export class MentionAliasesService {
         excludedAliasId: null,
         connection
       });
-      await this.db.insertAlias(
-        {
-          id,
-          ownerProfileId,
-          alias: normalized.alias,
-          normalizedAlias: normalized.alias
-        },
-        connection
-      );
+      try {
+        await this.db.insertAlias(
+          {
+            id,
+            ownerProfileId,
+            alias: normalized.alias,
+            normalizedAlias: normalized.alias
+          },
+          connection
+        );
+      } catch (error) {
+        if (isDuplicateKeyError(error)) {
+          throw new BadRequestException(
+            `You already have a @${normalized.alias} mention shortcut.`
+          );
+        }
+        throw error;
+      }
       await this.db.replaceMembers(id, normalized.memberProfileIds, connection);
     });
     return this.findCreatedOrThrow(ownerProfileId, id);
@@ -194,3 +204,12 @@ export class MentionAliasesService {
 export const mentionAliasesService = new MentionAliasesService(
   mentionAliasesDb
 );
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { readonly code?: unknown }).code === 'ER_DUP_ENTRY'
+  );
+}

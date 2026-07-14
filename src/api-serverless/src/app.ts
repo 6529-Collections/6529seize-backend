@@ -31,7 +31,7 @@ import mintingClaimsRoutes from './minting-claims/api.minting-claims.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import notificationsRoutes from './notifications/notifications.routes';
-import mentionAliasesRoutes from './mention-aliases/mention-aliases.routes';
+import mentionAliasesRoutes from '@/api/mention-aliases/mention-aliases.routes';
 import oracleRoutes from './oracle/api.oracle.routes';
 import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import policiesRoutes from './policies/policies.routes';

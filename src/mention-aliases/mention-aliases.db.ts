@@ -1,13 +1,15 @@
 import {
   IDENTITIES_TABLE,
   MENTION_ALIASES_TABLE,
-  MENTION_ALIAS_MEMBERS_TABLE
+  MENTION_ALIAS_MEMBERS_TABLE,
+  PROFILES_TABLE
 } from '@/constants';
 import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
+import { MAX_MEMBERS_PER_MENTION_ALIAS } from './mention-aliases.constants';
 
 export interface MentionAliasMember {
   readonly profile_id: string;
@@ -85,6 +87,19 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       )
       .then((row) => row?.cnt ?? 0);
+  }
+
+  async lockOwnerProfile(
+    ownerProfileId: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `select external_id from ${PROFILES_TABLE}
+       where external_id = :ownerProfileId
+       for update`,
+      { ownerProfileId },
+      { wrappedConnection: connection }
+    );
   }
 
   async findOwnedAlias(
@@ -229,8 +244,12 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
       { sourceProfileId, targetProfileId },
       { wrappedConnection: connection }
     );
-    const conflictingSourceAliases = await this.db.execute<{ id: string }>(
-      `select source_alias.id
+    const conflictingSourceAliases = await this.db.execute<{
+      source_alias_id: string;
+      target_alias_id: string;
+    }>(
+      `select source_alias.id as source_alias_id,
+              target_alias.id as target_alias_id
        from ${MENTION_ALIASES_TABLE} source_alias
        join ${MENTION_ALIASES_TABLE} target_alias
          on target_alias.owner_profile_id = :targetProfileId
@@ -240,7 +259,30 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
     for (const alias of conflictingSourceAliases) {
-      await this.deleteAlias(alias.id, connection);
+      const members = await this.db.execute<{
+        alias_id: string;
+        member_profile_id: string;
+      }>(
+        `select alias_id, member_profile_id
+         from ${MENTION_ALIAS_MEMBERS_TABLE}
+         where alias_id in (:aliasIds)
+         order by case when alias_id = :targetAliasId then 0 else 1 end,
+                  position asc`,
+        {
+          aliasIds: [alias.target_alias_id, alias.source_alias_id],
+          targetAliasId: alias.target_alias_id
+        },
+        { wrappedConnection: connection }
+      );
+      const retainedMemberIds = Array.from(
+        new Set(members.map((member) => member.member_profile_id))
+      ).slice(0, MAX_MEMBERS_PER_MENTION_ALIAS);
+      await this.replaceMembers(
+        alias.target_alias_id,
+        retainedMemberIds,
+        connection
+      );
+      await this.deleteAlias(alias.source_alias_id, connection);
     }
     await this.db.execute(
       `update ${MENTION_ALIASES_TABLE}

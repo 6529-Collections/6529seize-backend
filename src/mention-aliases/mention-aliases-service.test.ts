@@ -8,6 +8,7 @@ function createDb() {
     db: {
       executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
       findByOwner: jest.fn(),
+      lockOwnerProfile: jest.fn().mockResolvedValue(undefined),
       countByOwner: jest.fn().mockResolvedValue(0),
       normalizedAliasExists: jest.fn().mockResolvedValue(false),
       findExistingProfileIds: jest.fn().mockResolvedValue(['profile-2']),
@@ -60,6 +61,7 @@ describe('MentionAliasesService', () => {
       }),
       connection
     );
+    expect(db.lockOwnerProfile).toHaveBeenCalledWith('owner-1', connection);
     expect(db.replaceMembers).toHaveBeenCalledWith(
       expect.any(String),
       ['profile-2'],
@@ -90,6 +92,19 @@ describe('MentionAliasesService', () => {
     await expect(
       service.create('owner-1', {
         alias: 'Frens',
+        member_profile_ids: ['profile-2']
+      })
+    ).rejects.toThrow('You already have a @frens mention shortcut.');
+  });
+
+  it('translates a concurrent duplicate insert into a bad request', async () => {
+    const { db } = createDb();
+    db.insertAlias.mockRejectedValue({ code: 'ER_DUP_ENTRY' });
+    const service = new MentionAliasesService(db as any);
+
+    await expect(
+      service.create('owner-1', {
+        alias: 'frens',
         member_profile_ids: ['profile-2']
       })
     ).rejects.toThrow('You already have a @frens mention shortcut.');
