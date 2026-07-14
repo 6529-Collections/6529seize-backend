@@ -92,6 +92,85 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('builds a backend release context from exactly the declared PR', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          ...currentRun,
+          name: 'Deploy api to prod',
+          display_title: 'Deploy api to prod',
+          head_sha: 'current-sha'
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          number: 1749,
+          html_url:
+            'https://github.com/6529-Collections/6529seize-backend/pull/1749',
+          title: 'Link Main Stage winners to Meme cards',
+          body: 'Adds the production mapping.',
+          merged_at: '2026-07-14T12:00:00Z',
+          merge_commit_sha: 'merge-sha',
+          user: { login: 'prxt0' },
+          base: { ref: 'main' }
+        })
+      )
+      .mockResolvedValueOnce(response({ status: 'ahead' }))
+      .mockResolvedValueOnce(
+        response([
+          {
+            filename: 'src/api-serverless/src/drops/api-drop.mapper.ts',
+            additions: 10,
+            deletions: 2,
+            changes: 12
+          }
+        ])
+      );
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      run_number: '45',
+      sha: 'current-sha',
+      branch: 'main',
+      service: 'api',
+      release_group_id: 'pr-1749',
+      release_group_services: ['dbMigrationsLoop', 'claimsBuilder', 'api'],
+      pull_request_number: 1749
+    });
+
+    expect(context).toEqual({
+      previous_sha: 'merge-sha',
+      current_sha: 'current-sha',
+      pull_requests: [
+        {
+          number: 1749,
+          url: 'https://github.com/6529-Collections/6529seize-backend/pull/1749',
+          title: 'Link Main Stage winners to Meme cards',
+          body: 'Adds the production mapping.',
+          contributors: ['prxt0'],
+          commit_messages: ['Link Main Stage winners to Meme cards'],
+          changed_files: [
+            {
+              filename: 'src/api-serverless/src/drops/api-drop.mapper.ts',
+              additions: 10,
+              deletions: 2,
+              changes: 12
+            }
+          ],
+          candidate_services: ['api', 'claimsBuilder', 'dbMigrationsLoop']
+        }
+      ]
+    });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/pulls/1749',
+      expect.any(Object)
+    );
+  });
+
   it('does not use a frontend non-production run as the release baseline', async () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(currentRun))

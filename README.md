@@ -124,7 +124,7 @@ Service picker controls:
 
 The list scrolls automatically as you move beyond the visible items. `j` / `k` and `x` also work as fallback keys if your terminal handles arrows or space oddly.
 
-Root mode prompts once for `staging` or `prod`, uses that environment for the whole batch, then dispatches one GitHub workflow run per selected service. If one dispatch fails, it asks whether to continue with the remaining services and prints a success/failure/skipped summary at the end.
+Root mode supports staging batches. Production services are deployed one at a time from their service folders so each successful workflow can either hold the PR release note for another service or publish it.
 
 ### 0.4.2 Use `ghdeploy` from a service folder
 
@@ -135,7 +135,7 @@ cd src/tdhLoop
 ghdeploy
 ```
 
-Single-service mode opens the same environment picker, resolves the service from the current folder, and then triggers:
+Single-service mode opens the same environment picker and resolves the service from the current folder. For production it also asks for the merged PR number and whether this successful deploy should hold or publish the release note. Use `hold` while more services for that PR remain, then choose `publish` for the final service. The published note includes every successful service accumulated for that PR, even when later services deploy a descendant commit. For staging, it triggers:
 
 ```bash
 gh workflow run "Deploy a service" \

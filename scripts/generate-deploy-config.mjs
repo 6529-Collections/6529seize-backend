@@ -77,6 +77,15 @@ ${indent(yamlList(serviceNames))}
         type: string
         description: 'Internal ghdeploy value; leave blank for manual deploys'
         required: false
+      release_pull_request:
+        type: string
+        description: 'Merged PR represented by this production release'
+        required: false
+      release_note_publish:
+        type: boolean
+        description: 'Publish the accumulated release note for this PR after success'
+        required: false
+        default: false
 
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
@@ -111,6 +120,22 @@ jobs:
         run: |
           echo "Given service can only be deployed to staging environment" >&2
           exit 1
+      - name: Check production release-note preconditions
+        shell: bash
+        if: github.event.inputs.environment == 'prod' && github.event.inputs.release_pull_request == ''
+        run: |
+          echo "A merged release_pull_request is required for production deploys" >&2
+          exit 1
+      - name: Validate production release PR
+        shell: bash
+        if: github.event.inputs.environment == 'prod'
+        env:
+          RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
+        run: |
+          if ! [[ "$RELEASE_PULL_REQUEST" =~ ^[1-9][0-9]*$ ]]; then
+            echo "release_pull_request must be a positive PR number" >&2
+            exit 1
+          fi
       - name: Extract branch name
         shell: bash
         run: echo "branch=\${GITHUB_HEAD_REF:-\${GITHUB_REF#refs/heads/}}" >> "$GITHUB_OUTPUT"
@@ -294,6 +319,8 @@ jobs:
           CI_RELEASE_NOTES_PROMPT_PATH: ops/release-notes/release-notes.prompt.md
           CI_RELEASE_GROUP_ID: \${{ github.event.inputs.release_group_id }}
           CI_RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
+          CI_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
+          CI_RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
         run: node scripts/notify-ci-wave.mjs
 `;
 }

@@ -30,6 +30,7 @@ interface GitHubCommit {
 interface GitHubCompareResponse {
   readonly commits?: GitHubCommit[];
   readonly total_commits?: number;
+  readonly status?: string;
 }
 
 interface GitHubContentResponse {
@@ -44,6 +45,7 @@ interface GitHubPullRequest {
   readonly title: string;
   readonly body: string | null;
   readonly merged_at: string | null;
+  readonly merge_commit_sha?: string | null;
   readonly user?: {
     readonly login?: string;
   };
@@ -300,6 +302,12 @@ export class ReleaseNoteGitHubService {
     request: ReleaseNoteGenerationRequest
   ): Promise<GitHubReleaseContext | null> {
     const repository = normalizeRepository(request.repo);
+    if (
+      getRepoName(request.repo) === BACKEND_REPO &&
+      request.pull_request_number
+    ) {
+      return this.getPullRequestReleaseContext(repository, request);
+    }
     const previousRun = await this.findPreviousSuccessfulRun(
       repository,
       request
@@ -327,10 +335,63 @@ export class ReleaseNoteGitHubService {
     };
   }
 
-  private async findPreviousSuccessfulRun(
+  private async getPullRequestReleaseContext(
     repository: string,
     request: ReleaseNoteGenerationRequest
-  ): Promise<GitHubWorkflowRun | null> {
+  ): Promise<GitHubReleaseContext> {
+    await this.getValidatedCurrentRun(repository, request);
+    const pullRequestNumber = request.pull_request_number!;
+    const pullRequest = await this.api<GitHubPullRequest>(
+      `/repos/${repository}/pulls/${pullRequestNumber}`
+    );
+    const branch = normalizeBranch(request.branch);
+    const mergeCommitSha = pullRequest.merge_commit_sha?.trim();
+    if (
+      pullRequest.number !== pullRequestNumber ||
+      !pullRequest.merged_at ||
+      pullRequest.base?.ref !== branch ||
+      !mergeCommitSha
+    ) {
+      throw new Error(
+        `Pull request ${pullRequestNumber} is not merged into ${branch}`
+      );
+    }
+    if (mergeCommitSha !== request.sha) {
+      const comparison = await this.api<GitHubCompareResponse>(
+        `/repos/${repository}/compare/${encodeURIComponent(mergeCommitSha)}...${encodeURIComponent(request.sha)}`
+      );
+      if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
+        throw new Error(
+          `Deployed commit ${request.sha} does not contain pull request ${pullRequestNumber}`
+        );
+      }
+    }
+    const files = await this.getPullRequestFiles(repository, pullRequestNumber);
+    const contributor = pullRequest.user?.login?.trim();
+    return {
+      previous_sha: mergeCommitSha,
+      current_sha: request.sha,
+      pull_requests: [
+        {
+          number: pullRequest.number,
+          url: pullRequest.html_url,
+          title: pullRequest.title,
+          body: pullRequest.body,
+          contributors: contributor ? [contributor] : [],
+          commit_messages: [pullRequest.title],
+          changed_files: files,
+          candidate_services: Array.from(
+            new Set(request.release_group_services)
+          ).sort((a, b) => a.localeCompare(b))
+        }
+      ]
+    };
+  }
+
+  private async getValidatedCurrentRun(
+    repository: string,
+    request: ReleaseNoteGenerationRequest
+  ): Promise<GitHubWorkflowRun> {
     const currentRun = await this.api<GitHubWorkflowRun>(
       `/repos/${repository}/actions/runs/${encodeURIComponent(request.run_id)}`
     );
@@ -343,6 +404,14 @@ export class ReleaseNoteGitHubService {
         `GitHub release run ${request.run_id} does not match the queued release metadata`
       );
     }
+    return currentRun;
+  }
+
+  private async findPreviousSuccessfulRun(
+    repository: string,
+    request: ReleaseNoteGenerationRequest
+  ): Promise<GitHubWorkflowRun | null> {
+    const currentRun = await this.getValidatedCurrentRun(repository, request);
 
     const branch = encodeURIComponent(normalizeBranch(request.branch));
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {

@@ -45,6 +45,30 @@ function requireTimestamp(
   return value;
 }
 
+function parsePullRequestNumber(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    throw new Error(
+      'Invalid release note message: pull_request_number must be a positive integer'
+    );
+  }
+  return Number(value);
+}
+
+function parsePublishReleaseNote(value: unknown): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  if (typeof value !== 'boolean') {
+    throw new TypeError(
+      'Invalid release note message: publish_release_note must be a boolean'
+    );
+  }
+  return value;
+}
+
 export function parseReleaseNoteMessage(
   body: string
 ): ReleaseNoteGenerationRequest {
@@ -71,6 +95,8 @@ export function parseReleaseNoteMessage(
     prompt_path: requireString(payload, 'prompt_path'),
     release_group_id: requireString(payload, 'release_group_id'),
     release_group_services: parseServices(payload.release_group_services),
+    pull_request_number: parsePullRequestNumber(payload.pull_request_number),
+    publish_release_note: parsePublishReleaseNote(payload.publish_release_note),
     deployed_at: requireTimestamp(payload, 'deployed_at')
   };
 }
@@ -99,6 +125,9 @@ function sanitizeRedisKeyPart(value: string): string {
 
 function buildDedupeKey(request: ReleaseNoteGenerationRequest): string {
   const repo = sanitizeRedisKeyPart(request.repo);
+  if (request.pull_request_number) {
+    return `release-note:${repo}:pr-${request.pull_request_number}`;
+  }
   const group = sanitizeRedisKeyPart(request.release_group_id);
   const sha = sanitizeRedisKeyPart(request.sha);
   return `release-note:${repo}:${group}:${sha}`;
@@ -106,6 +135,9 @@ function buildDedupeKey(request: ReleaseNoteGenerationRequest): string {
 
 function buildReleaseGroupKey(request: ReleaseNoteGenerationRequest): string {
   const repo = sanitizeRedisKeyPart(request.repo);
+  if (request.pull_request_number) {
+    return `release-note-group:${repo}:pr-${request.pull_request_number}`;
+  }
   const group = sanitizeRedisKeyPart(request.release_group_id);
   const sha = sanitizeRedisKeyPart(request.sha);
   return `release-note-group:${repo}:${group}:${sha}`;
@@ -154,10 +186,27 @@ export async function isReleaseGroupComplete(
   request: ReleaseNoteGenerationRequest,
   redis: ReleaseNotesRedis
 ): Promise<boolean> {
+  const service = request.service?.trim();
+  if (request.pull_request_number) {
+    if (!service) {
+      throw new Error(
+        `Release group ${request.release_group_id} received a missing service`
+      );
+    }
+    const groupKey = buildReleaseGroupKey(request);
+    await redis.set(
+      `${groupKey}:run:${service}`,
+      JSON.stringify(buildRunReference(request, service)),
+      { EX: RELEASE_GROUP_TTL_SECONDS }
+    );
+    await redis.sAdd(`${groupKey}:services`, service);
+    await redis.expire(`${groupKey}:services`, RELEASE_GROUP_TTL_SECONDS);
+    return request.publish_release_note === true;
+  }
+
   if (request.release_group_services.length === 1) {
     return true;
   }
-  const service = request.service?.trim();
   if (!service || !request.release_group_services.includes(service)) {
     throw new Error(
       `Release group ${request.release_group_id} received unexpected service ${service ?? 'missing'}`
@@ -187,28 +236,47 @@ export async function isReleaseGroupComplete(
   return isComplete;
 }
 
-async function getReleaseGroupRuns(
+async function getReleaseGroupState(
   request: ReleaseNoteGenerationRequest,
   redis: ReleaseNotesRedis
-): Promise<ReleaseNoteRunReference[]> {
-  if (request.release_group_services.length === 1) {
+): Promise<{
+  readonly services: string[];
+  readonly runs: ReleaseNoteRunReference[];
+}> {
+  if (
+    !request.pull_request_number &&
+    request.release_group_services.length === 1
+  ) {
     const service =
       request.service?.trim() || request.release_group_services[0];
-    return [buildRunReference(request, service)];
+    return {
+      services: [service],
+      runs: [buildRunReference(request, service)]
+    };
   }
 
   const groupKey = buildReleaseGroupKey(request);
-  return Promise.all(
-    request.release_group_services.map(async (service) => {
+  const services = request.pull_request_number
+    ? (await redis.sMembers(`${groupKey}:services`)).sort((a, b) =>
+        a.localeCompare(b)
+      )
+    : request.release_group_services;
+  const runs = await Promise.all(
+    services.map(async (service) => {
       const stored = await redis.get(`${groupKey}:run:${service}`);
       if (!stored) {
-        throw new Error(
-          `Missing release run metadata for service ${service} in group ${request.release_group_id}`
+        logger.warn(
+          `Publishing release group ${request.release_group_id} without expired run metadata for service ${service}`
         );
+        return null;
       }
       return parseRunReference(stored, service);
     })
   );
+  return {
+    services,
+    runs: runs.filter((run): run is ReleaseNoteRunReference => run !== null)
+  };
 }
 
 export async function processRequest(
@@ -237,7 +305,7 @@ export async function processRequest(
   if (!(await isReleaseGroupComplete(request, redis))) {
     return;
   }
-  const releaseGroupRuns = await getReleaseGroupRuns(request, redis);
+  const releaseGroup = await getReleaseGroupState(request, redis);
   const lockAcquired =
     (await redis.set(processingKey, '1', {
       NX: true,
@@ -255,7 +323,11 @@ export async function processRequest(
         releaseNoteGenerationService
       );
     const outcome = await generateAndPost(
-      { ...request, release_group_runs: releaseGroupRuns },
+      {
+        ...request,
+        release_group_services: releaseGroup.services,
+        release_group_runs: releaseGroup.runs
+      },
       {}
     );
     if (outcome !== 'no-baseline') {
