@@ -96,6 +96,10 @@ import {
   nftLinkResolvingService,
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
+import {
+  memeCardDropMappingsDb,
+  MemeCardDropMappingsDb
+} from '@/minting-claims/meme-card-drop-mappings.db';
 
 type VoteRangeByDropId = Record<
   string,
@@ -125,7 +129,9 @@ export class ApiDropMapper {
     private readonly dropPollsDb: DropPollsDb,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
-    private readonly nftLinkResolvingService: NftLinkResolvingService
+    private readonly nftLinkResolvingService: NftLinkResolvingService,
+    private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
+    private readonly getMainStageWaveId: () => string | null
   ) {}
 
   public async mapDrops(
@@ -162,7 +168,16 @@ export class ApiDropMapper {
       const winnerDropIds = submissionEntities
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
-      const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+      const mainStageWaveId = this.getMainStageWaveId();
+      const mainStageWinnerDropIds = mainStageWaveId
+        ? submissionEntities
+            .filter(
+              (drop) =>
+                drop.drop_type === DropType.WINNER &&
+                drop.wave_id === mainStageWaveId
+            )
+            .map((drop) => drop.id)
+        : [];
       // mapDrops only enriches entities that its caller has already authorized
       // for this response. These flags are display metadata, never access
       // control; the lazy full-entry endpoint performs its own wave check.
@@ -224,7 +239,8 @@ export class ApiDropMapper {
         submissionVotingSummaries,
         votingRanges,
         winningDropsRatingsByVoter,
-        pollsByDropId
+        pollsByDropId,
+        memeCardIdsByDropId
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.findAuthorWaveParticipationByDropContexts(
@@ -295,7 +311,14 @@ export class ApiDropMapper {
               ctx
             )
           : Promise.resolve({} as Record<string, number>),
-        this.dropPollsDb.findPollsByDropIds(dropIds, ctx)
+        this.dropPollsDb.findPollsByDropIds(dropIds, ctx),
+        mainStageWaveId && mainStageWinnerDropIds.length
+          ? this.memeCardDropMappingsDb.findMemeCardIdsByDropIds(
+              mainStageWinnerDropIds,
+              mainStageWaveId,
+              ctx
+            )
+          : Promise.resolve({} as Record<string, number>)
       ]);
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
@@ -350,6 +373,7 @@ export class ApiDropMapper {
             votingRanges,
             winningDropsRatingsByVoter,
             poll: pollsByDropId[drop.id],
+            memeCardId: memeCardIdsByDropId[drop.id],
             contextProfileId
           });
           return acc;
@@ -387,6 +411,7 @@ export class ApiDropMapper {
     votingRanges,
     winningDropsRatingsByVoter,
     poll,
+    memeCardId,
     contextProfileId
   }: {
     drop: DropEntity;
@@ -414,6 +439,7 @@ export class ApiDropMapper {
     votingRanges: VoteRangeByDropId;
     winningDropsRatingsByVoter: Record<string, number>;
     poll?: DropPollWithOptions;
+    memeCardId?: number;
     contextProfileId: string | null;
   }): ApiDropV2 {
     const apiDrop: ApiDropV2 = {
@@ -522,7 +548,8 @@ export class ApiDropMapper {
         votingRanges,
         winningDropsRatingsByVoter,
         contextProfileId,
-        hasMetadata
+        hasMetadata,
+        memeCardId
       });
     }
     if (poll) {
@@ -572,7 +599,8 @@ export class ApiDropMapper {
     votingRanges,
     winningDropsRatingsByVoter,
     contextProfileId,
-    hasMetadata
+    hasMetadata,
+    memeCardId
   }: {
     drop: DropEntity;
     votingSummary: DropSubmissionVotingSummary;
@@ -580,6 +608,7 @@ export class ApiDropMapper {
     winningDropsRatingsByVoter: Record<string, number>;
     contextProfileId: string | null;
     hasMetadata: boolean;
+    memeCardId?: number;
   }): ApiSubmissionDropContext {
     const voting: ApiSubmissionDropVoting = {
       is_open: votingSummary.is_open,
@@ -615,6 +644,9 @@ export class ApiDropMapper {
     }
     if (votingSummary.won_at !== null) {
       submissionContext.won_at = votingSummary.won_at;
+    }
+    if (drop.drop_type === DropType.WINNER && memeCardId !== undefined) {
+      submissionContext.meme_card_id = memeCardId;
     }
     return submissionContext;
   }
@@ -882,5 +914,7 @@ export const apiDropMapper = new ApiDropMapper(
   dropPollsDb,
   dropNftLinksDb,
   nftLinksDb,
-  nftLinkResolvingService
+  nftLinkResolvingService,
+  memeCardDropMappingsDb,
+  () => env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );

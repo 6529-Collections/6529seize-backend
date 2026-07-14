@@ -29,6 +29,7 @@ export { DistributionPhoto } from './IDistributionPhoto';
 export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export { MintingClaimActionEntity } from './IMintingClaimAction';
+export { MemeCardDropMappingEntity } from './IMemeCardDropMapping';
 export {
   DropGroupMentionEntity,
   DropBoostEntity,
