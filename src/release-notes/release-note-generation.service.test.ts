@@ -150,7 +150,7 @@ describe('ReleaseNoteGenerationService', () => {
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
-                '- [PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - @[alice6529] — Service: api'
+                '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - @[alice6529]\n- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'
               )
             })
           ]
@@ -163,9 +163,8 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).toContain(
       '### Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
-    expect(content).toContain(
-      'Runs: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [pushNotificationsHandler #46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
-    );
+    expect(content).not.toContain('\n\n- Service:');
+    expect(content).not.toContain('Runs:');
     expect(content).not.toContain('Services affected:');
   });
 
@@ -227,7 +226,10 @@ describe('ReleaseNoteGenerationService', () => {
     const backendContent =
       createDrop.mock.calls[1][0].createDropRequest.parts[0].content;
     expect(backendContent).toContain(
-      '### Backend deploy [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+    );
+    expect(backendContent).toContain(
+      '- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'
     );
   });
 
@@ -299,8 +301,10 @@ describe('ReleaseNoteGenerationService', () => {
 
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
-    expect(content).toContain('— Services: api, pushNotificationsHandler');
-    expect(content).not.toContain('\nRuns:');
+    expect(content).toContain(
+      '- Services: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), pushNotificationsHandler'
+    );
+    expect(content).not.toContain('Runs:');
   });
 
   it('neutralizes model-supplied markdown and mention syntax', async () => {
