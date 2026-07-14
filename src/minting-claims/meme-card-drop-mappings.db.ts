@@ -19,6 +19,14 @@ function isDuplicateEntryError(error: unknown): boolean {
   );
 }
 
+/**
+ * Persistence for the purpose-built Memes Main Stage mapping table.
+ *
+ * The table is intentionally Main-Stage-only by construction: runtime writes
+ * select exclusively from the configured Main Stage winner rows, and the
+ * historical backfill applies the same wave constraint. Reads therefore use
+ * the mapping itself as the invariant instead of re-reading wave configuration.
+ */
 export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
   private getRequiredConnection(
     ctx: RequestContext

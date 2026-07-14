@@ -46,7 +46,7 @@ function makeIdentity(id: string) {
   };
 }
 
-function createMapper(mainStageWaveId = 'main-stage-wave') {
+function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
   const identityFetcher = {
     getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({
       'author-1': makeIdentity('author-1')
@@ -639,8 +639,8 @@ describe('ApiDropMapper', () => {
     );
   });
 
-  it('maps Meme card IDs only for winners in the configured Main Stage wave', async () => {
-    const { mapper, deps } = createMapper();
+  it('maps Meme card IDs from the Main Stage-only mapping table without requiring wave configuration', async () => {
+    const { mapper, deps } = createMapper(null);
     const mainStageWinner = makeDrop({
       id: 'main-stage-winner',
       wave_id: 'main-stage-wave',
@@ -689,7 +689,10 @@ describe('ApiDropMapper', () => {
 
     expect(
       deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds
-    ).toHaveBeenCalledWith(['main-stage-winner'], expect.any(Object));
+    ).toHaveBeenCalledWith(
+      ['main-stage-winner', 'other-winner'],
+      expect.any(Object)
+    );
     expect(result['main-stage-winner'].submission_context).toMatchObject({
       status: ApiSubmissionDropStatus.Winner,
       meme_card_id: 521
