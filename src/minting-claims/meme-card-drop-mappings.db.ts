@@ -19,6 +19,15 @@ function isDuplicateEntryError(error: unknown): boolean {
   );
 }
 
+/**
+ * Persistence for the purpose-built Memes Main Stage mapping table.
+ *
+ * The table is intentionally Main-Stage-only by construction: runtime writes
+ * select exclusively from the configured Main Stage winner rows, and the
+ * historical backfill applies the same wave constraint. Reads repeat that
+ * per-row Main Stage winner check, so an unrelated invalid mapping cannot
+ * suppress valid mappings.
+ */
 export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
   private getRequiredConnection(
     ctx: RequestContext
@@ -67,6 +76,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
 
   async findMemeCardIdsByDropIds(
     dropIds: string[],
+    mainStageWaveId: string,
     ctx: RequestContext
   ): Promise<Record<string, number>> {
     if (!dropIds.length) {
@@ -76,10 +86,14 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(timerName);
       const rows = await this.db.execute<MemeCardDropMappingRow>(
-        `select drop_id, meme_card_id
-         from ${MEME_CARD_DROP_MAPPINGS_TABLE}
-         where drop_id in (:dropIds)`,
-        { dropIds },
+        `select mapping.drop_id, mapping.meme_card_id
+         from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
+         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
+           on winner.drop_id = mapping.drop_id
+          and winner.wave_id = :mainStageWaveId
+         where mapping.drop_id in (:dropIds)
+        `,
+        { dropIds, mainStageWaveId },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       return rows.reduce<Record<string, number>>((acc, row) => {
@@ -93,17 +107,21 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
 
   async findByMemeCardId(
     memeCardId: number,
+    mainStageWaveId: string,
     ctx: RequestContext
   ): Promise<MemeCardDropMappingRow | null> {
     const timerName = `${this.constructor.name}->findByMemeCardId`;
     try {
       ctx.timer?.start(timerName);
       const rows = await this.db.execute<MemeCardDropMappingRow>(
-        `select meme_card_id, drop_id
-         from ${MEME_CARD_DROP_MAPPINGS_TABLE}
-         where meme_card_id = :memeCardId
+        `select mapping.meme_card_id, mapping.drop_id
+         from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
+         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
+           on winner.drop_id = mapping.drop_id
+          and winner.wave_id = :mainStageWaveId
+         where mapping.meme_card_id = :memeCardId
          limit 1`,
-        { memeCardId },
+        { memeCardId, mainStageWaveId },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       const mapping = rows[0];

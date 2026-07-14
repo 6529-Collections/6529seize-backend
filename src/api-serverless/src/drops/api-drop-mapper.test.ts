@@ -46,7 +46,7 @@ function makeIdentity(id: string) {
   };
 }
 
-function createMapper(mainStageWaveId = 'main-stage-wave') {
+function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
   const identityFetcher = {
     getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({
       'author-1': makeIdentity('author-1')
@@ -639,8 +639,8 @@ describe('ApiDropMapper', () => {
     );
   });
 
-  it('maps Meme card IDs only for winners in the configured Main Stage wave', async () => {
-    const { mapper, deps } = createMapper();
+  it('maps Meme card IDs only for configured Main Stage winners', async () => {
+    const { mapper, deps } = createMapper('main-stage-wave');
     const mainStageWinner = makeDrop({
       id: 'main-stage-winner',
       wave_id: 'main-stage-wave',
@@ -689,7 +689,11 @@ describe('ApiDropMapper', () => {
 
     expect(
       deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds
-    ).toHaveBeenCalledWith(['main-stage-winner'], expect.any(Object));
+    ).toHaveBeenCalledWith(
+      ['main-stage-winner'],
+      'main-stage-wave',
+      expect.any(Object)
+    );
     expect(result['main-stage-winner'].submission_context).toMatchObject({
       status: ApiSubmissionDropStatus.Winner,
       meme_card_id: 521
@@ -697,6 +701,27 @@ describe('ApiDropMapper', () => {
     expect(result['other-winner'].submission_context).not.toHaveProperty(
       'meme_card_id'
     );
+  });
+
+  it('does not query or expose Meme card mappings without Main Stage configuration', async () => {
+    const { mapper, deps } = createMapper(null);
+    const winner = makeDrop({
+      id: 'winner',
+      wave_id: 'main-stage-wave',
+      drop_type: DropType.WINNER
+    });
+    deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds.mockResolvedValue({
+      winner: 521
+    });
+
+    const result = await mapper.mapDrops([winner], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(
+      deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds
+    ).not.toHaveBeenCalled();
+    expect(result.winner.submission_context?.meme_card_id).toBeUndefined();
   });
 
   it('maps priority metadata whenever additional media metadata exists', async () => {

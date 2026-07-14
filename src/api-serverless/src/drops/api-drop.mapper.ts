@@ -312,9 +312,10 @@ export class ApiDropMapper {
             )
           : Promise.resolve({} as Record<string, number>),
         this.dropPollsDb.findPollsByDropIds(dropIds, ctx),
-        this.mainStageWaveId && mainStageWinnerDropIds.length
+        mainStageWaveId && mainStageWinnerDropIds.length
           ? this.memeCardDropMappingsDb.findMemeCardIdsByDropIds(
               mainStageWinnerDropIds,
+              mainStageWaveId,
               ctx
             )
           : Promise.resolve({} as Record<string, number>)
