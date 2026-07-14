@@ -40,6 +40,7 @@
     { "name": "populateHistoricConsolidatedTdh", "allowed_environments": ["staging", "prod"] },
     { "name": "pushNotificationsHandler", "allowed_environments": ["staging", "prod"] },
     { "name": "rateEventProcessingLoop", "allowed_environments": ["staging", "prod"] },
+    { "name": "releaseNotesGenerationLoop", "allowed_environments": ["prod"] },
     { "name": "refreshEnsLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "rememesLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "royaltiesLoop", "allowed_environments": ["staging", "prod"] },

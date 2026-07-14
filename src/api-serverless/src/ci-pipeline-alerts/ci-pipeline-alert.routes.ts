@@ -8,6 +8,7 @@ import { Timer } from '@/time';
 import { asyncRouter } from '@/api/async.router';
 import { ApiResponse } from '@/api/api-response';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
 import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
@@ -41,7 +42,25 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .lowercase()
       .valid('staging', 'prod', 'production')
       .required(),
-    service: Joi.string().trim().max(200).allow(null, '').optional()
+    service: Joi.string().trim().max(200).allow(null, '').optional(),
+    release_notes_prompt_path: Joi.string()
+      .trim()
+      .max(300)
+      .pattern(/^[a-zA-Z0-9._/-]+$/)
+      .allow(null, '')
+      .optional(),
+    release_group_id: Joi.string().trim().max(200).allow(null, '').optional(),
+    release_group_services: Joi.array()
+      .items(Joi.string().trim().min(1).max(200))
+      .min(1)
+      .max(100)
+      .optional(),
+    deployed_at: Joi.string()
+      .isoDate()
+      .pattern(RELEASE_NOTE_DEPLOYED_AT_PATTERN)
+      .strict()
+      .allow(null, '')
+      .optional()
   }).unknown(false);
 
 type SignatureVerificationResult =

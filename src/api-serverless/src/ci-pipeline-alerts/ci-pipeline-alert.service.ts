@@ -9,6 +9,11 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import {
+  releaseNoteGenerationQueue,
+  ReleaseNoteGenerationQueue
+} from '@/release-notes/release-note-generation-queue';
+import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
 
@@ -25,6 +30,10 @@ export interface CiPipelineAlertRequest {
   readonly branch?: string | null;
   readonly environment?: string | null;
   readonly service?: string | null;
+  readonly release_notes_prompt_path?: string | null;
+  readonly release_group_id?: string | null;
+  readonly release_group_services?: string[];
+  readonly deployed_at?: string | null;
 }
 
 interface MentionedProfile {
@@ -217,7 +226,8 @@ export class CiPipelineAlertService {
 
   constructor(
     private readonly dropCreationApiService: DropCreationApiService,
-    private readonly identitiesRepository: IdentitiesDb
+    private readonly identitiesRepository: IdentitiesDb,
+    private readonly releaseNotesQueue: ReleaseNoteGenerationQueue = releaseNoteGenerationQueue
   ) {}
 
   public async postAlert(
@@ -249,6 +259,55 @@ export class CiPipelineAlertService {
         authenticationContext
       }
     );
+
+    await this.enqueueReleaseNotesIfEligible(request);
+  }
+
+  private async enqueueReleaseNotesIfEligible(
+    request: CiPipelineAlertRequest
+  ): Promise<void> {
+    const promptPath = normalizeOptionalValue(
+      request.release_notes_prompt_path
+    );
+    const sha = normalizeOptionalValue(request.sha);
+    const releaseGroupId = normalizeOptionalValue(request.release_group_id);
+    const deployedAt = normalizeOptionalValue(request.deployed_at);
+    const releaseGroupServices = (request.release_group_services ?? [])
+      .map((service) => service.trim())
+      .filter(Boolean);
+    if (
+      request.status !== 'success' ||
+      normalizeTargetEnvironment(request.environment) !== 'prod' ||
+      !promptPath ||
+      !sha ||
+      !releaseGroupId ||
+      !releaseGroupServices.length ||
+      !deployedAt
+    ) {
+      return;
+    }
+    if (!isAllowedReleaseNotesPrompt(request.repo, promptPath)) {
+      this.logger.warn(
+        `Skipping release notes for unsupported prompt path ${promptPath} in ${request.repo}`
+      );
+      return;
+    }
+
+    await this.releaseNotesQueue.enqueueBestEffort({
+      repo: request.repo,
+      workflow: request.workflow,
+      run_id: request.run_id,
+      run_number: request.run_number,
+      run_url: request.run_url,
+      sha,
+      branch: request.branch,
+      environment: 'prod',
+      service: request.service,
+      prompt_path: promptPath,
+      release_group_id: releaseGroupId,
+      release_group_services: releaseGroupServices,
+      deployed_at: deployedAt
+    });
   }
 
   private async resolveFailureMentions(): Promise<MentionedProfile[]> {
@@ -364,5 +423,6 @@ export class CiPipelineAlertService {
 
 export const ciPipelineAlertService = new CiPipelineAlertService(
   dropCreationService,
-  identitiesDb
+  identitiesDb,
+  releaseNoteGenerationQueue
 );
