@@ -180,6 +180,31 @@ function getBackendServiceLine(
   return `- ${serviceLabel}: ${runLinks.join(', ')}`;
 }
 
+function formatReleaseNoteBlock(
+  pullRequestLine: string,
+  services: string[],
+  frontendRelease: boolean,
+  backendRunsByService: ReadonlyMap<string, ReleaseNoteRunReference>,
+  backendFallbackServices: string[]
+): string {
+  if (!frontendRelease) {
+    const backendServices = services.length
+      ? services
+      : backendFallbackServices;
+    const serviceLine = getBackendServiceLine(
+      backendServices,
+      backendRunsByService
+    );
+    return serviceLine ? `${pullRequestLine}\n${serviceLine}` : pullRequestLine;
+  }
+
+  const serviceLabel = services.length === 1 ? 'Service' : 'Services';
+  const serviceSuffix = services.length
+    ? ` — ${serviceLabel}: ${services.join(', ')}`
+    : '';
+  return `- ${pullRequestLine}${serviceSuffix}`;
+}
+
 function sanitizeContext(context: GitHubReleaseContext) {
   return {
     previous_sha: context.previous_sha,
@@ -481,23 +506,13 @@ export class ReleaseNoteGenerationService {
         (a, b) => a.localeCompare(b)
       );
       const pullRequestLine = `${pullRequestLink}: ${note.summary}${contributorSuffix}`;
-      if (!frontendRelease) {
-        const backendServices = services.length
-          ? services
-          : backendFallbackServices;
-        const serviceLine = getBackendServiceLine(
-          backendServices,
-          backendRunsByService
-        );
-        return serviceLine
-          ? `${pullRequestLine}\n${serviceLine}`
-          : pullRequestLine;
-      }
-      const serviceLabel = services.length === 1 ? 'Service' : 'Services';
-      const serviceSuffix = services.length
-        ? ` — ${serviceLabel}: ${services.join(', ')}`
-        : '';
-      return `- ${pullRequestLine}${serviceSuffix}`;
+      return formatReleaseNoteBlock(
+        pullRequestLine,
+        services,
+        frontendRelease,
+        backendRunsByService,
+        backendFallbackServices
+      );
     });
     const content = [
       getReleaseHeading(request),
