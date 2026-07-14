@@ -41,9 +41,18 @@ const MAX_BODY_LENGTH = 12000;
 const MAX_COMMIT_MESSAGES = 25;
 const MAX_COMMIT_MESSAGE_LENGTH = 500;
 const MAX_CHANGED_FILES = 300;
+const COMPACT_BODY_LENGTH = 2000;
+const COMPACT_COMMIT_MESSAGES = 5;
+const COMPACT_CHANGED_FILES = 50;
 const MAX_SUMMARY_LENGTH = 600;
 const MAX_RELEASE_CONTEXT_LENGTH = 200000;
 const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
+
+export type ReleaseNoteGenerationOutcome =
+  | 'published'
+  | 'already-published'
+  | 'no-baseline'
+  | 'no-pull-requests';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -163,9 +172,57 @@ function sanitizeContext(context: GitHubReleaseContext) {
       commit_messages: pullRequest.commit_messages
         .slice(0, MAX_COMMIT_MESSAGES)
         .map((message) => message.slice(0, MAX_COMMIT_MESSAGE_LENGTH)),
-      changed_files: pullRequest.changed_files.slice(0, MAX_CHANGED_FILES)
+      changed_files: pullRequest.changed_files
+        .slice(0, MAX_CHANGED_FILES)
+        .map(({ filename, additions, deletions, changes }) => ({
+          filename,
+          additions,
+          deletions,
+          changes
+        }))
     }))
   };
+}
+
+function serializeReleaseContext(context: GitHubReleaseContext): string {
+  const sanitized = sanitizeContext(context);
+  const serialized = JSON.stringify(sanitized);
+  if (serialized.length <= MAX_RELEASE_CONTEXT_LENGTH) {
+    return serialized;
+  }
+
+  const compact = {
+    ...sanitized,
+    pull_requests: sanitized.pull_requests.map((pullRequest) => ({
+      ...pullRequest,
+      body: pullRequest.body?.slice(0, COMPACT_BODY_LENGTH) ?? null,
+      commit_messages: pullRequest.commit_messages.slice(
+        0,
+        COMPACT_COMMIT_MESSAGES
+      ),
+      changed_files: pullRequest.changed_files.slice(0, COMPACT_CHANGED_FILES)
+    }))
+  };
+  const compactSerialized = JSON.stringify(compact);
+  if (compactSerialized.length <= MAX_RELEASE_CONTEXT_LENGTH) {
+    return compactSerialized;
+  }
+
+  const minimal = {
+    previous_sha: context.previous_sha,
+    current_sha: context.current_sha,
+    pull_requests: context.pull_requests.map(({ number, title }) => ({
+      number,
+      title
+    }))
+  };
+  const minimalSerialized = JSON.stringify(minimal);
+  if (minimalSerialized.length > MAX_RELEASE_CONTEXT_LENGTH) {
+    throw new Error(
+      `Release context exceeds maximum of ${MAX_RELEASE_CONTEXT_LENGTH} characters after compaction`
+    );
+  }
+  return minimalSerialized;
 }
 
 export class ReleaseNoteGenerationService {
@@ -185,7 +242,7 @@ export class ReleaseNoteGenerationService {
   public async generateAndPost(
     request: ReleaseNoteGenerationRequest,
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<ReleaseNoteGenerationOutcome> {
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const waveId = env.getStringOrThrow('CI_RELEASES_WAVE_ID');
     const publicationId = buildReleaseNotePublicationId(request);
@@ -201,20 +258,20 @@ export class ReleaseNoteGenerationService {
       this.logger.info(
         `Skipping release note ${publicationId}; drop ${existingDropId} already exists`
       );
-      return;
+      return 'already-published';
     }
     const context = await this.githubService.getReleaseContext(request);
     if (!context) {
       this.logger.info(
         `Skipping release notes for ${request.repo} run ${request.run_id}; no previous successful production run was found`
       );
-      return;
+      return 'no-baseline';
     }
     if (!context.pull_requests.length) {
       this.logger.info(
         `Skipping release notes for ${request.repo} run ${request.run_id}; no merged pull requests were found`
       );
-      return;
+      return 'no-pull-requests';
     }
     const repositoryPrompt = await this.githubService.getReleasePrompt(request);
 
@@ -244,18 +301,14 @@ export class ReleaseNoteGenerationService {
         authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
       }
     );
+    return 'published';
   }
 
   private buildPrompt(
     repositoryPrompt: string,
     context: GitHubReleaseContext
   ): string {
-    const serializedContext = JSON.stringify(sanitizeContext(context));
-    if (serializedContext.length > MAX_RELEASE_CONTEXT_LENGTH) {
-      throw new Error(
-        `Release context exceeds maximum of ${MAX_RELEASE_CONTEXT_LENGTH} characters`
-      );
-    }
+    const serializedContext = serializeReleaseContext(context);
     return [
       repositoryPrompt.trim(),
       '',

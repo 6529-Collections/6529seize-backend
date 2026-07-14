@@ -254,13 +254,15 @@ export async function processRequest(
       releaseNoteGenerationService.generateAndPost.bind(
         releaseNoteGenerationService
       );
-    await generateAndPost(
+    const outcome = await generateAndPost(
       { ...request, release_group_runs: releaseGroupRuns },
       {}
     );
-    await redis.set(dedupeKey, '1', {
-      EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
-    });
+    if (outcome !== 'no-baseline') {
+      await redis.set(dedupeKey, '1', {
+        EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
+      });
+    }
   } finally {
     await redis.del(processingKey);
   }
