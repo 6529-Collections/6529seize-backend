@@ -20,6 +20,28 @@ function isDuplicateEntryError(error: unknown): boolean {
 }
 
 export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
+  private getRequiredConnection(
+    ctx: RequestContext
+  ): NonNullable<RequestContext['connection']> {
+    if (!ctx.connection) {
+      throw new Error('Meme card mappings can only be saved in a transaction');
+    }
+    return ctx.connection;
+  }
+
+  private resolveConflictReason(
+    dropMapping: MemeCardDropMappingRow | undefined,
+    cardMapping: MemeCardDropMappingRow | undefined
+  ): string {
+    if (dropMapping) {
+      return `already assigned to Meme card ${dropMapping.meme_card_id}`;
+    }
+    if (cardMapping) {
+      return `already assigned to drop ${cardMapping.drop_id}`;
+    }
+    return 'Main Stage winner not found';
+  }
+
   private assertExactMapping(
     rows: MemeCardDropMappingRow[],
     dropId: string,
@@ -37,11 +59,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     const cardMapping = rows.find(
       (row) => Number(row.meme_card_id) === memeCardId
     );
-    const reason = dropMapping
-      ? `already assigned to Meme card ${dropMapping.meme_card_id}`
-      : cardMapping
-        ? `already assigned to drop ${cardMapping.drop_id}`
-        : 'Main Stage winner not found';
+    const reason = this.resolveConflictReason(dropMapping, cardMapping);
     throw new Error(
       `Cannot assign Meme card ${memeCardId} to drop ${dropId}: ${reason}`
     );
@@ -78,15 +96,22 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     mainStageWaveId: string,
     ctx: RequestContext
   ): Promise<boolean> {
-    const rows = await this.db.execute<{ found: number }>(
-      `select 1 as found
-       from ${WAVES_DECISION_WINNER_DROPS_TABLE}
-       where wave_id = :mainStageWaveId and drop_id = :dropId
-       limit 1`,
-      { dropId, mainStageWaveId },
-      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
-    );
-    return rows.length > 0;
+    const connection = this.getRequiredConnection(ctx);
+    const timerName = `${this.constructor.name}->isMainStageWinnerDrop`;
+    try {
+      ctx.timer?.start(timerName);
+      const rows = await this.db.execute<{ found: number }>(
+        `select 1 as found
+         from ${WAVES_DECISION_WINNER_DROPS_TABLE}
+         where wave_id = :mainStageWaveId and drop_id = :dropId
+         limit 1`,
+        { dropId, mainStageWaveId },
+        { wrappedConnection: connection }
+      );
+      return rows.length > 0;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   async setMemeCardIdForDrop(
@@ -95,9 +120,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     mainStageWaveId: string,
     ctx: RequestContext
   ): Promise<void> {
-    if (!ctx.connection) {
-      throw new Error('Meme card mappings can only be saved in a transaction');
-    }
+    const connection = this.getRequiredConnection(ctx);
     const timerName = `${this.constructor.name}->setMemeCardIdForDrop`;
     try {
       ctx.timer?.start(timerName);
@@ -107,11 +130,9 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
            select :memeCardId, winner.drop_id
            from ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
            where winner.wave_id = :mainStageWaveId
-             and winner.drop_id = :dropId
-           on duplicate key update
-             drop_id = ${MEME_CARD_DROP_MAPPINGS_TABLE}.drop_id`,
+             and winner.drop_id = :dropId`,
           { dropId, memeCardId, mainStageWaveId },
-          { wrappedConnection: ctx.connection }
+          { wrappedConnection: connection }
         );
       } catch (error) {
         if (!isDuplicateEntryError(error)) {
@@ -123,7 +144,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
          from ${MEME_CARD_DROP_MAPPINGS_TABLE}
          where drop_id = :dropId or meme_card_id = :memeCardId`,
         { dropId, memeCardId },
-        { wrappedConnection: ctx.connection }
+        { wrappedConnection: connection }
       );
       this.assertExactMapping(rows, dropId, memeCardId);
     } finally {

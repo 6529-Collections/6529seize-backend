@@ -5,6 +5,7 @@ import {
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { Timer } from '@/time';
 import fc from 'fast-check';
 import {
   memeCardDropMappingsDb,
@@ -38,15 +39,37 @@ describe('MemeCardDropMappingsDb', () => {
   it('checks whether a drop is a winner in the configured Main Stage wave', async () => {
     const execute = jest.fn().mockResolvedValue([{ found: 1 }]);
     const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
+    const timer = new Timer('test');
+    const timerStart = jest.spyOn(timer, 'start');
+    const timerStop = jest.spyOn(timer, 'stop');
+    const transactionalCtx: RequestContext = { ...ctx, timer };
 
     await expect(
-      repo.isMainStageWinnerDrop('drop-1', 'main-stage-wave', ctx)
+      repo.isMainStageWinnerDrop('drop-1', 'main-stage-wave', transactionalCtx)
     ).resolves.toBe(true);
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining('wave_id = :mainStageWaveId'),
       { dropId: 'drop-1', mainStageWaveId: 'main-stage-wave' },
-      { wrappedConnection: ctx.connection }
+      { wrappedConnection: transactionalCtx.connection }
     );
+    expect(timerStart).toHaveBeenCalledWith(
+      'MemeCardDropMappingsDb->isMainStageWinnerDrop'
+    );
+    expect(timerStop).toHaveBeenCalledWith(
+      'MemeCardDropMappingsDb->isMainStageWinnerDrop'
+    );
+  });
+
+  it('requires the Main Stage winner check to share the caller transaction', async () => {
+    const execute = jest.fn();
+    const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.isMainStageWinnerDrop('drop-1', 'main-stage-wave', {
+        timer: undefined
+      })
+    ).rejects.toThrow('Meme card mappings can only be saved in a transaction');
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('requires runtime mapping writes to share the caller transaction', async () => {
@@ -188,6 +211,14 @@ describeWithSeed(
         final_vote: 1,
         prizes: [],
         wave_id: 'main-stage-wave'
+      },
+      {
+        decision_time: 2,
+        drop_id: 'other-main-stage-drop',
+        ranking: 1,
+        final_vote: 1,
+        prizes: [],
+        wave_id: 'main-stage-wave'
       }
     ]
   },
@@ -254,6 +285,37 @@ describeWithSeed(
             )
           ).rejects.toThrow(
             'Cannot assign Meme card 521 to drop main-stage-drop: already assigned to Meme card 520'
+          );
+        }
+      );
+    });
+
+    it('translates a double unique-key conflict', async () => {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx: RequestContext = { timer: undefined, connection };
+          await memeCardDropMappingsDb.setMemeCardIdForDrop(
+            'main-stage-drop',
+            520,
+            'main-stage-wave',
+            ctx
+          );
+          await memeCardDropMappingsDb.setMemeCardIdForDrop(
+            'other-main-stage-drop',
+            521,
+            'main-stage-wave',
+            ctx
+          );
+
+          await expect(
+            memeCardDropMappingsDb.setMemeCardIdForDrop(
+              'other-main-stage-drop',
+              520,
+              'main-stage-wave',
+              ctx
+            )
+          ).rejects.toThrow(
+            'Cannot assign Meme card 520 to drop other-main-stage-drop: already assigned to Meme card 521'
           );
         }
       );

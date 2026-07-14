@@ -100,7 +100,6 @@ import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
 } from '@/minting-claims/meme-card-drop-mappings.db';
-import { env } from '@/env';
 
 type VoteRangeByDropId = Record<
   string,
@@ -169,16 +168,16 @@ export class ApiDropMapper {
       const winnerDropIds = submissionEntities
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
-      const mainStageWaveId = this.mainStageWaveId;
-      const mainStageWinnerDropIds = mainStageWaveId
+      const mainStageWinnerDropIds = this.mainStageWaveId
         ? submissionEntities
             .filter(
               (drop) =>
                 drop.drop_type === DropType.WINNER &&
-                drop.wave_id === mainStageWaveId
+                drop.wave_id === this.mainStageWaveId
             )
             .map((drop) => drop.id)
         : [];
+      const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
       // mapDrops only enriches entities that its caller has already authorized
       // for this response. These flags are display metadata, never access
       // control; the lazy full-entry endpoint performs its own wave check.
