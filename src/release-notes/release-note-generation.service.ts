@@ -101,12 +101,13 @@ function isFrontendRelease(request: ReleaseNoteGenerationRequest): boolean {
 function buildReleaseNotePublicationId(
   request: ReleaseNoteGenerationRequest
 ): string {
+  const identity = request.pull_request_number
+    ? `pr:${request.pull_request_number}`
+    : `${request.release_group_id}\0${request.sha}`;
   return createHash('sha256')
     .update(request.repo)
     .update('\0')
-    .update(request.release_group_id)
-    .update('\0')
-    .update(request.sha)
+    .update(identity)
     .digest('hex');
 }
 

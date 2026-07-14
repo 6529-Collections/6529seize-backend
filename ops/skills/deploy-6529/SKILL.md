@@ -164,9 +164,11 @@ Always determine the exact services to deploy before merging or deploying:
 
 ## Release Notes Publication
 
-Publish a release note after production is deployed and production validation passes, unless the user explicitly asked to skip public notes.
+Publish a release note after every production service required by the PR is deployed and production validation passes, unless the user explicitly asked to skip public notes.
 
-The `6529 Releases` wave is the single channel for deploy communication. Every production deploy — backend or frontend — gets exactly one numbered release note there. Do not post deployment overviews, deploy notes, or release announcements to the `Follow The Repo` wave or any other chat wave: those waves are for live human and agent discussion, not release notes. Operational detail (PR links, merge SHAs, deployed services, run URLs) lives in the GitHub PR and the deploy workflow run, not in a wave post.
+For backend PRs spanning multiple services, deploy each service from its service folder with the same merged PR number. Choose `hold` until the last required service has succeeded, then choose `publish` on the final deploy. If a planned service is not deployed, leave the note held until the release is complete or intentionally finalize the actually deployed subset with a later successful deploy marked `publish`.
+
+The `6529 Releases` wave is the single channel for deploy communication. Every production PR release — backend or frontend — gets exactly one numbered release note there, even when the PR requires several service deploys. Individual service runs are deployment operations, not separate releases. Do not post deployment overviews, deploy notes, or release announcements to the `Follow The Repo` wave or any other chat wave: those waves are for live human and agent discussion, not release notes. Operational detail (PR links, merge SHAs, deployed services, run URLs) lives in the GitHub PR and the deploy workflow run, not in a wave post.
 
 1. Use an authorized 6529.io posting credential the current operator personally controls or was explicitly approved to use, such as the `punk6529bot` helper CLI or a logged-in browser session. Confirm identity and that the account can post in the `6529 Releases` wave before drafting. If no authorized credential is available, treat publication as blocked and deliver the exact ready-to-post note in the closeout; do not use shared wallets, another person's account, or automation keys unless that was explicitly approved for the release.
 2. Resolve the `6529 Releases` wave immediately before posting rather than trusting a cached id: `punk6529bot waves search --name "6529 releases"` (currently `https://6529.io/waves/05b14183-e153-4e47-bc66-42a0f49102d4`).
