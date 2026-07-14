@@ -57,6 +57,20 @@ read_line_from_tty() {
   printf -v "$__target" '%s' "$value"
 }
 
+read_release_pr_number() {
+  local value
+
+  while true; do
+    tty_printf 'Merged PR number represented by this production release: '
+    read_line_from_tty value || die 'Failed to read the release PR number'
+    if [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+    tty_printf 'Enter a positive PR number.\n'
+  done
+}
+
 resolve_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null ||
     die 'Run this command from inside the repository'
@@ -307,9 +321,17 @@ dispatch_deploy() {
   local upstream_ref="$4"
   local release_group_id="$5"
   local release_group_services="$6"
+  local release_pull_request="$7"
+  local wait_for_completion="$8"
+  local dispatched_at
+  local head_sha
+  local run_id
 
   printf 'Triggering deploy for service=%s environment=%s branch=%s upstream=%s\n' \
     "$service" "$environment" "$branch" "$upstream_ref"
+
+  dispatched_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  head_sha="$(git rev-parse "$upstream_ref")"
 
   gh workflow run "$WORKFLOW_NAME" \
     --ref "$branch" \
@@ -317,7 +339,50 @@ dispatch_deploy() {
     -f "service=$service" \
     -f "release_group_id=$release_group_id" \
     -f "release_group_services=$release_group_services" \
+    -f "release_pull_request=$release_pull_request" \
     -R "$WORKFLOW_REPO"
+
+  if [[ "$wait_for_completion" != 'yes' ]]; then
+    return 0
+  fi
+
+  printf 'Waiting for the %s deploy run to appear...\n' "$service"
+  if ! run_id="$(find_dispatched_run "$service" "$environment" "$branch" "$head_sha" "$dispatched_at")"; then
+    printf 'ghdeploy: Could not find the dispatched %s deploy run\n' "$service" >&2
+    return 1
+  fi
+  printf 'Watching deploy run %s for %s...\n' "$run_id" "$service"
+  gh run watch "$run_id" -R "$WORKFLOW_REPO" --exit-status
+}
+
+find_dispatched_run() {
+  local service="$1"
+  local environment="$2"
+  local branch="$3"
+  local head_sha="$4"
+  local dispatched_at="$5"
+  local attempt
+  local run_id
+
+  for ((attempt = 1; attempt <= 30; attempt += 1)); do
+    run_id="$(
+      gh run list \
+        -R "$WORKFLOW_REPO" \
+        --workflow "$WORKFLOW_NAME" \
+        --branch "$branch" \
+        --event workflow_dispatch \
+        --limit 50 \
+        --json databaseId,displayTitle,headSha,createdAt \
+        --jq ".[] | select(.displayTitle == \"Deploy $service to $environment\" and .headSha == \"$head_sha\" and .createdAt >= \"$dispatched_at\") | .databaseId" |
+        sed -n '1p'
+    )"
+    if [[ -n "$run_id" ]]; then
+      printf '%s\n' "$run_id"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 print_batch_summary() {
@@ -364,6 +429,7 @@ run_batch_mode() {
   local selected_output
   local release_group_id
   local release_group_services
+  local release_pull_request=''
   local -a selected_services=()
 
   environment="$(choose_environment 'selected services' "$branch")"
@@ -379,6 +445,10 @@ run_batch_mode() {
   (( ${#selected_services[@]} > 0 )) || die 'No services were selected'
 
   release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+  if [[ "$environment" == 'prod' ]]; then
+    release_pull_request="$(read_release_pr_number)"
+    release_group_id="pr-$release_pull_request"
+  fi
   release_group_services="$(IFS=,; printf '%s' "${selected_services[*]}")"
 
   BATCH_SUCCEEDED=()
@@ -386,7 +456,7 @@ run_batch_mode() {
   BATCH_SKIPPED=()
 
   for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
-    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$release_group_services"; then
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$release_group_services" "$release_pull_request" yes; then
       BATCH_SUCCEEDED+=("${selected_services[$idx]}")
       continue
     fi
@@ -464,8 +534,11 @@ main() {
     die "Directory '$current_dir' does not map to a deployable service in $WORKFLOW_FILE"
 
   environment="$(choose_environment "$service" "$branch")"
+  if [[ "$environment" == 'prod' ]]; then
+    die 'Run ghdeploy from the repository root for production so the PR and complete service set are declared together'
+  fi
   release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$service"
+  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$service" '' no
 }
 
 main "$@"

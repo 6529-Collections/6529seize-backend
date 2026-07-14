@@ -18,6 +18,7 @@ function buildRequest(): ReleaseNoteGenerationRequest {
     prompt_path: 'ops/release-notes/release-notes.prompt.md',
     release_group_id: 'release-group',
     release_group_services: ['api'],
+    pull_request_number: 42,
     deployed_at: '2026-07-13T11:38:00.000Z'
   };
 }

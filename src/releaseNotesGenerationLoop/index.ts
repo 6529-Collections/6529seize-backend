@@ -45,6 +45,18 @@ function requireTimestamp(
   return value;
 }
 
+function parsePullRequestNumber(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    throw new Error(
+      'Invalid release note message: pull_request_number must be a positive integer'
+    );
+  }
+  return Number(value);
+}
+
 export function parseReleaseNoteMessage(
   body: string
 ): ReleaseNoteGenerationRequest {
@@ -71,6 +83,7 @@ export function parseReleaseNoteMessage(
     prompt_path: requireString(payload, 'prompt_path'),
     release_group_id: requireString(payload, 'release_group_id'),
     release_group_services: parseServices(payload.release_group_services),
+    pull_request_number: parsePullRequestNumber(payload.pull_request_number),
     deployed_at: requireTimestamp(payload, 'deployed_at')
   };
 }
@@ -99,12 +112,27 @@ function sanitizeRedisKeyPart(value: string): string {
 
 function buildDedupeKey(request: ReleaseNoteGenerationRequest): string {
   const repo = sanitizeRedisKeyPart(request.repo);
+  if (request.pull_request_number) {
+    return `release-note:${repo}:pr-${request.pull_request_number}`;
+  }
   const group = sanitizeRedisKeyPart(request.release_group_id);
   const sha = sanitizeRedisKeyPart(request.sha);
   return `release-note:${repo}:${group}:${sha}`;
 }
 
 function buildReleaseGroupKey(request: ReleaseNoteGenerationRequest): string {
+  const repo = sanitizeRedisKeyPart(request.repo);
+  if (request.pull_request_number) {
+    return `release-note-group:${repo}:pr-${request.pull_request_number}`;
+  }
+  const group = sanitizeRedisKeyPart(request.release_group_id);
+  const sha = sanitizeRedisKeyPart(request.sha);
+  return `release-note-group:${repo}:${group}:${sha}`;
+}
+
+function buildLegacyReleaseGroupKey(
+  request: ReleaseNoteGenerationRequest
+): string {
   const repo = sanitizeRedisKeyPart(request.repo);
   const group = sanitizeRedisKeyPart(request.release_group_id);
   const sha = sanitizeRedisKeyPart(request.sha);
@@ -176,6 +204,14 @@ export async function isReleaseGroupComplete(
   await redis.sAdd(completedKey, service);
   await redis.expire(completedKey, RELEASE_GROUP_TTL_SECONDS);
   const completedServices = new Set(await redis.sMembers(completedKey));
+  if (request.pull_request_number) {
+    const legacyCompleted = await redis.sMembers(
+      `${buildLegacyReleaseGroupKey(request)}:completed`
+    );
+    legacyCompleted.forEach((completedService) =>
+      completedServices.add(completedService)
+    );
+  }
   const isComplete = request.release_group_services.every((expectedService) =>
     completedServices.has(expectedService)
   );
@@ -198,9 +234,14 @@ async function getReleaseGroupRuns(
   }
 
   const groupKey = buildReleaseGroupKey(request);
+  const legacyGroupKey = buildLegacyReleaseGroupKey(request);
   return Promise.all(
     request.release_group_services.map(async (service) => {
-      const stored = await redis.get(`${groupKey}:run:${service}`);
+      const stored =
+        (await redis.get(`${groupKey}:run:${service}`)) ??
+        (request.pull_request_number
+          ? await redis.get(`${legacyGroupKey}:run:${service}`)
+          : null);
       if (!stored) {
         throw new Error(
           `Missing release run metadata for service ${service} in group ${request.release_group_id}`

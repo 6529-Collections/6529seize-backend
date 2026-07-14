@@ -15,6 +15,7 @@ const {
   CI_RELEASE_NOTES_PROMPT_PATH,
   CI_RELEASE_GROUP_ID,
   CI_RELEASE_GROUP_SERVICES,
+  CI_RELEASE_PULL_REQUEST,
   GITHUB_REPOSITORY,
   GITHUB_WORKFLOW,
   GITHUB_RUN_ID,
@@ -89,11 +90,24 @@ const releaseGroupServices = (
   .split(',')
   .map((service) => service.trim())
   .filter(Boolean);
+const pullRequestNumber = CI_RELEASE_PULL_REQUEST
+  ? Number(CI_RELEASE_PULL_REQUEST)
+  : null;
+if (
+  CI_RELEASE_PULL_REQUEST &&
+  (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber <= 0)
+) {
+  console.error('CI_RELEASE_PULL_REQUEST must be a positive integer');
+  process.exit(1);
+}
 const releaseNotesFields = isReleaseNotesEligible
   ? {
       release_notes_prompt_path: CI_RELEASE_NOTES_PROMPT_PATH,
-      release_group_id: CI_RELEASE_GROUP_ID || `${repository}:${runId}`,
+      release_group_id:
+        CI_RELEASE_GROUP_ID ||
+        (pullRequestNumber ? `pr-${pullRequestNumber}` : `${repository}:${runId}`),
       release_group_services: releaseGroupServices,
+      pull_request_number: pullRequestNumber,
       deployed_at: new Date().toISOString()
     }
   : {};

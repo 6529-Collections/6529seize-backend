@@ -23,6 +23,7 @@ const request: ReleaseNoteGenerationRequest = {
   prompt_path: 'ops/release-notes/release-notes.prompt.md',
   release_group_id: 'backend-release',
   release_group_services: ['api', 'pushNotificationsHandler'],
+  pull_request_number: 42,
   release_group_runs: [
     {
       service: 'api',
@@ -202,6 +203,7 @@ describe('ReleaseNoteGenerationService', () => {
         service: 'web',
         release_group_id: 'frontend-release',
         release_group_services: ['web'],
+        pull_request_number: null,
         release_group_runs: undefined
       },
       {}
@@ -507,6 +509,32 @@ describe('ReleaseNoteGenerationService', () => {
     expect(getReleaseContext).not.toHaveBeenCalled();
     expect(promptAndGetReply).not.toHaveBeenCalled();
     expect(createDrop).not.toHaveBeenCalled();
+  });
+
+  it('uses one publication identity for a PR across service SHAs', async () => {
+    const findDropIdByMetadata = jest.fn().mockResolvedValue('existing-drop');
+    const service = new ReleaseNoteGenerationService(
+      {} as ReleaseNoteGitHubService,
+      {} as AiPrompter,
+      {} as DropCreationApiService,
+      {} as IdentitiesDb,
+      undefined,
+      { findDropIdByMetadata } as unknown as DropsDb
+    );
+
+    await service.generateAndPost(request, {});
+    await service.generateAndPost(
+      {
+        ...request,
+        sha: 'later-service-sha',
+        release_group_id: 'another-deploy-attempt'
+      },
+      {}
+    );
+
+    const firstPublicationId = findDropIdByMetadata.mock.calls[0][0].dataValue;
+    const secondPublicationId = findDropIdByMetadata.mock.calls[1][0].dataValue;
+    expect(secondPublicationId).toBe(firstPublicationId);
   });
 
   it('reports a missing baseline without generating content', async () => {

@@ -25,6 +25,7 @@ export interface ReleaseNoteGenerationRequest {
   readonly prompt_path: string;
   readonly release_group_id: string;
   readonly release_group_services: string[];
+  readonly pull_request_number?: number | null;
   readonly release_group_runs?: ReleaseNoteRunReference[];
   readonly deployed_at: string;
 }

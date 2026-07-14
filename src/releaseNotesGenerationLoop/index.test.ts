@@ -14,6 +14,7 @@ const request: ReleaseNoteGenerationRequest = {
   prompt_path: 'ops/release-notes/release-notes.prompt.md',
   release_group_id: 'backend-release',
   release_group_services: ['api', 'worker'],
+  pull_request_number: 1749,
   deployed_at: '2026-07-13T11:38:00.000Z'
 };
 
@@ -50,6 +51,7 @@ describe('parseReleaseNoteMessage', () => {
       prompt_path: 'ops/release-notes/release-notes.prompt.md',
       release_group_id: 'frontend-release',
       release_group_services: ['web'],
+      pull_request_number: null,
       deployed_at: '2026-07-13T11:38:00.000Z'
     });
   });
@@ -148,7 +150,7 @@ describe('processRequest', () => {
     });
 
     expect(redis.sAdd).toHaveBeenCalledWith(
-      'release-note-group:6529seize-backend:backend-release:abc123:completed',
+      'release-note-group:6529seize-backend:pr-1749:completed',
       'api'
     );
     expect(generateAndPost).not.toHaveBeenCalled();
@@ -182,7 +184,7 @@ describe('processRequest', () => {
       {}
     );
     expect(redis.set).toHaveBeenCalledWith(
-      'release-note-group:6529seize-backend:backend-release:abc123:run:api',
+      'release-note-group:6529seize-backend:pr-1749:run:api',
       JSON.stringify({
         service: 'api',
         run_id: '123',
@@ -192,23 +194,23 @@ describe('processRequest', () => {
       { NX: true, EX: 7776000 }
     );
     expect(redis.set).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:backend-release:abc123:processing',
+      'release-note:6529seize-backend:pr-1749:processing',
       '1',
       { NX: true, EX: 1200 }
     );
     expect(redis.set).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:backend-release:abc123',
+      'release-note:6529seize-backend:pr-1749',
       '1',
       { EX: 7776000 }
     );
     expect(redis.del).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:backend-release:abc123:processing'
+      'release-note:6529seize-backend:pr-1749:processing'
     );
   });
 
   it('does not record deduplication when no release baseline exists', async () => {
     const redis = buildRedis(['api', 'worker'], {
-      'release-note-group:6529seize-backend:backend-release:abc123:run:worker':
+      'release-note-group:6529seize-backend:pr-1749:run:worker':
         JSON.stringify(workerRun)
     });
 
@@ -218,18 +220,18 @@ describe('processRequest', () => {
     });
 
     expect(redis.set).not.toHaveBeenCalledWith(
-      'release-note:6529seize-backend:backend-release:abc123',
+      'release-note:6529seize-backend:pr-1749',
       '1',
       { EX: 7776000 }
     );
     expect(redis.del).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:backend-release:abc123:processing'
+      'release-note:6529seize-backend:pr-1749:processing'
     );
   });
 
-  it('sanitizes the deployed SHA in Redis keys', async () => {
+  it('does not split a PR release when sequential services deploy different SHAs', async () => {
     const redis = buildRedis(['api', 'worker'], {
-      'release-note-group:6529seize-backend:backend-release:abc-123:run:worker':
+      'release-note-group:6529seize-backend:pr-1749:run:worker':
         JSON.stringify(workerRun)
     });
 
@@ -242,15 +244,14 @@ describe('processRequest', () => {
     );
 
     expect(redis.set).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:backend-release:abc-123:processing',
+      'release-note:6529seize-backend:pr-1749:processing',
       '1',
       { NX: true, EX: 1200 }
     );
   });
 
   it('keeps the first service run metadata on redelivery', async () => {
-    const runKey =
-      'release-note-group:6529seize-backend:backend-release:abc123:run:api';
+    const runKey = 'release-note-group:6529seize-backend:pr-1749:run:api';
     const originalRun = JSON.stringify({
       service: 'api',
       run_id: 'original-run',

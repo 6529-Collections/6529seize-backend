@@ -355,6 +355,7 @@ describe('CiPipelineAlertService', () => {
       prompt_path: 'ops/release-notes/release-notes.prompt.md',
       release_group_id: 'frontend-release',
       release_group_services: ['web'],
+      pull_request_number: null,
       deployed_at: '2026-07-13T11:38:00.000Z'
     });
     expect(
@@ -384,6 +385,42 @@ describe('CiPipelineAlertService', () => {
     );
 
     expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit PR before enqueueing backend release notes', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+    const backendRequest = {
+      ...baseRequest,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      service: 'api',
+      status: 'success' as const,
+      release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
+      release_group_id: 'pr-1749',
+      release_group_services: ['dbMigrationsLoop', 'claimsBuilder', 'api'],
+      deployed_at: '2026-07-14T12:16:00.000Z'
+    };
+
+    await service.postAlert(backendRequest, {});
+
+    expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
+
+    await service.postAlert(
+      { ...backendRequest, pull_request_number: 1749 },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        release_group_id: 'pr-1749',
+        release_group_services: ['dbMigrationsLoop', 'claimsBuilder', 'api'],
+        pull_request_number: 1749
+      })
+    );
   });
 
   it('formats desktop alerts with the product label and existing emoji', async () => {
