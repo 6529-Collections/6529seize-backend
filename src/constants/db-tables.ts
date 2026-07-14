@@ -194,6 +194,8 @@ export const IDENTITY_MUTES_TABLE = 'identity_mutes';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';
+export const MENTION_ALIASES_TABLE = 'mention_aliases';
+export const MENTION_ALIAS_MEMBERS_TABLE = 'mention_alias_members';
 export const ACTIVITY_EVENTS_TABLE = 'activity_events';
 export const XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX = 'xtdh_token_grant_stats_';
 export const XTDH_TOKEN_STATS_TABLE_PREFIX = 'xtdh_token_stats_';
