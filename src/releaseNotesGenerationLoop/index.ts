@@ -93,16 +93,22 @@ function parseServices(value: unknown): string[] {
   return Array.from(new Set(services)).sort((a, b) => a.localeCompare(b));
 }
 
+function sanitizeRedisKeyPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]/g, '-');
+}
+
 function buildDedupeKey(request: ReleaseNoteGenerationRequest): string {
-  const repo = request.repo.replace(/[^a-zA-Z0-9_.-]/g, '-');
-  const group = request.release_group_id.replace(/[^a-zA-Z0-9_.-]/g, '-');
-  const sha = request.sha.replace(/[^a-zA-Z0-9_.-]/g, '-');
+  const repo = sanitizeRedisKeyPart(request.repo);
+  const group = sanitizeRedisKeyPart(request.release_group_id);
+  const sha = sanitizeRedisKeyPart(request.sha);
   return `release-note:${repo}:${group}:${sha}`;
 }
 
 function buildReleaseGroupKey(request: ReleaseNoteGenerationRequest): string {
-  const group = request.release_group_id.replace(/[^a-zA-Z0-9_.-]/g, '-');
-  return `release-note-group:${group}`;
+  const repo = sanitizeRedisKeyPart(request.repo);
+  const group = sanitizeRedisKeyPart(request.release_group_id);
+  const sha = sanitizeRedisKeyPart(request.sha);
+  return `release-note-group:${repo}:${group}:${sha}`;
 }
 
 function buildRunReference(
@@ -161,7 +167,10 @@ export async function isReleaseGroupComplete(
   const groupKey = buildReleaseGroupKey(request);
   const completedKey = `${groupKey}:completed`;
   const runKey = `${groupKey}:run:${service}`;
+  // The first successful notification owns the service run link. Redeliveries
+  // and re-runs for the same release cannot rewrite already-recorded metadata.
   await redis.set(runKey, JSON.stringify(buildRunReference(request, service)), {
+    NX: true,
     EX: RELEASE_GROUP_TTL_SECONDS
   });
   await redis.sAdd(completedKey, service);

@@ -136,12 +136,17 @@ function getGroupedRunLine(
     return null;
   }
   const runs = request.release_group_runs ?? [];
-  if (runs.length !== request.release_group_services.length) {
-    throw new Error(
-      `Release group ${request.release_group_id} is missing workflow run links`
-    );
+  const runsByService = new Map(runs.map((run) => [run.service, run]));
+  if (
+    runsByService.size !== request.release_group_services.length ||
+    request.release_group_services.some(
+      (service) => !runsByService.has(service)
+    )
+  ) {
+    return null;
   }
-  const runLinks = runs.map((run) => {
+  const runLinks = request.release_group_services.map((service) => {
+    const run = runsByService.get(service)!;
     const runNumber = run.run_number || run.run_id;
     return formatMarkdownLink(`${run.service} #${runNumber}`, run.run_url);
   });

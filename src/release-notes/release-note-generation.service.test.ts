@@ -289,11 +289,18 @@ describe('ReleaseNoteGenerationService', () => {
       createDropsRepository()
     );
 
-    await service.generateAndPost(request, {});
+    await service.generateAndPost(
+      {
+        ...request,
+        release_group_runs: request.release_group_runs?.slice(0, 1)
+      },
+      {}
+    );
 
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain('— Services: api, pushNotificationsHandler');
+    expect(content).not.toContain('\nRuns:');
   });
 
   it('neutralizes model-supplied markdown and mention syntax', async () => {
