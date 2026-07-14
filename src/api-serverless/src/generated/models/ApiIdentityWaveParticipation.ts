@@ -13,7 +13,13 @@
 import { HttpFile } from '../http/http';
 
 export class ApiIdentityWaveParticipation {
+    /**
+    * Whether the identity currently has at least one active PARTICIPATORY drop in the wave.
+    */
     'is_participant': boolean;
+    /**
+    * Whether the identity has at least one WINNER drop in the wave.
+    */
     'is_winner': boolean;
 
     static readonly discriminator: string | undefined = undefined;
