@@ -3,7 +3,8 @@ import { getRedisClient } from '@/redis';
 import { releaseNoteGenerationService } from '@/release-notes/release-note-generation.service';
 import {
   RELEASE_NOTE_DEPLOYED_AT_PATTERN,
-  ReleaseNoteGenerationRequest
+  ReleaseNoteGenerationRequest,
+  ReleaseNoteRunReference
 } from '@/release-notes/release-note-generation-queue';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
@@ -99,6 +100,50 @@ function buildDedupeKey(request: ReleaseNoteGenerationRequest): string {
   return `release-note:${repo}:${group}:${sha}`;
 }
 
+function buildReleaseGroupKey(request: ReleaseNoteGenerationRequest): string {
+  const group = request.release_group_id.replace(/[^a-zA-Z0-9_.-]/g, '-');
+  return `release-note-group:${group}`;
+}
+
+function buildRunReference(
+  request: ReleaseNoteGenerationRequest,
+  service: string
+): ReleaseNoteRunReference {
+  return {
+    service,
+    run_id: request.run_id,
+    run_number: request.run_number,
+    run_url: request.run_url
+  };
+}
+
+function parseRunReference(
+  value: string,
+  expectedService: string
+): ReleaseNoteRunReference {
+  const parsed = JSON.parse(value) as Partial<ReleaseNoteRunReference>;
+  if (
+    parsed.service !== expectedService ||
+    typeof parsed.run_id !== 'string' ||
+    !parsed.run_id.trim() ||
+    typeof parsed.run_url !== 'string' ||
+    !parsed.run_url.trim() ||
+    (parsed.run_number !== undefined &&
+      parsed.run_number !== null &&
+      typeof parsed.run_number !== 'string')
+  ) {
+    throw new Error(
+      `Invalid release run metadata for service ${expectedService}`
+    );
+  }
+  return {
+    service: expectedService,
+    run_id: parsed.run_id.trim(),
+    run_number: parsed.run_number?.trim() || null,
+    run_url: parsed.run_url.trim()
+  };
+}
+
 export async function isReleaseGroupComplete(
   request: ReleaseNoteGenerationRequest,
   redis: ReleaseNotesRedis
@@ -113,10 +158,15 @@ export async function isReleaseGroupComplete(
     );
   }
 
-  const groupKey = `release-note-group:${request.release_group_id}:completed`;
-  await redis.sAdd(groupKey, service);
-  await redis.expire(groupKey, RELEASE_GROUP_TTL_SECONDS);
-  const completedServices = new Set(await redis.sMembers(groupKey));
+  const groupKey = buildReleaseGroupKey(request);
+  const completedKey = `${groupKey}:completed`;
+  const runKey = `${groupKey}:run:${service}`;
+  await redis.set(runKey, JSON.stringify(buildRunReference(request, service)), {
+    EX: RELEASE_GROUP_TTL_SECONDS
+  });
+  await redis.sAdd(completedKey, service);
+  await redis.expire(completedKey, RELEASE_GROUP_TTL_SECONDS);
+  const completedServices = new Set(await redis.sMembers(completedKey));
   const isComplete = request.release_group_services.every((expectedService) =>
     completedServices.has(expectedService)
   );
@@ -126,6 +176,30 @@ export async function isReleaseGroupComplete(
     );
   }
   return isComplete;
+}
+
+async function getReleaseGroupRuns(
+  request: ReleaseNoteGenerationRequest,
+  redis: ReleaseNotesRedis
+): Promise<ReleaseNoteRunReference[]> {
+  if (request.release_group_services.length === 1) {
+    const service =
+      request.service?.trim() || request.release_group_services[0];
+    return [buildRunReference(request, service)];
+  }
+
+  const groupKey = buildReleaseGroupKey(request);
+  return Promise.all(
+    request.release_group_services.map(async (service) => {
+      const stored = await redis.get(`${groupKey}:run:${service}`);
+      if (!stored) {
+        throw new Error(
+          `Missing release run metadata for service ${service} in group ${request.release_group_id}`
+        );
+      }
+      return parseRunReference(stored, service);
+    })
+  );
 }
 
 export async function processRequest(
@@ -154,6 +228,7 @@ export async function processRequest(
   if (!(await isReleaseGroupComplete(request, redis))) {
     return;
   }
+  const releaseGroupRuns = await getReleaseGroupRuns(request, redis);
   const lockAcquired =
     (await redis.set(processingKey, '1', {
       NX: true,
@@ -170,7 +245,10 @@ export async function processRequest(
       releaseNoteGenerationService.generateAndPost.bind(
         releaseNoteGenerationService
       );
-    await generateAndPost(request, {});
+    await generateAndPost(
+      { ...request, release_group_runs: releaseGroupRuns },
+      {}
+    );
     await redis.set(dedupeKey, '1', {
       EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
     });

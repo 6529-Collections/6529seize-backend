@@ -82,10 +82,28 @@ describe('parseReleaseNoteMessage', () => {
 });
 
 describe('processRequest', () => {
-  function buildRedis(completedServices: string[] = []) {
+  const workerRun = {
+    service: 'worker',
+    run_id: '456',
+    run_number: '46',
+    run_url: 'https://github.com/example/actions/runs/456'
+  };
+
+  function buildRedis(
+    completedServices: string[] = [],
+    storedValues: Record<string, string> = {}
+  ) {
+    const values = new Map(Object.entries(storedValues));
     return {
-      get: jest.fn().mockResolvedValue(null),
-      set: jest.fn().mockResolvedValue('OK'),
+      get: jest
+        .fn()
+        .mockImplementation((key: string) =>
+          Promise.resolve(values.get(key) ?? null)
+        ),
+      set: jest.fn().mockImplementation((key: string, value: string) => {
+        values.set(key, value);
+        return Promise.resolve('OK');
+      }),
       del: jest.fn().mockResolvedValue(1),
       sAdd: jest.fn().mockResolvedValue(1),
       expire: jest.fn().mockResolvedValue(true),
@@ -130,7 +148,9 @@ describe('processRequest', () => {
   });
 
   it('locks, generates, records deduplication, and releases the lock', async () => {
-    const redis = buildRedis(['api', 'worker']);
+    const redis = buildRedis(['api', 'worker'], {
+      'release-note-group:backend-release:run:worker': JSON.stringify(workerRun)
+    });
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
 
     await processRequest(request, {
@@ -138,15 +158,37 @@ describe('processRequest', () => {
       generateAndPost
     });
 
-    expect(generateAndPost).toHaveBeenCalledWith(request, {});
-    expect(redis.set).toHaveBeenNthCalledWith(
-      1,
+    expect(generateAndPost).toHaveBeenCalledWith(
+      {
+        ...request,
+        release_group_runs: [
+          {
+            service: 'api',
+            run_id: '123',
+            run_number: '45',
+            run_url: 'https://github.com/example/actions/runs/123'
+          },
+          workerRun
+        ]
+      },
+      {}
+    );
+    expect(redis.set).toHaveBeenCalledWith(
+      'release-note-group:backend-release:run:api',
+      JSON.stringify({
+        service: 'api',
+        run_id: '123',
+        run_number: '45',
+        run_url: 'https://github.com/example/actions/runs/123'
+      }),
+      { EX: 7776000 }
+    );
+    expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:backend-release:abc123:processing',
       '1',
       { NX: true, EX: 1200 }
     );
-    expect(redis.set).toHaveBeenNthCalledWith(
-      2,
+    expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:backend-release:abc123',
       '1',
       { EX: 7776000 }
@@ -157,7 +199,9 @@ describe('processRequest', () => {
   });
 
   it('sanitizes the deployed SHA in Redis keys', async () => {
-    const redis = buildRedis(['api', 'worker']);
+    const redis = buildRedis(['api', 'worker'], {
+      'release-note-group:backend-release:run:worker': JSON.stringify(workerRun)
+    });
 
     await processRequest(
       { ...request, sha: 'abc:123' },
@@ -167,8 +211,7 @@ describe('processRequest', () => {
       }
     );
 
-    expect(redis.set).toHaveBeenNthCalledWith(
-      1,
+    expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:backend-release:abc-123:processing',
       '1',
       { NX: true, EX: 1200 }

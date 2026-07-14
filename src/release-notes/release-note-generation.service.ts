@@ -117,7 +117,35 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
     timeZone: 'UTC',
     timeZoneName: 'short'
   }).format(deployedAt);
+  if (request.release_group_services.length === 1) {
+    const runNumber = request.run_number || request.run_id;
+    const runLabel =
+      surface === 'Frontend'
+        ? `#${runNumber}`
+        : `${request.service?.trim() || request.release_group_services[0]} #${runNumber}`;
+    const run = formatMarkdownLink(runLabel, request.run_url);
+    return `### ${surface} deploy ${run} · commit ${commit} — ${formattedDate}`;
+  }
   return `### ${surface} deploy · commit ${commit} — ${formattedDate}`;
+}
+
+function getGroupedRunLine(
+  request: ReleaseNoteGenerationRequest
+): string | null {
+  if (request.release_group_services.length === 1) {
+    return null;
+  }
+  const runs = request.release_group_runs ?? [];
+  if (runs.length !== request.release_group_services.length) {
+    throw new Error(
+      `Release group ${request.release_group_id} is missing workflow run links`
+    );
+  }
+  const runLinks = runs.map((run) => {
+    const runNumber = run.run_number || run.run_id;
+    return formatMarkdownLink(`${run.service} #${runNumber}`, run.run_url);
+  });
+  return `Runs: ${runLinks.join(', ')}`;
 }
 
 function sanitizeContext(context: GitHubReleaseContext) {
@@ -377,7 +405,13 @@ export class ReleaseNoteGenerationService {
         : '';
       return `- ${pullRequestLink}: ${note.summary}${contributorSuffix}${serviceSuffix}`;
     });
-    const content = [getReleaseHeading(request), '', ...lines].join('\n');
+    const groupedRunLine = getGroupedRunLine(request);
+    const content = [
+      getReleaseHeading(request),
+      ...(groupedRunLine ? [groupedRunLine] : []),
+      '',
+      ...lines
+    ].join('\n');
 
     return {
       title: null,

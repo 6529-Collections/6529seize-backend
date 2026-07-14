@@ -23,6 +23,22 @@ const request: ReleaseNoteGenerationRequest = {
   prompt_path: 'ops/release-notes/release-notes.prompt.md',
   release_group_id: 'backend-release',
   release_group_services: ['api', 'pushNotificationsHandler'],
+  release_group_runs: [
+    {
+      service: 'api',
+      run_id: '123',
+      run_number: '45',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-backend/actions/runs/123'
+    },
+    {
+      service: 'pushNotificationsHandler',
+      run_id: '456',
+      run_number: '46',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-backend/actions/runs/456'
+    }
+  ],
   deployed_at: '2026-07-13T11:38:00.000Z'
 };
 
@@ -147,7 +163,72 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).toContain(
       '### Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
+    expect(content).toContain(
+      'Runs: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [pushNotificationsHandler #46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
+    );
     expect(content).not.toContain('Services affected:');
+  });
+
+  it('renders repository-specific single-service run links', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue(context),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 42,
+                summary: 'Made notification delivery more reliable.'
+              }
+            ]
+          })
+        )
+      },
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      createDropsRepository()
+    );
+
+    await service.generateAndPost(
+      {
+        ...request,
+        repo: '6529-Collections/6529seize-frontend',
+        service: 'web',
+        release_group_id: 'frontend-release',
+        release_group_services: ['web'],
+        release_group_runs: undefined
+      },
+      {}
+    );
+
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).toContain(
+      '### Frontend deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123) · commit [current-](https://github.com/6529-Collections/6529seize-frontend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+    );
+    expect(content).not.toContain('[Frontend deploy #45]');
+
+    await service.generateAndPost(
+      {
+        ...request,
+        release_group_services: ['api'],
+        release_group_runs: undefined
+      },
+      {}
+    );
+
+    const backendContent =
+      createDrop.mock.calls[1][0].createDropRequest.parts[0].content;
+    expect(backendContent).toContain(
+      '### Backend deploy [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+    );
   });
 
   it('rejects a model response that omits a pull request', async () => {
