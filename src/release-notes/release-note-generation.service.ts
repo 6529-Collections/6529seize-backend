@@ -20,7 +20,10 @@ import {
   ReleaseNoteGitHubService,
   ReleasePullRequestContext
 } from './release-note-github.service';
-import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
+import {
+  ReleaseNoteGenerationRequest,
+  ReleaseNoteRunReference
+} from './release-note-generation-queue';
 
 interface GeneratedReleaseNote {
   readonly number: number;
@@ -137,13 +140,9 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
   return `### ${surface} deploy · commit ${commit} — ${formattedDate}`;
 }
 
-function getBackendServiceLine(
-  request: ReleaseNoteGenerationRequest,
-  services: string[]
-): string | null {
-  if (!services.length) {
-    return null;
-  }
+function getBackendRunsByService(
+  request: ReleaseNoteGenerationRequest
+): ReadonlyMap<string, ReleaseNoteRunReference> {
   const runs = request.release_group_runs ?? [];
   const runsByService = new Map(runs.map((run) => [run.service, run]));
   const currentService =
@@ -159,7 +158,16 @@ function getBackendServiceLine(
       run_url: request.run_url
     });
   }
+  return runsByService;
+}
 
+function getBackendServiceLine(
+  services: string[],
+  runsByService: ReadonlyMap<string, ReleaseNoteRunReference>
+): string | null {
+  if (!services.length) {
+    return null;
+  }
   const runLinks = services.map((service) => {
     const run = runsByService.get(service);
     if (!run) {
@@ -451,6 +459,10 @@ export class ReleaseNoteGenerationService {
       ])
     );
     const frontendRelease = isFrontendRelease(request);
+    const backendRunsByService = getBackendRunsByService(request);
+    const backendFallbackServices = Array.from(
+      new Set(request.release_group_services)
+    ).sort((a, b) => a.localeCompare(b));
     const releaseNoteBlocks = generatedNotes.map((note) => {
       const pullRequest = contextsByNumber.get(note.number);
       if (!pullRequest) {
@@ -470,7 +482,13 @@ export class ReleaseNoteGenerationService {
       );
       const pullRequestLine = `${pullRequestLink}: ${note.summary}${contributorSuffix}`;
       if (!frontendRelease) {
-        const serviceLine = getBackendServiceLine(request, services);
+        const backendServices = services.length
+          ? services
+          : backendFallbackServices;
+        const serviceLine = getBackendServiceLine(
+          backendServices,
+          backendRunsByService
+        );
         return serviceLine
           ? `${pullRequestLine}\n${serviceLine}`
           : pullRequestLine;

@@ -233,6 +233,104 @@ describe('ReleaseNoteGenerationService', () => {
     );
   });
 
+  it('renders multi-PR backend notes as paragraphs with adjacent service bullets', async () => {
+    const multiPullRequestContext: GitHubReleaseContext = {
+      ...context,
+      pull_requests: [
+        context.pull_requests[0],
+        {
+          ...context.pull_requests[0],
+          number: 43,
+          url: 'https://github.com/6529-Collections/6529seize-backend/pull/43',
+          title: 'Improve push notifications',
+          contributors: [],
+          candidate_services: ['pushNotificationsHandler']
+        }
+      ]
+    };
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue(multiPullRequestContext),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 42,
+                summary: 'Made notification delivery more reliable.'
+              },
+              {
+                number: 43,
+                summary: 'Improved push notification delivery.'
+              }
+            ]
+          })
+        )
+      },
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      createDropsRepository()
+    );
+
+    await service.generateAndPost(request, {});
+
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).toContain(
+      '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - [@Alice](https://github.com/Alice)\n- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)\n\n[PR #43](https://github.com/6529-Collections/6529seize-backend/pull/43): Improved push notification delivery.\n- Service: [pushNotificationsHandler #46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
+    );
+  });
+
+  it('falls back to grouped service run links when service candidates are empty', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: [
+            {
+              ...context.pull_requests[0],
+              candidate_services: []
+            }
+          ]
+        }),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 42,
+                summary: 'Made notification delivery more reliable.'
+              }
+            ]
+          })
+        )
+      },
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      createDropsRepository()
+    );
+
+    await service.generateAndPost(request, {});
+
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).toContain(
+      '- Services: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [pushNotificationsHandler #46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
+    );
+  });
+
   it('rejects a model response that omits a pull request', async () => {
     const service = new ReleaseNoteGenerationService(
       {
