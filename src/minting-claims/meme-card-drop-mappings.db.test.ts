@@ -59,7 +59,7 @@ describe('MemeCardDropMappingsDb', () => {
       meme_card_id: 521
     });
     expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('where meme_card_id = :memeCardId'),
+      expect.stringContaining('where mapping.meme_card_id = :memeCardId'),
       { memeCardId: 521, winnerDropType: DropType.WINNER },
       undefined
     );
