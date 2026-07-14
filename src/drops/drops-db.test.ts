@@ -27,12 +27,18 @@ describe('DropsDb', () => {
       {
         wave_id: 'wave-1',
         author_id: 'author-1',
-        is_participant: 1,
+        is_participant: 0,
         is_winner: 1
       },
       {
         wave_id: 'wave-2',
         author_id: 'author-outside-requested-pair',
+        is_participant: 1,
+        is_winner: 1
+      },
+      {
+        wave_id: 'wave-3',
+        author_id: 'author-1',
         is_participant: 1,
         is_winner: 1
       }
@@ -49,7 +55,8 @@ describe('DropsDb', () => {
         { wave_id: 'wave-1', author_id: 'author-1' },
         { wave_id: 'wave-1', author_id: 'author-1' },
         { wave_id: 'wave-2', author_id: 'author-1' },
-        { wave_id: 'wave-2', author_id: 'author-2' }
+        { wave_id: 'wave-2', author_id: 'author-2' },
+        { wave_id: 'wave-3', author_id: 'author-1' }
       ],
       {
         connection: { connection } as any,
@@ -60,7 +67,7 @@ describe('DropsDb', () => {
     expect(result).toEqual({
       'wave-1': {
         'author-1': {
-          is_participant: true,
+          is_participant: false,
           is_winner: true
         }
       },
@@ -73,12 +80,18 @@ describe('DropsDb', () => {
           is_participant: false,
           is_winner: false
         }
+      },
+      'wave-3': {
+        'author-1': {
+          is_participant: true,
+          is_winner: true
+        }
       }
     });
     expect(execute).toHaveBeenCalledTimes(1);
     const [sql, params, options] = execute.mock.calls[0];
     expect(sql).toContain(
-      'max(case when drop_type in (:participant_type, :winner_type)'
+      'max(case when drop_type = :participant_type then 1 else 0 end)'
     );
     expect(sql).toContain('max(case when drop_type = :winner_type');
     expect(sql).toContain('wave_id in (:wave_ids)');
@@ -87,7 +100,7 @@ describe('DropsDb', () => {
     expect(sql).not.toContain('exists(');
     expect(sql).not.toContain('union all');
     expect(params).toEqual({
-      wave_ids: ['wave-1', 'wave-2'],
+      wave_ids: ['wave-1', 'wave-2', 'wave-3'],
       author_ids: ['author-1', 'author-2'],
       participant_type: DropType.PARTICIPATORY,
       winner_type: DropType.WINNER
@@ -95,12 +108,12 @@ describe('DropsDb', () => {
     expect(options).toEqual({ wrappedConnection: { connection } });
   });
 
-  it('treats a promoted winner row as both participant and winner', async () => {
+  it('does not treat a promoted winner row as an active participant', async () => {
     const execute = jest.fn().mockResolvedValue([
       {
         wave_id: 'wave-1',
         author_id: 'author-1',
-        is_participant: 1,
+        is_participant: 0,
         is_winner: 1
       }
     ]);
@@ -120,11 +133,11 @@ describe('DropsDb', () => {
     );
 
     expect(result['wave-1']?.['author-1']).toEqual({
-      is_participant: true,
+      is_participant: false,
       is_winner: true
     });
     expect(execute.mock.calls[0]?.[0]).toContain(
-      'drop_type in (:participant_type, :winner_type)'
+      'max(case when drop_type = :participant_type then 1 else 0 end)'
     );
   });
 
