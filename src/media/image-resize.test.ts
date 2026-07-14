@@ -9,15 +9,19 @@ jest.mock('imagescript', () => ({
   }
 }));
 
-jest.mock('@/logging', () => ({
-  Logger: {
-    get: jest.fn(() => ({
-      warn: jest.fn()
-    }))
-  }
-}));
+jest.mock('@/logging', () => {
+  const logger = {
+    warn: jest.fn()
+  };
+  return {
+    Logger: {
+      get: jest.fn(() => logger)
+    }
+  };
+});
 
 import sharp from 'sharp';
+import { Logger } from '@/logging';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
 
 const imagescript = require('imagescript');
@@ -51,6 +55,25 @@ describe('resizeImageBufferToHeight', () => {
     expect(sharp).not.toHaveBeenCalled();
   });
 
+  it('keeps the direct Sharp WebP path unchanged', async () => {
+    const toBuffer = jest.fn().mockResolvedValue(Buffer.from('sharp-webp'));
+    const webp = jest.fn().mockReturnValue({ toBuffer });
+    const resize = jest.fn().mockReturnValue({ webp });
+    jest.mocked(sharp).mockReturnValue({ resize } as unknown as sharp.Sharp);
+
+    const result = await resizeImageBufferToHeight({
+      buffer,
+      height: 1000,
+      toWebp: true
+    });
+
+    expect(result).toEqual(Buffer.from('sharp-webp'));
+    expect(sharp).toHaveBeenCalledWith(buffer);
+    expect(resize).toHaveBeenCalledWith({ height: 1000 });
+    expect(webp).toHaveBeenCalledTimes(1);
+    expect(imagescript.GIF.decode).not.toHaveBeenCalled();
+  });
+
   it('falls back to animated Sharp when ImageScript fails', async () => {
     const toBuffer = jest.fn().mockResolvedValue(Buffer.from('sharp-gif'));
     const gif = jest.fn().mockReturnValue({ toBuffer });
@@ -68,6 +91,10 @@ describe('resizeImageBufferToHeight', () => {
     expect(sharp).toHaveBeenCalledWith(buffer, { animated: true });
     expect(resize).toHaveBeenCalledWith({ height: 450 });
     expect(gif).toHaveBeenCalledTimes(1);
+    expect(Logger.get('IMAGE_RESIZE').warn).toHaveBeenCalledWith(
+      '[GIF RESIZE FALLBACK] ImageScript failed; retrying with Sharp [height=450]',
+      expect.objectContaining({ message: 'unreachable' })
+    );
   });
 
   it('propagates the error when ImageScript and Sharp both fail', async () => {
