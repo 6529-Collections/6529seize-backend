@@ -655,7 +655,7 @@ async function resizeImage(
   toWEBP: boolean,
   buffer: Buffer,
   height: number
-): Promise<Buffer | undefined> {
+): Promise<Buffer> {
   logger.info(
     `[RESIZING FOR ${nft.contract} #${nft.id} (WEBP: ${toWEBP})] [TO TARGET HEIGHT ${height}]`
   );
@@ -670,5 +670,6 @@ async function resizeImage(
       `[RESIZING FOR ${nft.contract} #${nft.id}] [TO TARGET HEIGHT ${height}] [FAILED!]`,
       err
     );
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }

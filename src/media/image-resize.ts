@@ -1,6 +1,8 @@
 import sharp from 'sharp';
+import { Logger } from '@/logging';
 
 const imagescript = require('imagescript');
+const logger = Logger.get('IMAGE_RESIZE');
 
 export async function resizeImageBufferToHeight({
   buffer,
@@ -19,8 +21,19 @@ export async function resizeImageBufferToHeight({
     return await sharp(buffer).resize({ height }).webp().toBuffer();
   }
 
-  const gif = await imagescript.GIF.decode(buffer);
-  const scaleFactor = gif.height / height;
-  gif.resize(gif.width / scaleFactor, height);
-  return gif.encode();
+  try {
+    const gif = await imagescript.GIF.decode(buffer);
+    const scaleFactor = gif.height / height;
+    gif.resize(gif.width / scaleFactor, height);
+    return gif.encode();
+  } catch (error) {
+    logger.warn(
+      `[GIF RESIZE FALLBACK] ImageScript failed; retrying with Sharp [height=${height}]`,
+      error
+    );
+    return await sharp(buffer, { animated: true })
+      .resize({ height })
+      .gif()
+      .toBuffer();
+  }
 }
