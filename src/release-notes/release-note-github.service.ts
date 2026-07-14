@@ -10,6 +10,7 @@ interface GitHubWorkflowRun {
   readonly display_title: string;
   readonly head_sha: string;
   readonly run_number: number;
+  readonly workflow_id: number;
 }
 
 interface GitHubWorkflowRunsResponse {
@@ -83,6 +84,7 @@ interface AggregatedPullRequest {
 
 const MAX_COMPARE_PAGES = 3;
 const MAX_FILE_PAGES = 3;
+const MAX_WORKFLOW_RUN_PAGES = 10;
 const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
 const FRONTEND_REPO = '6529seize-frontend';
@@ -329,25 +331,42 @@ export class ReleaseNoteGitHubService {
     repository: string,
     request: ReleaseNoteGenerationRequest
   ): Promise<GitHubWorkflowRun | null> {
-    const branch = encodeURIComponent(normalizeBranch(request.branch));
-    const payload = await this.api<GitHubWorkflowRunsResponse>(
-      `/repos/${repository}/actions/runs?status=success&branch=${branch}&per_page=${PAGE_SIZE}`
+    const currentRun = await this.api<GitHubWorkflowRun>(
+      `/repos/${repository}/actions/runs/${encodeURIComponent(request.run_id)}`
     );
-    const currentRunNumber = request.run_number
-      ? Number(request.run_number)
-      : null;
+    if (
+      String(currentRun.id) !== request.run_id ||
+      currentRun.head_sha !== request.sha ||
+      !Number.isSafeInteger(currentRun.workflow_id)
+    ) {
+      throw new Error(
+        `GitHub release run ${request.run_id} does not match the queued release metadata`
+      );
+    }
 
-    return (
-      payload.workflow_runs?.find(
+    const branch = encodeURIComponent(normalizeBranch(request.branch));
+    for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
+      const payload = await this.api<GitHubWorkflowRunsResponse>(
+        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?status=success&branch=${branch}&per_page=${PAGE_SIZE}&page=${page}`
+      );
+      const runs = payload.workflow_runs ?? [];
+      const previousRun = runs.find(
         (run) =>
           String(run.id) !== request.run_id &&
           run.head_sha !== request.sha &&
-          run.name === request.workflow &&
-          (currentRunNumber === null ||
-            !Number.isFinite(currentRunNumber) ||
-            run.run_number < currentRunNumber) &&
+          run.workflow_id === currentRun.workflow_id &&
+          run.run_number < currentRun.run_number &&
           isMatchingProductionRun(run, request)
-      ) ?? null
+      );
+      if (previousRun) {
+        return previousRun;
+      }
+      if (runs.length < PAGE_SIZE) {
+        return null;
+      }
+    }
+    throw new Error(
+      `Previous successful production run was not found within ${MAX_WORKFLOW_RUN_PAGES * PAGE_SIZE} workflow runs`
     );
   }
 
@@ -517,7 +536,14 @@ export class ReleaseNoteGitHubService {
       const pageFiles = await this.api<GitHubPullRequestFile[]>(
         `/repos/${repository}/pulls/${pullRequestNumber}/files?per_page=${PAGE_SIZE}&page=${page}`
       );
-      files.push(...pageFiles);
+      files.push(
+        ...pageFiles.map(({ filename, additions, deletions, changes }) => ({
+          filename,
+          additions,
+          deletions,
+          changes
+        }))
+      );
       if (pageFiles.length < PAGE_SIZE) {
         break;
       }

@@ -340,6 +340,52 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).not.toContain('*bold*');
   });
 
+  it('compacts oversized release context while retaining every pull request', async () => {
+    const pullRequests = Array.from({ length: 20 }, (_, index) => ({
+      ...context.pull_requests[0],
+      number: index + 1,
+      url: `https://github.com/6529-Collections/6529seize-backend/pull/${index + 1}`,
+      title: `Release change ${index + 1}`,
+      body: 'x'.repeat(12000),
+      contributors: [],
+      commit_messages: [`Release change ${index + 1}`]
+    }));
+    const promptAndGetReply = jest.fn().mockResolvedValue(
+      JSON.stringify({
+        pull_requests: pullRequests.map((pullRequest) => ({
+          number: pullRequest.number,
+          summary: `Summarized change ${pullRequest.number}.`
+        }))
+      })
+    );
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: pullRequests
+        }),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      createDropsRepository()
+    );
+
+    const outcome = await service.generateAndPost(request, {});
+
+    const prompt = promptAndGetReply.mock.calls[0][0] as string;
+    expect(outcome).toBe('published');
+    expect(prompt.length).toBeLessThan(200000);
+    expect(prompt).toContain('Release change 20');
+    expect(prompt).not.toContain('x'.repeat(3000));
+    expect(createDrop).toHaveBeenCalledTimes(1);
+  });
+
   it('skips generation when the release drop already exists', async () => {
     const getReleaseContext = jest.fn();
     const promptAndGetReply = jest.fn();
@@ -353,9 +399,35 @@ describe('ReleaseNoteGenerationService', () => {
       createDropsRepository('existing-drop')
     );
 
-    await service.generateAndPost(request, {});
+    const outcome = await service.generateAndPost(request, {});
 
+    expect(outcome).toBe('already-published');
     expect(getReleaseContext).not.toHaveBeenCalled();
+    expect(promptAndGetReply).not.toHaveBeenCalled();
+    expect(createDrop).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing baseline without generating content', async () => {
+    const getReleaseContext = jest.fn().mockResolvedValue(null);
+    const getReleasePrompt = jest.fn();
+    const promptAndGetReply = jest.fn();
+    const createDrop = jest.fn();
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext,
+        getReleasePrompt
+      } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
+      undefined,
+      createDropsRepository()
+    );
+
+    const outcome = await service.generateAndPost(request, {});
+
+    expect(outcome).toBe('no-baseline');
+    expect(getReleasePrompt).not.toHaveBeenCalled();
     expect(promptAndGetReply).not.toHaveBeenCalled();
     expect(createDrop).not.toHaveBeenCalled();
   });
