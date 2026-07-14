@@ -24,8 +24,9 @@ function isDuplicateEntryError(error: unknown): boolean {
  *
  * The table is intentionally Main-Stage-only by construction: runtime writes
  * select exclusively from the configured Main Stage winner rows, and the
- * historical backfill applies the same wave constraint. Reads therefore use
- * the mapping itself as the invariant instead of re-reading wave configuration.
+ * historical backfill applies the same wave constraint. Reads do not depend on
+ * runtime wave configuration, but they fail closed unless every mapping still
+ * resolves to a winner from exactly one wave.
  */
 export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
   private getRequiredConnection(
@@ -84,9 +85,19 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(timerName);
       const rows = await this.db.execute<MemeCardDropMappingRow>(
-        `select drop_id, meme_card_id
-         from ${MEME_CARD_DROP_MAPPINGS_TABLE}
-         where drop_id in (:dropIds)`,
+        `select distinct mapping.drop_id, mapping.meme_card_id
+         from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
+         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
+           on winner.drop_id = mapping.drop_id
+         where mapping.drop_id in (:dropIds)
+           and winner.wave_id = (
+             select min(scope_winner.wave_id)
+             from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
+             left join ${WAVES_DECISION_WINNER_DROPS_TABLE} scope_winner
+               on scope_winner.drop_id = scope_mapping.drop_id
+             having count(scope_winner.wave_id) = count(*)
+                and count(distinct scope_winner.wave_id) = 1
+           )`,
         { dropIds },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
@@ -107,9 +118,19 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(timerName);
       const rows = await this.db.execute<MemeCardDropMappingRow>(
-        `select meme_card_id, drop_id
-         from ${MEME_CARD_DROP_MAPPINGS_TABLE}
-         where meme_card_id = :memeCardId
+        `select distinct mapping.meme_card_id, mapping.drop_id
+         from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
+         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
+           on winner.drop_id = mapping.drop_id
+         where mapping.meme_card_id = :memeCardId
+           and winner.wave_id = (
+             select min(scope_winner.wave_id)
+             from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
+             left join ${WAVES_DECISION_WINNER_DROPS_TABLE} scope_winner
+               on scope_winner.drop_id = scope_mapping.drop_id
+             having count(scope_winner.wave_id) = count(*)
+                and count(distinct scope_winner.wave_id) = 1
+           )
          limit 1`,
         { memeCardId },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined

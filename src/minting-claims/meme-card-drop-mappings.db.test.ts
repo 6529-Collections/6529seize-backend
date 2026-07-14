@@ -32,7 +32,10 @@ describe('MemeCardDropMappingsDb', () => {
 
     expect(result).toEqual({ 'drop-1': 520, 'drop-2': 521 });
     const [sql, params] = execute.mock.calls[0];
-    expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE}`);
+    expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping`);
+    expect(sql).toContain(`join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner`);
+    expect(sql).toContain('having count(scope_winner.wave_id) = count(*)');
+    expect(sql).toContain('count(distinct scope_winner.wave_id) = 1');
     expect(params).toEqual({ dropIds: ['drop-1', 'drop-2'] });
   });
 
@@ -254,6 +257,14 @@ describeWithSeed(
         final_vote: 1,
         prizes: [],
         wave_id: 'main-stage-wave'
+      },
+      {
+        decision_time: 3,
+        drop_id: 'other-wave-drop',
+        ranking: 1,
+        final_vote: 1,
+        prizes: [],
+        wave_id: 'other-wave'
       }
     ]
   },
@@ -296,6 +307,36 @@ describeWithSeed(
               { timer: undefined, connection }
             )
           ).rejects.toThrow('Main Stage winner not found');
+        }
+      );
+    });
+
+    it('fails closed when the mapping table contains more than one wave', async () => {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx: RequestContext = { timer: undefined, connection };
+          await memeCardDropMappingsDb.setMemeCardIdForDrop(
+            'main-stage-drop',
+            521,
+            'main-stage-wave',
+            ctx
+          );
+          await sqlExecutor.execute(
+            `insert into ${MEME_CARD_DROP_MAPPINGS_TABLE} (meme_card_id, drop_id)
+             values (:memeCardId, :dropId)`,
+            { memeCardId: 522, dropId: 'other-wave-drop' },
+            { wrappedConnection: connection }
+          );
+
+          await expect(
+            memeCardDropMappingsDb.findMemeCardIdsByDropIds(
+              ['main-stage-drop', 'other-wave-drop'],
+              ctx
+            )
+          ).resolves.toEqual({});
+          await expect(
+            memeCardDropMappingsDb.findByMemeCardId(521, ctx)
+          ).resolves.toBeNull();
         }
       );
     });
