@@ -36,6 +36,41 @@ describe('MemeCardDropMappingsDb', () => {
     expect(params).toEqual({ dropIds: ['drop-1', 'drop-2'] });
   });
 
+  it('returns the drop mapping for a Meme card ID', async () => {
+    const execute = jest
+      .fn()
+      .mockResolvedValue([{ drop_id: 'drop-1', meme_card_id: '521' }]);
+    const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
+    const timer = new Timer('test');
+    const timerStart = jest.spyOn(timer, 'start');
+    const timerStop = jest.spyOn(timer, 'stop');
+
+    await expect(repo.findByMemeCardId(521, { timer })).resolves.toEqual({
+      drop_id: 'drop-1',
+      meme_card_id: 521
+    });
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('where meme_card_id = :memeCardId'),
+      { memeCardId: 521 },
+      undefined
+    );
+    expect(timerStart).toHaveBeenCalledWith(
+      'MemeCardDropMappingsDb->findByMemeCardId'
+    );
+    expect(timerStop).toHaveBeenCalledWith(
+      'MemeCardDropMappingsDb->findByMemeCardId'
+    );
+  });
+
+  it('returns null when a Meme card has no drop mapping', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.findByMemeCardId(1, { timer: undefined })
+    ).resolves.toBeNull();
+  });
+
   it('checks whether a drop is a winner in the configured Main Stage wave', async () => {
     const execute = jest.fn().mockResolvedValue([{ found: 1 }]);
     const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);

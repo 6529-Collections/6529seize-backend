@@ -28,6 +28,7 @@ import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlob
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
+import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/ApiProfileCmsAgentPatchValidationResult';
@@ -75,6 +76,22 @@ export type ResolveDecentralizedMediaRequest = Request<
   ApiResponse<ResolveDecentralizedMediaResponse>,
   ApiMediaResolveRequest,
   ResolveDecentralizedMediaQuery,
+  Record<string, never>
+>;
+
+export interface GetMemeCardDropMappingPathParams {
+  "meme_card_id": number;
+}
+
+export type GetMemeCardDropMappingQuery = Record<string, never>;
+
+export type GetMemeCardDropMappingResponse = ApiMemeCardDropMapping;
+
+export type GetMemeCardDropMappingRequest = Request<
+  GetMemeCardDropMappingPathParams,
+  ApiResponse<GetMemeCardDropMappingResponse>,
+  never,
+  GetMemeCardDropMappingQuery,
   Record<string, never>
 >;
 
