@@ -1,6 +1,7 @@
 const mockFindWaves = jest.fn();
 const mockFindOfficialWaves = jest.fn();
 const mockFindDropsFeed = jest.fn();
+const mockFindWaveCompetitionDrops = jest.fn();
 const mockFindDropRepliesFeed = jest.fn();
 const mockFindWaveCurationDrops = jest.fn();
 const mockSearchDropsContainingPhraseInWave = jest.fn();
@@ -24,6 +25,7 @@ jest.mock('@/api/waves/api-wave-v2.service', () => ({
     findWaves: mockFindWaves,
     findOfficialWaves: mockFindOfficialWaves,
     findDropsFeed: mockFindDropsFeed,
+    findWaveCompetitionDrops: mockFindWaveCompetitionDrops,
     findDropRepliesFeed: mockFindDropRepliesFeed,
     findWaveCurationDrops: mockFindWaveCurationDrops,
     searchDropsContainingPhraseInWave: mockSearchDropsContainingPhraseInWave
@@ -77,6 +79,7 @@ import {
   handleGetWaveDecisionsV2,
   handleGetDropRepliesV2,
   handleGetWaveDropsV2,
+  handleGetWaveCompetitionDropsV2,
   handleGetWaveLeaderboardV2,
   handleGetOfficialWaves,
   handleGetWavesV2,
@@ -291,6 +294,49 @@ describe('waves v2 handlers', () => {
         '"curation_id" is not allowed'
       );
       expect(mockFindDropsFeed).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleGetWaveCompetitionDropsV2', () => {
+    const result = { data: [], page: 1, next: false } as any;
+
+    beforeEach(() => {
+      mockFindWaveCompetitionDrops.mockResolvedValue(result);
+    });
+
+    it('loads participatory drops with pagination defaults', async () => {
+      const req = {
+        params: { id: 'wave-1' },
+        query: {
+          author_id: 'author-1',
+          drop_type: ApiDropType.Participatory
+        }
+      } as any;
+
+      await expect(handleGetWaveCompetitionDropsV2(req)).resolves.toBe(result);
+
+      expect(mockFindWaveCompetitionDrops).toHaveBeenCalledWith(
+        {
+          wave_id: 'wave-1',
+          author_id: 'author-1',
+          drop_type: 'PARTICIPATORY',
+          page: 1,
+          page_size: 50
+        },
+        { authenticationContext, timer }
+      );
+    });
+
+    it('rejects chat drops', async () => {
+      const req = {
+        params: { id: 'wave-1' },
+        query: { author_id: 'author-1', drop_type: ApiDropType.Chat }
+      } as any;
+
+      await expect(handleGetWaveCompetitionDropsV2(req)).rejects.toThrow(
+        '"drop_type" must be one of [PARTICIPATORY, WINNER]'
+      );
+      expect(mockFindWaveCompetitionDrops).not.toHaveBeenCalled();
     });
   });
 
