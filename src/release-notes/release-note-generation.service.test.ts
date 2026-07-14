@@ -134,7 +134,7 @@ describe('ReleaseNoteGenerationService', () => {
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
-                '- [PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - @[alice6529]'
+                '- [PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - @[alice6529] — Service: api'
               )
             })
           ]
@@ -147,9 +147,7 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).toContain(
       '### Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
-    expect(content).toContain(
-      'Services affected: api, pushNotificationsHandler'
-    );
+    expect(content).not.toContain('Services affected:');
   });
 
   it('rejects a model response that omits a pull request', async () => {
@@ -172,6 +170,49 @@ describe('ReleaseNoteGenerationService', () => {
     await expect(service.generateAndPost(request, {})).rejects.toThrow(
       'did not include every pull request'
     );
+  });
+
+  it('renders sorted unique service labels for a multi-service pull request', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const multiServiceContext: GitHubReleaseContext = {
+      ...context,
+      pull_requests: [
+        {
+          ...context.pull_requests[0],
+          candidate_services: ['pushNotificationsHandler', 'api', 'api']
+        }
+      ]
+    };
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue(multiServiceContext),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 42,
+                summary: 'Made notification delivery more reliable.'
+              }
+            ]
+          })
+        )
+      },
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      createDropsRepository()
+    );
+
+    await service.generateAndPost(request, {});
+
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).toContain('— Services: api, pushNotificationsHandler');
   });
 
   it('neutralizes model-supplied markdown and mention syntax', async () => {

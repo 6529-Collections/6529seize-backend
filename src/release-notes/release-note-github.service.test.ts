@@ -142,4 +142,110 @@ describe('ReleaseNoteGitHubService', () => {
     });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+
+  it('attributes backend pull requests to their directly changed deployed services', async () => {
+    const response = (payload: unknown) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { get: jest.fn().mockReturnValue(null) },
+      json: jest.fn().mockResolvedValue(payload)
+    });
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Deploy a service',
+              display_title: 'Deploy api to prod',
+              head_sha: 'previous-sha',
+              run_number: 44
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          commits: [
+            {
+              sha: 'api-commit',
+              author: { login: 'simo6529' },
+              commit: { message: 'Improve API validation' }
+            },
+            {
+              sha: 'claims-commit',
+              author: { login: 'ragnep' },
+              commit: { message: 'Update claims builder' }
+            }
+          ],
+          total_commits: 2
+        })
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            number: 101,
+            html_url: 'https://github.com/example/pull/101',
+            title: 'Improve API validation',
+            body: null,
+            merged_at: '2026-07-13T10:00:00Z',
+            user: { login: 'simo6529' },
+            base: { ref: 'main' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            number: 102,
+            html_url: 'https://github.com/example/pull/102',
+            title: 'Update claims builder',
+            body: null,
+            merged_at: '2026-07-13T10:05:00Z',
+            user: { login: 'ragnep' },
+            base: { ref: 'main' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            filename: 'src/api-serverless/src/profiles/routes.ts',
+            additions: 4,
+            deletions: 1,
+            changes: 5
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            filename: 'src/claimsBuilder/index.ts',
+            additions: 6,
+            deletions: 2,
+            changes: 8
+          }
+        ])
+      );
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      run_number: '45',
+      sha: 'current-sha',
+      branch: 'main',
+      release_group_id: 'backend-release',
+      release_group_services: ['api', 'claimsBuilder']
+    });
+
+    expect(context?.pull_requests).toEqual([
+      expect.objectContaining({ number: 101, candidate_services: ['api'] }),
+      expect.objectContaining({
+        number: 102,
+        candidate_services: ['claimsBuilder']
+      })
+    ]);
+  });
 });

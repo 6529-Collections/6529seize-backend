@@ -171,13 +171,15 @@ function collectCandidateServices(
   const knownServices = new Set(
     deployConfig.services.map((service) => service.name)
   );
+  const normalizedDeployedServices = Array.from(
+    new Set(
+      deployedServices
+        .map((service) => service.trim())
+        .filter((service) => knownServices.has(service))
+    )
+  ).sort((a, b) => a.localeCompare(b));
+  const deployedServiceSet = new Set(normalizedDeployedServices);
   const candidates = new Set<string>();
-  for (const deployedService of deployedServices) {
-    const normalizedDeployedService = deployedService.trim();
-    if (knownServices.has(normalizedDeployedService)) {
-      candidates.add(normalizedDeployedService);
-    }
-  }
 
   for (const file of files) {
     const match = /^src\/([^/]+)\//.exec(file.filename);
@@ -185,14 +187,21 @@ function collectCandidateServices(
       continue;
     }
     const directory = match[1];
-    if (directory === 'api-serverless') {
+    if (directory === 'api-serverless' && deployedServiceSet.has('api')) {
       candidates.add('api');
-    } else if (knownServices.has(directory)) {
+    } else if (
+      knownServices.has(directory) &&
+      deployedServiceSet.has(directory)
+    ) {
       candidates.add(directory);
     }
   }
 
-  return Array.from(candidates).sort((a, b) => a.localeCompare(b));
+  if (candidates.size) {
+    return Array.from(candidates).sort((a, b) => a.localeCompare(b));
+  }
+
+  return normalizedDeployedServices;
 }
 
 export class ReleaseNoteGitHubService {

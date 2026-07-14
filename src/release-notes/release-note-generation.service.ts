@@ -368,22 +368,16 @@ export class ReleaseNoteGenerationService {
         pullRequest.url
       );
       const contributorSuffix = credits ? ` - ${credits}` : '';
-      return `- ${pullRequestLink}: ${note.summary}${contributorSuffix}`;
+      const services = Array.from(new Set(pullRequest.candidate_services)).sort(
+        (a, b) => a.localeCompare(b)
+      );
+      const serviceLabel = services.length === 1 ? 'Service' : 'Services';
+      const serviceSuffix = services.length
+        ? ` — ${serviceLabel}: ${services.join(', ')}`
+        : '';
+      return `- ${pullRequestLink}: ${note.summary}${contributorSuffix}${serviceSuffix}`;
     });
-    const isBackend = getRepoName(request.repo) === '6529seize-backend';
-    const serviceLines =
-      isBackend && request.release_group_services.length
-        ? [
-            '',
-            `Services affected: ${request.release_group_services.join(', ')}`
-          ]
-        : [];
-    const content = [
-      getReleaseHeading(request),
-      '',
-      ...lines,
-      ...serviceLines
-    ].join('\n');
+    const content = [getReleaseHeading(request), '', ...lines].join('\n');
 
     return {
       title: null,
