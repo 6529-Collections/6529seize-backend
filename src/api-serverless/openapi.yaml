@@ -13354,6 +13354,9 @@ components:
       type: string
       enum:
         - ALL
+        - CONTRIBUTORS
+        - ADMINS
+        - DEVS_6529
     ApiDropId:
       type: object
       required:

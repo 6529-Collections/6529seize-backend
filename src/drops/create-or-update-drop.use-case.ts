@@ -102,24 +102,32 @@ import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
 const ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
-const ALL_GROUP_MENTION_REGEX = /(^|[^a-z0-9_@])@all(?![a-z0-9_@])/i;
+const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
+  [DropGroupMention.ALL]: 'all',
+  [DropGroupMention.CONTRIBUTORS]: 'contributors',
+  [DropGroupMention.ADMINS]: 'admins',
+  [DropGroupMention.DEVS_6529]: 'devs6529'
+};
+
+function hasGroupMentionToken(
+  content: string | null,
+  mentionedGroup: DropGroupMention
+): boolean {
+  const token = GROUP_MENTION_TOKENS[mentionedGroup];
+  return new RegExp(`(^|[^a-z0-9_@])@${token}(?![a-z0-9_@])`, 'i').test(
+    content ?? ''
+  );
+}
 
 export function normalizeDropGroupMentions({
-  mentionedGroups,
   parts
 }: {
   mentionedGroups?: readonly DropGroupMention[] | null;
   parts: readonly Pick<CreateOrUpdateDropPartModel, 'content'>[];
 }): DropGroupMention[] {
-  const hasAllMentionInContent = parts.some((part) =>
-    ALL_GROUP_MENTION_REGEX.test(part.content ?? '')
+  return Object.values(DropGroupMention).filter((mentionedGroup) =>
+    parts.some((part) => hasGroupMentionToken(part.content, mentionedGroup))
   );
-  return collections
-    .distinct([...(mentionedGroups ?? [])])
-    .filter(
-      (mentionedGroup) =>
-        mentionedGroup !== DropGroupMention.ALL || hasAllMentionInContent
-    );
 }
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
@@ -447,10 +455,10 @@ export class CreateOrUpdateDropUseCase {
     let pendingPushNotificationIds: number[] = [];
     if (preExistingDropId) {
       dropId = preExistingDropId;
-      const [dropBeforeUpdate, existingMentionedGroups] = await Promise.all([
-        this.dropsDb.findDropById(dropId, connection),
-        this.dropsDb.getDropGroupMentions(dropId, connection)
-      ]);
+      const dropBeforeUpdate = await this.dropsDb.findDropById(
+        dropId,
+        connection
+      );
       if (dropBeforeUpdate === null) {
         throw new NotFoundException(`Drop ${dropId} not found`);
       }
@@ -489,8 +497,7 @@ export class CreateOrUpdateDropUseCase {
         {
           model: {
             ...validatedModel,
-            drop_id: dropId,
-            mentioned_groups: existingMentionedGroups
+            drop_id: dropId
           },
           createdAt: dropBeforeUpdate.created_at,
           serialNo: dropBeforeUpdate.serial_no,
@@ -1798,20 +1805,108 @@ export class CreateOrUpdateDropUseCase {
     if (!model.mentioned_groups.length) {
       return;
     }
-    if (model.drop_id !== null) {
-      throw new BadRequestException(
-        `Group mentions can only be used when creating a drop`
-      );
-    }
     const isCreator = wave.created_by === this.getRequiredAuthorId(model);
     const isAdmin =
       wave.admin_group_id !== null &&
       groupIdsUserIsEligibleFor.includes(wave.admin_group_id);
-    if (!isCreator && !isAdmin) {
+    if (
+      model.mentioned_groups.includes(DropGroupMention.ALL) &&
+      !isCreator &&
+      !isAdmin
+    ) {
       throw new ForbiddenException(
-        `Only wave creators or admins can mention groups`
+        `Only wave creators or admins can mention @all`
       );
     }
+  }
+
+  private async resolvePermissionGroupMentionRecipients(
+    model: CreateOrUpdateDropModel,
+    wave: WaveEntity,
+    followerIdentityIds: string[],
+    timer?: Timer,
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    const groupIds = collections.distinct(
+      [
+        model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS)
+          ? wave.chat_group_id
+          : null,
+        model.mentioned_groups.includes(DropGroupMention.ADMINS)
+          ? wave.admin_group_id
+          : null
+      ].filter((groupId): groupId is string => groupId !== null)
+    );
+    const configuredDeveloperIds = model.mentioned_groups.includes(
+      DropGroupMention.DEVS_6529
+    )
+      ? collections.distinct(
+          env
+            .getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
+            .map((id) => id.trim())
+            .filter(Boolean)
+        )
+      : [];
+    const accessGroupMemberIds = groupIds.length
+      ? await this.userGroupsService.findIdentitiesInGroups(groupIds, {
+          timer,
+          connection
+        })
+      : [];
+    const existingConfiguredDeveloperIds = configuredDeveloperIds.length
+      ? await identitiesDb
+          .getIdentitiesByIds(configuredDeveloperIds, connection)
+          .then((identities) =>
+            identities
+              .map((identity) => identity.profile_id)
+              .filter((profileId): profileId is string => profileId !== null)
+          )
+      : [];
+    const candidates = collections.distinct([
+      ...accessGroupMemberIds,
+      ...existingConfiguredDeveloperIds,
+      ...(model.mentioned_groups.includes(DropGroupMention.ADMINS)
+        ? [wave.created_by]
+        : []),
+      ...(model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS) &&
+      wave.chat_group_id === null
+        ? followerIdentityIds
+        : [])
+    ]);
+    const eligibility = await Promise.all(
+      candidates.map(async (profileId) => ({
+        profileId,
+        eligibleGroupIds:
+          await this.userGroupsService.getGroupsUserIsEligibleFor(
+            profileId,
+            timer
+          )
+      }))
+    );
+    return eligibility
+      .filter(({ profileId, eligibleGroupIds }) => {
+        if (
+          wave.visibility_group_id !== null &&
+          !eligibleGroupIds.includes(wave.visibility_group_id)
+        ) {
+          return false;
+        }
+        const contributor =
+          model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS) &&
+          (wave.chat_group_id === null ||
+            eligibleGroupIds.includes(wave.chat_group_id));
+        const admin =
+          model.mentioned_groups.includes(DropGroupMention.ADMINS) &&
+          (profileId === wave.created_by ||
+            (wave.admin_group_id !== null &&
+              eligibleGroupIds.includes(wave.admin_group_id)));
+        return (
+          contributor ||
+          admin ||
+          existingConfiguredDeveloperIds.includes(profileId)
+        );
+      })
+      .map(({ profileId }) => profileId);
   }
 
   private async recordQuoteNotifications(
@@ -1971,15 +2066,29 @@ export class CreateOrUpdateDropUseCase {
       ),
       this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
     ]);
+    const permissionGroupMentionIdentityIds =
+      await this.resolvePermissionGroupMentionRecipients(
+        model,
+        wave,
+        followerRecipients.map((recipient) => recipient.identity_id),
+        timer,
+        connection
+      );
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
-        directlyMentionedIdentityIds,
+        collections.distinct([
+          ...directlyMentionedIdentityIds,
+          ...permissionGroupMentionIdentityIds
+        ]),
         connection
       )
     );
     const directMentionIdentityIds = collections.distinct(
-      directlyMentionedIdentityIds.filter(
+      [
+        ...directlyMentionedIdentityIds,
+        ...permissionGroupMentionIdentityIds
+      ].filter(
         (identityId) =>
           identityId !== authorId &&
           !mutedDirectMentionedIdentityIds.has(identityId)

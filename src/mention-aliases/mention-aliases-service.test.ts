@@ -80,7 +80,9 @@ describe('MentionAliasesService', () => {
           alias,
           member_profile_ids: ['profile-2']
         })
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        'That shortcut is reserved. Try something a little more creative.'
+      );
     }
   );
 

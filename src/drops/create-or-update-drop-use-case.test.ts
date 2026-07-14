@@ -445,7 +445,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toEqual([]);
   });
 
-  it('preserves non-ALL group mention metadata without @all content', () => {
+  it('drops unknown group mention metadata', () => {
     const specificGroup = 'specific-group' as DropGroupMention;
 
     expect(
@@ -457,10 +457,10 @@ describe('CreateOrUpdateDropUseCase', () => {
           }
         ]
       })
-    ).toEqual([specificGroup]);
+    ).toEqual([]);
   });
 
-  it('treats missing group mention metadata as empty', () => {
+  it('derives group mention metadata from raw typed content', () => {
     expect(
       normalizeDropGroupMentions({
         mentionedGroups: undefined,
@@ -470,7 +470,7 @@ describe('CreateOrUpdateDropUseCase', () => {
           }
         ]
       })
-    ).toEqual([]);
+    ).toEqual([DropGroupMention.ALL]);
 
     expect(
       normalizeDropGroupMentions({
@@ -481,7 +481,38 @@ describe('CreateOrUpdateDropUseCase', () => {
           }
         ]
       })
-    ).toEqual([]);
+    ).toEqual([DropGroupMention.ALL]);
+  });
+
+  it('derives all reserved global mentions case-insensitively', () => {
+    expect(
+      normalizeDropGroupMentions({
+        mentionedGroups: [],
+        parts: [{ content: '@Contributors @ADMINS @DeVs6529' }]
+      })
+    ).toEqual([
+      DropGroupMention.CONTRIBUTORS,
+      DropGroupMention.ADMINS,
+      DropGroupMention.DEVS_6529
+    ]);
+  });
+
+  it('allows chat participants to use permission-derived group mentions', () => {
+    const useCase = createUseCase({ existingNominations: [] });
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [
+            DropGroupMention.CONTRIBUTORS,
+            DropGroupMention.ADMINS,
+            DropGroupMention.DEVS_6529
+          ]
+        },
+        wave: { created_by: 'another-profile', admin_group_id: 'admins' },
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
   });
 
   it('normalizes group mention metadata idempotently', () => {
@@ -522,7 +553,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
-  it('rejects group mentions from non-admins', () => {
+  it('rejects @all mentions from non-admins', () => {
     const useCase = createUseCase({
       existingNominations: []
     });
@@ -536,10 +567,10 @@ describe('CreateOrUpdateDropUseCase', () => {
         },
         groupIdsUserIsEligibleFor: ['members']
       })
-    ).toThrow(`Only wave creators or admins can mention groups`);
+    ).toThrow(`Only wave creators or admins can mention @all`);
   });
 
-  it('rejects group mentions on drop updates', () => {
+  it('allows group mentions on drop updates', () => {
     const useCase = createUseCase({
       existingNominations: []
     });
@@ -556,7 +587,7 @@ describe('CreateOrUpdateDropUseCase', () => {
         },
         groupIdsUserIsEligibleFor: ['admins']
       })
-    ).toThrow(`Group mentions can only be used when creating a drop`);
+    ).not.toThrow();
   });
 
   it('rejects non-admin chat drops with links when links are disabled', () => {
@@ -1154,6 +1185,59 @@ describe('CreateOrUpdateDropUseCase', () => {
         allDropsSubscriberIds: ['all-drops-1']
       },
       null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('resolves contributors, admins, and configured developers with view access', async () => {
+    jest
+      .spyOn(env, 'getStringArray')
+      .mockReturnValue([' developer-1 ', 'hidden-developer']);
+    jest
+      .spyOn(identitiesDb, 'getIdentitiesByIds')
+      .mockResolvedValue([
+        { profile_id: 'developer-1' },
+        { profile_id: 'hidden-developer' }
+      ] as any);
+    const userGroupsService = {
+      findIdentitiesInGroups: jest
+        .fn()
+        .mockResolvedValue(['contributor-1', 'admin-1']),
+      getGroupsUserIsEligibleFor: jest.fn(async (profileId: string) => {
+        const groups: Record<string, string[]> = {
+          'contributor-1': ['visible', 'chatters'],
+          'admin-1': ['visible', 'admins'],
+          creator: ['visible'],
+          'developer-1': ['visible'],
+          'hidden-developer': []
+        };
+        return groups[profileId] ?? [];
+      })
+    };
+    const useCase = createUseCaseWithMocks({ userGroupsService });
+
+    await expect(
+      (useCase as any).resolvePermissionGroupMentionRecipients(
+        {
+          mentioned_groups: [
+            DropGroupMention.CONTRIBUTORS,
+            DropGroupMention.ADMINS,
+            DropGroupMention.DEVS_6529
+          ]
+        },
+        {
+          created_by: 'creator',
+          chat_group_id: 'chatters',
+          admin_group_id: 'admins',
+          visibility_group_id: 'visible'
+        },
+        [],
+        undefined,
+        {}
+      )
+    ).resolves.toEqual(['contributor-1', 'admin-1', 'developer-1', 'creator']);
+    expect(userGroupsService.findIdentitiesInGroups).toHaveBeenCalledWith(
+      ['chatters', 'admins'],
       { timer: undefined, connection: {} }
     );
   });

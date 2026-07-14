@@ -2,7 +2,10 @@ import { Entity, Index, PrimaryColumn } from 'typeorm';
 import { WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE } from '@/constants';
 
 export enum DropGroupMention {
-  ALL = 'ALL'
+  ALL = 'ALL',
+  CONTRIBUTORS = 'CONTRIBUTORS',
+  ADMINS = 'ADMINS',
+  DEVS_6529 = 'DEVS_6529'
 }
 
 @Entity(WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE)
