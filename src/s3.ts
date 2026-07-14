@@ -670,5 +670,6 @@ async function resizeImage(
       `[RESIZING FOR ${nft.contract} #${nft.id}] [TO TARGET HEIGHT ${height}] [FAILED!]`,
       err
     );
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
