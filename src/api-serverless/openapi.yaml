@@ -3558,6 +3558,8 @@ paths:
       x-6529-router:
         enabled: true
         auth: none
+        cache:
+          ttlSeconds: 300
         handler:
           import: "@/api/memes/meme-card-drop-mappings.handlers"
           name: handleGetMemeCardDropMapping

@@ -26,5 +26,8 @@ export async function handleGetMemeCardDropMapping(
       `Main Stage drop mapping for Meme card ${meme_card_id} not found`
     );
   }
-  return mapping;
+  return {
+    meme_card_id: mapping.meme_card_id,
+    drop_id: mapping.drop_id
+  };
 }

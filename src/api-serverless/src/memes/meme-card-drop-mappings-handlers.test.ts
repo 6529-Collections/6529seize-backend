@@ -25,11 +25,18 @@ describe('handleGetMemeCardDropMapping', () => {
   });
 
   it('returns the Main Stage drop mapping for a Meme card', async () => {
-    const mapping = { meme_card_id: 521, drop_id: 'drop-1' };
+    const mapping = {
+      meme_card_id: 521,
+      drop_id: 'drop-1',
+      internal_only: 'not-public'
+    };
     mockFindByMemeCardId.mockResolvedValue(mapping);
     const req = { params: { meme_card_id: '521' } } as any;
 
-    await expect(handleGetMemeCardDropMapping(req)).resolves.toBe(mapping);
+    await expect(handleGetMemeCardDropMapping(req)).resolves.toEqual({
+      meme_card_id: 521,
+      drop_id: 'drop-1'
+    });
     expect(mockGetFromRequest).toHaveBeenCalledWith(req);
     expect(mockFindByMemeCardId).toHaveBeenCalledWith(521, { timer });
   });

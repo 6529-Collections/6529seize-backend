@@ -41,6 +41,7 @@ router.post(
 
 router.get(
   '/meme-cards/:meme_card_id/drop',
+  cacheRequest({ ttl: Time.seconds(300) }),
   async (
     req: GetMemeCardDropMappingRequest,
     res: Response<ApiResponse<GetMemeCardDropMappingResponse>>
