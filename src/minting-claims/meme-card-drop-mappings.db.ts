@@ -91,6 +91,33 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async findByMemeCardId(
+    memeCardId: number,
+    ctx: RequestContext
+  ): Promise<MemeCardDropMappingRow | null> {
+    const timerName = `${this.constructor.name}->findByMemeCardId`;
+    try {
+      ctx.timer?.start(timerName);
+      const rows = await this.db.execute<MemeCardDropMappingRow>(
+        `select meme_card_id, drop_id
+         from ${MEME_CARD_DROP_MAPPINGS_TABLE}
+         where meme_card_id = :memeCardId
+         limit 1`,
+        { memeCardId },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      const mapping = rows[0];
+      return mapping
+        ? {
+            meme_card_id: Number(mapping.meme_card_id),
+            drop_id: mapping.drop_id
+          }
+        : null;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async isMainStageWinnerDrop(
     dropId: string,
     mainStageWaveId: string,
