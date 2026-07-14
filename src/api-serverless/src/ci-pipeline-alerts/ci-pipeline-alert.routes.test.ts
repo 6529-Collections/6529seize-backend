@@ -346,6 +346,26 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
+  it('rejects release deployment dates without a full timestamp', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    const res = makeResponse();
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          release_notes_prompt_path:
+            'ops/release-notes/release-notes.prompt.md',
+          release_group_id: 'release-group',
+          release_group_services: ['api'],
+          deployed_at: '2026-07-13'
+        }),
+        res
+      )
+    ).rejects.toThrow('fails to match the required pattern');
+
+    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+  });
+
   it('acknowledges in-flight duplicate alerts without returning an error', async () => {
     const redis = {
       get: jest.fn().mockResolvedValue(null),

@@ -35,6 +35,12 @@ describe('deploy.config', () => {
       false
     );
     expect(
+      canDeployServiceToEnvironment('releaseNotesGenerationLoop', 'prod')
+    ).toBe(true);
+    expect(
+      canDeployServiceToEnvironment('releaseNotesGenerationLoop', 'staging')
+    ).toBe(false);
+    expect(
       canDeployServiceToEnvironment('dropVideoConversionInvokerLoop', 'staging')
     ).toBe(true);
     expect(

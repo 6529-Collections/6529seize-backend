@@ -305,6 +305,8 @@ dispatch_deploy() {
   local environment="$2"
   local branch="$3"
   local upstream_ref="$4"
+  local release_group_id="$5"
+  local release_group_services="$6"
 
   printf 'Triggering deploy for service=%s environment=%s branch=%s upstream=%s\n' \
     "$service" "$environment" "$branch" "$upstream_ref"
@@ -313,6 +315,8 @@ dispatch_deploy() {
     --ref "$branch" \
     -f "environment=$environment" \
     -f "service=$service" \
+    -f "release_group_id=$release_group_id" \
+    -f "release_group_services=$release_group_services" \
     -R "$WORKFLOW_REPO"
 }
 
@@ -358,6 +362,8 @@ run_batch_mode() {
   local continue_choice
   local idx
   local selected_output
+  local release_group_id
+  local release_group_services
   local -a selected_services=()
 
   environment="$(choose_environment 'selected services' "$branch")"
@@ -372,12 +378,15 @@ run_batch_mode() {
 
   (( ${#selected_services[@]} > 0 )) || die 'No services were selected'
 
+  release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+  release_group_services="$(IFS=,; printf '%s' "${selected_services[*]}")"
+
   BATCH_SUCCEEDED=()
   BATCH_FAILED=()
   BATCH_SKIPPED=()
 
   for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
-    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref"; then
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$release_group_services"; then
       BATCH_SUCCEEDED+=("${selected_services[$idx]}")
       continue
     fi
@@ -414,11 +423,13 @@ main() {
   local environment
   local service
   local allowed_service
+  local release_group_id
 
   [[ $# -eq 0 ]] || die 'This command does not take arguments'
 
   ensure_command git
   ensure_command gh
+  ensure_command node
   open_tty
   trap cleanup_on_exit EXIT
   trap handle_interrupt INT TERM
@@ -453,7 +464,8 @@ main() {
     die "Directory '$current_dir' does not map to a deployable service in $WORKFLOW_FILE"
 
   environment="$(choose_environment "$service" "$branch")"
-  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref"
+  release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$service"
 }
 
 main "$@"

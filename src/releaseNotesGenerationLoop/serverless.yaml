@@ -1,0 +1,74 @@
+service: releaseNotesGenerationLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 300
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  releaseNotesGenerationLoop:
+    handler: index.handler
+    name: releaseNotesGenerationLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ReleaseNoteGenerationQueue, Arn]
+          batchSize: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'releaseNotesGenerationLoop_${opt:stage, self:provider.stage}'
+      API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
+
+resources:
+  Resources:
+    ReleaseNotesGenerationLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/releaseNotesGenerationLoop
+        RetentionInDays: 60
+
+    ReleaseNoteGenerationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: release-note-generation
+        VisibilityTimeout: 900
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ReleaseNoteGenerationDLQ, Arn]
+          maxReceiveCount: 5
+
+    ReleaseNoteGenerationDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: release-note-generation-dlq
+
+    ReleaseNoteGenerationQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: ReleaseNoteGenerationQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:GetQueueUrl
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt ReleaseNoteGenerationQueue.Arn
