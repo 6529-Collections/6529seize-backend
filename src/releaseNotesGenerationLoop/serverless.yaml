@@ -36,7 +36,7 @@ functions:
 
 resources:
   Resources:
-    ReleaseNotesGenerationLogGroup:
+    ReleaseNotesGenerationLoopLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/releaseNotesGenerationLoop
