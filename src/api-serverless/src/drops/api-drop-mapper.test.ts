@@ -46,7 +46,7 @@ function makeIdentity(id: string) {
   };
 }
 
-function createMapper() {
+function createMapper(mainStageWaveId = 'main-stage-wave') {
   const identityFetcher = {
     getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({
       'author-1': makeIdentity('author-1')
@@ -135,7 +135,7 @@ function createMapper() {
       nftLinksDb as any,
       nftLinkResolvingService as any,
       memeCardDropMappingsDb as any,
-      'main-stage-wave'
+      mainStageWaveId
     ),
     deps: {
       identityFetcher,
@@ -184,24 +184,14 @@ describe('ApiDropMapper', () => {
   });
 
   it('omits wave participation metadata and its query context in Main Stage', async () => {
-    const previousMainStageWaveId = process.env.MAIN_STAGE_WAVE_ID;
-    process.env.MAIN_STAGE_WAVE_ID = 'wave-1';
-    try {
-      const { mapper, deps } = createMapper();
+    const { mapper, deps } = createMapper('wave-1');
 
-      const result = await mapper.mapDrops([makeDrop()], {});
+    const result = await mapper.mapDrops([makeDrop()], {});
 
-      expect(result['drop-1']?.author.wave_participation).toBeUndefined();
-      expect(
-        deps.dropsDb.findAuthorWaveParticipationByDropContexts
-      ).toHaveBeenCalledWith([], {});
-    } finally {
-      if (previousMainStageWaveId === undefined) {
-        delete process.env.MAIN_STAGE_WAVE_ID;
-      } else {
-        process.env.MAIN_STAGE_WAVE_ID = previousMainStageWaveId;
-      }
-    }
+    expect(result['drop-1']?.author.wave_participation).toBeUndefined();
+    expect(
+      deps.dropsDb.findAuthorWaveParticipationByDropContexts
+    ).toHaveBeenCalledWith([], {});
   });
 
   it('maps part one content and omits missing optional fields', async () => {

@@ -168,16 +168,16 @@ export class ApiDropMapper {
       const winnerDropIds = submissionEntities
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
-      const mainStageWinnerDropIds = this.mainStageWaveId
+      const mainStageWaveId = this.mainStageWaveId;
+      const mainStageWinnerDropIds = mainStageWaveId
         ? submissionEntities
             .filter(
               (drop) =>
                 drop.drop_type === DropType.WINNER &&
-                drop.wave_id === this.mainStageWaveId
+                drop.wave_id === mainStageWaveId
             )
             .map((drop) => drop.id)
         : [];
-      const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
       // mapDrops only enriches entities that its caller has already authorized
       // for this response. These flags are display metadata, never access
       // control; the lazy full-entry endpoint performs its own wave check.
