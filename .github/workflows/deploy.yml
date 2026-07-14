@@ -107,7 +107,7 @@ jobs:
     steps:
       - name: Check production preconditions
         shell: bash
-        if: (github.event.inputs.service == 'cloudwatchAlarmsToDiscordLoop' || github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaImageResolutions' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader') && github.event.inputs.environment != 'prod'
+        if: (github.event.inputs.service == 'cloudwatchAlarmsToDiscordLoop' || github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaImageResolutions' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'releaseNotesGenerationLoop') && github.event.inputs.environment != 'prod'
         run: |
           echo "Given service can only be deployed to production environment" >&2
           exit 1
