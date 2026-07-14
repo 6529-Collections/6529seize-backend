@@ -145,7 +145,7 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      'Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
     expect(content).toContain(
       'Services affected: api, pushNotificationsHandler'

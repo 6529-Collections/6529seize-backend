@@ -117,7 +117,7 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
     timeZone: 'UTC',
     timeZoneName: 'short'
   }).format(deployedAt);
-  return `${surface} deploy · commit ${commit} — ${formattedDate}`;
+  return `### ${surface} deploy · commit ${commit} — ${formattedDate}`;
 }
 
 function sanitizeContext(context: GitHubReleaseContext) {
