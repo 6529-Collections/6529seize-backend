@@ -2,6 +2,8 @@
 
 /* global exports, process */
 
+var MAPPINGS_TABLE = 'meme_card_drop_mappings';
+
 function parsePositiveInteger(value, label) {
   var parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
@@ -16,18 +18,18 @@ exports.up = async function(db) {
     return;
   }
   var anchors = await db.runSql(
-    `select wd.drop_id, mc.claim_id
-     from wave_decision_winner_drops wd
-     join minting_claims mc on mc.drop_id = wd.drop_id
-     where wd.wave_id = ?
-     order by wd.decision_time asc, wd.ranking asc, wd.drop_id asc`,
+    `select winner.drop_id, claim.claim_id
+     from wave_decision_winner_drops winner
+     join minting_claims claim on claim.drop_id = winner.drop_id
+     where winner.wave_id = ?
+     order by winner.decision_time asc, winner.ranking asc, winner.drop_id asc`,
     [mainStageWaveId]
   );
   if (!anchors.length) {
     return;
   }
   var winners = await db.runSql(
-    `select drop_id, decision_time, ranking, meme_card_id
+    `select drop_id, decision_time, ranking
      from wave_decision_winner_drops
      where wave_id = ?
      order by decision_time asc, ranking asc, drop_id asc`,
@@ -41,11 +43,15 @@ exports.up = async function(db) {
   var winnerIndexes = new Map();
   winners.forEach(function(winner, index) {
     if (Number(winner.ranking) !== 1) {
-      throw new Error('Main Stage backfill requires exactly one rank-1 winner per decision');
+      throw new Error(
+        'Main Stage backfill requires exactly one rank-1 winner per decision'
+      );
     }
     var decisionTime = String(winner.decision_time);
     if (seenDecisionTimes.has(decisionTime)) {
-      throw new Error('Multiple Main Stage winners found for decision ' + decisionTime);
+      throw new Error(
+        'Multiple Main Stage winners found for decision ' + decisionTime
+      );
     }
     seenDecisionTimes.add(decisionTime);
     winnerIndexes.set(winner.drop_id, index);
@@ -56,12 +62,16 @@ exports.up = async function(db) {
   anchors.forEach(function(anchor) {
     var winnerIndex = winnerIndexes.get(anchor.drop_id);
     if (winnerIndex === undefined) {
-      throw new Error('Minting claim anchor is missing its winner: ' + anchor.drop_id);
+      throw new Error(
+        'Minting claim anchor is missing its winner: ' + anchor.drop_id
+      );
     }
     var claimId = parsePositiveInteger(anchor.claim_id, 'claim_id');
     var existingClaimId = claimIdsByDrop.get(anchor.drop_id);
     if (existingClaimId !== undefined && existingClaimId !== claimId) {
-      throw new Error('Conflicting minting claim anchors for drop ' + anchor.drop_id);
+      throw new Error(
+        'Conflicting minting claim anchors for drop ' + anchor.drop_id
+      );
     }
     claimIdsByDrop.set(anchor.drop_id, claimId);
     offsets.add(claimId - winnerIndex);
@@ -79,25 +89,35 @@ exports.up = async function(db) {
     var winner = winners[index];
     var memeCardId = firstMemeCardId + index;
     parsePositiveInteger(memeCardId, 'Meme card ID');
-    if (
-      winner.meme_card_id !== null &&
-      winner.meme_card_id !== undefined &&
-      Number(winner.meme_card_id) !== memeCardId
-    ) {
-      throw new Error('Existing Meme card mapping conflicts for drop ' + winner.drop_id);
-    }
     await db.runSql(
-      `update wave_decision_winner_drops
-       set meme_card_id = ?
-       where wave_id = ? and drop_id = ?`,
-      [memeCardId, mainStageWaveId, winner.drop_id]
+      `insert into ${MAPPINGS_TABLE} (meme_card_id, drop_id)
+       values (?, ?)
+       on duplicate key update drop_id = ${MAPPINGS_TABLE}.drop_id`,
+      [memeCardId, winner.drop_id]
     );
+    var mappings = await db.runSql(
+      `select meme_card_id, drop_id
+       from ${MAPPINGS_TABLE}
+       where meme_card_id = ? or drop_id = ?`,
+      [memeCardId, winner.drop_id]
+    );
+    var exactMapping = mappings.some(function(mapping) {
+      return (
+        Number(mapping.meme_card_id) === memeCardId &&
+        mapping.drop_id === winner.drop_id
+      );
+    });
+    if (!exactMapping) {
+      throw new Error(
+        'Existing Meme card mapping conflicts for drop ' + winner.drop_id
+      );
+    }
   }
 };
 
 exports.down = function() {
-  // Intentionally irreversible. Clearing these values would also remove
-  // relationships written by claim creation after this migration ran.
+  // Intentionally irreversible. The mapping table is also written by future
+  // claim creation, so a rollback must not clear it.
 };
 
 exports._meta = {

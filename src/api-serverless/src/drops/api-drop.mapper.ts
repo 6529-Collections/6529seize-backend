@@ -96,7 +96,10 @@ import {
   nftLinkResolvingService,
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
-import { waveDecisionsDb, WaveDecisionsDb } from '@/waves/wave-decisions.db';
+import {
+  memeCardDropMappingsDb,
+  MemeCardDropMappingsDb
+} from '@/minting-claims/meme-card-drop-mappings.db';
 
 type VoteRangeByDropId = Record<
   string,
@@ -127,7 +130,7 @@ export class ApiDropMapper {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
-    private readonly waveDecisionsDb: WaveDecisionsDb,
+    private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
     private readonly mainStageWaveId: string | null
   ) {}
 
@@ -174,11 +177,12 @@ export class ApiDropMapper {
             )
             .map((drop) => drop.id)
         : [];
+      const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
       // mapDrops only enriches entities that its caller has already authorized
       // for this response. These flags are display metadata, never access
       // control; the lazy full-entry endpoint performs its own wave check.
-      const visibleCompetitionDropContexts = this.mainStageWaveId
-        ? entities.filter((drop) => drop.wave_id !== this.mainStageWaveId)
+      const visibleCompetitionDropContexts = mainStageWaveId
+        ? entities.filter((drop) => drop.wave_id !== mainStageWaveId)
         : entities;
 
       const dropAttachmentsPromise =
@@ -309,9 +313,8 @@ export class ApiDropMapper {
           : Promise.resolve({} as Record<string, number>),
         this.dropPollsDb.findPollsByDropIds(dropIds, ctx),
         this.mainStageWaveId && mainStageWinnerDropIds.length
-          ? this.waveDecisionsDb.findMemeCardIdsByDropIds(
+          ? this.memeCardDropMappingsDb.findMemeCardIdsByDropIds(
               mainStageWinnerDropIds,
-              this.mainStageWaveId,
               ctx
             )
           : Promise.resolve({} as Record<string, number>)
@@ -341,7 +344,7 @@ export class ApiDropMapper {
           acc[drop.id] = this.mapDrop({
             drop,
             author:
-              this.mainStageWaveId && drop.wave_id === this.mainStageWaveId
+              mainStageWaveId && drop.wave_id === mainStageWaveId
                 ? author
                 : { ...author, wave_participation: waveParticipation },
             partOne: partOnes[drop.id],
@@ -911,6 +914,6 @@ export const apiDropMapper = new ApiDropMapper(
   dropNftLinksDb,
   nftLinksDb,
   nftLinkResolvingService,
-  waveDecisionsDb,
+  memeCardDropMappingsDb,
   env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );
