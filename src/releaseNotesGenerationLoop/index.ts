@@ -236,17 +236,23 @@ export async function isReleaseGroupComplete(
   return isComplete;
 }
 
-async function getReleaseGroupRuns(
+async function getReleaseGroupState(
   request: ReleaseNoteGenerationRequest,
   redis: ReleaseNotesRedis
-): Promise<ReleaseNoteRunReference[]> {
+): Promise<{
+  readonly services: string[];
+  readonly runs: ReleaseNoteRunReference[];
+}> {
   if (
     !request.pull_request_number &&
     request.release_group_services.length === 1
   ) {
     const service =
       request.service?.trim() || request.release_group_services[0];
-    return [buildRunReference(request, service)];
+    return {
+      services: [service],
+      runs: [buildRunReference(request, service)]
+    };
   }
 
   const groupKey = buildReleaseGroupKey(request);
@@ -255,17 +261,22 @@ async function getReleaseGroupRuns(
         a.localeCompare(b)
       )
     : request.release_group_services;
-  return Promise.all(
+  const runs = await Promise.all(
     services.map(async (service) => {
       const stored = await redis.get(`${groupKey}:run:${service}`);
       if (!stored) {
-        throw new Error(
-          `Missing release run metadata for service ${service} in group ${request.release_group_id}`
+        logger.warn(
+          `Publishing release group ${request.release_group_id} without expired run metadata for service ${service}`
         );
+        return null;
       }
       return parseRunReference(stored, service);
     })
   );
+  return {
+    services,
+    runs: runs.filter((run): run is ReleaseNoteRunReference => run !== null)
+  };
 }
 
 export async function processRequest(
@@ -294,7 +305,7 @@ export async function processRequest(
   if (!(await isReleaseGroupComplete(request, redis))) {
     return;
   }
-  const releaseGroupRuns = await getReleaseGroupRuns(request, redis);
+  const releaseGroup = await getReleaseGroupState(request, redis);
   const lockAcquired =
     (await redis.set(processingKey, '1', {
       NX: true,
@@ -314,8 +325,8 @@ export async function processRequest(
     const outcome = await generateAndPost(
       {
         ...request,
-        release_group_services: releaseGroupRuns.map(({ service }) => service),
-        release_group_runs: releaseGroupRuns
+        release_group_services: releaseGroup.services,
+        release_group_runs: releaseGroup.runs
       },
       {}
     );

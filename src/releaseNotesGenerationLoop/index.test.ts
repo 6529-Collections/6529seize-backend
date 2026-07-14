@@ -126,7 +126,8 @@ describe('processRequest', () => {
         .fn()
         .mockImplementation((key: string) =>
           Promise.resolve(Array.from(sets.get(key) ?? []))
-        )
+        ),
+      deleteValue: (key: string) => values.delete(key)
     };
   }
 
@@ -175,6 +176,8 @@ describe('processRequest', () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
 
+    await processRequest(request, { redis: redis as any, generateAndPost });
+
     await processRequest(
       {
         ...request,
@@ -183,13 +186,9 @@ describe('processRequest', () => {
         run_url: 'https://github.com/example/actions/runs/456',
         sha: 'later-sha',
         service: 'worker',
-        release_group_services: ['worker']
+        release_group_services: ['worker'],
+        publish_release_note: true
       },
-      { redis: redis as any, generateAndPost }
-    );
-
-    await processRequest(
-      { ...request, publish_release_note: true },
       {
         redis: redis as any,
         generateAndPost
@@ -199,6 +198,11 @@ describe('processRequest', () => {
     expect(generateAndPost).toHaveBeenCalledWith(
       {
         ...request,
+        run_id: '456',
+        run_number: '46',
+        run_url: 'https://github.com/example/actions/runs/456',
+        sha: 'later-sha',
+        service: 'worker',
         publish_release_note: true,
         release_group_services: ['api', 'worker'],
         release_group_runs: [
@@ -218,6 +222,7 @@ describe('processRequest', () => {
       },
       {}
     );
+    expect(generateAndPost).toHaveBeenCalledTimes(1);
     expect(redis.set).toHaveBeenCalledWith(
       'release-note-group:6529seize-backend:pr-1749:run:api',
       JSON.stringify({
@@ -241,6 +246,42 @@ describe('processRequest', () => {
     expect(redis.del).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing'
     );
+  });
+
+  it('publishes retained services when old run metadata has expired', async () => {
+    const redis = buildRedis();
+    const generateAndPost = jest.fn().mockResolvedValue(undefined);
+    await processRequest(request, { redis: redis as any, generateAndPost });
+    redis.deleteValue('release-note-group:6529seize-backend:pr-1749:run:api');
+
+    await processRequest(
+      {
+        ...request,
+        run_id: '456',
+        run_number: '46',
+        run_url: 'https://github.com/example/actions/runs/456',
+        service: 'worker',
+        release_group_services: ['worker'],
+        publish_release_note: true
+      },
+      { redis: redis as any, generateAndPost }
+    );
+
+    expect(generateAndPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        release_group_services: ['api', 'worker'],
+        release_group_runs: [
+          {
+            service: 'worker',
+            run_id: '456',
+            run_number: '46',
+            run_url: 'https://github.com/example/actions/runs/456'
+          }
+        ]
+      }),
+      {}
+    );
+    expect(generateAndPost).toHaveBeenCalledTimes(1);
   });
 
   it('does not record deduplication when no release baseline exists', async () => {
