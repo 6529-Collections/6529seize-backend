@@ -267,6 +267,12 @@ Wave rows can be top-level waves or subwaves through the nullable `parent_wave_i
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
+For the wave configured by `MAIN_STAGE_WAVE_ID`, v2 winning-drop responses can
+also expose an optional Meme card ID through their submission context. The
+public `/meme-cards/{id}/drop` lookup provides the reverse link. Both directions
+are limited to configured Main Stage winner rows; unrelated waves and legacy
+drop responses are unchanged.
+
 The waves v2 boundary also exposes `/v2/official-waves`, backed by the `official_waves` selector table. It returns readable `ApiWaveOverview` rows for listed wave ids and skips stale entries whose wave row no longer exists.
 
 Wave creators and wave admins can manage arbitrary wave metadata pairs through `/v2/waves/{id}/metadata`. Read access follows the same wave visibility rules as other wave v2 reads, while writes are restricted to the creator or members of the wave admin group. Metadata is stored in `waves_metadatas`, keyed by wave id and metadata key.
@@ -283,6 +289,14 @@ There are two DB access modes:
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
+
+Main Stage Meme-card associations are stored separately in
+`meme_card_drop_mappings`, with one unique row per Meme card ID and drop ID.
+`dbMigrationsLoop` backfills the table only after minting-claim anchors prove a
+single sequential winner-to-card offset, and aborts instead of guessing when
+the anchors or winner sequence are inconsistent. `claimsBuilder` adds future
+mappings in the same transaction as claim creation after confirming that the
+drop is a winner in the configured Main Stage wave.
 
 Profile-native CMS packages are stored in `profile_cms_packages`. The table
 keeps the complete CMS V1 package JSON, indexed profile/package/version/hash

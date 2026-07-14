@@ -136,7 +136,7 @@ export class MintingClaimsService {
     private readonly dropsDb: DropsDb,
     private readonly mintingClaimsDb: MintingClaimsDb,
     private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
-    private readonly mainStageWaveId: string | null
+    private readonly getMainStageWaveId: () => string | null
   ) {}
 
   async createClaimForDropIfMissing(dropId: string): Promise<void> {
@@ -189,21 +189,7 @@ export class MintingClaimsService {
     );
     const enriched = await this.enrichRowWithComputedDetails(row);
     await this.mintingClaimsDb.createMintingClaim([enriched], ctx);
-    if (
-      this.mainStageWaveId &&
-      (await this.memeCardDropMappingsDb.isMainStageWinnerDrop(
-        dropId,
-        this.mainStageWaveId,
-        ctx
-      ))
-    ) {
-      await this.memeCardDropMappingsDb.setMemeCardIdForDrop(
-        dropId,
-        nextClaimId,
-        this.mainStageWaveId,
-        ctx
-      );
-    }
+    await this.saveMemeCardMappingIfMainStageWinner(dropId, nextClaimId, ctx);
 
     const teamWalletRows = await fetchTeamWalletRows();
     const airdropConfigEntries = parseAirdropConfigFromMetadatas(metadatas);
@@ -292,6 +278,30 @@ export class MintingClaimsService {
     return maxMemeId + 1;
   }
 
+  private async saveMemeCardMappingIfMainStageWinner(
+    dropId: string,
+    memeCardId: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    const mainStageWaveId = this.getMainStageWaveId();
+    if (
+      !mainStageWaveId ||
+      !(await this.memeCardDropMappingsDb.isMainStageWinnerDrop(
+        dropId,
+        mainStageWaveId,
+        ctx
+      ))
+    ) {
+      return;
+    }
+    await this.memeCardDropMappingsDb.setMemeCardIdForDrop(
+      dropId,
+      memeCardId,
+      mainStageWaveId,
+      ctx
+    );
+  }
+
   private async enrichRowWithComputedDetails(
     row: MintingClaimRowInput
   ): Promise<MintingClaimRowInput> {
@@ -323,5 +333,5 @@ export const mintingClaimsService = new MintingClaimsService(
   dropsDb,
   mintingClaimsDb,
   memeCardDropMappingsDb,
-  env.getStringOrNull('MAIN_STAGE_WAVE_ID')
+  () => env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );
