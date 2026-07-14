@@ -131,7 +131,7 @@ export class ApiDropMapper {
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
-    private readonly mainStageWaveId: string | null
+    private readonly getMainStageWaveId: () => string | null
   ) {}
 
   public async mapDrops(
@@ -168,7 +168,7 @@ export class ApiDropMapper {
       const winnerDropIds = submissionEntities
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
-      const mainStageWaveId = this.mainStageWaveId;
+      const mainStageWaveId = this.getMainStageWaveId();
       const mainStageWinnerDropIds = mainStageWaveId
         ? submissionEntities
             .filter(
@@ -916,5 +916,5 @@ export const apiDropMapper = new ApiDropMapper(
   nftLinksDb,
   nftLinkResolvingService,
   memeCardDropMappingsDb,
-  env.getStringOrNull('MAIN_STAGE_WAVE_ID')
+  () => env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );

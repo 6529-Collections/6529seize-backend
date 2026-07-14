@@ -47,6 +47,7 @@ function makeIdentity(id: string) {
 }
 
 function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
+  let configuredMainStageWaveId = mainStageWaveId;
   const identityFetcher = {
     getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({
       'author-1': makeIdentity('author-1')
@@ -135,8 +136,11 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
       nftLinksDb as any,
       nftLinkResolvingService as any,
       memeCardDropMappingsDb as any,
-      mainStageWaveId
+      () => configuredMainStageWaveId
     ),
+    setMainStageWaveId: (waveId: string | null) => {
+      configuredMainStageWaveId = waveId;
+    },
     deps: {
       identityFetcher,
       identitiesDb,
@@ -639,8 +643,9 @@ describe('ApiDropMapper', () => {
     );
   });
 
-  it('maps Meme card IDs only for configured Main Stage winners', async () => {
-    const { mapper, deps } = createMapper('main-stage-wave');
+  it('resolves Main Stage configuration after mapper construction', async () => {
+    const { mapper, deps, setMainStageWaveId } = createMapper(null);
+    setMainStageWaveId('main-stage-wave');
     const mainStageWinner = makeDrop({
       id: 'main-stage-winner',
       wave_id: 'main-stage-wave',
