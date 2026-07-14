@@ -233,21 +233,41 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
     targetProfileId: string,
     connection: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `insert ignore into ${MENTION_ALIAS_MEMBERS_TABLE}
-       (alias_id, member_profile_id, position)
-       select alias_id, :targetProfileId, position
-       from ${MENTION_ALIAS_MEMBERS_TABLE}
-       where member_profile_id = :sourceProfileId`,
-      { sourceProfileId, targetProfileId },
-      { wrappedConnection: connection }
-    );
-    await this.db.execute(
-      `delete from ${MENTION_ALIAS_MEMBERS_TABLE}
-       where member_profile_id = :sourceProfileId`,
+    const affectedMemberships = await this.db.execute<{
+      alias_id: string;
+      member_profile_id: string;
+    }>(
+      `select members.alias_id, members.member_profile_id
+       from ${MENTION_ALIAS_MEMBERS_TABLE} members
+       join ${MENTION_ALIAS_MEMBERS_TABLE} source_member
+         on source_member.alias_id = members.alias_id
+        and source_member.member_profile_id = :sourceProfileId
+       order by members.alias_id asc, members.position asc`,
       { sourceProfileId },
       { wrappedConnection: connection }
     );
+    const membersByAlias = affectedMemberships.reduce<Map<string, string[]>>(
+      (result, member) => {
+        const members = result.get(member.alias_id) ?? [];
+        members.push(
+          member.member_profile_id === sourceProfileId
+            ? targetProfileId
+            : member.member_profile_id
+        );
+        result.set(member.alias_id, members);
+        return result;
+      },
+      new Map()
+    );
+    for (const [aliasId, memberProfileIds] of Array.from(
+      membersByAlias.entries()
+    )) {
+      const retainedMemberIds = Array.from(new Set(memberProfileIds)).slice(
+        0,
+        MAX_MEMBERS_PER_MENTION_ALIAS
+      );
+      await this.replaceMembers(aliasId, retainedMemberIds, connection);
+    }
     const conflictingSourceAliases = await this.db.execute<{
       source_alias_id: string;
       target_alias_id: string;

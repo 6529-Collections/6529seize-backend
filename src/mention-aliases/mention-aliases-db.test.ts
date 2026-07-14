@@ -12,7 +12,6 @@ describe('MentionAliasesDb', () => {
       execute: jest
         .fn()
         .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
           {
             source_alias_id: 'source-alias',
@@ -50,16 +49,7 @@ describe('MentionAliasesDb', () => {
 
     expect(executor.execute).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining('insert ignore into mention_alias_members'),
-      {
-        sourceProfileId: 'source-profile',
-        targetProfileId: 'target-profile'
-      },
-      { wrappedConnection: connection }
-    );
-    expect(executor.execute).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('where member_profile_id = :sourceProfileId'),
+      expect.stringContaining('join mention_alias_members source_member'),
       { sourceProfileId: 'source-profile' },
       { wrappedConnection: connection }
     );
@@ -76,5 +66,75 @@ describe('MentionAliasesDb', () => {
     const retainedMemberIds = replaceMembers.mock.calls[0]?.[1] ?? [];
     expect(retainedMemberIds).toHaveLength(25);
     expect(retainedMemberIds).not.toContain('source-only-2');
+  });
+
+  it('repoints members without duplicate profiles, positions, or cap overflow', async () => {
+    const connection = { connection: {} } as ConnectionWrapper<any>;
+    const fullAliasMembers = [
+      {
+        alias_id: 'full-alias',
+        member_profile_id: 'source-profile'
+      },
+      ...Array.from({ length: 24 }, (_, index) => ({
+        alias_id: 'full-alias',
+        member_profile_id: `member-${index}`
+      }))
+    ];
+    const executor = {
+      execute: jest
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            alias_id: 'dedupe-alias',
+            member_profile_id: 'source-profile'
+          },
+          {
+            alias_id: 'dedupe-alias',
+            member_profile_id: 'target-profile'
+          },
+          ...fullAliasMembers
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      executeNativeQueriesInTransaction: jest.fn(),
+      bulkInsert: jest.fn().mockResolvedValue(undefined)
+    };
+    const db = new MentionAliasesDb(() => executor as never);
+
+    await db.mergeProfileIds('source-profile', 'target-profile', connection);
+
+    expect(executor.bulkInsert).toHaveBeenNthCalledWith(
+      1,
+      'mention_alias_members',
+      [
+        {
+          alias_id: 'dedupe-alias',
+          member_profile_id: 'target-profile',
+          position: 0
+        }
+      ],
+      ['alias_id', 'member_profile_id', 'position'],
+      undefined,
+      { connection }
+    );
+    const fullAliasRows = executor.bulkInsert.mock.calls[1]?.[1] ?? [];
+    expect(fullAliasRows).toHaveLength(25);
+    expect(fullAliasRows[0]).toEqual({
+      alias_id: 'full-alias',
+      member_profile_id: 'target-profile',
+      position: 0
+    });
+    expect(
+      fullAliasRows.map((row: { position: number }) => row.position)
+    ).toEqual(Array.from({ length: 25 }, (_, index) => index));
+    expect(
+      new Set(
+        fullAliasRows.map(
+          (row: { member_profile_id: string }) => row.member_profile_id
+        )
+      ).size
+    ).toBe(25);
   });
 });
