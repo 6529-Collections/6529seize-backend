@@ -234,19 +234,18 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
-      `delete m from ${MENTION_ALIAS_MEMBERS_TABLE} m
-       join ${MENTION_ALIAS_MEMBERS_TABLE} target_member
-         on target_member.alias_id = m.alias_id
-        and target_member.member_profile_id = :targetProfileId
-       where m.member_profile_id = :sourceProfileId`,
+      `insert ignore into ${MENTION_ALIAS_MEMBERS_TABLE}
+       (alias_id, member_profile_id, position)
+       select alias_id, :targetProfileId, position
+       from ${MENTION_ALIAS_MEMBERS_TABLE}
+       where member_profile_id = :sourceProfileId`,
       { sourceProfileId, targetProfileId },
       { wrappedConnection: connection }
     );
     await this.db.execute(
-      `update ${MENTION_ALIAS_MEMBERS_TABLE}
-       set member_profile_id = :targetProfileId
+      `delete from ${MENTION_ALIAS_MEMBERS_TABLE}
        where member_profile_id = :sourceProfileId`,
-      { sourceProfileId, targetProfileId },
+      { sourceProfileId },
       { wrappedConnection: connection }
     );
     const conflictingSourceAliases = await this.db.execute<{

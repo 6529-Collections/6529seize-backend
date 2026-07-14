@@ -48,6 +48,22 @@ describe('MentionAliasesDb', () => {
 
     await db.mergeProfileIds('source-profile', 'target-profile', connection);
 
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('insert ignore into mention_alias_members'),
+      {
+        sourceProfileId: 'source-profile',
+        targetProfileId: 'target-profile'
+      },
+      { wrappedConnection: connection }
+    );
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('where member_profile_id = :sourceProfileId'),
+      { sourceProfileId: 'source-profile' },
+      { wrappedConnection: connection }
+    );
+
     expect(replaceMembers).toHaveBeenCalledWith(
       'target-alias',
       [
