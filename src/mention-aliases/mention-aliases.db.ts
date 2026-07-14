@@ -60,11 +60,13 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
     );
     const membersByAlias = members.reduce<Record<string, MentionAliasMember[]>>(
       (acc, member) => {
-        (acc[member.alias_id] ??= []).push({
+        const aliasMembers = acc[member.alias_id] ?? [];
+        aliasMembers.push({
           profile_id: member.profile_id,
           handle: member.handle,
           pfp: member.pfp
         });
+        acc[member.alias_id] = aliasMembers;
         return acc;
       },
       {}
@@ -92,14 +94,17 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
   async lockOwnerProfile(
     ownerProfileId: string,
     connection: ConnectionWrapper<any>
-  ): Promise<void> {
-    await this.db.execute(
+  ): Promise<boolean> {
+    // Authentication profile IDs originate from identities.profile_id, which
+    // is the same identifier stored in profiles.external_id.
+    const profile = await this.db.oneOrNull<{ external_id: string }>(
       `select external_id from ${PROFILES_TABLE}
        where external_id = :ownerProfileId
        for update`,
       { ownerProfileId },
       { wrappedConnection: connection }
     );
+    return profile !== null;
   }
 
   async findOwnedAlias(

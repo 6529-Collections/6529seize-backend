@@ -34,7 +34,13 @@ export class MentionAliasesService {
     const normalized = this.validateInput(input);
     const id = randomUUID();
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      await this.db.lockOwnerProfile(ownerProfileId, connection);
+      const ownerLocked = await this.db.lockOwnerProfile(
+        ownerProfileId,
+        connection
+      );
+      if (!ownerLocked) {
+        throw new NotFoundException('Profile not found.');
+      }
       const count = await this.db.countByOwner(ownerProfileId, connection);
       if (count >= MAX_MENTION_ALIASES_PER_PROFILE) {
         throw new BadRequestException(
@@ -93,12 +99,21 @@ export class MentionAliasesService {
         excludedAliasId: aliasId,
         connection
       });
-      await this.db.updateAliasName(
-        aliasId,
-        normalized.alias,
-        normalized.alias,
-        connection
-      );
+      try {
+        await this.db.updateAliasName(
+          aliasId,
+          normalized.alias,
+          normalized.alias,
+          connection
+        );
+      } catch (error) {
+        if (isDuplicateKeyError(error)) {
+          throw new BadRequestException(
+            `You already have a @${normalized.alias} mention shortcut.`
+          );
+        }
+        throw error;
+      }
       await this.db.replaceMembers(
         aliasId,
         normalized.memberProfileIds,
@@ -206,10 +221,18 @@ export const mentionAliasesService = new MentionAliasesService(
 );
 
 function isDuplicateKeyError(error: unknown): boolean {
+  if (!isErrorRecord(error)) return false;
+  if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) return true;
+  return isDuplicateKeyDetails(error.driverError);
+}
+
+function isDuplicateKeyDetails(error: unknown): boolean {
   return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { readonly code?: unknown }).code === 'ER_DUP_ENTRY'
+    isErrorRecord(error) &&
+    (error.code === 'ER_DUP_ENTRY' || error.errno === 1062)
   );
+}
+
+function isErrorRecord(error: unknown): error is Record<string, unknown> {
+  return typeof error === 'object' && error !== null;
 }

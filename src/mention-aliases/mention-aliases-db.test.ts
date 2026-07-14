@@ -57,5 +57,8 @@ describe('MentionAliasesDb', () => {
       connection
     );
     expect(deleteAlias).toHaveBeenCalledWith('source-alias', connection);
+    const retainedMemberIds = replaceMembers.mock.calls[0]?.[1] ?? [];
+    expect(retainedMemberIds).toHaveLength(25);
+    expect(retainedMemberIds).not.toContain('source-only-2');
   });
 });

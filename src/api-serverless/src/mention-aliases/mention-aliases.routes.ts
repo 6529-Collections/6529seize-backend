@@ -23,13 +23,13 @@ const MentionAliasInputSchema: Joi.ObjectSchema<ApiMentionAliasRequest> =
   Joi.object({
     alias: Joi.string()
       .trim()
-      .pattern(/^@?[A-Za-z0-9_]{3,15}$/)
+      .pattern(/^@?\w{3,15}$/)
       .required(),
     member_profile_ids: Joi.array()
       .items(
         Joi.string()
           .max(100)
-          .pattern(/^[A-Za-z0-9_-]+$/)
+          .pattern(/^[\w-]+$/)
           .required()
       )
       .min(1)
@@ -37,9 +37,15 @@ const MentionAliasInputSchema: Joi.ObjectSchema<ApiMentionAliasRequest> =
       .required()
   });
 
-const AliasIdSchema = Joi.string()
-  .guid({ version: ['uuidv4'] })
-  .required();
+interface AliasParams {
+  readonly aliasId: string;
+}
+
+const AliasParamsSchema: Joi.ObjectSchema<AliasParams> = Joi.object({
+  aliasId: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .required()
+});
 
 function toApiMentionAlias(alias: MentionAlias): ApiMentionAlias {
   return {
@@ -111,7 +117,7 @@ router.put(
   ) => {
     const ownerProfileId = await getOwnerProfileId(req);
     const input = getValidatedByJoiOrThrow(req.body, MentionAliasInputSchema);
-    const aliasId = getValidatedByJoiOrThrow(req.params.aliasId, AliasIdSchema);
+    const { aliasId } = getValidatedByJoiOrThrow(req.params, AliasParamsSchema);
     res
       .status(200)
       .send(
@@ -134,7 +140,7 @@ router.delete(
     res: Response<ApiResponse<void>>
   ) => {
     const ownerProfileId = await getOwnerProfileId(req);
-    const aliasId = getValidatedByJoiOrThrow(req.params.aliasId, AliasIdSchema);
+    const { aliasId } = getValidatedByJoiOrThrow(req.params, AliasParamsSchema);
     await mentionAliasesService.delete(ownerProfileId, aliasId);
     res.status(204).send();
   }

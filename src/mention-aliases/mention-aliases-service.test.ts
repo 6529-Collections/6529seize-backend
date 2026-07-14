@@ -8,7 +8,7 @@ function createDb() {
     db: {
       executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
       findByOwner: jest.fn(),
-      lockOwnerProfile: jest.fn().mockResolvedValue(undefined),
+      lockOwnerProfile: jest.fn().mockResolvedValue(true),
       countByOwner: jest.fn().mockResolvedValue(0),
       normalizedAliasExists: jest.fn().mockResolvedValue(false),
       findExistingProfileIds: jest.fn().mockResolvedValue(['profile-2']),
@@ -108,6 +108,33 @@ describe('MentionAliasesService', () => {
         member_profile_ids: ['profile-2']
       })
     ).rejects.toThrow('You already have a @frens mention shortcut.');
+  });
+
+  it('translates a concurrent duplicate rename into a bad request', async () => {
+    const { db } = createDb();
+    db.updateAliasName.mockRejectedValue({ driverError: { errno: 1062 } });
+    const service = new MentionAliasesService(db as any);
+
+    await expect(
+      service.update('owner-1', 'alias-1', {
+        alias: 'frens',
+        member_profile_ids: ['profile-2']
+      })
+    ).rejects.toThrow('You already have a @frens mention shortcut.');
+  });
+
+  it('fails if the authenticated owner profile cannot be locked', async () => {
+    const { db } = createDb();
+    db.lockOwnerProfile.mockResolvedValue(false);
+    const service = new MentionAliasesService(db as any);
+
+    await expect(
+      service.create('owner-1', {
+        alias: 'frens',
+        member_profile_ids: ['profile-2']
+      })
+    ).rejects.toThrow('Profile not found.');
+    expect(db.countByOwner).not.toHaveBeenCalled();
   });
 
   it('rejects updating an alias owned by another profile', async () => {
