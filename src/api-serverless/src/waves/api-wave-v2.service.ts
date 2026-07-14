@@ -65,6 +65,14 @@ export interface FindDropRepliesFeedV2Request {
   readonly drop_type: ApiDropType | null;
 }
 
+export interface FindWaveCompetitionDropsRequest {
+  readonly wave_id: string;
+  readonly author_id: string;
+  readonly drop_type: DropType.PARTICIPATORY | DropType.WINNER;
+  readonly page: number;
+  readonly page_size: number;
+}
+
 export interface FindWavesV2Request {
   readonly view: ApiWavesV2ListType;
   readonly page: number;
@@ -307,6 +315,56 @@ export class ApiWaveV2Service {
         },
         ctx
       );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findWaveCompetitionDrops(
+    request: FindWaveCompetitionDropsRequest,
+    ctx: RequestContext
+  ): Promise<ApiDropV2PageWithoutCount> {
+    const timerKey = `${this.constructor.name}->findWaveCompetitionDrops`;
+    ctx.timer?.start(timerKey);
+    try {
+      const [groupIdsUserIsEligibleFor, { wave, notFoundMessage }] =
+        await Promise.all([
+          getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx),
+          this.findWaveAndCurationFilter(
+            { waveId: request.wave_id, curationId: null },
+            ctx
+          )
+        ]);
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+        message: notFoundMessage,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+
+      const dropEntities = await this.dropsDb.findWaveCompetitionDropsByAuthor(
+        {
+          wave_id: request.wave_id,
+          author_id: request.author_id,
+          drop_type: request.drop_type,
+          limit: request.page_size + 1,
+          offset: request.page_size * (request.page - 1)
+        },
+        ctx
+      );
+      const pageDropEntities = dropEntities.slice(0, request.page_size);
+      const dropsById = await this.apiDropMapper.mapDrops(
+        pageDropEntities,
+        ctx,
+        { groupIdsUserIsEligibleFor }
+      );
+
+      return {
+        data: pageDropEntities.map((drop) => dropsById[drop.id]),
+        page: request.page,
+        next: dropEntities.length > request.page_size
+      };
     } finally {
       ctx.timer?.stop(timerKey);
     }
