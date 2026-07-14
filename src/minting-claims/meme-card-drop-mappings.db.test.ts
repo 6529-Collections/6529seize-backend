@@ -1,7 +1,9 @@
 import {
+  DROPS_TABLE,
   MEME_CARD_DROP_MAPPINGS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE
 } from '@/constants';
+import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -33,10 +35,14 @@ describe('MemeCardDropMappingsDb', () => {
     expect(result).toEqual({ 'drop-1': 520, 'drop-2': 521 });
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping`);
-    expect(sql).toContain(`join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner`);
-    expect(sql).toContain('having count(scope_winner.wave_id) = count(*)');
-    expect(sql).toContain('count(distinct scope_winner.wave_id) = 1');
-    expect(params).toEqual({ dropIds: ['drop-1', 'drop-2'] });
+    expect(sql).toContain(`join ${DROPS_TABLE} mapped_drop`);
+    expect(sql).toContain(') mapping_scope');
+    expect(sql).toContain('having count(scope_drop.wave_id) = count(*)');
+    expect(sql).toContain('count(distinct scope_drop.wave_id) = 1');
+    expect(params).toEqual({
+      dropIds: ['drop-1', 'drop-2'],
+      winnerDropType: DropType.WINNER
+    });
   });
 
   it('returns the drop mapping for a Meme card ID', async () => {
@@ -54,7 +60,7 @@ describe('MemeCardDropMappingsDb', () => {
     });
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining('where meme_card_id = :memeCardId'),
-      { memeCardId: 521 },
+      { memeCardId: 521, winnerDropType: DropType.WINNER },
       undefined
     );
     expect(timerStart).toHaveBeenCalledWith(
@@ -239,35 +245,72 @@ describe('MemeCardDropMappingsDb', () => {
 
 describeWithSeed(
   'MemeCardDropMappingsDb integration',
-  {
-    table: WAVES_DECISION_WINNER_DROPS_TABLE,
-    rows: [
-      {
-        decision_time: 1,
-        drop_id: 'main-stage-drop',
-        ranking: 1,
-        final_vote: 1,
-        prizes: [],
-        wave_id: 'main-stage-wave'
-      },
-      {
-        decision_time: 2,
-        drop_id: 'other-main-stage-drop',
-        ranking: 1,
-        final_vote: 1,
-        prizes: [],
-        wave_id: 'main-stage-wave'
-      },
-      {
-        decision_time: 3,
-        drop_id: 'other-wave-drop',
-        ranking: 1,
-        final_vote: 1,
-        prizes: [],
-        wave_id: 'other-wave'
-      }
-    ]
-  },
+  [
+    {
+      table: WAVES_DECISION_WINNER_DROPS_TABLE,
+      rows: [
+        {
+          decision_time: 1,
+          drop_id: 'main-stage-drop',
+          ranking: 1,
+          final_vote: 1,
+          prizes: [],
+          wave_id: 'main-stage-wave'
+        },
+        {
+          decision_time: 2,
+          drop_id: 'other-main-stage-drop',
+          ranking: 1,
+          final_vote: 1,
+          prizes: [],
+          wave_id: 'main-stage-wave'
+        },
+        {
+          decision_time: 3,
+          drop_id: 'other-wave-drop',
+          ranking: 1,
+          final_vote: 1,
+          prizes: [],
+          wave_id: 'other-wave'
+        }
+      ]
+    },
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'main-stage-drop',
+          serial_no: 1,
+          wave_id: 'main-stage-wave',
+          author_id: 'author-1',
+          created_at: 1,
+          title: null,
+          parts_count: 1,
+          drop_type: DropType.WINNER
+        },
+        {
+          id: 'other-main-stage-drop',
+          serial_no: 2,
+          wave_id: 'main-stage-wave',
+          author_id: 'author-2',
+          created_at: 2,
+          title: null,
+          parts_count: 1,
+          drop_type: DropType.WINNER
+        },
+        {
+          id: 'other-wave-drop',
+          serial_no: 3,
+          wave_id: 'other-wave',
+          author_id: 'author-3',
+          created_at: 3,
+          title: null,
+          parts_count: 1,
+          drop_type: DropType.WINNER
+        }
+      ]
+    }
+  ],
   () => {
     it('persists an idempotent one-to-one Main Stage mapping', async () => {
       await sqlExecutor.executeNativeQueriesInTransaction(
@@ -292,6 +335,12 @@ describeWithSeed(
               ctx
             )
           ).resolves.toEqual({ 'main-stage-drop': 521 });
+          await expect(
+            memeCardDropMappingsDb.findByMemeCardId(521, ctx)
+          ).resolves.toEqual({
+            drop_id: 'main-stage-drop',
+            meme_card_id: 521
+          });
         }
       );
     });

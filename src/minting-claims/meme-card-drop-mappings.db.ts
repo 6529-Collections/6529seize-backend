@@ -1,7 +1,9 @@
 import {
+  DROPS_TABLE,
   MEME_CARD_DROP_MAPPINGS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE
 } from '@/constants';
+import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
@@ -85,20 +87,24 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(timerName);
       const rows = await this.db.execute<MemeCardDropMappingRow>(
-        `select distinct mapping.drop_id, mapping.meme_card_id
+        `select mapping.drop_id, mapping.meme_card_id
          from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
-         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
-           on winner.drop_id = mapping.drop_id
+         join ${DROPS_TABLE} mapped_drop
+           on mapped_drop.id = mapping.drop_id
+          and mapped_drop.drop_type = :winnerDropType
+         join (
+           select min(scope_drop.wave_id) as wave_id
+           from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
+           left join ${DROPS_TABLE} scope_drop
+             on scope_drop.id = scope_mapping.drop_id
+            and scope_drop.drop_type = :winnerDropType
+           having count(scope_drop.wave_id) = count(*)
+              and count(distinct scope_drop.wave_id) = 1
+         ) mapping_scope
+           on mapping_scope.wave_id = mapped_drop.wave_id
          where mapping.drop_id in (:dropIds)
-           and winner.wave_id = (
-             select min(scope_winner.wave_id)
-             from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
-             left join ${WAVES_DECISION_WINNER_DROPS_TABLE} scope_winner
-               on scope_winner.drop_id = scope_mapping.drop_id
-             having count(scope_winner.wave_id) = count(*)
-                and count(distinct scope_winner.wave_id) = 1
-           )`,
-        { dropIds },
+        `,
+        { dropIds, winnerDropType: DropType.WINNER },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       return rows.reduce<Record<string, number>>((acc, row) => {
@@ -118,21 +124,24 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(timerName);
       const rows = await this.db.execute<MemeCardDropMappingRow>(
-        `select distinct mapping.meme_card_id, mapping.drop_id
+        `select mapping.meme_card_id, mapping.drop_id
          from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
-         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
-           on winner.drop_id = mapping.drop_id
+         join ${DROPS_TABLE} mapped_drop
+           on mapped_drop.id = mapping.drop_id
+          and mapped_drop.drop_type = :winnerDropType
+         join (
+           select min(scope_drop.wave_id) as wave_id
+           from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
+           left join ${DROPS_TABLE} scope_drop
+             on scope_drop.id = scope_mapping.drop_id
+            and scope_drop.drop_type = :winnerDropType
+           having count(scope_drop.wave_id) = count(*)
+              and count(distinct scope_drop.wave_id) = 1
+         ) mapping_scope
+           on mapping_scope.wave_id = mapped_drop.wave_id
          where mapping.meme_card_id = :memeCardId
-           and winner.wave_id = (
-             select min(scope_winner.wave_id)
-             from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
-             left join ${WAVES_DECISION_WINNER_DROPS_TABLE} scope_winner
-               on scope_winner.drop_id = scope_mapping.drop_id
-             having count(scope_winner.wave_id) = count(*)
-                and count(distinct scope_winner.wave_id) = 1
-           )
          limit 1`,
-        { memeCardId },
+        { memeCardId, winnerDropType: DropType.WINNER },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       const mapping = rows[0];
