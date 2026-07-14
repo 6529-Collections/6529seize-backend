@@ -33,6 +33,8 @@ export interface CiPipelineAlertRequest {
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
+  readonly pull_request_number?: number | null;
+  readonly publish_release_note?: boolean;
   readonly deployed_at?: string | null;
 }
 
@@ -275,6 +277,9 @@ export class CiPipelineAlertService {
     const releaseGroupServices = (request.release_group_services ?? [])
       .map((service) => service.trim())
       .filter(Boolean);
+    const pullRequestNumber = request.pull_request_number ?? null;
+    const isBackendRelease =
+      request.repo.split('/').pop() === '6529seize-backend';
     if (
       request.status !== 'success' ||
       normalizeTargetEnvironment(request.environment) !== 'prod' ||
@@ -282,6 +287,7 @@ export class CiPipelineAlertService {
       !sha ||
       !releaseGroupId ||
       !releaseGroupServices.length ||
+      (isBackendRelease && pullRequestNumber === null) ||
       !deployedAt
     ) {
       return;
@@ -306,6 +312,8 @@ export class CiPipelineAlertService {
       prompt_path: promptPath,
       release_group_id: releaseGroupId,
       release_group_services: releaseGroupServices,
+      pull_request_number: pullRequestNumber,
+      publish_release_note: request.publish_release_note ?? false,
       deployed_at: deployedAt
     });
   }

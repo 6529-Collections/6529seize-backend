@@ -366,6 +366,20 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
+  it('rejects a non-boolean release-note publish flag', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    const res = makeResponse();
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({ publish_release_note: 'true' }),
+        res
+      )
+    ).rejects.toThrow('"publish_release_note" must be a boolean');
+
+    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+  });
+
   it('acknowledges in-flight duplicate alerts without returning an error', async () => {
     const redis = {
       get: jest.fn().mockResolvedValue(null),

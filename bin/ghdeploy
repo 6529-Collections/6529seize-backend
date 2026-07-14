@@ -57,6 +57,32 @@ read_line_from_tty() {
   printf -v "$__target" '%s' "$value"
 }
 
+read_release_pr_number() {
+  local value
+
+  while true; do
+    tty_printf 'Merged PR number represented by this production release: '
+    read_line_from_tty value || die 'Failed to read the release PR number'
+    if [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+    tty_printf 'Enter a positive PR number.\n'
+  done
+}
+
+choose_release_note_mode() {
+  local pull_request="$1"
+  local choice
+
+  choice="$(
+    node "$PICKER_SCRIPT" single \
+      "Release note action for PR #$pull_request" \
+      hold hold publish
+  )" || die 'Cancelled'
+  printf '%s\n' "$choice"
+}
+
 resolve_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null ||
     die 'Run this command from inside the repository'
@@ -307,6 +333,8 @@ dispatch_deploy() {
   local upstream_ref="$4"
   local release_group_id="$5"
   local release_group_services="$6"
+  local release_pull_request="$7"
+  local release_note_publish="$8"
 
   printf 'Triggering deploy for service=%s environment=%s branch=%s upstream=%s\n' \
     "$service" "$environment" "$branch" "$upstream_ref"
@@ -317,6 +345,8 @@ dispatch_deploy() {
     -f "service=$service" \
     -f "release_group_id=$release_group_id" \
     -f "release_group_services=$release_group_services" \
+    -f "release_pull_request=$release_pull_request" \
+    -f "release_note_publish=$release_note_publish" \
     -R "$WORKFLOW_REPO"
 }
 
@@ -367,6 +397,9 @@ run_batch_mode() {
   local -a selected_services=()
 
   environment="$(choose_environment 'selected services' "$branch")"
+  if [[ "$environment" == 'prod' ]]; then
+    die 'Deploy production services one at a time from their service directories so each run can hold or publish its PR release note'
+  fi
 
   selected_output="$(choose_services_for_batch "$branch" "$environment" "${BATCH_SERVICES[@]}")" ||
     die 'Cancelled'
@@ -386,7 +419,7 @@ run_batch_mode() {
   BATCH_SKIPPED=()
 
   for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
-    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$release_group_services"; then
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$release_group_services" '' false; then
       BATCH_SUCCEEDED+=("${selected_services[$idx]}")
       continue
     fi
@@ -424,6 +457,8 @@ main() {
   local service
   local allowed_service
   local release_group_id
+  local release_pull_request=''
+  local release_note_publish='false'
 
   [[ $# -eq 0 ]] || die 'This command does not take arguments'
 
@@ -464,8 +499,16 @@ main() {
     die "Directory '$current_dir' does not map to a deployable service in $WORKFLOW_FILE"
 
   environment="$(choose_environment "$service" "$branch")"
-  release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$service"
+  if [[ "$environment" == 'prod' ]]; then
+    release_pull_request="$(read_release_pr_number)"
+    release_group_id="pr-$release_pull_request"
+    if [[ "$(choose_release_note_mode "$release_pull_request")" == 'publish' ]]; then
+      release_note_publish='true'
+    fi
+  else
+    release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+  fi
+  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$service" "$release_pull_request" "$release_note_publish"
 }
 
 main "$@"
