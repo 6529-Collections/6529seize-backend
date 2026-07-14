@@ -206,6 +206,27 @@ describe('processRequest', () => {
     );
   });
 
+  it('does not record deduplication when no release baseline exists', async () => {
+    const redis = buildRedis(['api', 'worker'], {
+      'release-note-group:6529seize-backend:backend-release:abc123:run:worker':
+        JSON.stringify(workerRun)
+    });
+
+    await processRequest(request, {
+      redis: redis as any,
+      generateAndPost: jest.fn().mockResolvedValue('no-baseline')
+    });
+
+    expect(redis.set).not.toHaveBeenCalledWith(
+      'release-note:6529seize-backend:backend-release:abc123',
+      '1',
+      { EX: 7776000 }
+    );
+    expect(redis.del).toHaveBeenCalledWith(
+      'release-note:6529seize-backend:backend-release:abc123:processing'
+    );
+  });
+
   it('sanitizes the deployed SHA in Redis keys', async () => {
     const redis = buildRedis(['api', 'worker'], {
       'release-note-group:6529seize-backend:backend-release:abc-123:run:worker':

@@ -21,6 +21,23 @@ const request: ReleaseNoteGenerationRequest = {
   deployed_at: '2026-07-13T11:38:00.000Z'
 };
 
+const response = (payload: unknown) => ({
+  ok: true,
+  status: 200,
+  statusText: 'OK',
+  headers: { get: jest.fn().mockReturnValue(null) },
+  json: jest.fn().mockResolvedValue(payload)
+});
+
+const currentRun = {
+  id: 123,
+  name: 'Web Deploy - PROD',
+  display_title: 'Web Deploy - PROD',
+  head_sha: 'abc123',
+  run_number: 45,
+  workflow_id: 7
+};
+
 describe('ReleaseNoteGitHubService', () => {
   const originalToken = process.env.RELEASE_NOTES_GITHUB_TOKEN;
 
@@ -76,23 +93,22 @@ describe('ReleaseNoteGitHubService', () => {
   });
 
   it('does not use a frontend non-production run as the release baseline', async () => {
-    (fetch as unknown as jest.Mock).mockResolvedValue({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      headers: { get: jest.fn().mockReturnValue(null) },
-      json: jest.fn().mockResolvedValue({
-        workflow_runs: [
-          {
-            id: 122,
-            name: 'Deploy Staging',
-            display_title: 'Deploy Staging',
-            head_sha: 'previous-sha',
-            run_number: 44
-          }
-        ]
-      })
-    });
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Deploy Staging',
+              display_title: 'Deploy Staging',
+              head_sha: 'previous-sha',
+              run_number: 44,
+              workflow_id: 7
+            }
+          ]
+        })
+      );
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
       ...request,
@@ -101,35 +117,27 @@ describe('ReleaseNoteGitHubService', () => {
     });
 
     expect(context).toBeNull();
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('finds a previous production run when run_number is missing', async () => {
     (fetch as unknown as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        headers: { get: jest.fn().mockReturnValue(null) },
-        json: jest.fn().mockResolvedValue({
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
           workflow_runs: [
             {
               id: 122,
               name: 'Web Deploy - PROD',
               display_title: 'Web Deploy - PROD',
               head_sha: 'previous-sha',
-              run_number: 44
+              run_number: 44,
+              workflow_id: 7
             }
           ]
         })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        headers: { get: jest.fn().mockReturnValue(null) },
-        json: jest.fn().mockResolvedValue({ commits: [], total_commits: 0 })
-      });
+      )
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext(
       request
@@ -140,27 +148,36 @@ describe('ReleaseNoteGitHubService', () => {
       current_sha: 'abc123',
       pull_requests: []
     });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?status=success&branch=main&per_page=100&page=1',
+      expect.any(Object)
+    );
   });
 
-  it('attributes backend pull requests to their directly changed deployed services', async () => {
-    const response = (payload: unknown) => ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      headers: { get: jest.fn().mockReturnValue(null) },
-      json: jest.fn().mockResolvedValue(payload)
-    });
+  it('uses service-specific backend run names from the deploy workflow', async () => {
     (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          id: 123,
+          name: 'Deploy claimsBuilder to prod',
+          display_title: 'Deploy claimsBuilder to prod',
+          head_sha: 'current-sha',
+          run_number: 45,
+          workflow_id: 82013288
+        })
+      )
       .mockResolvedValueOnce(
         response({
           workflow_runs: [
             {
               id: 122,
-              name: 'Deploy a service',
+              name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
               head_sha: 'previous-sha',
-              run_number: 44
+              run_number: 44,
+              workflow_id: 82013288
             }
           ]
         })
@@ -214,7 +231,9 @@ describe('ReleaseNoteGitHubService', () => {
             filename: 'src/api-serverless/src/profiles/routes.ts',
             additions: 4,
             deletions: 1,
-            changes: 5
+            changes: 5,
+            patch: 'x'.repeat(300000),
+            blob_url: 'https://github.com/example/blob/api-commit/routes.ts'
           }
         ])
       )
@@ -241,11 +260,84 @@ describe('ReleaseNoteGitHubService', () => {
     });
 
     expect(context?.pull_requests).toEqual([
-      expect.objectContaining({ number: 101, candidate_services: ['api'] }),
+      expect.objectContaining({
+        number: 101,
+        candidate_services: ['api'],
+        changed_files: [
+          {
+            filename: 'src/api-serverless/src/profiles/routes.ts',
+            additions: 4,
+            deletions: 1,
+            changes: 5
+          }
+        ]
+      }),
       expect.objectContaining({
         number: 102,
         candidate_services: ['claimsBuilder']
       })
     ]);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?status=success&branch=main&per_page=100&page=1',
+      expect.any(Object)
+    );
+  });
+
+  it('paginates past successful runs from the current backend SHA', async () => {
+    const sameShaRuns = Array.from({ length: 100 }, (_, index) => ({
+      id: 1000 + index,
+      name: `Deploy service${index} to prod`,
+      display_title: `Deploy service${index} to prod`,
+      head_sha: 'current-sha',
+      run_number: 199 - index,
+      workflow_id: 82013288
+    }));
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          id: 123,
+          name: 'Deploy s3Uploader to prod',
+          display_title: 'Deploy s3Uploader to prod',
+          head_sha: 'current-sha',
+          run_number: 200,
+          workflow_id: 82013288
+        })
+      )
+      .mockResolvedValueOnce(response({ workflow_runs: sameShaRuns }))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Deploy api to prod',
+              display_title: 'Deploy api to prod',
+              head_sha: 'previous-sha',
+              run_number: 99,
+              workflow_id: 82013288
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      run_number: '200',
+      sha: 'current-sha',
+      branch: 'main',
+      service: 's3Uploader',
+      release_group_id: 'backend-release',
+      release_group_services: ['s3Uploader']
+    });
+
+    expect(context?.previous_sha).toBe('previous-sha');
+    expect(fetch).toHaveBeenNthCalledWith(
+      3,
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?status=success&branch=main&per_page=100&page=2',
+      expect.any(Object)
+    );
   });
 });
