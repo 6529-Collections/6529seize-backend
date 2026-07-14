@@ -169,6 +169,15 @@ export class ApiDropMapper {
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
       const mainStageWaveId = this.mainStageWaveId;
+      const mainStageWinnerDropIds = mainStageWaveId
+        ? submissionEntities
+            .filter(
+              (drop) =>
+                drop.drop_type === DropType.WINNER &&
+                drop.wave_id === mainStageWaveId
+            )
+            .map((drop) => drop.id)
+        : [];
       // mapDrops only enriches entities that its caller has already authorized
       // for this response. These flags are display metadata, never access
       // control; the lazy full-entry endpoint performs its own wave check.
@@ -303,9 +312,10 @@ export class ApiDropMapper {
             )
           : Promise.resolve({} as Record<string, number>),
         this.dropPollsDb.findPollsByDropIds(dropIds, ctx),
-        winnerDropIds.length
+        mainStageWaveId && mainStageWinnerDropIds.length
           ? this.memeCardDropMappingsDb.findMemeCardIdsByDropIds(
-              winnerDropIds,
+              mainStageWinnerDropIds,
+              mainStageWaveId,
               ctx
             )
           : Promise.resolve({} as Record<string, number>)

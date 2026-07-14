@@ -1,9 +1,7 @@
 import {
-  DROPS_TABLE,
   MEME_CARD_DROP_MAPPINGS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE
 } from '@/constants';
-import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
@@ -26,9 +24,9 @@ function isDuplicateEntryError(error: unknown): boolean {
  *
  * The table is intentionally Main-Stage-only by construction: runtime writes
  * select exclusively from the configured Main Stage winner rows, and the
- * historical backfill applies the same wave constraint. Reads do not depend on
- * runtime wave configuration, but they fail closed unless every mapping still
- * resolves to a winner from exactly one wave.
+ * historical backfill applies the same wave constraint. Reads repeat that
+ * per-row Main Stage winner check, so an unrelated invalid mapping cannot
+ * suppress valid mappings.
  */
 export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
   private getRequiredConnection(
@@ -78,6 +76,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
 
   async findMemeCardIdsByDropIds(
     dropIds: string[],
+    mainStageWaveId: string,
     ctx: RequestContext
   ): Promise<Record<string, number>> {
     if (!dropIds.length) {
@@ -89,22 +88,12 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
       const rows = await this.db.execute<MemeCardDropMappingRow>(
         `select mapping.drop_id, mapping.meme_card_id
          from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
-         join ${DROPS_TABLE} mapped_drop
-           on mapped_drop.id = mapping.drop_id
-          and mapped_drop.drop_type = :winnerDropType
-         join (
-           select min(scope_drop.wave_id) as wave_id
-           from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
-           left join ${DROPS_TABLE} scope_drop
-             on scope_drop.id = scope_mapping.drop_id
-            and scope_drop.drop_type = :winnerDropType
-           having count(scope_drop.wave_id) = count(*)
-              and count(distinct scope_drop.wave_id) = 1
-         ) mapping_scope
-           on mapping_scope.wave_id = mapped_drop.wave_id
+         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
+           on winner.drop_id = mapping.drop_id
+          and winner.wave_id = :mainStageWaveId
          where mapping.drop_id in (:dropIds)
         `,
-        { dropIds, winnerDropType: DropType.WINNER },
+        { dropIds, mainStageWaveId },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       return rows.reduce<Record<string, number>>((acc, row) => {
@@ -118,6 +107,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
 
   async findByMemeCardId(
     memeCardId: number,
+    mainStageWaveId: string,
     ctx: RequestContext
   ): Promise<MemeCardDropMappingRow | null> {
     const timerName = `${this.constructor.name}->findByMemeCardId`;
@@ -126,22 +116,12 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
       const rows = await this.db.execute<MemeCardDropMappingRow>(
         `select mapping.meme_card_id, mapping.drop_id
          from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping
-         join ${DROPS_TABLE} mapped_drop
-           on mapped_drop.id = mapping.drop_id
-          and mapped_drop.drop_type = :winnerDropType
-         join (
-           select min(scope_drop.wave_id) as wave_id
-           from ${MEME_CARD_DROP_MAPPINGS_TABLE} scope_mapping
-           left join ${DROPS_TABLE} scope_drop
-             on scope_drop.id = scope_mapping.drop_id
-            and scope_drop.drop_type = :winnerDropType
-           having count(scope_drop.wave_id) = count(*)
-              and count(distinct scope_drop.wave_id) = 1
-         ) mapping_scope
-           on mapping_scope.wave_id = mapped_drop.wave_id
+         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
+           on winner.drop_id = mapping.drop_id
+          and winner.wave_id = :mainStageWaveId
          where mapping.meme_card_id = :memeCardId
          limit 1`,
-        { memeCardId, winnerDropType: DropType.WINNER },
+        { memeCardId, mainStageWaveId },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       const mapping = rows[0];

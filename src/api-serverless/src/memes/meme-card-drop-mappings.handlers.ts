@@ -1,6 +1,7 @@
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
 import { GetMemeCardDropMappingRequest } from '@/api/generated/routes/operations';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { env } from '@/env';
 import { NotFoundException } from '@/exceptions';
 import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
 import { Timer } from '@/time';
@@ -18,9 +19,14 @@ export async function handleGetMemeCardDropMapping(
     req.params,
     GetMemeCardDropMappingPathSchema
   );
-  const mapping = await memeCardDropMappingsDb.findByMemeCardId(meme_card_id, {
-    timer
-  });
+  const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+  const mapping = mainStageWaveId
+    ? await memeCardDropMappingsDb.findByMemeCardId(
+        meme_card_id,
+        mainStageWaveId,
+        { timer }
+      )
+    : null;
   if (!mapping) {
     throw new NotFoundException(
       `Main Stage drop mapping for Meme card ${meme_card_id} not found`

@@ -1,5 +1,12 @@
 const mockFindByMemeCardId = jest.fn();
 const mockGetFromRequest = jest.fn();
+const mockGetStringOrNull = jest.fn();
+
+jest.mock('@/env', () => ({
+  env: {
+    getStringOrNull: mockGetStringOrNull
+  }
+}));
 
 jest.mock('@/minting-claims/meme-card-drop-mappings.db', () => ({
   memeCardDropMappingsDb: {
@@ -22,6 +29,7 @@ describe('handleGetMemeCardDropMapping', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetFromRequest.mockReturnValue(timer);
+    mockGetStringOrNull.mockReturnValue('main-stage-wave');
   });
 
   it('returns the Main Stage drop mapping for a Meme card', async () => {
@@ -38,7 +46,9 @@ describe('handleGetMemeCardDropMapping', () => {
       drop_id: 'drop-1'
     });
     expect(mockGetFromRequest).toHaveBeenCalledWith(req);
-    expect(mockFindByMemeCardId).toHaveBeenCalledWith(521, { timer });
+    expect(mockFindByMemeCardId).toHaveBeenCalledWith(521, 'main-stage-wave', {
+      timer
+    });
   });
 
   it.each(['0', '-1', 'not-a-number'])(
@@ -61,5 +71,16 @@ describe('handleGetMemeCardDropMapping', () => {
         params: { meme_card_id: '1' }
       } as any)
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns not found when Main Stage is not configured', async () => {
+    mockGetStringOrNull.mockReturnValue(null);
+
+    await expect(
+      handleGetMemeCardDropMapping({
+        params: { meme_card_id: '521' }
+      } as any)
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(mockFindByMemeCardId).not.toHaveBeenCalled();
   });
 });

@@ -29,19 +29,18 @@ describe('MemeCardDropMappingsDb', () => {
 
     const result = await repo.findMemeCardIdsByDropIds(
       ['drop-1', 'drop-2'],
+      'main-stage-wave',
       ctx
     );
 
     expect(result).toEqual({ 'drop-1': 520, 'drop-2': 521 });
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping`);
-    expect(sql).toContain(`join ${DROPS_TABLE} mapped_drop`);
-    expect(sql).toContain(') mapping_scope');
-    expect(sql).toContain('having count(scope_drop.wave_id) = count(*)');
-    expect(sql).toContain('count(distinct scope_drop.wave_id) = 1');
+    expect(sql).toContain(`join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner`);
+    expect(sql).toContain('winner.wave_id = :mainStageWaveId');
     expect(params).toEqual({
       dropIds: ['drop-1', 'drop-2'],
-      winnerDropType: DropType.WINNER
+      mainStageWaveId: 'main-stage-wave'
     });
   });
 
@@ -54,13 +53,15 @@ describe('MemeCardDropMappingsDb', () => {
     const timerStart = jest.spyOn(timer, 'start');
     const timerStop = jest.spyOn(timer, 'stop');
 
-    await expect(repo.findByMemeCardId(521, { timer })).resolves.toEqual({
+    await expect(
+      repo.findByMemeCardId(521, 'main-stage-wave', { timer })
+    ).resolves.toEqual({
       drop_id: 'drop-1',
       meme_card_id: 521
     });
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining('where mapping.meme_card_id = :memeCardId'),
-      { memeCardId: 521, winnerDropType: DropType.WINNER },
+      { memeCardId: 521, mainStageWaveId: 'main-stage-wave' },
       undefined
     );
     expect(timerStart).toHaveBeenCalledWith(
@@ -76,7 +77,7 @@ describe('MemeCardDropMappingsDb', () => {
     const repo = new MemeCardDropMappingsDb(() => ({ execute }) as any);
 
     await expect(
-      repo.findByMemeCardId(1, { timer: undefined })
+      repo.findByMemeCardId(1, 'main-stage-wave', { timer: undefined })
     ).resolves.toBeNull();
   });
 
@@ -332,11 +333,12 @@ describeWithSeed(
           await expect(
             memeCardDropMappingsDb.findMemeCardIdsByDropIds(
               ['main-stage-drop'],
+              'main-stage-wave',
               ctx
             )
           ).resolves.toEqual({ 'main-stage-drop': 521 });
           await expect(
-            memeCardDropMappingsDb.findByMemeCardId(521, ctx)
+            memeCardDropMappingsDb.findByMemeCardId(521, 'main-stage-wave', ctx)
           ).resolves.toEqual({
             drop_id: 'main-stage-drop',
             meme_card_id: 521
@@ -360,7 +362,7 @@ describeWithSeed(
       );
     });
 
-    it('fails closed when the mapping table contains more than one wave', async () => {
+    it('scopes each mapping read to the configured Main Stage wave', async () => {
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctx: RequestContext = { timer: undefined, connection };
@@ -380,11 +382,18 @@ describeWithSeed(
           await expect(
             memeCardDropMappingsDb.findMemeCardIdsByDropIds(
               ['main-stage-drop', 'other-wave-drop'],
+              'main-stage-wave',
               ctx
             )
-          ).resolves.toEqual({});
+          ).resolves.toEqual({ 'main-stage-drop': 521 });
           await expect(
-            memeCardDropMappingsDb.findByMemeCardId(521, ctx)
+            memeCardDropMappingsDb.findByMemeCardId(521, 'main-stage-wave', ctx)
+          ).resolves.toEqual({
+            drop_id: 'main-stage-drop',
+            meme_card_id: 521
+          });
+          await expect(
+            memeCardDropMappingsDb.findByMemeCardId(522, 'main-stage-wave', ctx)
           ).resolves.toBeNull();
         }
       );
