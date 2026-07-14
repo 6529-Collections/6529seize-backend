@@ -15,6 +15,7 @@ const request: ReleaseNoteGenerationRequest = {
   release_group_id: 'backend-release',
   release_group_services: ['api', 'worker'],
   pull_request_number: 1749,
+  publish_release_note: false,
   deployed_at: '2026-07-13T11:38:00.000Z'
 };
 
@@ -52,6 +53,7 @@ describe('parseReleaseNoteMessage', () => {
       release_group_id: 'frontend-release',
       release_group_services: ['web'],
       pull_request_number: null,
+      publish_release_note: false,
       deployed_at: '2026-07-13T11:38:00.000Z'
     });
   });
@@ -81,21 +83,20 @@ describe('parseReleaseNoteMessage', () => {
       )
     ).toThrow('deployed_at must be a full ISO timestamp');
   });
+
+  it('rejects a non-boolean publish flag', () => {
+    expect(() =>
+      parseReleaseNoteMessage(
+        JSON.stringify({ ...request, publish_release_note: 'true' })
+      )
+    ).toThrow('publish_release_note must be a boolean');
+  });
 });
 
 describe('processRequest', () => {
-  const workerRun = {
-    service: 'worker',
-    run_id: '456',
-    run_number: '46',
-    run_url: 'https://github.com/example/actions/runs/456'
-  };
-
-  function buildRedis(
-    completedServices: string[] = [],
-    storedValues: Record<string, string> = {}
-  ) {
+  function buildRedis(storedValues: Record<string, string> = {}) {
     const values = new Map(Object.entries(storedValues));
+    const sets = new Map<string, Set<string>>();
     return {
       get: jest
         .fn()
@@ -114,9 +115,18 @@ describe('processRequest', () => {
           }
         ),
       del: jest.fn().mockResolvedValue(1),
-      sAdd: jest.fn().mockResolvedValue(1),
+      sAdd: jest.fn().mockImplementation((key: string, value: string) => {
+        const members = sets.get(key) ?? new Set<string>();
+        members.add(value);
+        sets.set(key, members);
+        return Promise.resolve(1);
+      }),
       expire: jest.fn().mockResolvedValue(true),
-      sMembers: jest.fn().mockResolvedValue(completedServices)
+      sMembers: jest
+        .fn()
+        .mockImplementation((key: string) =>
+          Promise.resolve(Array.from(sets.get(key) ?? []))
+        )
     };
   }
 
@@ -140,8 +150,8 @@ describe('processRequest', () => {
     expect(generateAndPost).not.toHaveBeenCalled();
   });
 
-  it('waits until every grouped service succeeds', async () => {
-    const redis = buildRedis(['api']);
+  it('accumulates a successful service without publishing when held', async () => {
+    const redis = buildRedis();
     const generateAndPost = jest.fn();
 
     await processRequest(request, {
@@ -150,27 +160,47 @@ describe('processRequest', () => {
     });
 
     expect(redis.sAdd).toHaveBeenCalledWith(
-      'release-note-group:6529seize-backend:pr-1749:completed',
+      'release-note-group:6529seize-backend:pr-1749:services',
       'api'
+    );
+    expect(redis.set).toHaveBeenCalledWith(
+      'release-note-group:6529seize-backend:pr-1749:run:api',
+      expect.any(String),
+      { EX: 7776000 }
     );
     expect(generateAndPost).not.toHaveBeenCalled();
   });
 
-  it('locks, generates, records deduplication, and releases the lock', async () => {
-    const redis = buildRedis(['api', 'worker'], {
-      'release-note-group:6529seize-backend:backend-release:abc123:run:worker':
-        JSON.stringify(workerRun)
-    });
+  it('publishes all successful PR services when the final deploy says publish', async () => {
+    const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
 
-    await processRequest(request, {
-      redis: redis as any,
-      generateAndPost
-    });
+    await processRequest(
+      {
+        ...request,
+        run_id: '456',
+        run_number: '46',
+        run_url: 'https://github.com/example/actions/runs/456',
+        sha: 'later-sha',
+        service: 'worker',
+        release_group_services: ['worker']
+      },
+      { redis: redis as any, generateAndPost }
+    );
+
+    await processRequest(
+      { ...request, publish_release_note: true },
+      {
+        redis: redis as any,
+        generateAndPost
+      }
+    );
 
     expect(generateAndPost).toHaveBeenCalledWith(
       {
         ...request,
+        publish_release_note: true,
+        release_group_services: ['api', 'worker'],
         release_group_runs: [
           {
             service: 'api',
@@ -178,7 +208,12 @@ describe('processRequest', () => {
             run_number: '45',
             run_url: 'https://github.com/example/actions/runs/123'
           },
-          workerRun
+          {
+            service: 'worker',
+            run_id: '456',
+            run_number: '46',
+            run_url: 'https://github.com/example/actions/runs/456'
+          }
         ]
       },
       {}
@@ -191,7 +226,7 @@ describe('processRequest', () => {
         run_number: '45',
         run_url: 'https://github.com/example/actions/runs/123'
       }),
-      { NX: true, EX: 7776000 }
+      { EX: 7776000 }
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing',
@@ -209,15 +244,15 @@ describe('processRequest', () => {
   });
 
   it('does not record deduplication when no release baseline exists', async () => {
-    const redis = buildRedis(['api', 'worker'], {
-      'release-note-group:6529seize-backend:pr-1749:run:worker':
-        JSON.stringify(workerRun)
-    });
+    const redis = buildRedis();
 
-    await processRequest(request, {
-      redis: redis as any,
-      generateAndPost: jest.fn().mockResolvedValue('no-baseline')
-    });
+    await processRequest(
+      { ...request, publish_release_note: true },
+      {
+        redis: redis as any,
+        generateAndPost: jest.fn().mockResolvedValue('no-baseline')
+      }
+    );
 
     expect(redis.set).not.toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749',
@@ -229,28 +264,7 @@ describe('processRequest', () => {
     );
   });
 
-  it('does not split a PR release when sequential services deploy different SHAs', async () => {
-    const redis = buildRedis(['api', 'worker'], {
-      'release-note-group:6529seize-backend:pr-1749:run:worker':
-        JSON.stringify(workerRun)
-    });
-
-    await processRequest(
-      { ...request, sha: 'abc:123' },
-      {
-        redis: redis as any,
-        generateAndPost: jest.fn().mockResolvedValue(undefined)
-      }
-    );
-
-    expect(redis.set).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:pr-1749:processing',
-      '1',
-      { NX: true, EX: 1200 }
-    );
-  });
-
-  it('keeps the first service run metadata on redelivery', async () => {
+  it('keeps the latest successful run for a service before publication', async () => {
     const runKey = 'release-note-group:6529seize-backend:pr-1749:run:api';
     const originalRun = JSON.stringify({
       service: 'api',
@@ -258,7 +272,7 @@ describe('processRequest', () => {
       run_number: '44',
       run_url: 'https://github.com/example/actions/runs/original-run'
     });
-    const redis = buildRedis(['api'], { [runKey]: originalRun });
+    const redis = buildRedis({ [runKey]: originalRun });
 
     await processRequest(request, {
       redis: redis as any,
@@ -266,9 +280,8 @@ describe('processRequest', () => {
     });
 
     expect(redis.set).toHaveBeenCalledWith(runKey, expect.any(String), {
-      NX: true,
       EX: 7776000
     });
-    await expect(redis.get(runKey)).resolves.toBe(originalRun);
+    await expect(redis.get(runKey)).resolves.toContain('"run_id":"123"');
   });
 });

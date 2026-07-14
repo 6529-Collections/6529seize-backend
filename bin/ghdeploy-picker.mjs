@@ -19,7 +19,6 @@ let footer = '';
 let multiSelect = false;
 let cursor = 0;
 let selected = [];
-let selectionSequence = 0;
 let cleanedUp = false;
 let errorMessage = '';
 let windowStart = 0;
@@ -28,7 +27,7 @@ if (mode === 'multi') {
   options = rest;
   footer = 'Controls: Up/Down move, Space toggles, Enter confirms, q cancels';
   multiSelect = true;
-  selected = options.map(() => 0);
+  selected = options.map(() => false);
 } else if (mode === 'single') {
   const [defaultOption, ...singleOptions] = rest;
 
@@ -67,21 +66,7 @@ function ensureCursorVisible() {
 }
 
 function selectedCount() {
-  return selected.filter((selectionOrder) => selectionOrder > 0).length;
-}
-
-function toggleSelection(idx) {
-  const removedOrder = selected[idx];
-  if (removedOrder > 0) {
-    selected = selected.map((selectionOrder) =>
-      selectionOrder > removedOrder ? selectionOrder - 1 : selectionOrder
-    );
-    selected[idx] = 0;
-    selectionSequence -= 1;
-    return;
-  }
-  selectionSequence += 1;
-  selected[idx] = selectionSequence;
+  return selected.filter(Boolean).length;
 }
 
 function renderHeader() {
@@ -105,13 +90,8 @@ function renderOptions() {
   const end = Math.min(windowStart + rows, options.length);
 
   for (let idx = windowStart; idx < end; idx += 1) {
-    const selectionOrder = multiSelect ? selected[idx] : 0;
-    const isSelected = multiSelect ? selectionOrder > 0 : idx === cursor;
-    const marker = isSelected
-      ? multiSelect
-        ? `[${selectionOrder}]`
-        : '[x]'
-      : '[ ]';
+    const isSelected = multiSelect ? selected[idx] : idx === cursor;
+    const marker = isSelected ? '[x]' : '[ ]';
     const line = `${marker} ${options[idx]}`;
 
     if (idx === cursor) {
@@ -150,12 +130,7 @@ function finishWithSelection() {
   cleanup();
 
   if (multiSelect) {
-    const output = options
-      .map((option, idx) => ({ option, selectionOrder: selected[idx] }))
-      .filter(({ selectionOrder }) => selectionOrder > 0)
-      .sort((a, b) => a.selectionOrder - b.selectionOrder)
-      .map(({ option }) => option)
-      .join('\n');
+    const output = options.filter((_, idx) => selected[idx]).join('\n');
     process.stdout.write(`${output}\n`);
   } else {
     process.stdout.write(`${options[cursor]}\n`);
@@ -216,7 +191,7 @@ process.stdin.on('keypress', (_, key) => {
       break;
     case 'space':
       if (multiSelect) {
-        toggleSelection(cursor);
+        selected[cursor] = !selected[cursor];
       }
       break;
     case 'return':
@@ -245,7 +220,7 @@ process.stdin.on('keypress', (_, key) => {
         multiSelect &&
         (key.name === 'x' || key.sequence === 'x' || key.sequence === 'X')
       ) {
-        toggleSelection(cursor);
+        selected[cursor] = !selected[cursor];
       }
       break;
   }

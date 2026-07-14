@@ -61,6 +61,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .max(Number.MAX_SAFE_INTEGER)
       .allow(null)
       .optional(),
+    publish_release_note: Joi.boolean().optional(),
     deployed_at: Joi.string()
       .isoDate()
       .pattern(RELEASE_NOTE_DEPLOYED_AT_PATTERN)

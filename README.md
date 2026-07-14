@@ -118,13 +118,13 @@ Environment picker controls:
 Service picker controls:
 
 - `Up` / `Down` moves through the service list
-- `Space` toggles the current service; the displayed selection numbers define deployment order
+- `Space` toggles the current service
 - `Enter` confirms the selected services
 - `q` cancels
 
 The list scrolls automatically as you move beyond the visible items. `j` / `k` and `x` also work as fallback keys if your terminal handles arrows or space oddly.
 
-Root mode prompts once for `staging` or `prod` and uses that environment for the whole batch. Production also requires the merged PR number represented by the release. It dispatches the selected services sequentially, waiting for each workflow run to succeed before starting the next. The final successful service publishes one release note for the PR with links to every service run. If a dispatch or deploy fails, the helper asks whether to continue with the remaining services and prints a success/failure/skipped summary at the end.
+Root mode supports staging batches. Production services are deployed one at a time from their service folders so each successful workflow can either hold the PR release note for another service or publish it.
 
 ### 0.4.2 Use `ghdeploy` from a service folder
 
@@ -135,7 +135,7 @@ cd src/tdhLoop
 ghdeploy
 ```
 
-Single-service mode opens the same environment picker, resolves the service from the current folder, and supports staging deploys. Production deploys must run from the repository root—even for one service—so the helper can declare the PR and complete production service set before publishing release notes. For staging, it triggers:
+Single-service mode opens the same environment picker and resolves the service from the current folder. For production it also asks for the merged PR number and whether this successful deploy should hold or publish the release note. Use `hold` while more services for that PR remain, then choose `publish` for the final service. The published note includes every successful service accumulated for that PR, even when later services deploy a descendant commit. For staging, it triggers:
 
 ```bash
 gh workflow run "Deploy a service" \

@@ -75,12 +75,17 @@ ${indent(yamlList(serviceNames))}
         required: false
       release_group_services:
         type: string
-        description: 'Full comma-separated PR service set; ghdeploy fills this'
+        description: 'Internal ghdeploy value; leave blank for manual deploys'
         required: false
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
         required: false
+      release_note_publish:
+        type: boolean
+        description: 'Publish the accumulated release note for this PR after success'
+        required: false
+        default: false
 
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
@@ -315,6 +320,7 @@ jobs:
           CI_RELEASE_GROUP_ID: \${{ github.event.inputs.release_group_id }}
           CI_RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
           CI_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
+          CI_RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
         run: node scripts/notify-ci-wave.mjs
 `;
 }

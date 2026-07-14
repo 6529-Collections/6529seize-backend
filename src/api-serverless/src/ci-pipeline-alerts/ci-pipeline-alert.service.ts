@@ -34,6 +34,7 @@ export interface CiPipelineAlertRequest {
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
   readonly pull_request_number?: number | null;
+  readonly publish_release_note?: boolean;
   readonly deployed_at?: string | null;
 }
 
@@ -312,6 +313,7 @@ export class CiPipelineAlertService {
       release_group_id: releaseGroupId,
       release_group_services: releaseGroupServices,
       pull_request_number: pullRequestNumber,
+      publish_release_note: request.publish_release_note ?? false,
       deployed_at: deployedAt
     });
   }

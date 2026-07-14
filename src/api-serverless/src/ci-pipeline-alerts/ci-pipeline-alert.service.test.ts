@@ -356,6 +356,7 @@ describe('CiPipelineAlertService', () => {
       release_group_id: 'frontend-release',
       release_group_services: ['web'],
       pull_request_number: null,
+      publish_release_note: false,
       deployed_at: '2026-07-13T11:38:00.000Z'
     });
     expect(
@@ -410,7 +411,11 @@ describe('CiPipelineAlertService', () => {
     expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
 
     await service.postAlert(
-      { ...backendRequest, pull_request_number: 1749 },
+      {
+        ...backendRequest,
+        pull_request_number: 1749,
+        publish_release_note: true
+      },
       {}
     );
 
@@ -418,7 +423,8 @@ describe('CiPipelineAlertService', () => {
       expect.objectContaining({
         release_group_id: 'pr-1749',
         release_group_services: ['dbMigrationsLoop', 'claimsBuilder', 'api'],
-        pull_request_number: 1749
+        pull_request_number: 1749,
+        publish_release_note: true
       })
     );
   });

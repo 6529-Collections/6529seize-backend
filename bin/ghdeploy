@@ -71,6 +71,18 @@ read_release_pr_number() {
   done
 }
 
+choose_release_note_mode() {
+  local pull_request="$1"
+  local choice
+
+  choice="$(
+    node "$PICKER_SCRIPT" single \
+      "Release note action for PR #$pull_request" \
+      hold hold publish
+  )" || die 'Cancelled'
+  printf '%s\n' "$choice"
+}
+
 resolve_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null ||
     die 'Run this command from inside the repository'
@@ -322,16 +334,10 @@ dispatch_deploy() {
   local release_group_id="$5"
   local release_group_services="$6"
   local release_pull_request="$7"
-  local wait_for_completion="$8"
-  local dispatched_at
-  local head_sha
-  local run_id
+  local release_note_publish="$8"
 
   printf 'Triggering deploy for service=%s environment=%s branch=%s upstream=%s\n' \
     "$service" "$environment" "$branch" "$upstream_ref"
-
-  dispatched_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  head_sha="$(git rev-parse "$upstream_ref")"
 
   gh workflow run "$WORKFLOW_NAME" \
     --ref "$branch" \
@@ -340,49 +346,8 @@ dispatch_deploy() {
     -f "release_group_id=$release_group_id" \
     -f "release_group_services=$release_group_services" \
     -f "release_pull_request=$release_pull_request" \
+    -f "release_note_publish=$release_note_publish" \
     -R "$WORKFLOW_REPO"
-
-  if [[ "$wait_for_completion" != 'yes' ]]; then
-    return 0
-  fi
-
-  printf 'Waiting for the %s deploy run to appear...\n' "$service"
-  if ! run_id="$(find_dispatched_run "$service" "$environment" "$branch" "$head_sha" "$dispatched_at")"; then
-    printf 'ghdeploy: Could not find the dispatched %s deploy run\n' "$service" >&2
-    return 1
-  fi
-  printf 'Watching deploy run %s for %s...\n' "$run_id" "$service"
-  gh run watch "$run_id" -R "$WORKFLOW_REPO" --exit-status
-}
-
-find_dispatched_run() {
-  local service="$1"
-  local environment="$2"
-  local branch="$3"
-  local head_sha="$4"
-  local dispatched_at="$5"
-  local attempt
-  local run_id
-
-  for ((attempt = 1; attempt <= 30; attempt += 1)); do
-    run_id="$(
-      gh run list \
-        -R "$WORKFLOW_REPO" \
-        --workflow "$WORKFLOW_NAME" \
-        --branch "$branch" \
-        --event workflow_dispatch \
-        --limit 50 \
-        --json databaseId,displayTitle,headSha,createdAt \
-        --jq ".[] | select(.displayTitle == \"Deploy $service to $environment\" and .headSha == \"$head_sha\" and .createdAt >= \"$dispatched_at\") | .databaseId" |
-        sed -n '1p'
-    )"
-    if [[ -n "$run_id" ]]; then
-      printf '%s\n' "$run_id"
-      return 0
-    fi
-    sleep 2
-  done
-  return 1
 }
 
 print_batch_summary() {
@@ -429,10 +394,12 @@ run_batch_mode() {
   local selected_output
   local release_group_id
   local release_group_services
-  local release_pull_request=''
   local -a selected_services=()
 
   environment="$(choose_environment 'selected services' "$branch")"
+  if [[ "$environment" == 'prod' ]]; then
+    die 'Deploy production services one at a time from their service directories so each run can hold or publish its PR release note'
+  fi
 
   selected_output="$(choose_services_for_batch "$branch" "$environment" "${BATCH_SERVICES[@]}")" ||
     die 'Cancelled'
@@ -445,10 +412,6 @@ run_batch_mode() {
   (( ${#selected_services[@]} > 0 )) || die 'No services were selected'
 
   release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-  if [[ "$environment" == 'prod' ]]; then
-    release_pull_request="$(read_release_pr_number)"
-    release_group_id="pr-$release_pull_request"
-  fi
   release_group_services="$(IFS=,; printf '%s' "${selected_services[*]}")"
 
   BATCH_SUCCEEDED=()
@@ -456,7 +419,7 @@ run_batch_mode() {
   BATCH_SKIPPED=()
 
   for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
-    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$release_group_services" "$release_pull_request" yes; then
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$release_group_services" '' false; then
       BATCH_SUCCEEDED+=("${selected_services[$idx]}")
       continue
     fi
@@ -494,6 +457,8 @@ main() {
   local service
   local allowed_service
   local release_group_id
+  local release_pull_request=''
+  local release_note_publish='false'
 
   [[ $# -eq 0 ]] || die 'This command does not take arguments'
 
@@ -535,10 +500,15 @@ main() {
 
   environment="$(choose_environment "$service" "$branch")"
   if [[ "$environment" == 'prod' ]]; then
-    die 'Run ghdeploy from the repository root for production so the PR and complete service set are declared together'
+    release_pull_request="$(read_release_pr_number)"
+    release_group_id="pr-$release_pull_request"
+    if [[ "$(choose_release_note_mode "$release_pull_request")" == 'publish' ]]; then
+      release_note_publish='true'
+    fi
+  else
+    release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
   fi
-  release_group_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$service" '' no
+  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_group_id" "$service" "$release_pull_request" "$release_note_publish"
 }
 
 main "$@"
