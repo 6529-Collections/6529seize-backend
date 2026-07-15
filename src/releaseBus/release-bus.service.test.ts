@@ -1,0 +1,225 @@
+import { ReleaseBusService } from '@/releaseBus/release-bus.service';
+import type { ReleaseCandidateRecord } from '@/releaseBus/release-bus.types';
+import type { ReleaseBusRepository } from '@/releaseBus/release-bus.repository';
+
+const SHA = 'a'.repeat(40);
+
+function candidate(status: ReleaseCandidateRecord['status']) {
+  return {
+    id: 'candidate-1',
+    repository: 'frontend',
+    branch_name: 'feature/example',
+    head_sha: SHA,
+    pr_number: 123,
+    status,
+    staging_ready_by_github_login: null,
+    staging_ready_at: null,
+    production_ready_by_github_login: null,
+    production_ready_at: null,
+    deploy_plan_json: null,
+    metadata_version: 1,
+    current_train_id: null,
+    hold_reason: null,
+    invalidated_at: null,
+    released_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  } satisfies ReleaseCandidateRecord;
+}
+
+describe('ReleaseBusService readiness', () => {
+  it('rejects production readiness without exact staging evidence', async () => {
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        fn: (value: unknown) => unknown
+      ) => fn({}),
+      findCandidateByIdentity: async () => candidate('DRAFT'),
+      hasCandidateEvidence: async () => false
+    } as unknown as ReleaseBusRepository;
+    const service = new ReleaseBusService(repository);
+
+    await expect(
+      service.markReady({
+        repository: 'frontend',
+        branch: 'feature/example',
+        expected_head_sha: SHA,
+        target_lane: 'PRODUCTION',
+        dependencies: [],
+        deploy_plan: null,
+        actor: 'developer',
+        prNumber: 123,
+        resolvedDependencies: []
+      })
+    ).rejects.toThrow('exact candidate SHA has not passed staging');
+  });
+
+  it('rejects backend candidates that require frontend-first deployment', async () => {
+    const service = new ReleaseBusService({} as ReleaseBusRepository);
+    await expect(
+      service.markReady({
+        repository: 'backend',
+        branch: 'feature/api',
+        expected_head_sha: SHA,
+        target_lane: 'STAGING',
+        dependencies: [],
+        deploy_plan: { units: ['api'], edges: [] },
+        actor: 'developer',
+        prNumber: 124,
+        resolvedDependencies: [
+          {
+            repository: 'frontend',
+            branch: 'feature/ui',
+            headSha: 'b'.repeat(40),
+            prNumber: 125
+          }
+        ]
+      })
+    ).rejects.toThrow('Backend candidates cannot depend on frontend-first');
+  });
+
+  it('fills the deploy plan when a dependency placeholder is marked ready', async () => {
+    let row: ReleaseCandidateRecord = {
+      ...candidate('DRAFT'),
+      repository: 'backend',
+      pr_number: null,
+      deploy_plan_json: null
+    };
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        fn: (value: unknown) => unknown
+      ) => fn({}),
+      findCandidateByIdentity: async () => row,
+      updateCandidateMetadata: async (
+        _id: string,
+        _version: number,
+        fields: {
+          prNumber: number | null;
+          deployPlan: ReleaseCandidateRecord['deploy_plan_json'];
+        }
+      ) => {
+        row = {
+          ...row,
+          pr_number: fields.prNumber,
+          deploy_plan_json: fields.deployPlan,
+          row_version: row.row_version + 1
+        };
+      },
+      findCandidateById: async () => row,
+      replaceDependencies: async () => undefined,
+      listCandidates: async () => [row],
+      listDependencies: async () => [],
+      updateCandidateLifecycle: async () => {
+        row = {
+          ...row,
+          status: 'READY_FOR_STAGING',
+          row_version: row.row_version + 1
+        };
+      },
+      appendEvent: async () => undefined
+    } as unknown as ReleaseBusRepository;
+
+    const result = await new ReleaseBusService(repository).markReady({
+      repository: 'backend',
+      branch: row.branch_name,
+      expected_head_sha: SHA,
+      target_lane: 'STAGING',
+      dependencies: [],
+      deploy_plan: { units: ['api'], edges: [] },
+      actor: 'developer',
+      prNumber: 321,
+      resolvedDependencies: []
+    });
+
+    expect(result.deploy_plan_json).toEqual({ units: ['api'], edges: [] });
+    expect(result.pr_number).toBe(321);
+    expect(result.status).toBe('READY_FOR_STAGING');
+  });
+
+  it('rejects dependency changes after a candidate is ready', async () => {
+    const row = candidate('READY_FOR_STAGING');
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        fn: (value: unknown) => unknown
+      ) => fn({}),
+      findCandidateByIdentity: async () => row,
+      listDependencies: async () => [
+        {
+          id: 'dependency-edge',
+          candidate_id: row.id,
+          depends_on_candidate_id: 'old-dependency',
+          required_state: 'STAGING_VALIDATED',
+          created_at: 1,
+          updated_at: 1
+        }
+      ]
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).markReady({
+        repository: 'frontend',
+        branch: row.branch_name,
+        expected_head_sha: SHA,
+        target_lane: 'STAGING',
+        dependencies: [],
+        deploy_plan: null,
+        actor: 'developer',
+        prNumber: row.pr_number,
+        resolvedDependencies: []
+      })
+    ).rejects.toThrow('Dependencies for a ready candidate are immutable');
+  });
+
+  it('carries staging dependency identities into production readiness', async () => {
+    let row = candidate('STAGING_VALIDATED');
+    let requiredState = 'STAGING_VALIDATED';
+    const dependency = {
+      id: 'dependency-edge',
+      candidate_id: row.id,
+      depends_on_candidate_id: 'backend-dependency',
+      required_state: requiredState,
+      created_at: 1,
+      updated_at: 1
+    };
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        fn: (value: unknown) => unknown
+      ) => fn({}),
+      findCandidateByIdentity: async () => row,
+      findCandidateById: async () => row,
+      listDependencies: async () => [
+        { ...dependency, required_state: requiredState }
+      ],
+      replaceDependencies: async (
+        _candidateId: string,
+        dependencies: Array<{ requiredState: string }>
+      ) => {
+        requiredState = dependencies[0].requiredState;
+      },
+      listCandidates: async () => [row],
+      updateCandidateLifecycle: async () => {
+        row = {
+          ...row,
+          status: 'READY_FOR_PRODUCTION',
+          row_version: row.row_version + 1
+        };
+      },
+      appendEvent: async () => undefined
+    } as unknown as ReleaseBusRepository;
+
+    const result = await new ReleaseBusService(repository).markReady({
+      repository: 'frontend',
+      branch: row.branch_name,
+      expected_head_sha: SHA,
+      target_lane: 'PRODUCTION',
+      dependencies: [],
+      deploy_plan: null,
+      actor: 'developer',
+      prNumber: row.pr_number,
+      resolvedDependencies: []
+    });
+
+    expect(requiredState).toBe('PRODUCTION_VALIDATED');
+    expect(result.status).toBe('READY_FOR_PRODUCTION');
+  });
+});

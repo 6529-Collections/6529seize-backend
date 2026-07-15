@@ -1,6 +1,7 @@
 import * as deployConfigJson from '@/config/deploy-services.json';
 import { validateDeployConfig } from '@/config/deploy-config.validation';
 import type {
+  DeployConfig,
   DeployEnvironment,
   DeployServiceConfig
 } from '@/config/deploy-config.validation';
@@ -24,7 +25,7 @@ export const FRONTEND_DEPLOY_WORKFLOW_FILE = 'build-upload-deploy-prod.yml';
 export const FRONTEND_DEPLOY_WORKFLOW_NAME = 'Web Deploy - PROD';
 
 validateDeployConfig(deployConfigJson);
-const DEPLOY_CONFIG = deployConfigJson;
+const DEPLOY_CONFIG = deployConfigJson as unknown as DeployConfig;
 
 export const DEFAULT_DEPLOY_ENVIRONMENT: DeployEnvironment =
   DEPLOY_CONFIG.default_environment;
@@ -60,8 +61,13 @@ export function canDeployServiceToEnvironment(
 }
 
 export function getDeployServiceConfigs(): DeployServiceConfig[] {
-  return DEPLOY_SERVICES.map((service) => ({
-    name: service,
-    allowed_environments: [...getAllowedEnvironmentsForService(service)]
-  })).sort((a, b) => a.name.localeCompare(b.name));
+  return DEPLOY_CONFIG.services
+    .map((service) => ({
+      ...service,
+      allowed_environments: [...service.allowed_environments],
+      aws_region: { ...service.aws_region },
+      verification_targets: [...service.verification_targets],
+      default_dependencies: [...service.default_dependencies]
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

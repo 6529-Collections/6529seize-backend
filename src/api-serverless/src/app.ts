@@ -733,6 +733,7 @@ async function initializeApp() {
         if (
           url === '/gh-hooks' ||
           url === '/dev-alerts' ||
+          url === '/deploy/github/webhook' ||
           isCiPipelineAlertsPath
         ) {
           req.rawBody = buf;
