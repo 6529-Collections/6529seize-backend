@@ -13,6 +13,7 @@ import {
   releaseNoteGenerationQueue,
   ReleaseNoteGenerationQueue
 } from '@/release-notes/release-note-generation-queue';
+import { GITHUB_TO_6529_HANDLES } from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
@@ -23,6 +24,7 @@ export interface CiPipelineAlertRequest {
   readonly status: CiPipelineAlertStatus;
   readonly title: string;
   readonly description?: string | null;
+  readonly triggered_by_github_login?: string | null;
   readonly run_id: string;
   readonly run_number?: string | null;
   readonly run_url: string;
@@ -41,6 +43,12 @@ export interface CiPipelineAlertRequest {
 interface MentionedProfile {
   readonly profileId: string;
   readonly handle: string;
+}
+
+interface AlertMentions {
+  readonly triggeredBy: MentionedProfile | null;
+  readonly failureCc: MentionedProfile[];
+  readonly all: MentionedProfile[];
 }
 
 const MAX_DROP_CONTENT_LENGTH = 30000;
@@ -104,7 +112,7 @@ export function normalizeTargetEnvironment(value: string | null | undefined) {
 }
 
 function formatStatusEmoji(status: CiPipelineAlertStatus): string {
-  return status === 'success' ? '✅' : '❌';
+  return status === 'success' ? '✅' : '🚨';
 }
 
 function sanitizeAlertText(value: string): string {
@@ -121,7 +129,7 @@ function formatAlertHeading(request: CiPipelineAlertRequest): string {
   const title = sanitizeAlertText(
     normalizeOptionalValue(request.title) ?? request.workflow
   )
-    .replace(/[✅❌]/g, '')
+    .replace(/✅|❌|🚨/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   const truncatedTitle = truncate(
@@ -238,8 +246,7 @@ export class CiPipelineAlertService {
   ): Promise<void> {
     const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
-    const mentions =
-      request.status === 'failure' ? await this.resolveFailureMentions() : [];
+    const mentions = await this.resolveAlertMentions(request);
 
     const createDropRequest = this.buildCreateDropRequest({
       request,
@@ -318,16 +325,42 @@ export class CiPipelineAlertService {
     });
   }
 
-  private async resolveFailureMentions(): Promise<MentionedProfile[]> {
-    const configuredHandles = parseProfileHandles(
-      env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES')
+  private async resolveAlertMentions(
+    request: CiPipelineAlertRequest
+  ): Promise<AlertMentions> {
+    const triggeredByGithubLogin = normalizeOptionalValue(
+      request.triggered_by_github_login
     );
-    if (!configuredHandles.length) {
-      return [];
+    const triggeredByHandle = triggeredByGithubLogin
+      ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
+      : null;
+    if (triggeredByGithubLogin && !triggeredByHandle) {
+      throw new Error(
+        `Missing 6529 profile mapping for CI workflow initiator: ${triggeredByGithubLogin}`
+      );
+    }
+
+    const failureHandles =
+      request.status === 'failure'
+        ? parseProfileHandles(
+            env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES')
+          )
+        : [];
+    const handlesToResolve = [
+      ...(triggeredByHandle ? [triggeredByHandle] : []),
+      ...failureHandles
+    ].filter(
+      (handle, index, handles) =>
+        handles.findIndex(
+          (candidate) => candidate.toLowerCase() === handle.toLowerCase()
+        ) === index
+    );
+    if (!handlesToResolve.length) {
+      return { triggeredBy: null, failureCc: [], all: [] };
     }
 
     const profileIdsByHandle =
-      await this.identitiesRepository.getIdsByHandles(configuredHandles);
+      await this.identitiesRepository.getIdsByHandles(handlesToResolve);
     const mentionsByNormalizedHandle = new Map(
       Object.entries(profileIdsByHandle).map(([handle, profileId]) => [
         handle.toLowerCase(),
@@ -337,7 +370,17 @@ export class CiPipelineAlertService {
         }
       ])
     );
-    const missingHandles = configuredHandles.filter(
+    const triggeredBy = triggeredByHandle
+      ? (mentionsByNormalizedHandle.get(triggeredByHandle.toLowerCase()) ??
+        null)
+      : null;
+    if (triggeredByHandle && !triggeredBy) {
+      throw new Error(
+        `Missing 6529 profile for CI workflow initiator: ${triggeredByHandle}`
+      );
+    }
+
+    const missingHandles = failureHandles.filter(
       (handle) => !mentionsByNormalizedHandle.has(handle.toLowerCase())
     );
     if (missingHandles.length) {
@@ -345,10 +388,17 @@ export class CiPipelineAlertService {
         `Skipping CI pipeline alert mentions with missing profiles: ${missingHandles.join(', ')}`
       );
     }
-
-    return configuredHandles
+    const failureCc = failureHandles
       .map((handle) => mentionsByNormalizedHandle.get(handle.toLowerCase()))
       .filter((mention): mention is MentionedProfile => !!mention);
+    const all = [...(triggeredBy ? [triggeredBy] : []), ...failureCc].filter(
+      (mention, index, mentions) =>
+        mentions.findIndex(
+          (candidate) => candidate.profileId === mention.profileId
+        ) === index
+    );
+
+    return { triggeredBy, failureCc, all };
   }
 
   private resolveWaveId(request: CiPipelineAlertRequest): string {
@@ -371,7 +421,7 @@ export class CiPipelineAlertService {
   }: {
     readonly request: CiPipelineAlertRequest;
     readonly waveId: string;
-    readonly mentions: MentionedProfile[];
+    readonly mentions: AlertMentions;
   }): ApiCreateDropRequest {
     const content = this.formatContent(request, mentions);
     return {
@@ -384,7 +434,7 @@ export class CiPipelineAlertService {
           media: []
         }
       ],
-      mentioned_users: mentions.map((mention) => ({
+      mentioned_users: mentions.all.map((mention) => ({
         mentioned_profile_id: mention.profileId,
         handle_in_content: mention.handle
       })),
@@ -399,12 +449,14 @@ export class CiPipelineAlertService {
 
   private formatContent(
     request: CiPipelineAlertRequest,
-    mentions: MentionedProfile[]
+    mentions: AlertMentions
   ): string {
-    const mentionHandles = mentions
+    const failureMentionHandles = mentions.failureCc
       .map((mention) => '@[' + mention.handle + ']')
       .join(' ');
-    const mentionLines = mentions.length ? [`cc ${mentionHandles}`] : [];
+    const failureMentionLines = failureMentionHandles
+      ? ['', `cc ${failureMentionHandles}`]
+      : [];
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
@@ -416,13 +468,15 @@ export class CiPipelineAlertService {
       formatAlertHeading(request),
       '',
       ...(formattedDescription ? [formattedDescription, ''] : []),
-      ...mentionLines,
-      ...(mentionLines.length ? [''] : []),
       `Service: ${formatServiceLabel(request)}`,
       `Workflow: ${request.workflow}`,
       ...(branch ? [`Branch: ${branch}`] : []),
       ...(commit ? [`Commit: ${commit}`] : []),
-      `Run: ${formatRun(request)}`
+      ...(mentions.triggeredBy
+        ? [`Triggered by: @[${mentions.triggeredBy.handle}]`]
+        : []),
+      `Run: ${formatRun(request)}`,
+      ...failureMentionLines
     ];
 
     return truncate(lines.join('\n'), MAX_DROP_CONTENT_LENGTH);

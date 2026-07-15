@@ -28,6 +28,12 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
     status: Joi.string().valid('success', 'failure').required(),
     title: Joi.string().trim().min(1).max(250).required(),
     description: Joi.string().trim().max(5000).allow(null, '').optional(),
+    triggered_by_github_login: Joi.string()
+      .trim()
+      .min(1)
+      .max(100)
+      .allow(null, '')
+      .optional(),
     run_id: Joi.string().trim().min(1).max(100).required(),
     run_number: Joi.string().trim().max(100).allow(null, '').optional(),
     run_url: Joi.string()
@@ -200,6 +206,7 @@ export function buildCiPipelineAlertDedupeKey(
         request.status,
         request.title,
         request.description ?? '',
+        request.triggered_by_github_login ?? '',
         request.sha ?? '',
         request.branch ?? '',
         request.environment ?? '',
