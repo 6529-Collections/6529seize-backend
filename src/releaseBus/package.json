@@ -11,5 +11,6 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.1"
-  }
+  },
+  "packageManager": "npm@10.9.8"
 }
