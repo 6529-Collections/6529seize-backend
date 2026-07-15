@@ -1146,6 +1146,55 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
+  it('does not resend permission-group mentions when editing a drop', async () => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([]),
+      countWaveSubscribers: jest.fn().mockResolvedValue(0),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userGroupsService = {
+      findIdentityGroupMemberships: jest.fn()
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userGroupsService,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: {
+          drop_id: 'drop-1',
+          author_id: 'author-1',
+          mentioned_groups: [DropGroupMention.ADMINS]
+        },
+        wave: { id: 'wave-1', visibility_group_id: null },
+        directlyMentionedIdentityIds: [],
+        permissionGroupMentionsEnabled: false
+      },
+      { connection: {} }
+    );
+
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        authorId: 'author-1',
+        mentionedGroups: []
+      },
+      {}
+    );
+    expect(
+      userGroupsService.findIdentityGroupMemberships
+    ).not.toHaveBeenCalled();
+  });
+
   it('resolves contributors, admins, and configured developers with view access', async () => {
     jest
       .spyOn(env, 'getStringArray')

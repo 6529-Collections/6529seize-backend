@@ -98,10 +98,13 @@ import {
 } from '@/waves/wave-chat-slow-mode.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
+import { Logger } from '@/logging';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
 const ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
+const logger = Logger.get('CREATE_OR_UPDATE_DROP_USE_CASE');
+let warnedAboutMissingDeveloperMentionIds = false;
 const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
   [DropGroupMention.CONTRIBUTORS]: 'contributors',
@@ -1725,7 +1728,8 @@ export class CreateOrUpdateDropUseCase {
       {
         model,
         wave,
-        directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds
+        directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds,
+        permissionGroupMentionsEnabled: updatedAt === null
       },
       { timer, connection }
     );
@@ -1936,6 +1940,16 @@ export class CreateOrUpdateDropUseCase {
             .filter(Boolean)
         )
       : [];
+    if (
+      model.mentioned_groups.includes(DropGroupMention.DEVS_6529) &&
+      !configuredDeveloperIds.length &&
+      !warnedAboutMissingDeveloperMentionIds
+    ) {
+      warnedAboutMissingDeveloperMentionIds = true;
+      logger.warn(
+        '[@devs6529 is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]'
+      );
+    }
     const memberships =
       await this.userGroupsService.findIdentityGroupMemberships(groupIds, {
         timer,
@@ -2110,23 +2124,28 @@ export class CreateOrUpdateDropUseCase {
     {
       model,
       wave,
-      directlyMentionedIdentityIds
+      directlyMentionedIdentityIds,
+      permissionGroupMentionsEnabled = true
     }: {
       model: CreateOrUpdateDropModel;
       wave: WaveEntity;
       directlyMentionedIdentityIds: string[];
+      permissionGroupMentionsEnabled?: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
+    const notificationMentionedGroups = permissionGroupMentionsEnabled
+      ? model.mentioned_groups
+      : [];
     const [followerRecipients, waveSubscribersCount] = await Promise.all([
       this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
           authorId,
-          mentionedGroups: model.mentioned_groups
+          mentionedGroups: notificationMentionedGroups
         },
         connection
       ),
@@ -2135,7 +2154,7 @@ export class CreateOrUpdateDropUseCase {
     const permissionGroupMentionIdentityIds =
       await this.resolvePermissionGroupMentionRecipients(
         {
-          model,
+          model: { ...model, mentioned_groups: notificationMentionedGroups },
           wave,
           followerIdentityIds: followerRecipients.map(
             (recipient) => recipient.identity_id

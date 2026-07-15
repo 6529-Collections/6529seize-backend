@@ -847,7 +847,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           SELECT DISTINCT ug.id AS group_id, pg.profile_id
           FROM ${PROFILE_GROUPS_TABLE} pg
           JOIN ${USER_GROUPS_TABLE} ug ON pg.profile_group_id = ug.profile_group_id
-          WHERE ug.id IN (:groupIds);
+          WHERE ug.id IN (:groupIds)
       `,
         { groupIds },
         { wrappedConnection: ctx.connection }
