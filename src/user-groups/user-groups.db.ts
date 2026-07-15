@@ -833,6 +833,30 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .then((res) => res.map((it) => it.profile_id));
   }
 
+  async findIdentityGroupMemberships(
+    groupIds: string[],
+    ctx: RequestContext
+  ): Promise<{ groupId: string; profileId: string }[]> {
+    if (!groupIds.length) {
+      return [];
+    }
+
+    return await this.db
+      .execute<{ group_id: string; profile_id: string }>(
+        `
+          SELECT DISTINCT ug.id AS group_id, pg.profile_id
+          FROM ${PROFILE_GROUPS_TABLE} pg
+          JOIN ${USER_GROUPS_TABLE} ug ON pg.profile_group_id = ug.profile_group_id
+          WHERE ug.id IN (:groupIds);
+      `,
+        { groupIds },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) =>
+        res.map((it) => ({ groupId: it.group_id, profileId: it.profile_id }))
+      );
+  }
+
   public async findDirectMessageGroup(
     addresses: string[],
     ctx: RequestContext

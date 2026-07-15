@@ -153,7 +153,7 @@ export class MentionAliasesService {
     }
     if (isReservedMentionAlias(alias)) {
       throw new BadRequestException(
-        'That shortcut is reserved. Try something a little more creative.'
+        `@${alias} is reserved. Try something a little more creative.`
       );
     }
     const memberProfileIds = Array.from(new Set(input.member_profile_ids));

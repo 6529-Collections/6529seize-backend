@@ -357,7 +357,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('strips ALL group mention metadata when the drop content has no @all token', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [DropGroupMention.ALL],
         parts: [
           {
             content:
@@ -371,7 +370,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('keeps ALL group mention metadata for standalone @all tokens', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [DropGroupMention.ALL, DropGroupMention.ALL],
         parts: [
           {
             content: 'Heads up @all: please review this drop.'
@@ -384,7 +382,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('keeps ALL group mention metadata when @all is in a later part', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [DropGroupMention.ALL],
         parts: [
           {
             content: 'first part'
@@ -400,7 +397,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('keeps ALL group mention metadata for case-insensitive @all tokens', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [DropGroupMention.ALL],
         parts: [
           {
             content: 'Heads up @ALL'
@@ -413,7 +409,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('keeps ALL group mention metadata for line-start @all tokens', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [DropGroupMention.ALL],
         parts: [
           {
             content: 'first line\n@all on the next line'
@@ -426,7 +421,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('does not treat embedded @all text as an ALL group mention', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [DropGroupMention.ALL],
         parts: [
           {
             content: 'email@example.com @alliance hello@all @all_again'
@@ -439,23 +433,7 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('strips ALL group mention metadata when there are no drop parts', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [DropGroupMention.ALL],
         parts: []
-      })
-    ).toEqual([]);
-  });
-
-  it('drops unknown group mention metadata', () => {
-    const specificGroup = 'specific-group' as DropGroupMention;
-
-    expect(
-      normalizeDropGroupMentions({
-        mentionedGroups: [specificGroup, DropGroupMention.ALL],
-        parts: [
-          {
-            content: 'no all mention here'
-          }
-        ]
       })
     ).toEqual([]);
   });
@@ -463,18 +441,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('derives group mention metadata from raw typed content', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: undefined,
-        parts: [
-          {
-            content: '@all'
-          }
-        ]
-      })
-    ).toEqual([DropGroupMention.ALL]);
-
-    expect(
-      normalizeDropGroupMentions({
-        mentionedGroups: null,
         parts: [
           {
             content: '@all'
@@ -487,7 +453,6 @@ describe('CreateOrUpdateDropUseCase', () => {
   it('derives all reserved global mentions case-insensitively', () => {
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: [],
         parts: [{ content: '@Contributors @ADMINS @DeVs6529' }]
       })
     ).toEqual([
@@ -516,21 +481,13 @@ describe('CreateOrUpdateDropUseCase', () => {
   });
 
   it('normalizes group mention metadata idempotently', () => {
-    const specificGroup = 'specific-group' as DropGroupMention;
     const parts = [{ content: 'hello @all' }];
     const once = normalizeDropGroupMentions({
-      mentionedGroups: [
-        specificGroup,
-        DropGroupMention.ALL,
-        specificGroup,
-        DropGroupMention.ALL
-      ],
       parts
     });
 
     expect(
       normalizeDropGroupMentions({
-        mentionedGroups: once,
         parts
       })
     ).toEqual(once);
@@ -1200,44 +1157,40 @@ describe('CreateOrUpdateDropUseCase', () => {
         { profile_id: 'hidden-developer' }
       ] as any);
     const userGroupsService = {
-      findIdentitiesInGroups: jest
-        .fn()
-        .mockResolvedValue(['contributor-1', 'admin-1']),
-      getGroupsUserIsEligibleFor: jest.fn(async (profileId: string) => {
-        const groups: Record<string, string[]> = {
-          'contributor-1': ['visible', 'chatters'],
-          'admin-1': ['visible', 'admins'],
-          creator: ['visible'],
-          'developer-1': ['visible'],
-          'hidden-developer': []
-        };
-        return groups[profileId] ?? [];
-      })
+      findIdentityGroupMemberships: jest.fn().mockResolvedValue([
+        { groupId: 'visible', profileId: 'contributor-1' },
+        { groupId: 'chatters', profileId: 'contributor-1' },
+        { groupId: 'visible', profileId: 'admin-1' },
+        { groupId: 'admins', profileId: 'admin-1' },
+        { groupId: 'visible', profileId: 'creator' },
+        { groupId: 'visible', profileId: 'developer-1' }
+      ])
     };
     const useCase = createUseCaseWithMocks({ userGroupsService });
 
     await expect(
       (useCase as any).resolvePermissionGroupMentionRecipients(
         {
-          mentioned_groups: [
-            DropGroupMention.CONTRIBUTORS,
-            DropGroupMention.ADMINS,
-            DropGroupMention.DEVS_6529
-          ]
+          model: {
+            mentioned_groups: [
+              DropGroupMention.CONTRIBUTORS,
+              DropGroupMention.ADMINS,
+              DropGroupMention.DEVS_6529
+            ]
+          },
+          wave: {
+            created_by: 'creator',
+            chat_group_id: 'chatters',
+            admin_group_id: 'admins',
+            visibility_group_id: 'visible'
+          },
+          followerIdentityIds: []
         },
-        {
-          created_by: 'creator',
-          chat_group_id: 'chatters',
-          admin_group_id: 'admins',
-          visibility_group_id: 'visible'
-        },
-        [],
-        undefined,
-        {}
+        { timer: undefined, connection: {} }
       )
     ).resolves.toEqual(['contributor-1', 'admin-1', 'developer-1', 'creator']);
-    expect(userGroupsService.findIdentitiesInGroups).toHaveBeenCalledWith(
-      ['chatters', 'admins'],
+    expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
+      ['chatters', 'admins', 'visible'],
       { timer: undefined, connection: {} }
     );
   });

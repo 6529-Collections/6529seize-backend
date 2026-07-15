@@ -2385,6 +2385,13 @@ export class UserGroupsService {
     return await this.userGroupsDb.findIdentitiesInGroups(groupIds, ctx);
   }
 
+  async findIdentityGroupMemberships(
+    groupIds: string[],
+    ctx: RequestContext
+  ): Promise<{ groupId: string; profileId: string }[]> {
+    return await this.userGroupsDb.findIdentityGroupMemberships(groupIds, ctx);
+  }
+
   private getIdentitySideTdhPart(
     identityAlias: string,
     tdhInclusionStrategy: GroupTdhInclusionStrategy

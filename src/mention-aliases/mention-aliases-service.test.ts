@@ -81,7 +81,7 @@ describe('MentionAliasesService', () => {
           member_profile_ids: ['profile-2']
         })
       ).rejects.toThrow(
-        'That shortcut is reserved. Try something a little more creative.'
+        `@${alias.replace(/^@/, '').toLowerCase()} is reserved. Try something a little more creative.`
       );
     }
   );

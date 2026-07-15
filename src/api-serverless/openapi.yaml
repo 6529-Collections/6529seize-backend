@@ -15380,6 +15380,7 @@ components:
           type: string
           minLength: 3
           maxLength: 16
+          description: Up to 15 alias characters, optionally prefixed with @.
           pattern: ^@?[A-Za-z0-9_]{3,15}$
         member_profile_ids:
           type: array
