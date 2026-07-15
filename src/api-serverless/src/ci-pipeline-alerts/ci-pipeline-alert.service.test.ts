@@ -340,36 +340,71 @@ describe('CiPipelineAlertService', () => {
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
   });
 
-  it('rejects initiators without a 6529 profile mapping', async () => {
+  it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
     );
 
-    await expect(
-      service.postAlert(
-        { ...baseRequest, triggered_by_github_login: 'unknown-user' },
-        {}
-      )
-    ).rejects.toThrow(
-      'Missing 6529 profile mapping for CI workflow initiator: unknown-user'
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        triggered_by_github_login: 'unknown-user'
+      },
+      {}
     );
 
-    expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Triggered by: unknown');
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .mentioned_users
+    ).toEqual([]);
   });
 
-  it('rejects mapped initiators without a matching 6529 profile', async () => {
+  it('posts with an unknown initiator when the mapped profile is missing', async () => {
     identitiesRepository.getIdsByHandles.mockResolvedValue({});
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
     );
 
-    await expect(service.postAlert(baseRequest, {})).rejects.toThrow(
-      'Missing 6529 profile for CI workflow initiator: prxt0'
+    await service.postAlert({ ...baseRequest, status: 'success' }, {});
+
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Triggered by: unknown');
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .mentioned_users
+    ).toEqual([]);
+  });
+
+  it('posts with an unknown initiator when actor metadata is absent', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
     );
 
-    expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        triggered_by_github_login: null
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Triggered by: unknown');
   });
 
   it('enqueues release-note generation after posting an eligible production success', async () => {

@@ -334,9 +334,13 @@ export class CiPipelineAlertService {
     const triggeredByHandle = triggeredByGithubLogin
       ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
       : null;
-    if (triggeredByGithubLogin && !triggeredByHandle) {
-      throw new Error(
-        `Missing 6529 profile mapping for CI workflow initiator: ${triggeredByGithubLogin}`
+    if (!triggeredByGithubLogin) {
+      this.logger.warn(
+        'Unable to resolve CI workflow initiator: GitHub login is missing'
+      );
+    } else if (!triggeredByHandle) {
+      this.logger.warn(
+        `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile mapping is missing`
       );
     }
 
@@ -375,8 +379,8 @@ export class CiPipelineAlertService {
         null)
       : null;
     if (triggeredByHandle && !triggeredBy) {
-      throw new Error(
-        `Missing 6529 profile for CI workflow initiator: ${triggeredByHandle}`
+      this.logger.warn(
+        `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile ${triggeredByHandle} is missing`
       );
     }
 
@@ -391,6 +395,7 @@ export class CiPipelineAlertService {
     const failureCc = failureHandles
       .map((handle) => mentionsByNormalizedHandle.get(handle.toLowerCase()))
       .filter((mention): mention is MentionedProfile => !!mention);
+    // Profile IDs collapse handle aliases while preserving initiator-first order.
     const all = [...(triggeredBy ? [triggeredBy] : []), ...failureCc].filter(
       (mention, index, mentions) =>
         mentions.findIndex(
@@ -472,9 +477,7 @@ export class CiPipelineAlertService {
       `Workflow: ${request.workflow}`,
       ...(branch ? [`Branch: ${branch}`] : []),
       ...(commit ? [`Commit: ${commit}`] : []),
-      ...(mentions.triggeredBy
-        ? [`Triggered by: @[${mentions.triggeredBy.handle}]`]
-        : []),
+      `Triggered by: ${mentions.triggeredBy ? `@[${mentions.triggeredBy.handle}]` : 'unknown'}`,
       `Run: ${formatRun(request)}`,
       ...failureMentionLines
     ];
