@@ -469,6 +469,9 @@ export class CiPipelineAlertService {
     const formattedDescription = description
       ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
       : null;
+    const triggeredBy = mentions.triggeredBy
+      ? '@[' + mentions.triggeredBy.handle + ']'
+      : 'unknown';
     const lines = [
       formatAlertHeading(request),
       '',
@@ -477,7 +480,7 @@ export class CiPipelineAlertService {
       `Workflow: ${request.workflow}`,
       ...(branch ? [`Branch: ${branch}`] : []),
       ...(commit ? [`Commit: ${commit}`] : []),
-      `Triggered by: ${mentions.triggeredBy ? `@[${mentions.triggeredBy.handle}]` : 'unknown'}`,
+      `Triggered by: ${triggeredBy}`,
       `Run: ${formatRun(request)}`,
       ...failureMentionLines
     ];
