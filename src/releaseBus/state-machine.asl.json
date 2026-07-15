@@ -1,0 +1,69 @@
+{
+  "Comment": "6529 staging and production release train",
+  "StartAt": "ADVANCE_TRAIN",
+  "States": {
+    "ADVANCE_TRAIN": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName.$": "$.worker_arn",
+        "Payload": {
+          "train_id.$": "$.train_id",
+          "worker_arn.$": "$.worker_arn"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ClientExecutionTimeoutException",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "States.Timeout",
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.last_worker_error",
+          "Next": "WAIT"
+        }
+      ],
+      "OutputPath": "$.Payload",
+      "Next": "DECIDE"
+    },
+    "DECIDE": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.decision",
+          "StringEquals": "COMPLETE",
+          "Next": "COMPLETE"
+        },
+        {
+          "Variable": "$.decision",
+          "StringEquals": "FAILED",
+          "Next": "FAILED"
+        },
+        {
+          "Variable": "$.decision",
+          "StringEquals": "CONTINUE",
+          "Next": "ADVANCE_TRAIN"
+        }
+      ],
+      "Default": "WAIT"
+    },
+    "WAIT": { "Type": "Wait", "Seconds": 60, "Next": "ADVANCE_TRAIN" },
+    "COMPLETE": { "Type": "Succeed" },
+    "FAILED": {
+      "Type": "Fail",
+      "Error": "ReleaseTrainFailed",
+      "Cause": "Release train failed; inspect release_train_events"
+    }
+  }
+}

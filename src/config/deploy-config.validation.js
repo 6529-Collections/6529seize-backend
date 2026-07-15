@@ -1,5 +1,18 @@
 const DEPLOY_ENVIRONMENTS = ['staging', 'prod'];
 const DEPLOY_SERVICE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const DEPLOY_ADAPTERS = [
+  'serverless',
+  'resources-only',
+  'api-zip',
+  'direct-lambda-zip',
+  'special-script'
+];
+const DEPLOY_VALIDATION_PROFILES = [
+  'lambda-version',
+  'api-health',
+  'cloudformation-stack',
+  'lambda-edge-association'
+];
 
 function isDeployEnvironment(value) {
   return DEPLOY_ENVIRONMENTS.includes(value);
@@ -39,6 +52,36 @@ function validateDeployServiceConfig(service, seenNames) {
       );
     }
   }
+
+  if (!DEPLOY_ADAPTERS.includes(service.deploy_adapter)) {
+    throw new Error(`service ${service.name} has invalid deploy_adapter`);
+  }
+  if (!service.aws_region || typeof service.aws_region !== 'object') {
+    throw new Error(`service ${service.name} must define aws_region`);
+  }
+  for (const environment of service.allowed_environments) {
+    if (typeof service.aws_region[environment] !== 'string') {
+      throw new Error(
+        `service ${service.name} must define aws_region.${environment}`
+      );
+    }
+  }
+  if (!Array.isArray(service.verification_targets)) {
+    throw new Error(`service ${service.name} must define verification_targets`);
+  }
+  if (!DEPLOY_VALIDATION_PROFILES.includes(service.validation_profile))
+    throw new Error(`service ${service.name} has invalid validation_profile`);
+  if (!['allowed', 'production-only'].includes(service.staging_policy)) {
+    throw new Error(`service ${service.name} has invalid staging_policy`);
+  }
+  if (!Array.isArray(service.default_dependencies)) {
+    throw new Error(`service ${service.name} must define default_dependencies`);
+  }
+  if (typeof service.automatic_rollback_supported !== 'boolean') {
+    throw new Error(
+      `service ${service.name} must define automatic_rollback_supported`
+    );
+  }
 }
 
 function validateDeployConfig(config) {
@@ -77,6 +120,8 @@ function validateDeployConfig(config) {
 module.exports = {
   DEPLOY_ENVIRONMENTS,
   DEPLOY_SERVICE_NAME_PATTERN,
+  DEPLOY_ADAPTERS,
+  DEPLOY_VALIDATION_PROFILES,
   isDeployEnvironment,
   validateDeployServiceConfig,
   validateDeployConfig
