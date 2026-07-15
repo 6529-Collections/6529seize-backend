@@ -834,27 +834,34 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   }
 
   async findIdentityGroupMemberships(
-    groupIds: string[],
+    { groupIds, profileIds }: { groupIds: string[]; profileIds?: string[] },
     ctx: RequestContext
   ): Promise<{ groupId: string; profileId: string }[]> {
-    if (!groupIds.length) {
+    if (!groupIds.length || profileIds?.length === 0) {
       return [];
     }
 
-    return await this.db
-      .execute<{ group_id: string; profile_id: string }>(
-        `
+    const timerName = `${this.constructor.name}->findIdentityGroupMemberships`;
+    try {
+      ctx.timer?.start(timerName);
+      return await this.db
+        .execute<{ group_id: string; profile_id: string }>(
+          `
           SELECT DISTINCT ug.id AS group_id, pg.profile_id
           FROM ${PROFILE_GROUPS_TABLE} pg
           JOIN ${USER_GROUPS_TABLE} ug ON pg.profile_group_id = ug.profile_group_id
           WHERE ug.id IN (:groupIds)
+          ${profileIds ? 'AND pg.profile_id IN (:profileIds)' : ''}
       `,
-        { groupIds },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) =>
-        res.map((it) => ({ groupId: it.group_id, profileId: it.profile_id }))
-      );
+          { groupIds, profileIds },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((res) =>
+          res.map((it) => ({ groupId: it.group_id, profileId: it.profile_id }))
+        );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   public async findDirectMessageGroup(

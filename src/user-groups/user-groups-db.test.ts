@@ -8,6 +8,10 @@ import {
   aUserGroup,
   withUserGroups
 } from '@/tests/fixtures/user-group.fixture';
+import {
+  aProfileGroup,
+  withProfileGroups
+} from '@/tests/fixtures/profile-group.fixture';
 
 const pureProfileGroup = aUserGroup(
   {
@@ -78,6 +82,64 @@ describeWithSeed(
       expect(results.map((group) => group.id).sort()).toEqual(
         [criteriaGroup.id, pureProfileGroup.id].sort()
       );
+    });
+  }
+);
+
+const membershipProfileGroupId = randomUUID();
+const membershipGroup = aUserGroup(
+  {
+    profile_group_id: membershipProfileGroupId,
+    is_direct_message: false
+  },
+  {
+    id: 'membership-group',
+    name: 'Membership Group'
+  }
+);
+const candidateMembership = aProfileGroup({
+  profile_group_id: membershipProfileGroupId,
+  profile_id: 'candidate-profile'
+});
+const unrelatedMembership = aProfileGroup({
+  profile_group_id: membershipProfileGroupId,
+  profile_id: 'unrelated-profile'
+});
+
+describeWithSeed(
+  'UserGroupsDb findIdentityGroupMemberships',
+  [
+    withUserGroups([membershipGroup]),
+    withProfileGroups([candidateMembership, unrelatedMembership])
+  ],
+  () => {
+    const repo = new UserGroupsDb(() => sqlExecutor);
+    const ctx: RequestContext = { timer: undefined };
+
+    it('limits membership rows to the supplied recipient candidates', async () => {
+      await expect(
+        repo.findIdentityGroupMemberships(
+          {
+            groupIds: [membershipGroup.id],
+            profileIds: ['candidate-profile', 'missing-profile']
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        {
+          groupId: membershipGroup.id,
+          profileId: 'candidate-profile'
+        }
+      ]);
+    });
+
+    it('returns no rows without querying for an empty candidate set', async () => {
+      await expect(
+        repo.findIdentityGroupMemberships(
+          { groupIds: [membershipGroup.id], profileIds: [] },
+          ctx
+        )
+      ).resolves.toEqual([]);
     });
   }
 );

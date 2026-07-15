@@ -464,6 +464,26 @@ describe('CreateOrUpdateDropUseCase', () => {
     ]);
   });
 
+  it('replaces edited group metadata with the mentions in edited content', () => {
+    const useCase = createUseCase({ existingNominations: [] });
+
+    expect(
+      (useCase as any).normalizeMentionedGroups({
+        ...createChatDropModel({
+          drop_id: 'existing-drop',
+          parts: [
+            {
+              content: 'updated for @contributors',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        mentioned_groups: [DropGroupMention.ADMINS]
+      }).mentioned_groups
+    ).toEqual([DropGroupMention.CONTRIBUTORS]);
+  });
+
   it('allows chat participants to use permission-derived group mentions', () => {
     const useCase = createUseCase({ existingNominations: [] });
     expect(() =>
@@ -1092,7 +1112,8 @@ describe('CreateOrUpdateDropUseCase', () => {
             id: 'wave-1',
             visibility_group_id: null
           },
-          directlyMentionedIdentityIds: ['direct-1', 'direct-muted']
+          directlyMentionedIdentityIds: ['direct-1', 'direct-muted'],
+          groupMentionNotificationsEnabled: true
         },
         { connection: {} }
       )
@@ -1160,7 +1181,8 @@ describe('CreateOrUpdateDropUseCase', () => {
             id: 'wave-1',
             visibility_group_id: null
           },
-          directlyMentionedIdentityIds: ['direct-1']
+          directlyMentionedIdentityIds: ['direct-1'],
+          groupMentionNotificationsEnabled: true
         },
         { connection: {} }
       )
@@ -1239,14 +1261,20 @@ describe('CreateOrUpdateDropUseCase', () => {
         { profile_id: 'hidden-developer' }
       ] as any);
     const userGroupsService = {
-      findIdentityGroupMemberships: jest.fn().mockResolvedValue([
-        { groupId: 'visible', profileId: 'contributor-1' },
-        { groupId: 'chatters', profileId: 'contributor-1' },
-        { groupId: 'visible', profileId: 'admin-1' },
-        { groupId: 'admins', profileId: 'admin-1' },
-        { groupId: 'visible', profileId: 'creator' },
-        { groupId: 'visible', profileId: 'developer-1' }
-      ])
+      findIdentityGroupMemberships: jest
+        .fn()
+        .mockResolvedValueOnce([
+          { groupId: 'chatters', profileId: 'contributor-1' },
+          { groupId: 'chatters', profileId: 'hidden-contributor' },
+          { groupId: 'admins', profileId: 'admin-1' },
+          { groupId: 'admins', profileId: 'hidden-admin' }
+        ])
+        .mockResolvedValueOnce([
+          { groupId: 'visible', profileId: 'contributor-1' },
+          { groupId: 'visible', profileId: 'admin-1' },
+          { groupId: 'visible', profileId: 'creator' },
+          { groupId: 'visible', profileId: 'developer-1' }
+        ])
     };
     const useCase = createUseCaseWithMocks({ userGroupsService });
 
@@ -1271,8 +1299,29 @@ describe('CreateOrUpdateDropUseCase', () => {
         { timer: undefined, connection: {} }
       )
     ).resolves.toEqual(['contributor-1', 'admin-1', 'developer-1', 'creator']);
-    expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
-      ['chatters', 'admins', 'visible'],
+    expect(
+      userGroupsService.findIdentityGroupMemberships
+    ).toHaveBeenNthCalledWith(
+      1,
+      { groupIds: ['chatters', 'admins'] },
+      { timer: undefined, connection: {} }
+    );
+    expect(
+      userGroupsService.findIdentityGroupMemberships
+    ).toHaveBeenNthCalledWith(
+      2,
+      {
+        groupIds: ['visible'],
+        profileIds: [
+          'contributor-1',
+          'hidden-contributor',
+          'admin-1',
+          'hidden-admin',
+          'developer-1',
+          'hidden-developer',
+          'creator'
+        ]
+      },
       { timer: undefined, connection: {} }
     );
   });

@@ -235,6 +235,8 @@ export function sanitizeDropStructuredFields(
 }
 
 export class CreateOrUpdateDropUseCase {
+  // Intentionally throttled per warm Lambda container, not per wave. One
+  // warning is enough to surface the shared missing environment configuration.
   private nextMissingDeveloperMentionWarningAt = 0;
 
   public constructor(
@@ -279,6 +281,9 @@ export class CreateOrUpdateDropUseCase {
   ): CreateOrUpdateDropModel {
     return {
       ...model,
+      // Content is the source of truth on creates and edits. The update path
+      // deletes the old rows before insertDropGroupMentions persists this
+      // freshly derived set, so removed tokens do not leave stale metadata.
       mentioned_groups: normalizeDropGroupMentions({
         parts: model.parts
       })
@@ -1845,7 +1850,7 @@ export class CreateOrUpdateDropUseCase {
     }
   }
 
-  private getPermissionMentionGroupIds({
+  private getPermissionMentionSourceGroupIds({
     model,
     wave
   }: {
@@ -1859,8 +1864,7 @@ export class CreateOrUpdateDropUseCase {
           : null,
         model.mentioned_groups.includes(DropGroupMention.ADMINS)
           ? wave.admin_group_id
-          : null,
-        wave.visibility_group_id
+          : null
       ].filter((groupId): groupId is string => groupId !== null)
     );
   }
@@ -1895,35 +1899,6 @@ export class CreateOrUpdateDropUseCase {
     ]);
   }
 
-  private isEligiblePermissionMentionRecipient({
-    profileId,
-    model,
-    wave,
-    groupMemberships,
-    configuredDeveloperIds
-  }: {
-    profileId: string;
-    model: CreateOrUpdateDropModel;
-    wave: WaveEntity;
-    groupMemberships: ReadonlyMap<string, ReadonlySet<string>>;
-    configuredDeveloperIds: ReadonlySet<string>;
-  }): boolean {
-    const belongsTo = (groupId: string | null) =>
-      groupId === null ||
-      groupMemberships.get(groupId)?.has(profileId) === true;
-    if (!belongsTo(wave.visibility_group_id)) {
-      return false;
-    }
-    const contributor =
-      model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS) &&
-      belongsTo(wave.chat_group_id);
-    const admin =
-      model.mentioned_groups.includes(DropGroupMention.ADMINS) &&
-      (profileId === wave.created_by ||
-        (wave.admin_group_id !== null && belongsTo(wave.admin_group_id)));
-    return contributor || admin || configuredDeveloperIds.has(profileId);
-  }
-
   private async resolvePermissionGroupMentionRecipients(
     {
       model,
@@ -1948,7 +1923,10 @@ export class CreateOrUpdateDropUseCase {
     ) {
       return [];
     }
-    const groupIds = this.getPermissionMentionGroupIds({ model, wave });
+    const sourceGroupIds = this.getPermissionMentionSourceGroupIds({
+      model,
+      wave
+    });
     const configuredDeveloperIds = model.mentioned_groups.includes(
       DropGroupMention.DEVS_6529
     )
@@ -1964,10 +1942,10 @@ export class CreateOrUpdateDropUseCase {
       configuredDeveloperIds
     });
     const memberships =
-      await this.userGroupsService.findIdentityGroupMemberships(groupIds, {
-        timer,
-        connection
-      });
+      await this.userGroupsService.findIdentityGroupMemberships(
+        { groupIds: sourceGroupIds },
+        { timer, connection }
+      );
     const groupMemberships = memberships.reduce((result, membership) => {
       const members = result.get(membership.groupId) ?? new Set<string>();
       members.add(membership.profileId);
@@ -1990,16 +1968,21 @@ export class CreateOrUpdateDropUseCase {
       groupMemberships,
       configuredDeveloperIds: existingConfiguredDeveloperIds
     });
-    const configuredDeveloperIdSet = new Set(existingConfiguredDeveloperIds);
-    return candidates.filter((profileId) =>
-      this.isEligiblePermissionMentionRecipient({
-        profileId,
-        model,
-        wave,
-        groupMemberships,
-        configuredDeveloperIds: configuredDeveloperIdSet
-      })
+    if (wave.visibility_group_id === null || !candidates.length) {
+      return candidates;
+    }
+    const visibleMemberships =
+      await this.userGroupsService.findIdentityGroupMemberships(
+        {
+          groupIds: [wave.visibility_group_id],
+          profileIds: candidates
+        },
+        { timer, connection }
+      );
+    const visibleRecipientIds = new Set(
+      visibleMemberships.map((membership) => membership.profileId)
     );
+    return candidates.filter((profileId) => visibleRecipientIds.has(profileId));
   }
 
   private warnIfDeveloperMentionHasNoRecipients({
@@ -2162,12 +2145,12 @@ export class CreateOrUpdateDropUseCase {
       model,
       wave,
       directlyMentionedIdentityIds,
-      groupMentionNotificationsEnabled = true
+      groupMentionNotificationsEnabled
     }: {
       model: CreateOrUpdateDropModel;
       wave: WaveEntity;
       directlyMentionedIdentityIds: string[];
-      groupMentionNotificationsEnabled?: boolean;
+      groupMentionNotificationsEnabled: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
