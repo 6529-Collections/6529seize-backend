@@ -238,7 +238,7 @@ describe('CiPipelineAlertService', () => {
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
-                  'Triggered by: @[prxt0]',
+                  'Initiated by: @[prxt0]',
                   'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)',
                   '',
                   'cc @[prxt0] @[ALICE] @[Bob]'
@@ -301,7 +301,7 @@ describe('CiPipelineAlertService', () => {
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
-                  'Triggered by: @[prxt0]',
+                  'Initiated by: @[prxt0]',
                   'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
                 ].join('\n')
               )
@@ -324,7 +324,7 @@ describe('CiPipelineAlertService', () => {
         'Workflow: Web Deploy - PROD',
         'Branch: main',
         'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
-        'Triggered by: @[prxt0]',
+        'Initiated by: @[prxt0]',
         'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
       ].join('\n')
     );
@@ -359,7 +359,7 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
-    ).toContain('Triggered by: unknown');
+    ).toContain('Initiated by: unknown');
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .mentioned_users
@@ -378,7 +378,7 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
-    ).toContain('Triggered by: unknown');
+    ).toContain('Initiated by: unknown');
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .mentioned_users
@@ -404,7 +404,7 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
-    ).toContain('Triggered by: unknown');
+    ).toContain('Initiated by: unknown');
   });
 
   it('enqueues release-note generation after posting an eligible production success', async () => {
@@ -549,7 +549,7 @@ describe('CiPipelineAlertService', () => {
         'Workflow: Publish',
         'Branch: v0.3.11',
         'Commit: [abc12345](https://github.com/6529-Collections/6529-core/commit/abc1234567890)',
-        'Triggered by: @[prxt0]',
+        'Initiated by: @[prxt0]',
         'Run: [#6082](https://github.com/6529-Collections/6529-core/actions/runs/12345)'
       ].join('\n')
     );

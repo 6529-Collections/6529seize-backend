@@ -480,7 +480,7 @@ export class CiPipelineAlertService {
       `Workflow: ${request.workflow}`,
       ...(branch ? [`Branch: ${branch}`] : []),
       ...(commit ? [`Commit: ${commit}`] : []),
-      `Triggered by: ${triggeredBy}`,
+      `Initiated by: ${triggeredBy}`,
       `Run: ${formatRun(request)}`,
       ...failureMentionLines
     ];
