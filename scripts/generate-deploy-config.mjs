@@ -226,13 +226,16 @@ jobs:
             echo 'A break-glass reason is required while Release Bus enforcement is enabled.' >&2
             exit 1
           }
+          expected_sha="\${INPUT_EXPECTED_SHA:-$GITHUB_SHA}"
+          [[ "$expected_sha" =~ ^[a-f0-9]{40}$ ]]
           payload="$(jq -n \
-            --arg actor "$GITHUB_ACTOR" \
             --arg workflow_run_id "$GITHUB_RUN_ID" \
             --arg repository backend \
             --arg environment "$INPUT_ENVIRONMENT" \
+            --arg service "$INPUT_SERVICE" \
+            --arg expected_sha "$expected_sha" \
             --arg reason "$INPUT_BREAK_GLASS_REASON" \
-            '{actor:$actor,workflow_run_id:$workflow_run_id,repository:$repository,environment:$environment,reason:$reason}')"
+            '{workflow_run_id:$workflow_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,reason:$reason}')"
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
             -H 'Content-Type: application/json' \

@@ -7,7 +7,7 @@ import type { ReleaseOperationStatus } from '@/releaseBus/release-bus.types';
 @Index('idx_release_operation_train_status', ['train_id', 'status'])
 export class ReleaseTrainOperationEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 }) readonly id!: string;
-  @Column({ type: 'varchar', length: 500 }) readonly operation_key!: string;
+  @Column({ type: 'varchar', length: 180 }) readonly operation_key!: string;
   @Column({ type: 'varchar', length: 36 }) readonly train_id!: string;
   @Column({ type: 'int' }) readonly revision!: number;
   @Column({ type: 'varchar', length: 64 }) readonly operation_type!: string;

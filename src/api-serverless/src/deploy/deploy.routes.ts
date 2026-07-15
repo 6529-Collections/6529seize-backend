@@ -33,8 +33,7 @@ import { releaseBusRepository } from '@/releaseBus/release-bus.repository';
 import { releaseBusGitHubApp } from '@/releaseBus/release-bus.github-app';
 import {
   getReleaseBusMode,
-  RELEASE_BUS_OPERATOR_TEAM,
-  RELEASE_BUS_ORG
+  RELEASE_BUS_OPERATOR_TEAM
 } from '@/releaseBus/release-bus.config';
 import { releaseBusService } from '@/releaseBus/release-bus.service';
 import type {
@@ -83,10 +82,8 @@ function targetForRepository(repository: ReleaseRepository) {
 
 async function requireOperator(token: string): Promise<string> {
   const viewer = await gitHubDeployService.getViewer(token);
-  const allowed = await gitHubDeployService.isOrganizationOperator(
-    token,
+  const allowed = await releaseBusGitHubApp.isOrganizationOperator(
     viewer.login,
-    RELEASE_BUS_ORG,
     RELEASE_BUS_OPERATOR_TEAM
   );
   if (!allowed)
@@ -544,15 +541,57 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
 deployRoutes.post('/release-bus/authorize-break-glass', async (req, res) => {
   requireWorkflowCredential(req);
   const body = getValidatedByJoiOrThrow<{
-    actor: string;
     workflow_run_id: string;
     repository: ReleaseRepository;
     environment: 'staging' | 'prod';
+    service: string | null;
+    expected_sha: string;
     reason: string;
   }>(req.body, ReleaseBusBreakGlassAuthorizationBodySchema);
+  const workflowRun = await releaseBusGitHubApp.getWorkflowRunIdentity(
+    body.repository,
+    body.workflow_run_id
+  );
+  if (workflowRun.headSha !== body.expected_sha) {
+    throw new CustomApiCompliantException(
+      403,
+      'Break-glass workflow does not match the requested immutable SHA'
+    );
+  }
+  if (!['push', 'workflow_dispatch'].includes(workflowRun.event)) {
+    throw new CustomApiCompliantException(
+      403,
+      'Break glass is only available to push or manually dispatched deploy workflows'
+    );
+  }
+  if (body.repository === 'backend') {
+    if (
+      !body.service ||
+      !canDeployServiceToEnvironment(body.service, body.environment) ||
+      workflowRun.name !== 'Deploy a service' ||
+      workflowRun.displayTitle !==
+        `Deploy ${body.service} to ${body.environment} [manual]`
+    ) {
+      throw new CustomApiCompliantException(
+        403,
+        'Break-glass workflow does not match the requested backend deployment'
+      );
+    }
+  } else {
+    const expectedWorkflowName =
+      body.environment === 'prod'
+        ? 'Web Deploy - PROD'
+        : 'Web Deploy - STAGING';
+    if (body.service !== null || workflowRun.name !== expectedWorkflowName) {
+      throw new CustomApiCompliantException(
+        403,
+        'Break-glass workflow does not match the requested frontend deployment'
+      );
+    }
+  }
   if (
     !(await releaseBusGitHubApp.isOrganizationOperator(
-      body.actor,
+      workflowRun.actor,
       RELEASE_BUS_OPERATOR_TEAM
     ))
   ) {
@@ -565,7 +604,7 @@ deployRoutes.post('/release-bus/authorize-break-glass', async (req, res) => {
   const activeTrain = await releaseBusService.pauseForBreakGlass(
     scope,
     `Break glass: ${body.reason}`,
-    body.actor
+    workflowRun.actor
   );
   if (activeTrain) {
     throw new CustomApiCompliantException(
@@ -576,18 +615,29 @@ deployRoutes.post('/release-bus/authorize-break-glass', async (req, res) => {
   await releaseBusRepository.appendEvent(
     {
       eventType: 'BREAK_GLASS_DEPLOYMENT_AUTHORIZED',
-      githubActor: body.actor,
+      githubActor: workflowRun.actor,
       payload: {
         workflow_run_id: body.workflow_run_id,
         repository: body.repository,
         environment: body.environment,
+        service: body.service,
+        expected_sha: body.expected_sha,
         reason: body.reason
       }
     },
     {}
   );
   setNoStoreHeaders(res);
-  return res.json({ authorized: true, scope, paused: true });
+  return res.json({
+    authorized: true,
+    scope,
+    paused: true,
+    workflow_run_id: body.workflow_run_id,
+    repository: body.repository,
+    environment: body.environment,
+    service: body.service,
+    expected_sha: body.expected_sha
+  });
 });
 
 deployRoutes.post('/github/webhook', async (req, res) => {

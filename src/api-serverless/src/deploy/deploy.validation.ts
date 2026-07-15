@@ -155,34 +155,35 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
   train_id: Joi.string()
     .guid({ version: ['uuidv4'] })
     .required(),
-  operation_key: Joi.string().max(500).required(),
+  operation_key: Joi.string().max(180).required(),
   workflow_run_id: Joi.string()
     .pattern(/^[0-9]+$/)
     .required(),
-  artifact_run_id: Joi.string()
-    .pattern(/^[0-9]+$/)
-    .allow(null)
-    .required(),
+  artifact_run_id: Joi.when('environment', {
+    is: 'orchestration',
+    then: Joi.valid(null).required(),
+    otherwise: Joi.string().pattern(/^\d+$/).required()
+  }),
   repository: ReleaseRepositorySchema.required(),
   environment: Joi.string()
     .valid('orchestration', 'staging', 'prod')
     .required(),
   service: Joi.string().max(100).allow(null).required(),
   expected_sha: ReleaseShaSchema.required(),
-  artifact_digest: Joi.string()
-    .pattern(/^[a-f0-9]{64}$/)
-    .allow(null)
-    .required()
+  artifact_digest: Joi.when('environment', {
+    is: 'orchestration',
+    then: Joi.valid(null).required(),
+    otherwise: Joi.string()
+      .pattern(/^[a-f0-9]{64}$/)
+      .required()
+  })
 }).required();
 
 export const ReleaseBusBreakGlassAuthorizationBodySchema = Joi.object({
-  actor: Joi.string()
-    .pattern(/^[A-Za-z0-9-]{1,39}$/)
-    .required(),
-  workflow_run_id: Joi.string()
-    .pattern(/^[0-9]+$/)
-    .required(),
+  workflow_run_id: Joi.string().pattern(/^\d+$/).required(),
   repository: ReleaseRepositorySchema.required(),
   environment: Joi.string().valid('staging', 'prod').required(),
+  service: Joi.string().max(100).allow(null).required(),
+  expected_sha: ReleaseShaSchema.required(),
   reason: Joi.string().trim().min(3).max(1000).required()
 }).required();

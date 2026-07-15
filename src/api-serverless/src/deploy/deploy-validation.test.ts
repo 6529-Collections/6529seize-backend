@@ -70,22 +70,58 @@ describe('deploy.validation', () => {
     expect(error).toBeUndefined();
   });
 
+  it('requires immutable artifact identity for deployment operations', () => {
+    const deployment = {
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:key',
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'prod',
+      service: 'api',
+      expected_sha: 'b'.repeat(40),
+      artifact_digest: null
+    };
+
+    expect(
+      ReleaseBusAuthorizationBodySchema.validate(deployment).error
+    ).toBeDefined();
+  });
+
+  it('allows artifact-free orchestration operations', () => {
+    const { error } = ReleaseBusAuthorizationBodySchema.validate({
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:key',
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: 'b'.repeat(40),
+      artifact_digest: null
+    });
+
+    expect(error).toBeUndefined();
+  });
+
   it('requires an audited break-glass identity and reason', () => {
     expect(
       ReleaseBusBreakGlassAuthorizationBodySchema.validate({
-        actor: 'release-operator',
         workflow_run_id: '12345',
         repository: 'frontend',
         environment: 'prod',
+        service: null,
+        expected_sha: 'd'.repeat(40),
         reason: 'Emergency rollback to the last healthy version'
       }).error
     ).toBeUndefined();
     expect(
       ReleaseBusBreakGlassAuthorizationBodySchema.validate({
-        actor: 'release-operator',
         workflow_run_id: '12345',
         repository: 'frontend',
         environment: 'prod',
+        service: null,
+        expected_sha: 'd'.repeat(40),
         reason: ''
       }).error
     ).toBeDefined();

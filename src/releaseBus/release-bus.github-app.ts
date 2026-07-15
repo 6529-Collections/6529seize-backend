@@ -19,6 +19,16 @@ type GitHubRun = {
   readonly conclusion: string | null;
   readonly head_sha: string;
   readonly html_url: string;
+  readonly event?: string;
+  readonly actor?: { readonly login?: string };
+};
+
+export type ReleaseBusWorkflowRunIdentity = {
+  readonly actor: string;
+  readonly event: string;
+  readonly headSha: string;
+  readonly name: string;
+  readonly displayTitle: string;
 };
 type GitHubMembership = {
   readonly state?: string;
@@ -320,6 +330,32 @@ export class ReleaseBusGitHubApp {
       ((await response.json()) as { workflow_runs?: GitHubRun[] })
         .workflow_runs ?? [];
     return runs.find((run) => run.display_title.includes(operationKey)) ?? null;
+  }
+
+  public async getWorkflowRunIdentity(
+    repository: ReleaseRepository,
+    workflowRunId: string
+  ): Promise<ReleaseBusWorkflowRunIdentity> {
+    if (!/^\d+$/.test(workflowRunId))
+      throw new Error('Invalid GitHub workflow run id');
+    const response = await this.request(
+      repository,
+      `/actions/runs/${workflowRunId}`
+    );
+    await this.assertOk(response, `read ${repository} workflow run`);
+    const run = (await response.json()) as GitHubRun;
+    const actor = run.actor?.login ?? '';
+    if (!/^[A-Za-z0-9-]{1,39}$/.test(actor))
+      throw new Error('GitHub workflow run has no valid actor');
+    if (!/^[a-f0-9]{40}$/i.test(run.head_sha))
+      throw new Error('GitHub workflow run has no valid head SHA');
+    return {
+      actor,
+      event: run.event ?? '',
+      headSha: run.head_sha.toLowerCase(),
+      name: run.name,
+      displayTitle: run.display_title
+    };
   }
 
   public async hasActiveDeploymentRun(

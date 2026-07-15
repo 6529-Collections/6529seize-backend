@@ -76,7 +76,7 @@ var CREATE_STATEMENTS = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS release_train_operations (
     id varchar(36) NOT NULL,
-    operation_key varchar(500) NOT NULL,
+    operation_key varchar(180) NOT NULL,
     train_id varchar(36) NOT NULL,
     revision int NOT NULL,
     operation_type varchar(64) NOT NULL,
@@ -180,6 +180,8 @@ exports.up = function (db) {
 };
 
 exports.down = function () {
+  // Intentionally non-destructive: repository migration policy requires
+  // production audit/queue data to be preserved and forward-fixed.
   return Promise.resolve();
 };
 

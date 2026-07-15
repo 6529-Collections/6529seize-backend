@@ -468,7 +468,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
   ): Promise<ReleaseTrainRecord[]> {
     const boundedLimit = Math.min(Math.max(limit, 1), 100);
     return this.db.execute<ReleaseTrainRecord>(
-      `select * from ${RELEASE_TRAINS_TABLE} order by created_at desc limit ${boundedLimit}`,
+      `select * from ${RELEASE_TRAINS_TABLE} order by created_at desc, id desc limit ${boundedLimit}`,
       undefined,
       dbOptions(ctx)
     );
