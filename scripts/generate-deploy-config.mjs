@@ -152,6 +152,14 @@ jobs:
   build-and-deploy:
     name: Build and deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+    env:
+      INPUT_ENVIRONMENT: \${{ github.event.inputs.environment }}
+      INPUT_SERVICE: \${{ github.event.inputs.service }}
+      INPUT_TRAIN_ID: \${{ github.event.inputs.release_train_id }}
+      INPUT_TRAIN_REVISION: \${{ github.event.inputs.release_train_revision }}
+      INPUT_OPERATION_KEY: \${{ github.event.inputs.operation_key }}
+      INPUT_EXPECTED_SHA: \${{ github.event.inputs.expected_sha }}
+      INPUT_ARTIFACT_RUN_ID: \${{ github.event.inputs.artifact_run_id }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -219,8 +227,8 @@ jobs:
             exit 1
           }
           payload="$(jq -n \
-            --arg actor "\${{ github.actor }}" \
-            --arg workflow_run_id "\${{ github.run_id }}" \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
             --arg repository backend \
             --arg environment "$INPUT_ENVIRONMENT" \
             --arg reason "$INPUT_BREAK_GLASS_REASON" \
@@ -245,9 +253,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
           actual_sha="$(git rev-parse HEAD)"
-          if [ "$actual_sha" != "\${{ github.event.inputs.expected_sha }}" ]; then
-            echo "Expected \${{ github.event.inputs.expected_sha }}, checked out $actual_sha" >&2
+          if [ "$actual_sha" != "$INPUT_EXPECTED_SHA" ]; then
+            echo "Expected $INPUT_EXPECTED_SHA, checked out $actual_sha" >&2
             exit 1
           fi
       - name: Download immutable preflight artifact
@@ -264,20 +273,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$INPUT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
+          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
           cd release-bus-artifact
           jq -e \
-            --arg train_id "\${{ github.event.inputs.release_train_id }}" \
-            --arg source_sha "\${{ github.event.inputs.expected_sha }}" \
-            --arg service "\${{ github.event.inputs.service }}" \
+            --arg train_id "$INPUT_TRAIN_ID" \
+            --arg source_sha "$INPUT_EXPECTED_SHA" \
+            --arg service "$INPUT_SERVICE" \
             '.train_id == $train_id and .source_sha == $source_sha and (.units | index($service)) != null' \
             manifest.json >/dev/null
           sha256sum -c SHA256SUMS
-          package_digest="$(sha256sum "packages/\${{ github.event.inputs.service }}/index.zip" | cut -d' ' -f1)"
+          package_digest="$(sha256sum "packages/$INPUT_SERVICE/index.zip" | cut -d' ' -f1)"
           echo "package_digest=$package_digest" >> "$GITHUB_OUTPUT"
       - name: Authorize Release Bus operation
         if: github.event.inputs.operation_key != ''
         shell: bash
         env:
+          RELEASE_BUS_ARTIFACT_DIGEST: \${{ steps.release_bus_artifact.outputs.package_digest }}
           RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
           RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
         run: |
@@ -285,15 +298,15 @@ jobs:
           test -n "$RELEASE_BUS_API_URL"
           test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
           payload="$(jq -n \
-            --arg train_id "\${{ github.event.inputs.release_train_id }}" \
-            --arg operation_key "\${{ github.event.inputs.operation_key }}" \
-            --arg workflow_run_id "\${{ github.run_id }}" \
-            --arg artifact_run_id "\${{ github.event.inputs.artifact_run_id }}" \
+            --arg train_id "$INPUT_TRAIN_ID" \
+            --arg operation_key "$INPUT_OPERATION_KEY" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID" \
             --arg repository backend \
-            --arg environment "\${{ github.event.inputs.environment }}" \
-            --arg service "\${{ github.event.inputs.service }}" \
-            --arg expected_sha "\${{ github.event.inputs.expected_sha }}" \
-            --arg artifact_digest "\${{ steps.release_bus_artifact.outputs.package_digest }}" \
+            --arg environment "$INPUT_ENVIRONMENT" \
+            --arg service "$INPUT_SERVICE" \
+            --arg expected_sha "$INPUT_EXPECTED_SHA" \
+            --arg artifact_digest "$RELEASE_BUS_ARTIFACT_DIGEST" \
             '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:$artifact_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,artifact_digest:(if $artifact_digest == "" then null else $artifact_digest end)}')"
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
@@ -323,14 +336,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "\${{ github.event.inputs.service }}" = api ]; then
+          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          if [ "$INPUT_SERVICE" = api ]; then
             destination=src/api-serverless/dist
           else
-            destination="src/\${{ github.event.inputs.service }}/dist"
+            destination="src/$INPUT_SERVICE/dist"
           fi
           rm -rf "$destination"
           mkdir -p "$destination"
-          cp "release-bus-artifact/packages/\${{ github.event.inputs.service }}/index.zip" "$destination/index.zip"
+          cp "release-bus-artifact/packages/$INPUT_SERVICE/index.zip" "$destination/index.zip"
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
@@ -451,13 +465,14 @@ jobs:
           VERIFICATION_TARGETS_BY_SERVICE: '${JSON.stringify(verificationTargetsByService)}'
         run: |
           set -euo pipefail
-          if [ "\${{ github.event.inputs.service }}" = api ]; then
+          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          if [ "$INPUT_SERVICE" = api ]; then
             package_path=src/api-serverless/dist/index.zip
           else
-            package_path="src/\${{ github.event.inputs.service }}/dist/index.zip"
+            package_path="src/$INPUT_SERVICE/dist/index.zip"
           fi
           expected_code_sha="$(openssl dgst -sha256 -binary "$package_path" | base64 | tr -d '\\n')"
-          targets="$(jq -cr --arg service "\${{ github.event.inputs.service }}" '.[$service]' <<< "$VERIFICATION_TARGETS_BY_SERVICE")"
+          targets="$(jq -cr --arg service "$INPUT_SERVICE" '.[$service]' <<< "$VERIFICATION_TARGETS_BY_SERVICE")"
           while IFS= read -r function_name; do
             actual_code_sha="$(aws lambda get-function-configuration \
               --function-name "$function_name" \
@@ -473,7 +488,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          stack_name="\${{ github.event.inputs.service }}-\${{ github.event.inputs.environment }}"
+          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
+          stack_name="$INPUT_SERVICE-$INPUT_ENVIRONMENT"
           stack_status="$(aws cloudformation describe-stacks \
             --stack-name "$stack_name" \
             --query 'Stacks[0].StackStatus' \
@@ -502,19 +519,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "\${{ github.event.inputs.environment }}" = prod ]; then
+          [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
+          [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          if [ "$INPUT_ENVIRONMENT" = prod ]; then
             health_url=https://api.6529.io/health
           else
             health_url=https://api.staging.6529.io/health
           fi
           for attempt in {1..18}; do
             health="$(curl --fail --silent --show-error --max-time 15 "$health_url" || true)"
-            if [ "$(jq -r '.version.commit // ""' <<< "$health")" = "\${{ github.event.inputs.expected_sha }}" ] && [ "$(jq -r '.status // ""' <<< "$health")" = ok ]; then
+            if [ "$(jq -r '.version.commit // ""' <<< "$health")" = "$INPUT_EXPECTED_SHA" ] && [ "$(jq -r '.status // ""' <<< "$health")" = ok ]; then
               exit 0
             fi
             sleep 10
           done
-          echo "API did not report healthy exact commit \${{ github.event.inputs.expected_sha }}" >&2
+          echo "API did not report healthy exact commit $INPUT_EXPECTED_SHA" >&2
           exit 1
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1

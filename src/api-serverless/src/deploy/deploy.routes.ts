@@ -503,31 +503,6 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
       `Release operation is ${operation.status}`
     );
   }
-  if (
-    body.artifact_digest &&
-    !(await releaseBusRepository.bindOperationArtifactDigest(
-      body.operation_key,
-      body.artifact_digest,
-      {}
-    ))
-  ) {
-    throw new CustomApiCompliantException(
-      409,
-      'Release operation is already bound to a different artifact digest'
-    );
-  }
-  if (
-    !(await releaseBusRepository.bindOperationExecutionId(
-      body.operation_key,
-      body.workflow_run_id,
-      {}
-    ))
-  ) {
-    throw new CustomApiCompliantException(
-      409,
-      'A different workflow run already claimed this release operation'
-    );
-  }
   const laneName =
     body.environment === 'prod'
       ? 'global-production'
@@ -543,6 +518,19 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
     throw new CustomApiCompliantException(
       409,
       `${laneName} is not owned by this train`
+    );
+  }
+  if (
+    !(await releaseBusRepository.bindOperationAuthorization(
+      body.operation_key,
+      body.workflow_run_id,
+      body.artifact_digest,
+      {}
+    ))
+  ) {
+    throw new CustomApiCompliantException(
+      409,
+      'A different workflow run or artifact already claimed this release operation'
     );
   }
   setNoStoreHeaders(res);
@@ -574,22 +562,15 @@ deployRoutes.post('/release-bus/authorize-break-glass', async (req, res) => {
     );
   }
   const scope = body.environment === 'prod' ? 'PRODUCTION' : 'STAGING';
-  await releaseBusService.setPaused(
+  const activeTrain = await releaseBusService.pauseForBreakGlass(
     scope,
-    true,
     `Break glass: ${body.reason}`,
     body.actor
-  );
-  const activeTrain = (await releaseBusRepository.listTrains(100, {})).find(
-    (train) =>
-      !['COMPLETED', 'FAILED', 'ROLLED_BACK', 'CANCELLED'].includes(
-        train.status
-      )
   );
   if (activeTrain) {
     throw new CustomApiCompliantException(
       409,
-      `Release train ${activeTrain.id} is still active; the lane was paused but break glass is not yet authorized`
+      `Release train ${activeTrain.id} is still active; break glass was not authorized and the lane was not paused`
     );
   }
   await releaseBusRepository.appendEvent(

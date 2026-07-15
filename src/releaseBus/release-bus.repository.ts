@@ -614,40 +614,26 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async bindOperationArtifactDigest(
-    operationKey: string,
-    artifactDigest: string,
-    ctx: RequestContext
-  ): Promise<boolean> {
-    await this.db.execute(
-      `update ${RELEASE_TRAIN_OPERATIONS_TABLE}
-       set artifact_digest = :artifactDigest, updated_at = :now,
-           row_version = row_version + 1
-       where operation_key = :operationKey
-         and (artifact_digest is null or artifact_digest = :artifactDigest)`,
-      { operationKey, artifactDigest, now: Date.now() },
-      dbOptions(ctx)
-    );
-    const saved = await this.findOperation(operationKey, ctx);
-    return saved?.artifact_digest === artifactDigest;
-  }
-
-  public async bindOperationExecutionId(
+  public async bindOperationAuthorization(
     operationKey: string,
     executionId: string,
+    artifactDigest: string | null,
     ctx: RequestContext
   ): Promise<boolean> {
-    await this.db.execute(
+    const result = await this.db.execute(
       `update ${RELEASE_TRAIN_OPERATIONS_TABLE}
-       set external_id = :executionId, updated_at = :now,
+       set external_id = coalesce(external_id, :executionId),
+           artifact_digest = coalesce(artifact_digest, :artifactDigest),
+           updated_at = :now,
            row_version = row_version + 1
        where operation_key = :operationKey
-         and (external_id is null or external_id = :executionId)`,
-      { operationKey, executionId, now: Date.now() },
+         and status in ('PENDING', 'DISPATCHED', 'RUNNING')
+         and (external_id is null or external_id = :executionId)
+         and (:artifactDigest is null or artifact_digest is null or artifact_digest = :artifactDigest)`,
+      { operationKey, executionId, artifactDigest, now: Date.now() },
       dbOptions(ctx)
     );
-    const saved = await this.findOperation(operationKey, ctx);
-    return saved?.external_id === executionId;
+    return this.db.getAffectedRows(result) === 1;
   }
 
   public async addEvidence(
@@ -713,11 +699,24 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
   }
 
   public async listControls(
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusControlRecord[]> {
     await this.ensureControlRows(ctx);
     return this.db.execute<ReleaseBusControlRecord>(
-      `select * from ${RELEASE_BUS_CONTROLS_TABLE} order by scope`,
+      `select * from ${RELEASE_BUS_CONTROLS_TABLE} order by scope${forUpdate ? ' for update' : ''}`,
+      undefined,
+      dbOptions(ctx)
+    );
+  }
+
+  public async findActiveTrain(
+    ctx: RequestContext
+  ): Promise<ReleaseTrainRecord | null> {
+    return this.db.oneOrNull<ReleaseTrainRecord>(
+      `select * from ${RELEASE_TRAINS_TABLE}
+       where status not in ('COMPLETED', 'FAILED', 'ROLLED_BACK', 'CANCELLED')
+       order by created_at limit 1 for update`,
       undefined,
       dbOptions(ctx)
     );

@@ -223,3 +223,59 @@ describe('ReleaseBusService readiness', () => {
     expect(result.status).toBe('READY_FOR_PRODUCTION');
   });
 });
+
+describe('ReleaseBusService break glass', () => {
+  it('does not pause when a train is active', async () => {
+    const activeTrain = { id: 'active-train' };
+    const setControl = jest.fn();
+    const appendEvent = jest.fn();
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        fn: (value: unknown) => unknown
+      ) => fn({}),
+      listControls: async () => [],
+      findActiveTrain: async () => activeTrain,
+      setControl,
+      appendEvent
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).pauseForBreakGlass(
+        'PRODUCTION',
+        'Emergency deploy',
+        'operator'
+      )
+    ).resolves.toBe(activeTrain);
+    expect(setControl).not.toHaveBeenCalled();
+    expect(appendEvent).not.toHaveBeenCalled();
+  });
+
+  it('pauses and audits atomically when no train is active', async () => {
+    const calls: string[] = [];
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        fn: (value: unknown) => unknown
+      ) => fn({}),
+      listControls: async () => {
+        calls.push('lock-controls');
+        return [];
+      },
+      findActiveTrain: async () => null,
+      setControl: async () => {
+        calls.push('pause');
+      },
+      appendEvent: async () => {
+        calls.push('audit');
+      }
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).pauseForBreakGlass(
+        'STAGING',
+        'Emergency deploy',
+        'operator'
+      )
+    ).resolves.toBeNull();
+    expect(calls).toEqual(['lock-controls', 'pause', 'audit']);
+  });
+});

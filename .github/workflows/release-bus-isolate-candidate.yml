@@ -119,4 +119,6 @@ jobs:
           retention-days: 90
       - name: Return deterministic result
         if: always()
-        run: test '${{ steps.reproduce.outcome }}' = success
+        env:
+          REPRODUCE_OUTCOME: ${{ steps.reproduce.outcome }}
+        run: test "$REPRODUCE_OUTCOME" = success

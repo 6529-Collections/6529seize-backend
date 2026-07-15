@@ -22,7 +22,6 @@ import {
 import type {
   MarkReleaseReadyInput,
   ReleaseCandidateRecord,
-  ReleaseCandidateStatus,
   ReleaseControlScope,
   ReleaseDeployPlan,
   ReleaseLane,
@@ -311,13 +310,15 @@ export class ReleaseBusService {
           );
           const existingIds = existingDependencies
             .map((dependency) => dependency.depends_on_candidate_id)
-            .sort();
+            .sort((left, right) => left.localeCompare(right));
           const requestedIds =
             request.target_lane === 'PRODUCTION' &&
             candidate.status === 'STAGING_VALIDATED' &&
             resolvedCandidateIds.length === 0
               ? existingIds
-              : [...resolvedCandidateIds].sort();
+              : [...resolvedCandidateIds].sort((left, right) =>
+                  left.localeCompare(right)
+                );
           if (JSON.stringify(existingIds) !== JSON.stringify(requestedIds)) {
             throw new Error(
               'Dependencies for a ready candidate are immutable; cancel it before resubmitting'
@@ -570,7 +571,7 @@ export class ReleaseBusService {
     return this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx = { connection };
-        const controls = await this.repository.listControls(ctx);
+        const controls = await this.repository.listControls(ctx, true);
         if (
           controls.some(
             (control) =>
@@ -762,6 +763,33 @@ export class ReleaseBusService {
         payload: { scope, reason }
       },
       {}
+    );
+  }
+
+  public async pauseForBreakGlass(
+    scope: ReleaseControlScope,
+    reason: string,
+    actor: string
+  ): Promise<ReleaseTrainRecord | null> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        // freezeNextTrain takes the same control-row locks before creating a
+        // train, so this check-and-pause cannot race a new train into existence.
+        await this.repository.listControls(ctx, true);
+        const activeTrain = await this.repository.findActiveTrain(ctx);
+        if (activeTrain) return activeTrain;
+        await this.repository.setControl(scope, true, reason, actor, ctx);
+        await this.repository.appendEvent(
+          {
+            eventType: 'BUS_PAUSED',
+            githubActor: actor,
+            payload: { scope, reason }
+          },
+          ctx
+        );
+        return null;
+      }
     );
   }
 

@@ -78,8 +78,12 @@ jobs:
       - name: Package selected units
         env:
           DEPLOY_UNITS: ${{ inputs.deploy_units }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          TRAIN_ID: ${{ inputs.release_train_id }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
           mkdir -p release-bus-artifact/packages
           while IFS= read -r unit; do
             if [ "$unit" = api ]; then
@@ -92,7 +96,7 @@ jobs:
               cp "src/$unit/dist/index.zip" "release-bus-artifact/packages/$unit/index.zip"
             fi
           done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
-          jq -n --arg train_id '${{ inputs.release_train_id }}' --arg source_sha '${{ inputs.expected_sha }}' --argjson units "$DEPLOY_UNITS" '{train_id:$train_id,source_sha:$source_sha,units:$units}' > release-bus-artifact/manifest.json
+          jq -n --arg train_id "$TRAIN_ID" --arg source_sha "$EXPECTED_SHA" --argjson units "$DEPLOY_UNITS" '{train_id:$train_id,source_sha:$source_sha,units:$units}' > release-bus-artifact/manifest.json
           (cd release-bus-artifact && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
       - name: Upload immutable packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
