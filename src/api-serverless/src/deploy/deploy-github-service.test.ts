@@ -68,4 +68,21 @@ describe('GitHubDeployService.listRefs', () => {
       { name: 'v1.0.0', type: 'tag' }
     ]);
   });
+
+  it('keeps the owner separator literal while encoding a PR head branch', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse([
+        { number: 42, html_url: 'https://github.com/example/pull/42' }
+      ]) as never
+    );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.findOpenPullRequest('token', 'backend', 'feature/release bus')
+    ).resolves.toMatchObject({ number: 42 });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toContain(
+      'head=6529-Collections:feature%2Frelease%20bus'
+    );
+  });
 });

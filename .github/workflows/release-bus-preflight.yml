@@ -1,0 +1,107 @@
+name: Release Bus - Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_train_id: { type: string, required: true }
+      release_train_revision: { type: string, required: true }
+      operation_key: { type: string, required: true }
+      target_lane:
+        { type: choice, required: true, options: [STAGING, PRODUCTION] }
+      release_branch: { type: string, required: true }
+      deploy_units: { type: string, required: true }
+      expected_sha: { type: string, required: true }
+
+permissions:
+  contents: read
+
+run-name: Preflight backend train ${{ inputs.release_train_id }} [${{ inputs.operation_key }}]
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Validate and authorize immutable inputs
+        env:
+          DEPLOY_UNITS: ${{ inputs.deploy_units }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          OPERATION_KEY: ${{ inputs.operation_key }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          TARGET_LANE: ${{ inputs.target_lane }}
+          TRAIN_ID: ${{ inputs.release_train_id }}
+          TRAIN_REVISION: ${{ inputs.release_train_revision }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
+          [[ "$TRAIN_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]
+          [[ "$OPERATION_KEY" =~ ^[A-Za-z0-9:._-]{1,180}$ ]]
+          [[ "$TARGET_LANE" =~ ^(STAGING|PRODUCTION)$ ]]
+          [[ "$RELEASE_BRANCH" =~ ^release-bus/(staging|production)-train-[A-Za-z0-9._-]+$ ]]
+          jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and test("^[A-Za-z0-9_-]+$"))' <<< "$DEPLOY_UNITS"
+          payload="$(jq -n --arg train_id "$TRAIN_ID" --arg operation_key "$OPERATION_KEY" --arg workflow_run_id "$GITHUB_RUN_ID" --arg expected_sha "$EXPECTED_SHA" '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:null,repository:"backend",environment:"orchestration",service:null,expected_sha:$expected_sha,artifact_digest:null}')"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$RELEASE_BUS_API_URL/deploy/release-bus/authorize"
+      - name: Check out exact train SHA
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate train and deploy units
+        env:
+          DEPLOY_UNITS: ${{ inputs.deploy_units }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          jq -e 'type == "array" and all(.[]; type == "string")' <<< "$DEPLOY_UNITS"
+          while IFS= read -r unit; do
+            jq -e --arg unit "$unit" '.services | any(.name == $unit)' src/config/deploy-services.json >/dev/null
+          done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint and typecheck
+        run: |
+          npx eslint "src/**/*.ts" --max-warnings=0
+          NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
+      - name: Run backend tests
+        run: npm test -- --runInBand
+      - name: Verify validation did not mutate source
+        run: git diff --exit-code
+      - name: Package selected units
+        env:
+          DEPLOY_UNITS: ${{ inputs.deploy_units }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          TRAIN_ID: ${{ inputs.release_train_id }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
+          mkdir -p release-bus-artifact/packages
+          while IFS= read -r unit; do
+            if [ "$unit" = api ]; then
+              (cd src/api-serverless && npm ci && npm run build)
+              mkdir -p "release-bus-artifact/packages/api"
+              cp src/api-serverless/dist/index.zip "release-bus-artifact/packages/api/index.zip"
+            else
+              (cd "src/$unit" && npm ci && npm run build)
+              mkdir -p "release-bus-artifact/packages/$unit"
+              cp "src/$unit/dist/index.zip" "release-bus-artifact/packages/$unit/index.zip"
+            fi
+          done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
+          jq -n --arg train_id "$TRAIN_ID" --arg source_sha "$EXPECTED_SHA" --argjson units "$DEPLOY_UNITS" '{train_id:$train_id,source_sha:$source_sha,units:$units}' > release-bus-artifact/manifest.json
+          (cd release-bus-artifact && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - name: Upload immutable packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-bus-backend-${{ inputs.release_train_id }}-r${{ inputs.release_train_revision }}
+          path: release-bus-artifact
+          if-no-files-found: error
+          retention-days: 90

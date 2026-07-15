@@ -1062,6 +1062,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
           <h1 class="brand-title">6529 Deploy Console</h1>
         </div>
         <div class="hero-actions">
+          <a class="hero-link" href="/deploy/ui/bus"><span>Release Bus</span></a>
           <a
             class="hero-link"
             href="/health/ui"
@@ -1204,6 +1205,10 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
               <button type="button" class="env-button" data-env-button data-environment="prod">PRODUCTION</button>
             </div>
           </div>
+          <div class="field">
+            <label class="field-label" for="break-glass-reason">Break-glass reason</label>
+            <input id="break-glass-reason" class="input" type="text" maxlength="1000" placeholder="Required after Release Bus enforcement" />
+          </div>
         </div>
 
         <div class="toolbar">
@@ -1268,6 +1273,7 @@ export function renderDeployUiApp(): string {
     document.querySelectorAll('[data-deploy-target]')
   );
   var refInput = document.getElementById('ref-input');
+  var breakGlassReasonInput = document.getElementById('break-glass-reason');
   var refMenu = document.getElementById('ref-menu');
   var quickRefButtons = Array.prototype.slice.call(
     document.querySelectorAll('[data-quick-ref]')
@@ -2072,13 +2078,15 @@ export function renderDeployUiApp(): string {
             ? {
                 target: state.deployTarget,
                 ref: ref,
-                environment: state.environment
+                environment: state.environment,
+                break_glass_reason: breakGlassReasonInput.value.trim()
               }
             : {
                 target: state.deployTarget,
                 ref: ref,
                 environment: state.environment,
-                services: services
+                services: services,
+                break_glass_reason: breakGlassReasonInput.value.trim()
               }
         )
       });
