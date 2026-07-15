@@ -1212,6 +1212,8 @@ export class DropsMappers {
           handle_in_content: it.handle_in_content,
           current_handle: profilesByIds[it.mentioned_profile_id]?.handle ?? null
         })),
+      // Current-content presentation metadata, not the historical audience
+      // notified when the drop was first created.
       mentioned_groups: mentionedGroupsByDropId[dropEntity.id] ?? [],
       metadata: metadata
         .filter((it) => it.drop_id === dropEntity.id)

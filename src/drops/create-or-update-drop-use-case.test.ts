@@ -506,11 +506,8 @@ describe('CreateOrUpdateDropUseCase', () => {
     const warn = jest
       .spyOn(Logger.get('CREATE_OR_UPDATE_DROP_USE_CASE'), 'warn')
       .mockImplementation();
-    jest
-      .spyOn(Time, 'currentMillis')
-      .mockReturnValueOnce(1_000)
-      .mockReturnValueOnce(1_001)
-      .mockReturnValueOnce(301_000);
+    let now = 1_000;
+    jest.spyOn(Time, 'currentMillis').mockImplementation(() => now);
     const useCase = createUseCase({ existingNominations: [] });
     const model = {
       ...createGroupMentionModel(),
@@ -521,6 +518,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       model,
       configuredDeveloperIds: []
     });
+    now = 301_000;
     (useCase as any).warnIfDeveloperMentionHasNoRecipients({
       model,
       configuredDeveloperIds: []
