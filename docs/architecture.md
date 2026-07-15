@@ -124,41 +124,43 @@ flowchart TD
 
 ### Scheduled Lambdas (EventBridge)
 
-| Lambda                               | Purpose                                                           |
-| ------------------------------------ | ----------------------------------------------------------------- |
-| `nftsLoop`                           | Discover, refresh, and audit NFTs.                                |
-| `transactionsLoop`                   | Index MEMES, Gradients, and Meme Lab transfers.                   |
-| `nftOwnersLoop`                      | Maintain current owner balance snapshots.                         |
-| `nftHistoryLoop`                     | Maintain ownership history.                                       |
-| `delegationsLoop`                    | Sync delegation.cash and consolidation data.                      |
-| `nextgenContractLoop`                | Index NextGen contract events.                                    |
-| `nextgenMetadataLoop`                | Refresh NextGen metadata.                                         |
-| `externalCollectionSnapshottingLoop` | Snapshot external collection ownership.                           |
-| `externalCollectionLiveTailingLoop`  | Live-tail external collection transfers.                          |
-| `transactionsProcessingLoop`         | Normalize raw transactions into processed state.                  |
-| `tdhLoop`                            | Calculate TDH and publish TDH completion.                         |
-| `tdhHistoryLoop`                     | Write historical TDH snapshots.                                   |
-| `ownersBalancesLoop`                 | Project owner balance aggregates.                                 |
-| `aggregatedActivityLoop`             | Calculate activity aggregates.                                    |
-| `marketStatsLoop`                    | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.    |
-| `rateEventProcessingLoop`            | Process DB-backed rating events.                                  |
-| `waveDecisionExecutionLoop`          | Execute wave decisions and enqueue claim builds.                  |
-| `waveLeaderboardSnapshotterLoop`     | Snapshot wave leaderboards.                                       |
-| `waveDropMetricsRefreshLoop`         | Scheduled fallback that drains dirty drop metric refresh requests. |
-| `waveScoreRefreshLoop`               | Scheduled fallback that drains dirty Wave Score refresh requests. |
-| `xTdhGrantsReviewerLoop`             | Review xTDH grants.                                               |
-| `subscriptionsDaily`                 | Process daily subscription work.                                  |
-| `subscriptionsTopUpLoop`             | Process subscription top-ups.                                     |
-| `discoverEnsLoop`                    | Discover ENS names.                                               |
-| `refreshEnsLoop`                     | Refresh known ENS names.                                          |
-| `ethPriceLoop`                       | Snapshot ETH price every five minutes.                            |
-| `mintAnnouncementsLoop`              | Publish mint announcements.                                       |
-| `artCurationNftWatchLoop`            | Watch curated NFT state.                                          |
-| `rememesLoop`                        | Refresh rememes S3 files and metadata.                            |
-| `royaltiesLoop`                      | Refresh royalty state.                                            |
-| `dbDumpsDaily`                       | Create daily database dumps.                                      |
-| `nextgenMediaUploader`               | Upload NextGen media.                                             |
-| `nextgenMediaImageResolutions`       | Generate NextGen image resolutions.                               |
+| Lambda                               | Purpose                                                              |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| `nftsLoop`                           | Discover, refresh, and audit NFTs.                                   |
+| `transactionsLoop`                   | Index MEMES, Gradients, and Meme Lab transfers.                      |
+| `nftOwnersLoop`                      | Maintain current owner balance snapshots.                            |
+| `nftHistoryLoop`                     | Maintain ownership history.                                          |
+| `delegationsLoop`                    | Sync delegation.cash and consolidation data.                         |
+| `nextgenContractLoop`                | Index NextGen contract events.                                       |
+| `nextgenMetadataLoop`                | Refresh NextGen metadata.                                            |
+| `externalCollectionSnapshottingLoop` | Snapshot external collection ownership.                              |
+| `externalCollectionLiveTailingLoop`  | Live-tail external collection transfers.                             |
+| `transactionsProcessingLoop`         | Normalize raw transactions into processed state.                     |
+| `tdhLoop`                            | Calculate TDH and publish TDH completion.                            |
+| `tdhHistoryLoop`                     | Write historical TDH snapshots.                                      |
+| `ownersBalancesLoop`                 | Project owner balance aggregates.                                    |
+| `aggregatedActivityLoop`             | Calculate activity aggregates.                                       |
+| `marketStatsLoop`                    | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.       |
+| `rateEventProcessingLoop`            | Process DB-backed rating events.                                     |
+| `waveDecisionExecutionLoop`          | Execute wave decisions and enqueue claim builds.                     |
+| `waveLeaderboardSnapshotterLoop`     | Snapshot wave leaderboards.                                          |
+| `waveDropMetricsRefreshLoop`         | Scheduled fallback that drains dirty drop metric refresh requests.   |
+| `waveScoreRefreshLoop`               | Scheduled fallback that drains dirty Wave Score refresh requests.    |
+| `xTdhGrantsReviewerLoop`             | Review xTDH grants.                                                  |
+| `subscriptionsDaily`                 | Process daily subscription work.                                     |
+| `subscriptionsTopUpLoop`             | Process subscription top-ups.                                        |
+| `discoverEnsLoop`                    | Discover ENS names.                                                  |
+| `refreshEnsLoop`                     | Refresh known ENS names.                                             |
+| `ethPriceLoop`                       | Snapshot ETH price every five minutes.                               |
+| `mintAnnouncementsLoop`              | Publish mint announcements.                                          |
+| `artCurationNftWatchLoop`            | Watch curated NFT state.                                             |
+| `rememesLoop`                        | Refresh rememes S3 files and metadata.                               |
+| `royaltiesLoop`                      | Refresh royalty state.                                               |
+| `dbDumpsDaily`                       | Create daily database dumps.                                         |
+| `nextgenMediaUploader`               | Upload NextGen media.                                                |
+| `nextgenMediaImageResolutions`       | Generate NextGen image resolutions.                                  |
+| `releaseBusStarter`                  | Reconcile queued immutable candidates and start one release train.   |
+| `releaseBusCleaner`                  | Remove expired temporary release branches that no active train owns. |
 
 ### Triggered Lambdas
 
@@ -176,6 +178,7 @@ flowchart TD
 | `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase push notifications.                                                                                        |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` mentions and direct follow-ups to bot replies.                                                           |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Production only: accumulate successful backend service runs by PR, then publish one repository-prompted note per completed PR as `ci6529`. |
+| `releaseBusWorker`               | AWS Standard Step Functions                                                                                                        | Advance and reconcile one durable staging or production release train without waiting inside Lambda.                        |
 | `waveDropMetricsRefreshLoop`      | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                |
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo`; self-queued stats phase                                                  | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
 | `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                        |
@@ -433,6 +436,31 @@ Important details:
 - `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, then stores Arweave transaction ids back on the claim row.
 
 ## Deployment Model
+
+The autonomous Release Bus coordinates frontend and backend staging and
+production. The existing application MySQL database stores immutable
+candidates, cross-repository dependencies, frozen trains, idempotent external
+operations, evidence, global leases, pause controls, and audit events.
+The orchestrator stack runs only in the production AWS region and owns both
+deployment lanes; there is no second staging-region scheduler.
+`releaseBusStarter` runs every minute, reconciles queued branch heads through a
+GitHub App, freezes one dependency-safe batch, and starts a Standard Step
+Functions execution pinned to the published worker Lambda version recorded on
+the train. Trains contain at most 20 candidates by default, bounding isolation
+fan-out while leaving later work queued. `releaseBusWorker` performs one short
+state transition per invocation; Step Functions waits between GitHub workflow polls. GitHub Actions
+builds immutable artifacts and deploys backend services in registry DAG order
+before dependent frontend code. The API's `/deploy/ui/bus` page is the
+readiness queue and pause/resume control plane. Modes `OFF`, `SHADOW`,
+`STAGING`, and `PRODUCTION` permit a backward-compatible rollout.
+Backend units whose registry policy is `production-only` are built and tested
+in preflight but cannot be runtime-deployed to staging; their staging gate is
+the combined application E2E suite plus the immutable artifact evidence. The
+bus never pretends that a staging Lambda deployment occurred for those units.
+
+The independent `releaseNotesGenerationLoop` remains downstream of successful
+production deployment signals; the Release Bus does not call a personal skill
+or publish release notes itself.
 
 Deployment is service-by-service through the generated GitHub Actions workflow. The workflow exposes `api` and each Lambda service as a deploy choice.
 

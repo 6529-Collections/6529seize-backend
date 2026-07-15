@@ -15,13 +15,14 @@ export async function doInDbContext<T>(
     entities?: any[];
     logger?: Logger;
     syncEntities?: boolean;
+    skipRedis?: boolean;
   }
 ): Promise<T> {
   const start = Time.now();
   const logger = opts?.logger ?? Logger.get('MAIN');
   logger.info(`[RUNNING]`);
   await loadEnv(opts?.entities ?? [], opts?.syncEntities ?? false);
-  await initRedis();
+  if (!opts?.skipRedis) await initRedis();
   try {
     return await fn();
   } finally {

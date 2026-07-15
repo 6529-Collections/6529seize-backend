@@ -201,3 +201,13 @@ export const XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX = 'xtdh_token_grant_stats_';
 export const XTDH_TOKEN_STATS_TABLE_PREFIX = 'xtdh_token_stats_';
 export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
+export const RELEASE_READY_DEPLOYMENTS_TABLE = 'release_ready_deployments';
+export const RELEASE_CANDIDATE_DEPENDENCIES_TABLE =
+  'release_candidate_dependencies';
+export const RELEASE_TRAINS_TABLE = 'release_trains';
+export const RELEASE_TRAIN_ITEMS_TABLE = 'release_train_items';
+export const RELEASE_TRAIN_OPERATIONS_TABLE = 'release_train_operations';
+export const RELEASE_TRAIN_EVIDENCE_TABLE = 'release_train_evidence';
+export const RELEASE_DEPLOYMENT_LANES_TABLE = 'release_deployment_lanes';
+export const RELEASE_BUS_CONTROLS_TABLE = 'release_bus_controls';
+export const RELEASE_TRAIN_EVENTS_TABLE = 'release_train_events';

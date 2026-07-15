@@ -58,6 +58,7 @@ import wavesRoutes from './waves/waves.routes';
 import xtdhRoutes from './xtdh/xtdh.routes';
 import nftLinksRoutes from './nft-links/nft-links.routes';
 import ciPipelineAlertRoutes from '@/api/ci-pipeline-alerts/ci-pipeline-alert.routes';
+import { shouldCaptureRawBody } from './raw-body-paths';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
@@ -727,15 +728,7 @@ async function initializeApp() {
       limit: '5mb',
       verify: (req: any, _res: any, buf: Buffer) => {
         // Store raw body only for webhook endpoints that need signature verification
-        const url = (req.url ?? '').split('?')[0];
-        const isCiPipelineAlertsPath =
-          url === '/ci-pipeline-alerts' ||
-          url.startsWith('/ci-pipeline-alerts/');
-        if (
-          url === '/gh-hooks' ||
-          url === '/dev-alerts' ||
-          isCiPipelineAlertsPath
-        ) {
+        if (shouldCaptureRawBody(req.url)) {
           req.rawBody = buf;
         }
       }
