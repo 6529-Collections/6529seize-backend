@@ -55,6 +55,7 @@ function makeAlertRequest(body: Record<string, unknown> = {}) {
     workflow: 'Deploy a service',
     status: 'failure',
     title: 'Backend deploy failed',
+    triggered_by_github_login: 'prxt6529',
     run_id: '123',
     run_url:
       'https://github.com/6529-Collections/6529seize-backend/actions/runs/123',
@@ -103,6 +104,7 @@ const ciPipelineAlertChangedFields = [
   'status',
   'title',
   'description',
+  'triggered_by_github_login',
   'sha',
   'branch',
   'environment',
@@ -115,6 +117,7 @@ const ciPipelineAlertRequestArbitrary = fc
     workflow: alertTextArbitrary,
     status: fc.constantFrom('success' as const, 'failure' as const),
     title: alertTextArbitrary,
+    triggered_by_github_login: alertTextArbitrary,
     run_id: alertTextArbitrary,
     run_number: optionalAlertTextArbitrary,
     run_url: alertTextArbitrary.map(
