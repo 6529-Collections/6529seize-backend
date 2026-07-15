@@ -567,6 +567,9 @@ describe('SubscriptionTests', () => {
         'Subscriptions',
         'warn'
       );
+      expect(mockSendDiscordUpdate.mock.calls[0][1]).toContain(
+        '🚨 No subscription found for airdrop address'
+      );
       expect(waveNotifications).toContainEqual({
         kind: 'no-subscription-found',
         airdropAddress: transaction.to_address,
@@ -628,7 +631,7 @@ describe('SubscriptionTests', () => {
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
         'https://test-discord-webhook',
-        expect.stringContaining('Insufficient balance'),
+        expect.stringContaining('🚨 Insufficient balance'),
         'Subscriptions',
         'error'
       );
@@ -681,7 +684,7 @@ describe('SubscriptionTests', () => {
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
         'https://test-discord-webhook',
-        expect.stringContaining('No balance found'),
+        expect.stringContaining('🚨 No balance found'),
         'Subscriptions',
         'error'
       );

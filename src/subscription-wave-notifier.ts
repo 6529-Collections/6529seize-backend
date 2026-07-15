@@ -110,7 +110,7 @@ export function buildProcessedTopUpWaveMessage({
   hash: string;
   adminHandles: string[];
 }): string {
-  return withMentions(`Top up ${hash} already processed`, adminHandles);
+  return withMentions(`⚠️ Top up ${hash} already processed`, adminHandles);
 }
 
 export function buildSubscriptionTopUpWaveMessage({
@@ -125,7 +125,7 @@ export function buildSubscriptionTopUpWaveMessage({
   profileHandle?: string | null;
 }): string {
   const lines = [
-    `🔝 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`
+    `💰 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`
   ];
   if (profileHandle) {
     lines.push('', `Profile: @[${profileHandle}]`);
@@ -152,7 +152,7 @@ export function buildNoSubscriptionFoundWaveMessage({
 }): string {
   return withMentions(
     [
-      'No subscription found for airdrop address:',
+      '🚨 No subscription found for airdrop address:',
       '',
       airdropAddress,
       '',
@@ -173,7 +173,7 @@ export function buildNoBalanceFoundWaveMessage({
 }): string {
   return withMentions(
     [
-      'No balance found for consolidation key:',
+      '🚨 No balance found for consolidation key:',
       '',
       consolidationKey,
       '',
@@ -194,7 +194,7 @@ export function buildInsufficientBalanceWaveMessage({
 }): string {
   return withMentions(
     [
-      'Insufficient balance for consolidation key:',
+      '🚨 Insufficient balance for consolidation key:',
       '',
       consolidationKey,
       '',
