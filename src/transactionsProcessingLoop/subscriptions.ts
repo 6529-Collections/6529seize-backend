@@ -234,7 +234,7 @@ async function processSubscription(
 
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
-    const message = `No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
+    const message = `🚨 No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
     logger.warn(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -256,7 +256,7 @@ async function processSubscription(
   );
   if (!balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
-    const message = `No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
+    const message = `🚨 No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -275,7 +275,7 @@ async function processSubscription(
     };
   } else if (MEMES_MINT_PRICE > balance.balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
-    const message = `Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
+    const message = `🚨 Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,

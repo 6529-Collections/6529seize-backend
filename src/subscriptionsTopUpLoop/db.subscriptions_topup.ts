@@ -35,7 +35,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
     for (const topUp of topUps) {
       const isProcessed = await isTopUpProcessed(topUp.hash, manager);
       if (isProcessed) {
-        const message = `Top up ${topUp.hash} already processed`;
+        const message = `⚠️ Top up ${topUp.hash} already processed`;
         logger.warn(message);
         await sendDiscordUpdate(
           process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -98,7 +98,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   for (const topUp of processedTopUps) {
     const seizeDomain =
       process.env.NODE_ENV === 'development' ? 'staging.6529' : '6529';
-    let discordMessage = `🔝 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`;
+    let discordMessage = `💰 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`;
     const link = ethTools.toEtherScanTransactionLink(
       parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1'),
       topUp.hash

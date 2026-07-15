@@ -100,7 +100,7 @@ describe('subscription wave notifier message formatting', () => {
         hash: '0xabc',
         adminHandles: ['admin1', 'admin2']
       })
-    ).toBe('Top up 0xabc already processed\n\n@[admin1] @[admin2]');
+    ).toBe('⚠️ Top up 0xabc already processed\n\n@[admin1] @[admin2]');
   });
 
   it('builds normal top-up posts with an optional profile mention', () => {
@@ -116,7 +116,7 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        '🔝 Subscription Top Up of 0.06529 ETH from 0x1234.',
+        '💰 Subscription Top Up of 0.06529 ETH from 0x1234.',
         '',
         'Profile: @[6529er]',
         '',
@@ -137,7 +137,7 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        'No subscription found for airdrop address:',
+        '🚨 No subscription found for airdrop address:',
         '',
         '0xairdrop',
         '',
@@ -154,7 +154,7 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        'No balance found for consolidation key:',
+        '🚨 No balance found for consolidation key:',
         '',
         '0xkey',
         '',
@@ -171,7 +171,7 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        'Insufficient balance for consolidation key:',
+        '🚨 Insufficient balance for consolidation key:',
         '',
         '0xkey',
         '',
