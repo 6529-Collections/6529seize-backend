@@ -13,8 +13,7 @@ on:
       failure_reason: { type: string, required: true }
       expected_sha: { type: string, required: true }
 
-permissions:
-  contents: read
+permissions: {}
 
 run-name: Isolate backend candidate ${{ inputs.candidate_id }} [${{ inputs.operation_key }}]
 
@@ -61,6 +60,8 @@ jobs:
 
   reproduce:
     needs: authorize
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
