@@ -26,6 +26,7 @@ const baseRequest = {
   status: 'failure' as const,
   title: 'Seize PROD WEB DEPLOY: CI pipeline is broken!!!',
   description: 'abc123 - Fix deploy',
+  triggered_by_github_login: 'prxt6529',
   run_id: '12345',
   run_number: '6082',
   run_url:
@@ -57,13 +58,14 @@ describe('CiPipelineAlertService', () => {
     process.env.CI_PIPELINES_PROD_WAVE_ID = 'prod-wave';
     process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
     process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES =
-      '@alice, @[Bob], alice, missing';
+      '@prxt0, @alice, @[Bob], alice, missing';
     dropCreationApiService = {
       createDrop: jest.fn().mockResolvedValue({ id: 'drop-1' }),
       toggleHideLinkPreview: jest.fn().mockResolvedValue({})
     };
     identitiesRepository = {
       getIdsByHandles: jest.fn().mockResolvedValue({
+        prxt0: 'profile-initiator',
         ALICE: 'profile-1',
         Bob: 'profile-2'
       })
@@ -196,6 +198,7 @@ describe('CiPipelineAlertService', () => {
     await service.postAlert(baseRequest, ctx as any);
 
     expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
+      'prxt0',
       'alice',
       'Bob',
       'missing'
@@ -211,6 +214,10 @@ describe('CiPipelineAlertService', () => {
           metadata: [],
           mentioned_users: [
             {
+              mentioned_profile_id: 'profile-initiator',
+              handle_in_content: 'prxt0'
+            },
+            {
               mentioned_profile_id: 'profile-1',
               handle_in_content: 'ALICE'
             },
@@ -223,17 +230,18 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[PROD] Seize PROD WEB DEPLOY: CI pipeline is broken!!! ❌',
+                  '[PROD] Seize PROD WEB DEPLOY: CI pipeline is broken!!! 🚨',
                   '',
                   'abc123 - Fix deploy',
-                  '',
-                  'cc @[ALICE] @[Bob]',
                   '',
                   'Service: Frontend - web',
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
-                  'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+                  'Initiated by: @[prxt0]',
+                  'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)',
+                  '',
+                  'cc @[prxt0] @[ALICE] @[Bob]'
                 ].join('\n')
               )
             })
@@ -249,7 +257,7 @@ describe('CiPipelineAlertService', () => {
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
   });
 
-  it('routes staging successes without resolving or adding mentions', async () => {
+  it('routes staging successes with an initiator mention', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
@@ -265,7 +273,9 @@ describe('CiPipelineAlertService', () => {
       {}
     );
 
-    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
+      'prxt0'
+    ]);
     expect(dropCreationApiService.createDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         hideLinkPreview: true,
@@ -273,7 +283,12 @@ describe('CiPipelineAlertService', () => {
           wave_id: 'staging-wave',
           title: null,
           metadata: [],
-          mentioned_users: [],
+          mentioned_users: [
+            {
+              mentioned_profile_id: 'profile-initiator',
+              handle_in_content: 'prxt0'
+            }
+          ],
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
@@ -286,6 +301,7 @@ describe('CiPipelineAlertService', () => {
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
+                  'Initiated by: @[prxt0]',
                   'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
                 ].join('\n')
               )
@@ -308,6 +324,7 @@ describe('CiPipelineAlertService', () => {
         'Workflow: Web Deploy - PROD',
         'Branch: main',
         'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
+        'Initiated by: @[prxt0]',
         'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
       ].join('\n')
     );
@@ -321,6 +338,73 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).not.toContain('cc @[');
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
+  });
+
+  it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        triggered_by_github_login: 'unknown-user'
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Initiated by: unknown');
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .mentioned_users
+    ).toEqual([]);
+  });
+
+  it('posts with an unknown initiator when the mapped profile is missing', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({});
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert({ ...baseRequest, status: 'success' }, {});
+
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Initiated by: unknown');
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .mentioned_users
+    ).toEqual([]);
+  });
+
+  it('posts with an unknown initiator when actor metadata is absent', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        triggered_by_github_login: null
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Initiated by: unknown');
   });
 
   it('enqueues release-note generation after posting an eligible production success', async () => {
@@ -465,6 +549,7 @@ describe('CiPipelineAlertService', () => {
         'Workflow: Publish',
         'Branch: v0.3.11',
         'Commit: [abc12345](https://github.com/6529-Collections/6529-core/commit/abc1234567890)',
+        'Initiated by: @[prxt0]',
         'Run: [#6082](https://github.com/6529-Collections/6529-core/actions/runs/12345)'
       ].join('\n')
     );
@@ -482,7 +567,7 @@ describe('CiPipelineAlertService', () => {
 
       expect(
         dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest.parts[0].content.startsWith(
-          '[PROD] Web Deploy - PROD ❌'
+          '[PROD] Web Deploy - PROD 🚨'
         )
       ).toBe(true);
     }
@@ -495,7 +580,7 @@ describe('CiPipelineAlertService', () => {
     );
 
     await service.postAlert(
-      { ...baseRequest, title: 'Build succeeded ✅ ❌', status: 'success' },
+      { ...baseRequest, title: 'Build succeeded ✅ ❌ 🚨', status: 'success' },
       {}
     );
 
@@ -503,7 +588,7 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content;
     expect(content.startsWith('[PROD] Build succeeded ✅')).toBe(true);
-    expect(content.startsWith('[PROD] Build succeeded ✅ ❌')).toBe(false);
+    expect(content.startsWith('[PROD] Build succeeded ✅ ❌ 🚨')).toBe(false);
   });
 
   it('preserves the outcome and run metadata when text is long', async () => {
@@ -525,7 +610,7 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content;
     const heading = content.split('\n')[0];
-    expect(heading.endsWith('❌')).toBe(true);
+    expect(heading.endsWith('🚨')).toBe(true);
     expect(heading.length).toBeLessThanOrEqual(250);
     expect(Buffer.from(heading, 'utf8').toString('utf8')).toBe(heading);
     expect(content).toContain(
