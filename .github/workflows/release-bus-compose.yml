@@ -215,6 +215,7 @@ jobs:
           TRAIN_ID: ${{ inputs.release_train_id }}
         run: |
           set -euo pipefail
+          # Keep dispatch inputs in validated environment variables; never interpolate them into shell source.
           [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
           [[ "$OPERATION_KEY" =~ ^[A-Za-z0-9:._-]{1,180}$ ]]

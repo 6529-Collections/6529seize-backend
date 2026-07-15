@@ -616,10 +616,11 @@ export class GitHubDeployService {
   ): Promise<GitHubPullRequest | null> {
     const owner =
       target === 'frontend' ? FRONTEND_DEPLOY_REPO_OWNER : DEPLOY_REPO_OWNER;
+    const head = `${encodeURIComponent(owner)}:${encodeURIComponent(branch)}`;
     const response = await this.api(
       token,
       target,
-      `/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=1`,
+      `/pulls?state=open&head=${head}&per_page=1`,
       { method: 'GET' }
     );
     if (!response.ok) {
