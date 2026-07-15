@@ -1,5 +1,13 @@
-import { ConnectionWrapper } from '@/sql-executor';
+import 'reflect-metadata';
+import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import { MentionAliasesDb } from './mention-aliases.db';
+import { describeWithSeed } from '@/tests/_setup/seed';
+import {
+  anIdentity,
+  aRandomIdentityKey,
+  withIdentities
+} from '@/tests/fixtures/identity.fixture';
+import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
 
 describe('MentionAliasesDb', () => {
   it('preserves target members and fills remaining capacity from a conflicting source alias', async () => {
@@ -138,3 +146,29 @@ describe('MentionAliasesDb', () => {
     ).toBe(25);
   });
 });
+
+const lockOwnerIdentityKey = aRandomIdentityKey();
+const lockOwnerIdentity = anIdentity({}, lockOwnerIdentityKey);
+const lockOwnerProfile = aProfile({
+  external_id: lockOwnerIdentityKey.profile_id,
+  handle: lockOwnerIdentityKey.handle,
+  primary_wallet: lockOwnerIdentityKey.primary_address
+});
+
+describeWithSeed(
+  'MentionAliasesDb lockOwnerProfile',
+  [withIdentities([lockOwnerIdentity]), withProfiles([lockOwnerProfile])],
+  () => {
+    const db = new MentionAliasesDb(() => sqlExecutor);
+
+    it('locks the profile addressed by the authenticated identity profile id', async () => {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await expect(
+            db.lockOwnerProfile(lockOwnerIdentityKey.profile_id, connection)
+          ).resolves.toBe(true);
+        }
+      );
+    });
+  }
+);

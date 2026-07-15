@@ -1326,6 +1326,133 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
+  it('uses wave followers as the bounded contributor audience for a fully open wave', async () => {
+    const userGroupsService = {
+      findIdentityGroupMemberships: jest.fn()
+    };
+    const useCase = createUseCaseWithMocks({ userGroupsService });
+
+    await expect(
+      (useCase as any).resolvePermissionGroupMentionRecipients(
+        {
+          model: {
+            mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+          },
+          wave: {
+            created_by: 'creator',
+            chat_group_id: null,
+            admin_group_id: null,
+            visibility_group_id: null
+          },
+          followerIdentityIds: ['follower-1', 'follower-2']
+        },
+        { timer: undefined, connection: {} }
+      )
+    ).resolves.toEqual(['follower-1', 'follower-2']);
+    expect(
+      userGroupsService.findIdentityGroupMemberships
+    ).not.toHaveBeenCalled();
+  });
+
+  it('removes muted followers from fully open contributor notifications', async () => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'follower-1',
+            subscribed_to_all_drops: false,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'follower-2',
+            subscribed_to_all_drops: false,
+            has_group_mention: false
+          }
+        ]),
+      countWaveSubscribers: jest.fn().mockResolvedValue(20),
+      findMutedWaveReaders: jest.fn().mockResolvedValue(['follower-2'])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: {
+          drop_id: 'drop-1',
+          author_id: 'author-1',
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          id: 'wave-1',
+          created_by: 'author-1',
+          chat_group_id: null,
+          admin_group_id: null,
+          visibility_group_id: null
+        },
+        directlyMentionedIdentityIds: [],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        mentionedIdentityIds: ['follower-1'],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('filters the wave creator and configured developers by wave visibility', async () => {
+    jest.spyOn(env, 'getStringArray').mockReturnValue(['hidden-developer']);
+    jest
+      .spyOn(identitiesDb, 'getIdentitiesByIds')
+      .mockResolvedValue([{ profile_id: 'hidden-developer' }] as any);
+    const userGroupsService = {
+      findIdentityGroupMemberships: jest.fn().mockResolvedValue([])
+    };
+    const useCase = createUseCaseWithMocks({ userGroupsService });
+
+    await expect(
+      (useCase as any).resolvePermissionGroupMentionRecipients(
+        {
+          model: {
+            mentioned_groups: [
+              DropGroupMention.ADMINS,
+              DropGroupMention.DEVS_6529
+            ]
+          },
+          wave: {
+            created_by: 'hidden-creator',
+            chat_group_id: null,
+            admin_group_id: null,
+            visibility_group_id: 'visible'
+          },
+          followerIdentityIds: []
+        },
+        { timer: undefined, connection: {} }
+      )
+    ).resolves.toEqual([]);
+    expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
+      {
+        groupIds: ['visible'],
+        profileIds: ['hidden-developer', 'hidden-creator']
+      },
+      { timer: undefined, connection: {} }
+    );
+  });
+
   it('rejects participatory drops in closed approve waves', async () => {
     const wavesApiDb = {
       countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({

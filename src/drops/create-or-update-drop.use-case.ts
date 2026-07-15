@@ -1892,6 +1892,10 @@ export class CreateOrUpdateDropUseCase {
       ...(model.mentioned_groups.includes(DropGroupMention.ADMINS)
         ? [wave.created_by]
         : []),
+      // An open chat has no finite access group. Wave followers are the
+      // bounded, relevant audience for @contributors; a fully public wave has
+      // no additional visibility eligibility to enforce, and muted readers
+      // are removed before notifications are sent.
       ...(model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS) &&
       wave.chat_group_id === null
         ? followerIdentityIds
@@ -1941,11 +1945,12 @@ export class CreateOrUpdateDropUseCase {
       model,
       configuredDeveloperIds
     });
-    const memberships =
-      await this.userGroupsService.findIdentityGroupMemberships(
-        { groupIds: sourceGroupIds },
-        { timer, connection }
-      );
+    const memberships = sourceGroupIds.length
+      ? await this.userGroupsService.findIdentityGroupMemberships(
+          { groupIds: sourceGroupIds },
+          { timer, connection }
+        )
+      : [];
     const groupMemberships = memberships.reduce((result, membership) => {
       const members = result.get(membership.groupId) ?? new Set<string>();
       members.add(membership.profileId);
@@ -1971,6 +1976,10 @@ export class CreateOrUpdateDropUseCase {
     if (wave.visibility_group_id === null || !candidates.length) {
       return candidates;
     }
+    // Visibility applies uniformly to every permission-derived recipient,
+    // including the wave creator and configured developers. This preserves
+    // the pre-refactor behavior and prevents global mentions exposing profiles
+    // that cannot view the wave.
     const visibleMemberships =
       await this.userGroupsService.findIdentityGroupMemberships(
         {
