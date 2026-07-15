@@ -170,16 +170,25 @@ describeWithSeed(
 
 describe('UserGroupsDb findIdentityGroupMembershipPage', () => {
   it('bounds each query and returns a stable continuation cursor', async () => {
-    const rows = Array.from({ length: 501 }, (_, index) => ({
+    const firstGroupRows = Array.from({ length: 500 }, (_, index) => ({
       group_id: 'group-1',
       profile_id: `profile-${index.toString().padStart(3, '0')}`
     }));
-    const executor = { execute: jest.fn().mockResolvedValue(rows) };
+    const firstRowInSecondGroup = {
+      group_id: 'group-2',
+      profile_id: 'profile-000'
+    };
+    const executor = {
+      execute: jest
+        .fn()
+        .mockResolvedValueOnce([...firstGroupRows, firstRowInSecondGroup])
+        .mockResolvedValueOnce([firstRowInSecondGroup])
+    };
     const repo = new UserGroupsDb(() => executor as never);
 
     const page = await repo.findIdentityGroupMembershipPage(
       {
-        groupIds: ['group-1'],
+        groupIds: ['group-1', 'group-2'],
         after: null
       },
       { timer: undefined }
@@ -192,7 +201,31 @@ describe('UserGroupsDb findIdentityGroupMembershipPage', () => {
     });
     expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining('LIMIT :limit'),
-      { groupIds: ['group-1'], limit: 501 },
+      { groupIds: ['group-1', 'group-2'], limit: 501 },
+      { wrappedConnection: undefined }
+    );
+
+    await expect(
+      repo.findIdentityGroupMembershipPage(
+        {
+          groupIds: ['group-1', 'group-2'],
+          after: page.nextCursor
+        },
+        { timer: undefined }
+      )
+    ).resolves.toEqual({
+      memberships: [{ groupId: 'group-2', profileId: 'profile-000' }],
+      nextCursor: null
+    });
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('ug.id > :afterGroupId'),
+      {
+        groupIds: ['group-1', 'group-2'],
+        afterGroupId: 'group-1',
+        afterProfileId: 'profile-499',
+        limit: 501
+      },
       { wrappedConnection: undefined }
     );
   });

@@ -34,6 +34,8 @@ const MentionAliasInputSchema: Joi.ObjectSchema<ApiMentionAliasRequest> =
       )
       .min(1)
       .max(MAX_MEMBERS_PER_MENTION_ALIAS)
+      .unique()
+      .custom((profileIds: string[]) => new Set(profileIds))
       .required()
   });
 

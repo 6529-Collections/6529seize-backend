@@ -1343,12 +1343,23 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
-  it('uses wave followers as the bounded contributor audience for a fully open wave', async () => {
+  it('treats all eligible followers as contributors when Chat access is Anyone', async () => {
     const userGroupsService = {
       findIdentityGroupMemberships: jest.fn(),
       findIdentityGroupMembershipPage: jest.fn()
     };
     const useCase = createUseCaseWithMocks({ userGroupsService });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: { created_by: 'another-profile', admin_group_id: 'admins' },
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
 
     await expect(
       (useCase as any).resolvePermissionGroupMentionRecipients(

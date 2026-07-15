@@ -1894,10 +1894,10 @@ export class CreateOrUpdateDropUseCase {
       ...(model.mentioned_groups.includes(DropGroupMention.ADMINS)
         ? [wave.created_by]
         : []),
-      // An open chat has no finite access group. Wave followers are the
-      // bounded, relevant audience for @contributors; a fully public wave has
-      // no additional visibility eligibility to enforce, and muted readers
-      // are removed before notifications are sent.
+      // Product rule: when Chat access is Anyone, every wave follower is
+      // allowed to contribute and is therefore in the @contributors audience.
+      // Followers provide the finite, wave-relevant subset of that otherwise
+      // unbounded public audience. Visibility and mute filtering still apply.
       ...(model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS) &&
       wave.chat_group_id === null
         ? followerIdentityIds
