@@ -502,6 +502,21 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it('allows chat participants to invoke @devs6529 like direct developer mentions', () => {
+    const useCase = createUseCase({ existingNominations: [] });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [DropGroupMention.DEVS_6529]
+        },
+        wave: { created_by: 'another-profile', admin_group_id: 'admins' },
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
+  });
+
   it('rate-limits missing developer mention configuration warnings', () => {
     const warn = jest
       .spyOn(Logger.get('CREATE_OR_UPDATE_DROP_USE_CASE'), 'warn')
@@ -1208,7 +1223,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userGroupsService = {
-      findIdentityGroupMemberships: jest.fn()
+      findIdentityGroupMemberships: jest.fn(),
+      findIdentityGroupMembershipPage: jest.fn()
     };
     const userNotifier = {
       notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
@@ -1246,6 +1262,9 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(
       userGroupsService.findIdentityGroupMemberships
     ).not.toHaveBeenCalled();
+    expect(
+      userGroupsService.findIdentityGroupMembershipPage
+    ).not.toHaveBeenCalled();
   });
 
   it('resolves contributors, admins, and configured developers with view access', async () => {
@@ -1259,20 +1278,21 @@ describe('CreateOrUpdateDropUseCase', () => {
         { profile_id: 'hidden-developer' }
       ] as any);
     const userGroupsService = {
-      findIdentityGroupMemberships: jest
-        .fn()
-        .mockResolvedValueOnce([
+      findIdentityGroupMembershipPage: jest.fn().mockResolvedValue({
+        memberships: [
           { groupId: 'chatters', profileId: 'contributor-1' },
           { groupId: 'chatters', profileId: 'hidden-contributor' },
           { groupId: 'admins', profileId: 'admin-1' },
           { groupId: 'admins', profileId: 'hidden-admin' }
-        ])
-        .mockResolvedValueOnce([
-          { groupId: 'visible', profileId: 'contributor-1' },
-          { groupId: 'visible', profileId: 'admin-1' },
-          { groupId: 'visible', profileId: 'creator' },
-          { groupId: 'visible', profileId: 'developer-1' }
-        ])
+        ],
+        nextCursor: null
+      }),
+      findIdentityGroupMemberships: jest.fn().mockResolvedValue([
+        { groupId: 'visible', profileId: 'contributor-1' },
+        { groupId: 'visible', profileId: 'admin-1' },
+        { groupId: 'visible', profileId: 'creator' },
+        { groupId: 'visible', profileId: 'developer-1' }
+      ])
     };
     const useCase = createUseCaseWithMocks({ userGroupsService });
 
@@ -1298,16 +1318,15 @@ describe('CreateOrUpdateDropUseCase', () => {
       )
     ).resolves.toEqual(['contributor-1', 'admin-1', 'developer-1', 'creator']);
     expect(
-      userGroupsService.findIdentityGroupMemberships
-    ).toHaveBeenNthCalledWith(
-      1,
-      { groupIds: ['chatters', 'admins'] },
+      userGroupsService.findIdentityGroupMembershipPage
+    ).toHaveBeenCalledWith(
+      {
+        groupIds: ['chatters', 'admins'],
+        after: null
+      },
       { timer: undefined, connection: {} }
     );
-    expect(
-      userGroupsService.findIdentityGroupMemberships
-    ).toHaveBeenNthCalledWith(
-      2,
+    expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
       {
         groupIds: ['visible'],
         profileIds: [
@@ -1326,7 +1345,8 @@ describe('CreateOrUpdateDropUseCase', () => {
 
   it('uses wave followers as the bounded contributor audience for a fully open wave', async () => {
     const userGroupsService = {
-      findIdentityGroupMemberships: jest.fn()
+      findIdentityGroupMemberships: jest.fn(),
+      findIdentityGroupMembershipPage: jest.fn()
     };
     const useCase = createUseCaseWithMocks({ userGroupsService });
 
@@ -1349,6 +1369,9 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).resolves.toEqual(['follower-1', 'follower-2']);
     expect(
       userGroupsService.findIdentityGroupMemberships
+    ).not.toHaveBeenCalled();
+    expect(
+      userGroupsService.findIdentityGroupMembershipPage
     ).not.toHaveBeenCalled();
   });
 

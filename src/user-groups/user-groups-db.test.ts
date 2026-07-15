@@ -141,5 +141,59 @@ describeWithSeed(
         )
       ).resolves.toEqual([]);
     });
+
+    it('returns complete group membership through the bounded page API', async () => {
+      await expect(
+        repo.findIdentityGroupMembershipPage(
+          {
+            groupIds: [membershipGroup.id],
+            after: null
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        memberships: [
+          {
+            groupId: membershipGroup.id,
+            profileId: 'candidate-profile'
+          },
+          {
+            groupId: membershipGroup.id,
+            profileId: 'unrelated-profile'
+          }
+        ],
+        nextCursor: null
+      });
+    });
   }
 );
+
+describe('UserGroupsDb findIdentityGroupMembershipPage', () => {
+  it('bounds each query and returns a stable continuation cursor', async () => {
+    const rows = Array.from({ length: 501 }, (_, index) => ({
+      group_id: 'group-1',
+      profile_id: `profile-${index.toString().padStart(3, '0')}`
+    }));
+    const executor = { execute: jest.fn().mockResolvedValue(rows) };
+    const repo = new UserGroupsDb(() => executor as never);
+
+    const page = await repo.findIdentityGroupMembershipPage(
+      {
+        groupIds: ['group-1'],
+        after: null
+      },
+      { timer: undefined }
+    );
+
+    expect(page.memberships).toHaveLength(500);
+    expect(page.nextCursor).toEqual({
+      groupId: 'group-1',
+      profileId: 'profile-499'
+    });
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('LIMIT :limit'),
+      { groupIds: ['group-1'], limit: 501 },
+      { wrappedConnection: undefined }
+    );
+  });
+});

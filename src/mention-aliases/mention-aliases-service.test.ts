@@ -11,7 +11,7 @@ function createDb() {
       lockOwnerProfile: jest.fn().mockResolvedValue(true),
       countByOwner: jest.fn().mockResolvedValue(0),
       normalizedAliasExists: jest.fn().mockResolvedValue(false),
-      findExistingProfileIds: jest.fn().mockResolvedValue(['profile-2']),
+      findMentionableProfileIds: jest.fn().mockResolvedValue(['profile-2']),
       insertAlias: jest.fn().mockResolvedValue(undefined),
       replaceMembers: jest.fn().mockResolvedValue(undefined),
       findOwnedAlias: jest
@@ -97,6 +97,21 @@ describe('MentionAliasesService', () => {
         member_profile_ids: ['profile-2']
       })
     ).rejects.toThrow('You already have a @frens mention shortcut.');
+  });
+
+  it('rejects profiles that cannot be rendered as mentions', async () => {
+    const { db } = createDb();
+    db.findMentionableProfileIds.mockResolvedValue([]);
+    const service = new MentionAliasesService(db as any);
+
+    await expect(
+      service.create('owner-1', {
+        alias: 'frens',
+        member_profile_ids: ['profile-without-handle']
+      })
+    ).rejects.toThrow(
+      'One or more mention shortcut profiles no longer exist or do not have a handle.'
+    );
   });
 
   it('translates a concurrent duplicate insert into a bad request', async () => {

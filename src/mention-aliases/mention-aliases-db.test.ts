@@ -10,6 +10,43 @@ import {
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
 
 describe('MentionAliasesDb', () => {
+  it('only returns alias members that have renderable handles', async () => {
+    const executor = {
+      execute: jest
+        .fn()
+        .mockResolvedValueOnce([{ id: 'alias-1', alias: 'frens' }])
+        .mockResolvedValueOnce([])
+    };
+    const db = new MentionAliasesDb(() => executor as never);
+
+    await expect(db.findByOwner('owner-1')).resolves.toEqual([
+      { id: 'alias-1', alias: 'frens', members: [] }
+    ]);
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('and i.handle is not null'),
+      { aliasIds: ['alias-1'] },
+      undefined
+    );
+  });
+
+  it('only validates profiles that have renderable handles', async () => {
+    const connection = { connection: {} } as ConnectionWrapper<any>;
+    const executor = {
+      execute: jest.fn().mockResolvedValue([{ profile_id: 'profile-1' }])
+    };
+    const db = new MentionAliasesDb(() => executor as never);
+
+    await expect(
+      db.findMentionableProfileIds(['profile-1'], connection)
+    ).resolves.toEqual(['profile-1']);
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('and handle is not null'),
+      { profileIds: ['profile-1'] },
+      { wrappedConnection: connection }
+    );
+  });
+
   it('preserves target members and fills remaining capacity from a conflicting source alias', async () => {
     const connection = { connection: {} } as ConnectionWrapper<any>;
     const targetMembers = Array.from({ length: 24 }, (_, index) => ({

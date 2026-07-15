@@ -21,7 +21,12 @@ import {
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
-import { userGroupsDb, UserGroupsDb } from '@/user-groups/user-groups.db';
+import {
+  type IdentityGroupMembership,
+  type IdentityGroupMembershipPage,
+  userGroupsDb,
+  UserGroupsDb
+} from '@/user-groups/user-groups.db';
 import slugify from 'slugify';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -2386,10 +2391,23 @@ export class UserGroupsService {
   }
 
   async findIdentityGroupMemberships(
-    filters: { groupIds: string[]; profileIds?: string[] },
+    filters: { groupIds: string[]; profileIds: string[] },
     ctx: RequestContext
-  ): Promise<{ groupId: string; profileId: string }[]> {
+  ): Promise<IdentityGroupMembership[]> {
     return await this.userGroupsDb.findIdentityGroupMemberships(filters, ctx);
+  }
+
+  async findIdentityGroupMembershipPage(
+    filters: {
+      groupIds: string[];
+      after: IdentityGroupMembership | null;
+    },
+    ctx: RequestContext
+  ): Promise<IdentityGroupMembershipPage> {
+    return await this.userGroupsDb.findIdentityGroupMembershipPage(
+      filters,
+      ctx
+    );
   }
 
   private getIdentitySideTdhPart(

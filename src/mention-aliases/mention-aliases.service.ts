@@ -190,7 +190,7 @@ export class MentionAliasesService {
         excludedAliasId,
         connection
       ),
-      this.db.findExistingProfileIds(memberProfileIds, connection)
+      this.db.findMentionableProfileIds(memberProfileIds, connection)
     ]);
     if (duplicate) {
       throw new BadRequestException(
@@ -199,7 +199,7 @@ export class MentionAliasesService {
     }
     if (existingProfileIds.length !== memberProfileIds.length) {
       throw new BadRequestException(
-        'One or more mention shortcut profiles no longer exist.'
+        'One or more mention shortcut profiles no longer exist or do not have a handle.'
       );
     }
   }

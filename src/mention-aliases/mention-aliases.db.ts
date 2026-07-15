@@ -54,6 +54,7 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
        from ${MENTION_ALIAS_MEMBERS_TABLE} m
        join ${IDENTITIES_TABLE} i on i.profile_id = m.member_profile_id
        where m.alias_id in (:aliasIds)
+         and i.handle is not null
        order by m.alias_id asc, m.position asc`,
       { aliasIds: aliases.map((alias) => alias.id) },
       options
@@ -139,7 +140,7 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
       .then(Boolean);
   }
 
-  async findExistingProfileIds(
+  async findMentionableProfileIds(
     profileIds: string[],
     connection: ConnectionWrapper<any>
   ): Promise<string[]> {
@@ -147,7 +148,8 @@ export class MentionAliasesDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<{ profile_id: string }>(
         `select profile_id from ${IDENTITIES_TABLE}
-         where profile_id in (:profileIds)`,
+         where profile_id in (:profileIds)
+           and handle is not null`,
         { profileIds },
         { wrappedConnection: connection }
       )

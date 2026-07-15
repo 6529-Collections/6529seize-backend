@@ -1834,7 +1834,9 @@ export class CreateOrUpdateDropUseCase {
     }
     // Contributors, admins, and developers are convenience expansions. Anyone
     // with chat access could mention the same profiles individually, so only
-    // @all retains the wave creator/admin restriction.
+    // @all retains the wave creator/admin restriction. In particular,
+    // @devs6529 is intentionally available to every chat participant: it is a
+    // shorter, more reliable form of directly mentioning the configured team.
     const isCreator = wave.created_by === this.getRequiredAuthorId(model);
     const isAdmin =
       wave.admin_group_id !== null &&
@@ -1945,18 +1947,13 @@ export class CreateOrUpdateDropUseCase {
       model,
       configuredDeveloperIds
     });
-    const memberships = sourceGroupIds.length
-      ? await this.userGroupsService.findIdentityGroupMemberships(
-          { groupIds: sourceGroupIds },
-          { timer, connection }
-        )
-      : [];
-    const groupMemberships = memberships.reduce((result, membership) => {
-      const members = result.get(membership.groupId) ?? new Set<string>();
-      members.add(membership.profileId);
-      result.set(membership.groupId, members);
-      return result;
-    }, new Map<string, Set<string>>());
+    const groupMemberships = await this.findPermissionMentionGroupMemberships(
+      sourceGroupIds,
+      {
+        timer,
+        connection
+      }
+    );
     const existingConfiguredDeveloperIds = configuredDeveloperIds.length
       ? await identitiesDb
           .getIdentitiesByIds(configuredDeveloperIds, connection)
@@ -2016,6 +2013,31 @@ export class CreateOrUpdateDropUseCase {
     logger.warn(
       '[@devs6529 is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]'
     );
+  }
+
+  private async findPermissionMentionGroupMemberships(
+    groupIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<Map<string, Set<string>>> {
+    const result = new Map<string, Set<string>>();
+    if (!groupIds.length) {
+      return result;
+    }
+
+    let cursor: { groupId: string; profileId: string } | null = null;
+    do {
+      const page = await this.userGroupsService.findIdentityGroupMembershipPage(
+        { groupIds, after: cursor },
+        { timer, connection }
+      );
+      for (const membership of page.memberships) {
+        const members = result.get(membership.groupId) ?? new Set<string>();
+        members.add(membership.profileId);
+        result.set(membership.groupId, members);
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+    return result;
   }
 
   private async recordQuoteNotifications(

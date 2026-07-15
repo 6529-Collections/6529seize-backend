@@ -39,6 +39,18 @@ export interface BeneficiaryGrantGroupCriteria {
   readonly matchMode: GroupBeneficiaryGrantMatchMode;
 }
 
+export interface IdentityGroupMembership {
+  readonly groupId: string;
+  readonly profileId: string;
+}
+
+export interface IdentityGroupMembershipPage {
+  readonly memberships: IdentityGroupMembership[];
+  readonly nextCursor: IdentityGroupMembership | null;
+}
+
+const IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE = 500;
+
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async save(
     entity: Omit<UserGroupEntity, 'is_pure_profile_group'>,
@@ -834,10 +846,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   }
 
   async findIdentityGroupMemberships(
-    { groupIds, profileIds }: { groupIds: string[]; profileIds?: string[] },
+    { groupIds, profileIds }: { groupIds: string[]; profileIds: string[] },
     ctx: RequestContext
-  ): Promise<{ groupId: string; profileId: string }[]> {
-    if (!groupIds.length || profileIds?.length === 0) {
+  ): Promise<IdentityGroupMembership[]> {
+    if (!groupIds.length || !profileIds.length) {
       return [];
     }
 
@@ -851,7 +863,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           FROM ${PROFILE_GROUPS_TABLE} pg
           JOIN ${USER_GROUPS_TABLE} ug ON pg.profile_group_id = ug.profile_group_id
           WHERE ug.id IN (:groupIds)
-          ${profileIds ? 'AND pg.profile_id IN (:profileIds)' : ''}
+            AND pg.profile_id IN (:profileIds)
       `,
           { groupIds, profileIds },
           { wrappedConnection: ctx.connection }
@@ -859,6 +871,71 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         .then((res) =>
           res.map((it) => ({ groupId: it.group_id, profileId: it.profile_id }))
         );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  async findIdentityGroupMembershipPage(
+    {
+      groupIds,
+      after
+    }: {
+      groupIds: string[];
+      after: IdentityGroupMembership | null;
+    },
+    ctx: RequestContext
+  ): Promise<IdentityGroupMembershipPage> {
+    if (!groupIds.length) {
+      return { memberships: [], nextCursor: null };
+    }
+
+    const timerName = `${this.constructor.name}->findIdentityGroupMembershipPage`;
+    try {
+      ctx.timer?.start(timerName);
+      const rows = await this.db.execute<{
+        group_id: string;
+        profile_id: string;
+      }>(
+        `
+          SELECT DISTINCT ug.id AS group_id, pg.profile_id
+          FROM ${PROFILE_GROUPS_TABLE} pg
+          JOIN ${USER_GROUPS_TABLE} ug ON pg.profile_group_id = ug.profile_group_id
+          WHERE ug.id IN (:groupIds)
+          ${
+            after
+              ? `AND (
+                   ug.id > :afterGroupId
+                   OR (ug.id = :afterGroupId AND pg.profile_id > :afterProfileId)
+                 )`
+              : ''
+          }
+          ORDER BY ug.id ASC, pg.profile_id ASC
+          LIMIT :limit
+      `,
+        {
+          groupIds,
+          ...(after
+            ? {
+                afterGroupId: after.groupId,
+                afterProfileId: after.profileId
+              }
+            : {}),
+          limit: IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE + 1
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      const hasNextPage = rows.length > IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE;
+      const memberships = rows
+        .slice(0, IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE)
+        .map((row) => ({
+          groupId: row.group_id,
+          profileId: row.profile_id
+        }));
+      return {
+        memberships,
+        nextCursor: hasNextPage ? (memberships.at(-1) ?? null) : null
+      };
     } finally {
       ctx.timer?.stop(timerName);
     }
