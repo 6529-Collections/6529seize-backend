@@ -16,6 +16,8 @@ import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
 import { env } from '@/env';
 import { profilesService } from '@/profiles/profiles.service';
 import { CLOUDFRONT_LINK } from '@/constants';
+import { Logger } from '@/logging';
+import { Time } from '@/time';
 import {
   CreateOrUpdateDropUseCase,
   normalizeDropGroupMentions,
@@ -478,6 +480,37 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
+  });
+
+  it('rate-limits missing developer mention configuration warnings', () => {
+    const warn = jest
+      .spyOn(Logger.get('CREATE_OR_UPDATE_DROP_USE_CASE'), 'warn')
+      .mockImplementation();
+    jest
+      .spyOn(Time, 'currentMillis')
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_001)
+      .mockReturnValueOnce(301_000);
+    const useCase = createUseCase({ existingNominations: [] });
+    const model = {
+      ...createGroupMentionModel(),
+      mentioned_groups: [DropGroupMention.DEVS_6529]
+    };
+
+    (useCase as any).warnIfDeveloperMentionHasNoRecipients({
+      model,
+      configuredDeveloperIds: []
+    });
+    (useCase as any).warnIfDeveloperMentionHasNoRecipients({
+      model,
+      configuredDeveloperIds: []
+    });
+    (useCase as any).warnIfDeveloperMentionHasNoRecipients({
+      model,
+      configuredDeveloperIds: []
+    });
+
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 
   it('normalizes group mention metadata idempotently', () => {
@@ -1146,7 +1179,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
-  it('does not resend permission-group mentions when editing a drop', async () => {
+  it('does not resend any group mentions when editing a drop', async () => {
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
@@ -1171,11 +1204,11 @@ describe('CreateOrUpdateDropUseCase', () => {
         model: {
           drop_id: 'drop-1',
           author_id: 'author-1',
-          mentioned_groups: [DropGroupMention.ADMINS]
+          mentioned_groups: [DropGroupMention.ALL, DropGroupMention.ADMINS]
         },
         wave: { id: 'wave-1', visibility_group_id: null },
         directlyMentionedIdentityIds: [],
-        permissionGroupMentionsEnabled: false
+        groupMentionNotificationsEnabled: false
       },
       { connection: {} }
     );

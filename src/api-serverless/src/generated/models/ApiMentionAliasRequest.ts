@@ -14,8 +14,8 @@ import { HttpFile } from '../http/http';
 
 export class ApiMentionAliasRequest {
     /**
-     * Up to 15 alias characters, optionally prefixed with @.
-     */
+    * Up to 15 alias characters, optionally prefixed with @.
+    */
     'alias': string;
     'member_profile_ids': Set<string>;
 

@@ -104,20 +104,32 @@ const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
 const ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
 const logger = Logger.get('CREATE_OR_UPDATE_DROP_USE_CASE');
-let warnedAboutMissingDeveloperMentionIds = false;
+const MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS = 5 * 60 * 1000;
 const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
   [DropGroupMention.CONTRIBUTORS]: 'contributors',
   [DropGroupMention.ADMINS]: 'admins',
   [DropGroupMention.DEVS_6529]: 'devs6529'
 };
-const GROUP_MENTION_PATTERNS: Readonly<Record<DropGroupMention, RegExp>> =
-  Object.fromEntries(
-    Object.entries(GROUP_MENTION_TOKENS).map(([group, token]) => [
-      group,
-      new RegExp(`(^|[^a-z0-9_@])@${token}(?![a-z0-9_@])`, 'i')
-    ])
-  ) as Readonly<Record<DropGroupMention, RegExp>>;
+
+function createGroupMentionPattern(token: string): RegExp {
+  return new RegExp(`(^|[^a-z0-9_@])@${token}(?![a-z0-9_@])`, 'i');
+}
+
+const GROUP_MENTION_PATTERNS: Readonly<Record<DropGroupMention, RegExp>> = {
+  [DropGroupMention.ALL]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.ALL]
+  ),
+  [DropGroupMention.CONTRIBUTORS]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.CONTRIBUTORS]
+  ),
+  [DropGroupMention.ADMINS]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.ADMINS]
+  ),
+  [DropGroupMention.DEVS_6529]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.DEVS_6529]
+  )
+};
 
 function hasGroupMentionToken(
   content: string | null,
@@ -223,6 +235,8 @@ export function sanitizeDropStructuredFields(
 }
 
 export class CreateOrUpdateDropUseCase {
+  private nextMissingDeveloperMentionWarningAt = 0;
+
   public constructor(
     private readonly dropsDb: DropsDb,
     private readonly dropVotingDb: DropVotingDb,
@@ -1729,7 +1743,9 @@ export class CreateOrUpdateDropUseCase {
         model,
         wave,
         directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds,
-        permissionGroupMentionsEnabled: updatedAt === null
+        // Group mention notifications, including @all, are create-only so an
+        // edit cannot resend a wave-wide or permission-derived notification.
+        groupMentionNotificationsEnabled: updatedAt === null
       },
       { timer, connection }
     );
@@ -1811,6 +1827,9 @@ export class CreateOrUpdateDropUseCase {
     if (!model.mentioned_groups.length) {
       return;
     }
+    // Contributors, admins, and developers are convenience expansions. Anyone
+    // with chat access could mention the same profiles individually, so only
+    // @all retains the wave creator/admin restriction.
     const isCreator = wave.created_by === this.getRequiredAuthorId(model);
     const isAdmin =
       wave.admin_group_id !== null &&
@@ -1940,16 +1959,10 @@ export class CreateOrUpdateDropUseCase {
             .filter(Boolean)
         )
       : [];
-    if (
-      model.mentioned_groups.includes(DropGroupMention.DEVS_6529) &&
-      !configuredDeveloperIds.length &&
-      !warnedAboutMissingDeveloperMentionIds
-    ) {
-      warnedAboutMissingDeveloperMentionIds = true;
-      logger.warn(
-        '[@devs6529 is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]'
-      );
-    }
+    this.warnIfDeveloperMentionHasNoRecipients({
+      model,
+      configuredDeveloperIds
+    });
     const memberships =
       await this.userGroupsService.findIdentityGroupMemberships(groupIds, {
         timer,
@@ -1986,6 +1999,30 @@ export class CreateOrUpdateDropUseCase {
         groupMemberships,
         configuredDeveloperIds: configuredDeveloperIdSet
       })
+    );
+  }
+
+  private warnIfDeveloperMentionHasNoRecipients({
+    model,
+    configuredDeveloperIds
+  }: {
+    model: CreateOrUpdateDropModel;
+    configuredDeveloperIds: string[];
+  }): void {
+    if (
+      !model.mentioned_groups.includes(DropGroupMention.DEVS_6529) ||
+      configuredDeveloperIds.length
+    ) {
+      return;
+    }
+    const now = Time.currentMillis();
+    if (now < this.nextMissingDeveloperMentionWarningAt) {
+      return;
+    }
+    this.nextMissingDeveloperMentionWarningAt =
+      now + MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS;
+    logger.warn(
+      '[@devs6529 is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]'
     );
   }
 
@@ -2125,19 +2162,19 @@ export class CreateOrUpdateDropUseCase {
       model,
       wave,
       directlyMentionedIdentityIds,
-      permissionGroupMentionsEnabled = true
+      groupMentionNotificationsEnabled = true
     }: {
       model: CreateOrUpdateDropModel;
       wave: WaveEntity;
       directlyMentionedIdentityIds: string[];
-      permissionGroupMentionsEnabled?: boolean;
+      groupMentionNotificationsEnabled?: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
-    const notificationMentionedGroups = permissionGroupMentionsEnabled
+    const notificationMentionedGroups = groupMentionNotificationsEnabled
       ? model.mentioned_groups
       : [];
     const [followerRecipients, waveSubscribersCount] = await Promise.all([
