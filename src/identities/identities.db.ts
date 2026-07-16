@@ -607,9 +607,9 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           select
             i.profile_id as id,
             i.handle,
-            coalesce(cwt.consolidation_display, i.primary_address) as display,
+            cwt.consolidation_display as display,
             i.pfp
-          from ${IDENTITIES_TABLE} i
+          from ${IDENTITIES_TABLE} i force index (identity_normalised_handle_idx)
           ${eligibilityJoin}
           left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
             on cwt.consolidation_key = i.consolidation_key

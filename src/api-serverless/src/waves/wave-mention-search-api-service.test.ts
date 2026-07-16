@@ -88,13 +88,19 @@ describe('WaveMentionSearchApiService', () => {
     );
   });
 
-  it('does not search when the wave is not visible to the caller', async () => {
+  it('returns 404 without searching when an anonymous caller cannot read a private wave', async () => {
     findWavesByIds.mockResolvedValue([]);
 
     await expect(
       service.search({ waveId: 'private-wave', handle: 'ali', limit: 5 }, {})
     ).rejects.toThrow(NotFoundException);
 
+    expect(getGroupsUserIsEligibleFor).not.toHaveBeenCalled();
+    expect(findWavesByIds).toHaveBeenCalledWith(
+      ['private-wave'],
+      [],
+      undefined
+    );
     expect(getSqlAndParamsByGroupId).not.toHaveBeenCalled();
     expect(searchWaveMentionCandidates).not.toHaveBeenCalled();
   });
