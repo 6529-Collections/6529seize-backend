@@ -276,6 +276,7 @@ export class AppWebSockets {
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       ctx
     );
+    await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
   }
 
   async syncNotificationIdentities(
@@ -290,6 +291,7 @@ export class AppWebSockets {
       authenticatedSubscriptions,
       ctx
     );
+    await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
     return authenticatedSubscriptions.map(({ identityId }) => identityId);
   }
 }

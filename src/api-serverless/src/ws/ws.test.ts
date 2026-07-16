@@ -132,6 +132,39 @@ describe('authenticateWebSocketJwtOrGetByConnectionId', () => {
   });
 });
 
+describe('AppWebSockets notification subscription maintenance', () => {
+  it('samples stale cleanup after identity authentication and resync', async () => {
+    const repository = {
+      updateIdentityForConnection: jest.fn().mockResolvedValue(undefined),
+      replaceNotificationSubscriptions: jest.fn().mockResolvedValue(undefined),
+      maybeCleanupStaleNotificationSubscriptions: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const sockets = new AppWebSockets(
+      repository as unknown as WsConnectionRepository
+    );
+
+    await sockets.authenticateConnection(
+      {
+        connectionId: 'connection-1',
+        identityId: 'profile-1',
+        jwtExpiry: 123
+      },
+      {}
+    );
+    await sockets.syncNotificationIdentities(
+      'connection-1',
+      [{ identityId: 'profile-2', jwtExpiry: 456 }],
+      {}
+    );
+
+    expect(
+      repository.maybeCleanupStaleNotificationSubscriptions
+    ).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('AppWebSockets.send', () => {
   const originalNodeEnv = process.env.NODE_ENV;
 
