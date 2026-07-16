@@ -48,4 +48,13 @@ describe('redactWebSocketMessageForLog', () => {
       }
     ]);
   });
+
+  it('does not log notification identity bearer tokens', () => {
+    expect(
+      redactWebSocketMessageForLog({
+        type: WsMessageType.SYNC_NOTIFICATION_IDENTITIES,
+        access_tokens: ['primary-jwt', 'secondary-jwt']
+      })
+    ).toEqual({ type: WsMessageType.SYNC_NOTIFICATION_IDENTITIES });
+  });
 });

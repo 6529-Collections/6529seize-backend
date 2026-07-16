@@ -3,7 +3,8 @@ import {
   IDENTITIES_TABLE,
   TDH_NFT_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
-  WAVES_TABLE
+  WAVES_TABLE,
+  WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { CustomApiCompliantException } from '@/exceptions';
@@ -13,6 +14,108 @@ import { WsConnectionRepository } from './ws-connection.repository';
 describe('WsConnectionRepository', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('replaces the notification identities owned by a connection', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const transactionConnection = { connection: {} };
+    const executeNativeQueriesInTransaction = jest.fn(async (callback) =>
+      callback(transactionConnection)
+    );
+    const repo = new WsConnectionRepository(
+      () => ({ execute, executeNativeQueriesInTransaction }) as any,
+      {} as any
+    );
+
+    await repo.replaceNotificationSubscriptions(
+      'connection-1',
+      [
+        { identityId: 'profile-1', jwtExpiry: 123 },
+        { identityId: 'profile-2', jwtExpiry: 456 }
+      ],
+      {}
+    );
+
+    expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0][0]).toContain(
+      `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[0][2]).toEqual({
+      wrappedConnection: transactionConnection
+    });
+    expect(execute.mock.calls[1][0]).toContain(
+      `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[1][0]).toContain(
+      '(:connectionId, :identityId0, :jwtExpiry0), (:connectionId, :identityId1, :jwtExpiry1)'
+    );
+    expect(execute.mock.calls[1][1]).toEqual({
+      connectionId: 'connection-1',
+      identityId0: 'profile-1',
+      jwtExpiry0: 123,
+      identityId1: 'profile-2',
+      jwtExpiry1: 456
+    });
+    expect(execute.mock.calls[1][2]).toEqual({
+      wrappedConnection: transactionConnection
+    });
+  });
+
+  it('runs bounded deterministic stale cleanup only for sampled connections', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new WsConnectionRepository(
+      () => ({ execute }) as any,
+      {} as any
+    );
+    jest.spyOn(Math, 'random').mockReturnValueOnce(0.5).mockReturnValueOnce(0);
+
+    await repo.maybeCleanupStaleNotificationSubscriptions();
+    expect(execute).not.toHaveBeenCalled();
+
+    await repo.maybeCleanupStaleNotificationSubscriptions();
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0][0]).toContain(
+      'where jwt_expiry <= unix_timestamp()'
+    );
+    expect(execute.mock.calls[0][0]).toContain('order by jwt_expiry asc');
+    expect(execute.mock.calls[0][0]).toContain('limit 1000');
+    expect(execute.mock.calls[1][0]).toContain('where not exists');
+    expect(execute.mock.calls[1][0]).toContain(
+      'order by connection_id, identity_id'
+    );
+    expect(execute.mock.calls[1][0]).toContain('limit 1000');
+  });
+
+  it('finds active primary and extra-account notification subscriptions', async () => {
+    const execute = jest
+      .fn()
+      .mockResolvedValue([
+        { connection_id: 'connection-1', identity_id: 'profile-1' }
+      ]);
+    const repo = new WsConnectionRepository(
+      () => ({ execute }) as any,
+      {} as any
+    );
+
+    await expect(
+      repo.findNotificationConnectionIdsByIdentityIds([
+        'profile-1',
+        'profile-1'
+      ])
+    ).resolves.toEqual([
+      { connectionId: 'connection-1', identityId: 'profile-1' }
+    ]);
+
+    expect(execute.mock.calls[0][0]).toContain(
+      `from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[0][0]).toContain(
+      'subscriptions.jwt_expiry > unix_timestamp()'
+    );
+    expect(execute.mock.calls[0][1]).toEqual({
+      identityIds: ['profile-1']
+    });
   });
 
   it('uses wave voting credit nft rows for CARD_SET_TDH credit-left queries', async () => {
