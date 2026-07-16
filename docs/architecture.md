@@ -238,6 +238,10 @@ Important API responsibilities:
   auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Wave-scoped mention autocomplete under
+  `/v2/waves/{waveId}/mention-search`, which derives visibility eligibility
+  from the requested wave, performs indexed handle-prefix matching, and
+  returns a minimal profile result ranked by level.
 - Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
 - Public profile-native CMS primary package lookup under
