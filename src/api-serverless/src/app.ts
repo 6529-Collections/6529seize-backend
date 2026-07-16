@@ -1609,6 +1609,10 @@ async function initializeApp() {
   apiRouter.use(`/drop-ids`, dropIdsRoutes);
   apiRouter.use(`/drops-bookmarked`, bookmarkedDropsRoutes);
   apiRouter.use(`/feed`, feedRoutes);
+  apiRouter.get([`/notifications`, `/v2/notifications`], (_req, res, next) => {
+    setNoStoreHeaders(res);
+    next();
+  });
   apiRouter.use(`/notifications`, notificationsRoutes);
   apiRouter.use(`/identity-subscriptions`, identitySubscriptionsRoutes);
   apiRouter.use(`/waves-overview`, wavesOverviewRoutes);
