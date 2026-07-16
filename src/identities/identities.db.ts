@@ -41,6 +41,13 @@ import {
 
 const mysql = require('mysql');
 
+export interface WaveMentionSearchCandidate {
+  readonly id: string;
+  readonly handle: string;
+  readonly display: string | null;
+  readonly pfp: string | null;
+}
+
 export class IdentitiesDb extends LazyDbAccessCompatibleService {
   async getEverythingRelatedToIdentitiesByAddresses(
     addresses: string[],
@@ -571,6 +578,62 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
 
     ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
     return results;
+  }
+
+  async searchWaveMentionCandidates(
+    param: {
+      handle: string;
+      limit: number;
+      excludedProfileId: string | null;
+    },
+    eligibility: {
+      sql: string;
+      params: Record<string, any>;
+    } | null,
+    ctx: RequestContext
+  ): Promise<WaveMentionSearchCandidate[]> {
+    const timerKey = `${this.constructor.name}->searchWaveMentionCandidates`;
+    ctx.timer?.start(timerKey);
+    try {
+      const eligibilityJoin = eligibility
+        ? `join user_groups_view ug on ug.profile_id = i.profile_id`
+        : '';
+      const excludedProfileClause = param.excludedProfileId
+        ? `and i.profile_id <> :mentionExcludedProfileId`
+        : '';
+      return await this.db.execute<WaveMentionSearchCandidate>(
+        `
+          ${eligibility?.sql ?? ''}
+          select
+            i.profile_id as id,
+            i.handle,
+            coalesce(cwt.consolidation_display, i.primary_address) as display,
+            i.pfp
+          from ${IDENTITIES_TABLE} i
+          ${eligibilityJoin}
+          left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
+            on cwt.consolidation_key = i.consolidation_key
+          where i.profile_id is not null
+            and i.handle is not null
+            and i.normalised_handle like :mentionHandlePrefix
+            ${excludedProfileClause}
+          order by
+            i.level_raw desc,
+            i.normalised_handle asc,
+            i.profile_id asc
+          limit :mentionLimit
+        `,
+        {
+          ...(eligibility?.params ?? {}),
+          mentionHandlePrefix: `${param.handle.toLowerCase()}%`,
+          mentionExcludedProfileId: param.excludedProfileId,
+          mentionLimit: param.limit
+        },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async getProfileIdByWallet(
