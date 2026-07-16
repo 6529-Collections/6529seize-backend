@@ -1,4 +1,5 @@
 import {
+  ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService,
   SqlExecutor
@@ -61,6 +62,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ) {
+    // Keep this as the sole write path for ws_connections.identity_id. Any
+    // future identity update must also replace notification subscriptions so
+    // a re-authenticated connection cannot retain another identity's grants.
     await this.db.execute(
       `update ${WS_CONNECTIONS_TABLE}
        set identity_id = :identityId,
@@ -85,18 +89,58 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     subscriptions: { identityId: string; jwtExpiry: number }[],
     ctx: RequestContext
   ): Promise<void> {
-    await this.deleteNotificationSubscriptions(connectionId, ctx);
-    await Promise.all(
-      subscriptions.map(({ identityId, jwtExpiry }) =>
-        this.db.execute(
-          `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
-             (connection_id, identity_id, jwt_expiry)
-           values (:connectionId, :identityId, :jwtExpiry)`,
-          { connectionId, identityId, jwtExpiry },
-          { wrappedConnection: ctx.connection }
-        )
-      )
-    );
+    const replace = async (connection: ConnectionWrapper<any>) => {
+      await this.deleteNotificationSubscriptions(connectionId, {
+        ...ctx,
+        connection
+      });
+      if (!subscriptions.length) {
+        return;
+      }
+      const params: Record<string, string | number> = { connectionId };
+      const values = subscriptions.map(({ identityId, jwtExpiry }, index) => {
+        params[`identityId${index}`] = identityId;
+        params[`jwtExpiry${index}`] = jwtExpiry;
+        return `(:connectionId, :identityId${index}, :jwtExpiry${index})`;
+      });
+      await this.db.execute(
+        `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+           (connection_id, identity_id, jwt_expiry)
+         values ${values.join(', ')}`,
+        params,
+        { wrappedConnection: connection }
+      );
+    };
+
+    if (ctx.connection) {
+      await replace(ctx.connection);
+    } else {
+      await this.db.executeNativeQueriesInTransaction(replace);
+    }
+    await this.cleanupStaleNotificationSubscriptions();
+  }
+
+  private async cleanupStaleNotificationSubscriptions(): Promise<void> {
+    try {
+      await this.db.execute(
+        `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+         where jwt_expiry <= unix_timestamp()
+         order by jwt_expiry asc
+         limit 1000`
+      );
+      await this.db.execute(
+        `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+         where not exists (
+           select 1 from ${WS_CONNECTIONS_TABLE} connections
+           where connections.connection_id = ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}.connection_id
+         )
+         limit 1000`
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to clean stale websocket notification subscriptions: ${String(error)}`
+      );
+    }
   }
 
   private async deleteNotificationSubscriptions(

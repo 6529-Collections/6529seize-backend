@@ -18,8 +18,12 @@ describe('WsConnectionRepository', () => {
 
   it('replaces the notification identities owned by a connection', async () => {
     const execute = jest.fn().mockResolvedValue([]);
+    const transactionConnection = { connection: {} };
+    const executeNativeQueriesInTransaction = jest.fn(async (callback) =>
+      callback(transactionConnection)
+    );
     const repo = new WsConnectionRepository(
-      () => ({ execute }) as any,
+      () => ({ execute, executeNativeQueriesInTransaction }) as any,
       {} as any
     );
 
@@ -32,20 +36,36 @@ describe('WsConnectionRepository', () => {
       {}
     );
 
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(4);
     expect(execute.mock.calls[0][0]).toContain(
       `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
     );
+    expect(execute.mock.calls[0][2]).toEqual({
+      wrappedConnection: transactionConnection
+    });
+    expect(execute.mock.calls[1][0]).toContain(
+      `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[1][0]).toContain(
+      '(:connectionId, :identityId0, :jwtExpiry0), (:connectionId, :identityId1, :jwtExpiry1)'
+    );
     expect(execute.mock.calls[1][1]).toEqual({
       connectionId: 'connection-1',
-      identityId: 'profile-1',
-      jwtExpiry: 123
+      identityId0: 'profile-1',
+      jwtExpiry0: 123,
+      identityId1: 'profile-2',
+      jwtExpiry1: 456
     });
-    expect(execute.mock.calls[2][1]).toEqual({
-      connectionId: 'connection-1',
-      identityId: 'profile-2',
-      jwtExpiry: 456
+    expect(execute.mock.calls[1][2]).toEqual({
+      wrappedConnection: transactionConnection
     });
+    expect(execute.mock.calls[2][0]).toContain(
+      'where jwt_expiry <= unix_timestamp()'
+    );
+    expect(execute.mock.calls[2][0]).toContain('limit 1000');
+    expect(execute.mock.calls[3][0]).toContain('where not exists');
+    expect(execute.mock.calls[3][0]).toContain('limit 1000');
   });
 
   it('finds active primary and extra-account notification subscriptions', async () => {

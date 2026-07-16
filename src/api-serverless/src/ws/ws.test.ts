@@ -91,6 +91,15 @@ describe('authenticateNotificationIdentityTokens', () => {
     ).resolves.toBeNull();
     expect(mockPassportAuthenticate).not.toHaveBeenCalled();
   });
+
+  it('applies the notification token cap after exact-token deduplication', async () => {
+    await expect(
+      authenticateNotificationIdentityTokens(Array(6).fill('wallet-1'))
+    ).resolves.toEqual([
+      { identityId: 'profile-wallet-1', jwtExpiry: 2_000_000_000 }
+    ]);
+    expect(mockPassportAuthenticate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('authenticateWebSocketJwtOrGetByConnectionId', () => {

@@ -306,15 +306,16 @@ export async function authenticateNotificationIdentityTokens(
 ): Promise<AuthenticatedWebSocketIdentity[] | null> {
   if (
     !Array.isArray(value) ||
-    value.length > MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS ||
     value.some((token) => typeof token !== 'string' || !token.trim())
   ) {
     return null;
   }
+  const uniqueTokens = Array.from(new Set(value));
+  if (uniqueTokens.length > MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS) {
+    return null;
+  }
   const authenticated = await Promise.all(
-    Array.from(new Set(value)).map((token) =>
-      authenticateWebSocketToken(token as string)
-    )
+    uniqueTokens.map((token) => authenticateWebSocketToken(token as string))
   );
   return getAuthenticatedNotificationSubscriptions(
     authenticated.filter(

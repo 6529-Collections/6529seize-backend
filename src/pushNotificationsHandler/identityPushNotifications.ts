@@ -254,6 +254,9 @@ export async function sendIdentityNotificationsBatch(
   const notificationsById = new Map(
     notifications.map((notification) => [Number(notification.id), notification])
   );
+  // These rows are already durable and visible in the authenticated REST feed.
+  // Mobile push mute/device/delivery rules do not suppress feed notifications,
+  // so realtime invalidation intentionally remains independent and idempotent.
   await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
     notifications.map((notification) => notification.identity_id)
   );
