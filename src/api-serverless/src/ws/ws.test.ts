@@ -23,6 +23,7 @@ import {
   ANON_USER_ID,
   appWebSockets,
   AppWebSockets,
+  authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken
 } from '@/api/ws/ws';
@@ -59,6 +60,36 @@ describe('authenticateWebSocketToken', () => {
     expect(
       identityFetcherMock.getProfileIdByIdentityKey
     ).not.toHaveBeenCalled();
+  });
+});
+
+describe('authenticateNotificationIdentityTokens', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPassportAuthenticate.mockImplementation(
+      (_strategy, _options, callback) => (req: any, _res: unknown) => {
+        const token = req.headers.authorization.replace('Bearer ', '');
+        callback(null, { wallet: token, exp: 2_000_000_000 });
+      }
+    );
+    identityFetcherMock.getProfileIdByIdentityKey.mockImplementation(
+      async ({ identityKey }) => `profile-${identityKey}`
+    );
+  });
+
+  it('authenticates and deduplicates notification identity tokens', async () => {
+    await expect(
+      authenticateNotificationIdentityTokens(['wallet-1', 'wallet-1'])
+    ).resolves.toEqual([
+      { identityId: 'profile-wallet-1', jwtExpiry: 2_000_000_000 }
+    ]);
+  });
+
+  it('rejects more than five notification identity tokens', async () => {
+    await expect(
+      authenticateNotificationIdentityTokens(['1', '2', '3', '4', '5', '6'])
+    ).resolves.toBeNull();
+    expect(mockPassportAuthenticate).not.toHaveBeenCalled();
   });
 });
 
@@ -104,6 +135,7 @@ describe('AppWebSockets.send', () => {
     const connectionId = 'connection-auth-failure';
     const repository = {
       save: jest.fn().mockResolvedValue(undefined),
+      replaceNotificationSubscriptions: jest.fn().mockResolvedValue(undefined),
       getByConnectionId: jest.fn(),
       deleteByConnectionId: jest.fn().mockResolvedValue(undefined)
     };

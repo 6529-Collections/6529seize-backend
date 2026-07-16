@@ -31,6 +31,7 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
+      API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'pushNotificationsHandler_${opt:stage, self:provider.stage}'
 

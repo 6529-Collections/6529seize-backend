@@ -11,7 +11,8 @@ import {
   TDH_NFT_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE,
-  WS_CONNECTIONS_TABLE
+  WS_CONNECTIONS_TABLE,
+  WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
@@ -71,8 +72,40 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   public async deleteByConnectionId(connectionId: string, ctx: RequestContext) {
+    await this.deleteNotificationSubscriptions(connectionId, ctx);
     await this.db.execute(
       `delete from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
+      { connectionId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  public async replaceNotificationSubscriptions(
+    connectionId: string,
+    subscriptions: { identityId: string; jwtExpiry: number }[],
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.deleteNotificationSubscriptions(connectionId, ctx);
+    await Promise.all(
+      subscriptions.map(({ identityId, jwtExpiry }) =>
+        this.db.execute(
+          `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+             (connection_id, identity_id, jwt_expiry)
+           values (:connectionId, :identityId, :jwtExpiry)`,
+          { connectionId, identityId, jwtExpiry },
+          { wrappedConnection: ctx.connection }
+        )
+      )
+    );
+  }
+
+  private async deleteNotificationSubscriptions(
+    connectionId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.db.execute(
+      `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+       where connection_id = :connectionId`,
       { connectionId },
       { wrappedConnection: ctx.connection }
     );
@@ -455,6 +488,42 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         { identityId }
       )
       .then((res) => res.map((it) => it.connection_id));
+  }
+
+  async findNotificationConnectionIdsByIdentityIds(
+    identityIds: string[]
+  ): Promise<{ connectionId: string; identityId: string }[]> {
+    const uniqueIdentityIds = Array.from(
+      new Set(identityIds.filter((identityId) => !!identityId))
+    ).filter((identityId) => identityId !== ANON_USER_ID);
+    if (!uniqueIdentityIds.length) {
+      return [];
+    }
+    return this.db
+      .execute<{ connection_id: string; identity_id: string }>(
+        `select distinct recipients.connection_id, recipients.identity_id
+         from (
+           select connection_id, identity_id
+           from ${WS_CONNECTIONS_TABLE}
+           where identity_id in (:identityIds)
+             and jwt_expiry > unix_timestamp()
+           union
+           select subscriptions.connection_id, subscriptions.identity_id
+           from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE} subscriptions
+           inner join ${WS_CONNECTIONS_TABLE} connections
+             on connections.connection_id = subscriptions.connection_id
+           where subscriptions.identity_id in (:identityIds)
+             and subscriptions.jwt_expiry > unix_timestamp()
+             and connections.jwt_expiry > unix_timestamp()
+         ) recipients`,
+        { identityIds: uniqueIdentityIds }
+      )
+      .then((rows) =>
+        rows.map((row) => ({
+          connectionId: row.connection_id,
+          identityId: row.identity_id
+        }))
+      );
   }
 
   async findAllConnectionIds(): Promise<string[]> {

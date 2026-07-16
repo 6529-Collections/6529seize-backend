@@ -3,7 +3,8 @@ import {
   IDENTITIES_TABLE,
   TDH_NFT_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
-  WAVES_TABLE
+  WAVES_TABLE,
+  WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { CustomApiCompliantException } from '@/exceptions';
@@ -13,6 +14,69 @@ import { WsConnectionRepository } from './ws-connection.repository';
 describe('WsConnectionRepository', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('replaces the notification identities owned by a connection', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new WsConnectionRepository(
+      () => ({ execute }) as any,
+      {} as any
+    );
+
+    await repo.replaceNotificationSubscriptions(
+      'connection-1',
+      [
+        { identityId: 'profile-1', jwtExpiry: 123 },
+        { identityId: 'profile-2', jwtExpiry: 456 }
+      ],
+      {}
+    );
+
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute.mock.calls[0][0]).toContain(
+      `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[1][1]).toEqual({
+      connectionId: 'connection-1',
+      identityId: 'profile-1',
+      jwtExpiry: 123
+    });
+    expect(execute.mock.calls[2][1]).toEqual({
+      connectionId: 'connection-1',
+      identityId: 'profile-2',
+      jwtExpiry: 456
+    });
+  });
+
+  it('finds active primary and extra-account notification subscriptions', async () => {
+    const execute = jest
+      .fn()
+      .mockResolvedValue([
+        { connection_id: 'connection-1', identity_id: 'profile-1' }
+      ]);
+    const repo = new WsConnectionRepository(
+      () => ({ execute }) as any,
+      {} as any
+    );
+
+    await expect(
+      repo.findNotificationConnectionIdsByIdentityIds([
+        'profile-1',
+        'profile-1'
+      ])
+    ).resolves.toEqual([
+      { connectionId: 'connection-1', identityId: 'profile-1' }
+    ]);
+
+    expect(execute.mock.calls[0][0]).toContain(
+      `from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[0][0]).toContain(
+      'subscriptions.jwt_expiry > unix_timestamp()'
+    );
+    expect(execute.mock.calls[0][1]).toEqual({
+      identityIds: ['profile-1']
+    });
   });
 
   it('uses wave voting credit nft rows for CARD_SET_TDH credit-left queries', async () => {

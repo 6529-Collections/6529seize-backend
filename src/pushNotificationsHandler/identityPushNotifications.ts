@@ -46,6 +46,7 @@ import {
   sendMessages
 } from '@/pushNotificationsHandler/sendPushNotifications';
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
+import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -252,6 +253,9 @@ export async function sendIdentityNotificationsBatch(
     .find({ where: { id: In(uniqueIds) } });
   const notificationsById = new Map(
     notifications.map((notification) => [Number(notification.id), notification])
+  );
+  await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
+    notifications.map((notification) => notification.identity_id)
   );
   const mutedNotificationIds = await findMutedNotificationIds(notifications);
 

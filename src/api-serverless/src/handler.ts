@@ -8,11 +8,15 @@ import type {
 } from 'aws-lambda';
 import {
   appWebSockets,
+  authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken
 } from './ws/ws';
 import { Logger } from '../../logging';
-import { WsMessageType } from './ws/ws-message';
+import {
+  notificationIdentitiesSyncedMessage,
+  WsMessageType
+} from './ws/ws-message';
 import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
@@ -263,6 +267,35 @@ async function wsHandler(
                   authenticated.jwtExpiry * 1000
                 ).toISOString()
               }),
+              skipStaleConnectionCheck: true
+            });
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'OK' })
+            };
+          }
+          case WsMessageType.SYNC_NOTIFICATION_IDENTITIES: {
+            const subscriptions = await authenticateNotificationIdentityTokens(
+              message.access_tokens
+            );
+            if (subscriptions === null) {
+              return {
+                statusCode: 400,
+                body: JSON.stringify({
+                  message: 'Invalid notification identity tokens'
+                })
+              };
+            }
+            const profileIds = await appWebSockets.syncNotificationIdentities(
+              connectionId!,
+              subscriptions,
+              {}
+            );
+            await appWebSockets.send({
+              connectionId: connectionId!,
+              message: JSON.stringify(
+                notificationIdentitiesSyncedMessage(profileIds)
+              ),
               skipStaleConnectionCheck: true
             });
             return {

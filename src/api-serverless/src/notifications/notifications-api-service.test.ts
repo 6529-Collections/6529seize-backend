@@ -479,6 +479,51 @@ describe('NotificationsApiService V2 notifications', () => {
   });
 });
 
+describe('NotificationsApiService realtime invalidation', () => {
+  it('notifies the affected profile after read-state mutations succeed', async () => {
+    const identityNotificationsDb = {
+      updateNotificationReadAt: jest.fn().mockResolvedValue(undefined),
+      markAllNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsListenersNotifier = {
+      notifyAboutIdentityNotificationsChanged: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const service = new NotificationsApiService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      identityNotificationsDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      wsListenersNotifier as any
+    );
+
+    await service.markNotificationAsRead({
+      id: 1,
+      identity_id: 'profile-1'
+    });
+    await service.markAllNotificationsAsRead('profile-1', {});
+
+    expect(
+      identityNotificationsDb.updateNotificationReadAt
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, identity_id: 'profile-1' })
+    );
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenNthCalledWith(1, ['profile-1']);
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenNthCalledWith(2, ['profile-1']);
+  });
+});
+
 describe('NotificationsApiService wave notification preferences', () => {
   afterEach(() => {
     jest.restoreAllMocks();
