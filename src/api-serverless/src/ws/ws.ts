@@ -223,6 +223,7 @@ export class AppWebSockets {
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}
     );
+    await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
   }
 
   async deregister({ connectionId }: { connectionId: string }) {

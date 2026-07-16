@@ -145,6 +145,9 @@ describe('AppWebSockets.send', () => {
     const repository = {
       save: jest.fn().mockResolvedValue(undefined),
       replaceNotificationSubscriptions: jest.fn().mockResolvedValue(undefined),
+      maybeCleanupStaleNotificationSubscriptions: jest
+        .fn()
+        .mockResolvedValue(undefined),
       getByConnectionId: jest.fn(),
       deleteByConnectionId: jest.fn().mockResolvedValue(undefined)
     };

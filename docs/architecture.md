@@ -218,7 +218,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
-WebSocket notification subscription replacement is transactional. Each replacement also performs bounded cleanup of expired and orphaned subscription rows. The repository identity update method is the sole write path for `ws_connections.identity_id` and keeps the primary subscription reset coupled to re-authentication.
+WebSocket notification subscription replacement is transactional. A sampled one-percent share of new connections performs bounded, deterministic cleanup of expired and orphaned subscription rows; re-authentication and identity resyncs never run cleanup on their hot path. The repository identity update method is the sole write path for `ws_connections.identity_id` and keeps the primary subscription reset coupled to re-authentication.
 
 ## API Boundary
 

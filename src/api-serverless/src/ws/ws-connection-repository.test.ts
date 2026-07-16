@@ -37,7 +37,7 @@ describe('WsConnectionRepository', () => {
     );
 
     expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls[0][0]).toContain(
       `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
     );
@@ -60,12 +60,31 @@ describe('WsConnectionRepository', () => {
     expect(execute.mock.calls[1][2]).toEqual({
       wrappedConnection: transactionConnection
     });
-    expect(execute.mock.calls[2][0]).toContain(
+  });
+
+  it('runs bounded deterministic stale cleanup only for sampled connections', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new WsConnectionRepository(
+      () => ({ execute }) as any,
+      {} as any
+    );
+    jest.spyOn(Math, 'random').mockReturnValueOnce(0.5).mockReturnValueOnce(0);
+
+    await repo.maybeCleanupStaleNotificationSubscriptions();
+    expect(execute).not.toHaveBeenCalled();
+
+    await repo.maybeCleanupStaleNotificationSubscriptions();
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0][0]).toContain(
       'where jwt_expiry <= unix_timestamp()'
     );
-    expect(execute.mock.calls[2][0]).toContain('limit 1000');
-    expect(execute.mock.calls[3][0]).toContain('where not exists');
-    expect(execute.mock.calls[3][0]).toContain('limit 1000');
+    expect(execute.mock.calls[0][0]).toContain('order by jwt_expiry asc');
+    expect(execute.mock.calls[0][0]).toContain('limit 1000');
+    expect(execute.mock.calls[1][0]).toContain('where not exists');
+    expect(execute.mock.calls[1][0]).toContain(
+      'order by connection_id, identity_id'
+    );
+    expect(execute.mock.calls[1][0]).toContain('limit 1000');
   });
 
   it('finds active primary and extra-account notification subscriptions', async () => {

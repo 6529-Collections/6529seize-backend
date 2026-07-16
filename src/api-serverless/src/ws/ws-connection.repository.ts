@@ -26,6 +26,8 @@ import {
 import { ANON_USER_ID } from './ws';
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
+  private static readonly NOTIFICATION_CLEANUP_SAMPLE_RATE = 0.01;
+
   private readonly logger = Logger.get(this.constructor.name);
 
   constructor(
@@ -117,10 +119,14 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     } else {
       await this.db.executeNativeQueriesInTransaction(replace);
     }
-    await this.cleanupStaleNotificationSubscriptions();
   }
 
-  private async cleanupStaleNotificationSubscriptions(): Promise<void> {
+  async maybeCleanupStaleNotificationSubscriptions(): Promise<void> {
+    if (
+      Math.random() >= WsConnectionRepository.NOTIFICATION_CLEANUP_SAMPLE_RATE
+    ) {
+      return;
+    }
     try {
       await this.db.execute(
         `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
@@ -134,6 +140,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
            select 1 from ${WS_CONNECTIONS_TABLE} connections
            where connections.connection_id = ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}.connection_id
          )
+         order by connection_id, identity_id
          limit 1000`
       );
     } catch (error) {
