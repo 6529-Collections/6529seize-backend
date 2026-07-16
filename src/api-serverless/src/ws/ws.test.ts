@@ -23,6 +23,7 @@ import {
   ANON_USER_ID,
   appWebSockets,
   AppWebSockets,
+  authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken
 } from '@/api/ws/ws';
@@ -62,6 +63,45 @@ describe('authenticateWebSocketToken', () => {
   });
 });
 
+describe('authenticateNotificationIdentityTokens', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPassportAuthenticate.mockImplementation(
+      (_strategy, _options, callback) => (req: any, _res: unknown) => {
+        const token = req.headers.authorization.replace('Bearer ', '');
+        callback(null, { wallet: token, exp: 2_000_000_000 });
+      }
+    );
+    identityFetcherMock.getProfileIdByIdentityKey.mockImplementation(
+      async ({ identityKey }) => `profile-${identityKey}`
+    );
+  });
+
+  it('authenticates and deduplicates notification identity tokens', async () => {
+    await expect(
+      authenticateNotificationIdentityTokens(['wallet-1', 'wallet-1'])
+    ).resolves.toEqual([
+      { identityId: 'profile-wallet-1', jwtExpiry: 2_000_000_000 }
+    ]);
+  });
+
+  it('rejects more than five notification identity tokens', async () => {
+    await expect(
+      authenticateNotificationIdentityTokens(['1', '2', '3', '4', '5', '6'])
+    ).resolves.toBeNull();
+    expect(mockPassportAuthenticate).not.toHaveBeenCalled();
+  });
+
+  it('applies the notification token cap after exact-token deduplication', async () => {
+    await expect(
+      authenticateNotificationIdentityTokens(Array(6).fill('wallet-1'))
+    ).resolves.toEqual([
+      { identityId: 'profile-wallet-1', jwtExpiry: 2_000_000_000 }
+    ]);
+    expect(mockPassportAuthenticate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('authenticateWebSocketJwtOrGetByConnectionId', () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -92,6 +132,39 @@ describe('authenticateWebSocketJwtOrGetByConnectionId', () => {
   });
 });
 
+describe('AppWebSockets notification subscription maintenance', () => {
+  it('samples stale cleanup after identity authentication and resync', async () => {
+    const repository = {
+      updateIdentityForConnection: jest.fn().mockResolvedValue(undefined),
+      replaceNotificationSubscriptions: jest.fn().mockResolvedValue(undefined),
+      maybeCleanupStaleNotificationSubscriptions: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const sockets = new AppWebSockets(
+      repository as unknown as WsConnectionRepository
+    );
+
+    await sockets.authenticateConnection(
+      {
+        connectionId: 'connection-1',
+        identityId: 'profile-1',
+        jwtExpiry: 123
+      },
+      {}
+    );
+    await sockets.syncNotificationIdentities(
+      'connection-1',
+      [{ identityId: 'profile-2', jwtExpiry: 456 }],
+      {}
+    );
+
+    expect(
+      repository.maybeCleanupStaleNotificationSubscriptions
+    ).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('AppWebSockets.send', () => {
   const originalNodeEnv = process.env.NODE_ENV;
 
@@ -104,6 +177,10 @@ describe('AppWebSockets.send', () => {
     const connectionId = 'connection-auth-failure';
     const repository = {
       save: jest.fn().mockResolvedValue(undefined),
+      replaceNotificationSubscriptions: jest.fn().mockResolvedValue(undefined),
+      maybeCleanupStaleNotificationSubscriptions: jest
+        .fn()
+        .mockResolvedValue(undefined),
       getByConnectionId: jest.fn(),
       deleteByConnectionId: jest.fn().mockResolvedValue(undefined)
     };

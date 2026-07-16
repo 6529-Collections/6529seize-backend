@@ -2,6 +2,49 @@ import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { WsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 
 describe('WsListenersNotifier', () => {
+  it('sends notification invalidations only to subscribed recipient connections', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      findNotificationConnectionIdsByIdentityIds: jest.fn().mockResolvedValue([
+        { connectionId: 'connection-1', identityId: 'profile-1' },
+        { connectionId: 'connection-2', identityId: 'profile-2' }
+      ])
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+
+    await notifier.notifyAboutIdentityNotificationsChanged([
+      'profile-1',
+      'profile-2',
+      'profile-1'
+    ]);
+
+    expect(
+      wsConnectionRepository.findNotificationConnectionIdsByIdentityIds
+    ).toHaveBeenCalledWith(['profile-1', 'profile-2']);
+    expect(appWebSockets.send).toHaveBeenCalledTimes(2);
+    expect(appWebSockets.send.mock.calls.map(([call]) => call)).toEqual([
+      {
+        connectionId: 'connection-1',
+        message: JSON.stringify({
+          type: 'IDENTITY_NOTIFICATIONS_CHANGED',
+          data: { profile_id: 'profile-1' }
+        })
+      },
+      {
+        connectionId: 'connection-2',
+        message: JSON.stringify({
+          type: 'IDENTITY_NOTIFICATIONS_CHANGED',
+          data: { profile_id: 'profile-2' }
+        })
+      }
+    ]);
+  });
+
   it('removes viewer poll selections from anonymous poll drop updates', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)
