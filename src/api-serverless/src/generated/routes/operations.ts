@@ -47,6 +47,7 @@ import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/A
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentionSearchResult';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
@@ -1035,6 +1036,25 @@ export type GetWavePollsV2Request = Request<
   ApiResponse<GetWavePollsV2Response>,
   never,
   GetWavePollsV2Query,
+  Record<string, never>
+>;
+
+export interface SearchWaveMentionsPathParams {
+  "waveId": string;
+}
+
+export interface SearchWaveMentionsQuery {
+  "handle": string;
+  "limit"?: number;
+}
+
+export type SearchWaveMentionsResponse = ApiWaveMentionSearchResult[];
+
+export type SearchWaveMentionsRequest = Request<
+  SearchWaveMentionsPathParams,
+  ApiResponse<SearchWaveMentionsResponse>,
+  never,
+  SearchWaveMentionsQuery,
   Record<string, never>
 >;
 
