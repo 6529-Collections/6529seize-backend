@@ -64,11 +64,15 @@ describe('WsConnectionRepository', () => {
 
   it('runs bounded deterministic stale cleanup only for sampled connections', async () => {
     const execute = jest.fn().mockResolvedValue([]);
+    const shouldCleanup = jest
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
     const repo = new WsConnectionRepository(
       () => ({ execute }) as any,
-      {} as any
+      {} as any,
+      shouldCleanup
     );
-    jest.spyOn(Math, 'random').mockReturnValueOnce(0.5).mockReturnValueOnce(0);
 
     await repo.maybeCleanupStaleNotificationSubscriptions();
     expect(execute).not.toHaveBeenCalled();
@@ -85,6 +89,7 @@ describe('WsConnectionRepository', () => {
       'order by connection_id, identity_id'
     );
     expect(execute.mock.calls[1][0]).toContain('limit 1000');
+    expect(shouldCleanup).toHaveBeenCalledTimes(2);
   });
 
   it('finds active primary and extra-account notification subscriptions', async () => {

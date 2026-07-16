@@ -24,15 +24,20 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { ANON_USER_ID } from './ws';
+import { randomInt } from 'node:crypto';
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
-  private static readonly NOTIFICATION_CLEANUP_SAMPLE_RATE = 0.01;
+  private static readonly NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR = 100;
 
   private readonly logger = Logger.get(this.constructor.name);
 
   constructor(
     sqlExecutorGetter: () => SqlExecutor,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly shouldCleanupNotificationSubscriptions: () => boolean = () =>
+      randomInt(
+        WsConnectionRepository.NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR
+      ) === 0
   ) {
     super(sqlExecutorGetter);
   }
@@ -122,9 +127,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async maybeCleanupStaleNotificationSubscriptions(): Promise<void> {
-    if (
-      Math.random() >= WsConnectionRepository.NOTIFICATION_CLEANUP_SAMPLE_RATE
-    ) {
+    if (!this.shouldCleanupNotificationSubscriptions()) {
       return;
     }
     try {
