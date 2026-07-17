@@ -397,6 +397,37 @@ jobs:
             echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE"
             echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT"
           } >> "$GITHUB_ENV"
+      - name: Store Release Bus GitHub App private key
+        if: github.event.inputs.service == 'releaseBus'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_PRIVATE_KEY: ${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          current_secret=/tmp/release-bus-current-secret.json
+          updated_secret=/tmp/release-bus-updated-secret.json
+          trap 'rm -f "$current_secret" "$updated_secret"' EXIT
+          aws secretsmanager get-secret-value             --secret-id prod/lambdas             --query SecretString             --output text > "$current_secret"
+          jq --arg privateKey "$RELEASE_BUS_GITHUB_PRIVATE_KEY"             '. + {RELEASE_BUS_GITHUB_PRIVATE_KEY: $privateKey}'             "$current_secret" > "$updated_secret"
+          aws secretsmanager put-secret-value             --secret-id prod/lambdas             --secret-string "file://$updated_secret"             --no-cli-pager > /dev/null
+      - name: Store Release Bus production API credentials
+        if: github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_WEBHOOK_SECRET: ${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          current_secret=/tmp/release-bus-current-secret.json
+          updated_secret=/tmp/release-bus-updated-secret.json
+          trap 'rm -f "$current_secret" "$updated_secret"' EXIT
+          aws secretsmanager get-secret-value             --secret-id prod/lambdas             --query SecretString             --output text > "$current_secret"
+          jq             --arg webhookSecret "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET"             --arg workflowToken "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"             '. + {RELEASE_BUS_GITHUB_WEBHOOK_SECRET: $webhookSecret, RELEASE_BUS_WORKFLOW_AUTH_TOKEN: $workflowToken}'             "$current_secret" > "$updated_secret"
+          aws secretsmanager put-secret-value             --secret-id prod/lambdas             --secret-string "file://$updated_secret"             --no-cli-pager > /dev/null
       - name: Deploy service
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop' && github.event.inputs.service != 'releaseBus'
         run: |
@@ -408,7 +439,7 @@ jobs:
         env:
           RELEASE_BUS_GITHUB_APP_ID: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
           RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}
-          RELEASE_BUS_GITHUB_PRIVATE_KEY: ${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_BUS_GITHUB_INSTALLATION_ID"
@@ -417,9 +448,6 @@ jobs:
           pushd src/releaseBus && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
       - name: Deploy API
         if: github.event.inputs.service == 'api'
-        env:
-          RELEASE_BUS_GITHUB_WEBHOOK_SECRET: ${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}
-          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
         run: |
           set +x
           GIT_COMMIT=$(git rev-parse HEAD)
@@ -433,7 +461,7 @@ jobs:
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
           jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
           if [ "${{ github.event.inputs.environment }}" = prod ]; then
-            jq --arg mode "$RELEASE_BUS_MODE" --arg workflowToken "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN" --arg webhookSecret "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET" '. + {RELEASE_BUS_MODE: $mode, RELEASE_BUS_WORKFLOW_AUTH_TOKEN: $workflowToken, RELEASE_BUS_GITHUB_WEBHOOK_SECRET: $webhookSecret}' /tmp/app_env.json > /tmp/runtime_env.json
+            jq --arg mode "$RELEASE_BUS_MODE" '. + {RELEASE_BUS_MODE: $mode} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           else
             jq '. + {RELEASE_BUS_MODE: "OFF"} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           fi

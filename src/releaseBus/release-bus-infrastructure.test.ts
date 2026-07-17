@@ -31,7 +31,7 @@ describe('release bus infrastructure contract', () => {
     expect(releaseBusServerless).toContain(
       'RELEASE_BUS_GITHUB_INSTALLATION_ID: ${env:RELEASE_BUS_GITHUB_INSTALLATION_ID}'
     );
-    expect(releaseBusServerless).toContain(
+    expect(releaseBusServerless).not.toContain(
       'RELEASE_BUS_GITHUB_PRIVATE_KEY: ${env:RELEASE_BUS_GITHUB_PRIVATE_KEY}'
     );
     expect(deployWorkflow).toContain(
@@ -42,7 +42,7 @@ describe('release bus infrastructure contract', () => {
     );
   });
 
-  it('wires production API credentials and keeps staging API OFF', () => {
+  it('stores production credentials outside Lambda configuration', () => {
     expect(deployWorkflow).toContain(
       'RELEASE_BUS_GITHUB_WEBHOOK_SECRET: ${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}'
     );
@@ -50,7 +50,11 @@ describe('release bus infrastructure contract', () => {
       'RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}'
     );
     expect(deployWorkflow).toContain(
-      'jq \'. + {RELEASE_BUS_MODE: "OFF"} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)\''
+      'name: Store Release Bus production API credentials'
+    );
+    expect(deployWorkflow).toContain('--secret-id prod/lambdas');
+    expect(deployWorkflow).toContain(
+      'del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
     );
   });
 });

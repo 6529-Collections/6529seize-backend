@@ -463,10 +463,17 @@ before dependent frontend code. The API's `/deploy/ui/bus` page is the
 readiness queue and pause/resume control plane. Modes `OFF`, `SHADOW`,
 `STAGING`, and `PRODUCTION` permit a backward-compatible rollout.
 The generated backend deployment workflow resolves the installed GitHub App's
-installation ID from the App credentials and injects the App identity into all
-three Release Bus Lambdas. Production API deployment also injects the webhook
-verification secret and workflow authorization token while explicitly keeping
-the staging API in `OFF` mode without those production-only credentials.
+installation ID and injects only the non-secret App identity into all three
+Release Bus Lambdas. The App private key, webhook verification secret, and
+workflow authorization token are merged into the existing regional
+`prod/lambdas` AWS Secrets Manager document and loaded through the standard
+Lambda secret bootstrap. Production API deployment keeps only the non-secret
+mode in Lambda configuration, while the staging API is explicitly forced to
+`OFF` and receives none of the production-only secret values. One global
+`RELEASE_BUS_MODE` intentionally controls the production-region API, starter,
+and worker; the orchestrator is not deployed separately in staging. The
+cleaner shares the App identity because it lists and deletes expired temporary
+branches in both repositories.
 Backend units whose registry policy is `production-only` are built and tested
 in preflight but cannot be runtime-deployed to staging; their staging gate is
 the combined application E2E suite plus the immutable artifact evidence. The
