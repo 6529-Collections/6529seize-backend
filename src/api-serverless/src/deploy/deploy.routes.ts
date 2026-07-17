@@ -283,6 +283,19 @@ deployRoutes.post('/release-candidates/ready', async (req, res) => {
     req.body,
     ReleaseCandidateReadyBodySchema
   );
+  const mode = getReleaseBusMode();
+  if (mode === 'OFF') {
+    throw new CustomApiCompliantException(
+      409,
+      'Release Bus is OFF; readiness submissions are disabled'
+    );
+  }
+  if (mode === 'STAGING' && body.target_lane === 'PRODUCTION') {
+    throw new CustomApiCompliantException(
+      409,
+      'Release Bus production readiness is disabled in STAGING mode'
+    );
+  }
   const target = targetForRepository(body.repository);
   const viewer = await gitHubDeployService.getViewer(token);
   await gitHubDeployService.assertRepositoryWriteAccess(token, target);
@@ -336,16 +349,18 @@ deployRoutes.post('/release-candidates/ready', async (req, res) => {
       error instanceof Error ? error.message : 'Invalid release candidate'
     );
   }
-  await gitHubDeployService.createCommitStatus(
-    token,
-    target,
-    candidate.head_sha,
-    'pending',
-    `${candidate.status.replace(/_/g, ' ').toLowerCase()} (${body.target_lane.toLowerCase()})`,
-    `${req.protocol}://${req.get('host')}/deploy/ui/bus`
-  );
+  if (mode === 'STAGING' || mode === 'PRODUCTION') {
+    await gitHubDeployService.createCommitStatus(
+      token,
+      target,
+      candidate.head_sha,
+      'pending',
+      `${candidate.status.replace(/_/g, ' ').toLowerCase()} (${body.target_lane.toLowerCase()})`,
+      `${req.protocol}://${req.get('host')}/deploy/ui/bus`
+    );
+  }
   setNoStoreHeaders(res);
-  return res.status(202).json({ candidate, mode: getReleaseBusMode() });
+  return res.status(202).json({ candidate, mode });
 });
 
 deployRoutes.post('/release-candidates/:id/cancel', async (req, res) => {
@@ -368,6 +383,23 @@ deployRoutes.post('/release-candidates/:id/cancel', async (req, res) => {
     throw new CustomApiCompliantException(
       409,
       error instanceof Error ? error.message : 'Candidate cannot be cancelled'
+    );
+  }
+  const target = targetForRepository(cancelled.repository);
+  if (
+    (await gitHubDeployService.getReleaseBusCommitStatusState(
+      token,
+      target,
+      cancelled.head_sha
+    )) === 'pending'
+  ) {
+    await gitHubDeployService.createCommitStatus(
+      token,
+      target,
+      cancelled.head_sha,
+      'success',
+      'release readiness cancelled',
+      `${req.protocol}://${req.get('host')}/deploy/ui/bus`
     );
   }
   setNoStoreHeaders(res);

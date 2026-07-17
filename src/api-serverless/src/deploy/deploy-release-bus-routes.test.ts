@@ -2,9 +2,18 @@ const mockFindOperation = jest.fn();
 const mockGetLane = jest.fn();
 const mockBindOperationAuthorization = jest.fn();
 const mockAppendEvent = jest.fn();
+const mockFindCandidateById = jest.fn();
 const mockGetWorkflowRunIdentity = jest.fn();
 const mockIsOrganizationOperator = jest.fn();
 const mockPauseForBreakGlass = jest.fn();
+const mockMarkReady = jest.fn();
+const mockCancel = jest.fn();
+const mockGetViewer = jest.fn();
+const mockAssertRepositoryWriteAccess = jest.fn();
+const mockResolveBranchHead = jest.fn();
+const mockFindOpenPullRequest = jest.fn();
+const mockCreateCommitStatus = jest.fn();
+const mockGetReleaseBusCommitStatusState = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -12,7 +21,22 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     getLane: (...args: unknown[]) => mockGetLane(...args),
     bindOperationAuthorization: (...args: unknown[]) =>
       mockBindOperationAuthorization(...args),
-    appendEvent: (...args: unknown[]) => mockAppendEvent(...args)
+    appendEvent: (...args: unknown[]) => mockAppendEvent(...args),
+    findCandidateById: (...args: unknown[]) => mockFindCandidateById(...args)
+  }
+}));
+
+jest.mock('@/api/deploy/deploy.github.service', () => ({
+  gitHubDeployService: {
+    getViewer: (...args: unknown[]) => mockGetViewer(...args),
+    assertRepositoryWriteAccess: (...args: unknown[]) =>
+      mockAssertRepositoryWriteAccess(...args),
+    resolveBranchHead: (...args: unknown[]) => mockResolveBranchHead(...args),
+    findOpenPullRequest: (...args: unknown[]) =>
+      mockFindOpenPullRequest(...args),
+    createCommitStatus: (...args: unknown[]) => mockCreateCommitStatus(...args),
+    getReleaseBusCommitStatusState: (...args: unknown[]) =>
+      mockGetReleaseBusCommitStatusState(...args)
   }
 }));
 
@@ -27,7 +51,9 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
 
 jest.mock('@/releaseBus/release-bus.service', () => ({
   releaseBusService: {
-    pauseForBreakGlass: (...args: unknown[]) => mockPauseForBreakGlass(...args)
+    pauseForBreakGlass: (...args: unknown[]) => mockPauseForBreakGlass(...args),
+    markReady: (...args: unknown[]) => mockMarkReady(...args),
+    cancel: (...args: unknown[]) => mockCancel(...args)
   }
 }));
 
@@ -40,6 +66,30 @@ const WORKFLOW_TOKEN = 'release-bus-workflow-token';
 const TRAIN_ID = '123e4567-e89b-42d3-a456-426614174000';
 const SHA = 'a'.repeat(40);
 const DIGEST = 'b'.repeat(64);
+
+function candidate(status: 'READY_FOR_STAGING' | 'CANCELLED') {
+  return {
+    id: 'candidate-1',
+    repository: 'frontend',
+    branch_name: 'feature/example',
+    head_sha: SHA,
+    pr_number: 123,
+    status,
+    staging_ready_by_github_login: 'developer',
+    staging_ready_at: Date.now(),
+    production_ready_by_github_login: null,
+    production_ready_at: null,
+    deploy_plan_json: null,
+    metadata_version: 1,
+    current_train_id: null,
+    hold_reason: null,
+    invalidated_at: null,
+    released_at: null,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    row_version: 1
+  } as const;
+}
 
 function createTestApp() {
   const app = express();
@@ -130,6 +180,139 @@ function breakGlassBody() {
     reason: 'Emergency fix forward'
   };
 }
+
+function readyBody(targetLane: 'STAGING' | 'PRODUCTION' = 'STAGING') {
+  return {
+    repository: 'frontend',
+    branch: 'feature/example',
+    expected_head_sha: SHA,
+    target_lane: targetLane,
+    dependencies: [],
+    deploy_plan: null
+  };
+}
+
+describe('release-bus readiness routes', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_MODE = 'OFF';
+    mockGetViewer.mockResolvedValue({ login: 'developer' });
+    mockAssertRepositoryWriteAccess.mockResolvedValue(undefined);
+    mockResolveBranchHead.mockResolvedValue(SHA);
+    mockFindOpenPullRequest.mockResolvedValue({ number: 123 });
+    mockMarkReady.mockResolvedValue(candidate('READY_FOR_STAGING'));
+    mockFindCandidateById.mockResolvedValue(candidate('READY_FOR_STAGING'));
+    mockCancel.mockResolvedValue(candidate('CANCELLED'));
+    mockCreateCommitStatus.mockResolvedValue(undefined);
+    mockGetReleaseBusCommitStatusState.mockResolvedValue('pending');
+  });
+
+  afterAll(() => {
+    delete process.env.RELEASE_BUS_MODE;
+  });
+
+  it('rejects readiness while the bus is OFF without touching GitHub', async () => {
+    const response = await post(
+      '/deploy/release-candidates/ready',
+      readyBody()
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain('Release Bus is OFF');
+    expect(mockGetViewer).not.toHaveBeenCalled();
+    expect(mockMarkReady).not.toHaveBeenCalled();
+    expect(mockCreateCommitStatus).not.toHaveBeenCalled();
+  });
+
+  it('records SHADOW readiness without creating a GitHub status', async () => {
+    process.env.RELEASE_BUS_MODE = 'SHADOW';
+
+    const response = await post(
+      '/deploy/release-candidates/ready',
+      readyBody()
+    );
+
+    expect(response.status).toBe(202);
+    expect(mockMarkReady).toHaveBeenCalled();
+    expect(mockCreateCommitStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects production readiness while only staging is enabled', async () => {
+    process.env.RELEASE_BUS_MODE = 'STAGING';
+
+    const response = await post(
+      '/deploy/release-candidates/ready',
+      readyBody('PRODUCTION')
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain('disabled in STAGING mode');
+    expect(mockGetViewer).not.toHaveBeenCalled();
+    expect(mockCreateCommitStatus).not.toHaveBeenCalled();
+  });
+
+  it('creates a pending status for an enabled staging submission', async () => {
+    process.env.RELEASE_BUS_MODE = 'STAGING';
+
+    const response = await post(
+      '/deploy/release-candidates/ready',
+      readyBody()
+    );
+
+    expect(response.status).toBe(202);
+    expect(mockCreateCommitStatus).toHaveBeenCalledWith(
+      WORKFLOW_TOKEN,
+      'frontend',
+      SHA,
+      'pending',
+      'ready for staging (staging)',
+      expect.stringContaining('/deploy/ui/bus')
+    );
+  });
+
+  it('publishes a terminal status when readiness is cancelled', async () => {
+    const response = await post(
+      '/deploy/release-candidates/candidate-1/cancel',
+      {}
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCancel).toHaveBeenCalledWith('candidate-1', 'developer');
+    expect(mockCreateCommitStatus).toHaveBeenCalledWith(
+      WORKFLOW_TOKEN,
+      'frontend',
+      SHA,
+      'success',
+      'release readiness cancelled',
+      expect.stringContaining('/deploy/ui/bus')
+    );
+  });
+
+  it('does not create a status when cancelling a shadow-only candidate', async () => {
+    process.env.RELEASE_BUS_MODE = 'SHADOW';
+    mockGetReleaseBusCommitStatusState.mockResolvedValue(null);
+
+    const response = await post(
+      '/deploy/release-candidates/candidate-1/cancel',
+      {}
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCreateCommitStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a terminal Release Bus status during cancellation', async () => {
+    mockGetReleaseBusCommitStatusState.mockResolvedValue('failure');
+
+    const response = await post(
+      '/deploy/release-candidates/candidate-1/cancel',
+      {}
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCreateCommitStatus).not.toHaveBeenCalled();
+  });
+});
 
 describe('release-bus authorization routes', () => {
   beforeEach(() => {

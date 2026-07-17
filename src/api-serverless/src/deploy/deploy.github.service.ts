@@ -40,6 +40,11 @@ type GitHubMatchingRef = {
 type GitHubRef = { object?: { sha?: string } };
 type GitHubRepository = { permissions?: { push?: boolean; admin?: boolean } };
 type GitHubPullRequest = { number: number; html_url: string };
+type GitHubCommitStatusState = 'error' | 'failure' | 'pending' | 'success';
+type GitHubCommitStatus = {
+  context?: string;
+  state?: GitHubCommitStatusState;
+};
 type GitHubOrgMembership = { role?: string; state?: string };
 
 type GitHubWorkflowRun = {
@@ -656,6 +661,34 @@ export class GitHubDeployService {
         502,
         `Failed to update Release Bus status: ${message}`
       );
+    }
+  }
+
+  public async getReleaseBusCommitStatusState(
+    token: string,
+    target: DeployTarget,
+    sha: string
+  ): Promise<GitHubCommitStatusState | null> {
+    for (let page = 1; ; page += 1) {
+      const response = await this.api(
+        token,
+        target,
+        `/commits/${encodeURIComponent(sha)}/statuses?per_page=100&page=${page}`,
+        { method: 'GET' }
+      );
+      if (!response.ok) {
+        const message = await this.getErrorMessage(response);
+        throw new CustomApiCompliantException(
+          502,
+          `Failed to inspect Release Bus status: ${message}`
+        );
+      }
+      const statuses = (await response.json()) as GitHubCommitStatus[];
+      const releaseBusStatus = statuses.find(
+        (status) => status.context === 'Release Bus'
+      );
+      if (releaseBusStatus) return releaseBusStatus.state ?? null;
+      if (statuses.length < 100) return null;
     }
   }
 

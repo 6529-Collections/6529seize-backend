@@ -14,12 +14,6 @@ export function getReleaseBusMode(): ReleaseBusMode {
     : 'OFF';
 }
 
-export function releaseBusWritesGitHub(): boolean {
-  return (
-    getReleaseBusMode() === 'STAGING' || getReleaseBusMode() === 'PRODUCTION'
-  );
-}
-
 export function releaseBusAllowsProduction(): boolean {
   return getReleaseBusMode() === 'PRODUCTION';
 }
