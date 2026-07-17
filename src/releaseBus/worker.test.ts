@@ -1,0 +1,171 @@
+const mockFindCandidateById = jest.fn();
+const mockUpdateCandidateLifecycle = jest.fn();
+const mockEnsureCommitStatus = jest.fn();
+const mockCommentOnPullRequest = jest.fn();
+const mockRefContainsCommit = jest.fn();
+const mockUpdateTrain = jest.fn();
+const mockGetLane = jest.fn();
+const mockReleaseLane = jest.fn();
+const mockAppendEvent = jest.fn();
+
+jest.mock('@/releaseBus/release-bus.repository', () => ({
+  releaseBusRepository: {
+    findCandidateById: (...args: unknown[]) => mockFindCandidateById(...args),
+    updateCandidateLifecycle: (...args: unknown[]) =>
+      mockUpdateCandidateLifecycle(...args),
+    updateTrain: (...args: unknown[]) => mockUpdateTrain(...args),
+    getLane: (...args: unknown[]) => mockGetLane(...args),
+    releaseLane: (...args: unknown[]) => mockReleaseLane(...args),
+    appendEvent: (...args: unknown[]) => mockAppendEvent(...args)
+  }
+}));
+
+jest.mock('@/releaseBus/release-bus.github-app', () => ({
+  releaseBusGitHubApp: {
+    ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args),
+    commentOnPullRequest: (...args: unknown[]) =>
+      mockCommentOnPullRequest(...args),
+    refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args)
+  }
+}));
+
+jest.mock('@/releaseBus/release-bus.metrics', () => ({
+  publishReleaseBusMetrics: jest.fn()
+}));
+
+import type {
+  ReleaseCandidateRecord,
+  ReleaseTrainRecord
+} from '@/releaseBus/release-bus.types';
+import { finishIncompleteComposition } from '@/releaseBus/worker';
+
+const SHA_A = 'a'.repeat(40);
+const SHA_B = 'b'.repeat(40);
+const SHA_C = 'c'.repeat(40);
+
+function candidate(
+  id: string,
+  repository: 'backend' | 'frontend',
+  sha: string,
+  prNumber: number
+): ReleaseCandidateRecord {
+  return {
+    id,
+    repository,
+    branch_name: `feature/${id}`,
+    head_sha: sha,
+    pr_number: prNumber,
+    status: 'STAGING_CLAIMED',
+    staging_ready_by_github_login: 'developer',
+    staging_ready_at: 1,
+    production_ready_by_github_login: null,
+    production_ready_at: null,
+    deploy_plan_json: null,
+    metadata_version: 1,
+    current_train_id: 'train-1',
+    hold_reason: null,
+    invalidated_at: null,
+    released_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  };
+}
+
+const train: ReleaseTrainRecord = {
+  id: 'train-1',
+  revision: 1,
+  target_lane: 'STAGING',
+  status: 'COMPOSING',
+  cutoff_at: 1,
+  frontend_base_sha: 'd'.repeat(40),
+  backend_base_sha: 'e'.repeat(40),
+  frontend_release_branch: 'release-bus/staging-train-train-1-r1',
+  backend_release_branch: 'release-bus/staging-train-train-1-r1',
+  frontend_pr_number: null,
+  backend_pr_number: null,
+  state_machine_execution_arn: null,
+  worker_version: '1',
+  failure_reason: null,
+  started_at: 1,
+  completed_at: null,
+  created_at: 1,
+  updated_at: 1,
+  row_version: 1
+};
+
+describe('finishIncompleteComposition', () => {
+  const candidates = [
+    candidate('candidate-a', 'backend', SHA_A, 101),
+    candidate('candidate-b', 'frontend', SHA_B, 102),
+    candidate('candidate-c', 'backend', SHA_C, 103)
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFindCandidateById.mockImplementation(async (id: string) =>
+      candidates.find((item) => item.id === id)
+    );
+    mockGetLane.mockResolvedValue(null);
+    mockEnsureCommitStatus.mockResolvedValue(undefined);
+    mockCommentOnPullRequest.mockResolvedValue(undefined);
+  });
+
+  it('quarantines the first omitted candidate and requeues unrelated work', async () => {
+    mockRefContainsCommit
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    const offender = await finishIncompleteComposition(train, candidates);
+
+    expect(offender?.id).toBe('candidate-b');
+    expect(mockUpdateCandidateLifecycle).toHaveBeenNthCalledWith(
+      1,
+      'candidate-a',
+      1,
+      expect.objectContaining({
+        status: 'READY_FOR_STAGING',
+        currentTrainId: null
+      }),
+      {}
+    );
+    expect(mockUpdateCandidateLifecycle).toHaveBeenNthCalledWith(
+      2,
+      'candidate-b',
+      1,
+      expect.objectContaining({
+        status: 'QUARANTINED',
+        holdReason: 'MERGE_CONFLICT_REQUIRES_DEVELOPER'
+      }),
+      {}
+    );
+    expect(mockUpdateCandidateLifecycle).toHaveBeenNthCalledWith(
+      3,
+      'candidate-c',
+      1,
+      expect.objectContaining({ status: 'READY_FOR_STAGING' }),
+      {}
+    );
+    expect(mockUpdateTrain).toHaveBeenCalledWith(
+      'train-1',
+      expect.objectContaining({ status: 'CANCELLED' }),
+      {}
+    );
+    expect(mockCommentOnPullRequest).toHaveBeenCalledWith(
+      'frontend',
+      102,
+      expect.stringContaining('resolve the conflict')
+    );
+  });
+
+  it('leaves a complete composition unchanged', async () => {
+    mockRefContainsCommit.mockResolvedValue(true);
+
+    await expect(
+      finishIncompleteComposition(train, candidates)
+    ).resolves.toBeNull();
+
+    expect(mockUpdateCandidateLifecycle).not.toHaveBeenCalled();
+    expect(mockUpdateTrain).not.toHaveBeenCalled();
+  });
+});

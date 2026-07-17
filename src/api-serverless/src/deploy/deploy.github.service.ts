@@ -40,6 +40,7 @@ type GitHubMatchingRef = {
 type GitHubRef = { object?: { sha?: string } };
 type GitHubRepository = { permissions?: { push?: boolean; admin?: boolean } };
 type GitHubPullRequest = { number: number; html_url: string };
+type GitHubCommitStatus = { context?: string };
 type GitHubOrgMembership = { role?: string; state?: string };
 
 type GitHubWorkflowRun = {
@@ -657,6 +658,29 @@ export class GitHubDeployService {
         `Failed to update Release Bus status: ${message}`
       );
     }
+  }
+
+  public async hasReleaseBusCommitStatus(
+    token: string,
+    target: DeployTarget,
+    sha: string
+  ): Promise<boolean> {
+    const response = await this.api(
+      token,
+      target,
+      `/commits/${encodeURIComponent(sha)}/statuses?per_page=100`,
+      { method: 'GET' }
+    );
+    if (!response.ok) {
+      const message = await this.getErrorMessage(response);
+      throw new CustomApiCompliantException(
+        502,
+        `Failed to inspect Release Bus status: ${message}`
+      );
+    }
+    return ((await response.json()) as GitHubCommitStatus[]).some(
+      (status) => status.context === 'Release Bus'
+    );
   }
 
   public async commentOnPullRequest(

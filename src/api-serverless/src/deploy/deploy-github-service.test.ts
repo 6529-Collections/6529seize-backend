@@ -85,4 +85,33 @@ describe('GitHubDeployService.listRefs', () => {
       'head=6529-Collections:feature%2Frelease%20bus'
     );
   });
+
+  it('detects an existing Release Bus commit status before cancellation', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse([
+        { context: 'continuous-integration' },
+        { context: 'Release Bus' }
+      ]) as never
+    );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.hasReleaseBusCommitStatus('token', 'frontend', 'a'.repeat(40))
+    ).resolves.toBe(true);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toContain(
+      `/commits/${'a'.repeat(40)}/statuses?per_page=100`
+    );
+  });
+
+  it('does not invent a Release Bus status for a shadow-only candidate', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse([{ context: 'continuous-integration' }]) as never
+    );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.hasReleaseBusCommitStatus('token', 'frontend', 'b'.repeat(40))
+    ).resolves.toBe(false);
+  });
 });
