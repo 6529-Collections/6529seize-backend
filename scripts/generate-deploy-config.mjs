@@ -132,6 +132,12 @@ permissions:
   actions: read
   contents: read
 
+# Production deployments share the prod/lambdas Secrets Manager document and
+# must never overlap. Staging remains serialized per service.
+concurrency:
+  group: deploy-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.environment == 'prod' && 'production' || github.event.inputs.service }}
+  cancel-in-progress: false
+
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: \${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -445,6 +451,15 @@ jobs:
             echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE"
             echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT"
           } >> "$GITHUB_ENV"
+      - name: Verify production Lambda secret exists
+        if: github.event.inputs.environment == 'prod' && (github.event.inputs.service == 'api' || github.event.inputs.service == 'releaseBus')
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! aws secretsmanager describe-secret --secret-id prod/lambdas --no-cli-pager > /dev/null; then
+            echo "::error::Required shared secret prod/lambdas does not exist in us-east-1"
+            exit 1
+          fi
       - name: Store Release Bus GitHub App private key
         if: github.event.inputs.service == 'releaseBus'
         shell: bash
