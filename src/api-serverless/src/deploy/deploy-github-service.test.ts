@@ -89,15 +89,19 @@ describe('GitHubDeployService.listRefs', () => {
   it('detects an existing Release Bus commit status before cancellation', async () => {
     fetchMock.mockResolvedValueOnce(
       createResponse([
-        { context: 'continuous-integration' },
-        { context: 'Release Bus' }
+        { context: 'continuous-integration', state: 'success' },
+        { context: 'Release Bus', state: 'pending' }
       ]) as never
     );
 
     const service = new GitHubDeployService();
     await expect(
-      service.hasReleaseBusCommitStatus('token', 'frontend', 'a'.repeat(40))
-    ).resolves.toBe(true);
+      service.getReleaseBusCommitStatusState(
+        'token',
+        'frontend',
+        'a'.repeat(40)
+      )
+    ).resolves.toBe('pending');
 
     expect(fetchMock.mock.calls[0]?.[0]).toContain(
       `/commits/${'a'.repeat(40)}/statuses?per_page=100&page=1`
@@ -106,13 +110,19 @@ describe('GitHubDeployService.listRefs', () => {
 
   it('does not invent a Release Bus status for a shadow-only candidate', async () => {
     fetchMock.mockResolvedValueOnce(
-      createResponse([{ context: 'continuous-integration' }]) as never
+      createResponse([
+        { context: 'continuous-integration', state: 'success' }
+      ]) as never
     );
 
     const service = new GitHubDeployService();
     await expect(
-      service.hasReleaseBusCommitStatus('token', 'frontend', 'b'.repeat(40))
-    ).resolves.toBe(false);
+      service.getReleaseBusCommitStatusState(
+        'token',
+        'frontend',
+        'b'.repeat(40)
+      )
+    ).resolves.toBeNull();
   });
 
   it('paginates commit statuses until the Release Bus context is found', async () => {
@@ -123,13 +133,13 @@ describe('GitHubDeployService.listRefs', () => {
         ) as never
       )
       .mockResolvedValueOnce(
-        createResponse([{ context: 'Release Bus' }]) as never
+        createResponse([{ context: 'Release Bus', state: 'pending' }]) as never
       );
 
     const service = new GitHubDeployService();
     await expect(
-      service.hasReleaseBusCommitStatus('token', 'backend', 'c'.repeat(40))
-    ).resolves.toBe(true);
+      service.getReleaseBusCommitStatusState('token', 'backend', 'c'.repeat(40))
+    ).resolves.toBe('pending');
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]?.[0]).toContain('page=2');

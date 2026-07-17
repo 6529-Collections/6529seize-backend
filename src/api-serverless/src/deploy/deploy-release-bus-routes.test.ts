@@ -13,7 +13,7 @@ const mockAssertRepositoryWriteAccess = jest.fn();
 const mockResolveBranchHead = jest.fn();
 const mockFindOpenPullRequest = jest.fn();
 const mockCreateCommitStatus = jest.fn();
-const mockHasReleaseBusCommitStatus = jest.fn();
+const mockGetReleaseBusCommitStatusState = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -35,8 +35,8 @@ jest.mock('@/api/deploy/deploy.github.service', () => ({
     findOpenPullRequest: (...args: unknown[]) =>
       mockFindOpenPullRequest(...args),
     createCommitStatus: (...args: unknown[]) => mockCreateCommitStatus(...args),
-    hasReleaseBusCommitStatus: (...args: unknown[]) =>
-      mockHasReleaseBusCommitStatus(...args)
+    getReleaseBusCommitStatusState: (...args: unknown[]) =>
+      mockGetReleaseBusCommitStatusState(...args)
   }
 }));
 
@@ -204,7 +204,7 @@ describe('release-bus readiness routes', () => {
     mockFindCandidateById.mockResolvedValue(candidate('READY_FOR_STAGING'));
     mockCancel.mockResolvedValue(candidate('CANCELLED'));
     mockCreateCommitStatus.mockResolvedValue(undefined);
-    mockHasReleaseBusCommitStatus.mockResolvedValue(true);
+    mockGetReleaseBusCommitStatusState.mockResolvedValue('pending');
   });
 
   afterAll(() => {
@@ -290,7 +290,19 @@ describe('release-bus readiness routes', () => {
 
   it('does not create a status when cancelling a shadow-only candidate', async () => {
     process.env.RELEASE_BUS_MODE = 'SHADOW';
-    mockHasReleaseBusCommitStatus.mockResolvedValue(false);
+    mockGetReleaseBusCommitStatusState.mockResolvedValue(null);
+
+    const response = await post(
+      '/deploy/release-candidates/candidate-1/cancel',
+      {}
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCreateCommitStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a terminal Release Bus status during cancellation', async () => {
+    mockGetReleaseBusCommitStatusState.mockResolvedValue('failure');
 
     const response = await post(
       '/deploy/release-candidates/candidate-1/cancel',

@@ -40,7 +40,11 @@ type GitHubMatchingRef = {
 type GitHubRef = { object?: { sha?: string } };
 type GitHubRepository = { permissions?: { push?: boolean; admin?: boolean } };
 type GitHubPullRequest = { number: number; html_url: string };
-type GitHubCommitStatus = { context?: string };
+type GitHubCommitStatusState = 'error' | 'failure' | 'pending' | 'success';
+type GitHubCommitStatus = {
+  context?: string;
+  state?: GitHubCommitStatusState;
+};
 type GitHubOrgMembership = { role?: string; state?: string };
 
 type GitHubWorkflowRun = {
@@ -660,11 +664,11 @@ export class GitHubDeployService {
     }
   }
 
-  public async hasReleaseBusCommitStatus(
+  public async getReleaseBusCommitStatusState(
     token: string,
     target: DeployTarget,
     sha: string
-  ): Promise<boolean> {
+  ): Promise<GitHubCommitStatusState | null> {
     for (let page = 1; ; page += 1) {
       const response = await this.api(
         token,
@@ -680,9 +684,11 @@ export class GitHubDeployService {
         );
       }
       const statuses = (await response.json()) as GitHubCommitStatus[];
-      if (statuses.some((status) => status.context === 'Release Bus'))
-        return true;
-      if (statuses.length < 100) return false;
+      const releaseBusStatus = statuses.find(
+        (status) => status.context === 'Release Bus'
+      );
+      if (releaseBusStatus) return releaseBusStatus.state ?? null;
+      if (statuses.length < 100) return null;
     }
   }
 

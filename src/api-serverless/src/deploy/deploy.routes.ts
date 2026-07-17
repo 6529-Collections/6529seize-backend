@@ -387,11 +387,11 @@ deployRoutes.post('/release-candidates/:id/cancel', async (req, res) => {
   }
   const target = targetForRepository(cancelled.repository);
   if (
-    await gitHubDeployService.hasReleaseBusCommitStatus(
+    (await gitHubDeployService.getReleaseBusCommitStatusState(
       token,
       target,
       cancelled.head_sha
-    )
+    )) === 'pending'
   ) {
     await gitHubDeployService.createCommitStatus(
       token,
