@@ -135,6 +135,9 @@ permissions:
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: \${{ secrets.SENTRY_AUTH_TOKEN }}
+  RELEASE_BUS_MODE: \${{ vars.RELEASE_BUS_MODE || 'OFF' }}
+  RELEASE_BUS_GITHUB_ORG: \${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
+  RELEASE_BUS_UI_URL: \${{ vars.RELEASE_BUS_UI_URL || 'https://api.6529.io/deploy/ui/bus' }}
   ATTACHMENTS_INGEST_S3_BUCKET_PROD: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_PROD }}
   ATTACHMENTS_INGEST_S3_BUCKET_STAGING: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_STAGING }}
   DROP_MEDIA_SANITIZE_IMAGES_PROD: \${{ vars.DROP_MEDIA_SANITIZE_IMAGES_PROD }}
@@ -182,6 +185,28 @@ jobs:
             [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
             [[ "$INPUT_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           fi
+      - name: Validate Release Bus GitHub App configuration
+        if: github.event.inputs.service == 'releaseBus'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_APP_ID: \${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
+          RELEASE_BUS_GITHUB_PRIVATE_KEY: \${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
+          [[ "$RELEASE_BUS_GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]]
+          test -n "$RELEASE_BUS_GITHUB_PRIVATE_KEY"
+      - name: Validate Release Bus API configuration
+        if: github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_WEBHOOK_SECRET: \${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
+          test -n "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET"
+          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
       - name: Check production preconditions
         shell: bash
         if: ${prodCondition}
@@ -251,6 +276,17 @@ jobs:
           ref: \${{ github.event.inputs.expected_sha || steps.extract_branch.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve Release Bus GitHub App installation
+        if: github.event.inputs.service == 'releaseBus'
+        id: release_bus_app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: \${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
+          private-key: \${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+          owner: \${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
+          repositories: |
+            6529seize-backend
+            6529seize-frontend
       - name: Verify immutable source
         if: github.event.inputs.operation_key != ''
         shell: bash
@@ -410,13 +446,28 @@ jobs:
             echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT"
           } >> "$GITHUB_ENV"
       - name: Deploy service
-        if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
+        if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop' && github.event.inputs.service != 'releaseBus'
         run: |
           VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           export VERSION_DESCRIPTION
           pushd src/\${{ github.event.inputs.service }} && npm run sls-deploy:\${{ github.event.inputs.environment }} && popd
+      - name: Deploy Release Bus with runtime credentials
+        if: github.event.inputs.service == 'releaseBus'
+        env:
+          RELEASE_BUS_GITHUB_APP_ID: \${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
+          RELEASE_BUS_GITHUB_INSTALLATION_ID: \${{ steps.release_bus_app.outputs.installation-id }}
+          RELEASE_BUS_GITHUB_PRIVATE_KEY: \${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_BUS_GITHUB_INSTALLATION_ID"
+          VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+          export VERSION_DESCRIPTION
+          pushd src/releaseBus && npm run sls-deploy:\${{ github.event.inputs.environment }} && popd
       - name: Deploy API
         if: github.event.inputs.service == 'api'
+        env:
+          RELEASE_BUS_GITHUB_WEBHOOK_SECRET: \${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
         run: |
           set +x
           GIT_COMMIT=$(git rev-parse HEAD)
@@ -428,9 +479,15 @@ jobs:
           aws lambda update-function-code --function-name seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip --no-cli-pager > /dev/null 2>&1
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
-          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
+          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
+          if [ "\${{ github.event.inputs.environment }}" = prod ]; then
+            jq --arg mode "$RELEASE_BUS_MODE" --arg workflowToken "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN" --arg webhookSecret "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET" '. + {RELEASE_BUS_MODE: $mode, RELEASE_BUS_WORKFLOW_AUTH_TOKEN: $workflowToken, RELEASE_BUS_GITHUB_WEBHOOK_SECRET: $webhookSecret}' /tmp/app_env.json > /tmp/runtime_env.json
+          else
+            jq '. + {RELEASE_BUS_MODE: "OFF"} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+          fi
+          jq '{Variables: .}' /tmp/runtime_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
-          rm -f /tmp/current_env.json /tmp/env_config.json
+          rm -f /tmp/current_env.json /tmp/app_env.json /tmp/runtime_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop
         if: github.event.inputs.service == 'mediaResizerLoop'
         run: |

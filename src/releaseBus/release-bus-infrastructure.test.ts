@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
 import stateMachine from '@/releaseBus/state-machine.asl.json';
 import { e2eSourceRef } from '@/releaseBus/worker';
+
+const deployWorkflow = readFileSync('.github/workflows/deploy.yml', 'utf8');
+const releaseBusServerless = readFileSync(
+  'src/releaseBus/serverless.yaml',
+  'utf8'
+);
 
 describe('release bus infrastructure contract', () => {
   it('invokes the worker version pinned into the train execution', () => {
@@ -18,5 +25,32 @@ describe('release bus infrastructure contract', () => {
     expect(
       e2eSourceRef('release-bus/train', 'staging', 'release-bus/train')
     ).toBe('release-bus/train');
+  });
+
+  it('injects the GitHub App identity into every Release Bus Lambda', () => {
+    expect(releaseBusServerless).toContain(
+      'RELEASE_BUS_GITHUB_INSTALLATION_ID: ${env:RELEASE_BUS_GITHUB_INSTALLATION_ID}'
+    );
+    expect(releaseBusServerless).toContain(
+      'RELEASE_BUS_GITHUB_PRIVATE_KEY: ${env:RELEASE_BUS_GITHUB_PRIVATE_KEY}'
+    );
+    expect(deployWorkflow).toContain(
+      'name: Resolve Release Bus GitHub App installation'
+    );
+    expect(deployWorkflow).toContain(
+      'RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}'
+    );
+  });
+
+  it('wires production API credentials and keeps staging API OFF', () => {
+    expect(deployWorkflow).toContain(
+      'RELEASE_BUS_GITHUB_WEBHOOK_SECRET: ${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}'
+    );
+    expect(deployWorkflow).toContain(
+      'RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}'
+    );
+    expect(deployWorkflow).toContain(
+      'jq \'. + {RELEASE_BUS_MODE: "OFF"} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)\''
+    );
   });
 });

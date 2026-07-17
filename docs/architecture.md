@@ -462,6 +462,11 @@ builds immutable artifacts and deploys backend services in registry DAG order
 before dependent frontend code. The API's `/deploy/ui/bus` page is the
 readiness queue and pause/resume control plane. Modes `OFF`, `SHADOW`,
 `STAGING`, and `PRODUCTION` permit a backward-compatible rollout.
+The generated backend deployment workflow resolves the installed GitHub App's
+installation ID from the App credentials and injects the App identity into all
+three Release Bus Lambdas. Production API deployment also injects the webhook
+verification secret and workflow authorization token while explicitly keeping
+the staging API in `OFF` mode without those production-only credentials.
 Backend units whose registry policy is `production-only` are built and tested
 in preflight but cannot be runtime-deployed to staging; their staging gate is
 the combined application E2E suite plus the immutable artifact evidence. The
