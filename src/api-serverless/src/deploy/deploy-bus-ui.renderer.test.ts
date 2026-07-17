@@ -10,6 +10,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('Mark exact SHA ready');
     expect(html).toContain('<option value="STAGING">Staging</option>');
     expect(html).toContain('<option value="PRODUCTION">Production</option>');
+    expect(html).toContain('id="mark-ready"');
+    expect(html).toContain('type="submit" disabled');
     expect(html).toContain('Operator controls');
     expect(html).toContain('Pause all');
   });
@@ -21,5 +23,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain("request('/deploy/release-candidates/ready'");
     expect(app).toContain('replace(/[&<>"\']/g');
     expect(app).toContain('expected_head_sha:');
+    expect(app).toContain("state.mode==='OFF'");
+    expect(app).toContain("state.mode==='STAGING'&&lane==='PRODUCTION'");
+    expect(app).toContain('SHADOW records decisions only');
   });
 });

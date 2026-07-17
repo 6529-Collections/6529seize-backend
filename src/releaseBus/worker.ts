@@ -45,6 +45,9 @@ async function loadTrain(trainId: string) {
   const train = await releaseBusRepository.findTrain(trainId, {});
   if (!train) throw new Error(`Release train ${trainId} not found`);
   const items = await releaseBusRepository.listTrainItems(trainId, {});
+  // Promise.all preserves the train-item sequence. Filtering that array by
+  // repository later therefore produces the exact candidate_shas order sent
+  // to each compose workflow.
   const candidates = (
     await Promise.all(
       items.map((item) =>
@@ -658,6 +661,122 @@ async function publishCandidateStatus(
       {}
     );
   }
+}
+
+export async function finishIncompleteComposition(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[]
+): Promise<ReleaseCandidateRecord | null> {
+  const branch = trainBranch(train);
+  let offender: ReleaseCandidateRecord | null = null;
+  // Compose stops at the first conflict in the same train-item order used
+  // here. Later missing candidates were not attempted: requeueing them cannot
+  // repeat this conflict because the first offender is quarantined.
+  for (const candidate of candidates) {
+    if (
+      !(await releaseBusGitHubApp.refContainsCommit(
+        candidate.repository,
+        branch,
+        candidate.head_sha
+      ))
+    ) {
+      offender = candidate;
+      break;
+    }
+  }
+  if (!offender) return null;
+
+  for (const candidate of candidates) {
+    const current = await releaseBusRepository.findCandidateById(
+      candidate.id,
+      {}
+    );
+    if (
+      !current ||
+      !['STAGING_CLAIMED', 'PRODUCTION_CLAIMED'].includes(current.status)
+    )
+      continue;
+    const isOffender = candidate.id === offender.id;
+    await releaseBusRepository.updateCandidateLifecycle(
+      current.id,
+      current.row_version,
+      {
+        status: isOffender ? 'QUARANTINED' : readyStatusForTrain(train),
+        currentTrainId: null,
+        holdReason: isOffender ? 'MERGE_CONFLICT_REQUIRES_DEVELOPER' : null
+      },
+      {}
+    );
+  }
+
+  await publishCandidateStatus(
+    train,
+    offender,
+    'failure',
+    `Merge conflict requires developer action (${train.id})`
+  );
+  if (offender.pr_number) {
+    try {
+      await releaseBusGitHubApp.commentOnPullRequest(
+        offender.repository,
+        offender.pr_number,
+        [
+          `Release Bus quarantined immutable candidate \`${offender.head_sha}\` after it conflicted with the fresh target and earlier candidates in train \`${train.id}\`.`,
+          '',
+          'Codex conflict resolution was unavailable or did not produce a complete composition. Other candidates were returned to the queue.',
+          '',
+          'Rebase or resolve the conflict, push the fix (which creates a new SHA), and mark that new SHA ready again.'
+        ].join('\n')
+      );
+    } catch (error) {
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          candidateId: offender.id,
+          eventType: 'CANDIDATE_COMPOSITION_COMMENT_FAILED',
+          payload: {
+            message: error instanceof Error ? error.message : 'comment failed'
+          }
+        },
+        {}
+      );
+      await publishReleaseBusMetrics([
+        {
+          MetricName: 'CandidateNotificationFailure',
+          Value: 1,
+          Dimensions: [
+            { Name: 'Lane', Value: train.target_lane },
+            { Name: 'Channel', Value: 'PullRequestComment' }
+          ]
+        }
+      ]);
+    }
+  }
+
+  await releaseBusRepository.updateTrain(
+    train.id,
+    {
+      status: 'CANCELLED',
+      failureReason: `Candidate ${offender.id} was not present in the composed release branch`,
+      completedAt: Date.now()
+    },
+    {}
+  );
+  await releaseTrainLanes(train);
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: train.id,
+      candidateId: offender.id,
+      eventType: 'CANDIDATE_QUARANTINED_BY_COMPOSITION',
+      payload: {
+        repository: offender.repository,
+        head_sha: offender.head_sha,
+        release_branch: branch
+      }
+    },
+    {}
+  );
+  return offender;
 }
 
 async function failAndPauseTrain(
@@ -1665,6 +1784,17 @@ export async function advanceReleaseTrain(
       }
       if (result === 'WAIT')
         return { decision: 'WAIT', train_id: train.id, status: train.status };
+      // A successful compose workflow may intentionally publish only its
+      // conflict-free prefix when Codex is disabled. Never dispatch preflight
+      // until every frozen candidate SHA is proven reachable from its branch.
+      const offender = await finishIncompleteComposition(train, candidates);
+      if (offender)
+        return {
+          decision: 'COMPLETE',
+          train_id: train.id,
+          status: 'CANCELLED',
+          message: `Candidate ${offender.id} requires merge-conflict resolution; other candidates were returned to the queue`
+        };
       await beginPreflight(train, candidates);
       return { decision: 'WAIT', train_id: train.id, status: 'PREFLIGHTING' };
     }

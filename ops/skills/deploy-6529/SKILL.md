@@ -5,17 +5,37 @@ description: Mark exact 6529 backend branch SHAs and allowlisted service DAGs re
 
 # Deploy 6529 Backend
 
-Use the Release Bus as the normal release path. The frontend repository's
+Use the Release Bus as the normal path only for lanes enabled by its current
+rollout mode. The frontend repository's
 `ops/docs/developer/deployment-bus-process.md` is the lifecycle authority and
 `deployment-bus-automation.md` is the operations runbook.
 
+## Rollout mode gate
+
+Before every staging or production action, authenticate at `/deploy/ui/bus`
+and read the mode shown by `/deploy/release-bus/controls`. Do not infer the
+mode from merged code, available workflows, or an existing candidate.
+
+- `OFF`: do not submit readiness. Use the existing manual staging or production
+  path under its normal authorization rules.
+- `SHADOW`: submit only when the user explicitly asks to record a shadow
+  decision. Shadow readiness does not stage or deploy anything; use the manual
+  path for an actual release.
+- `STAGING`: use the bus for staging only. Do not submit production readiness;
+  production remains on the existing manual path.
+- `PRODUCTION`: use the bus for both staging and production readiness.
+
+If the mode changes while working, re-read it before submission. Treat an API
+mode rejection as authoritative and do not work around it.
+
 ## Authority
 
-- A request to stage a development authorizes marking its exact SHA ready for
-  `STAGING`; it does not require or authorize a manual `1a-staging` merge.
-- A request to ship an exact staging-validated candidate authorizes separate
-  `PRODUCTION` readiness. The bus needs no later human approval on its normal
-  successful path.
+- When the staging lane is enabled, a request to stage a development authorizes
+  marking its exact SHA ready for `STAGING`; it does not require or authorize a
+  manual `1a-staging` merge.
+- When production mode is enabled, a request to ship an exact
+  staging-validated candidate authorizes separate `PRODUCTION` readiness. The
+  bus needs no later human approval on its normal successful path.
 - Do not manually dispatch `deploy.yml`, move `1a-staging`, or merge the source
   PR while the bus is enabled unless an operator explicitly uses break glass.
 - Never merge `1a-staging` into `main`.
@@ -59,8 +79,10 @@ Lambda/API target before advancing.
 
 - Fix a quarantined source branch and mark its new SHA ready again. Do not
   mutate the old candidate.
-- Treat read-only Codex output as diagnostic context only. Deterministic checks
-  decide quarantine.
+- Treat read-only Codex output, when enabled, as diagnostic context only.
+  Deterministic checks decide quarantine. Without Codex, a merge-conflicting
+  candidate is quarantined and unrelated candidates return to the queue
+  automatically.
 - If backend staging fails, frontend staging does not start.
 - If backend production fails, frontend `main` is not advanced.
 - Once production mutation starts, do not eject candidates. The production
