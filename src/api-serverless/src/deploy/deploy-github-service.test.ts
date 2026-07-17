@@ -100,7 +100,7 @@ describe('GitHubDeployService.listRefs', () => {
     ).resolves.toBe(true);
 
     expect(fetchMock.mock.calls[0]?.[0]).toContain(
-      `/commits/${'a'.repeat(40)}/statuses?per_page=100`
+      `/commits/${'a'.repeat(40)}/statuses?per_page=100&page=1`
     );
   });
 
@@ -113,5 +113,25 @@ describe('GitHubDeployService.listRefs', () => {
     await expect(
       service.hasReleaseBusCommitStatus('token', 'frontend', 'b'.repeat(40))
     ).resolves.toBe(false);
+  });
+
+  it('paginates commit statuses until the Release Bus context is found', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        createResponse(
+          Array.from({ length: 100 }, () => ({ context: 'other' }))
+        ) as never
+      )
+      .mockResolvedValueOnce(
+        createResponse([{ context: 'Release Bus' }]) as never
+      );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.hasReleaseBusCommitStatus('token', 'backend', 'c'.repeat(40))
+    ).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain('page=2');
   });
 });

@@ -7,6 +7,13 @@ const mockUpdateTrain = jest.fn();
 const mockGetLane = jest.fn();
 const mockReleaseLane = jest.fn();
 const mockAppendEvent = jest.fn();
+const mockPublishReleaseBusMetrics = jest.fn();
+const mockFindTrain = jest.fn();
+const mockListTrainItems = jest.fn();
+const mockHeartbeatLane = jest.fn();
+const mockListControls = jest.fn();
+const mockListTrainOperations = jest.fn();
+const mockResolveRef = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -16,7 +23,13 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     updateTrain: (...args: unknown[]) => mockUpdateTrain(...args),
     getLane: (...args: unknown[]) => mockGetLane(...args),
     releaseLane: (...args: unknown[]) => mockReleaseLane(...args),
-    appendEvent: (...args: unknown[]) => mockAppendEvent(...args)
+    appendEvent: (...args: unknown[]) => mockAppendEvent(...args),
+    findTrain: (...args: unknown[]) => mockFindTrain(...args),
+    listTrainItems: (...args: unknown[]) => mockListTrainItems(...args),
+    heartbeatLane: (...args: unknown[]) => mockHeartbeatLane(...args),
+    listControls: (...args: unknown[]) => mockListControls(...args),
+    listTrainOperations: (...args: unknown[]) =>
+      mockListTrainOperations(...args)
   }
 }));
 
@@ -25,19 +38,24 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args),
     commentOnPullRequest: (...args: unknown[]) =>
       mockCommentOnPullRequest(...args),
-    refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args)
+    refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args),
+    resolveRef: (...args: unknown[]) => mockResolveRef(...args)
   }
 }));
 
 jest.mock('@/releaseBus/release-bus.metrics', () => ({
-  publishReleaseBusMetrics: jest.fn()
+  publishReleaseBusMetrics: (...args: unknown[]) =>
+    mockPublishReleaseBusMetrics(...args)
 }));
 
 import type {
   ReleaseCandidateRecord,
   ReleaseTrainRecord
 } from '@/releaseBus/release-bus.types';
-import { finishIncompleteComposition } from '@/releaseBus/worker';
+import {
+  advanceReleaseTrain,
+  finishIncompleteComposition
+} from '@/releaseBus/worker';
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -111,7 +129,11 @@ describe('finishIncompleteComposition', () => {
     mockCommentOnPullRequest.mockResolvedValue(undefined);
   });
 
-  it('quarantines the first omitted candidate and requeues unrelated work', async () => {
+  afterEach(() => {
+    delete process.env.RELEASE_BUS_MODE;
+  });
+
+  it('quarantines the first omitted candidate and requeues later unattempted work', async () => {
     mockRefContainsCommit
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false);
@@ -158,6 +180,24 @@ describe('finishIncompleteComposition', () => {
     );
   });
 
+  it('emits an operator metric when the quarantine PR comment fails', async () => {
+    mockRefContainsCommit
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    mockCommentOnPullRequest.mockRejectedValueOnce(new Error('GitHub failed'));
+
+    await finishIncompleteComposition(train, candidates);
+
+    expect(mockPublishReleaseBusMetrics).toHaveBeenCalledWith([
+      expect.objectContaining({
+        MetricName: 'CandidateNotificationFailure',
+        Dimensions: expect.arrayContaining([
+          { Name: 'Channel', Value: 'PullRequestComment' }
+        ])
+      })
+    ]);
+  });
+
   it('leaves a complete composition unchanged', async () => {
     mockRefContainsCommit.mockResolvedValue(true);
 
@@ -167,5 +207,32 @@ describe('finishIncompleteComposition', () => {
 
     expect(mockUpdateCandidateLifecycle).not.toHaveBeenCalled();
     expect(mockUpdateTrain).not.toHaveBeenCalled();
+  });
+
+  it('cancels before preflight when a successful compose run published an incomplete branch', async () => {
+    process.env.RELEASE_BUS_MODE = 'STAGING';
+    mockFindTrain.mockResolvedValue(train);
+    mockListTrainItems.mockResolvedValue(
+      candidates.map((item, index) => ({
+        candidate_id: item.id,
+        sequence: index + 1
+      }))
+    );
+    mockHeartbeatLane.mockResolvedValue(true);
+    mockListControls.mockResolvedValue([]);
+    mockListTrainOperations.mockResolvedValue([
+      {
+        operation_type: 'compose-frontend',
+        status: 'SUCCEEDED'
+      }
+    ]);
+    mockRefContainsCommit.mockResolvedValueOnce(false);
+
+    await expect(advanceReleaseTrain(train.id)).resolves.toMatchObject({
+      decision: 'COMPLETE',
+      status: 'CANCELLED'
+    });
+
+    expect(mockResolveRef).not.toHaveBeenCalled();
   });
 });

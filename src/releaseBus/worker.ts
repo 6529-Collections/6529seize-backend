@@ -45,6 +45,9 @@ async function loadTrain(trainId: string) {
   const train = await releaseBusRepository.findTrain(trainId, {});
   if (!train) throw new Error(`Release train ${trainId} not found`);
   const items = await releaseBusRepository.listTrainItems(trainId, {});
+  // Promise.all preserves the train-item sequence. Filtering that array by
+  // repository later therefore produces the exact candidate_shas order sent
+  // to each compose workflow.
   const candidates = (
     await Promise.all(
       items.map((item) =>
@@ -666,6 +669,9 @@ export async function finishIncompleteComposition(
 ): Promise<ReleaseCandidateRecord | null> {
   const branch = trainBranch(train);
   let offender: ReleaseCandidateRecord | null = null;
+  // Compose stops at the first conflict in the same train-item order used
+  // here. Later missing candidates were not attempted: requeueing them cannot
+  // repeat this conflict because the first offender is quarantined.
   for (const candidate of candidates) {
     if (
       !(await releaseBusGitHubApp.refContainsCommit(
@@ -734,6 +740,16 @@ export async function finishIncompleteComposition(
         },
         {}
       );
+      await publishReleaseBusMetrics([
+        {
+          MetricName: 'CandidateNotificationFailure',
+          Value: 1,
+          Dimensions: [
+            { Name: 'Lane', Value: train.target_lane },
+            { Name: 'Channel', Value: 'PullRequestComment' }
+          ]
+        }
+      ]);
     }
   }
 
@@ -1768,6 +1784,9 @@ export async function advanceReleaseTrain(
       }
       if (result === 'WAIT')
         return { decision: 'WAIT', train_id: train.id, status: train.status };
+      // A successful compose workflow may intentionally publish only its
+      // conflict-free prefix when Codex is disabled. Never dispatch preflight
+      // until every frozen candidate SHA is proven reachable from its branch.
       const offender = await finishIncompleteComposition(train, candidates);
       if (offender)
         return {

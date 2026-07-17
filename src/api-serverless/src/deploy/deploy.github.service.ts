@@ -665,22 +665,25 @@ export class GitHubDeployService {
     target: DeployTarget,
     sha: string
   ): Promise<boolean> {
-    const response = await this.api(
-      token,
-      target,
-      `/commits/${encodeURIComponent(sha)}/statuses?per_page=100`,
-      { method: 'GET' }
-    );
-    if (!response.ok) {
-      const message = await this.getErrorMessage(response);
-      throw new CustomApiCompliantException(
-        502,
-        `Failed to inspect Release Bus status: ${message}`
+    for (let page = 1; ; page += 1) {
+      const response = await this.api(
+        token,
+        target,
+        `/commits/${encodeURIComponent(sha)}/statuses?per_page=100&page=${page}`,
+        { method: 'GET' }
       );
+      if (!response.ok) {
+        const message = await this.getErrorMessage(response);
+        throw new CustomApiCompliantException(
+          502,
+          `Failed to inspect Release Bus status: ${message}`
+        );
+      }
+      const statuses = (await response.json()) as GitHubCommitStatus[];
+      if (statuses.some((status) => status.context === 'Release Bus'))
+        return true;
+      if (statuses.length < 100) return false;
     }
-    return ((await response.json()) as GitHubCommitStatus[]).some(
-      (status) => status.context === 'Release Bus'
-    );
   }
 
   public async commentOnPullRequest(

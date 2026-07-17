@@ -33,7 +33,6 @@ import { releaseBusRepository } from '@/releaseBus/release-bus.repository';
 import { releaseBusGitHubApp } from '@/releaseBus/release-bus.github-app';
 import {
   getReleaseBusMode,
-  releaseBusWritesGitHub,
   RELEASE_BUS_OPERATOR_TEAM
 } from '@/releaseBus/release-bus.config';
 import { releaseBusService } from '@/releaseBus/release-bus.service';
@@ -350,7 +349,7 @@ deployRoutes.post('/release-candidates/ready', async (req, res) => {
       error instanceof Error ? error.message : 'Invalid release candidate'
     );
   }
-  if (releaseBusWritesGitHub()) {
+  if (mode === 'STAGING' || mode === 'PRODUCTION') {
     await gitHubDeployService.createCommitStatus(
       token,
       target,
