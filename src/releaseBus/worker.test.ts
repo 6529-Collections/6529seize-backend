@@ -52,6 +52,8 @@ import type {
   ReleaseCandidateRecord,
   ReleaseTrainRecord
 } from '@/releaseBus/release-bus.types';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   advanceReleaseTrain,
   finishIncompleteComposition
@@ -113,6 +115,10 @@ const train: ReleaseTrainRecord = {
 };
 
 describe('finishIncompleteComposition', () => {
+  const composeWorkflow = readFileSync(
+    path.join(process.cwd(), '.github/workflows/release-bus-compose.yml'),
+    'utf8'
+  );
   const candidates = [
     candidate('candidate-a', 'backend', SHA_A, 101),
     candidate('candidate-b', 'frontend', SHA_B, 102),
@@ -131,6 +137,17 @@ describe('finishIncompleteComposition', () => {
 
   afterEach(() => {
     delete process.env.RELEASE_BUS_MODE;
+  });
+
+  it('guards and integrity-checks a Codex-disabled deferred composition', () => {
+    expect(composeWorkflow).toContain(
+      'git rev-parse -q --verify MERGE_HEAD >/dev/null'
+    );
+    expect(composeWorkflow).toContain('Release-Bus-Defer: true');
+    expect(composeWorkflow).toContain(
+      'Incomplete composition does not contain a strict candidate prefix.'
+    );
+    expect(composeWorkflow).toContain('test "$missing_seen" = true');
   });
 
   it('quarantines the first omitted candidate and requeues later unattempted work', async () => {
