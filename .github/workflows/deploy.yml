@@ -114,9 +114,18 @@ permissions:
   actions: read
   contents: read
 
+# Production deployments share the prod/lambdas Secrets Manager document and
+# must never overlap. Staging remains serialized per service.
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}-${{ github.event.inputs.environment == 'prod' && 'production' || github.event.inputs.service }}
+  cancel-in-progress: false
+
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+  RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
+  RELEASE_BUS_GITHUB_ORG: ${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
+  RELEASE_BUS_UI_URL: ${{ vars.RELEASE_BUS_UI_URL || 'https://api.6529.io/deploy/ui/bus' }}
   ATTACHMENTS_INGEST_S3_BUCKET_PROD: ${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_PROD }}
   ATTACHMENTS_INGEST_S3_BUCKET_STAGING: ${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_STAGING }}
   DROP_MEDIA_SANITIZE_IMAGES_PROD: ${{ vars.DROP_MEDIA_SANITIZE_IMAGES_PROD }}
@@ -164,6 +173,28 @@ jobs:
             [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
             [[ "$INPUT_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           fi
+      - name: Validate Release Bus GitHub App configuration
+        if: github.event.inputs.service == 'releaseBus'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_APP_ID: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
+          RELEASE_BUS_GITHUB_PRIVATE_KEY: ${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
+          [[ "$RELEASE_BUS_GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]]
+          test -n "$RELEASE_BUS_GITHUB_PRIVATE_KEY"
+      - name: Validate Release Bus API configuration
+        if: github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_WEBHOOK_SECRET: ${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
+          test -n "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET"
+          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
       - name: Check production preconditions
         shell: bash
         if: (github.event.inputs.service == 'cloudwatchAlarmsToDiscordLoop' || github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaImageResolutions' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'releaseBus' || github.event.inputs.service == 'releaseNotesGenerationLoop') && github.event.inputs.environment != 'prod'
@@ -222,6 +253,17 @@ jobs:
           ref: ${{ github.event.inputs.expected_sha || steps.extract_branch.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve Release Bus GitHub App installation
+        if: github.event.inputs.service == 'releaseBus'
+        id: release_bus_app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+          owner: ${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
+          repositories: |
+            6529seize-backend
+            6529seize-frontend
       - name: Verify immutable source
         if: github.event.inputs.operation_key != ''
         shell: bash
@@ -361,12 +403,72 @@ jobs:
             echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE"
             echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT"
           } >> "$GITHUB_ENV"
+      - name: Verify production Lambda secret exists
+        if: github.event.inputs.environment == 'prod' && (github.event.inputs.service == 'api' || github.event.inputs.service == 'releaseBus')
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! aws secretsmanager describe-secret --secret-id prod/lambdas --no-cli-pager > /dev/null; then
+            echo "::error::Required shared secret prod/lambdas does not exist in us-east-1"
+            exit 1
+          fi
+      - name: Store Release Bus GitHub App private key
+        if: github.event.inputs.service == 'releaseBus'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_PRIVATE_KEY: ${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          current_secret=/tmp/release-bus-current-secret.json
+          updated_secret=/tmp/release-bus-updated-secret.json
+          trap 'rm -f "$current_secret" "$updated_secret"' EXIT
+          aws secretsmanager get-secret-value             --secret-id prod/lambdas             --query SecretString             --output text > "$current_secret"
+          if ! jq -e 'type == "object"' "$current_secret" > /dev/null; then
+            echo "::error::Shared secret prod/lambdas must contain a JSON object"
+            exit 1
+          fi
+          jq --arg privateKey "$RELEASE_BUS_GITHUB_PRIVATE_KEY"             '. + {RELEASE_BUS_GITHUB_PRIVATE_KEY: $privateKey}'             "$current_secret" > "$updated_secret"
+          aws secretsmanager put-secret-value             --secret-id prod/lambdas             --secret-string "file://$updated_secret"             --no-cli-pager > /dev/null
+      - name: Store Release Bus production API credentials
+        if: github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod'
+        shell: bash
+        env:
+          RELEASE_BUS_GITHUB_WEBHOOK_SECRET: ${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          current_secret=/tmp/release-bus-current-secret.json
+          updated_secret=/tmp/release-bus-updated-secret.json
+          trap 'rm -f "$current_secret" "$updated_secret"' EXIT
+          aws secretsmanager get-secret-value             --secret-id prod/lambdas             --query SecretString             --output text > "$current_secret"
+          if ! jq -e 'type == "object"' "$current_secret" > /dev/null; then
+            echo "::error::Shared secret prod/lambdas must contain a JSON object"
+            exit 1
+          fi
+          jq             --arg webhookSecret "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET"             --arg workflowToken "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"             '. + {RELEASE_BUS_GITHUB_WEBHOOK_SECRET: $webhookSecret, RELEASE_BUS_WORKFLOW_AUTH_TOKEN: $workflowToken}'             "$current_secret" > "$updated_secret"
+          aws secretsmanager put-secret-value             --secret-id prod/lambdas             --secret-string "file://$updated_secret"             --no-cli-pager > /dev/null
       - name: Deploy service
-        if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
+        if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop' && github.event.inputs.service != 'releaseBus'
         run: |
           VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           export VERSION_DESCRIPTION
           pushd src/${{ github.event.inputs.service }} && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
+      - name: Deploy Release Bus with runtime credentials
+        if: github.event.inputs.service == 'releaseBus'
+        env:
+          RELEASE_BUS_GITHUB_APP_ID: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
+          RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}
+          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_BUS_GITHUB_INSTALLATION_ID"
+          VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+          export VERSION_DESCRIPTION
+          pushd src/releaseBus && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
       - name: Deploy API
         if: github.event.inputs.service == 'api'
         run: |
@@ -380,9 +482,15 @@ jobs:
           aws lambda update-function-code --function-name seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip --no-cli-pager > /dev/null 2>&1
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
-          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
+          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
+          if [ "${{ github.event.inputs.environment }}" = prod ]; then
+            jq --arg mode "$RELEASE_BUS_MODE" '. + {RELEASE_BUS_MODE: $mode} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+          else
+            jq '. + {RELEASE_BUS_MODE: "OFF"} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+          fi
+          jq '{Variables: .}' /tmp/runtime_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
-          rm -f /tmp/current_env.json /tmp/env_config.json
+          rm -f /tmp/current_env.json /tmp/app_env.json /tmp/runtime_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop
         if: github.event.inputs.service == 'mediaResizerLoop'
         run: |
