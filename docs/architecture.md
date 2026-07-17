@@ -470,6 +470,10 @@ workflow authorization token are merged into the existing regional
 Lambda secret bootstrap before a handler enters its database context. The
 deployment workflow requires that shared secret to exist and serializes all
 production deployments so its read/merge/write updates cannot overlap.
+This single production lane is intentional: unrelated production services do
+not deploy in parallel, and an operator must cancel a stuck run before an
+urgent later production deploy can begin. Staging deployments retain
+per-service concurrency.
 Production API deployment keeps only the non-secret
 mode in Lambda configuration, while the staging API is explicitly forced to
 `OFF` and receives none of the production-only secret values. One global

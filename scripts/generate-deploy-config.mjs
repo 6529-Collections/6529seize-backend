@@ -476,6 +476,10 @@ jobs:
             --secret-id prod/lambdas \
             --query SecretString \
             --output text > "$current_secret"
+          if ! jq -e 'type == "object"' "$current_secret" > /dev/null; then
+            echo "::error::Shared secret prod/lambdas must contain a JSON object"
+            exit 1
+          fi
           jq --arg privateKey "$RELEASE_BUS_GITHUB_PRIVATE_KEY" \
             '. + {RELEASE_BUS_GITHUB_PRIVATE_KEY: $privateKey}' \
             "$current_secret" > "$updated_secret"
@@ -500,6 +504,10 @@ jobs:
             --secret-id prod/lambdas \
             --query SecretString \
             --output text > "$current_secret"
+          if ! jq -e 'type == "object"' "$current_secret" > /dev/null; then
+            echo "::error::Shared secret prod/lambdas must contain a JSON object"
+            exit 1
+          fi
           jq \
             --arg webhookSecret "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET" \
             --arg workflowToken "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
