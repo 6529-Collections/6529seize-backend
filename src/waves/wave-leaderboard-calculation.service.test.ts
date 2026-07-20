@@ -2,15 +2,42 @@ import { mock } from 'ts-jest-mocker';
 import { when } from 'jest-when';
 import { WaveLeaderboardCalculationService } from './wave-leaderboard-calculation.service';
 import { DropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
-import { Time } from '../time';
+import { Time, Timer } from '../time';
+import { CompetitionExecutionRouter } from '@/competitions/competition-execution.router';
 
 describe('WaveLeaderboardCalculationService', () => {
   let service: WaveLeaderboardCalculationService;
   let dropVotingDb: DropVotingDb;
+  let executionRouter: CompetitionExecutionRouter;
 
   beforeEach(() => {
     dropVotingDb = mock();
-    service = new WaveLeaderboardCalculationService(dropVotingDb);
+    executionRouter = mock();
+    (
+      executionRouter.shouldUseLegacyWaveExecution as jest.Mock
+    ).mockResolvedValue(true);
+    service = new WaveLeaderboardCalculationService(
+      dropVotingDb,
+      executionRouter
+    );
+  });
+
+  it('never lets the legacy snapshot worker own a native-routed wave', async () => {
+    (
+      dropVotingDb.getDropsInNeedOfLeaderboardUpdate as jest.Mock
+    ).mockResolvedValue([{ wave_id: 'native-wave', drop_id: 'native-drop' }]);
+    (
+      executionRouter.shouldUseLegacyWaveExecution as jest.Mock
+    ).mockResolvedValue(false);
+    (dropVotingDb.deleteStaleLeaderboardEntries as jest.Mock).mockResolvedValue(
+      undefined
+    );
+    const calculate = jest.spyOn(service, 'calculateLeaderboardEntryForDrop');
+
+    await service.refreshLeaderboardEntriesForDropsInNeed(new Timer('test'));
+
+    expect(calculate).not.toHaveBeenCalled();
+    expect(dropVotingDb.deleteStaleLeaderboardEntries).toHaveBeenCalled();
   });
   describe('calculateFinalVoteForDrop', () => {
     it('no vote states results to 0', () => {

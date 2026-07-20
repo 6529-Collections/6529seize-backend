@@ -5,6 +5,7 @@ import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth'
 import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
+import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetDmDropsUnread } from '@/api/dm-drops/dm-drops.handlers';
 import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
@@ -17,7 +18,7 @@ import { handleCreateProfileCmsWalletGallerySnapshot } from '@/api/profile-cms/w
 import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, handleGetGlobalRepCategoryRatings, handleGetGlobalRepCategoryRecipients, handleGetGlobalRepCategoryWaveContributors, handleGetGlobalRepCategoryWaveOverview, handleGetGlobalRepCategoryWaves } from '@/api/rep-categories/global-rep-category.handlers';
 import { handleSearchDraftWaveMentions, handleSearchWaveMentions } from '@/api/waves/wave-mention-search.handler';
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2 } from '@/api/waves/waves-v2.handlers';
-import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
+import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveHubV3Request, GetWaveHubV3Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/dm-drops/unread',
@@ -640,6 +641,160 @@ router.get(
     res: Response<ApiResponse<SearchDropsInWaveV2Response>>
   ) => {
     res.send(await handleSearchDropsInWaveV2(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetWaveHubV3Request,
+    res: Response<ApiResponse<GetWaveHubV3Response>>
+  ) => {
+    res.send(await handleGetWaveHubV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListWaveCompetitionsV3Request,
+    res: Response<ApiResponse<ListWaveCompetitionsV3Response>>
+  ) => {
+    res.send(await handleListWaveCompetitionsV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetWaveCompetitionV3Request,
+    res: Response<ApiResponse<GetWaveCompetitionV3Response>>
+  ) => {
+    res.send(await handleGetWaveCompetitionV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/decisions',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionDecisionsV3Request,
+    res: Response<ApiResponse<ListCompetitionDecisionsV3Response>>
+  ) => {
+    res.send(await handleListCompetitionDecisionsV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionEntriesV3Request,
+    res: Response<ApiResponse<ListCompetitionEntriesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionEntriesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetCompetitionEntryV3Request,
+    res: Response<ApiResponse<GetCompetitionEntryV3Response>>
+  ) => {
+    res.send(await handleGetCompetitionEntryV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id/votes',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionEntryVotesV3Request,
+    res: Response<ApiResponse<ListCompetitionEntryVotesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionEntryVotesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/leaderboard',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionLeaderboardV3Request,
+    res: Response<ApiResponse<ListCompetitionLeaderboardV3Response>>
+  ) => {
+    res.send(await handleListCompetitionLeaderboardV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/outcomes',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionOutcomesV3Request,
+    res: Response<ApiResponse<ListCompetitionOutcomesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionOutcomesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/outcomes/:outcome_id/distribution',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionOutcomeDistributionV3Request,
+    res: Response<ApiResponse<ListCompetitionOutcomeDistributionV3Response>>
+  ) => {
+    res.send(await handleListCompetitionOutcomeDistributionV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/pauses',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionPausesV3Request,
+    res: Response<ApiResponse<ListCompetitionPausesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionPausesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/versions',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionVersionsV3Request,
+    res: Response<ApiResponse<ListCompetitionVersionsV3Response>>
+  ) => {
+    res.send(await handleListCompetitionVersionsV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/voters',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionVotersV3Request,
+    res: Response<ApiResponse<ListCompetitionVotersV3Response>>
+  ) => {
+    res.send(await handleListCompetitionVotersV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/winners',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionWinnersV3Request,
+    res: Response<ApiResponse<ListCompetitionWinnersV3Response>>
+  ) => {
+    res.send(await handleListCompetitionWinnersV3(req));
   }
 );
 
