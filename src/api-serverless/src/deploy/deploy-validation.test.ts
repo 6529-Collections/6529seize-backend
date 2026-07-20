@@ -70,12 +70,12 @@ describe('deploy.validation', () => {
     expect(error).toBeUndefined();
   });
 
-  it('requires immutable artifact identity for deployment operations', () => {
+  it('requires an artifact digest when an artifact run is supplied', () => {
     const deployment = {
       train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
       operation_key: 'train:key',
       workflow_run_id: '12345',
-      artifact_run_id: null,
+      artifact_run_id: '12340',
       repository: 'backend',
       environment: 'prod',
       service: 'api',
@@ -87,6 +87,25 @@ describe('deploy.validation', () => {
       ReleaseBusAuthorizationBodySchema.validate(deployment).error
     ).toBeDefined();
   });
+
+  it.each(['staging', 'prod'])(
+    'allows artifact-free %s validation operations',
+    (environment) => {
+      const { error } = ReleaseBusAuthorizationBodySchema.validate({
+        train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+        operation_key: 'train:key',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment,
+        service: null,
+        expected_sha: 'b'.repeat(40),
+        artifact_digest: null
+      });
+
+      expect(error).toBeUndefined();
+    }
+  );
 
   it('allows artifact-free orchestration operations', () => {
     const { error } = ReleaseBusAuthorizationBodySchema.validate({

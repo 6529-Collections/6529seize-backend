@@ -162,7 +162,9 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
   artifact_run_id: Joi.when('environment', {
     is: 'orchestration',
     then: Joi.valid(null).required(),
-    otherwise: Joi.string().pattern(/^\d+$/).required()
+    otherwise: Joi.alternatives()
+      .try(Joi.string().pattern(/^\d+$/), Joi.valid(null))
+      .required()
   }),
   repository: ReleaseRepositorySchema.required(),
   environment: Joi.string()
@@ -170,8 +172,8 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
     .required(),
   service: Joi.string().max(100).allow(null).required(),
   expected_sha: ReleaseShaSchema.required(),
-  artifact_digest: Joi.when('environment', {
-    is: 'orchestration',
+  artifact_digest: Joi.when('artifact_run_id', {
+    is: null,
     then: Joi.valid(null).required(),
     otherwise: Joi.string()
       .pattern(/^[a-f0-9]{64}$/)
