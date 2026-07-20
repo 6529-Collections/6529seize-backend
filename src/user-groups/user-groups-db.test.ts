@@ -168,6 +168,94 @@ describeWithSeed(
   }
 );
 
+const firstPaginationProfileGroupId = randomUUID();
+const secondPaginationProfileGroupId = randomUUID();
+const firstPaginationGroup = aUserGroup(
+  {
+    profile_group_id: firstPaginationProfileGroupId,
+    is_direct_message: false
+  },
+  {
+    id: 'pagination-group-a',
+    name: 'Pagination Group A'
+  }
+);
+const secondPaginationGroup = aUserGroup(
+  {
+    profile_group_id: secondPaginationProfileGroupId,
+    is_direct_message: false
+  },
+  {
+    id: 'pagination-group-b',
+    name: 'Pagination Group B'
+  }
+);
+const firstPaginationGroupMemberships = Array.from(
+  { length: 500 },
+  (_, index) =>
+    aProfileGroup({
+      profile_group_id: firstPaginationProfileGroupId,
+      profile_id: `pagination-profile-${index.toString().padStart(3, '0')}`
+    })
+);
+const secondPaginationGroupMembership = aProfileGroup({
+  profile_group_id: secondPaginationProfileGroupId,
+  profile_id: 'pagination-profile-000'
+});
+
+describeWithSeed(
+  'UserGroupsDb findIdentityGroupMembershipPage database pagination',
+  [
+    withUserGroups([firstPaginationGroup, secondPaginationGroup]),
+    withProfileGroups([
+      ...firstPaginationGroupMemberships,
+      secondPaginationGroupMembership
+    ])
+  ],
+  () => {
+    const repo = new UserGroupsDb(() => sqlExecutor);
+    const ctx: RequestContext = { timer: undefined };
+
+    it('continues across a group boundary after a full database page', async () => {
+      const firstPage = await repo.findIdentityGroupMembershipPage(
+        {
+          groupIds: [firstPaginationGroup.id, secondPaginationGroup.id],
+          after: null
+        },
+        ctx
+      );
+
+      expect(firstPage.memberships).toHaveLength(500);
+      expect(firstPage.memberships[0]).toEqual({
+        groupId: firstPaginationGroup.id,
+        profileId: 'pagination-profile-000'
+      });
+      expect(firstPage.nextCursor).toEqual({
+        groupId: firstPaginationGroup.id,
+        profileId: 'pagination-profile-499'
+      });
+
+      await expect(
+        repo.findIdentityGroupMembershipPage(
+          {
+            groupIds: [firstPaginationGroup.id, secondPaginationGroup.id],
+            after: firstPage.nextCursor
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        memberships: [
+          {
+            groupId: secondPaginationGroup.id,
+            profileId: secondPaginationGroupMembership.profile_id
+          }
+        ],
+        nextCursor: null
+      });
+    });
+  }
+);
+
 describe('UserGroupsDb findIdentityGroupMembershipPage', () => {
   it('bounds each query and returns a stable continuation cursor', async () => {
     const firstGroupRows = Array.from({ length: 500 }, (_, index) => ({

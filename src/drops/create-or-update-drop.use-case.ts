@@ -1875,21 +1875,17 @@ export class CreateOrUpdateDropUseCase {
     model,
     wave,
     followerIdentityIds,
-    groupMemberships,
+    permissionGroupMemberIds,
     configuredDeveloperIds
   }: {
     model: CreateOrUpdateDropModel;
     wave: WaveEntity;
     followerIdentityIds: string[];
-    groupMemberships: ReadonlyMap<string, ReadonlySet<string>>;
+    permissionGroupMemberIds: ReadonlySet<string>;
     configuredDeveloperIds: string[];
   }): string[] {
-    const groupMemberIds = [wave.chat_group_id, wave.admin_group_id].flatMap(
-      (groupId) =>
-        groupId ? Array.from(groupMemberships.get(groupId) ?? []) : []
-    );
     return collections.distinct([
-      ...groupMemberIds,
+      ...Array.from(permissionGroupMemberIds),
       ...configuredDeveloperIds,
       ...(model.mentioned_groups.includes(DropGroupMention.ADMINS)
         ? [wave.created_by]
@@ -1947,13 +1943,11 @@ export class CreateOrUpdateDropUseCase {
       model,
       configuredDeveloperIds
     });
-    const groupMemberships = await this.findPermissionMentionGroupMemberships(
-      sourceGroupIds,
-      {
+    const permissionGroupMemberIds =
+      await this.findPermissionMentionGroupMemberIds(sourceGroupIds, {
         timer,
         connection
-      }
-    );
+      });
     const existingConfiguredDeveloperIds = configuredDeveloperIds.length
       ? await identitiesDb
           .getIdentitiesByIds(configuredDeveloperIds, connection)
@@ -1967,7 +1961,7 @@ export class CreateOrUpdateDropUseCase {
       model,
       wave,
       followerIdentityIds,
-      groupMemberships,
+      permissionGroupMemberIds,
       configuredDeveloperIds: existingConfiguredDeveloperIds
     });
     if (wave.visibility_group_id === null || !candidates.length) {
@@ -2015,15 +2009,18 @@ export class CreateOrUpdateDropUseCase {
     );
   }
 
-  private async findPermissionMentionGroupMemberships(
+  private async findPermissionMentionGroupMemberIds(
     groupIds: string[],
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ): Promise<Map<string, Set<string>>> {
-    const result = new Map<string, Set<string>>();
+  ): Promise<Set<string>> {
+    const memberIds = new Set<string>();
     if (!groupIds.length) {
-      return result;
+      return memberIds;
     }
 
+    // The database query is paged to keep each read bounded. The complete,
+    // de-duplicated recipient set is retained because the notifier requires
+    // the full audience for this drop.
     let cursor: { groupId: string; profileId: string } | null = null;
     do {
       const page = await this.userGroupsService.findIdentityGroupMembershipPage(
@@ -2031,13 +2028,11 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
       for (const membership of page.memberships) {
-        const members = result.get(membership.groupId) ?? new Set<string>();
-        members.add(membership.profileId);
-        result.set(membership.groupId, members);
+        memberIds.add(membership.profileId);
       }
       cursor = page.nextCursor;
     } while (cursor);
-    return result;
+    return memberIds;
   }
 
   private async recordQuoteNotifications(
