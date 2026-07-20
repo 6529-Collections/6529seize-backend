@@ -1240,7 +1240,7 @@ export interface ListCompetitionLeaderboardV3PathParams {
 
 export interface ListCompetitionLeaderboardV3Query {
   "sort"?: "rating";
-  "direction"?: "ASC" | "DESC";
+  "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
 }
@@ -1347,7 +1347,7 @@ export interface ListCompetitionVotersV3PathParams {
 export interface ListCompetitionVotersV3Query {
   "entry_id"?: string;
   "sort"?: "votes";
-  "direction"?: "ASC" | "DESC";
+  "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
 }

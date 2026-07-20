@@ -1,5 +1,6 @@
 import {
   handleGetWaveCompetitionV3,
+  handleListCompetitionVotersV3,
   handleListWaveCompetitionsV3
 } from '@/api/competitions/competitions-v3.handlers';
 import { getAuthenticationContext } from '@/api/auth/auth';
@@ -12,7 +13,8 @@ jest.mock('@/api/auth/auth', () => ({
 jest.mock('@/competitions/competition.service', () => ({
   competitionService: {
     getCompetition: jest.fn(),
-    listCompetitions: jest.fn()
+    listCompetitions: jest.fn(),
+    listVoters: jest.fn()
   }
 }));
 jest.mock('@/time', () => ({
@@ -98,5 +100,15 @@ describe('competition v3 handlers', () => {
       } as never)
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(competitionService.getCompetition).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed voter entry filters before reading data', async () => {
+    await expect(
+      handleListCompetitionVotersV3({
+        params: { wave_id: 'wave-a', competition_id: competitionId },
+        query: { entry_id: 'not-a-uuid' }
+      } as never)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(competitionService.listVoters).not.toHaveBeenCalled();
   });
 });

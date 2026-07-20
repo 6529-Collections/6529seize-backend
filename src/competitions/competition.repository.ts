@@ -549,9 +549,20 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
         dbOptions(ctx)
       );
       if (!rows.length) break;
-      for (const row of rows) {
-        if (await this.ensureLegacyMappingForWave(row, ctx)) inserted++;
-      }
+      const applyBatch = async (batchCtx: RequestContext): Promise<number> => {
+        let batchInserted = 0;
+        for (const row of rows) {
+          if (await this.ensureLegacyMappingForWave(row, batchCtx)) {
+            batchInserted++;
+          }
+        }
+        return batchInserted;
+      };
+      inserted += ctx.connection
+        ? await applyBatch(ctx)
+        : await this.executeNativeQueriesInTransaction((connection) =>
+            applyBatch({ ...ctx, connection })
+          );
       if (rows.length < batchSize) break;
     }
     await this.ensureConfiguredLegacyCapabilities(ctx);
@@ -1112,52 +1123,71 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     request: CompetitionPageRequest,
     ctx: RequestContext
   ): Promise<CompetitionPage<CompetitionDecision>> {
-    const rows = await this.db.execute<{
+    const decisionRows = await this.db.execute<{
       decision_time: number | string;
-      drop_id: string | null;
-      ranking: number | string | null;
-      final_vote: number | string | null;
     }>(
-      `select wd.decision_time, wdw.drop_id, wdw.ranking, wdw.final_vote
-       from ${WAVES_DECISIONS_TABLE} wd
-       left join ${WAVES_DECISION_WINNER_DROPS_TABLE} wdw
-         on wdw.wave_id = wd.wave_id and wdw.decision_time = wd.decision_time
-       where wd.wave_id = :waveId
-       order by wd.decision_time ${directionSql(request.direction)},
-                wdw.ranking asc, wdw.drop_id asc`,
-      { waveId: record.wave_id },
+      `select decision_time from ${WAVES_DECISIONS_TABLE}
+       where wave_id = :waveId
+       order by decision_time ${directionSql(request.direction)}
+       limit :offset, :rowLimit`,
+      {
+        waveId: record.wave_id,
+        offset: request.offset,
+        rowLimit: request.limit + 1
+      },
       dbOptions(ctx)
     );
-    const grouped = new Map<
+    const visibleDecisionRows = decisionRows.slice(0, request.limit);
+    const winnerRows = visibleDecisionRows.length
+      ? await this.db.execute<{
+          decision_time: number | string;
+          drop_id: string;
+          ranking: number | string;
+          final_vote: number | string | null;
+        }>(
+          `select decision_time, drop_id, ranking, final_vote
+           from ${WAVES_DECISION_WINNER_DROPS_TABLE}
+           where wave_id = :waveId and decision_time in (:decisionTimes)
+           order by decision_time ${directionSql(request.direction)},
+                    ranking asc, drop_id asc`,
+          {
+            waveId: record.wave_id,
+            decisionTimes: visibleDecisionRows.map(
+              (decision) => decision.decision_time
+            )
+          },
+          dbOptions(ctx)
+        )
+      : [];
+    const winnersByDecisionTime = new Map<
       number,
-      Omit<CompetitionDecision, 'winners'> & {
-        winners: CompetitionDecision['winners'][number][];
-      }
+      CompetitionDecision['winners'][number][]
     >();
-    for (const row of rows) {
+    for (const row of winnerRows) {
       const decisionTime = toNumber(row.decision_time);
-      const existing = grouped.get(decisionTime) ?? {
-        id: legacyCompetitionDecisionId(record.id, decisionTime),
-        competition_id: record.id,
-        scheduled_at: decisionTime,
-        decided_at: decisionTime,
-        status: CompetitionDecisionStatus.COMPLETED,
-        winners: []
-      };
-      if (row.drop_id && row.ranking !== null) {
-        existing.winners.push({
-          entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
-          rank: toNumber(row.ranking),
-          final_rating: toNumber(row.final_vote ?? 0)
-        });
-      }
-      grouped.set(decisionTime, existing);
+      const winners = winnersByDecisionTime.get(decisionTime) ?? [];
+      winners.push({
+        entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
+        rank: toNumber(row.ranking),
+        final_rating: toNumber(row.final_vote ?? 0)
+      });
+      winnersByDecisionTime.set(decisionTime, winners);
     }
-    const decisions = Array.from(grouped.values()).slice(
-      request.offset,
-      request.offset + request.limit + 1
-    );
-    return pageFromRows(decisions, request.limit);
+    return {
+      data: visibleDecisionRows.map((row) => {
+        const decisionTime = toNumber(row.decision_time);
+        return {
+          id: legacyCompetitionDecisionId(record.id, decisionTime),
+          competition_id: record.id,
+          scheduled_at: decisionTime,
+          decided_at: decisionTime,
+          status: CompetitionDecisionStatus.COMPLETED,
+          winners: winnersByDecisionTime.get(decisionTime) ?? []
+        };
+      }),
+      next_cursor: null,
+      has_more: decisionRows.length > request.limit
+    };
   }
 
   public async listNativeOutcomes(

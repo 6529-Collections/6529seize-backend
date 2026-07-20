@@ -33,6 +33,10 @@ describe('competition feature flags', () => {
     expect(appFeatures.getLegacyCompetitionShadowSampleRate()).toBe(0);
     process.env.COMPETITION_LEGACY_SHADOW_SAMPLE_RATE = 'not-a-rate';
     expect(appFeatures.getLegacyCompetitionShadowSampleRate()).toBe(0);
+    process.env.COMPETITION_LEGACY_SHADOW_SAMPLE_RATE = 'Infinity';
+    expect(appFeatures.getLegacyCompetitionShadowSampleRate()).toBe(0);
+    process.env.COMPETITION_LEGACY_SHADOW_SAMPLE_RATE = '-0.1';
+    expect(appFeatures.getLegacyCompetitionShadowSampleRate()).toBe(0);
     process.env.COMPETITION_LEGACY_SHADOW_SAMPLE_RATE = '1.1';
     expect(appFeatures.getLegacyCompetitionShadowSampleRate()).toBe(0);
     process.env.COMPETITION_LEGACY_SHADOW_SAMPLE_RATE = '0.125';

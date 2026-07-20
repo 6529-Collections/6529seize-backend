@@ -97,6 +97,8 @@ describe('CompetitionService', () => {
     findCompetitionRecordById: jest.fn(),
     parseCompetitionRecord: jest.fn((record) => record),
     findCapabilities: jest.fn().mockResolvedValue([]),
+    findNativeEntry: jest.fn(),
+    listNativeVoters: jest.fn(),
     listNativeOutcomes: jest.fn(),
     listNativeDistribution: jest.fn()
   };
@@ -130,6 +132,12 @@ describe('CompetitionService', () => {
       next_cursor: null
     });
     repository.listNativeDistribution.mockResolvedValue({
+      data: [],
+      has_more: false,
+      next_cursor: null
+    });
+    repository.findNativeEntry.mockResolvedValue(null);
+    repository.listNativeVoters.mockResolvedValue({
       data: [],
       has_more: false,
       next_cursor: null
@@ -208,6 +216,27 @@ describe('CompetitionService', () => {
     await expect(
       service.getCompetition(wave.id, first.id, {})
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('masks voter filters for entries outside the requested competition', async () => {
+    const otherCompetitionEntryId = '20000000-0000-4000-8000-000000000001';
+
+    await expect(
+      service.listVoters(
+        wave.id,
+        first.id,
+        { limit: 50, direction: 'DESC' },
+        otherCompetitionEntryId,
+        {}
+      )
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(repository.findNativeEntry).toHaveBeenCalledWith(
+      first.id,
+      otherCompetitionEntryId,
+      expect.any(Object)
+    );
+    expect(repository.listNativeVoters).not.toHaveBeenCalled();
   });
 
   it('validates distribution ownership beyond the first internal outcome page', async () => {

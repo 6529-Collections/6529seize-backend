@@ -42,8 +42,8 @@ describeWithSeed(
     });
 
     it('backfills exactly one stable primary for every non-chat wave', async () => {
-      await expect(repository.backfillLegacyMappings({})).resolves.toBe(2);
-      await expect(repository.backfillLegacyMappings({})).resolves.toBe(0);
+      await expect(repository.backfillLegacyMappings({}, 1)).resolves.toBe(2);
+      await expect(repository.backfillLegacyMappings({}, 1)).resolves.toBe(0);
 
       await expect(
         repository.listCompetitionRecordsForWave(chat.id, {})

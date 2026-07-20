@@ -115,7 +115,9 @@ describeWithSeed(
       }
     ]),
     withRows(WAVES_DECISIONS_TABLE, [
-      { wave_id: wave.id, decision_time: 1_000 }
+      { wave_id: wave.id, decision_time: 1_000 },
+      { wave_id: wave.id, decision_time: 2_000 },
+      { wave_id: wave.id, decision_time: 3_000 }
     ]),
     withRows(WAVES_DECISION_WINNER_DROPS_TABLE, [
       {
@@ -259,6 +261,38 @@ describeWithSeed(
       );
       expect(distribution.data).toHaveLength(1);
       expect(pauses.data[0]).toMatchObject({ start_time: 500, end_time: 600 });
+    });
+
+    it('paginates decision rounds before fetching their winners', async () => {
+      const { record, reader } = await adapter();
+      const first = await reader.listDecisions(record, {
+        offset: 0,
+        limit: 1,
+        direction: 'ASC'
+      });
+      const second = await reader.listDecisions(record, {
+        offset: 1,
+        limit: 1,
+        direction: 'ASC'
+      });
+      const last = await reader.listDecisions(record, {
+        offset: 2,
+        limit: 1,
+        direction: 'ASC'
+      });
+
+      expect(first).toMatchObject({
+        data: [{ scheduled_at: 1_000, winners: [{ rank: 1 }] }],
+        has_more: true
+      });
+      expect(second).toMatchObject({
+        data: [{ scheduled_at: 2_000, winners: [] }],
+        has_more: true
+      });
+      expect(last).toMatchObject({
+        data: [{ scheduled_at: 3_000, winners: [] }],
+        has_more: false
+      });
     });
 
     it('preserves vote totals and sums credit spend without multiplying votes', async () => {
