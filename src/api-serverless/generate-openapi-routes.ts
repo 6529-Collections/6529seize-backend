@@ -120,6 +120,36 @@ function compareStrings(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+function compareGeneratedOperations(
+  a: GeneratedOperation,
+  b: GeneratedOperation
+): number {
+  const aSegments = a.expressPath.split('/');
+  const bSegments = b.expressPath.split('/');
+  const sharedLength = Math.min(aSegments.length, bSegments.length);
+
+  for (let index = 0; index < sharedLength; index++) {
+    const aSegment = aSegments[index];
+    const bSegment = bSegments[index];
+    if (aSegment === bSegment) {
+      continue;
+    }
+
+    const aIsParameter = aSegment?.startsWith(':') ?? false;
+    const bIsParameter = bSegment?.startsWith(':') ?? false;
+    if (aIsParameter !== bIsParameter) {
+      return aIsParameter ? 1 : -1;
+    }
+
+    return compareStrings(aSegment ?? '', bSegment ?? '');
+  }
+
+  if (aSegments.length !== bSegments.length) {
+    return aSegments.length - bSegments.length;
+  }
+  return compareStrings(a.method, b.method);
+}
+
 function getOptedInOperations(document: OpenApiDocument): GeneratedOperation[] {
   const operations: GeneratedOperation[] = [];
   const seenRoutes = new Set<string>();
@@ -489,7 +519,10 @@ function renderRoutesFile(operations: GeneratedOperation[]): string {
   const importsApiResponse = operations.some(
     (operation) => operation.responseMode === 'json'
   );
-  const routeBlocks = operations.map(renderRouteBlock).join('\n\n');
+  const routeBlocks = [...operations]
+    .sort(compareGeneratedOperations)
+    .map(renderRouteBlock)
+    .join('\n\n');
   const typeImportLine = typeImports.length
     ? `import { ${typeImports.join(', ')} } from './operations';`
     : '';
