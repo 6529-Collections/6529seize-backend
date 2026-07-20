@@ -15,9 +15,9 @@ import { handleGetOgMetadataDrop, handleGetOgMetadataProfile, handleGetOgMetadat
 import { handleArchiveProfileCmsPackage, handleExportProfileCmsPackage, handleGetPrimaryProfileCmsPackage, handleGetProfileCmsAgentSchemaBundle, handleGetProfileCmsAgentSourcePacket, handleGetProfileCmsPackageByHash, handleGetProfileCmsPackageById, handleGetProfileCmsPackageByVersion, handleListProfileCmsPackages, handlePublishProfileCmsPackage, handleRollbackProfileCmsPackage, handleSaveProfileCmsPackageDraft, handleValidateProfileCmsAgentPatch, handleValidateProfileCmsPackage } from '@/api/profile-cms/profile-cms.handlers';
 import { handleCreateProfileCmsWalletGallerySnapshot } from '@/api/profile-cms/wallet-gallery.handlers';
 import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, handleGetGlobalRepCategoryRatings, handleGetGlobalRepCategoryRecipients, handleGetGlobalRepCategoryWaveContributors, handleGetGlobalRepCategoryWaveOverview, handleGetGlobalRepCategoryWaves } from '@/api/rep-categories/global-rep-category.handlers';
-import { handleSearchWaveMentions } from '@/api/waves/wave-mention-search.handler';
+import { handleSearchDraftWaveMentions, handleSearchWaveMentions } from '@/api/waves/wave-mention-search.handler';
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2 } from '@/api/waves/waves-v2.handlers';
-import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
+import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/dm-drops/unread',
@@ -85,16 +85,6 @@ router.get(
 );
 
 router.get(
-  '/profile-cms/:handle/primary',
-  async (
-    req: GetPrimaryProfileCmsPackageRequest,
-    res: Response<ApiResponse<GetPrimaryProfileCmsPackageResponse>>
-  ) => {
-    res.send(await handleGetPrimaryProfileCmsPackage(req));
-  }
-);
-
-router.get(
   '/profile-cms/agent/schema-bundle',
   async (
     req: GetProfileCmsAgentSchemaBundleRequest,
@@ -112,6 +102,28 @@ router.post(
     res: Response<ApiResponse<SaveProfileCmsPackageDraftResponse>>
   ) => {
     res.send(await handleSaveProfileCmsPackageDraft(req));
+  }
+);
+
+router.get(
+  '/profile-cms/packages/by-hash/:package_hash',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetProfileCmsPackageByHashRequest,
+    res: Response<ApiResponse<GetProfileCmsPackageByHashResponse>>
+  ) => {
+    res.send(await handleGetProfileCmsPackageByHash(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages/validate',
+  needsAuthenticatedUser(),
+  async (
+    req: ValidateProfileCmsPackageRequest,
+    res: Response<ApiResponse<ValidateProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handleValidateProfileCmsPackage(req));
   }
 );
 
@@ -193,28 +205,6 @@ router.post(
 );
 
 router.get(
-  '/profile-cms/packages/by-hash/:package_hash',
-  maybeAuthenticatedUser(),
-  async (
-    req: GetProfileCmsPackageByHashRequest,
-    res: Response<ApiResponse<GetProfileCmsPackageByHashResponse>>
-  ) => {
-    res.send(await handleGetProfileCmsPackageByHash(req));
-  }
-);
-
-router.post(
-  '/profile-cms/packages/validate',
-  needsAuthenticatedUser(),
-  async (
-    req: ValidateProfileCmsPackageRequest,
-    res: Response<ApiResponse<ValidateProfileCmsPackageResponse>>
-  ) => {
-    res.send(await handleValidateProfileCmsPackage(req));
-  }
-);
-
-router.get(
   '/profile-cms/profiles/:profile_id/packages',
   maybeAuthenticatedUser(),
   async (
@@ -244,6 +234,16 @@ router.post(
     res: Response<ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>>
   ) => {
     res.send(await handleCreateProfileCmsWalletGallerySnapshot(req));
+  }
+);
+
+router.get(
+  '/profile-cms/:handle/primary',
+  async (
+    req: GetPrimaryProfileCmsPackageRequest,
+    res: Response<ApiResponse<GetPrimaryProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handleGetPrimaryProfileCmsPackage(req));
   }
 );
 
@@ -401,17 +401,6 @@ router.get(
   }
 );
 
-router.get(
-  '/v2/drops/:id/poll/:option_no/voters',
-  maybeAuthenticatedUser(),
-  async (
-    req: GetDropPollOptionVotersV2Request,
-    res: Response<ApiResponse<GetDropPollOptionVotersV2Response>>
-  ) => {
-    res.send(await handleGetDropPollOptionVotersV2(req));
-  }
-);
-
 router.post(
   '/v2/drops/:id/poll/vote',
   needsAuthenticatedUser(),
@@ -420,6 +409,17 @@ router.post(
     res: Response<ApiResponse<VoteDropPollV2Response>>
   ) => {
     res.send(await handleVoteDropPollV2(req));
+  }
+);
+
+router.get(
+  '/v2/drops/:id/poll/:option_no/voters',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetDropPollOptionVotersV2Request,
+    res: Response<ApiResponse<GetDropPollOptionVotersV2Response>>
+  ) => {
+    res.send(await handleGetDropPollOptionVotersV2(req));
   }
 );
 
@@ -508,6 +508,17 @@ router.get(
     res: Response<ApiResponse<GetWavesV2Response>>
   ) => {
     res.send(await handleGetWavesV2(req));
+  }
+);
+
+router.get(
+  '/v2/waves/mention-search',
+  needsAuthenticatedUser(),
+  async (
+    req: SearchDraftWaveMentionsRequest,
+    res: Response<ApiResponse<SearchDraftWaveMentionsResponse>>
+  ) => {
+    res.send(await handleSearchDraftWaveMentions(req));
   }
 );
 

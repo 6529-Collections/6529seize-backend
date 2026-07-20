@@ -238,10 +238,11 @@ Important API responsibilities:
   auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
-- Wave-scoped mention autocomplete under
-  `/v2/waves/{waveId}/mention-search`, which derives visibility eligibility
-  from the requested wave, performs indexed handle-prefix matching, and
-  returns a minimal profile result ranked by level.
+- Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
+  derives visibility eligibility from a persisted wave, and the authenticated
+  `/v2/waves/mention-search` draft endpoint, which applies the selected
+  visibility group before the wave exists. Both perform indexed handle-prefix
+  matching and return a minimal profile result ranked by level.
 - Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
 - Public profile-native CMS primary package lookup under
@@ -462,6 +463,10 @@ builds immutable artifacts and deploys backend services in registry DAG order
 before dependent frontend code. The API's `/deploy/ui/bus` page is the
 readiness queue and pause/resume control plane. Modes `OFF`, `SHADOW`,
 `STAGING`, and `PRODUCTION` permit a backward-compatible rollout.
+Shadow evaluation writes evidence and audit state only, never GitHub statuses or
+other GitHub mutations. When dependency candidates are evaluated in separate
+shadow trains, successful shadow evidence satisfies their dependants for later
+shadow scheduling without satisfying the live staging or production gates.
 The generated backend deployment workflow resolves the installed GitHub App's
 installation ID and injects only the non-secret App identity into all three
 Release Bus Lambdas. The App private key, webhook verification secret, and
