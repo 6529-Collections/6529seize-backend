@@ -8,7 +8,7 @@ import {
   getWaveReadContextProfileId
 } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
-import { NotFoundException } from '@/exceptions';
+import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
 
@@ -59,6 +59,44 @@ export class WaveMentionSearchApiService {
         excludedProfileId: getWaveReadContextProfileId(
           ctx.authenticationContext
         )
+      },
+      eligibility,
+      ctx
+    );
+  }
+
+  public async searchDraft(
+    {
+      visibilityGroupId,
+      handle,
+      limit
+    }: {
+      readonly visibilityGroupId: string | null;
+      readonly handle: string;
+      readonly limit: number;
+    },
+    ctx: RequestContext
+  ): Promise<ApiWaveMentionSearchResult[]> {
+    const actingProfileId = ctx.authenticationContext?.getActingAsId() ?? null;
+    if (!actingProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+
+    const eligibility = visibilityGroupId
+      ? await this.userGroupsService.getSqlAndParamsByGroupId(
+          visibilityGroupId,
+          ctx
+        )
+      : null;
+    if (visibilityGroupId && !eligibility) {
+      return [];
+    }
+
+    return await this.identitiesDb.searchWaveMentionCandidates(
+      {
+        handle,
+        limit,
+        excludedProfileId: actingProfileId
       },
       eligibility,
       ctx
