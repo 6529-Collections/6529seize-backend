@@ -3,6 +3,14 @@ import stateMachine from '@/releaseBus/state-machine.asl.json';
 import { e2eSourceRef } from '@/releaseBus/worker';
 
 const deployWorkflow = readFileSync('.github/workflows/deploy.yml', 'utf8');
+const preflightWorkflow = readFileSync(
+  '.github/workflows/release-bus-preflight.yml',
+  'utf8'
+);
+const isolationWorkflow = readFileSync(
+  '.github/workflows/release-bus-isolate-candidate.yml',
+  'utf8'
+);
 const releaseBusServerless = readFileSync(
   'src/releaseBus/serverless.yaml',
   'utf8'
@@ -32,6 +40,15 @@ describe('release bus infrastructure contract', () => {
     expect(
       e2eSourceRef('release-bus/train', 'staging', 'release-bus/train')
     ).toBe('release-bus/train');
+  });
+
+  it('installs API dependencies before root typechecking', () => {
+    expect(preflightWorkflow).toContain(
+      'npm --prefix src/api-serverless ci\n      - name: Lint and typecheck'
+    );
+    expect(isolationWorkflow).toContain(
+      'npm --prefix src/api-serverless ci\n            npx eslint'
+    );
   });
 
   it('injects the GitHub App identity into every Release Bus Lambda', () => {
