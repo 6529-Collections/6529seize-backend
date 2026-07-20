@@ -49,6 +49,7 @@ export type FreezeTrainInput = {
   readonly backendBaseSha: string | null;
   readonly cutoffAt?: number;
   readonly excludedCandidateIds?: readonly string[];
+  readonly allowShadowDependencyEvidence?: boolean;
 };
 
 function normalizeDeployPlan(
@@ -591,7 +592,11 @@ export class ReleaseBusService {
         );
         if (!lane) return null;
 
-        await this.refreshSatisfiedDependencyHolds(input.lane, ctx);
+        await this.refreshSatisfiedDependencyHolds(
+          input.lane,
+          Boolean(input.allowShadowDependencyEvidence),
+          ctx
+        );
         const readyStatus = readyStatusForLane(input.lane);
         const excludedCandidateIds = new Set(input.excludedCandidateIds ?? []);
         const candidates = (
@@ -633,7 +638,13 @@ export class ReleaseBusService {
                 dependency.depends_on_candidate_id,
                 `CANDIDATE_${dependency.required_state}`,
                 ctx
-              )));
+              )) ||
+              (Boolean(input.allowShadowDependencyEvidence) &&
+                (await this.repository.hasCandidateEvidence(
+                  dependency.depends_on_candidate_id,
+                  `CANDIDATE_SHADOW_EVALUATED_${input.lane}`,
+                  ctx
+                ))));
           if (!satisfied) blockedRoots.add(dependency.candidate_id);
         }
         const internalEdges = dependencies
@@ -795,6 +806,7 @@ export class ReleaseBusService {
 
   private async refreshSatisfiedDependencyHolds(
     lane: ReleaseLane,
+    allowShadowDependencyEvidence: boolean,
     ctx: RequestContext
   ): Promise<void> {
     const blocked = (
@@ -819,7 +831,15 @@ export class ReleaseBusService {
             dependency.depends_on_candidate_id,
             `CANDIDATE_${dependency.required_state}`,
             ctx
-          ))
+          )) &&
+          !(
+            allowShadowDependencyEvidence &&
+            (await this.repository.hasCandidateEvidence(
+              dependency.depends_on_candidate_id,
+              `CANDIDATE_SHADOW_EVALUATED_${lane}`,
+              ctx
+            ))
+          )
         ) {
           satisfied = false;
           break;

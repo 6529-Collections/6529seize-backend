@@ -462,6 +462,10 @@ builds immutable artifacts and deploys backend services in registry DAG order
 before dependent frontend code. The API's `/deploy/ui/bus` page is the
 readiness queue and pause/resume control plane. Modes `OFF`, `SHADOW`,
 `STAGING`, and `PRODUCTION` permit a backward-compatible rollout.
+Shadow evaluation writes evidence and audit state only, never GitHub statuses or
+other GitHub mutations. When dependency candidates are evaluated in separate
+shadow trains, successful shadow evidence satisfies their dependants for later
+shadow scheduling without satisfying the live staging or production gates.
 The generated backend deployment workflow resolves the installed GitHub App's
 installation ID and injects only the non-secret App identity into all three
 Release Bus Lambdas. The App private key, webhook verification secret, and

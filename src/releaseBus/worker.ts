@@ -1701,12 +1701,6 @@ async function shadowComplete(
       },
       {}
     );
-    await publishCandidateStatus(
-      train,
-      candidate,
-      'pending',
-      `Shadow evaluated; waiting for live mode (${train.id})`
-    );
   }
   await releaseBusRepository.addEvidence(
     {
