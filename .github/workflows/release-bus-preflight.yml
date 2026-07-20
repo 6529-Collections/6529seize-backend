@@ -66,9 +66,9 @@ jobs:
             jq -e --arg unit "$unit" '.services | any(.name == $unit)' src/config/deploy-services.json >/dev/null
           done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
       - name: Install dependencies
-        run: |
-          npm ci
-          npm --prefix src/api-serverless ci
+        run: npm ci
+      - name: Install API type dependencies without lifecycle scripts
+        run: npm --prefix src/api-serverless ci --ignore-scripts
       - name: Lint and typecheck
         run: |
           npx eslint "src/**/*.ts" --max-warnings=0

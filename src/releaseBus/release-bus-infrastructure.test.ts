@@ -43,11 +43,18 @@ describe('release bus infrastructure contract', () => {
   });
 
   it('installs API dependencies before root typechecking', () => {
-    expect(preflightWorkflow).toContain(
-      'npm --prefix src/api-serverless ci\n      - name: Lint and typecheck'
+    const installCommand =
+      'npm --prefix src/api-serverless ci --ignore-scripts';
+    const preflightInstallIndex = preflightWorkflow.indexOf(installCommand);
+    const isolationInstallIndex = isolationWorkflow.indexOf(installCommand);
+
+    expect(preflightInstallIndex).toBeGreaterThan(-1);
+    expect(preflightWorkflow.indexOf('npx eslint')).toBeGreaterThan(
+      preflightInstallIndex
     );
-    expect(isolationWorkflow).toContain(
-      'npm --prefix src/api-serverless ci\n            npx eslint'
+    expect(isolationInstallIndex).toBeGreaterThan(-1);
+    expect(isolationWorkflow.indexOf('npx eslint')).toBeGreaterThan(
+      isolationInstallIndex
     );
   });
 
