@@ -207,6 +207,7 @@ export { WaveCurationEntity } from './IWaveCuration';
 export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificationSubscription';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
+export { WSNotificationSubscriptionEntity } from './IWSNotificationSubscription';
 export { ReleaseReadyDeploymentEntity } from './IReleaseReadyDeployment';
 export { ReleaseCandidateDependencyEntity } from './IReleaseCandidateDependency';
 export { ReleaseTrainEntity } from './IReleaseTrain';

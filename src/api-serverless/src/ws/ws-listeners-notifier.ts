@@ -12,6 +12,7 @@ import {
   dropReactionUpdateMessage,
   dropUpdateMessage,
   nftLinkUpdatedMessage,
+  identityNotificationsChangedMessage,
   userIsTypingMessage
 } from './ws-message';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
@@ -35,6 +36,38 @@ export class WsListenersNotifier {
     private readonly appWebSockets: AppWebSockets,
     private readonly wsConnectionRepository: WsConnectionRepository
   ) {}
+
+  async notifyAboutIdentityNotificationsChanged(
+    inputProfileIds: string[]
+  ): Promise<void> {
+    const profileIds = Array.from(
+      new Set(inputProfileIds.filter((profileId) => !!profileId))
+    );
+    if (!profileIds.length) {
+      return;
+    }
+    try {
+      const recipients =
+        await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+          profileIds
+        );
+      await Promise.all(
+        recipients.map(({ connectionId, identityId }) =>
+          this.appWebSockets.send({
+            connectionId,
+            message: JSON.stringify(
+              identityNotificationsChangedMessage(identityId)
+            )
+          })
+        )
+      );
+    } catch (error) {
+      this.logger.error(
+        `Sending notification invalidations to websockets failed. Profile ids: ${profileIds.join(',')}`,
+        error
+      );
+    }
+  }
 
   async notifyAboutDropUpdate(
     inputDrop: ApiDrop,

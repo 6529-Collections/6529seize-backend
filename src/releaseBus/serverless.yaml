@@ -10,6 +10,11 @@ provider:
   timeout: 60
   architecture: arm64
   logRetentionInDays: 60
+  environment:
+    RELEASE_BUS_GITHUB_APP_ID: ${env:RELEASE_BUS_GITHUB_APP_ID}
+    RELEASE_BUS_GITHUB_INSTALLATION_ID: ${env:RELEASE_BUS_GITHUB_INSTALLATION_ID}
+    RELEASE_BUS_GITHUB_ORG: ${env:RELEASE_BUS_GITHUB_ORG, '6529-Collections'}
+    RELEASE_BUS_UI_URL: ${env:RELEASE_BUS_UI_URL, 'https://api.6529.io/deploy/ui/bus'}
 
 functions:
   starter:

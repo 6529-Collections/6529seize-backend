@@ -40,4 +40,100 @@ describe('IdentitiesDb', () => {
       tokenIds: [1]
     });
   });
+
+  it('searches wave mentions by indexed handle prefix and level', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.searchWaveMentionCandidates(
+      {
+        handle: 'Ali',
+        limit: 5,
+        excludedProfileId: 'profile-me'
+      },
+      null,
+      { timer: undefined }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('force index (identity_normalised_handle_idx)');
+    expect(sql).toContain('i.normalised_handle like :mentionHandlePrefix');
+    expect(sql).toContain('i.level_raw desc');
+    expect(sql).toContain('i.profile_id <> :mentionExcludedProfileId');
+    expect(sql).not.toContain('join user_groups_view');
+    expect(params).toMatchObject({
+      mentionHandlePrefix: 'ali%',
+      mentionExcludedProfileId: 'profile-me',
+      mentionLimit: 5
+    });
+  });
+
+  it('restricts wave mention candidates to the supplied eligibility view', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+    const eligibility = {
+      sql: 'with user_groups_view as (select * from eligible_profiles)',
+      params: { eligibilityGroupId: 'group-1' }
+    };
+
+    await repo.searchWaveMentionCandidates(
+      { handle: 'ali', limit: 5, excludedProfileId: null },
+      eligibility,
+      { timer: undefined }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(eligibility.sql);
+    expect(sql).toContain(
+      'join user_groups_view ug on ug.profile_id = i.profile_id'
+    );
+    expect(sql).not.toContain('i.profile_id <> :mentionExcludedProfileId');
+    expect(params).toMatchObject({
+      eligibilityGroupId: 'group-1',
+      mentionHandlePrefix: 'ali%',
+      mentionLimit: 5
+    });
+  });
+
+  it('excludes the acting profile when an eligibility view is supplied', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+    const eligibility = {
+      sql: 'with user_groups_view as (select * from eligible_profiles)',
+      params: { eligibilityGroupId: 'group-1' }
+    };
+
+    await repo.searchWaveMentionCandidates(
+      { handle: 'ali', limit: 5, excludedProfileId: 'profile-me' },
+      eligibility,
+      { timer: undefined }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(
+      'join user_groups_view ug on ug.profile_id = i.profile_id'
+    );
+    expect(sql).toContain('i.profile_id <> :mentionExcludedProfileId');
+    expect(params).toMatchObject({
+      eligibilityGroupId: 'group-1',
+      mentionHandlePrefix: 'ali%',
+      mentionExcludedProfileId: 'profile-me',
+      mentionLimit: 5
+    });
+  });
 });

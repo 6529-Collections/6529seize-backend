@@ -117,6 +117,7 @@ flowchart TD
   NftLinkMediaPreviewLoop --> S3
   ClaimsMediaArweaveUploader --> Arweave["Arweave"]
   PushNotificationsHandler --> Firebase["Firebase"]
+  PushNotificationsHandler -->|recipient-scoped notification invalidation| APIGW
   DropVideoConversionInvokerLoop --> MediaConvert["MediaConvert"]
 ```
 
@@ -175,7 +176,7 @@ flowchart TD
 | `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                         | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
 | `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                           | Resolve external NFT links.                                                                                                 |
 | `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                      | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase push notifications.                                                                                        |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` mentions and direct follow-ups to bot replies.                                                           |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Production only: accumulate successful backend service runs by PR, then publish one repository-prompted note per completed PR as `ci6529`. |
 | `releaseBusWorker`               | AWS Standard Step Functions                                                                                                        | Advance and reconcile one durable staging or production release train without waiting inside Lambda.                        |
@@ -211,9 +212,13 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
 3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
-5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and Firebase push notifications.
+5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
+
+Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
+
+WebSocket notification subscription replacement is transactional. New connections, re-authentication, and identity resyncs each have a one-percent chance of running bounded, deterministic cleanup of expired and orphaned subscription rows, so cleanup capacity follows subscription churn without putting the sweep on every hot-path call. The repository identity update method is the sole write path for `ws_connections.identity_id` and keeps the primary subscription reset coupled to re-authentication.
 
 ## API Boundary
 
@@ -233,6 +238,10 @@ Important API responsibilities:
   auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Wave-scoped mention autocomplete under
+  `/v2/waves/{waveId}/mention-search`, which derives visibility eligibility
+  from the requested wave, performs indexed handle-prefix matching, and
+  returns a minimal profile result ranked by level.
 - Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
 - Public profile-native CMS primary package lookup under
@@ -453,6 +462,25 @@ builds immutable artifacts and deploys backend services in registry DAG order
 before dependent frontend code. The API's `/deploy/ui/bus` page is the
 readiness queue and pause/resume control plane. Modes `OFF`, `SHADOW`,
 `STAGING`, and `PRODUCTION` permit a backward-compatible rollout.
+The generated backend deployment workflow resolves the installed GitHub App's
+installation ID and injects only the non-secret App identity into all three
+Release Bus Lambdas. The App private key, webhook verification secret, and
+workflow authorization token are merged into the existing regional
+`prod/lambdas` AWS Secrets Manager document and loaded through the standard
+Lambda secret bootstrap before a handler enters its database context. The
+deployment workflow requires that shared secret to exist and serializes all
+production deployments so its read/merge/write updates cannot overlap.
+This single production lane is intentional: unrelated production services do
+not deploy in parallel, and an operator must cancel a stuck run before an
+urgent later production deploy can begin. Staging deployments retain
+per-service concurrency.
+Production API deployment keeps only the non-secret
+mode in Lambda configuration, while the staging API is explicitly forced to
+`OFF` and receives none of the production-only secret values. One global
+`RELEASE_BUS_MODE` intentionally controls the production-region API, starter,
+and worker; the orchestrator is not deployed separately in staging. The
+cleaner shares the App identity because it lists and deletes expired temporary
+branches in both repositories.
 Backend units whose registry policy is `production-only` are built and tested
 in preflight but cannot be runtime-deployed to staging; their staging gate is
 the combined application E2E suite plus the immutable artifact evidence. The

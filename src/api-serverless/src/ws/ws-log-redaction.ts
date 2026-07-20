@@ -10,7 +10,10 @@ export function redactWebSocketMessageForLog(message: unknown): unknown {
   }
 
   const record = message as Record<string, unknown>;
-  if (record.type === WsMessageType.AUTHENTICATE) {
+  if (
+    record.type === WsMessageType.AUTHENTICATE ||
+    record.type === WsMessageType.SYNC_NOTIFICATION_IDENTITIES
+  ) {
     return { type: record.type };
   }
 

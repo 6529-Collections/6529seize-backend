@@ -2,6 +2,7 @@ import type { APIGatewayEvent, Context } from 'aws-lambda';
 import { WsMessageType } from './ws/ws-message';
 import {
   appWebSockets,
+  authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken
 } from './ws/ws';
@@ -33,12 +34,14 @@ jest.mock('./app', () => ({
 jest.mock('./ws/ws', () => ({
   appWebSockets: {
     authenticateConnection: jest.fn(),
+    syncNotificationIdentities: jest.fn(),
     send: jest.fn(),
     register: jest.fn(),
     deregister: jest.fn(),
     updateActiveWaveForConnection: jest.fn()
   },
   authenticateWebSocketJwtOrGetByConnectionId: jest.fn(),
+  authenticateNotificationIdentityTokens: jest.fn(),
   authenticateWebSocketToken: jest.fn()
 }));
 
@@ -61,6 +64,10 @@ const authenticateWebSocketJwtOrGetByConnectionIdMock =
 const authenticateWebSocketTokenMock =
   authenticateWebSocketToken as jest.MockedFunction<
     typeof authenticateWebSocketToken
+  >;
+const authenticateNotificationIdentityTokensMock =
+  authenticateNotificationIdentityTokens as jest.MockedFunction<
+    typeof authenticateNotificationIdentityTokens
   >;
 type HttpHandlerResult = {
   readonly headers?: Record<string, unknown>;
@@ -119,6 +126,58 @@ describe('handler websocket auth', () => {
         type: WsMessageType.AUTHENTICATED,
         identity_id: 'fresh-identity',
         expires_at: '1970-01-01T00:03:20.000Z'
+      }),
+      skipStaleConnectionCheck: true
+    });
+  });
+
+  it('acknowledges only notification identities authenticated from supplied tokens', async () => {
+    authenticateNotificationIdentityTokensMock.mockResolvedValue([
+      { identityId: 'profile-1', jwtExpiry: 200 },
+      { identityId: 'profile-2', jwtExpiry: 300 }
+    ]);
+    appWebSocketsMock.syncNotificationIdentities.mockResolvedValue([
+      'profile-1',
+      'profile-2'
+    ]);
+
+    const event = {
+      httpMethod: 'POST',
+      requestContext: {
+        routeKey: '$default',
+        connectionId: 'connection-1',
+        requestId: 'request-1'
+      },
+      body: JSON.stringify({
+        type: WsMessageType.SYNC_NOTIFICATION_IDENTITIES,
+        access_tokens: ['token-1', 'token-2']
+      })
+    } as unknown as APIGatewayEvent;
+
+    await expect(
+      handler(event, { awsRequestId: 'lambda-request-1' } as Context, jest.fn())
+    ).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+
+    expect(authenticateNotificationIdentityTokensMock).toHaveBeenCalledWith([
+      'token-1',
+      'token-2'
+    ]);
+    expect(appWebSocketsMock.syncNotificationIdentities).toHaveBeenCalledWith(
+      'connection-1',
+      [
+        { identityId: 'profile-1', jwtExpiry: 200 },
+        { identityId: 'profile-2', jwtExpiry: 300 }
+      ],
+      {}
+    );
+    expect(appWebSocketsMock.send).toHaveBeenCalledWith({
+      connectionId: 'connection-1',
+      message: JSON.stringify({
+        type: WsMessageType.NOTIFICATION_IDENTITIES_SYNCED,
+        data: { profile_ids: ['profile-1', 'profile-2'] }
       }),
       skipStaleConnectionCheck: true
     });

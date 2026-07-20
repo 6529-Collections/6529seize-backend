@@ -147,12 +147,16 @@ import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import { getValidatedByJoiOrThrow } from './validation';
 import {
   appWebSockets,
+  authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
-import { WsMessageType } from './ws/ws-message';
+import {
+  notificationIdentitiesSyncedMessage,
+  WsMessageType
+} from './ws/ws-message';
 import { registerOpenApiSpecRoutes } from './openapi-spec-routes';
 
 const YAML = require('yamljs');
@@ -1606,6 +1610,10 @@ async function initializeApp() {
   apiRouter.use(`/drop-ids`, dropIdsRoutes);
   apiRouter.use(`/drops-bookmarked`, bookmarkedDropsRoutes);
   apiRouter.use(`/feed`, feedRoutes);
+  apiRouter.get([`/notifications`, `/v2/notifications`], (_req, res, next) => {
+    setNoStoreHeaders(res);
+    next();
+  });
   apiRouter.use(`/notifications`, notificationsRoutes);
   apiRouter.use(`/mention-aliases`, mentionAliasesRoutes);
   apiRouter.use(`/identity-subscriptions`, identitySubscriptionsRoutes);
@@ -1754,6 +1762,32 @@ async function initializeApp() {
                       authenticated.jwtExpiry * 1000
                     ).toISOString()
                   })
+                );
+                break;
+              }
+              case WsMessageType.SYNC_NOTIFICATION_IDENTITIES: {
+                const subscriptions =
+                  await authenticateNotificationIdentityTokens(
+                    message.access_tokens
+                  );
+                if (subscriptions === null) {
+                  socket.send(
+                    JSON.stringify({
+                      error: 'Invalid notification identity tokens'
+                    })
+                  );
+                  break;
+                }
+                const profileIds =
+                  await appWebSockets.syncNotificationIdentities(
+                    connectionId,
+                    subscriptions,
+                    {}
+                  );
+                socket.send(
+                  JSON.stringify(
+                    notificationIdentitiesSyncedMessage(profileIds)
+                  )
                 );
                 break;
               }

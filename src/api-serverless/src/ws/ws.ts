@@ -218,6 +218,12 @@ export class AppWebSockets {
       },
       {}
     );
+    await this.wsConnectionRepository.replaceNotificationSubscriptions(
+      connectionId,
+      getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
+      {}
+    );
+    await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
   }
 
   async deregister({ connectionId }: { connectionId: string }) {
@@ -265,10 +271,81 @@ export class AppWebSockets {
       },
       ctx
     );
+    await this.wsConnectionRepository.replaceNotificationSubscriptions(
+      connectionId,
+      getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
+      ctx
+    );
+    await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
+  }
+
+  async syncNotificationIdentities(
+    connectionId: string,
+    subscriptions: AuthenticatedWebSocketIdentity[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const authenticatedSubscriptions =
+      getAuthenticatedNotificationSubscriptions(subscriptions);
+    await this.wsConnectionRepository.replaceNotificationSubscriptions(
+      connectionId,
+      authenticatedSubscriptions,
+      ctx
+    );
+    await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
+    return authenticatedSubscriptions.map(({ identityId }) => identityId);
   }
 }
 
 export const ANON_USER_ID = '$ANONONYMOUS_USER$';
+export const MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS = 5;
+
+export interface AuthenticatedWebSocketIdentity {
+  identityId: string;
+  jwtExpiry: number;
+}
+
+export async function authenticateNotificationIdentityTokens(
+  value: unknown
+): Promise<AuthenticatedWebSocketIdentity[] | null> {
+  if (
+    !Array.isArray(value) ||
+    value.some((token) => typeof token !== 'string' || !token.trim())
+  ) {
+    return null;
+  }
+  const uniqueTokens = Array.from(new Set(value));
+  if (uniqueTokens.length > MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS) {
+    return null;
+  }
+  const authenticated = await Promise.all(
+    uniqueTokens.map((token) => authenticateWebSocketToken(token as string))
+  );
+  return getAuthenticatedNotificationSubscriptions(
+    authenticated.filter(
+      (result): result is AuthenticatedWebSocketIdentity => result !== null
+    )
+  );
+}
+
+function getAuthenticatedNotificationSubscriptions(
+  subscriptions: AuthenticatedWebSocketIdentity[]
+): AuthenticatedWebSocketIdentity[] {
+  const byIdentityId = new Map<string, AuthenticatedWebSocketIdentity>();
+  for (const subscription of subscriptions) {
+    if (
+      !subscription.identityId ||
+      subscription.identityId === ANON_USER_ID ||
+      !Number.isFinite(subscription.jwtExpiry)
+    ) {
+      continue;
+    }
+    const existing = byIdentityId.get(subscription.identityId);
+    if (!existing || existing.jwtExpiry < subscription.jwtExpiry) {
+      byIdentityId.set(subscription.identityId, subscription);
+    }
+  }
+  return Array.from(byIdentityId.values());
+}
 
 export async function authenticateWebSocketJwtOrGetByConnectionId(
   event: APIGatewayEvent

@@ -201,6 +201,8 @@ export const XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX = 'xtdh_token_grant_stats_';
 export const XTDH_TOKEN_STATS_TABLE_PREFIX = 'xtdh_token_stats_';
 export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
+export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
+  'ws_notification_subscriptions';
 export const RELEASE_READY_DEPLOYMENTS_TABLE = 'release_ready_deployments';
 export const RELEASE_CANDIDATE_DEPENDENCIES_TABLE =
   'release_candidate_dependencies';
