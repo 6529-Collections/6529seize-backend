@@ -138,6 +138,52 @@ describe('generateOpenApiRouteFiles', () => {
     expect(operations).toContain('"id": string;');
   });
 
+  it('registers static routes before parameterized siblings', () => {
+    const response = {
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ApiWaveMentionSearchResult' }
+        }
+      }
+    };
+    const document: OpenApiDocument = {
+      paths: {
+        '/v2/waves/{waveId}/mention-search': {
+          get: {
+            operationId: 'searchWaveMentions',
+            'x-6529-router': {
+              enabled: true,
+              handler: {
+                import: '@/api/waves/wave-mention-search.handler',
+                name: 'handleSearchWaveMentions'
+              }
+            },
+            responses: { '200': response }
+          }
+        },
+        '/v2/waves/mention-search': {
+          get: {
+            operationId: 'searchDraftWaveMentions',
+            'x-6529-router': {
+              enabled: true,
+              handler: {
+                import: '@/api/waves/wave-mention-search.handler',
+                name: 'handleSearchDraftWaveMentions'
+              }
+            },
+            responses: { '200': response }
+          }
+        }
+      }
+    };
+
+    const routes = getFile(document, 'openapi-generated.routes.ts');
+
+    expect(routes.indexOf("'/v2/waves/mention-search'")).toBeLessThan(
+      routes.indexOf("'/v2/waves/:waveId/mention-search'")
+    );
+  });
+
   it('generates array response types', () => {
     const document: OpenApiDocument = {
       paths: {

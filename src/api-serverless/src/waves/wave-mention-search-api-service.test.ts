@@ -1,6 +1,6 @@
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
-import { NotFoundException } from '@/exceptions';
+import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { WaveMentionSearchApiService } from './wave-mention-search.api.service';
 
@@ -115,6 +115,95 @@ describe('WaveMentionSearchApiService', () => {
       service.search({ waveId: 'wave-1', handle: 'ali', limit: 5 }, {})
     ).resolves.toEqual([]);
 
+    expect(searchWaveMentionCandidates).not.toHaveBeenCalled();
+  });
+
+  it('restricts private draft-wave results to the selected visibility group', async () => {
+    const eligibility = {
+      sql: 'with user_groups_view as (select profile_id from eligible)',
+      params: { groupId: 'visibility-group' }
+    };
+    getSqlAndParamsByGroupId.mockResolvedValue(eligibility);
+    const authenticationContext = {
+      getActingAsId: () => 'profile-me'
+    };
+
+    await service.searchDraft(
+      {
+        visibilityGroupId: 'visibility-group',
+        handle: 'ali',
+        limit: 5
+      },
+      { authenticationContext: authenticationContext as any }
+    );
+
+    expect(findWavesByIds).not.toHaveBeenCalled();
+    expect(getSqlAndParamsByGroupId).toHaveBeenCalledWith(
+      'visibility-group',
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(searchWaveMentionCandidates).toHaveBeenCalledWith(
+      {
+        handle: 'ali',
+        limit: 5,
+        excludedProfileId: 'profile-me'
+      },
+      eligibility,
+      expect.objectContaining({ authenticationContext })
+    );
+  });
+
+  it('searches all profiles for a public draft wave', async () => {
+    const authenticationContext = {
+      getActingAsId: () => 'profile-me'
+    };
+
+    await service.searchDraft(
+      { visibilityGroupId: null, handle: 'ali', limit: 5 },
+      { authenticationContext: authenticationContext as any }
+    );
+
+    expect(getSqlAndParamsByGroupId).not.toHaveBeenCalled();
+    expect(searchWaveMentionCandidates).toHaveBeenCalledWith(
+      { handle: 'ali', limit: 5, excludedProfileId: 'profile-me' },
+      null,
+      expect.objectContaining({ authenticationContext })
+    );
+  });
+
+  it('fails closed when draft visibility eligibility cannot be resolved', async () => {
+    getSqlAndParamsByGroupId.mockResolvedValue(null);
+    const authenticationContext = {
+      getActingAsId: () => 'profile-me'
+    };
+
+    await expect(
+      service.searchDraft(
+        {
+          visibilityGroupId: 'visibility-group',
+          handle: 'ali',
+          limit: 5
+        },
+        { authenticationContext: authenticationContext as any }
+      )
+    ).resolves.toEqual([]);
+
+    expect(searchWaveMentionCandidates).not.toHaveBeenCalled();
+  });
+
+  it('requires an acting profile for draft-wave searches', async () => {
+    const authenticationContext = {
+      getActingAsId: () => null
+    };
+
+    await expect(
+      service.searchDraft(
+        { visibilityGroupId: null, handle: 'ali', limit: 5 },
+        { authenticationContext: authenticationContext as any }
+      )
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(getSqlAndParamsByGroupId).not.toHaveBeenCalled();
     expect(searchWaveMentionCandidates).not.toHaveBeenCalled();
   });
 });

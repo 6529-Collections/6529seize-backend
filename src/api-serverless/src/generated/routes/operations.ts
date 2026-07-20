@@ -1078,6 +1078,24 @@ export type SearchDropsInWaveV2Request = Request<
   Record<string, never>
 >;
 
+export type SearchDraftWaveMentionsPathParams = Record<string, never>;
+
+export interface SearchDraftWaveMentionsQuery {
+  "handle": string;
+  "visibility_group_id"?: string;
+  "limit"?: number;
+}
+
+export type SearchDraftWaveMentionsResponse = ApiWaveMentionSearchResult[];
+
+export type SearchDraftWaveMentionsRequest = Request<
+  SearchDraftWaveMentionsPathParams,
+  ApiResponse<SearchDraftWaveMentionsResponse>,
+  never,
+  SearchDraftWaveMentionsQuery,
+  Record<string, never>
+>;
+
 export interface ListWaveSubwavesPathParams {
   "id": string;
 }
