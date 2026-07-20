@@ -85,16 +85,6 @@ router.get(
 );
 
 router.get(
-  '/profile-cms/:handle/primary',
-  async (
-    req: GetPrimaryProfileCmsPackageRequest,
-    res: Response<ApiResponse<GetPrimaryProfileCmsPackageResponse>>
-  ) => {
-    res.send(await handleGetPrimaryProfileCmsPackage(req));
-  }
-);
-
-router.get(
   '/profile-cms/agent/schema-bundle',
   async (
     req: GetProfileCmsAgentSchemaBundleRequest,
@@ -112,6 +102,28 @@ router.post(
     res: Response<ApiResponse<SaveProfileCmsPackageDraftResponse>>
   ) => {
     res.send(await handleSaveProfileCmsPackageDraft(req));
+  }
+);
+
+router.get(
+  '/profile-cms/packages/by-hash/:package_hash',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetProfileCmsPackageByHashRequest,
+    res: Response<ApiResponse<GetProfileCmsPackageByHashResponse>>
+  ) => {
+    res.send(await handleGetProfileCmsPackageByHash(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages/validate',
+  needsAuthenticatedUser(),
+  async (
+    req: ValidateProfileCmsPackageRequest,
+    res: Response<ApiResponse<ValidateProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handleValidateProfileCmsPackage(req));
   }
 );
 
@@ -193,28 +205,6 @@ router.post(
 );
 
 router.get(
-  '/profile-cms/packages/by-hash/:package_hash',
-  maybeAuthenticatedUser(),
-  async (
-    req: GetProfileCmsPackageByHashRequest,
-    res: Response<ApiResponse<GetProfileCmsPackageByHashResponse>>
-  ) => {
-    res.send(await handleGetProfileCmsPackageByHash(req));
-  }
-);
-
-router.post(
-  '/profile-cms/packages/validate',
-  needsAuthenticatedUser(),
-  async (
-    req: ValidateProfileCmsPackageRequest,
-    res: Response<ApiResponse<ValidateProfileCmsPackageResponse>>
-  ) => {
-    res.send(await handleValidateProfileCmsPackage(req));
-  }
-);
-
-router.get(
   '/profile-cms/profiles/:profile_id/packages',
   maybeAuthenticatedUser(),
   async (
@@ -244,6 +234,16 @@ router.post(
     res: Response<ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>>
   ) => {
     res.send(await handleCreateProfileCmsWalletGallerySnapshot(req));
+  }
+);
+
+router.get(
+  '/profile-cms/:handle/primary',
+  async (
+    req: GetPrimaryProfileCmsPackageRequest,
+    res: Response<ApiResponse<GetPrimaryProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handleGetPrimaryProfileCmsPackage(req));
   }
 );
 
@@ -401,17 +401,6 @@ router.get(
   }
 );
 
-router.get(
-  '/v2/drops/:id/poll/:option_no/voters',
-  maybeAuthenticatedUser(),
-  async (
-    req: GetDropPollOptionVotersV2Request,
-    res: Response<ApiResponse<GetDropPollOptionVotersV2Response>>
-  ) => {
-    res.send(await handleGetDropPollOptionVotersV2(req));
-  }
-);
-
 router.post(
   '/v2/drops/:id/poll/vote',
   needsAuthenticatedUser(),
@@ -420,6 +409,17 @@ router.post(
     res: Response<ApiResponse<VoteDropPollV2Response>>
   ) => {
     res.send(await handleVoteDropPollV2(req));
+  }
+);
+
+router.get(
+  '/v2/drops/:id/poll/:option_no/voters',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetDropPollOptionVotersV2Request,
+    res: Response<ApiResponse<GetDropPollOptionVotersV2Response>>
+  ) => {
+    res.send(await handleGetDropPollOptionVotersV2(req));
   }
 );
 
@@ -508,6 +508,17 @@ router.get(
     res: Response<ApiResponse<GetWavesV2Response>>
   ) => {
     res.send(await handleGetWavesV2(req));
+  }
+);
+
+router.get(
+  '/v2/waves/mention-search',
+  needsAuthenticatedUser(),
+  async (
+    req: SearchDraftWaveMentionsRequest,
+    res: Response<ApiResponse<SearchDraftWaveMentionsResponse>>
+  ) => {
+    res.send(await handleSearchDraftWaveMentions(req));
   }
 );
 
@@ -629,17 +640,6 @@ router.get(
     res: Response<ApiResponse<SearchDropsInWaveV2Response>>
   ) => {
     res.send(await handleSearchDropsInWaveV2(req));
-  }
-);
-
-router.get(
-  '/v2/waves/mention-search',
-  needsAuthenticatedUser(),
-  async (
-    req: SearchDraftWaveMentionsRequest,
-    res: Response<ApiResponse<SearchDraftWaveMentionsResponse>>
-  ) => {
-    res.send(await handleSearchDraftWaveMentions(req));
   }
 );
 
