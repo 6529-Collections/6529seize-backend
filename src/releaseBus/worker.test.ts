@@ -1,5 +1,6 @@
 const mockFindCandidateById = jest.fn();
 const mockUpdateCandidateLifecycle = jest.fn();
+const mockAddEvidence = jest.fn();
 const mockEnsureCommitStatus = jest.fn();
 const mockCommentOnPullRequest = jest.fn();
 const mockRefContainsCommit = jest.fn();
@@ -20,6 +21,7 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     findCandidateById: (...args: unknown[]) => mockFindCandidateById(...args),
     updateCandidateLifecycle: (...args: unknown[]) =>
       mockUpdateCandidateLifecycle(...args),
+    addEvidence: (...args: unknown[]) => mockAddEvidence(...args),
     updateTrain: (...args: unknown[]) => mockUpdateTrain(...args),
     getLane: (...args: unknown[]) => mockGetLane(...args),
     releaseLane: (...args: unknown[]) => mockReleaseLane(...args),
@@ -251,5 +253,29 @@ describe('finishIncompleteComposition', () => {
     });
 
     expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+
+  it('completes shadow evaluation without publishing a GitHub status', async () => {
+    process.env.RELEASE_BUS_MODE = 'SHADOW';
+    const shadowTrain = { ...train, status: 'FROZEN' as const };
+    mockFindTrain.mockResolvedValue(shadowTrain);
+    mockListTrainItems.mockResolvedValue([
+      { candidate_id: candidates[0].id, sequence: 1 }
+    ]);
+
+    await expect(advanceReleaseTrain(shadowTrain.id)).resolves.toMatchObject({
+      decision: 'COMPLETE',
+      status: 'COMPLETED'
+    });
+
+    expect(mockAddEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: candidates[0].id,
+        evidenceType: 'CANDIDATE_SHADOW_EVALUATED_STAGING',
+        status: 'SUCCEEDED'
+      }),
+      {}
+    );
+    expect(mockEnsureCommitStatus).not.toHaveBeenCalled();
   });
 });
