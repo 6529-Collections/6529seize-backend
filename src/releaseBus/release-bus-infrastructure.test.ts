@@ -47,6 +47,21 @@ describe('release bus infrastructure contract', () => {
     expect(deployWorkflow).toContain(
       'RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}'
     );
+    expect(deployWorkflow).toContain(
+      "github.event.inputs.service == 'releaseBus' || (github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod')"
+    );
+    expect(deployWorkflow).toContain(
+      'RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId'
+    );
+    expect(deployWorkflow).toContain(
+      "- name: Deploy API\n        if: github.event.inputs.service == 'api'\n        env:\n          RELEASE_BUS_GITHUB_APP_ID: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}\n          RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}\n          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}"
+    );
+    expect(deployWorkflow).not.toContain(
+      "RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}\n          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}"
+    );
+    expect(deployWorkflow).toContain(
+      'del(.RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
+    );
   });
 
   it('stores production credentials outside Lambda configuration', () => {
