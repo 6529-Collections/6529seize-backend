@@ -758,6 +758,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleGetWaveHubV3
@@ -800,6 +801,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListWaveCompetitionsV3
@@ -895,6 +897,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleGetWaveCompetitionV3
@@ -945,6 +948,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionVersionsV3
@@ -1009,6 +1013,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionEntriesV3
@@ -1107,6 +1112,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleGetCompetitionEntryV3
@@ -1161,6 +1167,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionEntryVotesV3
@@ -1238,6 +1245,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionLeaderboardV3
@@ -1317,6 +1325,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionVotersV3
@@ -1402,6 +1411,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionDecisionsV3
@@ -1473,6 +1483,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionWinnersV3
@@ -1544,6 +1555,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionOutcomesV3
@@ -1615,6 +1627,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionOutcomeDistributionV3
@@ -1692,6 +1705,7 @@ paths:
       x-6529-router:
         enabled: true
         auth: optional
+        typeImportGroup: competitions-v3
         handler:
           import: "@/api/competitions/competitions-v3.handlers"
           name: handleListCompetitionPausesV3
