@@ -626,6 +626,10 @@ describe('frontend base canary', () => {
   });
 
   it('records fresh terminal evidence and provenance in one transaction', async () => {
+    const freshSummary = {
+      ...reusableSummary,
+      shards: [{ ...reusableSummary.shards[0], coordinate: { unsafe: true } }]
+    };
     mockGetActionsVariable.mockImplementation(
       async (repository: string, name: string) => {
         if (repository === 'backend')
@@ -653,7 +657,7 @@ describe('frontend base canary', () => {
         request_metadata_json: { gate_contract: gateContract },
         result_metadata_json: {
           url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
-          gate_report: { summary: reusableSummary, reported_at: 1_500 }
+          gate_report: { summary: freshSummary, reported_at: 1_500 }
         },
         started_at: 1_000,
         completed_at: 2_000,
@@ -677,7 +681,7 @@ describe('frontend base canary', () => {
           'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
         metadata: expect.objectContaining({
           contract: gateContract,
-          summary: reusableSummary,
+          summary: freshSummary,
           source_run_id: '123',
           created_at: 1_500,
           expires_at: 1_500 + 12 * 60 * 60 * 1_000
@@ -691,6 +695,16 @@ describe('frontend base canary', () => {
         payload: expect.objectContaining({ fresh_or_reused: 'fresh' })
       }),
       { connection: { transaction: 'test' } }
+    );
+    expect(mockPublishReleaseBusMetrics).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          MetricName: 'BaseCanaryShardDurationSeconds',
+          Dimensions: expect.arrayContaining([
+            { Name: 'Shard', Value: 'unknown' }
+          ])
+        })
+      ])
     );
   });
 

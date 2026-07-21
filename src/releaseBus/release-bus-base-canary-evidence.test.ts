@@ -286,7 +286,7 @@ describe('frontend base-canary evidence contract', () => {
                   {
                     index: 1,
                     count: 4,
-                    coordinate: '2/4',
+                    coordinate: { unexpected: true },
                     status: 'SUCCEEDED',
                     failed_test_suites: 0,
                     failed_tests: 0

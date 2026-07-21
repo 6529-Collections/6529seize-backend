@@ -88,7 +88,7 @@ function digest(value: unknown): string | null {
 function trustedRunUrl(value: unknown): value is string {
   return (
     typeof value === 'string' &&
-    /^https:\/\/github\.com\/6529-Collections\/6529seize-frontend\/actions\/runs\/[0-9]+$/.test(
+    /^https:\/\/github\.com\/6529-Collections\/6529seize-frontend\/actions\/runs\/\d+$/.test(
       value
     )
   );
@@ -248,11 +248,11 @@ function validateSummary(
   const shardCoordinates = summary.shards.map((value) => {
     const shard = parseObject(value);
     if (
-      !shard ||
-      shard.status !== 'SUCCEEDED' ||
+      shard?.status !== 'SUCCEEDED' ||
       shard.count !== contract.shard_count ||
       shard.failed_test_suites !== 0 ||
-      shard.failed_tests !== 0
+      shard.failed_tests !== 0 ||
+      typeof shard.coordinate !== 'string'
     )
       return null;
     return `${shard.index}/${shard.count}` === shard.coordinate
@@ -265,11 +265,43 @@ function validateSummary(
   );
   if (
     shardCoordinates.length !== expectedCoordinates.length ||
-    JSON.stringify([...shardCoordinates].sort()) !==
-      JSON.stringify(expectedCoordinates)
+    JSON.stringify(
+      [...shardCoordinates].sort((left, right) =>
+        (left ?? '').localeCompare(right ?? '')
+      )
+    ) !== JSON.stringify(expectedCoordinates)
   )
     return 'invalid_shard_summary';
   return null;
+}
+
+type RelevantEvidence = {
+  readonly row: BaseCanaryEvidenceRecord;
+  readonly metadata: Record<string, unknown>;
+  readonly createdAt: number;
+};
+
+type ClassifiedEvidenceRow =
+  | { readonly kind: 'INVALID'; readonly reason: string }
+  | { readonly kind: 'MISMATCH'; readonly reason: string }
+  | ({ readonly kind: 'RELEVANT' } & RelevantEvidence);
+
+function classifyEvidenceRow(
+  row: BaseCanaryEvidenceRecord,
+  contract: FrontendGateContract
+): ClassifiedEvidenceRow {
+  const metadata = parseObject(row.metadata_json);
+  if (!metadata) return { kind: 'INVALID', reason: 'malformed_metadata' };
+  const storedContract = parseObject(metadata.contract);
+  if (!storedContract) return { kind: 'INVALID', reason: 'malformed_contract' };
+  const mismatch = contractMismatchReason(storedContract, contract);
+  if (mismatch) return { kind: 'MISMATCH', reason: mismatch };
+  return {
+    kind: 'RELEVANT',
+    row,
+    metadata,
+    createdAt: Number(metadata.created_at ?? row.created_at)
+  };
 }
 
 export function evaluateBaseCanaryEvidence(input: {
@@ -281,25 +313,16 @@ export function evaluateBaseCanaryEvidence(input: {
   if (!Number.isSafeInteger(input.maxAgeMs) || input.maxAgeMs <= 0)
     return { decision: 'INVALIDATED', reason: 'invalid_max_age' };
   let mismatchReason = 'no_exact_sha_evidence';
-  const relevant: Array<{
-    row: BaseCanaryEvidenceRecord;
-    metadata: Record<string, unknown>;
-    createdAt: number;
-  }> = [];
+  const relevant: RelevantEvidence[] = [];
   for (const row of input.rows) {
-    const metadata = parseObject(row.metadata_json);
-    if (!metadata)
-      return { decision: 'INVALIDATED', reason: 'malformed_metadata' };
-    const storedContract = parseObject(metadata.contract);
-    if (!storedContract)
-      return { decision: 'INVALIDATED', reason: 'malformed_contract' };
-    const mismatch = contractMismatchReason(storedContract, input.contract);
-    if (mismatch) {
-      mismatchReason = mismatch;
+    const classified = classifyEvidenceRow(row, input.contract);
+    if (classified.kind === 'INVALID')
+      return { decision: 'INVALIDATED', reason: classified.reason };
+    if (classified.kind === 'MISMATCH') {
+      mismatchReason = classified.reason;
       continue;
     }
-    const createdAt = Number(metadata.created_at ?? row.created_at);
-    relevant.push({ row, metadata, createdAt });
+    relevant.push(classified);
   }
   if (relevant.length === 0)
     return { decision: 'MISS', reason: mismatchReason };
