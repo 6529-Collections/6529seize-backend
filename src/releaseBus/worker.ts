@@ -371,7 +371,7 @@ function operationWaitReason(
   if (operation.phase === 'BASE_CANARY_RUNNING') {
     return {
       code: 'GITHUB_WORKFLOW_RUNNING',
-      summary: `Frontend base canary running for staging SHA ${operation.expected_sha}. Candidates have not been tested yet.`
+      summary: `Frontend base canary running for staging SHA ${operation.expected_sha ?? 'unknown'}. Candidates have not been tested yet.`
     };
   }
   const external = operation.workflow_url ? ' GitHub Actions workflow' : '';
@@ -437,14 +437,19 @@ async function updateTrainPhase(
   train: ReleaseTrainRecord,
   status: ReleaseTrainRecord['status']
 ): Promise<void> {
-  await releaseBusRepository.updateTrain(train.id, { status }, {});
-  await releaseBusRepository.appendEvent(
-    {
-      trainId: train.id,
-      eventType: 'TRAIN_PHASE_CHANGED',
-      payload: { from: train.status, to: status }
-    },
-    {}
+  await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      await releaseBusRepository.updateTrain(train.id, { status }, context);
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'TRAIN_PHASE_CHANGED',
+          payload: { from: train.status, to: status }
+        },
+        context
+      );
+    }
   );
 }
 
@@ -2164,7 +2169,7 @@ export async function advanceReleaseTrain(
       if (baseCanary === 'WAIT')
         return waitFor(train, 'BASE_CANARY_RUNNING', {
           code: 'GITHUB_WORKFLOW_RUNNING',
-          summary: `Frontend base canary running for staging SHA ${train.frontend_base_sha}. Candidates have not been tested yet.`
+          summary: `Frontend base canary running for staging SHA ${train.frontend_base_sha ?? 'unknown'}. Candidates have not been tested yet.`
         });
       await beginComposition(train, candidates);
       return waitFor(train, 'COMPOSING');

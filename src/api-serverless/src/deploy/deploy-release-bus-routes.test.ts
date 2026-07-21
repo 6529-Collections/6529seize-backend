@@ -581,7 +581,7 @@ describe('release-bus progress reporting', () => {
   it('binds the report to the exact operation and workflow run', async () => {
     mockFindOperation.mockResolvedValue({
       train_id: TRAIN_ID,
-      external_id: '99999',
+      external_id: null,
       status: 'DISPATCHED'
     });
 
@@ -630,6 +630,7 @@ describe('release-bus progress reporting', () => {
 
   it('accepts an identical terminal report idempotently without another event', async () => {
     const report = progressBody();
+    const { base_sha, ...summaryRest } = report.summary;
     mockFindOperation.mockResolvedValue({
       train_id: TRAIN_ID,
       external_id: '12345',
@@ -640,7 +641,7 @@ describe('release-bus progress reporting', () => {
           status: report.status,
           stages: report.stages,
           jest: report.jest,
-          summary: report.summary,
+          summary: { ...summaryRest, base_sha },
           reported_at: 123456
         }
       }

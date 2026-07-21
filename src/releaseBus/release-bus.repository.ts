@@ -500,12 +500,11 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     limit: number,
     ctx: RequestContext
   ): Promise<ReleaseTrainEventRecord[]> {
-    const boundedLimit = Math.min(Math.max(limit, 1), 500);
     return this.db.execute<ReleaseTrainEventRecord>(
       `select * from ${RELEASE_TRAIN_EVENTS_TABLE}
        where train_id = :trainId
-       order by created_at desc, id desc limit ${boundedLimit}`,
-      { trainId },
+       order by created_at desc, id desc limit :limit`,
+      { trainId, limit: Math.min(Math.max(limit, 1), 500) },
       dbOptions(ctx)
     );
   }
