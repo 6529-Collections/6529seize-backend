@@ -834,6 +834,44 @@ describe('frontend base canary', () => {
     );
   });
 
+  it('reports contract resolution failure in default fresh mode', async () => {
+    mockResolveRef.mockRejectedValue(new Error('GitHub unavailable'));
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockPublishReleaseBusMetrics).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          MetricName: 'BaseCanaryEvidenceLookup',
+          Dimensions: expect.arrayContaining([
+            { Name: 'Decision', Value: 'INVALIDATED' },
+            { Name: 'Reason', Value: 'contract_unavailable' }
+          ])
+        })
+      ])
+    );
+    const workflowInputs = mockDispatchWorkflow.mock.calls[0]?.[3];
+    expect(workflowInputs).toEqual(
+      expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
+    );
+    expect(workflowInputs).not.toHaveProperty('gate_contract');
+    expect(mockAppendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_INVALIDATED'
+      }),
+      expect.anything()
+    );
+  });
+
   it('honors an operator force-fresh choice', async () => {
     process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
     mockFindCandidateById.mockResolvedValue({

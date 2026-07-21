@@ -98,10 +98,8 @@ function trustedRunId(value: string): string {
   return value.slice(value.lastIndexOf('/') + 1);
 }
 
-function count(value: unknown): number | null {
-  return Number.isSafeInteger(value) && Number(value) >= 0
-    ? Number(value)
-    : null;
+function isPositiveCount(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) > 0;
 }
 
 export function buildFrontendGateContract(input: {
@@ -229,9 +227,9 @@ function validateSummary(
   const totals = parseObject(summary.totals);
   if (
     !totals ||
-    !count(totals.files) ||
-    !count(totals.test_suites) ||
-    !count(totals.tests) ||
+    !isPositiveCount(totals.files) ||
+    !isPositiveCount(totals.test_suites) ||
+    !isPositiveCount(totals.tests) ||
     totals.failed_test_suites !== 0 ||
     totals.failed_tests !== 0
   )

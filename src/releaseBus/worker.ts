@@ -1024,19 +1024,16 @@ async function existingFrontendBaseCanaryResult(
 
 async function resolveFrontendGateContractFailClosed(
   train: ReleaseTrainRecord,
-  baseSha: string,
-  evidenceConfig: BaseCanaryEvidenceConfig
+  baseSha: string
 ): Promise<FrontendGateContract | null> {
   try {
     return await resolveFrontendGateContract(baseSha);
   } catch {
-    if (evidenceConfig.reuse || evidenceConfig.shadow) {
-      await publishBaseEvidenceLookup(
-        train,
-        'INVALIDATED',
-        'contract_unavailable'
-      );
-    }
+    await publishBaseEvidenceLookup(
+      train,
+      'INVALIDATED',
+      'contract_unavailable'
+    );
     return null;
   }
 }
@@ -1070,8 +1067,7 @@ async function prepareFreshFrontendBaseCanary(
   const evidenceConfig = await resolveBaseCanaryEvidenceConfig();
   let gateContract = await resolveFrontendGateContractFailClosed(
     train,
-    baseSha,
-    evidenceConfig
+    baseSha
   );
   const forceFreshCandidateIds = candidates
     .filter(

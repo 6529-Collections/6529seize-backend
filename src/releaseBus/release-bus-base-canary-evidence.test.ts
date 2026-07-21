@@ -337,4 +337,39 @@ describe('frontend base-canary evidence contract', () => {
       reason: 'skipped_test_counts'
     });
   });
+
+  it.each(['files', 'test_suites', 'tests'])(
+    'rejects a zero %s total',
+    (field) => {
+      const value = contract();
+      const evidence = row(value);
+      const stored = evidence.metadata_json as Record<string, unknown>;
+      const storedSummary = stored.summary as Record<string, unknown>;
+      expect(
+        evaluateBaseCanaryEvidence({
+          rows: [
+            {
+              ...evidence,
+              metadata_json: {
+                ...stored,
+                summary: {
+                  ...storedSummary,
+                  totals: {
+                    ...(storedSummary.totals as Record<string, unknown>),
+                    [field]: 0
+                  }
+                }
+              }
+            }
+          ],
+          contract: value,
+          now: 2_000,
+          maxAgeMs: 24 * 60 * 60 * 1000
+        })
+      ).toEqual({
+        decision: 'INVALIDATED',
+        reason: 'failed_test_counts'
+      });
+    }
+  );
 });
