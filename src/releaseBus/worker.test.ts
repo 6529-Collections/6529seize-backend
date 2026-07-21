@@ -404,6 +404,14 @@ describe('frontend base canary', () => {
   });
 
   it('does not advance or append an event after the train phase diverges', async () => {
+    const advancedTrain = {
+      ...frozenTrain,
+      status: 'BASE_CANARY_RUNNING' as const,
+      row_version: 2
+    };
+    mockFindTrain
+      .mockResolvedValueOnce(frozenTrain)
+      .mockResolvedValueOnce(advancedTrain);
     mockListTrainOperations.mockResolvedValue([]);
     mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
     mockFindWorkflowRun.mockResolvedValue(null);
@@ -412,9 +420,11 @@ describe('frontend base canary', () => {
     mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
     mockAdvanceTrainPhase.mockResolvedValue(false);
 
-    await expect(advanceReleaseTrain(frozenTrain.id)).rejects.toThrow(
-      'Release train train-1 changed concurrently from FROZEN'
-    );
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toEqual({
+      decision: 'CONTINUE',
+      train_id: frozenTrain.id,
+      status: 'BASE_CANARY_RUNNING'
+    });
 
     expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
       frozenTrain.id,
