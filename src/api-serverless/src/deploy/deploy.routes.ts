@@ -649,11 +649,11 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
           'Release progress report does not match the authorized operation'
         );
       }
-      if (
-        operation.operation_type === 'base-canary-frontend' &&
-        body.phase === 'complete' &&
-        !body.summary
-      ) {
+      const isFrontendBaseCanary =
+        operation.operation_type === 'base-canary-frontend';
+      // Aggregate summaries are base-canary evidence. Other operations report
+      // bounded stages/Jest data but must not claim reusable base evidence.
+      if (isFrontendBaseCanary && body.phase === 'complete' && !body.summary) {
         throw new CustomApiCompliantException(
           422,
           'A terminal frontend base canary report requires its aggregate summary'
@@ -661,7 +661,7 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       }
       if (
         body.summary &&
-        (operation.operation_type !== 'base-canary-frontend' ||
+        (!isFrontendBaseCanary ||
           operation.expected_sha?.toLowerCase() !==
             body.summary.base_sha.toLowerCase() ||
           operation.environment !== body.summary.environment)
