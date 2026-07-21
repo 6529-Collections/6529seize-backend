@@ -629,9 +629,8 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
     {}
   );
   if (
-    !operation ||
-    operation.train_id !== body.train_id ||
-    operation.external_id !== body.workflow_run_id
+    operation?.train_id !== body.train_id ||
+    operation?.external_id !== body.workflow_run_id
   ) {
     throw new CustomApiCompliantException(
       403,

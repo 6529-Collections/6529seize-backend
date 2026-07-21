@@ -671,6 +671,49 @@ async function ensureLane(
   );
 }
 
+async function waitForRequiredLane(
+  train: ReleaseTrainRecord,
+  laneName: 'global-staging' | 'global-production'
+): Promise<WorkerResult | null> {
+  if (await ensureLane(laneName, train)) return null;
+  return waitFor(
+    train,
+    train.status,
+    leaseWaitReason(laneName, await releaseBusRepository.getLane(laneName, {}))
+  );
+}
+
+async function continueAtPhase(
+  train: ReleaseTrainRecord,
+  status: ReleaseTrainRecord['status']
+): Promise<WorkerResult> {
+  await updateTrainPhase(train, status);
+  return { decision: 'CONTINUE', train_id: train.id, status };
+}
+
+async function reloadTrain(trainId: string): Promise<ReleaseTrainRecord> {
+  return (await releaseBusRepository.findTrain(
+    trainId,
+    {}
+  )) as ReleaseTrainRecord;
+}
+
+async function advanceGuardedPhase(params: {
+  readonly train: ReleaseTrainRecord;
+  readonly lane: 'global-staging' | 'global-production';
+  readonly run: () => Promise<'PASS' | 'WAIT' | 'FAIL'>;
+  readonly failureMessage: string;
+  readonly nextStatus: ReleaseTrainRecord['status'];
+}): Promise<WorkerResult> {
+  const laneWait = await waitForRequiredLane(params.train, params.lane);
+  if (laneWait) return laneWait;
+  const result = await params.run();
+  if (result === 'FAIL')
+    throw new TerminalReleaseTrainError(params.failureMessage);
+  if (result === 'WAIT') return waitFor(params.train, params.train.status);
+  return continueAtPhase(params.train, params.nextStatus);
+}
+
 async function externalDeploymentLaneBusy(
   environment: 'staging' | 'prod'
 ): Promise<ReleaseRepository | null> {
@@ -1044,11 +1087,75 @@ export async function finishIncompleteComposition(
   return offender;
 }
 
+type FailureDisposition = 'QUARANTINE' | 'REQUEUE';
+
+function failureLifecycle(
+  train: ReleaseTrainRecord,
+  reason: string,
+  disposition: FailureDisposition,
+  attribution: 'PRE_EXISTING_BASE' | 'CANDIDATE' | 'TRAIN' | undefined
+) {
+  if (disposition === 'QUARANTINE') {
+    return {
+      status: 'QUARANTINED' as const,
+      currentTrainId: null,
+      holdReason: reason.slice(0, 500)
+    };
+  }
+  return {
+    status: readyStatusForTrain(train),
+    currentTrainId: null,
+    holdReason:
+      attribution === 'PRE_EXISTING_BASE'
+        ? 'BASE_FAILURE_NO_CANDIDATE_BLAMED'
+        : 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
+  };
+}
+
+async function releaseCandidateAfterTrainFailure(
+  train: ReleaseTrainRecord,
+  candidate: ReleaseCandidateRecord,
+  reason: string,
+  disposition: FailureDisposition,
+  attribution: 'PRE_EXISTING_BASE' | 'CANDIDATE' | 'TRAIN' | undefined
+): Promise<FailureDisposition | null> {
+  const current = await releaseBusRepository.findCandidateById(
+    candidate.id,
+    {}
+  );
+  if (
+    !current ||
+    ['QUARANTINED', 'CANCELLED', 'SUPERSEDED'].includes(current.status) ||
+    ![
+      'STAGING_CLAIMED',
+      'STAGING_VALIDATING',
+      'PRODUCTION_CLAIMED',
+      'PRODUCTION_VALIDATING'
+    ].includes(current.status)
+  )
+    return null;
+  await releaseBusRepository.updateCandidateLifecycle(
+    current.id,
+    current.row_version,
+    failureLifecycle(train, reason, disposition, attribution),
+    {}
+  );
+  await publishCandidateStatus(
+    train,
+    candidate,
+    disposition === 'QUARANTINE' ? 'failure' : 'error',
+    disposition === 'QUARANTINE'
+      ? `Quarantined by release train ${train.id}`
+      : `Release lane paused; candidate preserved (${train.id})`
+  );
+  return disposition;
+}
+
 async function failAndPauseTrain(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[],
   reason: string,
-  candidateDisposition: 'QUARANTINE' | 'REQUEUE' = 'QUARANTINE',
+  candidateDisposition: FailureDisposition = 'QUARANTINE',
   details: {
     readonly attribution?: 'PRE_EXISTING_BASE' | 'CANDIDATE' | 'TRAIN';
     readonly recommendedRecovery?: string;
@@ -1057,53 +1164,15 @@ async function failAndPauseTrain(
   const returnedCandidates: string[] = [];
   const quarantinedCandidates: string[] = [];
   for (const candidate of candidates) {
-    const current = await releaseBusRepository.findCandidateById(
-      candidate.id,
-      {}
-    );
-    if (
-      !current ||
-      ['QUARANTINED', 'CANCELLED', 'SUPERSEDED'].includes(current.status)
-    )
-      continue;
-    if (
-      ![
-        'STAGING_CLAIMED',
-        'STAGING_VALIDATING',
-        'PRODUCTION_CLAIMED',
-        'PRODUCTION_VALIDATING'
-      ].includes(current.status)
-    )
-      continue;
-    await releaseBusRepository.updateCandidateLifecycle(
-      current.id,
-      current.row_version,
-      {
-        status:
-          candidateDisposition === 'QUARANTINE'
-            ? 'QUARANTINED'
-            : readyStatusForTrain(train),
-        currentTrainId: null,
-        holdReason:
-          candidateDisposition === 'QUARANTINE'
-            ? reason.slice(0, 500)
-            : details.attribution === 'PRE_EXISTING_BASE'
-              ? 'BASE_FAILURE_NO_CANDIDATE_BLAMED'
-              : 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
-      },
-      {}
-    );
-    if (candidateDisposition === 'QUARANTINE')
-      quarantinedCandidates.push(candidate.id);
-    else returnedCandidates.push(candidate.id);
-    await publishCandidateStatus(
+    const disposition = await releaseCandidateAfterTrainFailure(
       train,
       candidate,
-      candidateDisposition === 'QUARANTINE' ? 'failure' : 'error',
-      candidateDisposition === 'QUARANTINE'
-        ? `Quarantined by release train ${train.id}`
-        : `Release lane paused; candidate preserved (${train.id})`
+      reason,
+      candidateDisposition,
+      details.attribution
     );
+    if (disposition === 'QUARANTINE') quarantinedCandidates.push(candidate.id);
+    if (disposition === 'REQUEUE') returnedCandidates.push(candidate.id);
   }
   await releaseBusRepository.setControl(
     train.target_lane,
@@ -2155,12 +2224,7 @@ export async function advanceReleaseTrain(
             await releaseBusRepository.getLane('global-staging', {})
           )
         );
-      await updateTrainPhase(train, 'DEPLOYING_BACKEND');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'DEPLOYING_BACKEND'
-      };
+      return continueAtPhase(train, 'DEPLOYING_BACKEND');
     }
     if (train.status === 'ISOLATING_FAILURE') {
       const result = await finishFailureIsolation(train, candidates);
@@ -2180,90 +2244,41 @@ export async function advanceReleaseTrain(
       };
     }
     if (train.status === 'STAGING') {
-      await updateTrainPhase(train, 'DEPLOYING_BACKEND');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'DEPLOYING_BACKEND'
-      };
+      return continueAtPhase(train, 'DEPLOYING_BACKEND');
     }
     if (train.status === 'DEPLOYING_BACKEND') {
-      if (!(await ensureLane('global-staging', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-staging',
-            await releaseBusRepository.getLane('global-staging', {})
-          )
-        );
-      const backend = await advanceBackendDeploy(train, candidates, 'staging');
-      if (backend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Backend staging deployment failed'
-        );
-      if (backend === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'DEPLOYING_FRONTEND');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'DEPLOYING_FRONTEND'
-      };
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-staging',
+        run: () => advanceBackendDeploy(train, candidates, 'staging'),
+        failureMessage: 'Backend staging deployment failed',
+        nextStatus: 'DEPLOYING_FRONTEND'
+      });
     }
     if (train.status === 'DEPLOYING_FRONTEND') {
-      if (!(await ensureLane('global-staging', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-staging',
-            await releaseBusRepository.getLane('global-staging', {})
-          )
-        );
-      const frontend = await advanceFrontendDeploy(train, 'staging');
-      if (frontend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Frontend staging deployment failed'
-        );
-      if (frontend === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'E2E_RUNNING');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'E2E_RUNNING'
-      };
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-staging',
+        run: () => advanceFrontendDeploy(train, 'staging'),
+        failureMessage: 'Frontend staging deployment failed',
+        nextStatus: 'E2E_RUNNING'
+      });
     }
     if (train.status === 'E2E_RUNNING') {
-      if (!(await ensureLane('global-staging', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-staging',
-            await releaseBusRepository.getLane('global-staging', {})
-          )
-        );
-      const e2e = await advanceE2e(train, 'staging');
-      if (e2e === 'FAIL')
-        throw new TerminalReleaseTrainError('Staging E2E failed');
-      if (e2e === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'VALIDATING_STAGING');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'VALIDATING_STAGING'
-      };
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-staging',
+        run: () => advanceE2e(train, 'staging'),
+        failureMessage: 'Staging E2E failed',
+        nextStatus: 'VALIDATING_STAGING'
+      });
     }
     if (train.status === 'VALIDATING_STAGING') {
-      if (!(await ensureLane('global-staging', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-staging',
-            await releaseBusRepository.getLane('global-staging', {})
-          )
-        );
+      const stagingLaneWait = await waitForRequiredLane(
+        train,
+        'global-staging'
+      );
+      if (stagingLaneWait) return stagingLaneWait;
       if (train.target_lane === 'STAGING') {
         try {
           await finishStaging(train, candidates);
@@ -2298,36 +2313,20 @@ export async function advanceReleaseTrain(
             environment: 'prod'
           }
         });
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
-      await updateTrainPhase(train, 'MERGING_PRODUCTION');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'MERGING_PRODUCTION'
-      };
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      return continueAtPhase(train, 'MERGING_PRODUCTION');
     }
     if (train.status === 'MERGING_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
-      const latest = (await releaseBusRepository.findTrain(
-        train.id,
-        {}
-      )) as ReleaseTrainRecord;
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      const latest = await reloadTrain(train.id);
       const backendMerge = await mergeReleasePullRequest(latest, 'backend');
       if (backendMerge === 'STALE') {
         await requeueMovedTarget(
@@ -2347,58 +2346,27 @@ export async function advanceReleaseTrain(
         );
       }
       if (backendMerge === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'DEPLOYING_BACKEND_PRODUCTION'
-      };
+      return continueAtPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
     }
     if (train.status === 'DEPLOYING_PRODUCTION') {
-      await updateTrainPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'DEPLOYING_BACKEND_PRODUCTION'
-      };
+      return continueAtPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
     }
     if (train.status === 'DEPLOYING_BACKEND_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
-      const backend = await advanceBackendDeploy(train, candidates, 'prod');
-      if (backend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Backend production deployment failed'
-        );
-      if (backend === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'MERGING_FRONTEND_PRODUCTION');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'MERGING_FRONTEND_PRODUCTION'
-      };
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-production',
+        run: () => advanceBackendDeploy(train, candidates, 'prod'),
+        failureMessage: 'Backend production deployment failed',
+        nextStatus: 'MERGING_FRONTEND_PRODUCTION'
+      });
     }
     if (train.status === 'MERGING_FRONTEND_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
-      const latest = (await releaseBusRepository.findTrain(
-        train.id,
-        {}
-      )) as ReleaseTrainRecord;
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      const latest = await reloadTrain(train.id);
       const frontendMerge = await mergeReleasePullRequest(latest, 'frontend');
       if (frontendMerge === 'STALE') {
         if (!latest.backend_release_branch) {
@@ -2423,92 +2391,41 @@ export async function advanceReleaseTrain(
         );
       }
       if (frontendMerge === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'DEPLOYING_FRONTEND_PRODUCTION');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'DEPLOYING_FRONTEND_PRODUCTION'
-      };
+      return continueAtPhase(train, 'DEPLOYING_FRONTEND_PRODUCTION');
     }
     if (train.status === 'DEPLOYING_FRONTEND_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
-      const latest = (await releaseBusRepository.findTrain(
-        train.id,
-        {}
-      )) as ReleaseTrainRecord;
-      const frontend = await advanceFrontendDeploy(latest, 'prod');
-      if (frontend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Frontend production deployment failed'
-        );
-      if (frontend === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'PRODUCTION_E2E_RUNNING');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'PRODUCTION_E2E_RUNNING'
-      };
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-production',
+        run: async () =>
+          advanceFrontendDeploy(await reloadTrain(train.id), 'prod'),
+        failureMessage: 'Frontend production deployment failed',
+        nextStatus: 'PRODUCTION_E2E_RUNNING'
+      });
     }
     if (train.status === 'PRODUCTION_E2E_RUNNING') {
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
-      const latest = (await releaseBusRepository.findTrain(
-        train.id,
-        {}
-      )) as ReleaseTrainRecord;
-      const e2e = await advanceE2e(latest, 'prod');
-      if (e2e === 'FAIL')
-        throw new TerminalReleaseTrainError('Production E2E failed');
-      if (e2e === 'WAIT') return waitFor(train, train.status);
-      await updateTrainPhase(train, 'VALIDATING_PRODUCTION');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'VALIDATING_PRODUCTION'
-      };
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-production',
+        run: async () => advanceE2e(await reloadTrain(train.id), 'prod'),
+        failureMessage: 'Production E2E failed',
+        nextStatus: 'VALIDATING_PRODUCTION'
+      });
     }
     if (train.status === 'VALIDATING_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
-      await updateTrainPhase(train, 'SYNCING_STAGING');
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'SYNCING_STAGING'
-      };
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      return continueAtPhase(train, 'SYNCING_STAGING');
     }
     if (train.status === 'SYNCING_STAGING') {
-      if (!(await ensureLane('global-production', train)))
-        return waitFor(
-          train,
-          train.status,
-          leaseWaitReason(
-            'global-production',
-            await releaseBusRepository.getLane('global-production', {})
-          )
-        );
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
       const sync = await advanceStagingSync(train, candidates);
       if (sync === 'FAIL')
         throw new TerminalReleaseTrainError(

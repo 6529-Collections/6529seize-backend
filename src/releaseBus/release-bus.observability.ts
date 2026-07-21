@@ -111,7 +111,7 @@ const TERMINAL_OPERATION_STATUSES = new Set([
 ]);
 
 const ACTIONS_URL_PATTERN =
-  /^https:\/\/github\.com\/6529-Collections\/6529seize-(?:frontend|backend)\/actions\/runs\/[0-9]+$/;
+  /^https:\/\/github\.com\/6529-Collections\/6529seize-(?:frontend|backend)\/actions\/runs\/\d+$/;
 
 function objectMetadata(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {
@@ -144,7 +144,7 @@ function boundedText(value: unknown, maxLength: number): string | null {
   if (typeof value !== 'string') return null;
   const sanitized = Array.from(value)
     .map((character) => {
-      const code = character.charCodeAt(0);
+      const code = character.codePointAt(0) ?? 0;
       return code <= 31 || code === 127 ? ' ' : character;
     })
     .join('')
@@ -455,7 +455,7 @@ export function toOperationView(
     service: operation.service,
     expected_sha: operation.expected_sha,
     run_id:
-      operation.external_id && /^[0-9]+$/.test(operation.external_id)
+      operation.external_id && /^\d+$/.test(operation.external_id)
         ? operation.external_id
         : null,
     workflow_url: workflowUrl,
