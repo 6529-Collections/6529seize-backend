@@ -5,9 +5,13 @@ export const FRONTEND_GATE_BASE_FILES = [
   'jest.config.js',
   'jest.setup.js',
   'package.json',
-  'pnpm-lock.yaml',
+  'pnpm-lock.yaml'
+] as const;
+
+export const FRONTEND_GATE_TOOLING_FILES = [
   'scripts/release-bus-frontend-gate.sh',
-  'scripts/release-bus-gate-evidence.cjs'
+  'scripts/release-bus-gate-evidence.cjs',
+  'scripts/release-bus-report-progress.mjs'
 ] as const;
 
 export const FRONTEND_GATE_WORKFLOW =
@@ -18,7 +22,7 @@ export type FrontendGateMode = 'legacy' | 'shadow' | 'sharded';
 export type FrontendGateContract = {
   readonly schema_version: 1;
   readonly repository: 'frontend';
-  readonly environment: 'staging';
+  readonly environment: 'orchestration';
   readonly base_sha: string;
   readonly gate_fingerprint: string;
   readonly workflow_sha: string;
@@ -90,21 +94,42 @@ function trustedRunUrl(value: unknown): value is string {
   );
 }
 
+function trustedRunId(value: string): string {
+  return value.slice(value.lastIndexOf('/') + 1);
+}
+
+function count(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+    ? Number(value)
+    : null;
+}
+
 export function buildFrontendGateContract(input: {
   readonly baseSha: string;
   readonly workflowSha: string;
-  readonly workflowContent: string;
+  readonly workflowFileContents: Readonly<Record<string, string>>;
   readonly baseFileContents: Readonly<Record<string, string>>;
   readonly gateMode: FrontendGateMode;
   readonly shardCount: 1 | 2 | 4;
 }): FrontendGateContract {
   assertSha(input.baseSha, 'frontend base SHA');
   assertSha(input.workflowSha, 'frontend workflow SHA');
-  const missing = FRONTEND_GATE_BASE_FILES.filter(
+  const missingBaseFile = FRONTEND_GATE_BASE_FILES.find(
     (file) => typeof input.baseFileContents[file] !== 'string'
   );
-  if (missing.length > 0)
-    throw new Error(`Missing frontend gate contract file ${missing[0]}`);
+  if (missingBaseFile)
+    throw new Error(`Missing frontend gate contract file ${missingBaseFile}`);
+  const workflowFiles = [
+    FRONTEND_GATE_WORKFLOW,
+    ...FRONTEND_GATE_TOOLING_FILES
+  ] as const;
+  const missingWorkflowFile = workflowFiles.find(
+    (file) => typeof input.workflowFileContents[file] !== 'string'
+  );
+  if (missingWorkflowFile)
+    throw new Error(
+      `Missing frontend gate workflow file ${missingWorkflowFile}`
+    );
   const packageJson = parseObject(input.baseFileContents['package.json']);
   const packageManager = packageJson?.packageManager;
   if (
@@ -113,18 +138,20 @@ export function buildFrontendGateContract(input: {
     packageManager.length > 128
   )
     throw new Error('Frontend packageManager contract is invalid');
-  const componentDigests = Object.fromEntries(
-    FRONTEND_GATE_BASE_FILES.map((file) => [
-      file,
-      sha256(input.baseFileContents[file])
-    ])
-  );
-  const workflowDigest = sha256(input.workflowContent);
+  const componentDigests = Object.fromEntries([
+    ...FRONTEND_GATE_BASE_FILES.map(
+      (file) => [file, sha256(input.baseFileContents[file])] as const
+    ),
+    ...workflowFiles.map(
+      (file) => [file, sha256(input.workflowFileContents[file])] as const
+    )
+  ]);
+  const workflowDigest = componentDigests[FRONTEND_GATE_WORKFLOW];
   const fingerprint = sha256(
     JSON.stringify({
       schema_version: 1,
       repository: 'frontend',
-      environment: 'staging',
+      environment: 'orchestration',
       base_sha: input.baseSha,
       workflow_sha: input.workflowSha,
       workflow_digest: workflowDigest,
@@ -138,7 +165,7 @@ export function buildFrontendGateContract(input: {
   return {
     schema_version: 1,
     repository: 'frontend',
-    environment: 'staging',
+    environment: 'orchestration',
     base_sha: input.baseSha,
     gate_fingerprint: fingerprint,
     workflow_sha: input.workflowSha,
@@ -177,9 +204,7 @@ function validateSummary(
   contract: FrontendGateContract,
   record: BaseCanaryEvidenceRecord
 ): string | null {
-  const checks: ReadonlyArray<
-    readonly [keyof FrontendGateContract, string]
-  > = [
+  const checks: ReadonlyArray<readonly [keyof FrontendGateContract, string]> = [
     ['base_sha', 'sha_mismatch'],
     ['environment', 'environment_mismatch'],
     ['gate_fingerprint', 'fingerprint_mismatch'],
@@ -196,9 +221,17 @@ function validateSummary(
   if (!artifactDigest || artifactDigest !== digest(record.artifact_digest))
     return 'artifact_digest_mismatch';
   if (!trustedRunUrl(record.evidence_uri)) return 'invalid_evidence_uri';
+  if (
+    typeof record.source_sha !== 'string' ||
+    record.source_sha !== contract.base_sha
+  )
+    return 'source_sha_mismatch';
   const totals = parseObject(summary.totals);
   if (
     !totals ||
+    !count(totals.files) ||
+    !count(totals.test_suites) ||
+    !count(totals.tests) ||
     totals.failed_test_suites !== 0 ||
     totals.failed_tests !== 0
   )
@@ -210,13 +243,29 @@ function validateSummary(
     summary.duplicate_files.length > 0
   )
     return 'manifest_count_mismatch';
+  if (!Array.isArray(summary.shards)) return 'invalid_shard_summary';
+  const shardCoordinates = summary.shards.map((value) => {
+    const shard = parseObject(value);
+    if (
+      !shard ||
+      shard.status !== 'SUCCEEDED' ||
+      shard.count !== contract.shard_count ||
+      shard.failed_test_suites !== 0 ||
+      shard.failed_tests !== 0
+    )
+      return null;
+    return `${shard.index}/${shard.count}` === shard.coordinate
+      ? shard.coordinate
+      : null;
+  });
+  const expectedCoordinates = Array.from(
+    { length: contract.shard_count },
+    (_, index) => `${index + 1}/${contract.shard_count}`
+  );
   if (
-    !Array.isArray(summary.shards) ||
-    summary.shards.length !== contract.shard_count ||
-    summary.shards.some((value) => {
-      const shard = parseObject(value);
-      return !shard || shard.status !== 'SUCCEEDED';
-    })
+    shardCoordinates.length !== expectedCoordinates.length ||
+    JSON.stringify([...shardCoordinates].sort()) !==
+      JSON.stringify(expectedCoordinates)
   )
     return 'invalid_shard_summary';
   return null;
@@ -231,6 +280,11 @@ export function evaluateBaseCanaryEvidence(input: {
   if (!Number.isSafeInteger(input.maxAgeMs) || input.maxAgeMs <= 0)
     return { decision: 'INVALIDATED', reason: 'invalid_max_age' };
   let mismatchReason = 'no_exact_sha_evidence';
+  const relevant: Array<{
+    row: BaseCanaryEvidenceRecord;
+    metadata: Record<string, unknown>;
+    createdAt: number;
+  }> = [];
   for (const row of input.rows) {
     const metadata = parseObject(row.metadata_json);
     if (!metadata)
@@ -243,32 +297,50 @@ export function evaluateBaseCanaryEvidence(input: {
       mismatchReason = mismatch;
       continue;
     }
-    if (row.status !== 'SUCCEEDED')
-      return { decision: 'INVALIDATED', reason: 'newer_failure' };
     const createdAt = Number(metadata.created_at ?? row.created_at);
-    const storedExpiry = Number(metadata.expires_at);
-    if (!Number.isSafeInteger(createdAt) || createdAt <= 0)
-      return { decision: 'INVALIDATED', reason: 'invalid_creation_time' };
-    const effectiveExpiry = Math.min(
-      createdAt + input.maxAgeMs,
-      Number.isSafeInteger(storedExpiry) && storedExpiry > 0
-        ? storedExpiry
-        : Number.POSITIVE_INFINITY
-    );
-    if (input.now > effectiveExpiry)
-      return { decision: 'INVALIDATED', reason: 'expired' };
-    const summary = parseObject(metadata.summary);
-    if (!summary)
-      return { decision: 'INVALIDATED', reason: 'malformed_summary' };
-    const invalidSummary = validateSummary(summary, input.contract, row);
-    if (invalidSummary)
-      return { decision: 'INVALIDATED', reason: invalidSummary };
-    return {
-      decision: 'HIT',
-      reason: 'reusable_success',
-      evidence: row,
-      metadata
-    };
+    relevant.push({ row, metadata, createdAt });
   }
-  return { decision: 'MISS', reason: mismatchReason };
+  if (relevant.length === 0)
+    return { decision: 'MISS', reason: mismatchReason };
+  relevant.sort((left, right) => {
+    const leftValid =
+      Number.isSafeInteger(left.createdAt) && left.createdAt > 0;
+    const rightValid =
+      Number.isSafeInteger(right.createdAt) && right.createdAt > 0;
+    if (!leftValid && rightValid) return -1;
+    if (leftValid && !rightValid) return 1;
+    return right.createdAt - left.createdAt;
+  });
+  const { row, metadata, createdAt } = relevant[0];
+  if (row.status !== 'SUCCEEDED')
+    return { decision: 'INVALIDATED', reason: 'newer_failure' };
+  const storedExpiry = Number(metadata.expires_at);
+  if (
+    !Number.isSafeInteger(createdAt) ||
+    createdAt <= 0 ||
+    createdAt > input.now + 5 * 60 * 1000
+  )
+    return { decision: 'INVALIDATED', reason: 'invalid_creation_time' };
+  if (!Number.isSafeInteger(storedExpiry) || storedExpiry <= createdAt)
+    return { decision: 'INVALIDATED', reason: 'invalid_expiry_time' };
+  if (
+    typeof metadata.source_run_id !== 'string' ||
+    !trustedRunUrl(row.evidence_uri) ||
+    trustedRunId(row.evidence_uri) !== metadata.source_run_id
+  )
+    return { decision: 'INVALIDATED', reason: 'run_provenance_mismatch' };
+  const effectiveExpiry = Math.min(createdAt + input.maxAgeMs, storedExpiry);
+  if (input.now > effectiveExpiry)
+    return { decision: 'INVALIDATED', reason: 'expired' };
+  const summary = parseObject(metadata.summary);
+  if (!summary) return { decision: 'INVALIDATED', reason: 'malformed_summary' };
+  const invalidSummary = validateSummary(summary, input.contract, row);
+  if (invalidSummary)
+    return { decision: 'INVALIDATED', reason: invalidSummary };
+  return {
+    decision: 'HIT',
+    reason: 'reusable_success',
+    evidence: row,
+    metadata
+  };
 }

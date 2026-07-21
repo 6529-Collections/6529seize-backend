@@ -707,7 +707,7 @@ async function recordFreshBaseCanaryEvidence(
       ? (gateReport.summary as Record<string, unknown>)
       : null;
   const createdAt = Number(
-    operation.completed_at ?? gateReport.reported_at ?? Date.now()
+    gateReport.reported_at ?? operation.completed_at ?? Date.now()
   );
   const maxAgeHours = getBaseCanaryEvidenceConfig().maxAgeHours;
   const artifactDigest = normalizeArtifactDigest(
