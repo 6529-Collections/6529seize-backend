@@ -1,5 +1,6 @@
 import { Request } from 'express';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { CustomApiCompliantException } from '@/exceptions';
 import { asyncRouter } from '@/api/async.router';
 import {
@@ -671,7 +672,7 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       jest: existingGateReport.jest,
       summary: existingGateReport.summary ?? null
     };
-    if (JSON.stringify(persistedContent) !== JSON.stringify(reportContent)) {
+    if (!isDeepStrictEqual(persistedContent, reportContent)) {
       throw new CustomApiCompliantException(
         409,
         'A different terminal progress report is already recorded for this operation'

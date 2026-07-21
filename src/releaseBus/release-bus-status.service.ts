@@ -100,7 +100,7 @@ function latestWaitReason(
   if (currentOperation.phase === 'BASE_CANARY_RUNNING') {
     return {
       code: 'GITHUB_WORKFLOW_RUNNING',
-      summary: `Frontend base canary running for staging SHA ${currentOperation.expected_sha}. Candidates have not been tested yet.`
+      summary: `Frontend base canary running for staging SHA ${currentOperation.expected_sha ?? 'unknown'}. Candidates have not been tested yet.`
     };
   }
   if (currentOperation.health === 'STALLED') {
@@ -190,7 +190,7 @@ function runningBaseIncident(
   return {
     severity: stalled ? 'WARNING' : 'INFO',
     title: 'Frontend base canary running',
-    summary: `Frontend base canary running for staging SHA ${operation.expected_sha}. Candidates have not been tested yet.`,
+    summary: `Frontend base canary running for staging SHA ${operation.expected_sha ?? 'unknown'}. Candidates have not been tested yet.`,
     attribution: 'PRE_EXISTING_BASE_CHECK',
     failed_gate: null,
     failed_job: null,

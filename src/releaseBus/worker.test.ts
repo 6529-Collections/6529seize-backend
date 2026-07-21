@@ -20,6 +20,7 @@ const mockGetOrCreateOperation = jest.fn();
 const mockFindOperation = jest.fn();
 const mockUpdateOperation = jest.fn();
 const mockSetControl = jest.fn();
+const mockExecuteTransaction = jest.fn();
 const mockResolveRef = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
@@ -49,7 +50,9 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
       mockGetOrCreateOperation(...args),
     findOperation: (...args: unknown[]) => mockFindOperation(...args),
     updateOperation: (...args: unknown[]) => mockUpdateOperation(...args),
-    setControl: (...args: unknown[]) => mockSetControl(...args)
+    setControl: (...args: unknown[]) => mockSetControl(...args),
+    executeNativeQueriesInTransaction: (...args: unknown[]) =>
+      mockExecuteTransaction(...args)
   }
 }));
 
@@ -263,6 +266,9 @@ describe('frontend base canary', () => {
           ? 'workflow-content'
           : baseFileContents[file]
     );
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
   });
 
   afterEach(() => {
@@ -301,7 +307,11 @@ describe('frontend base canary', () => {
     expect(mockUpdateTrain).toHaveBeenCalledWith(
       frozenTrain.id,
       { status: 'BASE_CANARY_RUNNING' },
-      {}
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
+      { connection: { transaction: 'test' } }
     );
   });
 
