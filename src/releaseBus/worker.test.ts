@@ -378,7 +378,14 @@ describe('frontend base canary', () => {
     summary_artifact_name: 'release-bus-base-canary-summary-123',
     summary_artifact_digest: artifactDigest,
     phase_durations_ms: { total: 100 },
-    totals: { failed_test_suites: 0, failed_tests: 0 },
+    totals: {
+      files: 4,
+      test_suites: 4,
+      tests: 4,
+      failed_test_suites: 0,
+      failed_tests: 0,
+      skipped_tests: 0
+    },
     fresh_or_reused: 'fresh',
     shards: Array.from({ length: 4 }, (_, index) => ({
       index: index + 1,
