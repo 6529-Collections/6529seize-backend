@@ -22,6 +22,21 @@ export { CicScoreAggregation } from './ICicScoreAggregation';
 export { CicStatement } from './ICICStatement';
 export { CmsPublishedPackageEntity, CmsSiteEntity } from './ICmsSite';
 export { CookiesConsent } from './ICookieConsent';
+export {
+  CompetitionCapabilityEntity,
+  CompetitionConfigVersionEntity,
+  CompetitionDecisionEntity,
+  CompetitionDecisionWinnerEntity,
+  CompetitionEntity,
+  CompetitionEntryEntity,
+  CompetitionLeaderboardEntryEntity,
+  CompetitionLifecycleEventEntity,
+  CompetitionOutcomeDistributionItemEntity,
+  CompetitionOutcomeEntity,
+  CompetitionParityObservationEntity,
+  CompetitionPauseEntity,
+  CompetitionVoteEntity
+} from './ICompetition';
 export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';

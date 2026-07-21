@@ -3,6 +3,7 @@ import { Logger } from '../logging';
 import * as Entities from '../entities/entities';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
+import { competitionRepository } from '../competitions/competition.repository';
 
 const DBMigrate = require('db-migrate');
 
@@ -19,6 +20,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         });
         await dbmigrate.up();
       }
+      const insertedLegacyCompetitions =
+        await competitionRepository.backfillLegacyMappings({});
+      logger.info(
+        `Ensured immutable legacy competition mappings; inserted ${insertedLegacyCompetitions}`
+      );
     },
     { logger, entities: Object.values(Entities), syncEntities: true }
   );
