@@ -2,6 +2,7 @@ import {
   IdentityNotificationCause,
   IdentityNotificationEntity
 } from '@/entities/IIdentityNotification';
+import type { DataSource } from 'typeorm';
 import { IdentityPushNotificationAccess } from './identity-push-notification-access';
 
 describe('IdentityPushNotificationAccess', () => {
@@ -35,6 +36,9 @@ describe('IdentityPushNotificationAccess', () => {
     visibleWaves?: Array<{ id: string }>;
     relatedDrops?: Array<{ id: string; wave_id: string }>;
   } = {}) {
+    type DropFindOptions = {
+      where: { id: { _value: string[] } };
+    };
     const groupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroupIds)
     };
@@ -42,16 +46,20 @@ describe('IdentityPushNotificationAccess', () => {
       findWavesByIds: jest.fn().mockResolvedValue(visibleWaves)
     };
     const dropRepository = {
-      find: jest.fn().mockResolvedValue(relatedDrops)
+      find: jest
+        .fn()
+        .mockImplementation(({ where }: DropFindOptions) =>
+          relatedDrops.filter((drop) => where.id._value.includes(drop.id))
+        )
     };
     const dataSourceSupplier = jest.fn(() => ({
       getRepository: jest.fn(() => dropRepository)
     }));
     return {
       access: new IdentityPushNotificationAccess(
-        groupsService as any,
-        wavesDb as any,
-        dataSourceSupplier as any
+        groupsService,
+        wavesDb,
+        dataSourceSupplier as unknown as () => Pick<DataSource, 'getRepository'>
       ),
       groupsService,
       wavesDb,

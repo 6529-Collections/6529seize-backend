@@ -352,18 +352,6 @@ async function buildIdentityNotificationMessages(
     return [];
   }
 
-  const canRecipientReadRelatedContent =
-    await identityPushNotificationAccess.canRecipientReadRelatedContent(
-      notification,
-      waveAccessCache
-    );
-  if (!canRecipientReadRelatedContent) {
-    logger.warn(
-      `[ID ${notification.id}] Skipping push because identity ${notification.identity_id} cannot read the related content in wave ${notification.wave_id}`
-    );
-    return [];
-  }
-
   if (notification.wave_id) {
     const readerMetric = await getDataSource()
       .getRepository(WaveReaderMetricEntity)
@@ -410,6 +398,18 @@ async function buildIdentityNotificationMessages(
   let multiProfileTitlePrefix: string | null = null;
   if (sharedDeviceTokenKeys.size > 0) {
     multiProfileTitlePrefix = buildMultiProfileTitlePrefix(targetProfileHandle);
+  }
+
+  const canRecipientReadRelatedContent =
+    await identityPushNotificationAccess.canRecipientReadRelatedContent(
+      notification,
+      waveAccessCache
+    );
+  if (!canRecipientReadRelatedContent) {
+    logger.warn(
+      `[ID ${notification.id}] Skipping push because identity ${notification.identity_id} cannot read the related content in wave ${notification.wave_id}`
+    );
+    return [];
   }
 
   const notificationData = await generateNotificationData(notification);

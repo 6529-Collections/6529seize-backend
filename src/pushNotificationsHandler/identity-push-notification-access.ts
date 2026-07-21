@@ -10,9 +10,12 @@ import { IdentityNotificationEntity } from '@/entities/IIdentityNotification';
 
 export class IdentityPushNotificationAccess {
   constructor(
-    private readonly groupsService: UserGroupsService,
-    private readonly wavesDb: WavesApiDb,
-    private readonly dataSourceSupplier: () => DataSource
+    private readonly groupsService: Pick<
+      UserGroupsService,
+      'getGroupsUserIsEligibleFor'
+    >,
+    private readonly wavesDb: Pick<WavesApiDb, 'findWavesByIds'>,
+    private readonly dataSourceSupplier: () => Pick<DataSource, 'getRepository'>
   ) {}
 
   async canRecipientReadWave(
