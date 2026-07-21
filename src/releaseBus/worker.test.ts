@@ -411,8 +411,36 @@ describe('frontend base canary', () => {
     };
     mockFindTrain
       .mockResolvedValueOnce(frozenTrain)
+      .mockResolvedValueOnce(advancedTrain)
       .mockResolvedValueOnce(advancedTrain);
-    mockListTrainOperations.mockResolvedValue([]);
+    const completedCanary = {
+      id: 'operation-base-canary',
+      operation_key: 'train-1:r1:base-canary-frontend',
+      train_id: frozenTrain.id,
+      revision: frozenTrain.revision,
+      operation_type: 'base-canary-frontend',
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: frozenTrain.frontend_base_sha,
+      artifact_digest: null,
+      attempt: 1,
+      status: 'SUCCEEDED',
+      external_id: '12345',
+      request_metadata_json: {
+        workflow: 'release-bus-base-canary.yml'
+      },
+      result_metadata_json: {},
+      started_at: 1,
+      completed_at: 2,
+      created_at: 1,
+      updated_at: 2,
+      row_version: 2
+    } as const;
+    mockListTrainOperations
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([completedCanary]);
     mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
     mockFindWorkflowRun.mockResolvedValue(null);
     mockDispatchWorkflow.mockResolvedValue(undefined);
@@ -440,6 +468,17 @@ describe('frontend base canary', () => {
     expect(mockAppendEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
       expect.anything()
+    );
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      train_id: frozenTrain.id,
+      status: 'COMPOSING'
+    });
+    expect(mockUpdateTrain).toHaveBeenCalledWith(
+      frozenTrain.id,
+      expect.objectContaining({ status: 'COMPOSING' }),
+      {}
     );
   });
 

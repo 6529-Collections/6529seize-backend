@@ -384,10 +384,15 @@ export async function getReleaseTrainOverview(train: ReleaseTrainRecord) {
     releaseBusRepository.listLanes({}),
     releaseBusRepository.listControls({})
   ]);
-  const candidates = await Promise.all(
-    items.map((item) =>
-      releaseBusRepository.findCandidateById(item.candidate_id, {})
-    )
+  const candidateRows = await releaseBusRepository.findCandidatesByIds(
+    items.map((item) => item.candidate_id),
+    {}
+  );
+  const candidatesById = new Map(
+    candidateRows.map((candidate) => [candidate.id, candidate])
+  );
+  const candidates = items.map(
+    (item) => candidatesById.get(item.candidate_id) ?? null
   );
   return buildReleaseTrainOverview({
     train,
