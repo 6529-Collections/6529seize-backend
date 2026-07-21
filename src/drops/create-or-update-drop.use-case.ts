@@ -1971,15 +1971,21 @@ export class CreateOrUpdateDropUseCase {
       ),
       this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
     ]);
+    const eligibleDirectMentionedIdentityIds =
+      await this.filterIdentityIdsEligibleToReadWave(
+        wave,
+        directlyMentionedIdentityIds,
+        { timer, connection }
+      );
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
-        directlyMentionedIdentityIds,
+        eligibleDirectMentionedIdentityIds,
         connection
       )
     );
     const directMentionIdentityIds = collections.distinct(
-      directlyMentionedIdentityIds.filter(
+      eligibleDirectMentionedIdentityIds.filter(
         (identityId) =>
           identityId !== authorId &&
           !mutedDirectMentionedIdentityIds.has(identityId)
@@ -2017,6 +2023,47 @@ export class CreateOrUpdateDropUseCase {
       );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     return pendingPushNotificationIds;
+  }
+
+  private async filterIdentityIdsEligibleToReadWave(
+    wave: WaveEntity,
+    identityIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string => groupId !== null
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        return [];
+      }
+      if (parentWave.visibility_group_id) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    if (!visibilityGroupIds.length || !identityIds.length) {
+      return identityIds;
+    }
+
+    const eligibleIdentitySets = await Promise.all(
+      collections.distinct(visibilityGroupIds).map(async (groupId) => {
+        const eligibleIdentityIds =
+          await this.userGroupsService.findIdentitiesInGroups([groupId], {
+            timer,
+            connection
+          });
+        return new Set(eligibleIdentityIds);
+      })
+    );
+    return collections
+      .distinct(identityIds)
+      .filter((identityId) =>
+        eligibleIdentitySets.every((eligibleIds) => eligibleIds.has(identityId))
+      );
   }
 }
 

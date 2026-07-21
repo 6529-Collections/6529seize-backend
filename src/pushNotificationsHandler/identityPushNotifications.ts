@@ -47,6 +47,7 @@ import {
 } from '@/pushNotificationsHandler/sendPushNotifications';
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
 import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
+import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -346,6 +347,17 @@ async function buildIdentityNotificationMessages(
     return [];
   }
 
+  const canRecipientReadRelatedContent =
+    await identityPushNotificationAccess.canRecipientReadRelatedContent(
+      notification
+    );
+  if (!canRecipientReadRelatedContent) {
+    logger.warn(
+      `[ID ${notification.id}] Skipping push because identity ${notification.identity_id} cannot read wave ${notification.wave_id}`
+    );
+    return [];
+  }
+
   if (notification.wave_id) {
     const readerMetric = await getDataSource()
       .getRepository(WaveReaderMetricEntity)
@@ -443,12 +455,8 @@ async function buildIdentityNotificationMessages(
               const eligibleGroupIds =
                 await userGroupsService.getGroupsUserIsEligibleFor(profileId);
               const options: {
-                includeNotificationId?: number;
                 enabledCauses?: IdentityNotificationCause[];
               } = { enabledCauses };
-              if (profileId === notification.identity_id) {
-                options.includeNotificationId = notification.id;
-              }
               return identityNotificationsDb.countUnreadNotificationsForIdentity(
                 profileId,
                 eligibleGroupIds,
