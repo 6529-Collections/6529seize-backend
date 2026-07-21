@@ -657,14 +657,14 @@ describe('frontend base canary', () => {
           source_run_id: '123'
         })
       }),
-      {}
+      { connection: { transaction: 'test' } }
     );
     expect(mockAppendEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'BASE_CANARY_EVIDENCE_REUSED',
         payload: expect.objectContaining({ status: 'reused' })
       }),
-      {}
+      { connection: { transaction: 'test' } }
     );
   });
 
@@ -702,6 +702,53 @@ describe('frontend base canary', () => {
         eventType: 'BASE_CANARY_EVIDENCE_FORCE_FRESH'
       }),
       {}
+    );
+  });
+  it('records a would-reuse decision but dispatches fresh in shadow mode', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW = 'true';
+    mockListTrainOperations.mockResolvedValue([]);
+    mockListBaseCanaryEvidenceBySha.mockResolvedValue([
+      {
+        id: 'shadow-source-evidence',
+        train_id: 'shadow-source-train',
+        revision: 2,
+        status: 'SUCCEEDED',
+        source_sha: gateContract.base_sha,
+        artifact_digest: artifactDigest,
+        evidence_uri:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+        metadata_json: {
+          contract: gateContract,
+          summary: reusableSummary,
+          source_run_id: '123',
+          created_at: Date.now() - 1_000,
+          expires_at: Date.now() + 60_000
+        },
+        created_at: Date.now() - 1_000
+      }
+    ]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockAddEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evidenceType: 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ gate_contract: JSON.stringify(gateContract) })
     );
   });
 });

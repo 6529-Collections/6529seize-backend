@@ -713,46 +713,53 @@ async function recordFreshBaseCanaryEvidence(
   const artifactDigest = normalizeArtifactDigest(
     summary?.summary_artifact_digest
   );
-  const inserted = await releaseBusRepository.addEvidence(
-    {
-      idempotencyKey: `base-canary-completed:${operation.operation_key}`,
-      trainId: train.id,
-      revision: train.revision,
-      evidenceType: 'BASE_CANARY_COMPLETED',
-      status: operation.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
-      sourceSha: contract.base_sha,
-      artifactDigest,
-      evidenceUri:
-        typeof result.url === 'string' ? result.url.slice(0, 1000) : null,
-      metadata: {
-        schema_version: 1,
-        contract,
-        summary,
-        source_operation_key: operation.operation_key,
-        source_run_id: operation.external_id,
-        source_train_id: train.id,
-        created_at: createdAt,
-        expires_at: createdAt + maxAgeHours * 60 * 60 * 1000
-      }
-    },
-    {}
+  const inserted = await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const evidenceInserted = await releaseBusRepository.addEvidence(
+        {
+          idempotencyKey: `base-canary-completed:${operation.operation_key}`,
+          trainId: train.id,
+          revision: train.revision,
+          evidenceType: 'BASE_CANARY_COMPLETED',
+          status: operation.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+          sourceSha: contract.base_sha,
+          artifactDigest,
+          evidenceUri:
+            typeof result.url === 'string' ? result.url.slice(0, 1000) : null,
+          metadata: {
+            schema_version: 1,
+            contract,
+            summary,
+            source_operation_key: operation.operation_key,
+            source_run_id: operation.external_id,
+            source_train_id: train.id,
+            created_at: createdAt,
+            expires_at: createdAt + maxAgeHours * 60 * 60 * 1000
+          }
+        },
+        context
+      );
+      if (!evidenceInserted) return false;
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'BASE_CANARY_EVIDENCE_RECORDED',
+          payload: {
+            operation_key: operation.operation_key,
+            run_id: operation.external_id,
+            base_sha: contract.base_sha,
+            gate_fingerprint: contract.gate_fingerprint,
+            fresh_or_reused: 'fresh',
+            status: operation.status
+          }
+        },
+        context
+      );
+      return true;
+    }
   );
   if (!inserted) return;
-  await releaseBusRepository.appendEvent(
-    {
-      trainId: train.id,
-      eventType: 'BASE_CANARY_EVIDENCE_RECORDED',
-      payload: {
-        operation_key: operation.operation_key,
-        run_id: operation.external_id,
-        base_sha: contract.base_sha,
-        gate_fingerprint: contract.gate_fingerprint,
-        fresh_or_reused: 'fresh',
-        status: operation.status
-      }
-    },
-    {}
-  );
   const phaseDurations = metadata(summary?.phase_durations_ms);
   const totalDuration = Number(phaseDurations.total);
   const metricData: Array<
@@ -836,47 +843,52 @@ async function reuseBaseCanaryEvidence(
   sourceMetadata: Record<string, unknown>,
   eventType: 'BASE_CANARY_EVIDENCE_REUSED' | 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
 ): Promise<void> {
-  const inserted = await releaseBusRepository.addEvidence(
-    {
-      idempotencyKey: `${eventType.toLowerCase()}:${train.id}:r${train.revision}:${contract.base_sha}`,
-      trainId: train.id,
-      revision: train.revision,
-      evidenceType: eventType,
-      status: 'SUCCEEDED',
-      sourceSha: contract.base_sha,
-      artifactDigest: evidence.artifact_digest,
-      evidenceUri: evidence.evidence_uri,
-      metadata: {
-        schema_version: 1,
-        contract,
-        fresh_or_reused: eventType.endsWith('_REUSED') ? 'reused' : 'fresh',
-        source_evidence_id: evidence.id,
-        source_train_id: evidence.train_id,
-        source_train_revision: evidence.revision,
-        source_run_id: sourceMetadata.source_run_id ?? null,
-        source_created_at: Number(evidence.created_at),
-        source_expires_at: sourceMetadata.expires_at ?? null,
-        reused_at: Date.now()
-      }
-    },
-    {}
-  );
-  if (!inserted) return;
-  await releaseBusRepository.appendEvent(
-    {
-      trainId: train.id,
-      eventType,
-      payload: {
-        status: eventType.endsWith('_REUSED') ? 'reused' : 'would-reuse',
-        base_sha: contract.base_sha,
-        gate_fingerprint: contract.gate_fingerprint,
-        source_evidence_id: evidence.id,
-        source_train_id: evidence.train_id,
-        source_run_id: sourceMetadata.source_run_id ?? null,
-        evidence_uri: evidence.evidence_uri
-      }
-    },
-    {}
+  await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const inserted = await releaseBusRepository.addEvidence(
+        {
+          idempotencyKey: `${eventType.toLowerCase()}:${train.id}:r${train.revision}:${contract.base_sha}`,
+          trainId: train.id,
+          revision: train.revision,
+          evidenceType: eventType,
+          status: 'SUCCEEDED',
+          sourceSha: contract.base_sha,
+          artifactDigest: evidence.artifact_digest,
+          evidenceUri: evidence.evidence_uri,
+          metadata: {
+            schema_version: 1,
+            contract,
+            fresh_or_reused: eventType.endsWith('_REUSED') ? 'reused' : 'fresh',
+            source_evidence_id: evidence.id,
+            source_train_id: evidence.train_id,
+            source_train_revision: evidence.revision,
+            source_run_id: sourceMetadata.source_run_id ?? null,
+            source_created_at: Number(evidence.created_at),
+            source_expires_at: sourceMetadata.expires_at ?? null,
+            reused_at: Date.now()
+          }
+        },
+        context
+      );
+      if (!inserted) return;
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType,
+          payload: {
+            status: eventType.endsWith('_REUSED') ? 'reused' : 'would-reuse',
+            base_sha: contract.base_sha,
+            gate_fingerprint: contract.gate_fingerprint,
+            source_evidence_id: evidence.id,
+            source_train_id: evidence.train_id,
+            source_run_id: sourceMetadata.source_run_id ?? null,
+            evidence_uri: evidence.evidence_uri
+          }
+        },
+        context
+      );
+    }
   );
 }
 
