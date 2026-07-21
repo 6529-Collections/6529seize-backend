@@ -80,6 +80,7 @@ import path from 'node:path';
 import {
   advanceReleaseTrain,
   finishIncompleteComposition,
+  mergeWorkflowProgress,
   operationFailureReason,
   workflowProgress
 } from '@/releaseBus/worker';
@@ -159,34 +160,69 @@ describe('workflowProgress', () => {
   it('bounds labels and rejects future GitHub progress timestamps', () => {
     const now = Date.parse('2026-07-21T10:00:00Z');
     jest.spyOn(Date, 'now').mockReturnValue(now);
-    const progress = workflowProgress({
-      id: 12345,
-      name: 'Release Bus base canary',
-      display_title: 'Base canary',
-      status: 'completed',
-      conclusion: 'failure',
-      head_sha: SHA_A,
-      html_url:
-        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
-      updated_at: '2099-01-01T00:00:00Z',
-      jobs: [
-        {
-          id: 1,
-          name: `${'x'.repeat(600)}\u0000`,
-          status: 'completed',
-          conclusion: 'failure',
-          started_at: null,
-          completed_at: '2099-01-01T00:00:00Z',
-          html_url: '',
-          steps: []
-        }
-      ]
-    });
+    try {
+      const progress = workflowProgress({
+        id: 12345,
+        name: 'Release Bus base canary',
+        display_title: 'Base canary',
+        status: 'completed',
+        conclusion: 'failure',
+        head_sha: SHA_A,
+        html_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+        updated_at: '2099-01-01T00:00:00Z',
+        jobs: [
+          {
+            id: 1,
+            name: `${'x'.repeat(600)}\u0000`,
+            status: 'completed',
+            conclusion: 'failure',
+            started_at: null,
+            completed_at: '2099-01-01T00:00:00Z',
+            html_url: '',
+            steps: []
+          }
+        ]
+      });
 
-    expect(progress.failed_job).toHaveLength(500);
-    expect(progress.failed_job).not.toContain('\u0000');
-    expect(progress.last_progress_at).toBeNull();
-    jest.restoreAllMocks();
+      expect(progress.failed_job).toHaveLength(500);
+      expect(progress.failed_job).not.toContain('\u0000');
+      expect(progress.last_progress_at).toBeNull();
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('preserves a fresher workflow-reported progress heartbeat', () => {
+    const now = Date.parse('2026-07-21T10:10:00Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const progress = mergeWorkflowProgress(
+        {
+          gate_report: { phase: 'unit_tests', status: 'RUNNING' },
+          last_progress_at: now - 30_000
+        },
+        {
+          id: 12345,
+          name: 'Release Bus base canary',
+          display_title: 'Base canary',
+          status: 'in_progress',
+          conclusion: null,
+          head_sha: SHA_A,
+          html_url:
+            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+          updated_at: '2026-07-21T10:05:00Z'
+        }
+      );
+
+      expect(progress.last_progress_at).toBe(now - 30_000);
+      expect(progress.gate_report).toEqual({
+        phase: 'unit_tests',
+        status: 'RUNNING'
+      });
+    } finally {
+      jest.restoreAllMocks();
+    }
   });
 });
 
