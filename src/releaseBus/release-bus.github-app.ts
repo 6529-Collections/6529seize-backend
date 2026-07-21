@@ -11,7 +11,24 @@ type GitHubMatchingRef = {
   readonly ref: string;
   readonly object?: { readonly sha?: string };
 };
-type GitHubRun = {
+export type GitHubWorkflowStep = {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+};
+export type GitHubWorkflowJob = {
+  readonly id: number;
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly html_url: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly steps?: GitHubWorkflowStep[];
+};
+export type GitHubRun = {
   readonly id: number;
   readonly name: string;
   readonly display_title: string;
@@ -19,8 +36,11 @@ type GitHubRun = {
   readonly conclusion: string | null;
   readonly head_sha: string;
   readonly html_url: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
   readonly event?: string;
   readonly actor?: { readonly login?: string };
+  readonly jobs?: GitHubWorkflowJob[];
 };
 
 export type ReleaseBusWorkflowRunIdentity = {
@@ -319,7 +339,7 @@ export class ReleaseBusGitHubApp {
         throw new Error(
           `GitHub workflow run ${externalId} does not match operation ${operationKey}`
         );
-      return run;
+      return this.withWorkflowJobs(repository, run);
     }
     const response = await this.request(
       repository,
@@ -329,7 +349,25 @@ export class ReleaseBusGitHubApp {
     const runs =
       ((await response.json()) as { workflow_runs?: GitHubRun[] })
         .workflow_runs ?? [];
-    return runs.find((run) => run.display_title.includes(operationKey)) ?? null;
+    const run =
+      runs.find((candidate) =>
+        candidate.display_title.includes(operationKey)
+      ) ?? null;
+    return run ? this.withWorkflowJobs(repository, run) : null;
+  }
+
+  private async withWorkflowJobs(
+    repository: ReleaseRepository,
+    run: GitHubRun
+  ): Promise<GitHubRun> {
+    const response = await this.request(
+      repository,
+      `/actions/runs/${run.id}/jobs?filter=latest&per_page=100`
+    );
+    await this.assertOk(response, `read ${repository} workflow jobs`);
+    const jobs =
+      ((await response.json()) as { jobs?: GitHubWorkflowJob[] }).jobs ?? [];
+    return { ...run, jobs };
   }
 
   public async getWorkflowRunIdentity(

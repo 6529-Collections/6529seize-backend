@@ -24,6 +24,7 @@ import {
   ReleaseBusBreakGlassAuthorizationBodySchema,
   ReleaseBusControlBodySchema,
   ReleaseBusAuthorizationBodySchema,
+  ReleaseBusProgressReportBodySchema,
   ReleaseCandidateListQuerySchema,
   ReleaseCandidateReadyBodySchema
 } from '@/api/deploy/deploy.validation';
@@ -36,6 +37,7 @@ import {
   RELEASE_BUS_OPERATOR_TEAM
 } from '@/releaseBus/release-bus.config';
 import { releaseBusService } from '@/releaseBus/release-bus.service';
+import { getReleaseTrainOverview } from '@/releaseBus/release-bus-status.service';
 import type {
   MarkReleaseReadyInput,
   ReleaseCandidateRecord,
@@ -430,8 +432,19 @@ deployRoutes.get('/release-candidates', async (req, res) => {
 deployRoutes.get('/release-trains', async (req, res) => {
   await requireAuthenticatedViewer(req);
   const trains = await releaseBusRepository.listTrains(50, {});
+  const activeTrain = trains.find(
+    (train) =>
+      !['COMPLETED', 'FAILED', 'ROLLED_BACK', 'CANCELLED'].includes(
+        train.status
+      )
+  );
   setNoStoreHeaders(res);
-  return res.json({ trains });
+  return res.json({
+    trains,
+    active_train: activeTrain
+      ? await getReleaseTrainOverview(activeTrain)
+      : null
+  });
 });
 
 deployRoutes.get('/release-trains/:id', async (req, res) => {
@@ -441,7 +454,11 @@ deployRoutes.get('/release-trains/:id', async (req, res) => {
     throw new CustomApiCompliantException(404, 'Release train not found');
   const items = await releaseBusRepository.listTrainItems(train.id, {});
   setNoStoreHeaders(res);
-  return res.json({ train, items });
+  return res.json({
+    train,
+    items,
+    overview: await getReleaseTrainOverview(train)
+  });
 });
 
 deployRoutes.get('/release-bus/controls', async (req, res) => {
@@ -568,6 +585,140 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
     train_id: body.train_id,
     operation_key: body.operation_key
   });
+});
+
+deployRoutes.post('/release-bus/report-progress', async (req, res) => {
+  requireWorkflowCredential(req);
+  const body = getValidatedByJoiOrThrow<{
+    train_id: string;
+    operation_key: string;
+    workflow_run_id: string;
+    phase: 'lint' | 'typecheck' | 'unit_tests' | 'build' | 'complete';
+    status: 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+    stages: Array<{
+      name: 'lint' | 'typecheck' | 'unit_tests' | 'build';
+      status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'SKIPPED';
+    }>;
+    jest: {
+      num_failed_test_suites: number;
+      num_failed_tests: number;
+      failing_suites: string[];
+      failing_tests: Array<{ suite: string; test: string }>;
+    } | null;
+    summary: {
+      base_sha: string;
+      environment: 'orchestration' | 'staging' | 'prod';
+      gate_fingerprint: string;
+      workflow_sha: string;
+      workflow_digest: string;
+      node_version: string;
+      package_manager: string;
+      shard_count: number;
+      summary_artifact_name: string;
+      summary_artifact_digest: string;
+      phase_durations_ms: Record<string, number>;
+      totals: Record<string, number>;
+      fresh_or_reused: 'fresh' | 'reused';
+      shards: Array<Record<string, string | number>>;
+      missing_files: string[];
+      duplicate_files: string[];
+    } | null;
+  }>(req.body, ReleaseBusProgressReportBodySchema);
+  const operation = await releaseBusRepository.findOperation(
+    body.operation_key,
+    {}
+  );
+  if (
+    !operation ||
+    operation.train_id !== body.train_id ||
+    operation.external_id !== body.workflow_run_id
+  ) {
+    throw new CustomApiCompliantException(
+      403,
+      'Release progress report does not match the authorized operation'
+    );
+  }
+  const existingResult = (() => {
+    if (typeof operation.result_metadata_json !== 'string')
+      return operation.result_metadata_json &&
+        typeof operation.result_metadata_json === 'object'
+        ? (operation.result_metadata_json as Record<string, unknown>)
+        : {};
+    try {
+      return JSON.parse(operation.result_metadata_json) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      return {};
+    }
+  })();
+  const reportContent = {
+    phase: body.phase,
+    status: body.status,
+    stages: body.stages,
+    jest: body.jest,
+    summary: body.summary
+  };
+  const existingGateReport =
+    existingResult.gate_report && typeof existingResult.gate_report === 'object'
+      ? (existingResult.gate_report as Record<string, unknown>)
+      : null;
+  if (body.phase === 'complete' && existingGateReport?.phase === 'complete') {
+    const persistedContent = {
+      phase: existingGateReport.phase,
+      status: existingGateReport.status,
+      stages: existingGateReport.stages,
+      jest: existingGateReport.jest,
+      summary: existingGateReport.summary ?? null
+    };
+    if (JSON.stringify(persistedContent) !== JSON.stringify(reportContent)) {
+      throw new CustomApiCompliantException(
+        409,
+        'A different terminal progress report is already recorded for this operation'
+      );
+    }
+    setNoStoreHeaders(res);
+    return res.json({
+      accepted: true,
+      idempotent: true,
+      reported_at: existingGateReport.reported_at
+    });
+  }
+  const reportedAt = Date.now();
+  const gateReport = {
+    ...reportContent,
+    reported_at: reportedAt
+  };
+  await releaseBusRepository.updateOperation(
+    body.operation_key,
+    {
+      status: operation.status,
+      resultMetadata: {
+        ...existingResult,
+        gate_report: gateReport,
+        last_progress_at: reportedAt
+      }
+    },
+    {}
+  );
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: body.train_id,
+      eventType: 'OPERATION_GATE_REPORT',
+      payload: {
+        operation_key: body.operation_key,
+        phase: body.phase,
+        status: body.status,
+        failed_test_suites: body.jest?.num_failed_test_suites ?? 0,
+        failed_tests: body.jest?.num_failed_tests ?? 0,
+        summary: body.summary
+      }
+    },
+    {}
+  );
+  setNoStoreHeaders(res);
+  return res.json({ accepted: true, reported_at: reportedAt });
 });
 
 deployRoutes.post('/release-bus/authorize-break-glass', async (req, res) => {

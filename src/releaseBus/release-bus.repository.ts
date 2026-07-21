@@ -87,6 +87,16 @@ export type ReleaseOperationRecord = {
   readonly row_version: number;
 };
 
+export type ReleaseTrainEventRecord = {
+  readonly id: string;
+  readonly train_id: string | null;
+  readonly candidate_id: string | null;
+  readonly event_type: string;
+  readonly github_actor: string | null;
+  readonly payload_json: unknown;
+  readonly created_at: number;
+};
+
 function dbOptions(ctx: RequestContext) {
   return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
 }
@@ -485,6 +495,21 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async listTrainEvents(
+    trainId: string,
+    limit: number,
+    ctx: RequestContext
+  ): Promise<ReleaseTrainEventRecord[]> {
+    const boundedLimit = Math.min(Math.max(limit, 1), 500);
+    return this.db.execute<ReleaseTrainEventRecord>(
+      `select * from ${RELEASE_TRAIN_EVENTS_TABLE}
+       where train_id = :trainId
+       order by created_at desc, id desc limit ${boundedLimit}`,
+      { trainId },
+      dbOptions(ctx)
+    );
+  }
+
   public async updateTrain(
     id: string,
     fields: {
@@ -549,8 +574,12 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
            row_version = row_version + 1
        where id = :id and row_version = :expectedVersion
          and status not in ('MERGING_PRODUCTION', 'DEPLOYING_PRODUCTION',
-                            'VALIDATING_PRODUCTION', 'COMPLETED', 'FAILED',
-                            'ROLLED_BACK', 'CANCELLED')`,
+                            'DEPLOYING_BACKEND_PRODUCTION',
+                            'MERGING_FRONTEND_PRODUCTION',
+                            'DEPLOYING_FRONTEND_PRODUCTION',
+                            'PRODUCTION_E2E_RUNNING',
+                            'VALIDATING_PRODUCTION', 'SYNCING_STAGING',
+                            'COMPLETED', 'FAILED', 'ROLLED_BACK', 'CANCELLED')`,
       { id, expectedVersion, reason, now: Date.now() },
       dbOptions(ctx)
     );
@@ -597,7 +626,8 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       `update ${RELEASE_TRAIN_OPERATIONS_TABLE}
        set status = :status, external_id = coalesce(:externalId, external_id),
            result_metadata_json = coalesce(:resultMetadata, result_metadata_json),
-           started_at = coalesce(started_at, :now), completed_at = :completedAt,
+           started_at = coalesce(started_at, :now),
+           completed_at = case when :setCompletedAt then :completedAt else completed_at end,
            updated_at = :now, row_version = row_version + 1
        where operation_key = :operationKey`,
       {
@@ -607,6 +637,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
         resultMetadata: fields.resultMetadata
           ? JSON.stringify(fields.resultMetadata)
           : null,
+        setCompletedAt: fields.completedAt !== undefined,
         completedAt: fields.completedAt ?? null,
         now: Date.now()
       },
@@ -784,6 +815,14 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<ReleaseLaneRecord>(
       `select * from ${RELEASE_DEPLOYMENT_LANES_TABLE} where name = :name`,
       { name },
+      dbOptions(ctx)
+    );
+  }
+
+  public async listLanes(ctx: RequestContext): Promise<ReleaseLaneRecord[]> {
+    return this.db.execute<ReleaseLaneRecord>(
+      `select * from ${RELEASE_DEPLOYMENT_LANES_TABLE} order by name`,
+      undefined,
       dbOptions(ctx)
     );
   }
