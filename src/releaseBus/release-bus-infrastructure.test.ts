@@ -115,9 +115,7 @@ describe('release bus infrastructure contract', () => {
     expect(deployWorkflow).toContain(
       "RELEASE_BUS_BASE_EVIDENCE_REUSE: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}"
     );
-    expect(deployWorkflow).toContain(
-      'RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS'
-    );
+    expect(deployWorkflow).toContain('RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS');
   });
 
   it('stores production credentials outside Lambda configuration', () => {
