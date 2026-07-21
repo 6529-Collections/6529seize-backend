@@ -141,4 +141,22 @@ describe('release operation idempotency', () => {
       nextStatus: 'PRODUCTION_E2E_RUNNING'
     });
   });
+
+  it('loads a train candidate set in one bounded query', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repository = new ReleaseBusRepository(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.findCandidatesByIds(['candidate-1', 'candidate-2'], {})
+    ).resolves.toEqual([]);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(sql.trim().split(/\s+/).join(' ')).toContain('where id in (:ids)');
+    expect(params).toEqual({ ids: ['candidate-1', 'candidate-2'] });
+  });
 });

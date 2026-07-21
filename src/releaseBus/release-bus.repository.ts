@@ -155,6 +155,18 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async findCandidatesByIds(
+    ids: readonly string[],
+    ctx: RequestContext
+  ): Promise<ReleaseCandidateRecord[]> {
+    if (ids.length === 0) return [];
+    return this.db.execute<ReleaseCandidateRecord>(
+      `select * from ${RELEASE_READY_DEPLOYMENTS_TABLE} where id in (:ids)`,
+      { ids: [...ids] },
+      dbOptions(ctx)
+    );
+  }
+
   public async createCandidate(
     candidate: CreateCandidate,
     ctx: RequestContext
