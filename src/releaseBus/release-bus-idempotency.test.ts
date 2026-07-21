@@ -107,4 +107,38 @@ describe('release operation idempotency', () => {
       expectedVersion: 7
     });
   });
+
+  it('advances a train phase only from the expected status', async () => {
+    const execute = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const repository = new ReleaseBusRepository(
+      () =>
+        ({
+          execute,
+          getAffectedRows: (result: { affectedRows?: number }) =>
+            result.affectedRows ?? 0
+        }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.advanceTrainPhase(
+        'train-1',
+        'DEPLOYING_FRONTEND_PRODUCTION',
+        'PRODUCTION_E2E_RUNNING',
+        {}
+      )
+    ).resolves.toBe(true);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(sql.trim().split(/\s+/).join(' ')).toContain(
+      'where id = :id and status = :expectedStatus'
+    );
+    expect(params).toMatchObject({
+      id: 'train-1',
+      expectedStatus: 'DEPLOYING_FRONTEND_PRODUCTION',
+      nextStatus: 'PRODUCTION_E2E_RUNNING'
+    });
+  });
 });

@@ -5,6 +5,7 @@ const mockEnsureCommitStatus = jest.fn();
 const mockCommentOnPullRequest = jest.fn();
 const mockRefContainsCommit = jest.fn();
 const mockUpdateTrain = jest.fn();
+const mockAdvanceTrainPhase = jest.fn();
 const mockGetLane = jest.fn();
 const mockReleaseLane = jest.fn();
 const mockAppendEvent = jest.fn();
@@ -32,6 +33,7 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
       mockUpdateCandidateLifecycle(...args),
     addEvidence: (...args: unknown[]) => mockAddEvidence(...args),
     updateTrain: (...args: unknown[]) => mockUpdateTrain(...args),
+    advanceTrainPhase: (...args: unknown[]) => mockAdvanceTrainPhase(...args),
     getLane: (...args: unknown[]) => mockGetLane(...args),
     releaseLane: (...args: unknown[]) => mockReleaseLane(...args),
     appendEvent: (...args: unknown[]) => mockAppendEvent(...args),
@@ -349,6 +351,7 @@ describe('frontend base canary', () => {
     mockReleaseLane.mockResolvedValue(undefined);
     mockSetControl.mockResolvedValue(undefined);
     mockUpdateTrain.mockResolvedValue(undefined);
+    mockAdvanceTrainPhase.mockResolvedValue(true);
     mockUpdateOperationIfVersion.mockResolvedValue(true);
     mockUpdateCandidateLifecycle.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
@@ -388,14 +391,40 @@ describe('frontend base canary', () => {
         expected_sha: frozenTrain.frontend_base_sha
       })
     );
-    expect(mockUpdateTrain).toHaveBeenCalledWith(
+    expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
       frozenTrain.id,
-      { status: 'BASE_CANARY_RUNNING' },
+      'FROZEN',
+      'BASE_CANARY_RUNNING',
       { connection: { transaction: 'test' } }
     );
     expect(mockAppendEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
       { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('does not advance or append an event after the train phase diverges', async () => {
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+    mockAdvanceTrainPhase.mockResolvedValue(false);
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).rejects.toThrow(
+      'Release train train-1 changed concurrently from FROZEN'
+    );
+
+    expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
+      frozenTrain.id,
+      'FROZEN',
+      'BASE_CANARY_RUNNING',
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
+      expect.anything()
     );
   });
 

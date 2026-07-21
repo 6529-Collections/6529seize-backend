@@ -495,7 +495,16 @@ async function updateTrainPhase(
   await releaseBusRepository.executeNativeQueriesInTransaction(
     async (connection) => {
       const context = { connection };
-      await releaseBusRepository.updateTrain(train.id, { status }, context);
+      const advanced = await releaseBusRepository.advanceTrainPhase(
+        train.id,
+        train.status,
+        status,
+        context
+      );
+      if (!advanced)
+        throw new Error(
+          `Release train ${train.id} changed concurrently from ${train.status}`
+        );
       await releaseBusRepository.appendEvent(
         {
           trainId: train.id,

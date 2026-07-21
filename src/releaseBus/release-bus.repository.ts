@@ -24,7 +24,8 @@ import type {
   ReleaseDependencyRequiredState,
   ReleaseLane,
   ReleaseOperationStatus,
-  ReleaseTrainRecord
+  ReleaseTrainRecord,
+  ReleaseTrainStatus
 } from '@/releaseBus/release-bus.types';
 
 type CreateCandidate = Omit<
@@ -565,6 +566,28 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
     if (this.db.getAffectedRows(result) !== 1)
       throw new Error(`Release train ${id} changed concurrently`);
+  }
+
+  public async advanceTrainPhase(
+    id: string,
+    expectedStatus: ReleaseTrainStatus,
+    nextStatus: ReleaseTrainStatus,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const result = await this.db.execute(
+      `update ${RELEASE_TRAINS_TABLE}
+       set status = :nextStatus, updated_at = :now,
+           row_version = row_version + 1
+       where id = :id and status = :expectedStatus`,
+      {
+        id,
+        expectedStatus,
+        nextStatus,
+        now: Date.now()
+      },
+      dbOptions(ctx)
+    );
+    return this.db.getAffectedRows(result) === 1;
   }
 
   public async cancelTrain(
