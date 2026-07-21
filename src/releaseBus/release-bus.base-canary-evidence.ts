@@ -280,6 +280,11 @@ export function evaluateBaseCanaryEvidence(input: {
   if (!Number.isSafeInteger(input.maxAgeMs) || input.maxAgeMs <= 0)
     return { decision: 'INVALIDATED', reason: 'invalid_max_age' };
   let mismatchReason = 'no_exact_sha_evidence';
+  const relevant: Array<{
+    row: BaseCanaryEvidenceRecord;
+    metadata: Record<string, unknown>;
+    createdAt: number;
+  }> = [];
   for (const row of input.rows) {
     const metadata = parseObject(row.metadata_json);
     if (!metadata)
@@ -292,39 +297,50 @@ export function evaluateBaseCanaryEvidence(input: {
       mismatchReason = mismatch;
       continue;
     }
-    if (row.status !== 'SUCCEEDED')
-      return { decision: 'INVALIDATED', reason: 'newer_failure' };
     const createdAt = Number(metadata.created_at ?? row.created_at);
-    const storedExpiry = Number(metadata.expires_at);
-    if (
-      !Number.isSafeInteger(createdAt) ||
-      createdAt <= 0 ||
-      createdAt > input.now + 5 * 60 * 1000
-    )
-      return { decision: 'INVALIDATED', reason: 'invalid_creation_time' };
-    if (!Number.isSafeInteger(storedExpiry) || storedExpiry <= createdAt)
-      return { decision: 'INVALIDATED', reason: 'invalid_expiry_time' };
-    if (
-      typeof metadata.source_run_id !== 'string' ||
-      !trustedRunUrl(row.evidence_uri) ||
-      trustedRunId(row.evidence_uri) !== metadata.source_run_id
-    )
-      return { decision: 'INVALIDATED', reason: 'run_provenance_mismatch' };
-    const effectiveExpiry = Math.min(createdAt + input.maxAgeMs, storedExpiry);
-    if (input.now > effectiveExpiry)
-      return { decision: 'INVALIDATED', reason: 'expired' };
-    const summary = parseObject(metadata.summary);
-    if (!summary)
-      return { decision: 'INVALIDATED', reason: 'malformed_summary' };
-    const invalidSummary = validateSummary(summary, input.contract, row);
-    if (invalidSummary)
-      return { decision: 'INVALIDATED', reason: invalidSummary };
-    return {
-      decision: 'HIT',
-      reason: 'reusable_success',
-      evidence: row,
-      metadata
-    };
+    relevant.push({ row, metadata, createdAt });
   }
-  return { decision: 'MISS', reason: mismatchReason };
+  if (relevant.length === 0)
+    return { decision: 'MISS', reason: mismatchReason };
+  relevant.sort((left, right) => {
+    const leftValid =
+      Number.isSafeInteger(left.createdAt) && left.createdAt > 0;
+    const rightValid =
+      Number.isSafeInteger(right.createdAt) && right.createdAt > 0;
+    if (!leftValid && rightValid) return -1;
+    if (leftValid && !rightValid) return 1;
+    return right.createdAt - left.createdAt;
+  });
+  const { row, metadata, createdAt } = relevant[0];
+  if (row.status !== 'SUCCEEDED')
+    return { decision: 'INVALIDATED', reason: 'newer_failure' };
+  const storedExpiry = Number(metadata.expires_at);
+  if (
+    !Number.isSafeInteger(createdAt) ||
+    createdAt <= 0 ||
+    createdAt > input.now + 5 * 60 * 1000
+  )
+    return { decision: 'INVALIDATED', reason: 'invalid_creation_time' };
+  if (!Number.isSafeInteger(storedExpiry) || storedExpiry <= createdAt)
+    return { decision: 'INVALIDATED', reason: 'invalid_expiry_time' };
+  if (
+    typeof metadata.source_run_id !== 'string' ||
+    !trustedRunUrl(row.evidence_uri) ||
+    trustedRunId(row.evidence_uri) !== metadata.source_run_id
+  )
+    return { decision: 'INVALIDATED', reason: 'run_provenance_mismatch' };
+  const effectiveExpiry = Math.min(createdAt + input.maxAgeMs, storedExpiry);
+  if (input.now > effectiveExpiry)
+    return { decision: 'INVALIDATED', reason: 'expired' };
+  const summary = parseObject(metadata.summary);
+  if (!summary) return { decision: 'INVALIDATED', reason: 'malformed_summary' };
+  const invalidSummary = validateSummary(summary, input.contract, row);
+  if (invalidSummary)
+    return { decision: 'INVALIDATED', reason: invalidSummary };
+  return {
+    decision: 'HIT',
+    reason: 'reusable_success',
+    evidence: row,
+    metadata
+  };
 }

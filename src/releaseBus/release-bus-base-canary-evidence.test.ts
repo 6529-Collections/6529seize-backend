@@ -175,12 +175,24 @@ describe('frontend base-canary evidence contract', () => {
 
   it('lets the newest relevant failure override an older success', () => {
     const value = contract();
+    const oldSuccess = row(value, { id: 'old-success', created_at: 2_000 });
+    const newerFailure = row(value, {
+      id: 'new-failure',
+      status: 'FAILED',
+      created_at: 1_500,
+      metadata_json: {
+        contract: value,
+        summary: summary(value),
+        source_run_id: '123',
+        created_at: 1_500,
+        expires_at: 87_401_500
+      }
+    });
     expect(
       evaluateBaseCanaryEvidence({
-        rows: [
-          row(value, { id: 'new-failure', status: 'FAILED' }),
-          row(value, { id: 'old-success' })
-        ],
+        // The older success was inserted later, so repository insertion order
+        // is intentionally the reverse of workflow terminal order.
+        rows: [oldSuccess, newerFailure],
         contract: value,
         now: 2_000,
         maxAgeMs: 24 * 60 * 60 * 1000

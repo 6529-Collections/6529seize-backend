@@ -622,6 +622,65 @@ describe('frontend base canary', () => {
     );
   });
 
+  it('records fresh terminal evidence and provenance in one transaction', async () => {
+    mockListTrainOperations.mockResolvedValue([
+      {
+        id: 'operation-base-canary',
+        operation_key: 'train-1:r1:base-canary-frontend',
+        train_id: frozenTrain.id,
+        revision: frozenTrain.revision,
+        operation_type: 'base-canary-frontend',
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: frozenTrain.frontend_base_sha,
+        artifact_digest: null,
+        attempt: 1,
+        status: 'SUCCEEDED',
+        external_id: '123',
+        request_metadata_json: { gate_contract: gateContract },
+        result_metadata_json: {
+          url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+          gate_report: { summary: reusableSummary, reported_at: 1_500 }
+        },
+        started_at: 1_000,
+        completed_at: 2_000,
+        created_at: 1_000,
+        updated_at: 2_000,
+        row_version: 2
+      }
+    ]);
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT'
+    });
+
+    expect(mockAddEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evidenceType: 'BASE_CANARY_COMPLETED',
+        status: 'SUCCEEDED',
+        sourceSha: frozenTrain.frontend_base_sha,
+        artifactDigest,
+        evidenceUri:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+        metadata: expect.objectContaining({
+          contract: gateContract,
+          summary: reusableSummary,
+          source_run_id: '123',
+          created_at: 1_500
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_RECORDED',
+        payload: expect.objectContaining({ fresh_or_reused: 'fresh' })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
   it('advances from reusable exact-SHA evidence in one worker cycle', async () => {
     process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
     mockListTrainOperations.mockResolvedValue([]);
