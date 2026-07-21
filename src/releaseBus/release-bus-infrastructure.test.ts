@@ -16,6 +16,7 @@ const releaseBusServerless = readFileSync(
   'utf8'
 );
 const releaseBusEntryPoint = readFileSync('src/releaseBus/index.ts', 'utf8');
+const releaseBusWorker = readFileSync('src/releaseBus/worker.ts', 'utf8');
 const dbContext = readFileSync('src/secrets.ts', 'utf8');
 const environmentLoader = readFileSync('src/env.ts', 'utf8');
 const releaseBusGitHubApp = readFileSync(
@@ -40,6 +41,19 @@ describe('release bus infrastructure contract', () => {
     expect(
       e2eSourceRef('release-bus/train', 'staging', 'release-bus/train')
     ).toBe('release-bus/train');
+  });
+
+  it('requires an exact frontend base canary before composition', () => {
+    expect(releaseBusWorker).toContain(
+      "workflow: 'release-bus-base-canary.yml'"
+    );
+    const canaryCall =
+      'const baseCanary = await advanceFrontendBaseCanary(train, candidates);';
+    const compositionCall = 'await beginComposition(train, candidates);';
+    expect(releaseBusWorker).toContain(canaryCall);
+    expect(releaseBusWorker.indexOf(canaryCall)).toBeLessThan(
+      releaseBusWorker.indexOf(compositionCall)
+    );
   });
 
   it('installs API dependencies before root typechecking', () => {

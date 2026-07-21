@@ -355,6 +355,68 @@ describe('release-bus authorization routes', () => {
     expect(mockBindOperationAuthorization).not.toHaveBeenCalled();
   });
 
+  it('authorizes an artifact-free staging validation operation', async () => {
+    const operationKey = `rb:${TRAIN_ID}:r1:e2e-staging:${'a'.repeat(32)}:a1`;
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      repository: 'frontend',
+      environment: 'staging',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null,
+      status: 'DISPATCHED',
+      request_metadata_json: { inputs: {} }
+    });
+
+    const response = await post('/deploy/release-bus/authorize', {
+      train_id: TRAIN_ID,
+      operation_key: operationKey,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'staging',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockBindOperationAuthorization).toHaveBeenCalledWith(
+      operationKey,
+      '12345',
+      null,
+      {}
+    );
+  });
+
+  it('rejects an artifact-free production deploy before operation lookup', async () => {
+    const response = await post('/deploy/release-bus/authorize', {
+      ...authorizeBody(),
+      operation_key: `rb:${TRAIN_ID}:r1:deploy-backend-prod-api:${'a'.repeat(32)}:a1`,
+      artifact_run_id: null,
+      artifact_digest: null
+    });
+
+    expect(response.status).toBe(400);
+    expect(mockFindOperation).not.toHaveBeenCalled();
+    expect(mockBindOperationAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('authorizes the exact artifact run and digest for a production deploy', async () => {
+    const response = await post(
+      '/deploy/release-bus/authorize',
+      authorizeBody()
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockBindOperationAuthorization).toHaveBeenCalledWith(
+      authorizeBody().operation_key,
+      '12345',
+      DIGEST,
+      {}
+    );
+  });
+
   it('rejects a workflow or digest that loses the atomic claim', async () => {
     mockBindOperationAuthorization.mockResolvedValue(false);
 

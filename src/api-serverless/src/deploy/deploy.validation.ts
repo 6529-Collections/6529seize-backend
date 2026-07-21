@@ -151,6 +151,32 @@ export const ReleaseBusControlBodySchema = Joi.object({
   reason: Joi.string().trim().min(3).max(1000).required()
 }).required();
 
+// Non-orchestration deploy operations remain artifact-required. These are the
+// only workflows that authorize staging/prod evidence or synchronization
+// without deploying a package. The route still binds every field to the exact
+// stored operation; this allowlist is an additional schema-level boundary.
+const ARTIFACT_FREE_RELEASE_OPERATIONS = [
+  {
+    operation: 'e2e-staging',
+    repository: 'frontend',
+    environment: 'staging'
+  },
+  { operation: 'e2e-prod', repository: 'frontend', environment: 'prod' },
+  {
+    operation: 'sync-staging-frontend',
+    repository: 'frontend',
+    environment: 'staging'
+  },
+  {
+    operation: 'sync-staging-backend',
+    repository: 'backend',
+    environment: 'staging'
+  }
+] as const;
+
+const RELEASE_OPERATION_KEY_PATTERN =
+  /^rb:[A-Za-z0-9._-]+:r[1-9][0-9]*:([A-Za-z0-9._-]{1,48}):[a-f0-9]{32}:a[1-9][0-9]*$/;
+
 export const ReleaseBusAuthorizationBodySchema = Joi.object({
   train_id: Joi.string()
     .guid({ version: ['uuidv4'] })
@@ -162,7 +188,9 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
   artifact_run_id: Joi.when('environment', {
     is: 'orchestration',
     then: Joi.valid(null).required(),
-    otherwise: Joi.string().pattern(/^\d+$/).required()
+    otherwise: Joi.alternatives()
+      .try(Joi.string().pattern(/^\d+$/), Joi.valid(null))
+      .required()
   }),
   repository: ReleaseRepositorySchema.required(),
   environment: Joi.string()
@@ -170,14 +198,38 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
     .required(),
   service: Joi.string().max(100).allow(null).required(),
   expected_sha: ReleaseShaSchema.required(),
-  artifact_digest: Joi.when('environment', {
-    is: 'orchestration',
+  artifact_digest: Joi.when('artifact_run_id', {
+    is: null,
     then: Joi.valid(null).required(),
     otherwise: Joi.string()
       .pattern(/^[a-f0-9]{64}$/)
       .required()
   })
-}).required();
+})
+  .custom((value, helpers) => {
+    if (
+      value.environment === 'orchestration' ||
+      value.artifact_run_id !== null
+    ) {
+      return value;
+    }
+    const operation = RELEASE_OPERATION_KEY_PATTERN.exec(
+      value.operation_key
+    )?.[1];
+    const artifactFreeOperation = ARTIFACT_FREE_RELEASE_OPERATIONS.find(
+      (candidate) => candidate.operation === operation
+    );
+    if (
+      !artifactFreeOperation ||
+      artifactFreeOperation.repository !== value.repository ||
+      artifactFreeOperation.environment !== value.environment ||
+      value.service !== null
+    ) {
+      return helpers.error('any.invalid');
+    }
+    return value;
+  })
+  .required();
 
 export const ReleaseBusBreakGlassAuthorizationBodySchema = Joi.object({
   workflow_run_id: Joi.string().pattern(/^\d+$/).required(),
