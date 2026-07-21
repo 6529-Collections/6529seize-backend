@@ -420,10 +420,15 @@ describe('frontend base canary', () => {
     mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
     mockAdvanceTrainPhase.mockResolvedValue(false);
 
-    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toEqual({
-      decision: 'CONTINUE',
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
       train_id: frozenTrain.id,
-      status: 'BASE_CANARY_RUNNING'
+      status: 'BASE_CANARY_RUNNING',
+      wait_reason: {
+        code: 'PHASE_TRANSITION',
+        summary: expect.stringContaining('next guarded worker tick')
+      },
+      current_operation: null
     });
 
     expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(

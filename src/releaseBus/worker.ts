@@ -2533,11 +2533,10 @@ export async function advanceReleaseTrain(
           status: latest.status,
           message: latest.failure_reason ?? undefined
         };
-      return {
-        decision: 'CONTINUE',
-        train_id: latest.id,
-        status: latest.status
-      };
+      return waitFor(latest, latest.status, {
+        code: 'PHASE_TRANSITION',
+        summary: `Train phase changed concurrently to ${latest.status}; waiting for the next guarded worker tick.`
+      });
     }
     if (!(error instanceof TerminalReleaseTrainError)) throw error;
     const message =
