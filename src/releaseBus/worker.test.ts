@@ -5,6 +5,7 @@ const mockEnsureCommitStatus = jest.fn();
 const mockCommentOnPullRequest = jest.fn();
 const mockRefContainsCommit = jest.fn();
 const mockUpdateTrain = jest.fn();
+const mockAdvanceTrainPhase = jest.fn();
 const mockGetLane = jest.fn();
 const mockReleaseLane = jest.fn();
 const mockAppendEvent = jest.fn();
@@ -14,10 +15,13 @@ const mockListTrainItems = jest.fn();
 const mockHeartbeatLane = jest.fn();
 const mockListControls = jest.fn();
 const mockListTrainOperations = jest.fn();
+const mockListTrainEvents = jest.fn();
 const mockGetOrCreateOperation = jest.fn();
 const mockFindOperation = jest.fn();
 const mockUpdateOperation = jest.fn();
+const mockUpdateOperationIfVersion = jest.fn();
 const mockSetControl = jest.fn();
+const mockExecuteTransaction = jest.fn();
 const mockResolveRef = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
@@ -29,6 +33,7 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
       mockUpdateCandidateLifecycle(...args),
     addEvidence: (...args: unknown[]) => mockAddEvidence(...args),
     updateTrain: (...args: unknown[]) => mockUpdateTrain(...args),
+    advanceTrainPhase: (...args: unknown[]) => mockAdvanceTrainPhase(...args),
     getLane: (...args: unknown[]) => mockGetLane(...args),
     releaseLane: (...args: unknown[]) => mockReleaseLane(...args),
     appendEvent: (...args: unknown[]) => mockAppendEvent(...args),
@@ -38,11 +43,16 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     listControls: (...args: unknown[]) => mockListControls(...args),
     listTrainOperations: (...args: unknown[]) =>
       mockListTrainOperations(...args),
+    listTrainEvents: (...args: unknown[]) => mockListTrainEvents(...args),
     getOrCreateOperation: (...args: unknown[]) =>
       mockGetOrCreateOperation(...args),
     findOperation: (...args: unknown[]) => mockFindOperation(...args),
     updateOperation: (...args: unknown[]) => mockUpdateOperation(...args),
-    setControl: (...args: unknown[]) => mockSetControl(...args)
+    updateOperationIfVersion: (...args: unknown[]) =>
+      mockUpdateOperationIfVersion(...args),
+    setControl: (...args: unknown[]) => mockSetControl(...args),
+    executeNativeQueriesInTransaction: (...args: unknown[]) =>
+      mockExecuteTransaction(...args)
   }
 }));
 
@@ -72,7 +82,10 @@ import path from 'node:path';
 import {
   advanceReleaseTrain,
   finishIncompleteComposition,
-  operationFailureReason
+  mergeWorkflowProgress,
+  operationFailureReason,
+  reconcile,
+  workflowProgress
 } from '@/releaseBus/worker';
 
 const SHA_A = 'a'.repeat(40);
@@ -98,6 +111,200 @@ describe('operationFailureReason', () => {
         result_metadata_json: { url: 'https://example.com/untrusted' }
       } as never)
     ).toBe('Frontend base failed.');
+  });
+});
+
+describe('workflowProgress', () => {
+  it('records the active and failed GitHub job and step without raw logs', () => {
+    expect(
+      workflowProgress({
+        id: 12345,
+        name: 'Release Bus base canary',
+        display_title: 'Base canary',
+        status: 'completed',
+        conclusion: 'failure',
+        head_sha: SHA_A,
+        html_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+        created_at: '2026-07-21T10:00:00Z',
+        updated_at: '2026-07-21T10:05:00Z',
+        jobs: [
+          {
+            id: 1,
+            name: 'Frontend gate',
+            status: 'completed',
+            conclusion: 'failure',
+            started_at: '2026-07-21T10:01:00Z',
+            completed_at: '2026-07-21T10:05:00Z',
+            html_url:
+              'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345/job/1',
+            steps: [
+              {
+                name: 'Run unit tests',
+                status: 'completed',
+                conclusion: 'failure',
+                started_at: '2026-07-21T10:02:00Z',
+                completed_at: '2026-07-21T10:05:00Z'
+              }
+            ]
+          }
+        ]
+      })
+    ).toEqual(
+      expect.objectContaining({
+        failed_job: 'Frontend gate',
+        failed_step: 'Run unit tests',
+        last_progress_at: Date.parse('2026-07-21T10:05:00Z')
+      })
+    );
+    expect(workflowProgress({} as never)).not.toHaveProperty('logs');
+  });
+
+  it('bounds labels and rejects future GitHub progress timestamps', () => {
+    const now = Date.parse('2026-07-21T10:00:00Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const progress = workflowProgress({
+        id: 12345,
+        name: 'Release Bus base canary',
+        display_title: 'Base canary',
+        status: 'completed',
+        conclusion: 'failure',
+        head_sha: SHA_A,
+        html_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+        updated_at: '2099-01-01T00:00:00Z',
+        jobs: [
+          {
+            id: 1,
+            name: `${'x'.repeat(600)}\u0000`,
+            status: 'completed',
+            conclusion: 'failure',
+            started_at: null,
+            completed_at: '2099-01-01T00:00:00Z',
+            html_url: '',
+            steps: []
+          }
+        ]
+      });
+
+      expect(progress.failed_job).toHaveLength(500);
+      expect(progress.failed_job).not.toContain('\u0000');
+      expect(progress.last_progress_at).toBeNull();
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('preserves a fresher workflow-reported progress heartbeat', () => {
+    const now = Date.parse('2026-07-21T10:10:00Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const progress = mergeWorkflowProgress(
+        {
+          gate_report: { phase: 'unit_tests', status: 'RUNNING' },
+          last_progress_at: now - 30_000
+        },
+        {
+          id: 12345,
+          name: 'Release Bus base canary',
+          display_title: 'Base canary',
+          status: 'in_progress',
+          conclusion: null,
+          head_sha: SHA_A,
+          html_url:
+            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+          updated_at: '2026-07-21T10:05:00Z'
+        }
+      );
+
+      expect(progress.last_progress_at).toBe(now - 30_000);
+      expect(progress.gate_report).toEqual({
+        phase: 'unit_tests',
+        status: 'RUNNING'
+      });
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+});
+
+describe('workflow reconciliation contention', () => {
+  const operation = {
+    id: 'operation-1',
+    operation_key: 'train-1:r1:base-canary-frontend',
+    train_id: 'train-1',
+    revision: 1,
+    operation_type: 'base-canary-frontend',
+    repository: 'frontend',
+    environment: 'orchestration',
+    service: null,
+    expected_sha: SHA_A,
+    artifact_digest: null,
+    attempt: 1,
+    status: 'RUNNING',
+    external_id: '12345',
+    request_metadata_json: { workflow: 'release-bus-base-canary.yml' },
+    result_metadata_json: {
+      gate_report: { phase: 'complete', status: 'SUCCEEDED' }
+    },
+    started_at: 1,
+    completed_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  } as const;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFindWorkflowRun.mockResolvedValue({
+      id: 12345,
+      name: 'Release Bus base canary',
+      display_title: operation.operation_key,
+      status: 'completed',
+      conclusion: 'success',
+      head_sha: SHA_A,
+      html_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+      updated_at: '2026-07-21T10:05:00Z'
+    });
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
+    mockAppendEvent.mockResolvedValue(undefined);
+  });
+
+  it('retries a terminal GitHub result after a row-version race', async () => {
+    const refreshed = { ...operation, row_version: 2 };
+    const completed = {
+      ...refreshed,
+      status: 'SUCCEEDED',
+      row_version: 3
+    } as const;
+    mockUpdateOperationIfVersion
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockFindOperation
+      .mockResolvedValueOnce(refreshed)
+      .mockResolvedValueOnce(completed);
+
+    await expect(reconcile(operation)).resolves.toEqual(completed);
+
+    expect(mockUpdateOperationIfVersion).toHaveBeenNthCalledWith(
+      1,
+      operation.operation_key,
+      1,
+      expect.objectContaining({ status: 'SUCCEEDED' }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockUpdateOperationIfVersion).toHaveBeenNthCalledWith(
+      2,
+      operation.operation_key,
+      2,
+      expect.objectContaining({ status: 'SUCCEEDED' }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -144,8 +351,14 @@ describe('frontend base canary', () => {
     mockReleaseLane.mockResolvedValue(undefined);
     mockSetControl.mockResolvedValue(undefined);
     mockUpdateTrain.mockResolvedValue(undefined);
+    mockAdvanceTrainPhase.mockResolvedValue(true);
+    mockUpdateOperationIfVersion.mockResolvedValue(true);
     mockUpdateCandidateLifecycle.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
+    mockListTrainEvents.mockResolvedValue([]);
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
   });
 
   afterEach(() => {
@@ -154,7 +367,12 @@ describe('frontend base canary', () => {
 
   it('dispatches the immutable base canary before composition', async () => {
     mockListTrainOperations.mockResolvedValue([]);
-    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockGetOrCreateOperation
+      .mockImplementationOnce(async (operation) => operation)
+      .mockImplementationOnce(async (operation) => ({
+        ...operation,
+        status: 'DISPATCHED'
+      }));
     mockFindWorkflowRun.mockResolvedValue(null);
     mockDispatchWorkflow.mockResolvedValue(undefined);
     mockUpdateOperation.mockResolvedValue(undefined);
@@ -162,7 +380,11 @@ describe('frontend base canary', () => {
 
     await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
       decision: 'WAIT',
-      status: 'FROZEN'
+      status: 'BASE_CANARY_RUNNING',
+      wait_reason: {
+        code: 'GITHUB_WORKFLOW_RUNNING',
+        summary: expect.stringContaining('Candidates have not been tested yet')
+      }
     });
 
     expect(mockDispatchWorkflow).toHaveBeenCalledWith(
@@ -174,7 +396,98 @@ describe('frontend base canary', () => {
         expected_sha: frozenTrain.frontend_base_sha
       })
     );
-    expect(mockUpdateTrain).not.toHaveBeenCalled();
+    expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
+      frozenTrain.id,
+      'FROZEN',
+      frozenTrain.row_version,
+      'BASE_CANARY_RUNNING',
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('does not advance or append an event after the train phase diverges', async () => {
+    const advancedTrain = {
+      ...frozenTrain,
+      status: 'BASE_CANARY_RUNNING' as const,
+      row_version: 2
+    };
+    mockFindTrain
+      .mockResolvedValueOnce(frozenTrain)
+      .mockResolvedValueOnce(advancedTrain)
+      .mockResolvedValueOnce(advancedTrain);
+    const completedCanary = {
+      id: 'operation-base-canary',
+      operation_key: 'train-1:r1:base-canary-frontend',
+      train_id: frozenTrain.id,
+      revision: frozenTrain.revision,
+      operation_type: 'base-canary-frontend',
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: frozenTrain.frontend_base_sha,
+      artifact_digest: null,
+      attempt: 1,
+      status: 'SUCCEEDED',
+      external_id: '12345',
+      request_metadata_json: {
+        workflow: 'release-bus-base-canary.yml'
+      },
+      result_metadata_json: {},
+      started_at: 1,
+      completed_at: 2,
+      created_at: 1,
+      updated_at: 2,
+      row_version: 2
+    } as const;
+    mockListTrainOperations
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([completedCanary]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+    mockAdvanceTrainPhase.mockResolvedValue(false);
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      train_id: frozenTrain.id,
+      status: 'BASE_CANARY_RUNNING',
+      wait_reason: {
+        code: 'PHASE_TRANSITION',
+        summary: expect.stringContaining('next guarded worker tick')
+      },
+      current_operation: null
+    });
+
+    expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
+      frozenTrain.id,
+      'FROZEN',
+      frozenTrain.row_version,
+      'BASE_CANARY_RUNNING',
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
+      expect.anything()
+    );
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      train_id: frozenTrain.id,
+      status: 'COMPOSING'
+    });
+    expect(mockUpdateTrain).toHaveBeenCalledWith(
+      frozenTrain.id,
+      expect.objectContaining({ status: 'COMPOSING' }),
+      {}
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('requeues candidates and pauses with evidence when the base fails', async () => {
@@ -200,7 +513,7 @@ describe('frontend base canary', () => {
       expect.objectContaining({
         status: 'READY_FOR_STAGING',
         currentTrainId: null,
-        holdReason: 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
+        holdReason: 'BASE_FAILURE_NO_CANDIDATE_BLAMED'
       }),
       {}
     );
@@ -209,6 +522,17 @@ describe('frontend base canary', () => {
       true,
       expect.stringContaining('/actions/runs/12345'),
       'release-bus-worker',
+      {}
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'TRAIN_FAILED_AND_LANE_PAUSED',
+        payload: expect.objectContaining({
+          attribution: 'PRE_EXISTING_BASE',
+          returned_candidates: [frontendCandidate.id],
+          quarantined_candidates: []
+        })
+      }),
       {}
     );
   });
