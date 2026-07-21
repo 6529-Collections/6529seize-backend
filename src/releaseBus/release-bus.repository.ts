@@ -144,7 +144,9 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     ids: readonly string[],
     ctx: RequestContext
   ): Promise<ReleaseCandidateRecord[]> {
-    const boundedIds = Array.from(new Set(ids)).slice(0, 50);
+    const boundedIds = Array.from(new Set(ids));
+    if (boundedIds.length > 50)
+      throw new Error('Release train candidate query exceeds the maximum 50');
     if (boundedIds.length === 0) return [];
     return this.db.execute<ReleaseCandidateRecord>(
       `select * from ${RELEASE_READY_DEPLOYMENTS_TABLE} where id in (:ids)`,

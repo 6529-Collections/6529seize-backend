@@ -160,19 +160,16 @@ describe('release operation idempotency', () => {
     expect(params).toEqual({ ids: ['candidate-1', 'candidate-2'] });
   });
 
-  it('deduplicates and caps bulk candidate reads at the train limit', async () => {
+  it('deduplicates bulk candidate reads and rejects an impossible train size', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repository = new ReleaseBusRepository(
       () => ({ execute }) as unknown as SqlExecutor
     );
     const ids = Array.from({ length: 60 }, (_, index) => `candidate-${index}`);
 
-    await repository.findCandidatesByIds([...ids, ids[0]], {});
-
-    const [, params] = execute.mock.calls[0] as [
-      string,
-      Record<string, unknown>
-    ];
-    expect(params.ids).toEqual(ids.slice(0, 50));
+    await expect(
+      repository.findCandidatesByIds([...ids, ids[0]], {})
+    ).rejects.toThrow('exceeds the maximum 50');
+    expect(execute).not.toHaveBeenCalled();
   });
 });
