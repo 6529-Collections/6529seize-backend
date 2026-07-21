@@ -159,10 +159,11 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     ids: readonly string[],
     ctx: RequestContext
   ): Promise<ReleaseCandidateRecord[]> {
-    if (ids.length === 0) return [];
+    const boundedIds = Array.from(new Set(ids)).slice(0, 50);
+    if (boundedIds.length === 0) return [];
     return this.db.execute<ReleaseCandidateRecord>(
       `select * from ${RELEASE_READY_DEPLOYMENTS_TABLE} where id in (:ids)`,
-      { ids: [...ids] },
+      { ids: boundedIds },
       dbOptions(ctx)
     );
   }

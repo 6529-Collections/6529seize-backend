@@ -1194,6 +1194,9 @@ async function advanceGuardedPhase(params: {
 }): Promise<WorkerResult> {
   const laneWait = await waitForRequiredLane(params.train, params.lane);
   if (laneWait) return laneWait;
+  // The phase write is not a mutex. Every run callback is built from durable
+  // operation keys or expected-SHA branch updates, so a duplicate tick first
+  // reconciles the same external effect instead of starting a second one.
   const result = await params.run();
   if (result === 'FAIL')
     throw new TerminalReleaseTrainError(params.failureMessage);

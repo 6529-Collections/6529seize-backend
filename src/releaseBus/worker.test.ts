@@ -452,7 +452,12 @@ describe('frontend base canary', () => {
 
   it('dispatches the immutable base canary before composition', async () => {
     mockListTrainOperations.mockResolvedValue([]);
-    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockGetOrCreateOperation
+      .mockImplementationOnce(async (operation) => operation)
+      .mockImplementationOnce(async (operation) => ({
+        ...operation,
+        status: 'DISPATCHED'
+      }));
     mockFindWorkflowRun.mockResolvedValue(null);
     mockDispatchWorkflow.mockResolvedValue(undefined);
     mockUpdateOperation.mockResolvedValue(undefined);
@@ -565,6 +570,7 @@ describe('frontend base canary', () => {
       expect.objectContaining({ status: 'COMPOSING' }),
       {}
     );
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('requeues candidates and pauses with evidence when the base fails', async () => {

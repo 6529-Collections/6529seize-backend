@@ -679,6 +679,18 @@ describe('release-bus progress reporting', () => {
     }
   );
 
+  it('rejects a terminal base canary report without its aggregate summary', async () => {
+    const response = await post('/deploy/release-bus/report-progress', {
+      ...progressBody(),
+      summary: null
+    });
+
+    expect(response.status).toBe(422);
+    expect(response.body.error).toContain('requires its aggregate summary');
+    expect(mockUpdateOperation).not.toHaveBeenCalled();
+    expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+
   it('accepts an identical terminal report idempotently without another event', async () => {
     const report = progressBody();
     const { files, ...totalsRest } = report.summary.totals;

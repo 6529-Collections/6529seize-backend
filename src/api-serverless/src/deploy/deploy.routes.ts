@@ -650,6 +650,16 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
         );
       }
       if (
+        operation.operation_type === 'base-canary-frontend' &&
+        body.phase === 'complete' &&
+        !body.summary
+      ) {
+        throw new CustomApiCompliantException(
+          422,
+          'A terminal frontend base canary report requires its aggregate summary'
+        );
+      }
+      if (
         body.summary &&
         (operation.operation_type !== 'base-canary-frontend' ||
           operation.expected_sha?.toLowerCase() !==
