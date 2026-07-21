@@ -98,6 +98,7 @@ import {
 } from '@/waves/wave-chat-slow-mode.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
+import { Logger } from '@/logging';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -209,6 +210,8 @@ export function sanitizeDropStructuredFields(
 }
 
 export class CreateOrUpdateDropUseCase {
+  private readonly logger = Logger.get(CreateOrUpdateDropUseCase.name);
+
   public constructor(
     private readonly dropsDb: DropsDb,
     private readonly dropVotingDb: DropVotingDb,
@@ -1971,15 +1974,21 @@ export class CreateOrUpdateDropUseCase {
       ),
       this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
     ]);
+    const eligibleDirectMentionedIdentityIds =
+      await this.filterIdentityIdsEligibleToReadWave(
+        wave,
+        directlyMentionedIdentityIds,
+        { timer, connection }
+      );
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
-        directlyMentionedIdentityIds,
+        eligibleDirectMentionedIdentityIds,
         connection
       )
     );
     const directMentionIdentityIds = collections.distinct(
-      directlyMentionedIdentityIds.filter(
+      eligibleDirectMentionedIdentityIds.filter(
         (identityId) =>
           identityId !== authorId &&
           !mutedDirectMentionedIdentityIds.has(identityId)
@@ -2017,6 +2026,49 @@ export class CreateOrUpdateDropUseCase {
       );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     return pendingPushNotificationIds;
+  }
+
+  private async filterIdentityIdsEligibleToReadWave(
+    wave: WaveEntity,
+    identityIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string => groupId !== null
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        this.logger.warn(
+          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering direct mention recipients for wave ${wave.id}`
+        );
+        return [];
+      }
+      if (parentWave.visibility_group_id) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    const distinctIdentityIds = collections.distinct(identityIds);
+    if (!visibilityGroupIds.length || !distinctIdentityIds.length) {
+      return distinctIdentityIds;
+    }
+
+    const eligibleIdentitySets = await Promise.all(
+      collections.distinct(visibilityGroupIds).map(async (groupId) => {
+        const eligibleIdentityIds =
+          await this.userGroupsService.findIdentitiesInGroups([groupId], {
+            timer,
+            connection
+          });
+        return new Set(eligibleIdentityIds);
+      })
+    );
+    return distinctIdentityIds.filter((identityId) =>
+      eligibleIdentitySets.every((eligibleIds) => eligibleIds.has(identityId))
+    );
   }
 }
 
