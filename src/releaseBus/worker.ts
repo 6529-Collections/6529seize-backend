@@ -10,6 +10,7 @@ import {
   buildFrontendGateContract,
   evaluateBaseCanaryEvidence,
   FRONTEND_GATE_BASE_FILES,
+  FRONTEND_GATE_TOOLING_FILES,
   FRONTEND_GATE_WORKFLOW,
   type FrontendGateContract,
   type FrontendGateMode
@@ -609,7 +610,7 @@ function storedFrontendGateContract(
   if (
     contract.schema_version !== 1 ||
     contract.repository !== 'frontend' ||
-    contract.environment !== 'staging' ||
+    contract.environment !== 'orchestration' ||
     !/^[a-f0-9]{40}$/.test(contract.base_sha ?? '') ||
     !/^[a-f0-9]{64}$/.test(contract.gate_fingerprint ?? '') ||
     !/^[a-f0-9]{40}$/.test(contract.workflow_sha ?? '') ||
@@ -627,12 +628,21 @@ async function resolveFrontendGateContract(
   baseSha: string
 ): Promise<FrontendGateContract> {
   const workflowSha = await releaseBusGitHubApp.resolveRef('frontend', 'main');
-  const [workflowContent, modeValue, shardValue, ...baseContents] =
+  const workflowFiles = [
+    FRONTEND_GATE_WORKFLOW,
+    ...FRONTEND_GATE_TOOLING_FILES
+  ] as const;
+  const [workflowContents, baseContents, modeValue, shardValue] =
     await Promise.all([
-      releaseBusGitHubApp.getFileContent(
-        'frontend',
-        FRONTEND_GATE_WORKFLOW,
-        workflowSha
+      Promise.all(
+        workflowFiles.map((file) =>
+          releaseBusGitHubApp.getFileContent('frontend', file, workflowSha)
+        )
+      ),
+      Promise.all(
+        FRONTEND_GATE_BASE_FILES.map((file) =>
+          releaseBusGitHubApp.getFileContent('frontend', file, baseSha)
+        )
       ),
       releaseBusGitHubApp.getActionsVariable(
         'frontend',
@@ -641,9 +651,6 @@ async function resolveFrontendGateContract(
       releaseBusGitHubApp.getActionsVariable(
         'frontend',
         'FRONTEND_GATE_SHARD_COUNT'
-      ),
-      ...FRONTEND_GATE_BASE_FILES.map((file) =>
-        releaseBusGitHubApp.getFileContent('frontend', file, baseSha)
       )
     ]);
   const gateMode = (modeValue ?? 'legacy').toLowerCase();
@@ -655,12 +662,11 @@ async function resolveFrontendGateContract(
   return buildFrontendGateContract({
     baseSha,
     workflowSha,
-    workflowContent,
+    workflowFileContents: Object.fromEntries(
+      workflowFiles.map((file, index) => [file, workflowContents[index]])
+    ),
     baseFileContents: Object.fromEntries(
-      FRONTEND_GATE_BASE_FILES.map((file, index) => [
-        file,
-        baseContents[index]
-      ])
+      FRONTEND_GATE_BASE_FILES.map((file, index) => [file, baseContents[index]])
     ),
     gateMode: gateMode as FrontendGateMode,
     shardCount: shardCount as 1 | 2 | 4
@@ -746,7 +752,13 @@ async function recordFreshBaseCanaryEvidence(
     {}
   );
   const phaseDurations = metadata(summary?.phase_durations_ms);
-  const totalDuration = Number(phaseDurations.total);
+  const operationStartedAt = Number(operation.started_at);
+  const operationCompletedAt = Number(operation.completed_at);
+  const observedOperationDuration = operationCompletedAt - operationStartedAt;
+  const totalDuration =
+    Number.isFinite(observedOperationDuration) && observedOperationDuration >= 0
+      ? observedOperationDuration
+      : Number(phaseDurations.total);
   const metricData: Array<
     Parameters<typeof publishReleaseBusMetrics>[0][number]
   > = [];
@@ -779,8 +791,7 @@ async function recordFreshBaseCanaryEvidence(
     metricData.push({
       MetricName: 'BaseCanaryShardImbalanceSeconds',
       Unit: 'Seconds',
-      Value:
-        (Math.max(...shardDurations) - Math.min(...shardDurations)) / 1000,
+      Value: (Math.max(...shardDurations) - Math.min(...shardDurations)) / 1000,
       Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
     });
   }
@@ -1027,13 +1038,7 @@ async function advanceFrontendBaseCanary(
       base_sha: baseSha,
       ...(gateContract
         ? {
-            evidence_environment: gateContract.environment,
-            gate_fingerprint: gateContract.gate_fingerprint,
-            workflow_sha: gateContract.workflow_sha,
-            workflow_digest: gateContract.workflow_digest,
-            package_manager: gateContract.package_manager,
-            gate_mode: gateContract.gate_mode,
-            shard_count: String(gateContract.shard_count)
+            gate_contract: JSON.stringify(gateContract)
           }
         : {})
     },

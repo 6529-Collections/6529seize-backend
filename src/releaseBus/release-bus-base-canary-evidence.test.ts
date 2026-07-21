@@ -2,6 +2,8 @@ import {
   buildFrontendGateContract,
   evaluateBaseCanaryEvidence,
   FRONTEND_GATE_BASE_FILES,
+  FRONTEND_GATE_TOOLING_FILES,
+  FRONTEND_GATE_WORKFLOW,
   type BaseCanaryEvidenceRecord,
   type FrontendGateContract
 } from '@/releaseBus/release-bus.base-canary-evidence';
@@ -21,13 +23,22 @@ function contents(suffix = ''): Record<string, string> {
   );
 }
 
+function workflowContents(suffix = ''): Record<string, string> {
+  return Object.fromEntries(
+    [FRONTEND_GATE_WORKFLOW, ...FRONTEND_GATE_TOOLING_FILES].map((file) => [
+      file,
+      `${file}:${suffix}`
+    ])
+  );
+}
+
 function contract(
   overrides: Partial<Parameters<typeof buildFrontendGateContract>[0]> = {}
 ): FrontendGateContract {
   return buildFrontendGateContract({
     baseSha: BASE_SHA,
     workflowSha: WORKFLOW_SHA,
-    workflowContent: 'workflow',
+    workflowFileContents: workflowContents(),
     baseFileContents: contents(),
     gateMode: 'sharded',
     shardCount: 4,
@@ -67,7 +78,9 @@ function summary(value: FrontendGateContract): Record<string, unknown> {
       index: index + 1,
       count: value.shard_count,
       coordinate: `${index + 1}/${value.shard_count}`,
-      status: 'SUCCEEDED'
+      status: 'SUCCEEDED',
+      failed_test_suites: 0,
+      failed_tests: 0
     })),
     missing_files: [],
     duplicate_files: []
@@ -103,12 +116,16 @@ describe('frontend base-canary evidence contract', () => {
   it('fingerprints every relevant policy input deterministically', () => {
     const baseline = contract();
     expect(contract()).toEqual(baseline);
-    expect(contract({ workflowContent: 'workflow changed' }).gate_fingerprint)
-      .not.toBe(baseline.gate_fingerprint);
-    expect(contract({ baseFileContents: contents('-changed') }).gate_fingerprint)
-      .not.toBe(baseline.gate_fingerprint);
-    expect(contract({ gateMode: 'legacy', shardCount: 1 }).gate_fingerprint)
-      .not.toBe(baseline.gate_fingerprint);
+    expect(
+      contract({ workflowFileContents: workflowContents('-changed') })
+        .gate_fingerprint
+    ).not.toBe(baseline.gate_fingerprint);
+    expect(
+      contract({ baseFileContents: contents('-changed') }).gate_fingerprint
+    ).not.toBe(baseline.gate_fingerprint);
+    expect(
+      contract({ gateMode: 'legacy', shardCount: 1 }).gate_fingerprint
+    ).not.toBe(baseline.gate_fingerprint);
   });
 
   it('reuses only intact successful evidence for the exact contract', () => {
@@ -152,10 +169,7 @@ describe('frontend base-canary evidence contract', () => {
     ]
   >([
     ['expired', { now: 100_000_000 }],
-    [
-      'malformed_metadata',
-      { overrides: { metadata_json: '{not-json' } }
-    ],
+    ['malformed_metadata', { overrides: { metadata_json: '{not-json' } }],
     [
       'artifact_digest_mismatch',
       { overrides: { artifact_digest: 'd'.repeat(64) } }
@@ -183,5 +197,71 @@ describe('frontend base-canary evidence contract', () => {
         maxAgeMs: 24 * 60 * 60 * 1000
       })
     ).toEqual({ decision: 'MISS', reason: 'fingerprint_mismatch' });
+  });
+
+  it.each([
+    [
+      'invalid_creation_time',
+      { created_at: 10 * 60 * 1000, expires_at: 100_000_000 }
+    ],
+    ['invalid_expiry_time', { expires_at: 999 }],
+    ['run_provenance_mismatch', { source_run_id: '456' }]
+  ])('rejects %s provenance', (reason, metadataOverrides) => {
+    const value = contract();
+    const evidence = row(value);
+    expect(
+      evaluateBaseCanaryEvidence({
+        rows: [
+          {
+            ...evidence,
+            metadata_json: {
+              ...(evidence.metadata_json as Record<string, unknown>),
+              ...metadataOverrides
+            }
+          }
+        ],
+        contract: value,
+        now: 2_000,
+        maxAgeMs: 24 * 60 * 60 * 1000
+      })
+    ).toEqual({ decision: 'INVALIDATED', reason });
+  });
+
+  it('rejects a successful record with malformed shard provenance', () => {
+    const value = contract();
+    const evidence = row(value);
+    const stored = evidence.metadata_json as Record<string, unknown>;
+    const storedSummary = stored.summary as Record<string, unknown>;
+    expect(
+      evaluateBaseCanaryEvidence({
+        rows: [
+          {
+            ...evidence,
+            metadata_json: {
+              ...stored,
+              summary: {
+                ...storedSummary,
+                shards: [
+                  {
+                    index: 1,
+                    count: 4,
+                    coordinate: '2/4',
+                    status: 'SUCCEEDED',
+                    failed_test_suites: 0,
+                    failed_tests: 0
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        contract: value,
+        now: 2_000,
+        maxAgeMs: 24 * 60 * 60 * 1000
+      })
+    ).toEqual({
+      decision: 'INVALIDATED',
+      reason: 'invalid_shard_summary'
+    });
   });
 });
