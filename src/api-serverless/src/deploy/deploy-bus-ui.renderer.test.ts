@@ -26,5 +26,11 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain("state.mode==='OFF'");
     expect(app).toContain("state.mode==='STAGING'&&lane==='PRODUCTION'");
     expect(app).toContain('SHADOW records decisions only');
+    expect(app).toContain('item.reason');
+    expect(app).toContain('item.github_actor');
+    expect(app).toContain('Open failure evidence');
+    expect(app).toContain(
+      'github[.]com/6529-Collections/6529seize-(?:frontend|backend)'
+    );
   });
 });

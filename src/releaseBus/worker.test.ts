@@ -58,12 +58,35 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   advanceReleaseTrain,
-  finishIncompleteComposition
+  finishIncompleteComposition,
+  operationFailureReason
 } from '@/releaseBus/worker';
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
 const SHA_C = 'c'.repeat(40);
+
+describe('operationFailureReason', () => {
+  it('includes a trusted GitHub Actions evidence URL', () => {
+    expect(
+      operationFailureReason('Frontend base failed.', {
+        result_metadata_json: {
+          url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+        }
+      } as never)
+    ).toBe(
+      'Frontend base failed. Evidence: https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+    );
+  });
+
+  it('does not publish an untrusted evidence URL', () => {
+    expect(
+      operationFailureReason('Frontend base failed.', {
+        result_metadata_json: { url: 'https://example.com/untrusted' }
+      } as never)
+    ).toBe('Frontend base failed.');
+  });
+});
 
 function candidate(
   id: string,
