@@ -389,17 +389,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     eligibleGroupIds: string[],
     connection?: ConnectionWrapper<any>,
     options?: {
-      includeNotificationId?: number;
       enabledCauses?: IdentityNotificationCause[];
     }
   ): Promise<number> {
-    const includeId = options?.includeNotificationId;
-    const hasIncludeNotificationId =
-      includeId !== undefined && includeId !== null;
     const enabledCauses = options?.enabledCauses;
-    const includeClause = hasIncludeNotificationId
-      ? ` OR (n.id = :includeNotificationId AND n.identity_id = :identity_id)`
-      : '';
     const hasEnabledCauses =
       enabledCauses !== undefined && enabledCauses.length > 0;
     const causeClause = hasEnabledCauses
@@ -409,15 +402,11 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     const queryParams: {
       identity_id: string;
       eligibleGroupIds: string[];
-      includeNotificationId?: number;
       enabledCauses?: IdentityNotificationCause[];
     } = {
       identity_id,
       eligibleGroupIds
     };
-    if (hasIncludeNotificationId) {
-      queryParams.includeNotificationId = includeId;
-    }
     if (hasEnabledCauses) {
       queryParams.enabledCauses = enabledCauses;
     }
@@ -444,7 +433,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             })
             AND COALESCE(r.muted, FALSE) = FALSE
             AND m.id IS NULL
-          )${includeClause}
+          )
         )${causeClause}
       `,
         queryParams,
