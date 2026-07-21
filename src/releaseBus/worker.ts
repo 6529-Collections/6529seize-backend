@@ -1001,6 +1001,17 @@ async function advanceFrontendBaseCanary(
       Boolean(candidate.force_fresh_base_canary)
   );
   let gateContract: FrontendGateContract | null = null;
+  try {
+    gateContract = await resolveFrontendGateContract(baseSha);
+  } catch {
+    if (evidenceConfig.reuse || evidenceConfig.shadow) {
+      await publishBaseEvidenceLookup(
+        train,
+        'INVALIDATED',
+        'contract_unavailable'
+      );
+    }
+  }
   if (forceFresh) {
     await publishBaseEvidenceLookup(
       train,
@@ -1024,60 +1035,53 @@ async function advanceFrontendBaseCanary(
       },
       {}
     );
-    if (evidenceConfig.reuse || evidenceConfig.shadow) {
+  } else if (evidenceConfig.reuse || evidenceConfig.shadow) {
+    if (gateContract) {
       try {
-        gateContract = await resolveFrontendGateContract(baseSha);
+        const rows = await releaseBusRepository.listBaseCanaryEvidenceBySha(
+          baseSha,
+          {}
+        );
+        const evidenceDecision = evaluateBaseCanaryEvidence({
+          rows,
+          contract: gateContract,
+          now: Date.now(),
+          maxAgeMs: evidenceConfig.maxAgeHours * 60 * 60 * 1000
+        });
+        await publishBaseEvidenceLookup(
+          train,
+          evidenceDecision.decision,
+          evidenceDecision.reason
+        );
+        if (evidenceDecision.decision === 'HIT') {
+          if (evidenceConfig.reuse) {
+            await reuseBaseCanaryEvidence(
+              train,
+              gateContract,
+              evidenceDecision.evidence,
+              evidenceDecision.metadata,
+              'BASE_CANARY_EVIDENCE_REUSED'
+            );
+            return 'PASS';
+          }
+          await reuseBaseCanaryEvidence(
+            train,
+            gateContract,
+            evidenceDecision.evidence,
+            evidenceDecision.metadata,
+            'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+          );
+        }
       } catch {
         await publishBaseEvidenceLookup(
           train,
           'INVALIDATED',
           'contract_unavailable'
         );
+        gateContract = null;
       }
     }
-  } else if (evidenceConfig.reuse || evidenceConfig.shadow) {
-    try {
-      gateContract = await resolveFrontendGateContract(baseSha);
-      const rows = await releaseBusRepository.listBaseCanaryEvidenceBySha(
-        baseSha,
-        {}
-      );
-      const evidenceDecision = evaluateBaseCanaryEvidence({
-        rows,
-        contract: gateContract,
-        now: Date.now(),
-        maxAgeMs: evidenceConfig.maxAgeHours * 60 * 60 * 1000
-      });
-      await publishBaseEvidenceLookup(
-        train,
-        evidenceDecision.decision,
-        evidenceDecision.reason
-      );
-      if (evidenceDecision.decision === 'HIT') {
-        if (evidenceConfig.reuse) {
-          await reuseBaseCanaryEvidence(
-            train,
-            gateContract,
-            evidenceDecision.evidence,
-            evidenceDecision.metadata,
-            'BASE_CANARY_EVIDENCE_REUSED'
-          );
-          return 'PASS';
-        }
-        await reuseBaseCanaryEvidence(
-          train,
-          gateContract,
-          evidenceDecision.evidence,
-          evidenceDecision.metadata,
-          'BASE_CANARY_EVIDENCE_WOULD_REUSE'
-        );
-      }
-    } catch {
-      await publishBaseEvidenceLookup(
-        train,
-        'INVALIDATED',
-        'contract_unavailable'
-      );
+    if (!gateContract) {
       await releaseBusRepository.appendEvent(
         {
           trainId: train.id,
@@ -1090,7 +1094,6 @@ async function advanceFrontendBaseCanary(
         },
         {}
       );
-      gateContract = null;
     }
   }
   await dispatchWorkflow({

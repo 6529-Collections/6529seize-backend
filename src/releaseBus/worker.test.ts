@@ -780,8 +780,9 @@ describe('frontend base canary', () => {
       'main',
       expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
     );
-    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).not.toHaveProperty(
-      'gate_contract'
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).toHaveProperty(
+      'gate_contract',
+      JSON.stringify(gateContract)
     );
   });
 
