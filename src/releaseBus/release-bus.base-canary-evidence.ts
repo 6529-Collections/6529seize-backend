@@ -236,6 +236,7 @@ function validateSummary(
     totals.failed_tests !== 0
   )
     return 'failed_test_counts';
+  if (totals.skipped_tests !== 0) return 'skipped_test_counts';
   if (
     !Array.isArray(summary.missing_files) ||
     summary.missing_files.length > 0 ||

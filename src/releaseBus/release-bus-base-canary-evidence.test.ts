@@ -305,4 +305,36 @@ describe('frontend base-canary evidence contract', () => {
       reason: 'invalid_shard_summary'
     });
   });
+
+  it('rejects a successful record with skipped tests', () => {
+    const value = contract();
+    const evidence = row(value);
+    const stored = evidence.metadata_json as Record<string, unknown>;
+    const storedSummary = stored.summary as Record<string, unknown>;
+    expect(
+      evaluateBaseCanaryEvidence({
+        rows: [
+          {
+            ...evidence,
+            metadata_json: {
+              ...stored,
+              summary: {
+                ...storedSummary,
+                totals: {
+                  ...(storedSummary.totals as Record<string, unknown>),
+                  skipped_tests: 1
+                }
+              }
+            }
+          }
+        ],
+        contract: value,
+        now: 2_000,
+        maxAgeMs: 24 * 60 * 60 * 1000
+      })
+    ).toEqual({
+      decision: 'INVALIDATED',
+      reason: 'skipped_test_counts'
+    });
+  });
 });

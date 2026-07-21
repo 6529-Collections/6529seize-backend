@@ -391,7 +391,8 @@ describe('frontend base canary', () => {
       test_suites: 4,
       tests: 4,
       failed_test_suites: 0,
-      failed_tests: 0
+      failed_tests: 0,
+      skipped_tests: 0
     },
     fresh_or_reused: 'fresh',
     shards: Array.from({ length: 4 }, (_, index) => ({
