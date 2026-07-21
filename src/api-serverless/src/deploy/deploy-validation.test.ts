@@ -88,15 +88,20 @@ describe('deploy.validation', () => {
     ).toBeDefined();
   });
 
-  it.each(['staging', 'prod'])(
-    'allows artifact-free %s validation operations',
-    (environment) => {
+  it.each([
+    ['staging', 'e2e-staging', 'frontend'],
+    ['prod', 'e2e-prod', 'frontend'],
+    ['staging', 'sync-staging-frontend', 'frontend'],
+    ['staging', 'sync-staging-backend', 'backend']
+  ])(
+    'allows the artifact-free %s %s operation',
+    (environment, operation, repository) => {
       const { error } = ReleaseBusAuthorizationBodySchema.validate({
         train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
-        operation_key: 'train:key',
+        operation_key: `rb:train-id:r1:${operation}:${'a'.repeat(32)}:a1`,
         workflow_run_id: '12345',
         artifact_run_id: null,
-        repository: 'frontend',
+        repository,
         environment,
         service: null,
         expected_sha: 'b'.repeat(40),
@@ -106,6 +111,22 @@ describe('deploy.validation', () => {
       expect(error).toBeUndefined();
     }
   );
+
+  it('rejects an artifact-free production deploy operation', () => {
+    const { error } = ReleaseBusAuthorizationBodySchema.validate({
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: `rb:train-id:r1:deploy-frontend-prod:${'a'.repeat(32)}:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'prod',
+      service: null,
+      expected_sha: 'b'.repeat(40),
+      artifact_digest: null
+    });
+
+    expect(error).toBeDefined();
+  });
 
   it('allows artifact-free orchestration operations', () => {
     const { error } = ReleaseBusAuthorizationBodySchema.validate({

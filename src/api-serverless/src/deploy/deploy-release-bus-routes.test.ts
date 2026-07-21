@@ -356,7 +356,7 @@ describe('release-bus authorization routes', () => {
   });
 
   it('authorizes an artifact-free staging validation operation', async () => {
-    const operationKey = `${TRAIN_ID}:r1:e2e:staging`;
+    const operationKey = `rb:${TRAIN_ID}:r1:e2e-staging:${'a'.repeat(32)}:a1`;
     mockFindOperation.mockResolvedValue({
       train_id: TRAIN_ID,
       repository: 'frontend',
@@ -389,15 +389,32 @@ describe('release-bus authorization routes', () => {
     );
   });
 
-  it('rejects an artifact-free request for an artifact-backed operation', async () => {
+  it('rejects an artifact-free production deploy before operation lookup', async () => {
     const response = await post('/deploy/release-bus/authorize', {
       ...authorizeBody(),
+      operation_key: `rb:${TRAIN_ID}:r1:deploy-backend-prod-api:${'a'.repeat(32)}:a1`,
       artifact_run_id: null,
       artifact_digest: null
     });
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(400);
+    expect(mockFindOperation).not.toHaveBeenCalled();
     expect(mockBindOperationAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('authorizes the exact artifact run and digest for a production deploy', async () => {
+    const response = await post(
+      '/deploy/release-bus/authorize',
+      authorizeBody()
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockBindOperationAuthorization).toHaveBeenCalledWith(
+      authorizeBody().operation_key,
+      '12345',
+      DIGEST,
+      {}
+    );
   });
 
   it('rejects a workflow or digest that loses the atomic claim', async () => {

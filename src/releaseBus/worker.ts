@@ -334,7 +334,15 @@ async function advanceFrontendBaseCanary(
   const baseSha = train.frontend_base_sha;
   if (!baseSha)
     throw new TerminalReleaseTrainError('Missing frontend base SHA');
-  const existing = (await phaseOperations(train.id, 'base-canary-frontend'))[0];
+  const existingOperations = await phaseOperations(
+    train.id,
+    'base-canary-frontend'
+  );
+  if (existingOperations.length > 1)
+    throw new TerminalReleaseTrainError(
+      `Release train ${train.id} has multiple frontend base canary operations`
+    );
+  const existing = existingOperations[0];
   if (existing) {
     const operation = await reconcile(existing);
     const result = workflowResult(operation);
