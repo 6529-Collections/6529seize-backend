@@ -46,7 +46,7 @@ function safeText(value: unknown, maxLength = 1000): string | null {
   if (typeof value !== 'string') return null;
   const sanitized = Array.from(value)
     .map((character) => {
-      const code = character.charCodeAt(0);
+      const code = character.codePointAt(0) ?? 0;
       return code <= 31 || code === 127 ? ' ' : character;
     })
     .join('')
@@ -175,6 +175,77 @@ function candidateSummary(
   };
 }
 
+function runningBaseIncident(
+  operation: ReleaseOperationView | null
+): Record<string, unknown> | null {
+  if (
+    operation?.phase !== 'BASE_CANARY_RUNNING' ||
+    operation.health === 'FAILED'
+  )
+    return null;
+  const stalled = operation.health === 'STALLED';
+  const recommendedRecovery = stalled
+    ? 'Inspect the linked workflow job and step. Retry only after GitHub reports the operation terminal or deterministic reconciliation proves it absent.'
+    : 'No recovery is needed while the workflow is making progress.';
+  return {
+    severity: stalled ? 'WARNING' : 'INFO',
+    title: 'Frontend base canary running',
+    summary: `Frontend base canary running for staging SHA ${operation.expected_sha}. Candidates have not been tested yet.`,
+    attribution: 'PRE_EXISTING_BASE_CHECK',
+    failed_gate: null,
+    failed_job: null,
+    failed_step: null,
+    failing_suites: [],
+    failing_tests: [],
+    returned_candidates: [],
+    quarantined_candidates: [],
+    recommended_recovery: recommendedRecovery
+  };
+}
+
+function failingSuiteNames(jest: Record<string, unknown>): string[] {
+  if (!Array.isArray(jest.failing_suites)) return [];
+  return jest.failing_suites
+    .map((suite) => safeText(suite, 500))
+    .filter((suite): suite is string => Boolean(suite))
+    .slice(0, 50);
+}
+
+function failingTestNames(
+  jest: Record<string, unknown>
+): Array<{ suite: string; test: string }> {
+  if (!Array.isArray(jest.failing_tests)) return [];
+  return jest.failing_tests
+    .map((test) => {
+      const value = metadata(test);
+      const suite = safeText(value.suite, 500);
+      const name = safeText(value.test, 500);
+      return suite && name ? { suite, test: name } : null;
+    })
+    .filter((test): test is { suite: string; test: string } => Boolean(test))
+    .slice(0, 100);
+}
+
+function failureAttribution(
+  baseFailure: boolean,
+  quarantinedCount: number
+): string {
+  if (baseFailure) return 'PRE_EXISTING_BASE';
+  if (quarantinedCount > 0) return 'DETERMINISTIC_CANDIDATE';
+  return 'TRAIN_OR_ENVIRONMENT';
+}
+
+function recoveryRecommendation(
+  baseFailure: boolean,
+  quarantinedCount: number
+): string {
+  if (baseFailure)
+    return 'Repair and validate the existing staging base, deploy that isolated repair, then resume the paused lane. Do not modify or blame queued candidates.';
+  if (quarantinedCount > 0)
+    return 'Fix the quarantined source branch, push a new immutable SHA, and mark the new SHA ready. Unrelated returned candidates may depart on a later train.';
+  return 'Inspect the linked deterministic workflow evidence, repair the failing base, environment, or combined interaction, then resume the lane explicitly.';
+}
+
 function incidentSummary(
   train: ReleaseTrainRecord,
   candidates: readonly ReturnType<typeof candidateSummary>[],
@@ -182,28 +253,8 @@ function incidentSummary(
   failedOperation: ReleaseOperationView | null,
   controls: readonly ReleaseBusControlRecord[]
 ) {
-  if (
-    currentOperation?.phase === 'BASE_CANARY_RUNNING' &&
-    currentOperation.health !== 'FAILED'
-  ) {
-    return {
-      severity: currentOperation.health === 'STALLED' ? 'WARNING' : 'INFO',
-      title: 'Frontend base canary running',
-      summary: `Frontend base canary running for staging SHA ${currentOperation.expected_sha}. Candidates have not been tested yet.`,
-      attribution: 'PRE_EXISTING_BASE_CHECK',
-      failed_gate: null,
-      failed_job: null,
-      failed_step: null,
-      failing_suites: [],
-      failing_tests: [],
-      returned_candidates: [],
-      quarantined_candidates: [],
-      recommended_recovery:
-        currentOperation.health === 'STALLED'
-          ? 'Inspect the linked workflow job and step. Retry only after GitHub reports the operation terminal or deterministic reconciliation proves it absent.'
-          : 'No recovery is needed while the workflow is making progress.'
-    };
-  }
+  const runningIncident = runningBaseIncident(currentOperation);
+  if (runningIncident) return runningIncident;
   if (train.status !== 'FAILED' && !controlPaused(train, controls)) return null;
   const operation = failedOperation ?? currentOperation;
   const gateReport = metadata(operation?.gate_report);
@@ -219,52 +270,45 @@ function incidentSummary(
   const quarantinedCandidates = candidates
     .filter((candidate) => candidate.status === 'QUARANTINED')
     .map((candidate) => candidate.id);
-  const failingSuites = Array.isArray(jest.failing_suites)
-    ? jest.failing_suites
-        .map((suite) => safeText(suite, 500))
-        .filter((suite): suite is string => Boolean(suite))
-        .slice(0, 50)
-    : [];
-  const failingTests = Array.isArray(jest.failing_tests)
-    ? jest.failing_tests
-        .map((test) => {
-          const value = metadata(test);
-          const suite = safeText(value.suite, 500);
-          const name = safeText(value.test, 500);
-          return suite && name ? { suite, test: name } : null;
-        })
-        .filter((test): test is { suite: string; test: string } =>
-          Boolean(test)
-        )
-        .slice(0, 100)
-    : [];
+  const summary = baseFailure
+    ? `Existing staging base failed ${operation?.operation_type ?? 'the deterministic gate'} for SHA ${operation?.expected_sha ?? train.frontend_base_sha}. Candidates had not been tested. No candidate was blamed. ${train.target_lane} was paused.`
+    : (safeText(train.failure_reason) ??
+      `${train.target_lane} train failed and the lane was paused.`);
   return {
     severity: 'ERROR',
     title: baseFailure
       ? 'Existing staging base failed'
       : 'Release train paused',
-    summary: baseFailure
-      ? `Existing staging base failed ${operation?.operation_type ?? 'the deterministic gate'} for SHA ${operation?.expected_sha ?? train.frontend_base_sha}. Candidates had not been tested. No candidate was blamed. ${train.target_lane} was paused.`
-      : (safeText(train.failure_reason) ??
-        `${train.target_lane} train failed and the lane was paused.`),
-    attribution: baseFailure
-      ? 'PRE_EXISTING_BASE'
-      : quarantinedCandidates.length > 0
-        ? 'DETERMINISTIC_CANDIDATE'
-        : 'TRAIN_OR_ENVIRONMENT',
+    summary,
+    attribution: failureAttribution(baseFailure, quarantinedCandidates.length),
     failed_gate: operation?.operation_type ?? null,
     failed_job: operation?.failed_job ?? null,
     failed_step: operation?.failed_step ?? null,
-    failing_suites: failingSuites,
-    failing_tests: failingTests,
+    failing_suites: failingSuiteNames(jest),
+    failing_tests: failingTestNames(jest),
     returned_candidates: returnedCandidates,
     quarantined_candidates: baseFailure ? [] : quarantinedCandidates,
-    recommended_recovery: baseFailure
-      ? 'Repair and validate the existing staging base, deploy that isolated repair, then resume the paused lane. Do not modify or blame queued candidates.'
-      : quarantinedCandidates.length > 0
-        ? 'Fix the quarantined source branch, push a new immutable SHA, and mark the new SHA ready. Unrelated returned candidates may depart on a later train.'
-        : 'Inspect the linked deterministic workflow evidence, repair the failing base, environment, or combined interaction, then resume the lane explicitly.'
+    recommended_recovery: recoveryRecommendation(
+      baseFailure,
+      quarantinedCandidates.length
+    )
   };
+}
+
+function phaseState(
+  train: ReleaseTrainRecord,
+  paused: boolean,
+  currentOperation: ReleaseOperationView | null
+): string {
+  if (TERMINAL_TRAIN_STATUSES.has(train.status)) return train.status;
+  if (paused) return 'PAUSED';
+  if (currentOperation?.health === 'STALLED') return 'STALLED';
+  return 'RUNNING';
+}
+
+function laneState(lane: ReleaseLaneRecord, now: number): string {
+  if (lane.expires_at && Number(lane.expires_at) <= now) return 'EXPIRED';
+  return 'ACTIVE';
 }
 
 export function buildReleaseTrainOverview(input: {
@@ -296,8 +340,7 @@ export function buildReleaseTrainOverview(input: {
       lease_owner: lane.lease_owner,
       heartbeat_at: lane.heartbeat_at,
       expires_at: lane.expires_at,
-      state:
-        lane.expires_at && Number(lane.expires_at) <= now ? 'EXPIRED' : 'ACTIVE'
+      state: laneState(lane, now)
     }));
   const workerHeartbeat = ownedLanes
     .filter((lane) => lane.train_id === input.train.id && lane.heartbeat_at)
@@ -310,13 +353,7 @@ export function buildReleaseTrainOverview(input: {
   return {
     ...input.train,
     phase: currentTrainPhase(input.train, input.operations, paused),
-    phase_state: TERMINAL_TRAIN_STATUSES.has(input.train.status)
-      ? input.train.status
-      : paused
-        ? 'PAUSED'
-        : currentOperation?.health === 'STALLED'
-          ? 'STALLED'
-          : 'RUNNING',
+    phase_state: phaseState(input.train, paused, currentOperation),
     elapsed_ms: Math.max(
       0,
       (input.train.completed_at ?? now) -

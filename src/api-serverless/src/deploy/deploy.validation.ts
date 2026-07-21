@@ -156,7 +156,14 @@ const ReleaseBusReportPathSchema = Joi.string()
   .trim()
   .min(1)
   .max(500)
-  .pattern(/^[A-Za-z0-9._/@+-]+(?:\/[A-Za-z0-9._/@+-]+)*$/);
+  .pattern(/^[A-Za-z0-9._/@+/-]+$/)
+  .custom((value, helpers) => {
+    const segments = value.split('/');
+    return value.startsWith('/') ||
+      segments.some((segment: string) => ['', '.', '..'].includes(segment))
+      ? helpers.error('any.invalid')
+      : value;
+  });
 
 const ReleaseBusReportDigestSchema = Joi.string()
   .lowercase()
