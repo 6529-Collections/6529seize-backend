@@ -2,9 +2,18 @@ import { topologicallySort } from '@/releaseBus/release-bus.dag';
 import deployConfig from '@/config/deploy-services.json';
 import { buildReleaseOperationKey } from '@/releaseBus/release-bus.idempotency';
 import {
+  getBaseCanaryEvidenceConfig,
   getReleaseBusMode,
   RELEASE_BUS_LANE_TTL_MS
 } from '@/releaseBus/release-bus.config';
+import {
+  buildFrontendGateContract,
+  evaluateBaseCanaryEvidence,
+  FRONTEND_GATE_BASE_FILES,
+  FRONTEND_GATE_WORKFLOW,
+  type FrontendGateContract,
+  type FrontendGateMode
+} from '@/releaseBus/release-bus.base-canary-evidence';
 import {
   releaseBusGitHubApp,
   type GitHubRun,
@@ -236,6 +245,7 @@ async function dispatchWorkflow(params: {
   readonly environment?: 'orchestration' | 'staging' | 'prod' | null;
   readonly service?: string | null;
   readonly inputs: Record<string, string>;
+  readonly requestMetadata?: Record<string, unknown>;
 }): Promise<ReleaseOperationRecord> {
   const operationKey = buildReleaseOperationKey({
     trainId: params.train.id,
@@ -263,7 +273,8 @@ async function dispatchWorkflow(params: {
       request_metadata_json: {
         workflow: params.workflow,
         ref: params.ref,
-        inputs: params.inputs
+        inputs: params.inputs,
+        ...(params.requestMetadata ?? {})
       },
       result_metadata_json: null,
       started_at: null,
@@ -591,6 +602,284 @@ async function beginComposition(
   );
 }
 
+function normalizeArtifactDigest(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/^sha256:/, '').toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+function storedFrontendGateContract(
+  operation: ReleaseOperationRecord
+): FrontendGateContract | null {
+  const value = metadata(operation.request_metadata_json).gate_contract;
+  if (!value || typeof value !== 'object') return null;
+  const contract = value as Partial<FrontendGateContract>;
+  if (
+    contract.schema_version !== 1 ||
+    contract.repository !== 'frontend' ||
+    contract.environment !== 'staging' ||
+    !/^[a-f0-9]{40}$/.test(contract.base_sha ?? '') ||
+    !/^[a-f0-9]{64}$/.test(contract.gate_fingerprint ?? '') ||
+    !/^[a-f0-9]{40}$/.test(contract.workflow_sha ?? '') ||
+    !/^[a-f0-9]{64}$/.test(contract.workflow_digest ?? '') ||
+    contract.node_version !== '22' ||
+    typeof contract.package_manager !== 'string' ||
+    !['legacy', 'shadow', 'sharded'].includes(contract.gate_mode ?? '') ||
+    ![1, 2, 4].includes(contract.shard_count ?? 0)
+  )
+    return null;
+  return contract as FrontendGateContract;
+}
+
+async function resolveFrontendGateContract(
+  baseSha: string
+): Promise<FrontendGateContract> {
+  const workflowSha = await releaseBusGitHubApp.resolveRef('frontend', 'main');
+  const [workflowContent, modeValue, shardValue, ...baseContents] =
+    await Promise.all([
+      releaseBusGitHubApp.getFileContent(
+        'frontend',
+        FRONTEND_GATE_WORKFLOW,
+        workflowSha
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'frontend',
+        'RELEASE_BUS_FRONTEND_GATE_MODE'
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'frontend',
+        'FRONTEND_GATE_SHARD_COUNT'
+      ),
+      ...FRONTEND_GATE_BASE_FILES.map((file) =>
+        releaseBusGitHubApp.getFileContent('frontend', file, baseSha)
+      )
+    ]);
+  const gateMode = (modeValue ?? 'legacy').toLowerCase();
+  if (!['legacy', 'shadow', 'sharded'].includes(gateMode))
+    throw new Error('Invalid frontend gate mode variable');
+  const shardCount = Number(shardValue ?? 1);
+  if (![1, 2, 4].includes(shardCount))
+    throw new Error('Invalid frontend gate shard count variable');
+  return buildFrontendGateContract({
+    baseSha,
+    workflowSha,
+    workflowContent,
+    baseFileContents: Object.fromEntries(
+      FRONTEND_GATE_BASE_FILES.map((file, index) => [
+        file,
+        baseContents[index]
+      ])
+    ),
+    gateMode: gateMode as FrontendGateMode,
+    shardCount: shardCount as 1 | 2 | 4
+  });
+}
+
+async function publishBaseEvidenceLookup(
+  train: ReleaseTrainRecord,
+  decision: 'HIT' | 'MISS' | 'INVALIDATED' | 'FORCE_FRESH',
+  reason: string
+): Promise<void> {
+  await publishReleaseBusMetrics([
+    {
+      MetricName: 'BaseCanaryEvidenceLookup',
+      Value: 1,
+      Dimensions: [
+        { Name: 'Lane', Value: train.target_lane },
+        { Name: 'Decision', Value: decision },
+        { Name: 'Reason', Value: reason.slice(0, 100) }
+      ]
+    }
+  ]);
+}
+
+async function recordFreshBaseCanaryEvidence(
+  train: ReleaseTrainRecord,
+  operation: ReleaseOperationRecord
+): Promise<void> {
+  if (!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(operation.status)) return;
+  const contract = storedFrontendGateContract(operation);
+  if (!contract) return;
+  const result = metadata(operation.result_metadata_json);
+  const gateReport = metadata(result.gate_report);
+  const summary =
+    gateReport.summary && typeof gateReport.summary === 'object'
+      ? (gateReport.summary as Record<string, unknown>)
+      : null;
+  const createdAt = Number(
+    operation.completed_at ?? gateReport.reported_at ?? Date.now()
+  );
+  const maxAgeHours = getBaseCanaryEvidenceConfig().maxAgeHours;
+  const artifactDigest = normalizeArtifactDigest(
+    summary?.summary_artifact_digest
+  );
+  const inserted = await releaseBusRepository.addEvidence(
+    {
+      idempotencyKey: `base-canary-completed:${operation.operation_key}`,
+      trainId: train.id,
+      revision: train.revision,
+      evidenceType: 'BASE_CANARY_COMPLETED',
+      status: operation.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+      sourceSha: contract.base_sha,
+      artifactDigest,
+      evidenceUri:
+        typeof result.url === 'string' ? result.url.slice(0, 1000) : null,
+      metadata: {
+        schema_version: 1,
+        contract,
+        summary,
+        source_operation_key: operation.operation_key,
+        source_run_id: operation.external_id,
+        source_train_id: train.id,
+        created_at: createdAt,
+        expires_at: createdAt + maxAgeHours * 60 * 60 * 1000
+      }
+    },
+    {}
+  );
+  if (!inserted) return;
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: train.id,
+      eventType: 'BASE_CANARY_EVIDENCE_RECORDED',
+      payload: {
+        operation_key: operation.operation_key,
+        run_id: operation.external_id,
+        base_sha: contract.base_sha,
+        gate_fingerprint: contract.gate_fingerprint,
+        fresh_or_reused: 'fresh',
+        status: operation.status
+      }
+    },
+    {}
+  );
+  const phaseDurations = metadata(summary?.phase_durations_ms);
+  const totalDuration = Number(phaseDurations.total);
+  const metricData: Array<
+    Parameters<typeof publishReleaseBusMetrics>[0][number]
+  > = [];
+  if (Number.isFinite(totalDuration) && totalDuration >= 0) {
+    metricData.push({
+      MetricName: 'BaseCanaryFreshDurationSeconds',
+      Unit: 'Seconds',
+      Value: totalDuration / 1000,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    });
+  }
+  const shards = Array.isArray(summary?.shards) ? summary.shards : [];
+  const shardDurations: number[] = [];
+  for (const value of shards) {
+    const shard = metadata(value);
+    const duration = Number(shard.duration_ms);
+    if (!Number.isFinite(duration) || duration < 0) continue;
+    shardDurations.push(duration);
+    metricData.push({
+      MetricName: 'BaseCanaryShardDurationSeconds',
+      Unit: 'Seconds',
+      Value: duration / 1000,
+      Dimensions: [
+        { Name: 'Lane', Value: train.target_lane },
+        { Name: 'Shard', Value: String(shard.coordinate ?? 'unknown') }
+      ]
+    });
+  }
+  if (shardDurations.length > 0) {
+    metricData.push({
+      MetricName: 'BaseCanaryShardImbalanceSeconds',
+      Unit: 'Seconds',
+      Value:
+        (Math.max(...shardDurations) - Math.min(...shardDurations)) / 1000,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    });
+  }
+  const missing = Array.isArray(summary?.missing_files)
+    ? summary.missing_files.length
+    : 1;
+  const duplicate = Array.isArray(summary?.duplicate_files)
+    ? summary.duplicate_files.length
+    : 1;
+  if (missing + duplicate > 0) {
+    metricData.push({
+      MetricName: 'BaseCanaryCountMismatch',
+      Value: missing + duplicate,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    });
+  }
+  if (operation.status !== 'SUCCEEDED') {
+    const stages = Array.isArray(gateReport.stages) ? gateReport.stages : [];
+    const failed = stages
+      .map(metadata)
+      .find((stage) => stage.status === 'FAILED');
+    metricData.push({
+      MetricName: 'BaseCanaryFailure',
+      Value: 1,
+      Dimensions: [
+        { Name: 'Lane', Value: train.target_lane },
+        { Name: 'Phase', Value: String(failed?.name ?? 'workflow') }
+      ]
+    });
+  }
+  if (metricData.length > 0) await publishReleaseBusMetrics(metricData);
+}
+
+async function reuseBaseCanaryEvidence(
+  train: ReleaseTrainRecord,
+  contract: FrontendGateContract,
+  evidence: {
+    readonly id: string;
+    readonly train_id: string;
+    readonly revision: number;
+    readonly artifact_digest: string | null;
+    readonly evidence_uri: string | null;
+    readonly created_at: number | string;
+  },
+  sourceMetadata: Record<string, unknown>,
+  eventType: 'BASE_CANARY_EVIDENCE_REUSED' | 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+): Promise<void> {
+  const inserted = await releaseBusRepository.addEvidence(
+    {
+      idempotencyKey: `${eventType.toLowerCase()}:${train.id}:r${train.revision}:${contract.base_sha}`,
+      trainId: train.id,
+      revision: train.revision,
+      evidenceType: eventType,
+      status: 'SUCCEEDED',
+      sourceSha: contract.base_sha,
+      artifactDigest: evidence.artifact_digest,
+      evidenceUri: evidence.evidence_uri,
+      metadata: {
+        schema_version: 1,
+        contract,
+        fresh_or_reused: eventType.endsWith('_REUSED') ? 'reused' : 'fresh',
+        source_evidence_id: evidence.id,
+        source_train_id: evidence.train_id,
+        source_train_revision: evidence.revision,
+        source_run_id: sourceMetadata.source_run_id ?? null,
+        source_created_at: Number(evidence.created_at),
+        source_expires_at: sourceMetadata.expires_at ?? null,
+        reused_at: Date.now()
+      }
+    },
+    {}
+  );
+  if (!inserted) return;
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: train.id,
+      eventType,
+      payload: {
+        status: eventType.endsWith('_REUSED') ? 'reused' : 'would-reuse',
+        base_sha: contract.base_sha,
+        gate_fingerprint: contract.gate_fingerprint,
+        source_evidence_id: evidence.id,
+        source_train_id: evidence.train_id,
+        source_run_id: sourceMetadata.source_run_id ?? null,
+        evidence_uri: evidence.evidence_uri
+      }
+    },
+    {}
+  );
+}
+
 async function advanceFrontendBaseCanary(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[]
@@ -612,6 +901,8 @@ async function advanceFrontendBaseCanary(
   if (existing) {
     const operation = await reconcile(existing);
     const result = workflowResult(operation);
+    if (result !== 'WAIT')
+      await recordFreshBaseCanaryEvidence(train, operation);
     if (result !== 'FAIL') {
       if (train.status === 'FROZEN')
         await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
@@ -633,6 +924,105 @@ async function advanceFrontendBaseCanary(
     );
     return 'FAIL';
   }
+  const evidenceConfig = getBaseCanaryEvidenceConfig();
+  const forceFresh = candidates.some(
+    (candidate) =>
+      candidate.repository === 'frontend' &&
+      Boolean(candidate.force_fresh_base_canary)
+  );
+  let gateContract: FrontendGateContract | null = null;
+  if (forceFresh) {
+    await publishBaseEvidenceLookup(
+      train,
+      'FORCE_FRESH',
+      'operator_force_fresh'
+    );
+    await releaseBusRepository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'BASE_CANARY_EVIDENCE_FORCE_FRESH',
+        payload: {
+          base_sha: baseSha,
+          candidate_ids: candidates
+            .filter(
+              (candidate) =>
+                candidate.repository === 'frontend' &&
+                Boolean(candidate.force_fresh_base_canary)
+            )
+            .map((candidate) => candidate.id)
+        }
+      },
+      {}
+    );
+    if (evidenceConfig.reuse || evidenceConfig.shadow) {
+      try {
+        gateContract = await resolveFrontendGateContract(baseSha);
+      } catch {
+        await publishBaseEvidenceLookup(
+          train,
+          'INVALIDATED',
+          'contract_unavailable'
+        );
+      }
+    }
+  } else if (evidenceConfig.reuse || evidenceConfig.shadow) {
+    try {
+      gateContract = await resolveFrontendGateContract(baseSha);
+      const rows = await releaseBusRepository.listBaseCanaryEvidenceBySha(
+        baseSha,
+        {}
+      );
+      const evidenceDecision = evaluateBaseCanaryEvidence({
+        rows,
+        contract: gateContract,
+        now: Date.now(),
+        maxAgeMs: evidenceConfig.maxAgeHours * 60 * 60 * 1000
+      });
+      await publishBaseEvidenceLookup(
+        train,
+        evidenceDecision.decision,
+        evidenceDecision.reason
+      );
+      if (evidenceDecision.decision === 'HIT') {
+        if (evidenceConfig.reuse) {
+          await reuseBaseCanaryEvidence(
+            train,
+            gateContract,
+            evidenceDecision.evidence,
+            evidenceDecision.metadata,
+            'BASE_CANARY_EVIDENCE_REUSED'
+          );
+          return 'PASS';
+        }
+        await reuseBaseCanaryEvidence(
+          train,
+          gateContract,
+          evidenceDecision.evidence,
+          evidenceDecision.metadata,
+          'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+        );
+      }
+    } catch {
+      await publishBaseEvidenceLookup(
+        train,
+        'INVALIDATED',
+        'contract_unavailable'
+      );
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_INVALIDATED',
+          payload: {
+            base_sha: baseSha,
+            reason: 'contract_unavailable',
+            action: 'fresh_validation'
+          }
+        },
+        {}
+      );
+      gateContract = null;
+    }
+  }
   await dispatchWorkflow({
     train,
     repository: 'frontend',
@@ -641,7 +1031,21 @@ async function advanceFrontendBaseCanary(
     ref: 'main',
     expectedSha: baseSha,
     environment: 'orchestration',
-    inputs: { base_sha: baseSha }
+    inputs: {
+      base_sha: baseSha,
+      ...(gateContract
+        ? {
+            evidence_environment: gateContract.environment,
+            gate_fingerprint: gateContract.gate_fingerprint,
+            workflow_sha: gateContract.workflow_sha,
+            workflow_digest: gateContract.workflow_digest,
+            package_manager: gateContract.package_manager,
+            gate_mode: gateContract.gate_mode,
+            shard_count: String(gateContract.shard_count)
+          }
+        : {})
+    },
+    requestMetadata: gateContract ? { gate_contract: gateContract } : undefined
   });
   await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
   return 'WAIT';

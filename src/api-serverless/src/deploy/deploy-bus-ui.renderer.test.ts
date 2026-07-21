@@ -16,6 +16,7 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('Pause all');
     expect(html).toContain('Active train');
     expect(html).toContain('id="active-train"');
+    expect(html).toContain('id="force-fresh-base-canary"');
     expect(html).toContain('Current phase, exact wait, workflow progress');
   });
 
@@ -26,6 +27,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain("request('/deploy/release-candidates/ready'");
     expect(app).toContain('replace(/[&<>"\']/g');
     expect(app).toContain('expected_head_sha:');
+    expect(app).toContain('force_fresh_base_canary:');
+    expect(app).toContain('Fresh base canary required');
     expect(app).toContain("state.mode==='OFF'");
     expect(app).toContain("state.mode==='STAGING'&&lane==='PRODUCTION'");
     expect(app).toContain('SHADOW records decisions only');

@@ -45,6 +45,7 @@ const candidate: ReleaseCandidateRecord = {
   production_ready_by_github_login: null,
   production_ready_at: null,
   deploy_plan_json: null,
+  force_fresh_base_canary: false,
   metadata_version: 1,
   current_train_id: 'train-1',
   hold_reason: null,
