@@ -525,7 +525,9 @@ async function pollPhase(
 ): Promise<'PASS' | 'WAIT' | 'FAIL'> {
   const operations = await phaseOperations(train.id, prefix);
   if (operations.length === 0) return 'WAIT';
-  const reconciled = await Promise.all(operations.map(reconcile));
+  const reconciled = await Promise.all(
+    operations.map((operation) => reconcile(operation))
+  );
   if (reconciled.some((operation) => workflowResult(operation) === 'FAIL'))
     return 'FAIL';
   return reconciled.every((operation) => workflowResult(operation) === 'PASS')
