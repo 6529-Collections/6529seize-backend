@@ -82,6 +82,7 @@ import {
   finishIncompleteComposition,
   mergeWorkflowProgress,
   operationFailureReason,
+  reconcile,
   workflowProgress
 } from '@/releaseBus/worker';
 
@@ -223,6 +224,85 @@ describe('workflowProgress', () => {
     } finally {
       jest.restoreAllMocks();
     }
+  });
+});
+
+describe('workflow reconciliation contention', () => {
+  const operation = {
+    id: 'operation-1',
+    operation_key: 'train-1:r1:base-canary-frontend',
+    train_id: 'train-1',
+    revision: 1,
+    operation_type: 'base-canary-frontend',
+    repository: 'frontend',
+    environment: 'orchestration',
+    service: null,
+    expected_sha: SHA_A,
+    artifact_digest: null,
+    attempt: 1,
+    status: 'RUNNING',
+    external_id: '12345',
+    request_metadata_json: { workflow: 'release-bus-base-canary.yml' },
+    result_metadata_json: {
+      gate_report: { phase: 'complete', status: 'SUCCEEDED' }
+    },
+    started_at: 1,
+    completed_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  } as const;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFindWorkflowRun.mockResolvedValue({
+      id: 12345,
+      name: 'Release Bus base canary',
+      display_title: operation.operation_key,
+      status: 'completed',
+      conclusion: 'success',
+      head_sha: SHA_A,
+      html_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+      updated_at: '2026-07-21T10:05:00Z'
+    });
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
+    mockAppendEvent.mockResolvedValue(undefined);
+  });
+
+  it('retries a terminal GitHub result after a row-version race', async () => {
+    const refreshed = { ...operation, row_version: 2 };
+    const completed = {
+      ...refreshed,
+      status: 'SUCCEEDED',
+      row_version: 3
+    } as const;
+    mockUpdateOperationIfVersion
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockFindOperation
+      .mockResolvedValueOnce(refreshed)
+      .mockResolvedValueOnce(completed);
+
+    await expect(reconcile(operation)).resolves.toEqual(completed);
+
+    expect(mockUpdateOperationIfVersion).toHaveBeenNthCalledWith(
+      1,
+      operation.operation_key,
+      1,
+      expect.objectContaining({ status: 'SUCCEEDED' }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockUpdateOperationIfVersion).toHaveBeenNthCalledWith(
+      2,
+      operation.operation_key,
+      2,
+      expect.objectContaining({ status: 'SUCCEEDED' }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledTimes(1);
   });
 });
 
