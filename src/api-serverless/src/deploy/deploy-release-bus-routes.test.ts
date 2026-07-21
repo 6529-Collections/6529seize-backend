@@ -1,6 +1,7 @@
 const mockFindOperation = jest.fn();
 const mockGetLane = jest.fn();
 const mockBindOperationAuthorization = jest.fn();
+const mockUpdateOperation = jest.fn();
 const mockAppendEvent = jest.fn();
 const mockFindCandidateById = jest.fn();
 const mockGetWorkflowRunIdentity = jest.fn();
@@ -14,6 +15,10 @@ const mockResolveBranchHead = jest.fn();
 const mockFindOpenPullRequest = jest.fn();
 const mockCreateCommitStatus = jest.fn();
 const mockGetReleaseBusCommitStatusState = jest.fn();
+const mockListTrains = jest.fn();
+const mockFindTrain = jest.fn();
+const mockListTrainItems = jest.fn();
+const mockGetReleaseTrainOverview = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -21,9 +26,18 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     getLane: (...args: unknown[]) => mockGetLane(...args),
     bindOperationAuthorization: (...args: unknown[]) =>
       mockBindOperationAuthorization(...args),
+    updateOperation: (...args: unknown[]) => mockUpdateOperation(...args),
     appendEvent: (...args: unknown[]) => mockAppendEvent(...args),
-    findCandidateById: (...args: unknown[]) => mockFindCandidateById(...args)
+    findCandidateById: (...args: unknown[]) => mockFindCandidateById(...args),
+    listTrains: (...args: unknown[]) => mockListTrains(...args),
+    findTrain: (...args: unknown[]) => mockFindTrain(...args),
+    listTrainItems: (...args: unknown[]) => mockListTrainItems(...args)
   }
+}));
+
+jest.mock('@/releaseBus/release-bus-status.service', () => ({
+  getReleaseTrainOverview: (...args: unknown[]) =>
+    mockGetReleaseTrainOverview(...args)
 }));
 
 jest.mock('@/api/deploy/deploy.github.service', () => ({
@@ -138,7 +152,21 @@ async function post(path: string, body: unknown) {
     });
     return {
       status: response.status,
-      body: (await response.json()) as { error?: string }
+      body: (await response.json()) as Record<string, unknown> & {
+        error?: string;
+      }
+    };
+  });
+}
+
+async function get(path: string) {
+  return withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}${path}`, {
+      headers: { authorization: `Bearer ${WORKFLOW_TOKEN}` }
+    });
+    return {
+      status: response.status,
+      body: (await response.json()) as Record<string, unknown>
     };
   });
 }
@@ -179,6 +207,81 @@ function breakGlassBody() {
     expected_sha: SHA,
     reason: 'Emergency fix forward'
   };
+}
+
+function aggregateSummary() {
+  return {
+    base_sha: SHA,
+    environment: 'orchestration',
+    gate_fingerprint: `sha256:${'c'.repeat(64)}`,
+    workflow_sha: 'd'.repeat(40),
+    workflow_digest: 'e'.repeat(64),
+    node_version: '24.6.0',
+    package_manager: 'npm@11.5.1',
+    shard_count: 2,
+    summary_artifact_name: 'release-bus/base-canary-summary.json',
+    summary_artifact_digest: 'f'.repeat(64),
+    phase_durations_ms: { lint: 1000, unit_tests: 2000, total: 3000 },
+    totals: {
+      files: 500,
+      test_suites: 400,
+      tests: 5000,
+      failed_test_suites: 0,
+      failed_tests: 0
+    },
+    fresh_or_reused: 'fresh',
+    shards: [
+      {
+        index: 0,
+        count: 2,
+        coordinate: '0/2',
+        status: 'SUCCEEDED',
+        duration_ms: 1000,
+        files: 250,
+        test_suites: 200,
+        tests: 2500,
+        failed_test_suites: 0,
+        failed_tests: 0
+      },
+      {
+        index: 1,
+        count: 2,
+        coordinate: '1/2',
+        status: 'SUCCEEDED',
+        duration_ms: 1000,
+        files: 250,
+        test_suites: 200,
+        tests: 2500,
+        failed_test_suites: 0,
+        failed_tests: 0
+      }
+    ],
+    missing_files: [],
+    duplicate_files: []
+  } as const;
+}
+
+function progressBody() {
+  return {
+    train_id: TRAIN_ID,
+    operation_key: `${TRAIN_ID}:r1:base-canary-frontend`,
+    workflow_run_id: '12345',
+    phase: 'complete',
+    status: 'SUCCEEDED',
+    stages: [
+      { name: 'lint', status: 'SUCCEEDED' },
+      { name: 'typecheck', status: 'SUCCEEDED' },
+      { name: 'unit_tests', status: 'SUCCEEDED' },
+      { name: 'build', status: 'SUCCEEDED' }
+    ],
+    jest: {
+      num_failed_test_suites: 0,
+      num_failed_tests: 0,
+      failing_suites: [],
+      failing_tests: []
+    },
+    summary: aggregateSummary()
+  } as const;
 }
 
 function readyBody(targetLane: 'STAGING' | 'PRODUCTION' = 'STAGING') {
@@ -452,5 +555,176 @@ describe('release-bus authorization routes', () => {
     expect(response.status).toBe(409);
     expect(response.body.error).toContain('lane was not paused');
     expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('release-bus progress reporting', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_WORKFLOW_AUTH_TOKEN = WORKFLOW_TOKEN;
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      status: 'DISPATCHED',
+      result_metadata_json: {
+        url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+      }
+    });
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockAppendEvent.mockResolvedValue(undefined);
+  });
+
+  afterAll(() => {
+    delete process.env.RELEASE_BUS_WORKFLOW_AUTH_TOKEN;
+  });
+
+  it('binds the report to the exact operation and workflow run', async () => {
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '99999',
+      status: 'DISPATCHED'
+    });
+
+    const response = await post(
+      '/deploy/release-bus/report-progress',
+      progressBody()
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockUpdateOperation).not.toHaveBeenCalled();
+    expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+
+  it('persists a bounded aggregate in operation metadata and the durable event', async () => {
+    const response = await post(
+      '/deploy/release-bus/report-progress',
+      progressBody()
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateOperation).toHaveBeenCalledWith(
+      progressBody().operation_key,
+      expect.objectContaining({
+        status: 'DISPATCHED',
+        resultMetadata: expect.objectContaining({
+          gate_report: expect.objectContaining({
+            phase: 'complete',
+            summary: aggregateSummary()
+          }),
+          last_progress_at: expect.any(Number)
+        })
+      }),
+      {}
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'OPERATION_GATE_REPORT',
+        payload: expect.objectContaining({
+          phase: 'complete',
+          summary: aggregateSummary()
+        })
+      }),
+      {}
+    );
+  });
+
+  it('accepts an identical terminal report idempotently without another event', async () => {
+    const report = progressBody();
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      status: 'SUCCEEDED',
+      result_metadata_json: {
+        gate_report: {
+          phase: report.phase,
+          status: report.status,
+          stages: report.stages,
+          jest: report.jest,
+          summary: report.summary,
+          reported_at: 123456
+        }
+      }
+    });
+
+    const response = await post('/deploy/release-bus/report-progress', report);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      accepted: true,
+      idempotent: true,
+      reported_at: 123456
+    });
+    expect(mockUpdateOperation).not.toHaveBeenCalled();
+    expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects a conflicting terminal report for the same operation and run', async () => {
+    const report = progressBody();
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      status: 'SUCCEEDED',
+      result_metadata_json: {
+        gate_report: {
+          ...report,
+          status: 'FAILED',
+          reported_at: 123456
+        }
+      }
+    });
+
+    const response = await post('/deploy/release-bus/report-progress', report);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain('different terminal progress report');
+    expect(mockUpdateOperation).not.toHaveBeenCalled();
+    expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('release train observability responses', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetViewer.mockResolvedValue({ login: 'operator' });
+    const train = {
+      id: TRAIN_ID,
+      status: 'BASE_CANARY_RUNNING',
+      target_lane: 'STAGING'
+    };
+    mockListTrains.mockResolvedValue([train]);
+    mockFindTrain.mockResolvedValue(train);
+    mockListTrainItems.mockResolvedValue([]);
+    mockGetReleaseTrainOverview.mockResolvedValue({
+      ...train,
+      phase: 'BASE_CANARY_RUNNING',
+      phase_state: 'RUNNING',
+      wait_reason: {
+        code: 'GITHUB_WORKFLOW_RUNNING',
+        summary:
+          'Frontend base canary running. Candidates have not been tested yet.'
+      },
+      current_operation: {
+        run_id: '12345',
+        workflow_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+      }
+    });
+  });
+
+  it('returns the enriched active train alongside legacy train records', async () => {
+    const response = await get('/deploy/release-trains');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      trains: [{ id: TRAIN_ID }],
+      active_train: {
+        phase: 'BASE_CANARY_RUNNING',
+        phase_state: 'RUNNING',
+        current_operation: { run_id: '12345' }
+      }
+    });
+    expect(mockGetReleaseTrainOverview).toHaveBeenCalledWith(
+      expect.objectContaining({ id: TRAIN_ID })
+    );
   });
 });

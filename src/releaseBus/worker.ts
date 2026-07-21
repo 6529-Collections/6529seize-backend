@@ -5,9 +5,22 @@ import {
   getReleaseBusMode,
   RELEASE_BUS_LANE_TTL_MS
 } from '@/releaseBus/release-bus.config';
-import { releaseBusGitHubApp } from '@/releaseBus/release-bus.github-app';
+import {
+  releaseBusGitHubApp,
+  type GitHubRun,
+  type GitHubWorkflowJob,
+  type GitHubWorkflowStep
+} from '@/releaseBus/release-bus.github-app';
+import {
+  leaseWaitReason,
+  selectCurrentOperation,
+  toOperationView,
+  type ReleaseOperationView,
+  type ReleaseWaitReason
+} from '@/releaseBus/release-bus.observability';
 import {
   releaseBusRepository,
+  type ReleaseBusControlRecord,
   type ReleaseOperationRecord
 } from '@/releaseBus/release-bus.repository';
 import type {
@@ -24,6 +37,8 @@ export type WorkerResult = {
   readonly train_id: string;
   readonly status: string;
   readonly message?: string;
+  readonly wait_reason?: ReleaseWaitReason;
+  readonly current_operation?: ReleaseOperationView | null;
 };
 
 class TerminalReleaseTrainError extends Error {}
@@ -78,6 +93,70 @@ function workflowResult(
   if (operation.status === 'SUCCEEDED') return 'PASS';
   if (['FAILED', 'CANCELLED'].includes(operation.status)) return 'FAIL';
   return 'WAIT';
+}
+
+const FAILURE_CONCLUSIONS = new Set([
+  'action_required',
+  'cancelled',
+  'failure',
+  'startup_failure',
+  'timed_out'
+]);
+
+function latestTimestamp(values: readonly (string | null | undefined)[]) {
+  const timestamps = values
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter((value) => Number.isFinite(value));
+  return timestamps.length > 0 ? Math.max(...timestamps) : null;
+}
+
+export function workflowProgress(run: GitHubRun): Record<string, unknown> {
+  const jobs = run.jobs ?? [];
+  const activeJob = jobs.find((job) => job.status === 'in_progress') ?? null;
+  const activeStep =
+    activeJob?.steps?.find((step) => step.status === 'in_progress') ?? null;
+  const failedJob =
+    jobs.find((job) => FAILURE_CONCLUSIONS.has(job.conclusion ?? '')) ?? null;
+  const failedStep =
+    failedJob?.steps?.find((step) =>
+      FAILURE_CONCLUSIONS.has(step.conclusion ?? '')
+    ) ?? null;
+  const jobTimestamps = jobs.flatMap((job: GitHubWorkflowJob) => [
+    job.started_at,
+    job.completed_at,
+    ...(job.steps ?? []).flatMap((step: GitHubWorkflowStep) => [
+      step.started_at,
+      step.completed_at
+    ])
+  ]);
+  return {
+    url: run.html_url,
+    workflow_status: run.status,
+    workflow_conclusion: run.conclusion,
+    active_job: activeJob?.name ?? null,
+    active_step: activeStep?.name ?? null,
+    failed_job: failedJob?.name ?? null,
+    failed_step: failedStep?.name ?? null,
+    last_progress_at: latestTimestamp([
+      run.created_at,
+      run.updated_at,
+      ...jobTimestamps
+    ])
+  };
+}
+
+function meaningfulWorkflowProgressChanged(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): boolean {
+  return [
+    'workflow_status',
+    'workflow_conclusion',
+    'active_job',
+    'active_step',
+    'failed_job',
+    'failed_step'
+  ].some((key) => before[key] !== after[key]);
 }
 
 function githubActionsRunUrl(operation: ReleaseOperationRecord): string | null {
@@ -213,35 +292,48 @@ async function reconcile(
     operation.external_id
   );
   if (!run) return operation;
+  const previousResult = metadata(operation.result_metadata_json);
+  const progress = {
+    ...previousResult,
+    ...workflowProgress(run)
+  };
+  let nextStatus: ReleaseOperationRecord['status'];
   if (run.status !== 'completed') {
-    await releaseBusRepository.updateOperation(
-      operation.operation_key,
-      {
-        status: 'RUNNING',
-        externalId: String(run.id),
-        resultMetadata: { url: run.html_url }
-      },
-      {}
-    );
+    nextStatus = 'RUNNING';
   } else if (run.conclusion === 'success') {
-    await releaseBusRepository.updateOperation(
-      operation.operation_key,
-      {
-        status: 'SUCCEEDED',
-        externalId: String(run.id),
-        resultMetadata: { url: run.html_url, head_sha: run.head_sha },
-        completedAt: Date.now()
-      },
-      {}
-    );
+    nextStatus = 'SUCCEEDED';
+    progress.head_sha = run.head_sha;
   } else {
-    await releaseBusRepository.updateOperation(
-      operation.operation_key,
+    nextStatus = 'FAILED';
+  }
+  await releaseBusRepository.updateOperation(
+    operation.operation_key,
+    {
+      status: nextStatus,
+      externalId: String(run.id),
+      resultMetadata: progress,
+      completedAt: run.status === 'completed' ? Date.now() : undefined
+    },
+    {}
+  );
+  if (
+    operation.status !== nextStatus ||
+    meaningfulWorkflowProgressChanged(previousResult, progress)
+  ) {
+    await releaseBusRepository.appendEvent(
       {
-        status: 'FAILED',
-        externalId: String(run.id),
-        resultMetadata: { url: run.html_url, conclusion: run.conclusion },
-        completedAt: Date.now()
+        trainId: operation.train_id,
+        eventType: 'OPERATION_PROGRESS',
+        payload: {
+          operation_key: operation.operation_key,
+          operation_type: operation.operation_type,
+          status: nextStatus,
+          workflow_url: run.html_url,
+          active_job: progress.active_job,
+          active_step: progress.active_step,
+          failed_job: progress.failed_job,
+          failed_step: progress.failed_step
+        }
       },
       {}
     );
@@ -258,6 +350,101 @@ async function phaseOperations(
 ): Promise<ReleaseOperationRecord[]> {
   return (await releaseBusRepository.listTrainOperations(trainId, {})).filter(
     (operation) => operation.operation_type.startsWith(prefix)
+  );
+}
+
+function operationWaitReason(
+  operation: ReleaseOperationView | null
+): ReleaseWaitReason {
+  if (!operation) {
+    return {
+      code: 'OPERATION_RECONCILING',
+      summary: 'Waiting for the next deterministic Release Bus operation.'
+    };
+  }
+  if (operation.health === 'STALLED') {
+    return {
+      code: 'OPERATION_STALLED',
+      summary: `${operation.operation_type} is stalled: ${operation.stalled_reason}.`
+    };
+  }
+  if (operation.phase === 'BASE_CANARY_RUNNING') {
+    return {
+      code: 'GITHUB_WORKFLOW_RUNNING',
+      summary: `Frontend base canary running for staging SHA ${operation.expected_sha}. Candidates have not been tested yet.`
+    };
+  }
+  const external = operation.workflow_url ? ' GitHub Actions workflow' : '';
+  return {
+    code: operation.workflow_url
+      ? 'GITHUB_WORKFLOW_RUNNING'
+      : 'OPERATION_RUNNING',
+    summary: `Waiting for ${operation.operation_type}${external} to complete.`
+  };
+}
+
+async function waitFor(
+  train: ReleaseTrainRecord,
+  status: string,
+  waitReason?: ReleaseWaitReason
+): Promise<WorkerResult> {
+  const operations = await releaseBusRepository.listTrainOperations(
+    train.id,
+    {}
+  );
+  const operation = selectCurrentOperation(operations);
+  const currentOperation = operation ? toOperationView(operation) : null;
+  const reason = waitReason ?? operationWaitReason(currentOperation);
+  const fingerprint = JSON.stringify({
+    code: reason.code,
+    lease: reason.lease?.name ?? null,
+    operation_key: currentOperation?.operation_key ?? null,
+    stalled_reason: currentOperation?.stalled_reason ?? null
+  });
+  const latestEvent = (
+    await releaseBusRepository.listTrainEvents(train.id, 1, {})
+  )[0];
+  const latestPayload = metadata(latestEvent?.payload_json);
+  if (
+    latestEvent?.event_type !== 'TRAIN_WAITING' ||
+    latestPayload.fingerprint !== fingerprint
+  ) {
+    await releaseBusRepository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'TRAIN_WAITING',
+        payload: {
+          fingerprint,
+          phase: currentOperation?.phase ?? status,
+          wait_reason: reason,
+          operation_key: currentOperation?.operation_key ?? null
+        }
+      },
+      {}
+    );
+  }
+  return {
+    decision: 'WAIT',
+    train_id: train.id,
+    status,
+    message: reason.summary,
+    wait_reason: reason,
+    current_operation: currentOperation
+  };
+}
+
+async function updateTrainPhase(
+  train: ReleaseTrainRecord,
+  status: ReleaseTrainRecord['status']
+): Promise<void> {
+  await releaseBusRepository.updateTrain(train.id, { status }, {});
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: train.id,
+      eventType: 'TRAIN_PHASE_CHANGED',
+      payload: { from: train.status, to: status }
+    },
+    {}
   );
 }
 
@@ -346,15 +533,24 @@ async function advanceFrontendBaseCanary(
   if (existing) {
     const operation = await reconcile(existing);
     const result = workflowResult(operation);
-    if (result !== 'FAIL') return result;
+    if (result !== 'FAIL') {
+      if (train.status === 'FROZEN')
+        await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
+      return result;
+    }
     await failAndPauseTrain(
       train,
       candidates,
       operationFailureReason(
-        'The fresh frontend base failed its exact Release Bus canary; candidates were not blamed.',
+        `Existing staging base failed the frontend base canary for SHA ${baseSha}. Candidates had not been tested. No candidate was blamed. ${train.target_lane} was paused. Repair and validate the existing base, deploy that isolated repair, then resume ${train.target_lane}.`,
         operation
       ),
-      'REQUEUE'
+      'REQUEUE',
+      {
+        attribution: 'PRE_EXISTING_BASE',
+        recommendedRecovery:
+          'Repair and validate the existing staging base, deploy that isolated repair, then resume the paused lane.'
+      }
     );
     return 'FAIL';
   }
@@ -368,6 +564,7 @@ async function advanceFrontendBaseCanary(
     environment: 'orchestration',
     inputs: { base_sha: baseSha }
   });
+  await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
   return 'WAIT';
 }
 
@@ -476,13 +673,14 @@ async function ensureLane(
 
 async function externalDeploymentLaneBusy(
   environment: 'staging' | 'prod'
-): Promise<boolean> {
-  const states = await Promise.all(
-    (['frontend', 'backend'] as const).map((repository) =>
-      releaseBusGitHubApp.hasActiveDeploymentRun(repository, environment)
+): Promise<ReleaseRepository | null> {
+  for (const repository of ['frontend', 'backend'] as const) {
+    if (
+      await releaseBusGitHubApp.hasActiveDeploymentRun(repository, environment)
     )
-  );
-  return states.some(Boolean);
+      return repository;
+  }
+  return null;
 }
 
 async function advanceBackendDeploy(
@@ -850,8 +1048,14 @@ async function failAndPauseTrain(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[],
   reason: string,
-  candidateDisposition: 'QUARANTINE' | 'REQUEUE' = 'QUARANTINE'
+  candidateDisposition: 'QUARANTINE' | 'REQUEUE' = 'QUARANTINE',
+  details: {
+    readonly attribution?: 'PRE_EXISTING_BASE' | 'CANDIDATE' | 'TRAIN';
+    readonly recommendedRecovery?: string;
+  } = {}
 ): Promise<void> {
+  const returnedCandidates: string[] = [];
+  const quarantinedCandidates: string[] = [];
   for (const candidate of candidates) {
     const current = await releaseBusRepository.findCandidateById(
       candidate.id,
@@ -883,10 +1087,15 @@ async function failAndPauseTrain(
         holdReason:
           candidateDisposition === 'QUARANTINE'
             ? reason.slice(0, 500)
-            : 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
+            : details.attribution === 'PRE_EXISTING_BASE'
+              ? 'BASE_FAILURE_NO_CANDIDATE_BLAMED'
+              : 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
       },
       {}
     );
+    if (candidateDisposition === 'QUARANTINE')
+      quarantinedCandidates.push(candidate.id);
+    else returnedCandidates.push(candidate.id);
     await publishCandidateStatus(
       train,
       candidate,
@@ -913,7 +1122,16 @@ async function failAndPauseTrain(
     {
       trainId: train.id,
       eventType: 'TRAIN_FAILED_AND_LANE_PAUSED',
-      payload: { reason, candidate_disposition: candidateDisposition }
+      payload: {
+        reason,
+        candidate_disposition: candidateDisposition,
+        attribution: details.attribution ?? 'TRAIN',
+        returned_candidates: returnedCandidates,
+        quarantined_candidates: quarantinedCandidates,
+        recommended_recovery:
+          details.recommendedRecovery ??
+          'Inspect deterministic workflow evidence, repair the attributed failure, then resume the lane explicitly.'
+      }
     },
     {}
   );
@@ -957,10 +1175,15 @@ async function finishFailureIsolation(
       train,
       candidates,
       operationFailureReason(
-        `The fresh ${baselineFailure.repository} base failed the isolation gate; candidates were not blamed.`,
+        `Existing ${baselineFailure.repository} base failed the isolation gate for SHA ${baselineFailure.expected_sha}. Candidates had not been tested in isolation. No candidate was blamed. ${train.target_lane} was paused. Repair and validate the existing base, deploy that isolated repair, then resume ${train.target_lane}.`,
         baselineFailure
       ),
-      'REQUEUE'
+      'REQUEUE',
+      {
+        attribution: 'PRE_EXISTING_BASE',
+        recommendedRecovery:
+          'Repair and validate the existing base, deploy that isolated repair, then resume the paused lane.'
+      }
     );
     return 'FAILED';
   }
@@ -1113,12 +1336,16 @@ function readyStatusForTrain(
     : 'READY_FOR_PRODUCTION';
 }
 
-async function isTrainLanePaused(train: ReleaseTrainRecord): Promise<boolean> {
+async function pausedControlForTrain(
+  train: ReleaseTrainRecord
+): Promise<ReleaseBusControlRecord | null> {
   const controls = await releaseBusRepository.listControls({});
-  return controls.some(
-    (control) =>
-      Boolean(control.paused) &&
-      (control.scope === 'ALL' || control.scope === train.target_lane)
+  return (
+    controls.find(
+      (control) =>
+        Boolean(control.paused) &&
+        (control.scope === 'ALL' || control.scope === train.target_lane)
+    ) ?? null
   );
 }
 
@@ -1812,7 +2039,10 @@ export async function advanceReleaseTrain(
       };
     const mode = getReleaseBusMode();
     if (mode === 'OFF')
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
+      return waitFor(train, train.status, {
+        code: 'ROLLOUT_MODE_OFF',
+        summary: 'Waiting because the Release Bus rollout mode is OFF.'
+      });
     if (mode === 'SHADOW' && train.status === 'FROZEN') {
       await shadowComplete(train, candidates);
       return { decision: 'COMPLETE', train_id: train.id, status: 'COMPLETED' };
@@ -1821,14 +2051,38 @@ export async function advanceReleaseTrain(
       mode === 'SHADOW' ||
       (train.target_lane === 'PRODUCTION' && mode !== 'PRODUCTION')
     )
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
-    if (!(await ensureLane('global-orchestration', train)))
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
-    if (await isTrainLanePaused(train)) {
-      await heartbeatOwnedTrainLanes(train);
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
+      return waitFor(train, train.status, {
+        code: mode === 'SHADOW' ? 'SHADOW_MODE' : 'PRODUCTION_MODE_DISABLED',
+        summary:
+          mode === 'SHADOW'
+            ? 'Waiting because SHADOW mode records decisions without executing the train.'
+            : 'Waiting because production train execution is not enabled.'
+      });
+    if (!(await ensureLane('global-orchestration', train))) {
+      return waitFor(
+        train,
+        train.status,
+        leaseWaitReason(
+          'global-orchestration',
+          await releaseBusRepository.getLane('global-orchestration', {})
+        )
+      );
     }
-    if (train.status === 'FROZEN') {
+    const pausedControl = await pausedControlForTrain(train);
+    if (pausedControl) {
+      await heartbeatOwnedTrainLanes(train);
+      return waitFor(train, train.status, {
+        code: 'CONTROL_PAUSED',
+        summary: `${pausedControl.scope} is paused: ${pausedControl.reason ?? 'No reason recorded'}`,
+        control: {
+          scope: pausedControl.scope,
+          reason: pausedControl.reason,
+          actor: pausedControl.github_actor,
+          updated_at: Number(pausedControl.updated_at)
+        }
+      });
+    }
+    if (['FROZEN', 'BASE_CANARY_RUNNING'].includes(train.status)) {
       const baseCanary = await advanceFrontendBaseCanary(train, candidates);
       if (baseCanary === 'FAIL')
         return {
@@ -1839,9 +2093,12 @@ export async function advanceReleaseTrain(
             'Frontend base canary failed; candidates were returned to the queue'
         };
       if (baseCanary === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+        return waitFor(train, 'BASE_CANARY_RUNNING', {
+          code: 'GITHUB_WORKFLOW_RUNNING',
+          summary: `Frontend base canary running for staging SHA ${train.frontend_base_sha}. Candidates have not been tested yet.`
+        });
       await beginComposition(train, candidates);
-      return { decision: 'WAIT', train_id: train.id, status: 'COMPOSING' };
+      return waitFor(train, 'COMPOSING');
     }
     if (train.status === 'COMPOSING') {
       const result = await pollPhase(train, 'compose-');
@@ -1851,14 +2108,9 @@ export async function advanceReleaseTrain(
           candidates,
           'Release branch composition failed after bounded conflict resolution'
         );
-        return {
-          decision: 'WAIT',
-          train_id: train.id,
-          status: 'ISOLATING_FAILURE'
-        };
+        return waitFor(train, 'ISOLATING_FAILURE');
       }
-      if (result === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (result === 'WAIT') return waitFor(train, train.status);
       // A successful compose workflow may intentionally publish only its
       // conflict-free prefix when Codex is disabled. Never dispatch preflight
       // until every frozen candidate SHA is proven reachable from its branch.
@@ -1871,7 +2123,7 @@ export async function advanceReleaseTrain(
           message: `Candidate ${offender.id} requires merge-conflict resolution; other candidates were returned to the queue`
         };
       await beginPreflight(train, candidates);
-      return { decision: 'WAIT', train_id: train.id, status: 'PREFLIGHTING' };
+      return waitFor(train, 'PREFLIGHTING');
     }
     if (train.status === 'PREFLIGHTING') {
       const result = await pollPhase(train, 'preflight-');
@@ -1881,25 +2133,34 @@ export async function advanceReleaseTrain(
           candidates,
           'Release preflight failed'
         );
-        return {
-          decision: 'WAIT',
-          train_id: train.id,
-          status: 'ISOLATING_FAILURE'
-        };
+        return waitFor(train, 'ISOLATING_FAILURE');
       }
-      if (result === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      if (
-        (await externalDeploymentLaneBusy('staging')) ||
-        !(await ensureLane('global-staging', train))
-      )
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'STAGING' },
-        {}
-      );
-      return { decision: 'CONTINUE', train_id: train.id, status: 'STAGING' };
+      if (result === 'WAIT') return waitFor(train, train.status);
+      const busyRepository = await externalDeploymentLaneBusy('staging');
+      if (busyRepository)
+        return waitFor(train, train.status, {
+          code: 'EXTERNAL_DEPLOYMENT_ACTIVE',
+          summary: `Waiting for an existing ${busyRepository} staging deployment to finish.`,
+          external_operation: {
+            repository: busyRepository,
+            environment: 'staging'
+          }
+        });
+      if (!(await ensureLane('global-staging', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-staging',
+            await releaseBusRepository.getLane('global-staging', {})
+          )
+        );
+      await updateTrainPhase(train, 'DEPLOYING_BACKEND');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'DEPLOYING_BACKEND'
+      };
     }
     if (train.status === 'ISOLATING_FAILURE') {
       const result = await finishFailureIsolation(train, candidates);
@@ -1910,40 +2171,83 @@ export async function advanceReleaseTrain(
           status: 'CANCELLED',
           message: 'Transient gate failure; candidates returned to the queue'
         };
+      if (result === 'WAIT') return waitFor(train, train.status);
       return {
-        decision: result === 'WAIT' ? 'WAIT' : 'FAILED',
+        decision: 'FAILED',
         train_id: train.id,
-        status: result === 'WAIT' ? train.status : 'FAILED',
+        status: 'FAILED',
         message: train.failure_reason ?? undefined
       };
     }
     if (train.status === 'STAGING') {
+      await updateTrainPhase(train, 'DEPLOYING_BACKEND');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'DEPLOYING_BACKEND'
+      };
+    }
+    if (train.status === 'DEPLOYING_BACKEND') {
       if (!(await ensureLane('global-staging', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-staging',
+            await releaseBusRepository.getLane('global-staging', {})
+          )
+        );
       const backend = await advanceBackendDeploy(train, candidates, 'staging');
       if (backend === 'FAIL')
         throw new TerminalReleaseTrainError(
           'Backend staging deployment failed'
         );
-      if (backend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (backend === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'DEPLOYING_FRONTEND');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'DEPLOYING_FRONTEND'
+      };
+    }
+    if (train.status === 'DEPLOYING_FRONTEND') {
+      if (!(await ensureLane('global-staging', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-staging',
+            await releaseBusRepository.getLane('global-staging', {})
+          )
+        );
       const frontend = await advanceFrontendDeploy(train, 'staging');
       if (frontend === 'FAIL')
         throw new TerminalReleaseTrainError(
           'Frontend staging deployment failed'
         );
-      if (frontend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (frontend === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'E2E_RUNNING');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'E2E_RUNNING'
+      };
+    }
+    if (train.status === 'E2E_RUNNING') {
+      if (!(await ensureLane('global-staging', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-staging',
+            await releaseBusRepository.getLane('global-staging', {})
+          )
+        );
       const e2e = await advanceE2e(train, 'staging');
       if (e2e === 'FAIL')
         throw new TerminalReleaseTrainError('Staging E2E failed');
-      if (e2e === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'VALIDATING_STAGING' },
-        {}
-      );
+      if (e2e === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'VALIDATING_STAGING');
       return {
         decision: 'CONTINUE',
         train_id: train.id,
@@ -1952,7 +2256,14 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'VALIDATING_STAGING') {
       if (!(await ensureLane('global-staging', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-staging',
+            await releaseBusRepository.getLane('global-staging', {})
+          )
+        );
       if (train.target_lane === 'STAGING') {
         try {
           await finishStaging(train, candidates);
@@ -1977,16 +2288,26 @@ export async function advanceReleaseTrain(
       }
       await validateStaging(train, candidates);
       await createReleasePullRequests(train, candidates);
-      if (
-        (await externalDeploymentLaneBusy('prod')) ||
-        !(await ensureLane('global-production', train))
-      )
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'MERGING_PRODUCTION' },
-        {}
-      );
+      const busyRepository = await externalDeploymentLaneBusy('prod');
+      if (busyRepository)
+        return waitFor(train, train.status, {
+          code: 'EXTERNAL_DEPLOYMENT_ACTIVE',
+          summary: `Waiting for an existing ${busyRepository} production deployment to finish.`,
+          external_operation: {
+            repository: busyRepository,
+            environment: 'prod'
+          }
+        });
+      if (!(await ensureLane('global-production', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
+      await updateTrainPhase(train, 'MERGING_PRODUCTION');
       return {
         decision: 'CONTINUE',
         train_id: train.id,
@@ -1995,7 +2316,14 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'MERGING_PRODUCTION') {
       if (!(await ensureLane('global-production', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
       const latest = (await releaseBusRepository.findTrain(
         train.id,
         {}
@@ -2018,29 +2346,55 @@ export async function advanceReleaseTrain(
           'Backend production release PR merge failed'
         );
       }
-      if (backendMerge === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'DEPLOYING_PRODUCTION' },
-        {}
-      );
+      if (backendMerge === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
       return {
         decision: 'CONTINUE',
         train_id: train.id,
-        status: 'DEPLOYING_PRODUCTION'
+        status: 'DEPLOYING_BACKEND_PRODUCTION'
       };
     }
     if (train.status === 'DEPLOYING_PRODUCTION') {
+      await updateTrainPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'DEPLOYING_BACKEND_PRODUCTION'
+      };
+    }
+    if (train.status === 'DEPLOYING_BACKEND_PRODUCTION') {
       if (!(await ensureLane('global-production', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
       const backend = await advanceBackendDeploy(train, candidates, 'prod');
       if (backend === 'FAIL')
         throw new TerminalReleaseTrainError(
           'Backend production deployment failed'
         );
-      if (backend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (backend === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'MERGING_FRONTEND_PRODUCTION');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'MERGING_FRONTEND_PRODUCTION'
+      };
+    }
+    if (train.status === 'MERGING_FRONTEND_PRODUCTION') {
+      if (!(await ensureLane('global-production', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
       const latest = (await releaseBusRepository.findTrain(
         train.id,
         {}
@@ -2068,25 +2422,60 @@ export async function advanceReleaseTrain(
           'Frontend production release PR merge failed'
         );
       }
-      if (frontendMerge === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (frontendMerge === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'DEPLOYING_FRONTEND_PRODUCTION');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'DEPLOYING_FRONTEND_PRODUCTION'
+      };
+    }
+    if (train.status === 'DEPLOYING_FRONTEND_PRODUCTION') {
+      if (!(await ensureLane('global-production', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
+      const latest = (await releaseBusRepository.findTrain(
+        train.id,
+        {}
+      )) as ReleaseTrainRecord;
       const frontend = await advanceFrontendDeploy(latest, 'prod');
       if (frontend === 'FAIL')
         throw new TerminalReleaseTrainError(
           'Frontend production deployment failed'
         );
-      if (frontend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (frontend === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'PRODUCTION_E2E_RUNNING');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'PRODUCTION_E2E_RUNNING'
+      };
+    }
+    if (train.status === 'PRODUCTION_E2E_RUNNING') {
+      if (!(await ensureLane('global-production', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
+      const latest = (await releaseBusRepository.findTrain(
+        train.id,
+        {}
+      )) as ReleaseTrainRecord;
       const e2e = await advanceE2e(latest, 'prod');
       if (e2e === 'FAIL')
         throw new TerminalReleaseTrainError('Production E2E failed');
-      if (e2e === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'VALIDATING_PRODUCTION' },
-        {}
-      );
+      if (e2e === 'WAIT') return waitFor(train, train.status);
+      await updateTrainPhase(train, 'VALIDATING_PRODUCTION');
       return {
         decision: 'CONTINUE',
         train_id: train.id,
@@ -2095,14 +2484,37 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'VALIDATING_PRODUCTION') {
       if (!(await ensureLane('global-production', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
+      await updateTrainPhase(train, 'SYNCING_STAGING');
+      return {
+        decision: 'CONTINUE',
+        train_id: train.id,
+        status: 'SYNCING_STAGING'
+      };
+    }
+    if (train.status === 'SYNCING_STAGING') {
+      if (!(await ensureLane('global-production', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-production',
+            await releaseBusRepository.getLane('global-production', {})
+          )
+        );
       const sync = await advanceStagingSync(train, candidates);
       if (sync === 'FAIL')
         throw new TerminalReleaseTrainError(
           'Failed to sync main back into staging'
         );
-      if (sync === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (sync === 'WAIT') return waitFor(train, train.status);
       await finalizeProduction(train, candidates);
       return { decision: 'COMPLETE', train_id: train.id, status: 'COMPLETED' };
     }

@@ -14,6 +14,7 @@ const mockListTrainItems = jest.fn();
 const mockHeartbeatLane = jest.fn();
 const mockListControls = jest.fn();
 const mockListTrainOperations = jest.fn();
+const mockListTrainEvents = jest.fn();
 const mockGetOrCreateOperation = jest.fn();
 const mockFindOperation = jest.fn();
 const mockUpdateOperation = jest.fn();
@@ -38,6 +39,7 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     listControls: (...args: unknown[]) => mockListControls(...args),
     listTrainOperations: (...args: unknown[]) =>
       mockListTrainOperations(...args),
+    listTrainEvents: (...args: unknown[]) => mockListTrainEvents(...args),
     getOrCreateOperation: (...args: unknown[]) =>
       mockGetOrCreateOperation(...args),
     findOperation: (...args: unknown[]) => mockFindOperation(...args),
@@ -72,7 +74,8 @@ import path from 'node:path';
 import {
   advanceReleaseTrain,
   finishIncompleteComposition,
-  operationFailureReason
+  operationFailureReason,
+  workflowProgress
 } from '@/releaseBus/worker';
 
 const SHA_A = 'a'.repeat(40);
@@ -98,6 +101,53 @@ describe('operationFailureReason', () => {
         result_metadata_json: { url: 'https://example.com/untrusted' }
       } as never)
     ).toBe('Frontend base failed.');
+  });
+});
+
+describe('workflowProgress', () => {
+  it('records the active and failed GitHub job and step without raw logs', () => {
+    expect(
+      workflowProgress({
+        id: 12345,
+        name: 'Release Bus base canary',
+        display_title: 'Base canary',
+        status: 'completed',
+        conclusion: 'failure',
+        head_sha: SHA_A,
+        html_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+        created_at: '2026-07-21T10:00:00Z',
+        updated_at: '2026-07-21T10:05:00Z',
+        jobs: [
+          {
+            id: 1,
+            name: 'Frontend gate',
+            status: 'completed',
+            conclusion: 'failure',
+            started_at: '2026-07-21T10:01:00Z',
+            completed_at: '2026-07-21T10:05:00Z',
+            html_url:
+              'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345/job/1',
+            steps: [
+              {
+                name: 'Run unit tests',
+                status: 'completed',
+                conclusion: 'failure',
+                started_at: '2026-07-21T10:02:00Z',
+                completed_at: '2026-07-21T10:05:00Z'
+              }
+            ]
+          }
+        ]
+      })
+    ).toEqual(
+      expect.objectContaining({
+        failed_job: 'Frontend gate',
+        failed_step: 'Run unit tests',
+        last_progress_at: Date.parse('2026-07-21T10:05:00Z')
+      })
+    );
+    expect(workflowProgress({} as never)).not.toHaveProperty('logs');
   });
 });
 
@@ -146,6 +196,7 @@ describe('frontend base canary', () => {
     mockUpdateTrain.mockResolvedValue(undefined);
     mockUpdateCandidateLifecycle.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
+    mockListTrainEvents.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -162,7 +213,11 @@ describe('frontend base canary', () => {
 
     await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
       decision: 'WAIT',
-      status: 'FROZEN'
+      status: 'BASE_CANARY_RUNNING',
+      wait_reason: {
+        code: 'GITHUB_WORKFLOW_RUNNING',
+        summary: expect.stringContaining('Candidates have not been tested yet')
+      }
     });
 
     expect(mockDispatchWorkflow).toHaveBeenCalledWith(
@@ -174,7 +229,11 @@ describe('frontend base canary', () => {
         expected_sha: frozenTrain.frontend_base_sha
       })
     );
-    expect(mockUpdateTrain).not.toHaveBeenCalled();
+    expect(mockUpdateTrain).toHaveBeenCalledWith(
+      frozenTrain.id,
+      { status: 'BASE_CANARY_RUNNING' },
+      {}
+    );
   });
 
   it('requeues candidates and pauses with evidence when the base fails', async () => {
@@ -200,7 +259,7 @@ describe('frontend base canary', () => {
       expect.objectContaining({
         status: 'READY_FOR_STAGING',
         currentTrainId: null,
-        holdReason: 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
+        holdReason: 'BASE_FAILURE_NO_CANDIDATE_BLAMED'
       }),
       {}
     );
@@ -209,6 +268,17 @@ describe('frontend base canary', () => {
       true,
       expect.stringContaining('/actions/runs/12345'),
       'release-bus-worker',
+      {}
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'TRAIN_FAILED_AND_LANE_PAUSED',
+        payload: expect.objectContaining({
+          attribution: 'PRE_EXISTING_BASE',
+          returned_candidates: [frontendCandidate.id],
+          quarantined_candidates: []
+        })
+      }),
       {}
     );
   });

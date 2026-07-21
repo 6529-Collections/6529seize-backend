@@ -151,6 +151,137 @@ export const ReleaseBusControlBodySchema = Joi.object({
   reason: Joi.string().trim().min(3).max(1000).required()
 }).required();
 
+const ReleaseBusReportPathSchema = Joi.string()
+  .trim()
+  .min(1)
+  .max(500)
+  .pattern(/^[A-Za-z0-9._/@+-]+(?:\/[A-Za-z0-9._/@+-]+)*$/);
+
+const ReleaseBusReportDigestSchema = Joi.string()
+  .lowercase()
+  .pattern(/^(?:sha256:)?[a-f0-9]{64}$/);
+
+const ReleaseBusReportDurationSchema = Joi.number()
+  .integer()
+  .min(0)
+  .max(24 * 60 * 60 * 1000);
+
+const ReleaseBusReportCountSchema = Joi.number()
+  .integer()
+  .min(0)
+  .max(10_000_000);
+
+const ReleaseBusAggregateSummarySchema = Joi.object({
+  base_sha: ReleaseShaSchema.required(),
+  environment: Joi.string()
+    .valid('orchestration', 'staging', 'prod')
+    .required(),
+  gate_fingerprint: ReleaseBusReportDigestSchema.required(),
+  workflow_sha: ReleaseShaSchema.required(),
+  workflow_digest: ReleaseBusReportDigestSchema.required(),
+  node_version: Joi.string().trim().min(1).max(64).required(),
+  package_manager: Joi.string().trim().min(1).max(128).required(),
+  shard_count: Joi.number().integer().min(1).max(256).required(),
+  summary_artifact_name: ReleaseBusReportPathSchema.required(),
+  summary_artifact_digest: ReleaseBusReportDigestSchema.required(),
+  phase_durations_ms: Joi.object({
+    lint: ReleaseBusReportDurationSchema,
+    typecheck: ReleaseBusReportDurationSchema,
+    unit_tests: ReleaseBusReportDurationSchema,
+    build: ReleaseBusReportDurationSchema,
+    total: ReleaseBusReportDurationSchema.required()
+  }).required(),
+  totals: Joi.object({
+    files: ReleaseBusReportCountSchema,
+    test_suites: ReleaseBusReportCountSchema,
+    tests: ReleaseBusReportCountSchema,
+    failed_test_suites: ReleaseBusReportCountSchema.required(),
+    failed_tests: ReleaseBusReportCountSchema.required(),
+    skipped_tests: ReleaseBusReportCountSchema
+  }).required(),
+  fresh_or_reused: Joi.string().valid('fresh', 'reused').required(),
+  shards: Joi.array()
+    .items(
+      Joi.object({
+        index: Joi.number().integer().min(0).max(255).required(),
+        count: Joi.number().integer().min(1).max(256).required(),
+        coordinate: Joi.string()
+          .trim()
+          .min(1)
+          .max(64)
+          .pattern(/^[A-Za-z0-9._:/+-]+$/)
+          .required(),
+        status: Joi.string()
+          .valid('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'SKIPPED')
+          .required(),
+        duration_ms: ReleaseBusReportDurationSchema.required(),
+        files: ReleaseBusReportCountSchema,
+        test_suites: ReleaseBusReportCountSchema,
+        tests: ReleaseBusReportCountSchema,
+        failed_test_suites: ReleaseBusReportCountSchema.required(),
+        failed_tests: ReleaseBusReportCountSchema.required()
+      })
+    )
+    .max(256)
+    .unique('index')
+    .required(),
+  missing_files: Joi.array()
+    .items(ReleaseBusReportPathSchema)
+    .max(200)
+    .unique()
+    .default([]),
+  duplicate_files: Joi.array()
+    .items(ReleaseBusReportPathSchema)
+    .max(200)
+    .unique()
+    .default([])
+}).required();
+
+export const ReleaseBusProgressReportBodySchema = Joi.object({
+  train_id: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .required(),
+  operation_key: Joi.string().max(180).required(),
+  workflow_run_id: Joi.string().pattern(/^\d+$/).required(),
+  phase: Joi.string()
+    .valid('lint', 'typecheck', 'unit_tests', 'build', 'complete')
+    .required(),
+  status: Joi.string().valid('RUNNING', 'SUCCEEDED', 'FAILED').required(),
+  stages: Joi.array()
+    .items(
+      Joi.object({
+        name: Joi.string()
+          .valid('lint', 'typecheck', 'unit_tests', 'build')
+          .required(),
+        status: Joi.string()
+          .valid('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'SKIPPED')
+          .required()
+      })
+    )
+    .max(8)
+    .default([]),
+  jest: Joi.object({
+    num_failed_test_suites: Joi.number().integer().min(0).max(10000).required(),
+    num_failed_tests: Joi.number().integer().min(0).max(100000).required(),
+    failing_suites: Joi.array()
+      .items(Joi.string().trim().min(1).max(500))
+      .max(50)
+      .default([]),
+    failing_tests: Joi.array()
+      .items(
+        Joi.object({
+          suite: Joi.string().trim().min(1).max(500).required(),
+          test: Joi.string().trim().min(1).max(500).required()
+        })
+      )
+      .max(100)
+      .default([])
+  })
+    .allow(null)
+    .default(null),
+  summary: ReleaseBusAggregateSummarySchema.allow(null).default(null)
+}).required();
+
 // Non-orchestration deploy operations remain artifact-required. These are the
 // only workflows that authorize staging/prod evidence or synchronization
 // without deploying a package. The route still binds every field to the exact
