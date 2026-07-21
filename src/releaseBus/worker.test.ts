@@ -673,14 +673,14 @@ describe('frontend base canary', () => {
           source_run_id: '123'
         })
       }),
-      {}
+      { connection: { transaction: 'test' } }
     );
     expect(mockAppendEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'BASE_CANARY_EVIDENCE_REUSED',
         payload: expect.objectContaining({ status: 'reused' })
       }),
-      {}
+      { connection: { transaction: 'test' } }
     );
   });
 
@@ -757,7 +757,7 @@ describe('frontend base canary', () => {
       expect.objectContaining({
         evidenceType: 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
       }),
-      {}
+      { connection: { transaction: 'test' } }
     );
     expect(mockDispatchWorkflow).toHaveBeenCalledWith(
       'frontend',
