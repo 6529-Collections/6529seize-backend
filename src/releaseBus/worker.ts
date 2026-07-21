@@ -53,6 +53,13 @@ export type WorkerResult = {
 
 class TerminalReleaseTrainError extends Error {}
 
+class ConcurrentReleaseTrainPhaseError extends Error {
+  public constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, ConcurrentReleaseTrainPhaseError.prototype);
+  }
+}
+
 function metadata(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {
     try {
@@ -514,7 +521,7 @@ async function updateTrainPhase(
         context
       );
       if (!advanced)
-        throw new Error(
+        throw new ConcurrentReleaseTrainPhaseError(
           `Release train ${train.id} changed concurrently from ${train.status}`
         );
       await releaseBusRepository.appendEvent(
@@ -2920,6 +2927,27 @@ export async function advanceReleaseTrain(
       `Unsupported release train status ${train.status}`
     );
   } catch (error) {
+    if (error instanceof ConcurrentReleaseTrainPhaseError) {
+      const latest = await reloadTrain(train.id);
+      if (['COMPLETED', 'ROLLED_BACK', 'CANCELLED'].includes(latest.status))
+        return {
+          decision: 'COMPLETE',
+          train_id: latest.id,
+          status: latest.status
+        };
+      if (latest.status === 'FAILED')
+        return {
+          decision: 'FAILED',
+          train_id: latest.id,
+          status: latest.status,
+          message: latest.failure_reason ?? undefined
+        };
+      return {
+        decision: 'CONTINUE',
+        train_id: latest.id,
+        status: latest.status
+      };
+    }
     if (!(error instanceof TerminalReleaseTrainError)) throw error;
     const message =
       error instanceof Error
