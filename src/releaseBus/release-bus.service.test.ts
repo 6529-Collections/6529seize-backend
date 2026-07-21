@@ -224,6 +224,136 @@ describe('ReleaseBusService readiness', () => {
   });
 });
 
+describe('ReleaseBusService shadow dependencies', () => {
+  function repositoryWithShadowedDependency() {
+    let dependency: ReleaseCandidateRecord = {
+      ...candidate('READY_FOR_STAGING'),
+      id: 'backend-dependency',
+      repository: 'backend',
+      branch_name: 'feature/backend',
+      head_sha: 'b'.repeat(40),
+      staging_ready_at: 1,
+      deploy_plan_json: { units: ['api'], edges: [] }
+    };
+    let dependant: ReleaseCandidateRecord = {
+      ...candidate('BLOCKED'),
+      id: 'frontend-dependant',
+      staging_ready_at: 2,
+      hold_reason: 'WAITING_FOR_DEPENDENCY:STAGING'
+    };
+    const edge = {
+      id: 'dependency-edge',
+      candidate_id: dependant.id,
+      depends_on_candidate_id: dependency.id,
+      required_state: 'STAGING_VALIDATED' as const,
+      created_at: 1,
+      updated_at: 1
+    };
+    const createdCandidateIds: string[][] = [];
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        fn: (value: unknown) => unknown
+      ) => fn({}),
+      listControls: async () => [],
+      acquireLane: async () => ({ lease_token: 'lease-token' }),
+      releaseLane: async () => true,
+      listCandidates: async (
+        statuses: ReleaseCandidateRecord['status'][] | null
+      ) =>
+        [dependency, dependant].filter(
+          (item) => !statuses || statuses.includes(item.status)
+        ),
+      listDependencies: async (candidateIds: readonly string[]) =>
+        candidateIds.includes(dependant.id) ? [edge] : [],
+      findCandidateById: async (id: string) =>
+        [dependency, dependant].find((item) => item.id === id) ?? null,
+      hasCandidateEvidence: async (_candidateId: string, type: string) =>
+        type === 'CANDIDATE_SHADOW_EVALUATED_STAGING',
+      updateCandidateLifecycle: async (
+        id: string,
+        _version: number,
+        fields: {
+          status: ReleaseCandidateRecord['status'];
+          holdReason?: string | null;
+          currentTrainId?: string | null;
+        }
+      ) => {
+        const update = (item: ReleaseCandidateRecord) => ({
+          ...item,
+          status: fields.status,
+          hold_reason:
+            fields.holdReason === undefined
+              ? item.hold_reason
+              : fields.holdReason,
+          current_train_id:
+            fields.currentTrainId === undefined
+              ? item.current_train_id
+              : fields.currentTrainId,
+          row_version: item.row_version + 1
+        });
+        if (id === dependency.id) dependency = update(dependency);
+        if (id === dependant.id) dependant = update(dependant);
+      },
+      createTrain: async (_train: unknown, candidateIds: readonly string[]) => {
+        createdCandidateIds.push([...candidateIds]);
+      },
+      appendEvent: async () => undefined
+    } as unknown as ReleaseBusRepository;
+    return {
+      repository,
+      createdCandidateIds,
+      dependant: () => dependant,
+      dependency
+    };
+  }
+
+  it('releases a shadow hold after the dependency was evaluated in an earlier shadow train', async () => {
+    const state = repositoryWithShadowedDependency();
+
+    const train = await new ReleaseBusService(state.repository).freezeNextTrain(
+      {
+        lane: 'STAGING',
+        owner: 'shadow-starter',
+        frontendBaseSha: 'c'.repeat(40),
+        backendBaseSha: 'd'.repeat(40),
+        cutoffAt: 10,
+        excludedCandidateIds: [state.dependency.id],
+        allowShadowDependencyEvidence: true
+      }
+    );
+
+    expect(train).not.toBeNull();
+    expect(state.createdCandidateIds).toEqual([['frontend-dependant']]);
+    expect(state.dependant()).toMatchObject({
+      status: 'STAGING_CLAIMED',
+      hold_reason: null,
+      current_train_id: train?.id
+    });
+  });
+
+  it('does not use shadow evidence to release a live dependency hold', async () => {
+    const state = repositoryWithShadowedDependency();
+
+    const train = await new ReleaseBusService(state.repository).freezeNextTrain(
+      {
+        lane: 'STAGING',
+        owner: 'live-starter',
+        frontendBaseSha: 'c'.repeat(40),
+        backendBaseSha: 'd'.repeat(40),
+        cutoffAt: 10,
+        excludedCandidateIds: [state.dependency.id]
+      }
+    );
+
+    expect(train).toBeNull();
+    expect(state.createdCandidateIds).toEqual([]);
+    expect(state.dependant()).toMatchObject({
+      status: 'BLOCKED',
+      hold_reason: 'WAITING_FOR_DEPENDENCY:STAGING'
+    });
+  });
+});
+
 describe('ReleaseBusService break glass', () => {
   it('does not pause when a train is active', async () => {
     const activeTrain = { id: 'active-train' };

@@ -243,7 +243,8 @@ const starter: Handler = async () =>
           frontendBaseSha:
             lane === 'PRODUCTION' ? frontendMain : frontendStaging,
           backendBaseSha: lane === 'PRODUCTION' ? backendMain : backendStaging,
-          excludedCandidateIds
+          excludedCandidateIds,
+          allowShadowDependencyEvidence: mode === 'SHADOW'
         });
       }
       if (!train) return { mode, started: false };
