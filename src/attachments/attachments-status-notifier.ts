@@ -8,7 +8,12 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
-import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
+import type { ApiDrop } from '@/api/generated/models/ApiDrop';
+
+interface AttachmentBroadcastData {
+  readonly waveIds: string[];
+  readonly drops: ApiDrop[];
+}
 
 export class AttachmentsStatusNotifier {
   private readonly logger = Logger.get(this.constructor.name);
@@ -24,8 +29,9 @@ export class AttachmentsStatusNotifier {
     ctx: RequestContext = {}
   ): Promise<void> {
     try {
-      const waveIds = await this.attachmentsDb.findAttachmentWaveIds(
-        attachment.id
+      const { waveIds, drops } = await this.loadBroadcastData(
+        attachment.id,
+        ctx
       );
       const apiAttachment = mapAttachmentToApiAttachment(attachment);
       await this.wsListenersNotifier.notifyAboutAttachmentStatusUpdate(
@@ -36,7 +42,13 @@ export class AttachmentsStatusNotifier {
         },
         ctx
       );
-      await this.notifyDropUpdates(attachment.id, ctx);
+      await Promise.all(
+        drops.map((drop) =>
+          this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
+            useSystemBroadcastAudience: true
+          })
+        )
+      );
     } catch (error) {
       this.logger.error(
         `Failed to broadcast attachment status update for ${attachment.id}`,
@@ -45,33 +57,48 @@ export class AttachmentsStatusNotifier {
     }
   }
 
-  private async notifyDropUpdates(
+  private async loadBroadcastData(
     attachmentId: string,
     ctx: RequestContext
-  ): Promise<void> {
-    if (!this.dropsService) {
-      return;
+  ): Promise<AttachmentBroadcastData> {
+    const load = async (
+      consistentCtx: RequestContext
+    ): Promise<AttachmentBroadcastData> => {
+      const dropsService = this.dropsService;
+      const [waveIds, dropIds] = await Promise.all([
+        this.attachmentsDb.findAttachmentWaveIds(
+          attachmentId,
+          consistentCtx.connection
+        ),
+        dropsService
+          ? this.attachmentsDb.findAttachmentDropIds(
+              attachmentId,
+              consistentCtx.connection
+            )
+          : Promise.resolve([])
+      ]);
+      const drops = dropsService
+        ? await Promise.all(
+            dropIds.map((dropId) =>
+              dropsService.findDropByIdOrThrow(
+                {
+                  dropId,
+                  skipEligibilityCheck: true
+                },
+                consistentCtx
+              )
+            )
+          )
+        : [];
+      return { waveIds, drops };
+    };
+
+    if (ctx.connection) {
+      return load(ctx);
     }
-    const dropsService = this.dropsService;
-    const dropIds =
-      await this.attachmentsDb.findAttachmentDropIds(attachmentId);
-    if (!dropIds.length) {
-      return;
-    }
-    await giveReadReplicaTimeToCatchUp();
-    await Promise.all(
-      dropIds.map(async (dropId) => {
-        const drop = await dropsService.findDropByIdOrThrow(
-          {
-            dropId,
-            skipEligibilityCheck: true
-          },
-          ctx
-        );
-        await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
-          useSystemBroadcastAudience: true
-        });
-      })
+
+    return this.attachmentsDb.executeNativeQueriesInTransaction(
+      async (connection) => load({ ...ctx, connection })
     );
   }
 }
