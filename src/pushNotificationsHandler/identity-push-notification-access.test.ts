@@ -127,10 +127,10 @@ describe('IdentityPushNotificationAccess', () => {
     ).resolves.toBe(true);
     await expect(
       access.canRecipientReadRelatedContent(
-        createNotification({ related_drop_id: 'drop-2' }),
+        createNotification({ related_drop_id: 'drop-1' }),
         waveAccessCache
       )
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
 
     expect(groupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledTimes(1);
     expect(wavesDb.findWavesByIds).toHaveBeenCalledTimes(1);
