@@ -652,7 +652,8 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       if (
         body.summary &&
         (operation.operation_type !== 'base-canary-frontend' ||
-          operation.expected_sha?.toLowerCase() !== body.summary.base_sha ||
+          operation.expected_sha?.toLowerCase() !==
+            body.summary.base_sha.toLowerCase() ||
           operation.environment !== body.summary.environment)
       ) {
         throw new CustomApiCompliantException(

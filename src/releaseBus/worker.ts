@@ -167,6 +167,32 @@ export function workflowProgress(run: GitHubRun): Record<string, unknown> {
   };
 }
 
+function validProgressTimestamp(value: unknown, now: number): number | null {
+  let timestamp = Number.NaN;
+  if (typeof value === 'number') timestamp = value;
+  else if (typeof value === 'string') timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp >= 0 && timestamp <= now
+    ? timestamp
+    : null;
+}
+
+export function mergeWorkflowProgress(
+  previousResult: Record<string, unknown>,
+  run: GitHubRun
+): Record<string, unknown> {
+  const currentProgress = workflowProgress(run);
+  const now = Date.now();
+  const timestamps = [
+    validProgressTimestamp(previousResult.last_progress_at, now),
+    validProgressTimestamp(currentProgress.last_progress_at, now)
+  ].filter((value): value is number => value !== null);
+  return {
+    ...previousResult,
+    ...currentProgress,
+    last_progress_at: timestamps.length > 0 ? Math.max(...timestamps) : null
+  };
+}
+
 function meaningfulWorkflowProgressChanged(
   before: Record<string, unknown>,
   after: Record<string, unknown>
@@ -317,10 +343,7 @@ async function reconcile(
   );
   if (!run) return operation;
   const previousResult = metadata(operation.result_metadata_json);
-  const progress = {
-    ...previousResult,
-    ...workflowProgress(run)
-  };
+  const progress = mergeWorkflowProgress(previousResult, run);
   let nextStatus: ReleaseOperationRecord['status'];
   if (run.status !== 'completed') {
     nextStatus = 'RUNNING';
