@@ -605,6 +605,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
   public async advanceTrainPhase(
     id: string,
     expectedStatus: ReleaseTrainStatus,
+    expectedVersion: number,
     nextStatus: ReleaseTrainStatus,
     ctx: RequestContext
   ): Promise<boolean> {
@@ -612,10 +613,12 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       `update ${RELEASE_TRAINS_TABLE}
        set status = :nextStatus, updated_at = :now,
            row_version = row_version + 1
-       where id = :id and status = :expectedStatus`,
+       where id = :id and status = :expectedStatus
+         and row_version = :expectedVersion`,
       {
         id,
         expectedStatus,
+        expectedVersion,
         nextStatus,
         now: Date.now()
       },

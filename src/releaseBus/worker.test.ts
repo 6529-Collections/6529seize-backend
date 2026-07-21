@@ -484,6 +484,7 @@ describe('frontend base canary', () => {
     expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
       frozenTrain.id,
       'FROZEN',
+      frozenTrain.row_version,
       'BASE_CANARY_RUNNING',
       { connection: { transaction: 'test' } }
     );
@@ -552,6 +553,7 @@ describe('frontend base canary', () => {
     expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
       frozenTrain.id,
       'FROZEN',
+      frozenTrain.row_version,
       'BASE_CANARY_RUNNING',
       { connection: { transaction: 'test' } }
     );
