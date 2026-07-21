@@ -38,4 +38,3 @@ describe('base-canary evidence feature controls', () => {
     });
   });
 });
-

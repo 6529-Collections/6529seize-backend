@@ -36,8 +36,7 @@ export function getBaseCanaryEvidenceConfig(): {
     configuredMaxAge <= 168;
   return {
     reuse: maxAgeIsValid && enabled('RELEASE_BUS_BASE_EVIDENCE_REUSE'),
-    shadow:
-      maxAgeIsValid && enabled('RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW'),
+    shadow: maxAgeIsValid && enabled('RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW'),
     maxAgeHours: maxAgeIsValid ? configuredMaxAge : 24
   };
 }

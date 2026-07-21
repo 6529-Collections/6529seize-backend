@@ -274,7 +274,10 @@ export class ReleaseBusGitHubApp {
       `/actions/variables/${encodeURIComponent(name)}`
     );
     if (response.status === 404) return null;
-    await this.assertOk(response, `read ${repository} Actions variable ${name}`);
+    await this.assertOk(
+      response,
+      `read ${repository} Actions variable ${name}`
+    );
     const value = ((await response.json()) as GitHubActionsVariable).value;
     if (typeof value !== 'string' || value.length > 500)
       throw new Error(`Invalid ${repository} Actions variable ${name}`);

@@ -132,10 +132,7 @@ export class ReleaseBusService {
         'Frontend candidates cannot declare backend deploy units'
       );
     }
-    if (
-      request.repository === 'backend' &&
-      request.force_fresh_base_canary
-    ) {
+    if (request.repository === 'backend' && request.force_fresh_base_canary) {
       throw new Error(
         'Only frontend candidates can force a fresh frontend base canary'
       );
