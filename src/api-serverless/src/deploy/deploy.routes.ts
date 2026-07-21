@@ -625,34 +625,6 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       duplicate_files: string[];
     } | null;
   }>(req.body, ReleaseBusProgressReportBodySchema);
-  const operation = await releaseBusRepository.findOperation(
-    body.operation_key,
-    {}
-  );
-  if (
-    operation?.train_id !== body.train_id ||
-    operation?.external_id !== body.workflow_run_id
-  ) {
-    throw new CustomApiCompliantException(
-      403,
-      'Release progress report does not match the authorized operation'
-    );
-  }
-  const existingResult = (() => {
-    if (typeof operation.result_metadata_json !== 'string')
-      return operation.result_metadata_json &&
-        typeof operation.result_metadata_json === 'object'
-        ? (operation.result_metadata_json as Record<string, unknown>)
-        : {};
-    try {
-      return JSON.parse(operation.result_metadata_json) as Record<
-        string,
-        unknown
-      >;
-    } catch {
-      return {};
-    }
-  })();
   const reportContent = {
     phase: body.phase,
     status: body.status,
@@ -660,65 +632,123 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
     jest: body.jest,
     summary: body.summary
   };
-  const existingGateReport =
-    existingResult.gate_report && typeof existingResult.gate_report === 'object'
-      ? (existingResult.gate_report as Record<string, unknown>)
-      : null;
-  if (body.phase === 'complete' && existingGateReport?.phase === 'complete') {
-    const persistedContent = {
-      phase: existingGateReport.phase,
-      status: existingGateReport.status,
-      stages: existingGateReport.stages,
-      jest: existingGateReport.jest,
-      summary: existingGateReport.summary ?? null
-    };
-    if (!isDeepStrictEqual(persistedContent, reportContent)) {
-      throw new CustomApiCompliantException(
-        409,
-        'A different terminal progress report is already recorded for this operation'
+  const result = await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const operation = await releaseBusRepository.findOperation(
+        body.operation_key,
+        context,
+        true
       );
+      if (
+        operation?.train_id !== body.train_id ||
+        operation?.external_id !== body.workflow_run_id
+      ) {
+        throw new CustomApiCompliantException(
+          403,
+          'Release progress report does not match the authorized operation'
+        );
+      }
+      if (
+        body.summary &&
+        (operation.operation_type !== 'base-canary-frontend' ||
+          operation.expected_sha?.toLowerCase() !== body.summary.base_sha ||
+          operation.environment !== body.summary.environment)
+      ) {
+        throw new CustomApiCompliantException(
+          403,
+          'Release progress aggregate does not match the authorized base canary operation'
+        );
+      }
+      const existingResult = (() => {
+        if (typeof operation.result_metadata_json !== 'string')
+          return operation.result_metadata_json &&
+            typeof operation.result_metadata_json === 'object'
+            ? (operation.result_metadata_json as Record<string, unknown>)
+            : {};
+        try {
+          return JSON.parse(operation.result_metadata_json) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          return {};
+        }
+      })();
+      const existingGateReport =
+        existingResult.gate_report &&
+        typeof existingResult.gate_report === 'object'
+          ? (existingResult.gate_report as Record<string, unknown>)
+          : null;
+      if (existingGateReport?.phase === 'complete') {
+        if (body.phase !== 'complete') {
+          throw new CustomApiCompliantException(
+            409,
+            'A terminal progress report is already recorded for this operation'
+          );
+        }
+        const persistedContent = {
+          phase: existingGateReport.phase,
+          status: existingGateReport.status,
+          stages: existingGateReport.stages,
+          jest: existingGateReport.jest,
+          summary: existingGateReport.summary ?? null
+        };
+        if (!isDeepStrictEqual(persistedContent, reportContent)) {
+          throw new CustomApiCompliantException(
+            409,
+            'A different terminal progress report is already recorded for this operation'
+          );
+        }
+        return {
+          idempotent: true,
+          reportedAt: existingGateReport.reported_at
+        };
+      }
+      const reportedAt = Date.now();
+      const gateReport = {
+        ...reportContent,
+        reported_at: reportedAt
+      };
+      await releaseBusRepository.updateOperation(
+        body.operation_key,
+        {
+          status: operation.status,
+          resultMetadata: {
+            ...existingResult,
+            gate_report: gateReport,
+            last_progress_at: reportedAt
+          }
+        },
+        context
+      );
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: body.train_id,
+          eventType: 'OPERATION_GATE_REPORT',
+          payload: {
+            operation_key: body.operation_key,
+            phase: body.phase,
+            status: body.status,
+            failed_test_suites: body.jest?.num_failed_test_suites ?? 0,
+            failed_tests: body.jest?.num_failed_tests ?? 0,
+            summary: body.summary
+          }
+        },
+        context
+      );
+      return { idempotent: false, reportedAt };
     }
-    setNoStoreHeaders(res);
+  );
+  setNoStoreHeaders(res);
+  if (result.idempotent) {
     return res.json({
       accepted: true,
       idempotent: true,
-      reported_at: existingGateReport.reported_at
+      reported_at: result.reportedAt
     });
   }
-  const reportedAt = Date.now();
-  const gateReport = {
-    ...reportContent,
-    reported_at: reportedAt
-  };
-  await releaseBusRepository.updateOperation(
-    body.operation_key,
-    {
-      status: operation.status,
-      resultMetadata: {
-        ...existingResult,
-        gate_report: gateReport,
-        last_progress_at: reportedAt
-      }
-    },
-    {}
-  );
-  await releaseBusRepository.appendEvent(
-    {
-      trainId: body.train_id,
-      eventType: 'OPERATION_GATE_REPORT',
-      payload: {
-        operation_key: body.operation_key,
-        phase: body.phase,
-        status: body.status,
-        failed_test_suites: body.jest?.num_failed_test_suites ?? 0,
-        failed_tests: body.jest?.num_failed_tests ?? 0,
-        summary: body.summary
-      }
-    },
-    {}
-  );
-  setNoStoreHeaders(res);
-  return res.json({ accepted: true, reported_at: reportedAt });
+  return res.json({ accepted: true, reported_at: result.reportedAt });
 });
 
 deployRoutes.post('/release-bus/authorize-break-glass', async (req, res) => {

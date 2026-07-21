@@ -103,10 +103,23 @@ const FAILURE_CONCLUSIONS = new Set([
   'timed_out'
 ]);
 
+function boundedWorkflowLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const sanitized = Array.from(value)
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? ' ' : character;
+    })
+    .join('')
+    .trim();
+  return sanitized ? sanitized.slice(0, 500) : null;
+}
+
 function latestTimestamp(values: readonly (string | null | undefined)[]) {
+  const now = Date.now();
   const timestamps = values
     .map((value) => (value ? Date.parse(value) : Number.NaN))
-    .filter((value) => Number.isFinite(value));
+    .filter((value) => Number.isFinite(value) && value <= now);
   return timestamps.length > 0 ? Math.max(...timestamps) : null;
 }
 
@@ -133,10 +146,10 @@ export function workflowProgress(run: GitHubRun): Record<string, unknown> {
     url: run.html_url,
     workflow_status: run.status,
     workflow_conclusion: run.conclusion,
-    active_job: activeJob?.name ?? null,
-    active_step: activeStep?.name ?? null,
-    failed_job: failedJob?.name ?? null,
-    failed_step: failedStep?.name ?? null,
+    active_job: boundedWorkflowLabel(activeJob?.name),
+    active_step: boundedWorkflowLabel(activeStep?.name),
+    failed_job: boundedWorkflowLabel(failedJob?.name),
+    failed_step: boundedWorkflowLabel(failedStep?.name),
     last_progress_at: latestTimestamp([
       run.created_at,
       run.updated_at,
@@ -306,38 +319,52 @@ async function reconcile(
   } else {
     nextStatus = 'FAILED';
   }
-  await releaseBusRepository.updateOperation(
-    operation.operation_key,
-    {
-      status: nextStatus,
-      externalId: String(run.id),
-      resultMetadata: progress,
-      completedAt: run.status === 'completed' ? Date.now() : undefined
-    },
-    {}
+  const updated = await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const operationUpdated =
+        await releaseBusRepository.updateOperationIfVersion(
+          operation.operation_key,
+          operation.row_version,
+          {
+            status: nextStatus,
+            externalId: String(run.id),
+            resultMetadata: progress,
+            completedAt: run.status === 'completed' ? Date.now() : undefined
+          },
+          context
+        );
+      if (!operationUpdated) return false;
+      if (
+        operation.status !== nextStatus ||
+        meaningfulWorkflowProgressChanged(previousResult, progress)
+      ) {
+        await releaseBusRepository.appendEvent(
+          {
+            trainId: operation.train_id,
+            eventType: 'OPERATION_PROGRESS',
+            payload: {
+              operation_key: operation.operation_key,
+              operation_type: operation.operation_type,
+              status: nextStatus,
+              workflow_url: run.html_url,
+              active_job: progress.active_job,
+              active_step: progress.active_step,
+              failed_job: progress.failed_job,
+              failed_step: progress.failed_step
+            }
+          },
+          context
+        );
+      }
+      return true;
+    }
   );
-  if (
-    operation.status !== nextStatus ||
-    meaningfulWorkflowProgressChanged(previousResult, progress)
-  ) {
-    await releaseBusRepository.appendEvent(
-      {
-        trainId: operation.train_id,
-        eventType: 'OPERATION_PROGRESS',
-        payload: {
-          operation_key: operation.operation_key,
-          operation_type: operation.operation_type,
-          status: nextStatus,
-          workflow_url: run.html_url,
-          active_job: progress.active_job,
-          active_step: progress.active_step,
-          failed_job: progress.failed_job,
-          failed_step: progress.failed_step
-        }
-      },
+  if (!updated)
+    return (await releaseBusRepository.findOperation(
+      operation.operation_key,
       {}
-    );
-  }
+    )) as ReleaseOperationRecord;
   return (await releaseBusRepository.findOperation(
     operation.operation_key,
     {}
@@ -2399,20 +2426,21 @@ export async function advanceReleaseTrain(
       return continueAtPhase(train, 'DEPLOYING_FRONTEND_PRODUCTION');
     }
     if (train.status === 'DEPLOYING_FRONTEND_PRODUCTION') {
+      const latest = await reloadTrain(train.id);
       return advanceGuardedPhase({
-        train,
+        train: latest,
         lane: 'global-production',
-        run: async () =>
-          advanceFrontendDeploy(await reloadTrain(train.id), 'prod'),
+        run: () => advanceFrontendDeploy(latest, 'prod'),
         failureMessage: 'Frontend production deployment failed',
         nextStatus: 'PRODUCTION_E2E_RUNNING'
       });
     }
     if (train.status === 'PRODUCTION_E2E_RUNNING') {
+      const latest = await reloadTrain(train.id);
       return advanceGuardedPhase({
-        train,
+        train: latest,
         lane: 'global-production',
-        run: async () => advanceE2e(await reloadTrain(train.id), 'prod'),
+        run: () => advanceE2e(latest, 'prod'),
         failureMessage: 'Production E2E failed',
         nextStatus: 'VALIDATING_PRODUCTION'
       });

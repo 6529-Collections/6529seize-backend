@@ -64,6 +64,34 @@ const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
   frontend: '6529seize-frontend',
   backend: '6529seize-backend'
 };
+const MAX_WORKFLOW_JOBS = 100;
+const MAX_WORKFLOW_STEPS = 100;
+const MAX_WORKFLOW_LABEL_LENGTH = 500;
+
+export function safeGitHubWorkflowLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const sanitized = Array.from(value)
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? ' ' : character;
+    })
+    .join('')
+    .trim();
+  return sanitized ? sanitized.slice(0, MAX_WORKFLOW_LABEL_LENGTH) : null;
+}
+
+export function sanitizeGitHubWorkflowJobs(
+  jobs: readonly GitHubWorkflowJob[]
+): GitHubWorkflowJob[] {
+  return jobs.slice(0, MAX_WORKFLOW_JOBS).map((job) => ({
+    ...job,
+    name: safeGitHubWorkflowLabel(job.name) ?? 'Unnamed workflow job',
+    steps: job.steps?.slice(0, MAX_WORKFLOW_STEPS).map((step) => ({
+      ...step,
+      name: safeGitHubWorkflowLabel(step.name) ?? 'Unnamed workflow step'
+    }))
+  }));
+}
 
 function base64Url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url');
@@ -367,7 +395,7 @@ export class ReleaseBusGitHubApp {
     await this.assertOk(response, `read ${repository} workflow jobs`);
     const jobs =
       ((await response.json()) as { jobs?: GitHubWorkflowJob[] }).jobs ?? [];
-    return { ...run, jobs };
+    return { ...run, jobs: sanitizeGitHubWorkflowJobs(jobs) };
   }
 
   public async getWorkflowRunIdentity(

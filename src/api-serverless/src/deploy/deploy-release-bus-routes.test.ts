@@ -3,6 +3,7 @@ const mockGetLane = jest.fn();
 const mockBindOperationAuthorization = jest.fn();
 const mockUpdateOperation = jest.fn();
 const mockAppendEvent = jest.fn();
+const mockExecuteTransaction = jest.fn();
 const mockFindCandidateById = jest.fn();
 const mockGetWorkflowRunIdentity = jest.fn();
 const mockIsOrganizationOperator = jest.fn();
@@ -28,6 +29,8 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
       mockBindOperationAuthorization(...args),
     updateOperation: (...args: unknown[]) => mockUpdateOperation(...args),
     appendEvent: (...args: unknown[]) => mockAppendEvent(...args),
+    executeNativeQueriesInTransaction: (...args: unknown[]) =>
+      mockExecuteTransaction(...args),
     findCandidateById: (...args: unknown[]) => mockFindCandidateById(...args),
     listTrains: (...args: unknown[]) => mockListTrains(...args),
     findTrain: (...args: unknown[]) => mockFindTrain(...args),
@@ -565,11 +568,18 @@ describe('release-bus progress reporting', () => {
     mockFindOperation.mockResolvedValue({
       train_id: TRAIN_ID,
       external_id: '12345',
+      operation_type: 'base-canary-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
       status: 'DISPATCHED',
+      row_version: 1,
       result_metadata_json: {
         url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
       }
     });
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
     mockUpdateOperation.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
   });
@@ -614,7 +624,7 @@ describe('release-bus progress reporting', () => {
           last_progress_at: expect.any(Number)
         })
       }),
-      {}
+      { connection: { transaction: 'test' } }
     );
     expect(mockAppendEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -624,24 +634,74 @@ describe('release-bus progress reporting', () => {
           summary: aggregateSummary()
         })
       }),
-      {}
+      { connection: { transaction: 'test' } }
     );
   });
 
+  it.each([
+    {
+      name: 'base SHA',
+      operation: { expected_sha: 'b'.repeat(40) }
+    },
+    {
+      name: 'environment',
+      operation: { environment: 'prod' }
+    },
+    {
+      name: 'operation type',
+      operation: { operation_type: 'preflight-frontend' }
+    }
+  ])(
+    'rejects an aggregate with a mismatched authorized $name',
+    async ({ operation }) => {
+      mockFindOperation.mockResolvedValue({
+        train_id: TRAIN_ID,
+        external_id: '12345',
+        operation_type: 'base-canary-frontend',
+        expected_sha: SHA,
+        environment: 'orchestration',
+        status: 'DISPATCHED',
+        row_version: 1,
+        result_metadata_json: {},
+        ...operation
+      });
+
+      const response = await post(
+        '/deploy/release-bus/report-progress',
+        progressBody()
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.body.error).toContain('authorized base canary operation');
+      expect(mockUpdateOperation).not.toHaveBeenCalled();
+      expect(mockAppendEvent).not.toHaveBeenCalled();
+    }
+  );
+
   it('accepts an identical terminal report idempotently without another event', async () => {
     const report = progressBody();
-    const { base_sha, ...summaryRest } = report.summary;
+    const { files, ...totalsRest } = report.summary.totals;
+    const [{ index, ...firstShardRest }, ...remainingShards] =
+      report.summary.shards;
     mockFindOperation.mockResolvedValue({
       train_id: TRAIN_ID,
       external_id: '12345',
+      operation_type: 'base-canary-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
       status: 'SUCCEEDED',
+      row_version: 2,
       result_metadata_json: {
         gate_report: {
           phase: report.phase,
           status: report.status,
           stages: report.stages,
           jest: report.jest,
-          summary: { ...summaryRest, base_sha },
+          summary: {
+            ...report.summary,
+            totals: { ...totalsRest, files },
+            shards: [{ ...firstShardRest, index }, ...remainingShards]
+          },
           reported_at: 123456
         }
       }
@@ -664,7 +724,11 @@ describe('release-bus progress reporting', () => {
     mockFindOperation.mockResolvedValue({
       train_id: TRAIN_ID,
       external_id: '12345',
+      operation_type: 'base-canary-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
       status: 'SUCCEEDED',
+      row_version: 2,
       result_metadata_json: {
         gate_report: {
           ...report,
@@ -678,6 +742,34 @@ describe('release-bus progress reporting', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toContain('different terminal progress report');
+    expect(mockUpdateOperation).not.toHaveBeenCalled();
+    expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects a late partial report after the terminal report', async () => {
+    const report = progressBody();
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      operation_type: 'base-canary-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
+      status: 'SUCCEEDED',
+      row_version: 2,
+      result_metadata_json: {
+        gate_report: { ...report, reported_at: 123456 }
+      }
+    });
+
+    const response = await post('/deploy/release-bus/report-progress', {
+      ...report,
+      phase: 'unit_tests',
+      status: 'RUNNING',
+      summary: null
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain('terminal progress report');
     expect(mockUpdateOperation).not.toHaveBeenCalled();
     expect(mockAppendEvent).not.toHaveBeenCalled();
   });

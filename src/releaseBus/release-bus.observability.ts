@@ -432,7 +432,11 @@ export function toOperationView(
   const workflowUrl =
     rawUrl && ACTIONS_URL_PATTERN.test(rawUrl) ? rawUrl : null;
   const workflowStatus = optionalString(result.workflow_status);
-  const lastProgressAt = optionalTimestamp(result.last_progress_at);
+  const recordedProgressAt = optionalTimestamp(result.last_progress_at);
+  const lastProgressAt =
+    recordedProgressAt !== null && recordedProgressAt <= now
+      ? recordedProgressAt
+      : null;
   const staleAfterMs = operationStaleAfterMs(operation.operation_type);
   const health = classifyHealth(
     operation,

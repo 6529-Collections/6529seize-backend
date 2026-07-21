@@ -95,6 +95,23 @@ describe('release bus observability', () => {
     expect(view.stalled_reason).toBe('GITHUB_WORKFLOW_NO_RECENT_PROGRESS');
   });
 
+  it('does not let a future progress timestamp mask a stalled operation', () => {
+    const view = toOperationView(
+      operation({
+        started_at: NOW - 61 * 60 * 1000,
+        result_metadata_json: {
+          workflow_status: 'in_progress',
+          last_progress_at: NOW + 24 * 60 * 60 * 1000
+        }
+      }),
+      NOW
+    );
+
+    expect(view.health).toBe('STALLED');
+    expect(view.last_progress_at).toBeNull();
+    expect(view.stalled_reason).toBe('GITHUB_WORKFLOW_NO_RECENT_PROGRESS');
+  });
+
   it('rejects an untrusted operation URL from the operator response', () => {
     const view = toOperationView(
       operation({ result_metadata_json: { url: 'javascript:alert(1)' } }),
