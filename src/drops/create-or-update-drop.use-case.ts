@@ -103,7 +103,6 @@ import { Logger } from '@/logging';
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
 const ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
-const logger = Logger.get('CREATE_OR_UPDATE_DROP_USE_CASE');
 const MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS = 5 * 60 * 1000;
 const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
@@ -238,6 +237,7 @@ export class CreateOrUpdateDropUseCase {
   // Intentionally throttled per warm Lambda container, not per wave. One
   // warning is enough to surface the shared missing environment configuration.
   private nextMissingDeveloperMentionWarningAt = 0;
+  private readonly logger = Logger.get(CreateOrUpdateDropUseCase.name);
 
   public constructor(
     private readonly dropsDb: DropsDb,
@@ -2004,7 +2004,7 @@ export class CreateOrUpdateDropUseCase {
     }
     this.nextMissingDeveloperMentionWarningAt =
       now + MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS;
-    logger.warn(
+    this.logger.warn(
       '[@devs6529 is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]'
     );
   }
@@ -2208,21 +2208,24 @@ export class CreateOrUpdateDropUseCase {
         },
         { timer, connection }
       );
-    const mutedDirectMentionedIdentityIds = new Set(
-      await this.identitySubscriptionsDb.findMutedWaveReaders(
-        wave.id,
+    const eligibleMentionedIdentityIds =
+      await this.filterIdentityIdsEligibleToReadWave(
+        wave,
         collections.distinct([
           ...directlyMentionedIdentityIds,
           ...permissionGroupMentionIdentityIds
         ]),
+        { timer, connection }
+      );
+    const mutedDirectMentionedIdentityIds = new Set(
+      await this.identitySubscriptionsDb.findMutedWaveReaders(
+        wave.id,
+        eligibleMentionedIdentityIds,
         connection
       )
     );
     const directMentionIdentityIds = collections.distinct(
-      [
-        ...directlyMentionedIdentityIds,
-        ...permissionGroupMentionIdentityIds
-      ].filter(
+      eligibleMentionedIdentityIds.filter(
         (identityId) =>
           identityId !== authorId &&
           !mutedDirectMentionedIdentityIds.has(identityId)
@@ -2260,6 +2263,49 @@ export class CreateOrUpdateDropUseCase {
       );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     return pendingPushNotificationIds;
+  }
+
+  private async filterIdentityIdsEligibleToReadWave(
+    wave: WaveEntity,
+    identityIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string => groupId !== null
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        this.logger.warn(
+          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering direct mention recipients for wave ${wave.id}`
+        );
+        return [];
+      }
+      if (parentWave.visibility_group_id) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    const distinctIdentityIds = collections.distinct(identityIds);
+    if (!visibilityGroupIds.length || !distinctIdentityIds.length) {
+      return distinctIdentityIds;
+    }
+
+    const eligibleIdentitySets = await Promise.all(
+      collections.distinct(visibilityGroupIds).map(async (groupId) => {
+        const eligibleIdentityIds =
+          await this.userGroupsService.findIdentitiesInGroups([groupId], {
+            timer,
+            connection
+          });
+        return new Set(eligibleIdentityIds);
+      })
+    );
+    return distinctIdentityIds.filter((identityId) =>
+      eligibleIdentitySets.every((eligibleIds) => eligibleIds.has(identityId))
+    );
   }
 }
 

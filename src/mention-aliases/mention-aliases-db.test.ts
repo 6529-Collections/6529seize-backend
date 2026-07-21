@@ -199,13 +199,23 @@ describeWithSeed(
     const db = new MentionAliasesDb(() => sqlExecutor);
 
     it('locks the profile addressed by the authenticated identity profile id', async () => {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          await expect(
-            db.lockOwnerProfile(lockOwnerIdentityKey.profile_id, connection)
-          ).resolves.toBe(true);
-        }
-      );
+      const executeSpy = jest.spyOn(sqlExecutor, 'execute');
+      try {
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await expect(
+              db.lockOwnerProfile(lockOwnerIdentityKey.profile_id, connection)
+            ).resolves.toBe(true);
+          }
+        );
+        expect(executeSpy).toHaveBeenCalledWith(
+          expect.stringMatching(/\bfor update\b/i),
+          { ownerProfileId: lockOwnerIdentityKey.profile_id },
+          expect.objectContaining({ wrappedConnection: expect.any(Object) })
+        );
+      } finally {
+        executeSpy.mockRestore();
+      }
     });
   }
 );

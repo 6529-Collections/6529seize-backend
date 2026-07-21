@@ -92,6 +92,7 @@ jobs:
               git -c core.hooksPath=/dev/null commit -m "Isolation merge $sha"
             done < <(jq -r '.[]' <<< "$CANDIDATE_SHAS")
             npm ci
+            npm --prefix src/api-serverless ci --ignore-scripts
             npx eslint "src/**/*.ts" --max-warnings=0
             NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
             npm test -- --runInBand

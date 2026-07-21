@@ -80,6 +80,27 @@ function workflowResult(
   return 'WAIT';
 }
 
+function githubActionsRunUrl(operation: ReleaseOperationRecord): string | null {
+  const result = metadata(operation.result_metadata_json);
+  const url = result.url;
+  if (
+    typeof url === 'string' &&
+    /^https:\/\/github\.com\/6529-Collections\/6529seize-(?:frontend|backend)\/actions\/runs\/[0-9]+$/.test(
+      url
+    )
+  )
+    return url;
+  return null;
+}
+
+export function operationFailureReason(
+  reason: string,
+  operation: ReleaseOperationRecord
+): string {
+  const evidenceUrl = githubActionsRunUrl(operation);
+  return evidenceUrl ? `${reason} Evidence: ${evidenceUrl}` : reason;
+}
+
 async function dispatchWorkflow(params: {
   readonly train: ReleaseTrainRecord;
   readonly repository: ReleaseRepository;
@@ -302,6 +323,52 @@ async function beginComposition(
     },
     {}
   );
+}
+
+async function advanceFrontendBaseCanary(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[]
+): Promise<'PASS' | 'WAIT' | 'FAIL'> {
+  if (!candidates.some((candidate) => candidate.repository === 'frontend'))
+    return 'PASS';
+  const baseSha = train.frontend_base_sha;
+  if (!baseSha)
+    throw new TerminalReleaseTrainError('Missing frontend base SHA');
+  const existingOperations = await phaseOperations(
+    train.id,
+    'base-canary-frontend'
+  );
+  if (existingOperations.length > 1)
+    throw new TerminalReleaseTrainError(
+      `Release train ${train.id} has multiple frontend base canary operations`
+    );
+  const existing = existingOperations[0];
+  if (existing) {
+    const operation = await reconcile(existing);
+    const result = workflowResult(operation);
+    if (result !== 'FAIL') return result;
+    await failAndPauseTrain(
+      train,
+      candidates,
+      operationFailureReason(
+        'The fresh frontend base failed its exact Release Bus canary; candidates were not blamed.',
+        operation
+      ),
+      'REQUEUE'
+    );
+    return 'FAIL';
+  }
+  await dispatchWorkflow({
+    train,
+    repository: 'frontend',
+    operationType: 'base-canary-frontend',
+    workflow: 'release-bus-base-canary.yml',
+    ref: 'main',
+    expectedSha: baseSha,
+    environment: 'orchestration',
+    inputs: { base_sha: baseSha }
+  });
+  return 'WAIT';
 }
 
 async function beginPreflight(
@@ -889,7 +956,10 @@ async function finishFailureIsolation(
     await failAndPauseTrain(
       train,
       candidates,
-      `The fresh ${baselineFailure.repository} base failed the isolation gate; candidates were not blamed.`,
+      operationFailureReason(
+        `The fresh ${baselineFailure.repository} base failed the isolation gate; candidates were not blamed.`,
+        baselineFailure
+      ),
       'REQUEUE'
     );
     return 'FAILED';
@@ -1759,6 +1829,17 @@ export async function advanceReleaseTrain(
       return { decision: 'WAIT', train_id: train.id, status: train.status };
     }
     if (train.status === 'FROZEN') {
+      const baseCanary = await advanceFrontendBaseCanary(train, candidates);
+      if (baseCanary === 'FAIL')
+        return {
+          decision: 'FAILED',
+          train_id: train.id,
+          status: 'FAILED',
+          message:
+            'Frontend base canary failed; candidates were returned to the queue'
+        };
+      if (baseCanary === 'WAIT')
+        return { decision: 'WAIT', train_id: train.id, status: train.status };
       await beginComposition(train, candidates);
       return { decision: 'WAIT', train_id: train.id, status: 'COMPOSING' };
     }

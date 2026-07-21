@@ -3,11 +3,20 @@ import stateMachine from '@/releaseBus/state-machine.asl.json';
 import { e2eSourceRef } from '@/releaseBus/worker';
 
 const deployWorkflow = readFileSync('.github/workflows/deploy.yml', 'utf8');
+const preflightWorkflow = readFileSync(
+  '.github/workflows/release-bus-preflight.yml',
+  'utf8'
+);
+const isolationWorkflow = readFileSync(
+  '.github/workflows/release-bus-isolate-candidate.yml',
+  'utf8'
+);
 const releaseBusServerless = readFileSync(
   'src/releaseBus/serverless.yaml',
   'utf8'
 );
 const releaseBusEntryPoint = readFileSync('src/releaseBus/index.ts', 'utf8');
+const releaseBusWorker = readFileSync('src/releaseBus/worker.ts', 'utf8');
 const dbContext = readFileSync('src/secrets.ts', 'utf8');
 const environmentLoader = readFileSync('src/env.ts', 'utf8');
 const releaseBusGitHubApp = readFileSync(
@@ -34,6 +43,35 @@ describe('release bus infrastructure contract', () => {
     ).toBe('release-bus/train');
   });
 
+  it('requires an exact frontend base canary before composition', () => {
+    expect(releaseBusWorker).toContain(
+      "workflow: 'release-bus-base-canary.yml'"
+    );
+    const canaryCall =
+      'const baseCanary = await advanceFrontendBaseCanary(train, candidates);';
+    const compositionCall = 'await beginComposition(train, candidates);';
+    expect(releaseBusWorker).toContain(canaryCall);
+    expect(releaseBusWorker.indexOf(canaryCall)).toBeLessThan(
+      releaseBusWorker.indexOf(compositionCall)
+    );
+  });
+
+  it('installs API dependencies before root typechecking', () => {
+    const installCommand =
+      'npm --prefix src/api-serverless ci --ignore-scripts';
+    const preflightInstallIndex = preflightWorkflow.indexOf(installCommand);
+    const isolationInstallIndex = isolationWorkflow.indexOf(installCommand);
+
+    expect(preflightInstallIndex).toBeGreaterThan(-1);
+    expect(preflightWorkflow.indexOf('npx eslint')).toBeGreaterThan(
+      preflightInstallIndex
+    );
+    expect(isolationInstallIndex).toBeGreaterThan(-1);
+    expect(isolationWorkflow.indexOf('npx eslint')).toBeGreaterThan(
+      isolationInstallIndex
+    );
+  });
+
   it('injects the GitHub App identity into every Release Bus Lambda', () => {
     expect(releaseBusServerless).toContain(
       'RELEASE_BUS_GITHUB_INSTALLATION_ID: ${env:RELEASE_BUS_GITHUB_INSTALLATION_ID}'
@@ -46,6 +84,21 @@ describe('release bus infrastructure contract', () => {
     );
     expect(deployWorkflow).toContain(
       'RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}'
+    );
+    expect(deployWorkflow).toContain(
+      "github.event.inputs.service == 'releaseBus' || (github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod')"
+    );
+    expect(deployWorkflow).toContain(
+      'RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId'
+    );
+    expect(deployWorkflow).toContain(
+      "- name: Deploy API\n        if: github.event.inputs.service == 'api'\n        env:\n          RELEASE_BUS_GITHUB_APP_ID: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}\n          RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}\n          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}"
+    );
+    expect(deployWorkflow).not.toContain(
+      "RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}\n          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}"
+    );
+    expect(deployWorkflow).toContain(
+      'del(.RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
     );
   });
 
