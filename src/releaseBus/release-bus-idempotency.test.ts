@@ -71,4 +71,40 @@ describe('release operation idempotency', () => {
       artifactDigest: 'a'.repeat(64)
     });
   });
+
+  it('updates workflow progress only from the expected operation version', async () => {
+    const execute = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const repository = new ReleaseBusRepository(
+      () =>
+        ({
+          execute,
+          getAffectedRows: (result: { affectedRows?: number }) =>
+            result.affectedRows ?? 0
+        }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.updateOperationIfVersion(
+        'operation-key',
+        7,
+        {
+          status: 'RUNNING',
+          resultMetadata: { gate_report: { phase: 'lint' } }
+        },
+        {}
+      )
+    ).resolves.toBe(true);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(sql.trim().split(/\s+/).join(' ')).toContain(
+      'where operation_key = :operationKey and (:expectedVersion is null or row_version = :expectedVersion)'
+    );
+    expect(params).toMatchObject({
+      operationKey: 'operation-key',
+      expectedVersion: 7
+    });
+  });
 });

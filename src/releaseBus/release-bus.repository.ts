@@ -87,6 +87,13 @@ export type ReleaseOperationRecord = {
   readonly row_version: number;
 };
 
+type UpdateOperationFields = {
+  readonly status: ReleaseOperationStatus;
+  readonly externalId?: string | null;
+  readonly resultMetadata?: unknown;
+  readonly completedAt?: number | null;
+};
+
 export type ReleaseTrainEventRecord = {
   readonly id: string;
   readonly train_id: string | null;
@@ -632,24 +639,44 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
 
   public async updateOperation(
     operationKey: string,
-    fields: {
-      readonly status: ReleaseOperationStatus;
-      readonly externalId?: string | null;
-      readonly resultMetadata?: unknown;
-      readonly completedAt?: number | null;
-    },
+    fields: UpdateOperationFields,
     ctx: RequestContext
   ): Promise<void> {
-    await this.db.execute(
+    await this.updateOperationVersioned(operationKey, null, fields, ctx);
+  }
+
+  public async updateOperationIfVersion(
+    operationKey: string,
+    expectedVersion: number,
+    fields: UpdateOperationFields,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    return this.updateOperationVersioned(
+      operationKey,
+      expectedVersion,
+      fields,
+      ctx
+    );
+  }
+
+  private async updateOperationVersioned(
+    operationKey: string,
+    expectedVersion: number | null,
+    fields: UpdateOperationFields,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const result = await this.db.execute(
       `update ${RELEASE_TRAIN_OPERATIONS_TABLE}
        set status = :status, external_id = coalesce(:externalId, external_id),
            result_metadata_json = coalesce(:resultMetadata, result_metadata_json),
            started_at = coalesce(started_at, :now),
            completed_at = case when :setCompletedAt then :completedAt else completed_at end,
            updated_at = :now, row_version = row_version + 1
-       where operation_key = :operationKey`,
+       where operation_key = :operationKey
+         and (:expectedVersion is null or row_version = :expectedVersion)`,
       {
         operationKey,
+        expectedVersion,
         status: fields.status,
         externalId: fields.externalId ?? null,
         resultMetadata: fields.resultMetadata
@@ -661,6 +688,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       },
       dbOptions(ctx)
     );
+    return this.db.getAffectedRows(result) === 1;
   }
 
   public async bindOperationAuthorization(
@@ -968,10 +996,11 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
 
   public async findOperation(
     operationKey: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseOperationRecord | null> {
     return this.db.oneOrNull<ReleaseOperationRecord>(
-      `select * from ${RELEASE_TRAIN_OPERATIONS_TABLE} where operation_key = :operationKey`,
+      `select * from ${RELEASE_TRAIN_OPERATIONS_TABLE} where operation_key = :operationKey${forUpdate ? ' for update' : ''}`,
       { operationKey },
       dbOptions(ctx)
     );

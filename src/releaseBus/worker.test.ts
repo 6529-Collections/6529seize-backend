@@ -19,6 +19,7 @@ const mockListTrainEvents = jest.fn();
 const mockGetOrCreateOperation = jest.fn();
 const mockFindOperation = jest.fn();
 const mockUpdateOperation = jest.fn();
+const mockUpdateOperationIfVersion = jest.fn();
 const mockSetControl = jest.fn();
 const mockExecuteTransaction = jest.fn();
 const mockResolveRef = jest.fn();
@@ -50,6 +51,8 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
       mockGetOrCreateOperation(...args),
     findOperation: (...args: unknown[]) => mockFindOperation(...args),
     updateOperation: (...args: unknown[]) => mockUpdateOperation(...args),
+    updateOperationIfVersion: (...args: unknown[]) =>
+      mockUpdateOperationIfVersion(...args),
     setControl: (...args: unknown[]) => mockSetControl(...args),
     executeNativeQueriesInTransaction: (...args: unknown[]) =>
       mockExecuteTransaction(...args)
@@ -164,6 +167,39 @@ describe('workflowProgress', () => {
     );
     expect(workflowProgress({} as never)).not.toHaveProperty('logs');
   });
+
+  it('bounds labels and rejects future GitHub progress timestamps', () => {
+    const now = Date.parse('2026-07-21T10:00:00Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    const progress = workflowProgress({
+      id: 12345,
+      name: 'Release Bus base canary',
+      display_title: 'Base canary',
+      status: 'completed',
+      conclusion: 'failure',
+      head_sha: SHA_A,
+      html_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+      updated_at: '2099-01-01T00:00:00Z',
+      jobs: [
+        {
+          id: 1,
+          name: `${'x'.repeat(600)}\u0000`,
+          status: 'completed',
+          conclusion: 'failure',
+          started_at: null,
+          completed_at: '2099-01-01T00:00:00Z',
+          html_url: '',
+          steps: []
+        }
+      ]
+    });
+
+    expect(progress.failed_job).toHaveLength(500);
+    expect(progress.failed_job).not.toContain('\u0000');
+    expect(progress.last_progress_at).toBeNull();
+    jest.restoreAllMocks();
+  });
 });
 
 describe('frontend base canary', () => {
@@ -251,6 +287,7 @@ describe('frontend base canary', () => {
     mockReleaseLane.mockResolvedValue(undefined);
     mockSetControl.mockResolvedValue(undefined);
     mockUpdateTrain.mockResolvedValue(undefined);
+    mockUpdateOperationIfVersion.mockResolvedValue(true);
     mockUpdateCandidateLifecycle.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
     mockListTrainEvents.mockResolvedValue([]);
