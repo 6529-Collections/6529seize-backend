@@ -15,40 +15,54 @@ export class IdentityPushNotificationAccess {
     private readonly dataSourceSupplier: () => DataSource
   ) {}
 
+  async canRecipientReadWave(
+    identityId: string,
+    waveId: string
+  ): Promise<boolean> {
+    const eligibleGroupIds =
+      await this.groupsService.getGroupsUserIsEligibleFor(identityId);
+    const visibleWaves = await this.wavesDb.findWavesByIds(
+      [waveId],
+      eligibleGroupIds
+    );
+    return visibleWaves.some((wave) => wave.id === waveId);
+  }
+
   async canRecipientReadRelatedContent(
-    notification: IdentityNotificationEntity
+    notification: IdentityNotificationEntity,
+    waveAccessCache?: Map<string, Promise<boolean>>
   ): Promise<boolean> {
     const waveId = notification.wave_id;
     if (!waveId) {
       return true;
     }
 
-    const eligibleGroupIds =
-      await this.groupsService.getGroupsUserIsEligibleFor(
-        notification.identity_id
-      );
-    const visibleWaves = await this.wavesDb.findWavesByIds(
-      [waveId],
-      eligibleGroupIds
-    );
-    if (!visibleWaves.some((wave) => wave.id === waveId)) {
+    const waveAccessKey = `${notification.identity_id}:${waveId}`;
+    let canReadWave = waveAccessCache?.get(waveAccessKey);
+    if (!canReadWave) {
+      canReadWave = this.canRecipientReadWave(notification.identity_id, waveId);
+      waveAccessCache?.set(waveAccessKey, canReadWave);
+    }
+    if (!(await canReadWave)) {
       return false;
     }
 
-    const relatedDropIds = Array.from(
-      new Set(
-        [notification.related_drop_id, notification.related_drop_2_id].filter(
-          (dropId): dropId is string => dropId !== null
-        )
-      )
-    );
+    // Push bodies are rendered from the primary related drop. Secondary drops
+    // may legitimately belong to another wave for cross-wave quote/reply
+    // notifications, so they are not part of this content-access check.
+    const relatedDropIds = notification.related_drop_id
+      ? [notification.related_drop_id]
+      : [];
     if (!relatedDropIds.length) {
       return true;
     }
 
     const relatedDrops = await this.dataSourceSupplier()
       .getRepository(DropEntity)
-      .findBy({ id: In(relatedDropIds) });
+      .find({
+        where: { id: In(relatedDropIds) },
+        select: { id: true, wave_id: true }
+      });
     return (
       relatedDrops.length === relatedDropIds.length &&
       relatedDrops.every((drop) => drop.wave_id === waveId)

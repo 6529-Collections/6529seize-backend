@@ -1158,6 +1158,57 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
+  it('deduplicates direct mentions for a public wave without group lookups', async () => {
+    const userGroupsService = {
+      findIdentitiesInGroups: jest.fn()
+    };
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([]),
+      countWaveSubscribers: jest.fn().mockResolvedValue(0),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([103])
+    };
+    const useCase = createUseCaseWithMocks({
+      userGroupsService,
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: {
+          drop_id: 'drop-1',
+          author_id: 'author-1',
+          mentioned_groups: []
+        },
+        wave: {
+          id: 'public-wave',
+          visibility_group_id: null,
+          parent_wave_id: null
+        },
+        directlyMentionedIdentityIds: ['public-mention', 'public-mention']
+      },
+      { connection: {} }
+    );
+
+    expect(userGroupsService.findIdentitiesInGroups).not.toHaveBeenCalled();
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'public-wave',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        mentionedIdentityIds: ['public-mention'],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
   it('requires direct mentions to access both child and parent waves', async () => {
     const userGroupsService = {
       findIdentitiesInGroups: jest
@@ -1205,10 +1256,25 @@ describe('CreateOrUpdateDropUseCase', () => {
       { connection: {} }
     );
 
+    expect(wavesApiDb.findWaveById).toHaveBeenCalledWith('parent-wave', {});
+    expect(userGroupsService.findIdentitiesInGroups).toHaveBeenNthCalledWith(
+      1,
+      ['child-group'],
+      { timer: undefined, connection: {} }
+    );
+    expect(userGroupsService.findIdentitiesInGroups).toHaveBeenNthCalledWith(
+      2,
+      ['parent-group'],
+      { timer: undefined, connection: {} }
+    );
     expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mentionedIdentityIds: ['child-and-parent']
-      }),
+      {
+        waveId: 'child-wave',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        mentionedIdentityIds: ['child-and-parent'],
+        allDropsSubscriberIds: []
+      },
       'child-group',
       { timer: undefined, connection: {} }
     );

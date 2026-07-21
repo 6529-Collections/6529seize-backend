@@ -1,4 +1,7 @@
-import { IdentityNotificationEntity } from '@/entities/IIdentityNotification';
+import {
+  IdentityNotificationCause,
+  IdentityNotificationEntity
+} from '@/entities/IIdentityNotification';
 import { IdentityPushNotificationAccess } from './identity-push-notification-access';
 
 describe('IdentityPushNotificationAccess', () => {
@@ -39,7 +42,7 @@ describe('IdentityPushNotificationAccess', () => {
       findWavesByIds: jest.fn().mockResolvedValue(visibleWaves)
     };
     const dropRepository = {
-      findBy: jest.fn().mockResolvedValue(relatedDrops)
+      find: jest.fn().mockResolvedValue(relatedDrops)
     };
     const dataSourceSupplier = jest.fn(() => ({
       getRepository: jest.fn(() => dropRepository)
@@ -90,22 +93,65 @@ describe('IdentityPushNotificationAccess', () => {
     expect(dataSourceSupplier).not.toHaveBeenCalled();
   });
 
-  it('allows related drops only when they belong to the visible wave', async () => {
-    const { access } = createAccess({
-      relatedDrops: [
-        { id: 'drop-1', wave_id: 'wave-1' },
-        { id: 'drop-2', wave_id: 'wave-1' }
-      ]
+  it('allows a public wave without eligible groups', async () => {
+    const { access, groupsService, wavesDb } = createAccess({
+      eligibleGroupIds: [],
+      visibleWaves: [{ id: 'public-wave' }],
+      relatedDrops: [{ id: 'drop-1', wave_id: 'public-wave' }]
     });
 
     await expect(
       access.canRecipientReadRelatedContent(
-        createNotification({ related_drop_2_id: 'drop-2' })
+        createNotification({
+          wave_id: 'public-wave',
+          visibility_group_id: null
+        })
+      )
+    ).resolves.toBe(true);
+
+    expect(groupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'recipient-1'
+    );
+    expect(wavesDb.findWavesByIds).toHaveBeenCalledWith(['public-wave'], []);
+  });
+
+  it('caches wave eligibility while checking multiple notifications in one batch', async () => {
+    const { access, groupsService, wavesDb } = createAccess();
+    const waveAccessCache = new Map<string, Promise<boolean>>();
+
+    await expect(
+      access.canRecipientReadRelatedContent(
+        createNotification(),
+        waveAccessCache
+      )
+    ).resolves.toBe(true);
+    await expect(
+      access.canRecipientReadRelatedContent(
+        createNotification({ related_drop_id: 'drop-2' }),
+        waveAccessCache
+      )
+    ).resolves.toBe(false);
+
+    expect(groupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledTimes(1);
+    expect(wavesDb.findWavesByIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows the primary drop when a cross-wave secondary drop is referenced', async () => {
+    const { access } = createAccess({
+      relatedDrops: [{ id: 'drop-1', wave_id: 'wave-1' }]
+    });
+
+    await expect(
+      access.canRecipientReadRelatedContent(
+        createNotification({
+          cause: IdentityNotificationCause.DROP_QUOTED,
+          related_drop_2_id: 'private-wave-2-drop'
+        })
       )
     ).resolves.toBe(true);
   });
 
-  it('denies related content from a different wave', async () => {
+  it('denies primary related content from a different wave', async () => {
     const { access } = createAccess({
       relatedDrops: [{ id: 'drop-1', wave_id: 'private-wave-2' }]
     });

@@ -268,6 +268,7 @@ export async function sendIdentityNotificationsBatch(
     .forEach((id) => logger.error(`Notification not found: ${id}`));
 
   const failedIds: number[] = [];
+  const waveAccessCache = new Map<string, Promise<boolean>>();
   const messagesByNotification = await Promise.all(
     uniqueIds.map(async (id) => {
       const notification = notificationsById.get(id);
@@ -281,7 +282,10 @@ export async function sendIdentityNotificationsBatch(
         return [];
       }
       try {
-        return await buildIdentityNotificationMessages(notification);
+        return await buildIdentityNotificationMessages(
+          notification,
+          waveAccessCache
+        );
       } catch (error) {
         logger.error(`Failed to build notification ${id}: ${error}`);
         failedIds.push(id);
@@ -338,7 +342,8 @@ async function findMutedNotificationIds(
 }
 
 async function buildIdentityNotificationMessages(
-  notification: IdentityNotificationEntity
+  notification: IdentityNotificationEntity,
+  waveAccessCache?: Map<string, Promise<boolean>>
 ): Promise<IdentityPushNotificationMessage[]> {
   if (notification.read_at) {
     logger.info(
@@ -349,11 +354,12 @@ async function buildIdentityNotificationMessages(
 
   const canRecipientReadRelatedContent =
     await identityPushNotificationAccess.canRecipientReadRelatedContent(
-      notification
+      notification,
+      waveAccessCache
     );
   if (!canRecipientReadRelatedContent) {
     logger.warn(
-      `[ID ${notification.id}] Skipping push because identity ${notification.identity_id} cannot read wave ${notification.wave_id}`
+      `[ID ${notification.id}] Skipping push because identity ${notification.identity_id} cannot read the related content in wave ${notification.wave_id}`
     );
     return [];
   }

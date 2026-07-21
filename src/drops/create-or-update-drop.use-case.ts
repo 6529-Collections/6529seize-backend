@@ -98,6 +98,7 @@ import {
 } from '@/waves/wave-chat-slow-mode.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
+import { Logger } from '@/logging';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -209,6 +210,8 @@ export function sanitizeDropStructuredFields(
 }
 
 export class CreateOrUpdateDropUseCase {
+  private readonly logger = Logger.get(CreateOrUpdateDropUseCase.name);
+
   public constructor(
     private readonly dropsDb: DropsDb,
     private readonly dropVotingDb: DropVotingDb,
@@ -2039,14 +2042,18 @@ export class CreateOrUpdateDropUseCase {
         connection
       );
       if (!parentWave) {
+        this.logger.warn(
+          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering direct mention recipients for wave ${wave.id}`
+        );
         return [];
       }
       if (parentWave.visibility_group_id) {
         visibilityGroupIds.push(parentWave.visibility_group_id);
       }
     }
-    if (!visibilityGroupIds.length || !identityIds.length) {
-      return identityIds;
+    const distinctIdentityIds = collections.distinct(identityIds);
+    if (!visibilityGroupIds.length || !distinctIdentityIds.length) {
+      return distinctIdentityIds;
     }
 
     const eligibleIdentitySets = await Promise.all(
@@ -2059,11 +2066,9 @@ export class CreateOrUpdateDropUseCase {
         return new Set(eligibleIdentityIds);
       })
     );
-    return collections
-      .distinct(identityIds)
-      .filter((identityId) =>
-        eligibleIdentitySets.every((eligibleIds) => eligibleIds.has(identityId))
-      );
+    return distinctIdentityIds.filter((identityId) =>
+      eligibleIdentitySets.every((eligibleIds) => eligibleIds.has(identityId))
+    );
   }
 }
 

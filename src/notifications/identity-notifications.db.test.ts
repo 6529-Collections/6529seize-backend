@@ -169,4 +169,29 @@ describe('IdentityNotificationsDb mute filtering', () => {
     );
     expect(sendIdentityPushNotification).toHaveBeenCalledWith(401);
   });
+
+  it('counts only unread notifications visible to the recipient', async () => {
+    const db = {
+      oneOrNull: jest.fn().mockResolvedValue({ cnt: 2 })
+    };
+    const repo = new IdentityNotificationsDb(() => db as any);
+
+    await expect(
+      repo.countUnreadNotificationsForIdentity(
+        'recipient-1',
+        ['private-group'],
+        undefined,
+        { enabledCauses: [IdentityNotificationCause.IDENTITY_MENTIONED] }
+      )
+    ).resolves.toBe(2);
+
+    expect(db.oneOrNull).toHaveBeenCalledWith(
+      expect.not.stringContaining('includeNotificationId'),
+      expect.objectContaining({
+        identity_id: 'recipient-1',
+        eligibleGroupIds: ['private-group']
+      }),
+      undefined
+    );
+  });
 });
