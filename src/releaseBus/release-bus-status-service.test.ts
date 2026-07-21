@@ -116,7 +116,8 @@ function operation(status: ReleaseOperationRecord['status']) {
 function overview(
   operationStatus: ReleaseOperationRecord['status'],
   trainOverride: Partial<ReleaseTrainRecord> = {},
-  candidateOverride: Partial<ReleaseCandidateRecord> = {}
+  candidateOverride: Partial<ReleaseCandidateRecord> = {},
+  controlOverride: { paused?: boolean; reason?: string | null } = {}
 ) {
   return buildReleaseTrainOverview({
     train: { ...train, ...trainOverride },
@@ -139,8 +140,8 @@ function overview(
     controls: [
       {
         scope: 'STAGING',
-        paused: false,
-        reason: null,
+        paused: controlOverride.paused ?? false,
+        reason: controlOverride.reason ?? null,
         github_actor: null,
         updated_at: NOW,
         row_version: 1
@@ -190,5 +191,25 @@ describe('release train status view', () => {
       })
     );
     expect(result.incident?.summary).toContain('No candidate was blamed');
+  });
+
+  it('does not attribute a later lane pause to a completed train', () => {
+    const result = overview(
+      'SUCCEEDED',
+      {
+        status: 'COMPLETED',
+        completed_at: NOW,
+        failure_reason: null
+      },
+      { status: 'STAGING_VALIDATED' },
+      {
+        paused: true,
+        reason: 'Reserved after successful staging validation'
+      }
+    );
+
+    expect(result.phase).toBe('COMPLETED');
+    expect(result.phase_state).toBe('COMPLETED');
+    expect(result.incident).toBeNull();
   });
 });
