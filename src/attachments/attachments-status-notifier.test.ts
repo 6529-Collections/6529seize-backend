@@ -135,6 +135,34 @@ describe('AttachmentsStatusNotifier', () => {
     );
   });
 
+  it('reuses a caller connection without opening another transaction', async () => {
+    await notifier.notifyStatusTransition(baseAttachment, { connection });
+
+    expect(
+      attachmentsDb.executeNativeQueriesInTransaction
+    ).not.toHaveBeenCalled();
+    expect(attachmentsDb.findAttachmentWaveIds).toHaveBeenCalledWith(
+      baseAttachment.id,
+      connection
+    );
+  });
+
+  it('still broadcasts the attachment when loading full drops fails', async () => {
+    (attachmentsDb.findAttachmentDropIds as jest.Mock).mockResolvedValue([
+      'drop-1'
+    ]);
+    (dropsService.findDropByIdOrThrow as jest.Mock).mockRejectedValue(
+      new Error('drop load failed')
+    );
+
+    await notifier.notifyStatusTransition(baseAttachment);
+
+    expect(
+      wsListenersNotifier.notifyAboutAttachmentStatusUpdate
+    ).toHaveBeenCalled();
+    expect(wsListenersNotifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
+  });
+
   it('maps BLOCKED to bad and surfaces error_reason and ipfs_url', async () => {
     (attachmentsDb.findAttachmentWaveIds as jest.Mock).mockResolvedValue([]);
     await notifier.notifyStatusTransition({

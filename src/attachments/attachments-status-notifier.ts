@@ -65,31 +65,38 @@ export class AttachmentsStatusNotifier {
       consistentCtx: RequestContext
     ): Promise<AttachmentBroadcastData> => {
       const dropsService = this.dropsService;
-      const [waveIds, dropIds] = await Promise.all([
-        this.attachmentsDb.findAttachmentWaveIds(
-          attachmentId,
-          consistentCtx.connection
-        ),
-        dropsService
-          ? this.attachmentsDb.findAttachmentDropIds(
-              attachmentId,
-              consistentCtx.connection
-            )
-          : Promise.resolve([])
-      ]);
-      const drops = dropsService
-        ? await Promise.all(
-            dropIds.map((dropId) =>
-              dropsService.findDropByIdOrThrow(
-                {
-                  dropId,
-                  skipEligibilityCheck: true
-                },
-                consistentCtx
+      const waveIdsPromise = this.attachmentsDb.findAttachmentWaveIds(
+        attachmentId,
+        consistentCtx.connection
+      );
+      const dropsPromise = dropsService
+        ? this.attachmentsDb
+            .findAttachmentDropIds(attachmentId, consistentCtx.connection)
+            .then((dropIds) =>
+              Promise.all(
+                dropIds.map((dropId) =>
+                  dropsService.findDropByIdOrThrow(
+                    {
+                      dropId,
+                      skipEligibilityCheck: true
+                    },
+                    consistentCtx
+                  )
+                )
               )
             )
-          )
-        : [];
+            .catch((error) => {
+              this.logger.error(
+                `Failed to load full drop updates for attachment ${attachmentId}`,
+                error
+              );
+              return [];
+            })
+        : Promise.resolve([]);
+      const [waveIds, drops] = await Promise.all([
+        waveIdsPromise,
+        dropsPromise
+      ]);
       return { waveIds, drops };
     };
 
