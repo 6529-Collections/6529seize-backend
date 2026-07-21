@@ -71,4 +71,107 @@ describe('release operation idempotency', () => {
       artifactDigest: 'a'.repeat(64)
     });
   });
+
+  it('updates workflow progress only from the expected operation version', async () => {
+    const execute = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const repository = new ReleaseBusRepository(
+      () =>
+        ({
+          execute,
+          getAffectedRows: (result: { affectedRows?: number }) =>
+            result.affectedRows ?? 0
+        }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.updateOperationIfVersion(
+        'operation-key',
+        7,
+        {
+          status: 'RUNNING',
+          resultMetadata: { gate_report: { phase: 'lint' } }
+        },
+        {}
+      )
+    ).resolves.toBe(true);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(sql.trim().split(/\s+/).join(' ')).toContain(
+      'where operation_key = :operationKey and (:expectedVersion is null or row_version = :expectedVersion)'
+    );
+    expect(params).toMatchObject({
+      operationKey: 'operation-key',
+      expectedVersion: 7
+    });
+  });
+
+  it('advances a train phase only from the expected status', async () => {
+    const execute = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const repository = new ReleaseBusRepository(
+      () =>
+        ({
+          execute,
+          getAffectedRows: (result: { affectedRows?: number }) =>
+            result.affectedRows ?? 0
+        }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.advanceTrainPhase(
+        'train-1',
+        'DEPLOYING_FRONTEND_PRODUCTION',
+        7,
+        'PRODUCTION_E2E_RUNNING',
+        {}
+      )
+    ).resolves.toBe(true);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(sql.trim().split(/\s+/).join(' ')).toContain(
+      'where id = :id and status = :expectedStatus and row_version = :expectedVersion'
+    );
+    expect(params).toMatchObject({
+      id: 'train-1',
+      expectedStatus: 'DEPLOYING_FRONTEND_PRODUCTION',
+      expectedVersion: 7,
+      nextStatus: 'PRODUCTION_E2E_RUNNING'
+    });
+  });
+
+  it('loads a train candidate set in one bounded query', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repository = new ReleaseBusRepository(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.findCandidatesByIds(['candidate-1', 'candidate-2'], {})
+    ).resolves.toEqual([]);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(sql.trim().split(/\s+/).join(' ')).toContain('where id in (:ids)');
+    expect(params).toEqual({ ids: ['candidate-1', 'candidate-2'] });
+  });
+
+  it('deduplicates bulk candidate reads and rejects an impossible train size', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repository = new ReleaseBusRepository(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+    const ids = Array.from({ length: 60 }, (_, index) => `candidate-${index}`);
+
+    await expect(
+      repository.findCandidatesByIds([...ids, ids[0]], {})
+    ).rejects.toThrow('exceeds the maximum 50');
+    expect(execute).not.toHaveBeenCalled();
+  });
 });

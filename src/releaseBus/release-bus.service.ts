@@ -425,7 +425,12 @@ export class ReleaseBusService {
           [
             'MERGING_PRODUCTION',
             'DEPLOYING_PRODUCTION',
-            'VALIDATING_PRODUCTION'
+            'DEPLOYING_BACKEND_PRODUCTION',
+            'MERGING_FRONTEND_PRODUCTION',
+            'DEPLOYING_FRONTEND_PRODUCTION',
+            'PRODUCTION_E2E_RUNNING',
+            'VALIDATING_PRODUCTION',
+            'SYNCING_STAGING'
           ].includes(train.status)
         ) {
           throw new Error(

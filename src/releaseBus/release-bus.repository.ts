@@ -24,7 +24,8 @@ import type {
   ReleaseDependencyRequiredState,
   ReleaseLane,
   ReleaseOperationStatus,
-  ReleaseTrainRecord
+  ReleaseTrainRecord,
+  ReleaseTrainStatus
 } from '@/releaseBus/release-bus.types';
 
 type CreateCandidate = Omit<
@@ -87,6 +88,23 @@ export type ReleaseOperationRecord = {
   readonly row_version: number;
 };
 
+type UpdateOperationFields = {
+  readonly status: ReleaseOperationStatus;
+  readonly externalId?: string | null;
+  readonly resultMetadata?: unknown;
+  readonly completedAt?: number | null;
+};
+
+export type ReleaseTrainEventRecord = {
+  readonly id: string;
+  readonly train_id: string | null;
+  readonly candidate_id: string | null;
+  readonly event_type: string;
+  readonly github_actor: string | null;
+  readonly payload_json: unknown;
+  readonly created_at: number;
+};
+
 function dbOptions(ctx: RequestContext) {
   return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
 }
@@ -118,6 +136,21 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<ReleaseCandidateRecord>(
       `select * from ${RELEASE_READY_DEPLOYMENTS_TABLE} where id = :id${forUpdate ? ' for update' : ''}`,
       { id },
+      dbOptions(ctx)
+    );
+  }
+
+  public async findCandidatesByIds(
+    ids: readonly string[],
+    ctx: RequestContext
+  ): Promise<ReleaseCandidateRecord[]> {
+    const boundedIds = Array.from(new Set(ids));
+    if (boundedIds.length > 50)
+      throw new Error('Release train candidate query exceeds the maximum 50');
+    if (boundedIds.length === 0) return [];
+    return this.db.execute<ReleaseCandidateRecord>(
+      `select * from ${RELEASE_READY_DEPLOYMENTS_TABLE} where id in (:ids)`,
+      { ids: boundedIds },
       dbOptions(ctx)
     );
   }
@@ -485,6 +518,20 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async listTrainEvents(
+    trainId: string,
+    limit: number,
+    ctx: RequestContext
+  ): Promise<ReleaseTrainEventRecord[]> {
+    return this.db.execute<ReleaseTrainEventRecord>(
+      `select * from ${RELEASE_TRAIN_EVENTS_TABLE}
+       where train_id = :trainId
+       order by created_at desc, id desc limit :limit`,
+      { trainId, limit: Math.min(Math.max(limit, 1), 500) },
+      dbOptions(ctx)
+    );
+  }
+
   public async updateTrain(
     id: string,
     fields: {
@@ -536,6 +583,31 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       throw new Error(`Release train ${id} changed concurrently`);
   }
 
+  public async advanceTrainPhase(
+    id: string,
+    expectedStatus: ReleaseTrainStatus,
+    expectedVersion: number,
+    nextStatus: ReleaseTrainStatus,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const result = await this.db.execute(
+      `update ${RELEASE_TRAINS_TABLE}
+       set status = :nextStatus, updated_at = :now,
+           row_version = row_version + 1
+       where id = :id and status = :expectedStatus
+         and row_version = :expectedVersion`,
+      {
+        id,
+        expectedStatus,
+        expectedVersion,
+        nextStatus,
+        now: Date.now()
+      },
+      dbOptions(ctx)
+    );
+    return this.db.getAffectedRows(result) === 1;
+  }
+
   public async cancelTrain(
     id: string,
     expectedVersion: number,
@@ -549,8 +621,12 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
            row_version = row_version + 1
        where id = :id and row_version = :expectedVersion
          and status not in ('MERGING_PRODUCTION', 'DEPLOYING_PRODUCTION',
-                            'VALIDATING_PRODUCTION', 'COMPLETED', 'FAILED',
-                            'ROLLED_BACK', 'CANCELLED')`,
+                            'DEPLOYING_BACKEND_PRODUCTION',
+                            'MERGING_FRONTEND_PRODUCTION',
+                            'DEPLOYING_FRONTEND_PRODUCTION',
+                            'PRODUCTION_E2E_RUNNING',
+                            'VALIDATING_PRODUCTION', 'SYNCING_STAGING',
+                            'COMPLETED', 'FAILED', 'ROLLED_BACK', 'CANCELLED')`,
       { id, expectedVersion, reason, now: Date.now() },
       dbOptions(ctx)
     );
@@ -585,33 +661,56 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
 
   public async updateOperation(
     operationKey: string,
-    fields: {
-      readonly status: ReleaseOperationStatus;
-      readonly externalId?: string | null;
-      readonly resultMetadata?: unknown;
-      readonly completedAt?: number | null;
-    },
+    fields: UpdateOperationFields,
     ctx: RequestContext
   ): Promise<void> {
-    await this.db.execute(
+    await this.updateOperationVersioned(operationKey, null, fields, ctx);
+  }
+
+  public async updateOperationIfVersion(
+    operationKey: string,
+    expectedVersion: number,
+    fields: UpdateOperationFields,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    return this.updateOperationVersioned(
+      operationKey,
+      expectedVersion,
+      fields,
+      ctx
+    );
+  }
+
+  private async updateOperationVersioned(
+    operationKey: string,
+    expectedVersion: number | null,
+    fields: UpdateOperationFields,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const result = await this.db.execute(
       `update ${RELEASE_TRAIN_OPERATIONS_TABLE}
        set status = :status, external_id = coalesce(:externalId, external_id),
            result_metadata_json = coalesce(:resultMetadata, result_metadata_json),
-           started_at = coalesce(started_at, :now), completed_at = :completedAt,
+           started_at = coalesce(started_at, :now),
+           completed_at = case when :setCompletedAt then :completedAt else completed_at end,
            updated_at = :now, row_version = row_version + 1
-       where operation_key = :operationKey`,
+       where operation_key = :operationKey
+         and (:expectedVersion is null or row_version = :expectedVersion)`,
       {
         operationKey,
+        expectedVersion,
         status: fields.status,
         externalId: fields.externalId ?? null,
         resultMetadata: fields.resultMetadata
           ? JSON.stringify(fields.resultMetadata)
           : null,
+        setCompletedAt: fields.completedAt !== undefined,
         completedAt: fields.completedAt ?? null,
         now: Date.now()
       },
       dbOptions(ctx)
     );
+    return this.db.getAffectedRows(result) === 1;
   }
 
   public async bindOperationAuthorization(
@@ -788,6 +887,14 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async listLanes(ctx: RequestContext): Promise<ReleaseLaneRecord[]> {
+    return this.db.execute<ReleaseLaneRecord>(
+      `select * from ${RELEASE_DEPLOYMENT_LANES_TABLE} order by name`,
+      undefined,
+      dbOptions(ctx)
+    );
+  }
+
   public async releaseLane(
     name: string,
     token: string,
@@ -891,10 +998,11 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
 
   public async findOperation(
     operationKey: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseOperationRecord | null> {
     return this.db.oneOrNull<ReleaseOperationRecord>(
-      `select * from ${RELEASE_TRAIN_OPERATIONS_TABLE} where operation_key = :operationKey`,
+      `select * from ${RELEASE_TRAIN_OPERATIONS_TABLE} where operation_key = :operationKey${forUpdate ? ' for update' : ''}`,
       { operationKey },
       dbOptions(ctx)
     );
