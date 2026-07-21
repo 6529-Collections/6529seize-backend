@@ -123,6 +123,7 @@ describe('release operation idempotency', () => {
       repository.advanceTrainPhase(
         'train-1',
         'DEPLOYING_FRONTEND_PRODUCTION',
+        7,
         'PRODUCTION_E2E_RUNNING',
         {}
       )
@@ -133,11 +134,12 @@ describe('release operation idempotency', () => {
       Record<string, unknown>
     ];
     expect(sql.trim().split(/\s+/).join(' ')).toContain(
-      'where id = :id and status = :expectedStatus'
+      'where id = :id and status = :expectedStatus and row_version = :expectedVersion'
     );
     expect(params).toMatchObject({
       id: 'train-1',
       expectedStatus: 'DEPLOYING_FRONTEND_PRODUCTION',
+      expectedVersion: 7,
       nextStatus: 'PRODUCTION_E2E_RUNNING'
     });
   });

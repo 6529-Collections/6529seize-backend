@@ -505,6 +505,7 @@ async function updateTrainPhase(
       const advanced = await releaseBusRepository.advanceTrainPhase(
         train.id,
         train.status,
+        train.row_version,
         status,
         context
       );
