@@ -43,7 +43,7 @@ describe('deploy.validation', () => {
   });
 
   it('accepts an immutable cross-repository release candidate', () => {
-    const { error } = ReleaseCandidateReadyBodySchema.validate({
+    const { error, value } = ReleaseCandidateReadyBodySchema.validate({
       repository: 'frontend',
       branch: 'feature/ui',
       expected_head_sha: 'a'.repeat(40),
@@ -53,6 +53,22 @@ describe('deploy.validation', () => {
     });
 
     expect(error).toBeUndefined();
+    expect(value.force_fresh_base_canary).toBe(false);
+  });
+
+  it('accepts an explicit frontend force-fresh base-canary choice', () => {
+    const { error, value } = ReleaseCandidateReadyBodySchema.validate({
+      repository: 'frontend',
+      branch: 'feature/ui',
+      expected_head_sha: 'a'.repeat(40),
+      target_lane: 'STAGING',
+      dependencies: [],
+      deploy_plan: null,
+      force_fresh_base_canary: true
+    });
+
+    expect(error).toBeUndefined();
+    expect(value.force_fresh_base_canary).toBe(true);
   });
 
   it('requires workflow and artifact run identity at the mutation gate', () => {

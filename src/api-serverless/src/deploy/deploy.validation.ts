@@ -99,6 +99,7 @@ export const ReleaseCandidateReadyBodySchema = Joi.object({
     .max(50)
     .unique((a, b) => a.repository === b.repository && a.branch === b.branch)
     .default([]),
+  force_fresh_base_canary: Joi.boolean().default(false),
   deploy_plan: Joi.object({
     units: Joi.array()
       .items(Joi.string().pattern(/^[A-Za-z0-9_-]+$/))

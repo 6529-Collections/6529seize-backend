@@ -59,6 +59,13 @@ type GitHubCommitStatus = {
   readonly state?: string;
   readonly description?: string | null;
 };
+type GitHubFileContent = {
+  readonly type?: string;
+  readonly encoding?: string;
+  readonly content?: string;
+  readonly size?: number;
+};
+type GitHubActionsVariable = { readonly value?: string };
 
 const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
   frontend: '6529seize-frontend',
@@ -190,6 +197,60 @@ export class ReleaseBusGitHubApp {
     if (!sha || !/^[a-f0-9]{40}$/i.test(sha))
       throw new Error(`Invalid SHA returned for ${repository}:${ref}`);
     return sha.toLowerCase();
+  }
+
+  public async getFileContent(
+    repository: ReleaseRepository,
+    file: string,
+    ref: string
+  ): Promise<string> {
+    if (
+      !/^[A-Za-z0-9._/-]{1,500}$/.test(file) ||
+      file.startsWith('/') ||
+      file.split('/').includes('..')
+    )
+      throw new Error('Invalid repository file path');
+    if (!/^[a-f0-9]{40}$/.test(ref)) throw new Error('Invalid file ref SHA');
+    const response = await this.request(
+      repository,
+      `/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${ref}`
+    );
+    await this.assertOk(response, `read ${repository} file ${file}`);
+    const payload = (await response.json()) as GitHubFileContent;
+    if (
+      payload.type !== 'file' ||
+      payload.encoding !== 'base64' ||
+      typeof payload.content !== 'string' ||
+      !Number.isInteger(payload.size) ||
+      Number(payload.size) < 0 ||
+      Number(payload.size) > 1_000_000
+    )
+      throw new Error(`Invalid GitHub file response for ${repository}:${file}`);
+    const content = Buffer.from(
+      payload.content.replace(/\s/g, ''),
+      'base64'
+    ).toString('utf8');
+    if (Buffer.byteLength(content) !== payload.size)
+      throw new Error(`GitHub file size mismatch for ${repository}:${file}`);
+    return content;
+  }
+
+  public async getActionsVariable(
+    repository: ReleaseRepository,
+    name: string
+  ): Promise<string | null> {
+    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(name))
+      throw new Error('Invalid GitHub Actions variable name');
+    const response = await this.request(
+      repository,
+      `/actions/variables/${encodeURIComponent(name)}`
+    );
+    if (response.status === 404) return null;
+    await this.assertOk(response, `read ${repository} Actions variable ${name}`);
+    const value = ((await response.json()) as GitHubActionsVariable).value;
+    if (typeof value !== 'string' || value.length > 500)
+      throw new Error(`Invalid ${repository} Actions variable ${name}`);
+    return value;
   }
 
   public async resolveRefIfExists(

@@ -102,6 +102,24 @@ describe('release bus infrastructure contract', () => {
     );
   });
 
+  it('ships fail-closed base evidence controls to the worker', () => {
+    expect(releaseBusServerless).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_REUSE: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE, 'false'}"
+    );
+    expect(releaseBusServerless).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW, 'false'}"
+    );
+    expect(releaseBusServerless).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: ${env:RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS, '24'}"
+    );
+    expect(deployWorkflow).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_REUSE: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}"
+    );
+    expect(deployWorkflow).toContain(
+      'RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS'
+    );
+  });
+
   it('stores production credentials outside Lambda configuration', () => {
     expect(deployWorkflow).toContain(
       'RELEASE_BUS_GITHUB_WEBHOOK_SECRET: ${{ secrets.RELEASE_BUS_GITHUB_WEBHOOK_SECRET }}'

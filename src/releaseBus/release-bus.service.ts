@@ -134,6 +134,14 @@ export class ReleaseBusService {
     }
     if (
       request.repository === 'backend' &&
+      request.force_fresh_base_canary
+    ) {
+      throw new Error(
+        'Only frontend candidates can force a fresh frontend base canary'
+      );
+    }
+    if (
+      request.repository === 'backend' &&
       request.resolvedDependencies.some(
         (dependency) => dependency.repository === 'frontend'
       )
@@ -166,6 +174,7 @@ export class ReleaseBusService {
             production_ready_by_github_login: null,
             production_ready_at: null,
             deploy_plan_json: deployPlan,
+            force_fresh_base_canary: request.force_fresh_base_canary,
             metadata_version: 1,
             current_train_id: null,
             hold_reason: null,
@@ -202,16 +211,31 @@ export class ReleaseBusService {
           );
         }
         if (
+          !metadataMutable &&
+          Boolean(candidate.force_fresh_base_canary) !==
+            request.force_fresh_base_canary
+        ) {
+          throw new Error(
+            'The force-fresh base-canary choice is immutable; cancel the candidate before resubmitting'
+          );
+        }
+        if (
           metadataMutable &&
           ((request.prNumber !== null &&
             candidate.pr_number !== request.prNumber) ||
             (request.repository === 'backend' &&
-              !deployPlansEqual(existingPlan, deployPlan)))
+              !deployPlansEqual(existingPlan, deployPlan)) ||
+            Boolean(candidate.force_fresh_base_canary) !==
+              request.force_fresh_base_canary)
         ) {
           await this.repository.updateCandidateMetadata(
             candidate.id,
             candidate.row_version,
-            { prNumber: request.prNumber, deployPlan },
+            {
+              prNumber: request.prNumber,
+              deployPlan,
+              forceFreshBaseCanary: request.force_fresh_base_canary
+            },
             ctx
           );
           const refreshed = await this.repository.findCandidateById(
@@ -260,6 +284,7 @@ export class ReleaseBusService {
               production_ready_by_github_login: null,
               production_ready_at: null,
               deploy_plan_json: null,
+              force_fresh_base_canary: false,
               metadata_version: 1,
               current_train_id: null,
               hold_reason: null,

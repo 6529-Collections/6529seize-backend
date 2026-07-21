@@ -1,0 +1,187 @@
+import {
+  buildFrontendGateContract,
+  evaluateBaseCanaryEvidence,
+  FRONTEND_GATE_BASE_FILES,
+  type BaseCanaryEvidenceRecord,
+  type FrontendGateContract
+} from '@/releaseBus/release-bus.base-canary-evidence';
+
+const BASE_SHA = 'a'.repeat(40);
+const WORKFLOW_SHA = 'b'.repeat(40);
+const ARTIFACT_DIGEST = 'c'.repeat(64);
+
+function contents(suffix = ''): Record<string, string> {
+  return Object.fromEntries(
+    FRONTEND_GATE_BASE_FILES.map((file) => [
+      file,
+      file === 'package.json'
+        ? JSON.stringify({ packageManager: `pnpm@10.14.0${suffix}` })
+        : `${file}:${suffix}`
+    ])
+  );
+}
+
+function contract(
+  overrides: Partial<Parameters<typeof buildFrontendGateContract>[0]> = {}
+): FrontendGateContract {
+  return buildFrontendGateContract({
+    baseSha: BASE_SHA,
+    workflowSha: WORKFLOW_SHA,
+    workflowContent: 'workflow',
+    baseFileContents: contents(),
+    gateMode: 'sharded',
+    shardCount: 4,
+    ...overrides
+  });
+}
+
+function summary(value: FrontendGateContract): Record<string, unknown> {
+  return {
+    base_sha: value.base_sha,
+    environment: value.environment,
+    gate_fingerprint: value.gate_fingerprint,
+    workflow_sha: value.workflow_sha,
+    workflow_digest: value.workflow_digest,
+    node_version: value.node_version,
+    package_manager: value.package_manager,
+    shard_count: value.shard_count,
+    summary_artifact_name: 'release-bus-base-canary-summary-123',
+    summary_artifact_digest: ARTIFACT_DIGEST,
+    phase_durations_ms: {
+      lint: 1,
+      typecheck: 1,
+      unit_tests: 1,
+      build: 1,
+      total: 1
+    },
+    totals: {
+      files: 4,
+      test_suites: 4,
+      tests: 4,
+      failed_test_suites: 0,
+      failed_tests: 0,
+      skipped_tests: 0
+    },
+    fresh_or_reused: 'fresh',
+    shards: Array.from({ length: value.shard_count }, (_, index) => ({
+      index: index + 1,
+      count: value.shard_count,
+      coordinate: `${index + 1}/${value.shard_count}`,
+      status: 'SUCCEEDED'
+    })),
+    missing_files: [],
+    duplicate_files: []
+  };
+}
+
+function row(
+  value: FrontendGateContract,
+  overrides: Partial<BaseCanaryEvidenceRecord> = {}
+): BaseCanaryEvidenceRecord {
+  return {
+    id: 'evidence-1',
+    train_id: 'train-source',
+    revision: 2,
+    status: 'SUCCEEDED',
+    source_sha: value.base_sha,
+    artifact_digest: ARTIFACT_DIGEST,
+    evidence_uri:
+      'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+    metadata_json: {
+      contract: value,
+      summary: summary(value),
+      source_run_id: '123',
+      created_at: 1_000,
+      expires_at: 87_401_000
+    },
+    created_at: 1_000,
+    ...overrides
+  };
+}
+
+describe('frontend base-canary evidence contract', () => {
+  it('fingerprints every relevant policy input deterministically', () => {
+    const baseline = contract();
+    expect(contract()).toEqual(baseline);
+    expect(contract({ workflowContent: 'workflow changed' }).gate_fingerprint)
+      .not.toBe(baseline.gate_fingerprint);
+    expect(contract({ baseFileContents: contents('-changed') }).gate_fingerprint)
+      .not.toBe(baseline.gate_fingerprint);
+    expect(contract({ gateMode: 'legacy', shardCount: 1 }).gate_fingerprint)
+      .not.toBe(baseline.gate_fingerprint);
+  });
+
+  it('reuses only intact successful evidence for the exact contract', () => {
+    const value = contract();
+    expect(
+      evaluateBaseCanaryEvidence({
+        rows: [row(value)],
+        contract: value,
+        now: 2_000,
+        maxAgeMs: 24 * 60 * 60 * 1000
+      })
+    ).toMatchObject({
+      decision: 'HIT',
+      reason: 'reusable_success',
+      evidence: { id: 'evidence-1' }
+    });
+  });
+
+  it('lets the newest relevant failure override an older success', () => {
+    const value = contract();
+    expect(
+      evaluateBaseCanaryEvidence({
+        rows: [
+          row(value, { id: 'new-failure', status: 'FAILED' }),
+          row(value, { id: 'old-success' })
+        ],
+        contract: value,
+        now: 2_000,
+        maxAgeMs: 24 * 60 * 60 * 1000
+      })
+    ).toEqual({ decision: 'INVALIDATED', reason: 'newer_failure' });
+  });
+
+  it.each<
+    [
+      string,
+      {
+        now?: number;
+        overrides?: Partial<BaseCanaryEvidenceRecord>;
+      }
+    ]
+  >([
+    ['expired', { now: 100_000_000 }],
+    [
+      'malformed_metadata',
+      { overrides: { metadata_json: '{not-json' } }
+    ],
+    [
+      'artifact_digest_mismatch',
+      { overrides: { artifact_digest: 'd'.repeat(64) } }
+    ]
+  ])('rejects %s evidence', (reason, options) => {
+    const value = contract();
+    expect(
+      evaluateBaseCanaryEvidence({
+        rows: [row(value, options.overrides)],
+        contract: value,
+        now: options.now ?? 2_000,
+        maxAgeMs: 24 * 60 * 60 * 1000
+      })
+    ).toEqual({ decision: 'INVALIDATED', reason });
+  });
+
+  it('does not cross fingerprint or environment boundaries', () => {
+    const expected = contract();
+    const other = contract({ gateMode: 'legacy', shardCount: 1 });
+    expect(
+      evaluateBaseCanaryEvidence({
+        rows: [row(other)],
+        contract: expected,
+        now: 2_000,
+        maxAgeMs: 24 * 60 * 60 * 1000
+      })
+    ).toEqual({ decision: 'MISS', reason: 'fingerprint_mismatch' });
+  });
+});
