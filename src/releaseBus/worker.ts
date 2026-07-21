@@ -328,8 +328,9 @@ async function dispatchWorkflow(params: {
   return operation;
 }
 
-async function reconcile(
-  operation: ReleaseOperationRecord
+export async function reconcile(
+  operation: ReleaseOperationRecord,
+  remainingWriteAttempts = 2
 ): Promise<ReleaseOperationRecord> {
   if (!['DISPATCHED', 'RUNNING', 'AMBIGUOUS'].includes(operation.status))
     return operation;
@@ -394,11 +395,15 @@ async function reconcile(
       return true;
     }
   );
-  if (!updated)
-    return (await releaseBusRepository.findOperation(
+  if (!updated) {
+    const refreshed = await releaseBusRepository.findOperation(
       operation.operation_key,
       {}
-    )) as ReleaseOperationRecord;
+    );
+    if (!refreshed || remainingWriteAttempts === 0)
+      return refreshed ?? operation;
+    return reconcile(refreshed, remainingWriteAttempts - 1);
+  }
   return (await releaseBusRepository.findOperation(
     operation.operation_key,
     {}
