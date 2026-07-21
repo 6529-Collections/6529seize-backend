@@ -71,8 +71,7 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args),
     dispatchWorkflow: (...args: unknown[]) => mockDispatchWorkflow(...args),
     getFileContent: (...args: unknown[]) => mockGetFileContent(...args),
-    getActionsVariable: (...args: unknown[]) =>
-      mockGetActionsVariable(...args)
+    getActionsVariable: (...args: unknown[]) => mockGetActionsVariable(...args)
   }
 }));
 
@@ -87,7 +86,9 @@ import type {
 } from '@/releaseBus/release-bus.types';
 import {
   buildFrontendGateContract,
-  FRONTEND_GATE_BASE_FILES
+  FRONTEND_GATE_BASE_FILES,
+  FRONTEND_GATE_TOOLING_FILES,
+  FRONTEND_GATE_WORKFLOW
 } from '@/releaseBus/release-bus.base-canary-evidence';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -360,7 +361,14 @@ describe('frontend base canary', () => {
   const gateContract = buildFrontendGateContract({
     baseSha: frozenTrain.frontend_base_sha as string,
     workflowSha,
-    workflowContent: 'workflow-content',
+    workflowFileContents: Object.fromEntries(
+      [FRONTEND_GATE_WORKFLOW, ...FRONTEND_GATE_TOOLING_FILES].map((file) => [
+        file,
+        file === FRONTEND_GATE_WORKFLOW
+          ? 'workflow-content'
+          : `workflow-content:${file}`
+      ])
+    ),
     baseFileContents,
     gateMode: 'sharded',
     shardCount: 4
@@ -392,7 +400,9 @@ describe('frontend base canary', () => {
       count: 4,
       coordinate: `${index + 1}/4`,
       status: 'SUCCEEDED',
-      duration_ms: 25
+      duration_ms: 25,
+      failed_test_suites: 0,
+      failed_tests: 0
     })),
     missing_files: [],
     duplicate_files: []
@@ -430,9 +440,9 @@ describe('frontend base canary', () => {
     );
     mockGetFileContent.mockImplementation(
       async (_repository: string, file: string) =>
-        file === '.github/workflows/release-bus-base-canary.yml'
+        file === FRONTEND_GATE_WORKFLOW
           ? 'workflow-content'
-          : baseFileContents[file]
+          : (baseFileContents[file] ?? `workflow-content:${file}`)
     );
   });
 
@@ -834,9 +844,7 @@ describe('frontend base canary', () => {
       'release-bus-base-canary.yml',
       'main',
       expect.objectContaining({
-        gate_fingerprint: gateContract.gate_fingerprint,
-        gate_mode: 'sharded',
-        shard_count: '4'
+        gate_contract: JSON.stringify(gateContract)
       })
     );
     expect(mockAppendEvent).toHaveBeenCalledWith(
