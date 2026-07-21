@@ -608,6 +608,58 @@ function normalizeArtifactDigest(value: unknown): string | null {
   return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
+async function resolveBaseCanaryEvidenceConfig(): Promise<{
+  readonly reuse: boolean;
+  readonly shadow: boolean;
+  readonly maxAgeHours: number;
+}> {
+  const deployed = getBaseCanaryEvidenceConfig();
+  try {
+    const [reuseValue, shadowValue, maxAgeValue] = await Promise.all([
+      releaseBusGitHubApp.getActionsVariable(
+        'backend',
+        'RELEASE_BUS_BASE_EVIDENCE_REUSE'
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'backend',
+        'RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW'
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'backend',
+        'RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS'
+      )
+    ]);
+    const toggle = (
+      value: string | null,
+      fallback: boolean
+    ): boolean | null => {
+      if (value === null) return fallback;
+      const normalized = value.toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+      return null;
+    };
+    const reuse = toggle(reuseValue, deployed.reuse);
+    const shadow = toggle(shadowValue, deployed.shadow);
+    const maxAgeHours = Number(maxAgeValue ?? deployed.maxAgeHours);
+    if (
+      reuse === null ||
+      shadow === null ||
+      !Number.isInteger(maxAgeHours) ||
+      maxAgeHours < 1 ||
+      maxAgeHours > 168
+    )
+      return { reuse: false, shadow: false, maxAgeHours: 24 };
+    return { reuse, shadow, maxAgeHours };
+  } catch {
+    return {
+      reuse: false,
+      shadow: false,
+      maxAgeHours: deployed.maxAgeHours
+    };
+  }
+}
+
 function storedFrontendGateContract(
   operation: ReleaseOperationRecord
 ): FrontendGateContract | null {
@@ -695,7 +747,8 @@ async function publishBaseEvidenceLookup(
 
 async function recordFreshBaseCanaryEvidence(
   train: ReleaseTrainRecord,
-  operation: ReleaseOperationRecord
+  operation: ReleaseOperationRecord,
+  maxAgeHours: number
 ): Promise<void> {
   if (!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(operation.status)) return;
   const contract = storedFrontendGateContract(operation);
@@ -709,7 +762,6 @@ async function recordFreshBaseCanaryEvidence(
   const createdAt = Number(
     gateReport.reported_at ?? operation.completed_at ?? Date.now()
   );
-  const maxAgeHours = getBaseCanaryEvidenceConfig().maxAgeHours;
   const artifactDigest = normalizeArtifactDigest(
     summary?.summary_artifact_digest
   );
@@ -913,8 +965,14 @@ async function advanceFrontendBaseCanary(
   if (existing) {
     const operation = await reconcile(existing);
     const result = workflowResult(operation);
-    if (result !== 'WAIT')
-      await recordFreshBaseCanaryEvidence(train, operation);
+    if (result !== 'WAIT') {
+      const evidenceConfig = await resolveBaseCanaryEvidenceConfig();
+      await recordFreshBaseCanaryEvidence(
+        train,
+        operation,
+        evidenceConfig.maxAgeHours
+      );
+    }
     if (result !== 'FAIL') {
       if (train.status === 'FROZEN')
         await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
@@ -936,7 +994,7 @@ async function advanceFrontendBaseCanary(
     );
     return 'FAIL';
   }
-  const evidenceConfig = getBaseCanaryEvidenceConfig();
+  const evidenceConfig = await resolveBaseCanaryEvidenceConfig();
   const forceFresh = candidates.some(
     (candidate) =>
       candidate.repository === 'frontend' &&

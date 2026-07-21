@@ -416,8 +416,10 @@ describe('frontend base canary', () => {
     mockAddEvidence.mockResolvedValue(true);
     mockResolveRef.mockResolvedValue(workflowSha);
     mockGetActionsVariable.mockImplementation(
-      async (_repository: string, name: string) =>
-        name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4'
+      async (repository: string, name: string) => {
+        if (repository !== 'frontend') return null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
     );
     mockGetFileContent.mockImplementation(
       async (_repository: string, file: string) =>
@@ -607,6 +609,15 @@ describe('frontend base canary', () => {
   });
 
   it('records fresh terminal evidence and provenance in one transaction', async () => {
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend')
+          return name === 'RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS'
+            ? '12'
+            : null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
     mockListTrainOperations.mockResolvedValue([
       {
         id: 'operation-base-canary',
@@ -651,7 +662,8 @@ describe('frontend base canary', () => {
           contract: gateContract,
           summary: reusableSummary,
           source_run_id: '123',
-          created_at: 1_500
+          created_at: 1_500,
+          expires_at: 1_500 + 12 * 60 * 60 * 1_000
         })
       }),
       { connection: { transaction: 'test' } }
@@ -666,7 +678,13 @@ describe('frontend base canary', () => {
   });
 
   it('advances from reusable exact-SHA evidence in one worker cycle', async () => {
-    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend')
+          return name === 'RELEASE_BUS_BASE_EVIDENCE_REUSE' ? 'true' : null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
     mockListTrainOperations.mockResolvedValue([]);
     mockListBaseCanaryEvidenceBySha.mockResolvedValue([
       {
@@ -724,6 +742,63 @@ describe('frontend base canary', () => {
         payload: expect.objectContaining({ status: 'reused' })
       }),
       { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('disables evidence reuse from a runtime variable without redeployment', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend')
+          return name === 'RELEASE_BUS_BASE_EVIDENCE_REUSE' ? 'false' : null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockListBaseCanaryEvidenceBySha).not.toHaveBeenCalled();
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
+    );
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).not.toHaveProperty(
+      'gate_contract'
+    );
+  });
+
+  it('fails closed to fresh validation when runtime controls are unreadable', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockGetActionsVariable.mockRejectedValue(new Error('GitHub unavailable'));
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockListBaseCanaryEvidenceBySha).not.toHaveBeenCalled();
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
     );
   });
 
