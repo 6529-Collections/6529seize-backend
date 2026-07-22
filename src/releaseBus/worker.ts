@@ -300,11 +300,11 @@ function retryableCompositionPublicationFailure(
     gateReport.failure_phase === 'release_branch_publication'
   )
     return true;
+  const failedStep =
+    typeof result.failed_step === 'string' ? result.failed_step : '';
   return (
     result.workflow_conclusion === 'failure' &&
-    COMPOSITION_PUBLICATION_INFRASTRUCTURE_STEPS.has(
-      String(result.failed_step ?? '')
-    )
+    COMPOSITION_PUBLICATION_INFRASTRUCTURE_STEPS.has(failedStep)
   );
 }
 
@@ -420,7 +420,7 @@ async function retryInfrastructureOperationIfDue(
   if (retryableCompositionPublicationFailure(operation)) {
     const artifactRunId =
       requestInputs.composition_artifact_run_id || operation.external_id;
-    if (!artifactRunId || !/^[1-9][0-9]{0,19}$/.test(artifactRunId)) {
+    if (!artifactRunId || !/^[1-9]\d{0,19}$/.test(artifactRunId)) {
       throw new TerminalReleaseTrainError(
         `Composition publication retry ${operation.operation_key} is missing its verified artifact run`
       );
@@ -1787,8 +1787,10 @@ export function backendDeployGraph(
     (unit) => !knownServices.has(unit)
   );
   if (unknownUnits.length > 0) {
+    const sortedUnknownUnits = [...unknownUnits];
+    sortedUnknownUnits.sort((left, right) => left.localeCompare(right));
     throw new TerminalReleaseTrainError(
-      `Backend deploy DAG references unknown units: ${unknownUnits.sort().join(', ')}`
+      `Backend deploy DAG references unknown units: ${sortedUnknownUnits.join(', ')}`
     );
   }
   const units = environment
@@ -2006,6 +2008,9 @@ export async function advanceBackendDeploy(
       return 'FAIL';
     }
 
+    // This invocation dispatches at most one dependency layer, then returns
+    // WAIT. Keeping the capacity calculation outside the frontier dispatch
+    // therefore enforces the global cap across both existing and new runs.
     const available = Math.max(0, concurrency - activeCount);
     const frontier = missing.slice(0, available);
     if (frontier.length > 0) {
@@ -3659,10 +3664,15 @@ export async function finishStaging(
         finalSha,
         {}
       );
-      if (!intended)
-        throw new Error(
-          `1a-staging moved to train final SHA ${finalSha} without a recorded ${repository} Release Bus update intent`
+      if (!intended) {
+        const prefix =
+          updatedRepositories > 0
+            ? 'PARTIAL_STAGING_REF_UPDATE'
+            : 'UNOWNED_STAGING_REF_UPDATE';
+        throw new TerminalReleaseTrainError(
+          `${prefix}: 1a-staging moved to train final SHA ${finalSha} without a recorded ${repository} Release Bus update intent`
         );
+      }
       updatedRepositories += 1;
       continue;
     }

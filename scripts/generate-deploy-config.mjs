@@ -313,7 +313,7 @@ jobs:
         run: |
           corepack enable npm
           corepack install
-          test "$(npm --version)" = "$(node -p \"require('./package.json').packageManager.split('npm@')[1]\")"
+          test "$(npm --version)" = "$(node -p 'require("./package.json").packageManager.split("npm@")[1]')"
       - name: Resolve Release Bus GitHub App installation
         if: github.event.inputs.service == 'releaseBus' || (github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod')
         id: release_bus_app

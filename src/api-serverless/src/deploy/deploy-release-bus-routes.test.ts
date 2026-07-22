@@ -697,6 +697,33 @@ describe('release-bus progress reporting', () => {
     );
   });
 
+  it('rejects a frontend preflight summary whose kind was omitted and defaulted to base canary', async () => {
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      operation_type: 'preflight-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
+      artifact_digest: null,
+      status: 'DISPATCHED',
+      row_version: 1,
+      result_metadata_json: {
+        url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+      }
+    });
+    const report = progressBody();
+    const summary = { ...report.summary } as Record<string, unknown>;
+    delete summary.kind;
+
+    const response = await post('/deploy/release-bus/report-progress', {
+      ...report,
+      summary
+    });
+
+    expect(response.status).toBe(403);
+    expect(mockBindOperationAuthorization).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       name: 'base SHA',

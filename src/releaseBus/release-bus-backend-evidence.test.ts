@@ -323,6 +323,19 @@ describe('backend preflight evidence tool', () => {
       })
     );
 
+    const strayPackage = path.join(
+      packagesRoot,
+      'packages',
+      'unexpected',
+      'index.zip'
+    );
+    mkdirSync(path.dirname(strayPackage), { recursive: true });
+    writeFileSync(strayPackage, 'unexpected package');
+    expect(() => runTool(aggregateArgs)).toThrow(
+      'Unexpected or missing backend package directory'
+    );
+    rmSync(path.dirname(strayPackage), { recursive: true, force: true });
+
     writeJson(packageEvidenceFile, {
       kind: 'release_bus_backend_package_evidence',
       unit,

@@ -119,7 +119,7 @@ jobs:
         name: Install frozen root dependencies
         run: npm ci
       - name: Lint without source mutation
-        run: npx eslint "src/**/*.ts" --max-warnings=0
+        run: ./node_modules/.bin/eslint "src/**/*.ts" --max-warnings=0
       - name: Verify lint did not mutate source
         run: git diff --exit-code
 
@@ -161,7 +161,7 @@ jobs:
           printf '%s\n' "$CONTRACT" > "$RUNNER_TEMP/release-bus-backend-contract.json"
           git show "$WORKFLOW_SHA:scripts/release-bus-backend-evidence.cjs" > "$RUNNER_TEMP/release-bus-backend-evidence.cjs"
       - name: Capture complete Jest file inventory
-        run: npx jest --listTests --json > "$RUNNER_TEMP/release-bus-backend-test-inventory.json"
+        run: ./node_modules/.bin/jest --listTests --json > "$RUNNER_TEMP/release-bus-backend-test-inventory.json"
       - name: Execute backend Jest with bounded native parallelism
         id: jest
         continue-on-error: true
@@ -225,7 +225,7 @@ jobs:
           set -euo pipefail
           package_dir="src/$UNIT"
           if [ "$UNIT" = api ]; then package_dir=src/api-serverless; fi
-          (cd "$package_dir" && npm ci && npm run build)
+          (cd "$package_dir" && npm ci --ignore-scripts && npm run build)
           test -z "$(git status --porcelain --untracked-files=no)"
           mkdir -p "release-bus-unit/packages/$UNIT" release-bus-unit/evidence
           cp "$package_dir/dist/index.zip" "release-bus-unit/packages/$UNIT/index.zip"

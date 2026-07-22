@@ -1615,7 +1615,9 @@ describe('frontend base canary', () => {
 
     await expect(
       finishStaging(frozenTrain, [frontendCandidate])
-    ).rejects.toThrow('without a recorded frontend Release Bus update intent');
+    ).rejects.toThrow(
+      'UNOWNED_STAGING_REF_UPDATE: 1a-staging moved to train final SHA'
+    );
 
     expect(mockUpdateTrain).not.toHaveBeenCalled();
   });

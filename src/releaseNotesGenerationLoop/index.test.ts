@@ -126,8 +126,7 @@ describe('processRequest', () => {
         .fn()
         .mockImplementation((key: string) =>
           Promise.resolve(Array.from(sets.get(key) ?? []))
-        ),
-      deleteValue: (key: string) => values.delete(key)
+        )
     };
   }
 
@@ -252,40 +251,26 @@ describe('processRequest', () => {
     );
   });
 
-  it('publishes retained services when old run metadata has expired', async () => {
+  it('rejects a divergent release-group service set after the canonical set is persisted', async () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
     await processRequest(request, { redis: redis as any, generateAndPost });
-    redis.deleteValue('release-note-group:6529seize-backend:pr-1749:run:api');
 
-    await processRequest(
-      {
-        ...request,
-        run_id: '456',
-        run_number: '46',
-        run_url: 'https://github.com/example/actions/runs/456',
-        service: 'worker',
-        release_group_services: ['worker'],
-        publish_release_note: true
-      },
-      { redis: redis as any, generateAndPost }
-    );
-
-    expect(generateAndPost).toHaveBeenCalledWith(
-      expect.objectContaining({
-        release_group_services: ['api', 'worker'],
-        release_group_runs: [
-          {
-            service: 'worker',
-            run_id: '456',
-            run_number: '46',
-            run_url: 'https://github.com/example/actions/runs/456'
-          }
-        ]
-      }),
-      {}
-    );
-    expect(generateAndPost).toHaveBeenCalledTimes(1);
+    await expect(
+      processRequest(
+        {
+          ...request,
+          run_id: '456',
+          run_number: '46',
+          run_url: 'https://github.com/example/actions/runs/456',
+          service: 'worker',
+          release_group_services: ['worker'],
+          publish_release_note: true
+        },
+        { redis: redis as any, generateAndPost }
+      )
+    ).rejects.toThrow('changed its canonical service set');
+    expect(generateAndPost).not.toHaveBeenCalled();
   });
 
   it('does not record deduplication when no release baseline exists', async () => {

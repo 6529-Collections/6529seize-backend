@@ -8,6 +8,7 @@ const { execFileSync } = require('node:child_process');
 
 const WORKFLOW = '.github/workflows/release-bus-preflight.yml';
 const TOOL = 'scripts/release-bus-backend-evidence.cjs';
+const GIT_BINARY = '/usr/bin/git';
 const CONTRACT_FILES = [
   'package.json',
   'package-lock.json',
@@ -47,7 +48,7 @@ function readJson(file) {
 }
 
 function git(repo, args) {
-  return execFileSync('git', ['-C', repo, ...args], {
+  return execFileSync(GIT_BINARY, ['-C', repo, ...args], {
     encoding: 'utf8',
     maxBuffer: 4 * 1024 * 1024
   }).trimEnd();
@@ -128,7 +129,7 @@ function duplicateValues(values) {
   return [...counts]
     .filter(([, count]) => count > 1)
     .map(([value]) => value)
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function verifyTests(args) {
@@ -139,11 +140,13 @@ function verifyTests(args) {
   if (!Array.isArray(inventory) || inventory.length === 0) {
     throw new Error('Jest inventory is empty');
   }
-  const expected = relativeFiles(inventory, repo).sort();
+  const expected = relativeFiles(inventory, repo).sort((left, right) =>
+    left.localeCompare(right)
+  );
   const executed = relativeFiles(
     (result.testResults ?? []).map((suite) => suite.name),
     repo
-  ).sort();
+  ).sort((left, right) => left.localeCompare(right));
   const expectedSet = new Set(expected);
   const executedSet = new Set(executed);
   const missing = expected.filter((file) => !executedSet.has(file));
@@ -244,6 +247,20 @@ function aggregate(args) {
     throw new Error(
       'Test evidence does not match the exact composed tree contract'
     );
+  }
+  const packageDirectories = fs
+    .readdirSync(path.join(packagesRoot, 'packages'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+  const expectedPackageDirectories = [...units].sort((left, right) =>
+    left.localeCompare(right)
+  );
+  if (
+    JSON.stringify(packageDirectories) !==
+    JSON.stringify(expectedPackageDirectories)
+  ) {
+    throw new Error('Unexpected or missing backend package directory');
   }
   const packageDigests = {};
   for (const unit of units) {
