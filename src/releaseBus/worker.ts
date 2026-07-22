@@ -564,6 +564,11 @@ async function dispatchWorkflow(params: {
           },
           {}
         );
+        // Preserve the ambiguous row for exact operation-key reconciliation,
+        // but surface the dispatch failure to the phase. A frontier must never
+        // be reported as dispatched when one of its independent units failed
+        // before GitHub returned an accepted run.
+        throw error;
       }
     }
     operation = (await releaseBusRepository.findOperation(
@@ -1927,6 +1932,14 @@ async function externalDeploymentLaneBusy(
   return null;
 }
 
+function fulfilledOrThrow<T>(results: readonly PromiseSettledResult<T>[]): T[] {
+  const rejected = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (rejected) throw rejected.reason;
+  return results.map((result) => (result as PromiseFulfilledResult<T>).value);
+}
+
 export async function advanceBackendDeploy(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[],
@@ -1957,15 +1970,8 @@ export async function advanceBackendDeploy(
         .join(', ')}`
     );
   }
-  const settled = await Promise.allSettled(
-    existing.map((operation) => reconcile(operation))
-  );
-  const rejected = settled.find(
-    (result): result is PromiseRejectedResult => result.status === 'rejected'
-  );
-  if (rejected) throw rejected.reason;
-  const operations = settled.map(
-    (result) => (result as PromiseFulfilledResult<ReleaseOperationRecord>).value
+  const operations = fulfilledOrThrow(
+    await Promise.allSettled(existing.map((operation) => reconcile(operation)))
   );
   const byService = new Map(
     operations.map((operation) => [operation.service as string, operation])
@@ -2018,46 +2024,43 @@ export async function advanceBackendDeploy(
       const sha = await releaseBusGitHubApp.resolveRef('backend', ref);
       const artifactRunId = await preflightRunId(train.id, 'backend');
       const releaseGroupServices = units.join(',');
-      const dispatches = await Promise.allSettled(
-        frontier.map((unit) =>
-          dispatchWorkflow({
-            train,
-            repository: 'backend',
-            operationType: `${prefix}${unit}`,
-            workflow: 'deploy.yml',
-            ref: 'main',
-            expectedSha: sha,
-            environment,
-            service: unit,
-            inputs: {
+      fulfilledOrThrow(
+        await Promise.allSettled(
+          frontier.map((unit) =>
+            dispatchWorkflow({
+              train,
+              repository: 'backend',
+              operationType: `${prefix}${unit}`,
+              workflow: 'deploy.yml',
+              ref: 'main',
+              expectedSha: sha,
               environment,
               service: unit,
-              artifact_run_id: artifactRunId,
-              ...(environment === 'prod'
-                ? {
-                    release_pull_request: String(train.backend_pr_number),
-                    release_note_publish: 'true',
-                    release_group_services: releaseGroupServices
-                  }
-                : {})
-            },
-            requestMetadata: {
-              backend_deploy_graph: {
-                edges: graph.edges,
-                layers: graph.layers,
-                active_layer: layerIndex,
-                frontier,
-                concurrency
+              inputs: {
+                environment,
+                service: unit,
+                artifact_run_id: artifactRunId,
+                ...(environment === 'prod'
+                  ? {
+                      release_pull_request: String(train.backend_pr_number),
+                      release_note_publish: 'true',
+                      release_group_services: releaseGroupServices
+                    }
+                  : {})
+              },
+              requestMetadata: {
+                backend_deploy_graph: {
+                  edges: graph.edges,
+                  layers: graph.layers,
+                  active_layer: layerIndex,
+                  frontier,
+                  concurrency
+                }
               }
-            }
-          })
+            })
+          )
         )
       );
-      const rejectedDispatch = dispatches.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === 'rejected'
-      );
-      if (rejectedDispatch) throw rejectedDispatch.reason;
       await releaseBusRepository.appendEvent(
         {
           trainId: train.id,
@@ -3714,6 +3717,18 @@ export async function finishStaging(
         '1a-staging'
       );
       if (reconciledStagingSha === finalSha) {
+        const intended = await releaseBusRepository.hasTrainEvidence(
+          train.id,
+          train.revision,
+          refUpdateIntentType,
+          finalSha,
+          {}
+        );
+        if (!intended) {
+          throw new TerminalReleaseTrainError(
+            `UNOWNED_STAGING_REF_UPDATE: reconciled ${repository} staging SHA ${finalSha} has no durable Release Bus update intent`
+          );
+        }
         updatedRepositories += 1;
         continue;
       }

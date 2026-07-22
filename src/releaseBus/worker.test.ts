@@ -1656,6 +1656,30 @@ describe('frontend base canary', () => {
     );
   });
 
+  it('does not credit a reconciled staging ref without durable intent', async () => {
+    mockResolveRef
+      .mockResolvedValueOnce(frontendCandidate.head_sha)
+      .mockResolvedValueOnce(frozenTrain.frontend_base_sha)
+      .mockResolvedValueOnce(frontendCandidate.head_sha);
+    mockUpdateRef.mockRejectedValue(new Error('concurrent ref move'));
+    mockHasTrainEvidence.mockResolvedValue(false);
+
+    await expect(
+      finishStaging(frozenTrain, [frontendCandidate])
+    ).rejects.toThrow(
+      'UNOWNED_STAGING_REF_UPDATE: reconciled frontend staging SHA'
+    );
+
+    expect(mockHasTrainEvidence).toHaveBeenCalledWith(
+      frozenTrain.id,
+      frozenTrain.revision,
+      'STAGING_REF_UPDATE_INTENT_FRONTEND',
+      frontendCandidate.head_sha,
+      {}
+    );
+    expect(mockUpdateTrain).not.toHaveBeenCalled();
+  });
+
   it('continues idempotently after its recorded staging ref update survives a worker restart', async () => {
     mockResolveRef.mockResolvedValue(frontendCandidate.head_sha);
     mockHasTrainEvidence.mockResolvedValue(true);
@@ -2049,6 +2073,24 @@ describe('backend deployment DAG frontiers', () => {
       }
     }
   );
+
+  it('surfaces an independent frontier dispatch rejection before recording success', async () => {
+    mockDispatchWorkflow.mockRejectedValueOnce(
+      new Error('injected GitHub dispatch failure')
+    );
+
+    await expect(
+      advanceBackendDeploy(train, [backendCandidate(units)], 'staging')
+    ).rejects.toThrow('injected GitHub dispatch failure');
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(3);
+    expect(mockAppendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BACKEND_DEPLOY_FRONTIER_DISPATCHED'
+      }),
+      {}
+    );
+  });
 
   it('dispatches A and B together and waits for both before D', async () => {
     const dependent = 'aggregatedActivityLoop';
