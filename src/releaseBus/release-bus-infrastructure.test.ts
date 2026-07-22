@@ -86,6 +86,10 @@ describe('release bus infrastructure contract', () => {
     expect(preflightWorkflow).toContain('\n  package:\n');
     expect(preflightWorkflow).toContain('cache: npm');
     expect(preflightWorkflow).toContain(
+      `node -p 'require("./package.json").packageManager.split("npm@")[1]'`
+    );
+    expect(preflightWorkflow).not.toContain('node -p \\"');
+    expect(preflightWorkflow).toContain(
       'npm test -- --maxWorkers=2 --json --outputFile='
     );
     expect(preflightWorkflow).not.toContain('--runInBand');
@@ -103,6 +107,9 @@ describe('release bus infrastructure contract', () => {
     );
     expect(aggregateJob).toContain(
       'Assemble selected immutable packages without rebuilding'
+    );
+    expect(aggregateJob).toContain(
+      'steps.immutable-artifact.outputs.artifact-digest'
     );
     expect(aggregateJob).not.toContain('npm run build');
   });

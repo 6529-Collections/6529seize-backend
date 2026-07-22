@@ -114,7 +114,7 @@ jobs:
         run: |
           corepack enable npm
           corepack install
-          test "$(npm --version)" = "$(node -p \"require('./package.json').packageManager.split('npm@')[1]\")"
+          test "$(npm --version)" = "$(node -p 'require("./package.json").packageManager.split("npm@")[1]')"
       - &install-root
         name: Install frozen root dependencies
         run: npm ci
@@ -310,6 +310,7 @@ jobs:
       - name: Upload immutable backend packages
         id: immutable-artifact
         if: steps.evidence.outcome == 'success'
+        # The pinned v4 commit declares the artifact-digest output in action.yml.
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-bus-backend-${{ inputs.release_train_id }}-r${{ inputs.release_train_revision }}
