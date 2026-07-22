@@ -236,6 +236,7 @@ export function operationFailureReason(
   return evidenceUrl ? `${reason} Evidence: ${evidenceUrl}` : reason;
 }
 
+// The array index is the completed attempt number; index zero is unused.
 const BASE_CANARY_INFRASTRUCTURE_BACKOFF_MS = [
   0,
   0,
@@ -243,13 +244,10 @@ const BASE_CANARY_INFRASTRUCTURE_BACKOFF_MS = [
   5 * 60_000,
   10 * 60_000
 ];
-const BASE_CANARY_INFRASTRUCTURE_MAX_BACKOFF_MS = 15 * 60_000;
+const INFRASTRUCTURE_MAX_WORKFLOW_ATTEMPTS = 5;
 
 export function baseCanaryInfrastructureRetryDelayMs(attempt: number): number {
-  return (
-    BASE_CANARY_INFRASTRUCTURE_BACKOFF_MS[attempt] ??
-    BASE_CANARY_INFRASTRUCTURE_MAX_BACKOFF_MS
-  );
+  return BASE_CANARY_INFRASTRUCTURE_BACKOFF_MS[attempt] ?? 10 * 60_000;
 }
 
 function retryableInfrastructureFailure(
@@ -264,24 +262,47 @@ function retryableInfrastructureFailure(
 }
 
 function stringRecord(value: unknown): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(metadata(value)).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  );
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value) as unknown;
+    } catch {
+      throw new TerminalReleaseTrainError(
+        'Infrastructure retry inputs are not valid JSON'
+      );
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new TerminalReleaseTrainError(
+      'Infrastructure retry inputs must be an object'
+    );
+  const entries = Object.entries(parsed);
+  if (entries.some(([, entryValue]) => typeof entryValue !== 'string'))
+    throw new TerminalReleaseTrainError(
+      'Infrastructure retry inputs must contain only strings'
+    );
+  return Object.fromEntries(entries) as Record<string, string>;
 }
 
 function latestOperationAttempts(
   operations: readonly ReleaseOperationRecord[]
 ): ReleaseOperationRecord[] {
   const latest = new Map<string, ReleaseOperationRecord>();
+  const attempts = new Set<string>();
   for (const operation of operations) {
     const key = [
       operation.operation_type,
       operation.repository,
       operation.environment ?? '',
-      operation.service ?? ''
+      operation.service ?? '',
+      operation.expected_sha ?? ''
     ].join(':');
+    const attemptKey = `${key}:${operation.attempt}`;
+    if (attempts.has(attemptKey))
+      throw new TerminalReleaseTrainError(
+        `Release train ${operation.train_id} has duplicate ${operation.operation_type} attempt ${operation.attempt} for ${operation.expected_sha ?? 'an unknown SHA'}`
+      );
+    attempts.add(attemptKey);
     const previous = latest.get(key);
     if (!previous || operation.attempt > previous.attempt) {
       latest.set(key, operation);
@@ -293,7 +314,9 @@ function latestOperationAttempts(
 async function retryInfrastructureOperationIfDue(
   train: ReleaseTrainRecord,
   operation: ReleaseOperationRecord
-): Promise<'DISPATCHED' | 'BACKOFF'> {
+): Promise<'DISPATCHED' | 'BACKOFF' | 'EXHAUSTED'> {
+  if (operation.attempt >= INFRASTRUCTURE_MAX_WORKFLOW_ATTEMPTS)
+    return 'EXHAUSTED';
   const delayMs = baseCanaryInfrastructureRetryDelayMs(operation.attempt);
   const completedAt = Number(operation.completed_at ?? Date.now());
   const retryAt =
@@ -658,8 +681,11 @@ async function updateTrainPhase(
 
 async function pollPhase(
   train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[],
   prefix: string
-): Promise<'PASS' | 'WAIT' | 'INFRASTRUCTURE_WAIT' | 'FAIL'> {
+): Promise<
+  'PASS' | 'WAIT' | 'INFRASTRUCTURE_WAIT' | 'INFRASTRUCTURE_EXHAUSTED' | 'FAIL'
+> {
   const operations = latestOperationAttempts(
     await phaseOperations(train.id, prefix)
   );
@@ -672,11 +698,46 @@ async function pollPhase(
   );
   if (failed.length > 0) {
     if (failed.every(retryableInfrastructureFailure)) {
-      await Promise.all(
+      const exhausted = failed.find(
+        (operation) => operation.attempt >= INFRASTRUCTURE_MAX_WORKFLOW_ATTEMPTS
+      );
+      if (exhausted) {
+        await failInfrastructureTrainWithoutPausing(
+          train,
+          candidates,
+          exhausted,
+          prefix.replace(/-$/, '')
+        );
+        return 'INFRASTRUCTURE_EXHAUSTED';
+      }
+      const retryResults = await Promise.allSettled(
         failed.map((operation) =>
           retryInfrastructureOperationIfDue(train, operation)
         )
       );
+      const rejected = retryResults.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected'
+      );
+      if (rejected?.reason instanceof TerminalReleaseTrainError)
+        throw rejected.reason;
+      if (rejected) {
+        await releaseBusRepository.appendEvent(
+          {
+            trainId: train.id,
+            eventType: 'OPERATION_INFRASTRUCTURE_RETRY_DEFERRED',
+            payload: {
+              phase: prefix.replace(/-$/, ''),
+              message:
+                rejected.reason instanceof Error
+                  ? rejected.reason.message
+                  : 'Infrastructure retry dispatch failed',
+              lane_paused: false
+            }
+          },
+          {}
+        );
+      }
       return 'INFRASTRUCTURE_WAIT';
     }
     return 'FAIL';
@@ -1150,7 +1211,16 @@ async function existingFrontendBaseCanaryResult(
   if (retryableInfrastructureFailure(operation)) {
     if (train.status === 'FROZEN')
       await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
-    await retryInfrastructureOperationIfDue(train, operation);
+    const retry = await retryInfrastructureOperationIfDue(train, operation);
+    if (retry === 'EXHAUSTED') {
+      await failInfrastructureTrainWithoutPausing(
+        train,
+        candidates,
+        operation,
+        'base-canary-frontend'
+      );
+      return 'FAIL';
+    }
     return 'INFRASTRUCTURE_WAIT';
   }
   await failAndPauseTrain(
@@ -1741,6 +1811,88 @@ async function publishCandidateStatus(
       {}
     );
   }
+}
+
+async function failInfrastructureTrainWithoutPausing(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[],
+  operation: ReleaseOperationRecord,
+  phase: string
+): Promise<void> {
+  const reason = operationFailureReason(
+    `${phase} exhausted ${INFRASTRUCTURE_MAX_WORKFLOW_ATTEMPTS} automatic workflow attempts after repeated transient infrastructure failures. Candidates were returned to the queue and ${train.target_lane} remains running.`,
+    operation
+  );
+  const returnedCandidates: string[] = [];
+  for (const candidate of candidates) {
+    const current = await releaseBusRepository.findCandidateById(
+      candidate.id,
+      {}
+    );
+    if (
+      !current ||
+      ![
+        'STAGING_CLAIMED',
+        'STAGING_VALIDATING',
+        'PRODUCTION_CLAIMED',
+        'PRODUCTION_VALIDATING'
+      ].includes(current.status)
+    )
+      continue;
+    await releaseBusRepository.updateCandidateLifecycle(
+      current.id,
+      current.row_version,
+      {
+        status: readyStatusForTrain(train),
+        currentTrainId: null,
+        holdReason: `INFRASTRUCTURE_RETRY_EXHAUSTED:${phase}`.slice(0, 500)
+      },
+      {}
+    );
+    returnedCandidates.push(current.id);
+    await publishCandidateStatus(
+      train,
+      candidate,
+      'error',
+      `CI infrastructure retries exhausted; automatically requeued (${train.id})`
+    );
+  }
+  await releaseBusRepository.updateTrain(
+    train.id,
+    { status: 'FAILED', failureReason: reason, completedAt: Date.now() },
+    {}
+  );
+  await releaseTrainLanes(train);
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: train.id,
+      eventType: 'TRAIN_INFRASTRUCTURE_RETRIES_EXHAUSTED',
+      payload: {
+        reason,
+        phase,
+        operation_key: operation.operation_key,
+        attempt: operation.attempt,
+        max_attempts: INFRASTRUCTURE_MAX_WORKFLOW_ATTEMPTS,
+        returned_candidates: returnedCandidates,
+        lane_paused: false,
+        automatic_recovery:
+          'The running lane may form a fresh train from the returned immutable candidates.'
+      }
+    },
+    {}
+  );
+  await publishReleaseBusMetrics([
+    {
+      MetricName: 'InfrastructureRetryExhausted',
+      Value: 1,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    },
+    {
+      MetricName: 'TrainFailure',
+      Value: 1,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    }
+  ]);
 }
 
 export async function finishIncompleteComposition(
@@ -2948,7 +3100,15 @@ export async function advanceReleaseTrain(
       return waitFor(train, 'COMPOSING');
     }
     if (train.status === 'COMPOSING') {
-      const result = await pollPhase(train, 'compose-');
+      const result = await pollPhase(train, candidates, 'compose-');
+      if (result === 'INFRASTRUCTURE_EXHAUSTED')
+        return {
+          decision: 'FAILED',
+          train_id: train.id,
+          status: 'FAILED',
+          message:
+            'Release composition infrastructure retries were exhausted; candidates were returned to the running lane'
+        };
       if (result === 'INFRASTRUCTURE_WAIT')
         return waitFor(train, train.status, {
           code: 'INFRASTRUCTURE_RETRY_BACKOFF',
@@ -2979,7 +3139,15 @@ export async function advanceReleaseTrain(
       return waitFor(train, 'PREFLIGHTING');
     }
     if (train.status === 'PREFLIGHTING') {
-      const result = await pollPhase(train, 'preflight-');
+      const result = await pollPhase(train, candidates, 'preflight-');
+      if (result === 'INFRASTRUCTURE_EXHAUSTED')
+        return {
+          decision: 'FAILED',
+          train_id: train.id,
+          status: 'FAILED',
+          message:
+            'Release preflight infrastructure retries were exhausted; candidates were returned to the running lane'
+        };
       if (result === 'INFRASTRUCTURE_WAIT')
         return waitFor(train, train.status, {
           code: 'INFRASTRUCTURE_RETRY_BACKOFF',

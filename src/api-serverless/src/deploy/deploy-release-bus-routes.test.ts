@@ -699,7 +699,20 @@ describe('release-bus progress reporting', () => {
     expect(mockAppendEvent).not.toHaveBeenCalled();
   });
 
-  it('accepts an identical terminal report idempotently without another event', async () => {
+  it('rejects failure classification on a successful progress report', async () => {
+    const response = await post('/deploy/release-bus/report-progress', {
+      ...progressBody(),
+      failure_class: 'INFRASTRUCTURE_TRANSIENT',
+      failure_phase: 'dependency_install',
+      retryable: true
+    });
+
+    expect(response.status).toBe(400);
+    expect(mockUpdateOperation).not.toHaveBeenCalled();
+    expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+
+  it('accepts an identical pre-classification terminal report idempotently without another event', async () => {
     const report = progressBody();
     const { files, ...totalsRest } = report.summary.totals;
     const [{ index, ...firstShardRest }, ...remainingShards] =

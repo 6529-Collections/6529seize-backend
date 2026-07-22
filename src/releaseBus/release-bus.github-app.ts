@@ -18,6 +18,13 @@ export type GitHubWorkflowStep = {
   readonly started_at: string | null;
   readonly completed_at: string | null;
 };
+
+export function workflowRunMatchesOperation(
+  displayTitle: string,
+  operationKey: string
+): boolean {
+  return displayTitle.includes(`[${operationKey}]`);
+}
 export type GitHubWorkflowJob = {
   readonly id: number;
   readonly name: string;
@@ -427,7 +434,7 @@ export class ReleaseBusGitHubApp {
       if (response.status === 404) return null;
       await this.assertOk(response, `read ${repository} workflow run`);
       const run = (await response.json()) as GitHubRun;
-      if (!run.display_title.includes(operationKey))
+      if (!workflowRunMatchesOperation(run.display_title, operationKey))
         throw new Error(
           `GitHub workflow run ${externalId} does not match operation ${operationKey}`
         );
@@ -443,7 +450,7 @@ export class ReleaseBusGitHubApp {
         .workflow_runs ?? [];
     const run =
       runs.find((candidate) =>
-        candidate.display_title.includes(operationKey)
+        workflowRunMatchesOperation(candidate.display_title, operationKey)
       ) ?? null;
     return run ? this.withWorkflowJobs(repository, run) : null;
   }
