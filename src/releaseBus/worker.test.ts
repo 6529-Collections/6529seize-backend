@@ -1279,6 +1279,126 @@ describe('frontend base canary', () => {
   });
 });
 
+describe('staging E2E infrastructure recovery', () => {
+  const e2eCandidate = candidate('candidate-e2e', 'backend', SHA_A, 1776);
+  const e2eTrain: ReleaseTrainRecord = {
+    id: 'train-1',
+    revision: 1,
+    target_lane: 'STAGING',
+    status: 'E2E_RUNNING',
+    cutoff_at: 1,
+    frontend_base_sha: 'd'.repeat(40),
+    backend_base_sha: 'e'.repeat(40),
+    frontend_release_branch: null,
+    backend_release_branch: 'release-bus/staging-train-train-1-r1',
+    frontend_pr_number: null,
+    backend_pr_number: null,
+    state_machine_execution_arn: null,
+    worker_version: '11',
+    failure_reason: null,
+    started_at: 1,
+    completed_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  };
+  const failedOperation = {
+    id: 'operation-e2e-attempt-1',
+    operation_key: 'train-1:r1:e2e-staging:a1',
+    train_id: e2eTrain.id,
+    revision: e2eTrain.revision,
+    operation_type: 'e2e-staging',
+    repository: 'frontend',
+    environment: 'staging',
+    service: null,
+    expected_sha: SHA_B,
+    artifact_digest: null,
+    attempt: 1,
+    status: 'FAILED',
+    external_id: '29920703076',
+    request_metadata_json: {
+      workflow: 'staging-e2e.yml',
+      ref: 'main',
+      inputs: { pack: 'all', source_ref: '1a-staging' }
+    },
+    result_metadata_json: {
+      url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/29920703076',
+      workflow_conclusion: 'failure',
+      failed_job: 'Staging E2E packs',
+      failed_step: 'Install Playwright browser'
+    },
+    started_at: 1,
+    completed_at: 2,
+    created_at: 1,
+    updated_at: 2,
+    row_version: 2
+  } as const;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_MODE = 'STAGING';
+    mockFindTrain.mockResolvedValue(e2eTrain);
+    mockListTrainItems.mockResolvedValue([
+      { candidate_id: e2eCandidate.id, sequence: 1 }
+    ]);
+    mockFindCandidateById.mockResolvedValue(e2eCandidate);
+    mockHeartbeatLane.mockResolvedValue(true);
+    mockListControls.mockResolvedValue([]);
+    mockListTrainOperations.mockResolvedValue([failedOperation]);
+    mockListTrainEvents.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({
+      ...failedOperation,
+      operation_key: 'train-1:r1:e2e-staging:a2',
+      attempt: 2,
+      status: 'DISPATCHED'
+    });
+    mockAppendEvent.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    delete process.env.RELEASE_BUS_MODE;
+  });
+
+  it('retries a legacy E2E setup failure without redeploying or pausing', async () => {
+    await expect(advanceReleaseTrain(e2eTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'E2E_RUNNING',
+      wait_reason: {
+        code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+        summary: expect.stringContaining('retry automatically')
+      }
+    });
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'staging-e2e.yml',
+      'main',
+      expect.objectContaining({
+        pack: 'all',
+        source_ref: '1a-staging',
+        operation_key: expect.stringMatching(/:a2$/)
+      })
+    );
+    expect(mockSetControl).not.toHaveBeenCalled();
+    expect(mockUpdateCandidateLifecycle).not.toHaveBeenCalled();
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'OPERATION_INFRASTRUCTURE_RETRY_DISPATCHED',
+        payload: expect.objectContaining({
+          failed_attempt: 1,
+          next_attempt: 2,
+          lane_paused: false
+        })
+      }),
+      {}
+    );
+  });
+});
+
 function candidate(
   id: string,
   repository: 'backend' | 'frontend',

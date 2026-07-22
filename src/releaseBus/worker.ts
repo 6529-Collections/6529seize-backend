@@ -51,7 +51,27 @@ export type WorkerResult = {
   readonly current_operation?: ReleaseOperationView | null;
 };
 
-class TerminalReleaseTrainError extends Error {}
+class TerminalReleaseTrainError extends Error {
+  public readonly releaseBusTerminalError = true;
+
+  public constructor(message: string) {
+    super(message);
+    this.name = 'TerminalReleaseTrainError';
+    Object.setPrototypeOf(this, TerminalReleaseTrainError.prototype);
+  }
+}
+
+function isTerminalReleaseTrainError(
+  error: unknown
+): error is TerminalReleaseTrainError {
+  return (
+    error instanceof TerminalReleaseTrainError ||
+    (error !== null &&
+      typeof error === 'object' &&
+      'releaseBusTerminalError' in error &&
+      error.releaseBusTerminalError === true)
+  );
+}
 
 class ConcurrentReleaseTrainPhaseError extends Error {
   public constructor(message: string) {
@@ -258,6 +278,26 @@ function retryableInfrastructureFailure(
   return (
     gateReport.failure_class === 'INFRASTRUCTURE_TRANSIENT' &&
     gateReport.retryable === true
+  );
+}
+
+const E2E_INFRASTRUCTURE_SETUP_STEPS = new Set([
+  'Install Socket Firewall',
+  'Install and verify frozen dependencies',
+  'Install dependencies',
+  'Install Playwright browser'
+]);
+
+function retryableE2eInfrastructureFailure(
+  operation: ReleaseOperationRecord
+): boolean {
+  if (retryableInfrastructureFailure(operation)) return true;
+  if (!operation.operation_type.startsWith('e2e-')) return false;
+  const result = metadata(operation.result_metadata_json);
+  return (
+    result.workflow_conclusion === 'failure' &&
+    typeof result.failed_step === 'string' &&
+    E2E_INFRASTRUCTURE_SETUP_STEPS.has(result.failed_step)
   );
 }
 
@@ -705,8 +745,7 @@ async function retryInfrastructureFailures(
   const rejected = retryResults.find(
     (result): result is PromiseRejectedResult => result.status === 'rejected'
   );
-  if (rejected?.reason instanceof TerminalReleaseTrainError)
-    throw rejected.reason;
+  if (isTerminalReleaseTrainError(rejected?.reason)) throw rejected.reason;
   if (rejected) {
     await releaseBusRepository.appendEvent(
       {
@@ -730,7 +769,10 @@ async function retryInfrastructureFailures(
 async function pollPhase(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[],
-  prefix: string
+  prefix: string,
+  isRetryableInfrastructureFailure: (
+    operation: ReleaseOperationRecord
+  ) => boolean = retryableInfrastructureFailure
 ): Promise<
   'PASS' | 'WAIT' | 'INFRASTRUCTURE_WAIT' | 'INFRASTRUCTURE_EXHAUSTED' | 'FAIL'
 > {
@@ -745,7 +787,7 @@ async function pollPhase(
     (operation) => workflowResult(operation) === 'FAIL'
   );
   if (failed.length > 0) {
-    if (failed.every(retryableInfrastructureFailure)) {
+    if (failed.every(isRetryableInfrastructureFailure)) {
       return retryInfrastructureFailures(train, candidates, failed, prefix);
     }
     return 'FAIL';
@@ -2393,11 +2435,20 @@ async function heartbeatOwnedTrainLanes(
 
 async function advanceE2e(
   train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[],
   environment: 'staging' | 'prod'
-): Promise<'PASS' | 'WAIT' | 'FAIL'> {
+): Promise<
+  'PASS' | 'WAIT' | 'INFRASTRUCTURE_WAIT' | 'INFRASTRUCTURE_EXHAUSTED' | 'FAIL'
+> {
   const type = `e2e-${environment}`;
-  const existing = (await phaseOperations(train.id, type))[0];
-  if (existing) return workflowResult(await reconcile(existing));
+  const existing = await phaseOperations(train.id, type);
+  if (existing.length > 0)
+    return pollPhase(
+      train,
+      candidates,
+      type,
+      retryableE2eInfrastructureFailure
+    );
   const ref = e2eSourceRef(
     train.frontend_release_branch,
     environment,
@@ -3239,13 +3290,19 @@ export async function advanceReleaseTrain(
       });
     }
     if (train.status === 'E2E_RUNNING') {
-      return advanceGuardedPhase({
+      const laneWait = await waitForRequiredLane(train, 'global-staging');
+      if (laneWait) return laneWait;
+      const result = await advanceE2e(train, candidates, 'staging');
+      const infrastructure = await infrastructurePhaseResult(
         train,
-        lane: 'global-staging',
-        run: () => advanceE2e(train, 'staging'),
-        failureMessage: 'Staging E2E failed',
-        nextStatus: 'VALIDATING_STAGING'
-      });
+        result,
+        'staging E2E'
+      );
+      if (infrastructure) return infrastructure;
+      if (result === 'FAIL')
+        throw new TerminalReleaseTrainError('Staging E2E failed');
+      if (result === 'WAIT') return waitFor(train, train.status);
+      return continueAtPhase(train, 'VALIDATING_STAGING');
     }
     if (train.status === 'VALIDATING_STAGING') {
       const stagingLaneWait = await waitForRequiredLane(
@@ -3379,13 +3436,22 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'PRODUCTION_E2E_RUNNING') {
       const latest = await reloadTrain(train.id);
-      return advanceGuardedPhase({
-        train: latest,
-        lane: 'global-production',
-        run: () => advanceE2e(latest, 'prod'),
-        failureMessage: 'Production E2E failed',
-        nextStatus: 'VALIDATING_PRODUCTION'
-      });
+      const productionLaneWait = await waitForRequiredLane(
+        latest,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      const result = await advanceE2e(latest, candidates, 'prod');
+      const infrastructure = await infrastructurePhaseResult(
+        latest,
+        result,
+        'production E2E'
+      );
+      if (infrastructure) return infrastructure;
+      if (result === 'FAIL')
+        throw new TerminalReleaseTrainError('Production E2E failed');
+      if (result === 'WAIT') return waitFor(latest, latest.status);
+      return continueAtPhase(latest, 'VALIDATING_PRODUCTION');
     }
     if (train.status === 'VALIDATING_PRODUCTION') {
       const productionLaneWait = await waitForRequiredLane(
@@ -3434,7 +3500,7 @@ export async function advanceReleaseTrain(
         summary: `Train phase changed concurrently to ${latest.status}; waiting for the next guarded worker tick.`
       });
     }
-    if (!(error instanceof TerminalReleaseTrainError)) throw error;
+    if (!isTerminalReleaseTrainError(error)) throw error;
     const message =
       error instanceof Error
         ? error.message
