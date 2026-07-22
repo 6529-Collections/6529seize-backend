@@ -42,7 +42,10 @@ import {
   ReleaseBusHistoryResetBlockedError,
   releaseBusService
 } from '@/releaseBus/release-bus.service';
-import { getReleaseTrainOverview } from '@/releaseBus/release-bus-status.service';
+import {
+  getReleaseTrainOverview,
+  projectReleaseCandidate
+} from '@/releaseBus/release-bus-status.service';
 import type {
   MarkReleaseReadyInput,
   ReleaseCandidateRecord,
@@ -431,7 +434,10 @@ deployRoutes.get('/release-candidates', async (req, res) => {
     {}
   );
   setNoStoreHeaders(res);
-  return res.json({ candidates, mode: getReleaseBusMode() });
+  return res.json({
+    candidates: candidates.map(projectReleaseCandidate),
+    mode: getReleaseBusMode()
+  });
 });
 
 deployRoutes.get('/release-trains', async (req, res) => {

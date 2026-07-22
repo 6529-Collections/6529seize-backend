@@ -1967,7 +1967,7 @@ export async function advanceBackendDeploy(
       const sha = await releaseBusGitHubApp.resolveRef('backend', ref);
       const artifactRunId = await preflightRunId(train.id, 'backend');
       const releaseGroupServices = units.join(',');
-      await Promise.allSettled(
+      const dispatches = await Promise.allSettled(
         frontier.map((unit) =>
           dispatchWorkflow({
             train,
@@ -2002,6 +2002,11 @@ export async function advanceBackendDeploy(
           })
         )
       );
+      const rejectedDispatch = dispatches.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected'
+      );
+      if (rejectedDispatch) throw rejectedDispatch.reason;
       await releaseBusRepository.appendEvent(
         {
           trainId: train.id,
@@ -2244,6 +2249,50 @@ async function publishCandidateStatus(
       {}
     );
   }
+}
+
+const CANDIDATE_PHASE_LABELS: Partial<
+  Record<ReleaseTrainRecord['status'], string>
+> = {
+  FROZEN: 'candidate set frozen',
+  BASE_CANARY_RUNNING: 'checking the unchanged staging base',
+  COMPOSING: 'composing the immutable candidate',
+  PREFLIGHTING: 'running exact-SHA preflight',
+  ISOLATING_FAILURE: 'isolating a deterministic failure',
+  DEPLOYING_BACKEND: 'deploying the staging backend frontier',
+  DEPLOYING_FRONTEND: 'deploying the immutable staging frontend artifact',
+  E2E_RUNNING: 'running staging E2E',
+  VALIDATING_STAGING: 'finalizing staging evidence',
+  MERGING_PRODUCTION: 'advancing backend production main',
+  DEPLOYING_BACKEND_PRODUCTION: 'deploying the production backend frontier',
+  MERGING_FRONTEND_PRODUCTION: 'advancing frontend production main',
+  DEPLOYING_FRONTEND_PRODUCTION:
+    'deploying the immutable production frontend artifact',
+  PRODUCTION_E2E_RUNNING: 'running production-safe E2E',
+  VALIDATING_PRODUCTION: 'finalizing production evidence',
+  SYNCING_STAGING: 'synchronizing production back to staging'
+};
+
+export function candidatePhaseDescription(
+  train: ReleaseTrainRecord
+): string | null {
+  const label = CANDIDATE_PHASE_LABELS[train.status];
+  return label
+    ? `Release Bus: ${label} (train ${train.id.slice(0, 8)})`
+    : null;
+}
+
+async function publishCandidatePhaseStatuses(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[]
+): Promise<void> {
+  const description = candidatePhaseDescription(train);
+  if (!description) return;
+  await Promise.all(
+    candidates.map((candidate) =>
+      publishCandidateStatus(train, candidate, 'pending', description)
+    )
+  );
 }
 
 async function failInfrastructureTrainWithoutPausing(
@@ -3709,6 +3758,7 @@ export async function advanceReleaseTrain(
         status: train.status,
         message: train.failure_reason ?? undefined
       };
+    await publishCandidatePhaseStatuses(train, candidates);
     const mode = getReleaseBusMode();
     if (mode === 'OFF')
       return waitFor(train, train.status, {

@@ -36,7 +36,13 @@ const TERMINAL_TRAIN_STATUSES = new Set([
 
 async function reconcileQueuedCandidateHeads(): Promise<void> {
   const queued = await releaseBusRepository.listCandidates(
-    ['READY_FOR_STAGING', 'READY_FOR_PRODUCTION', 'BLOCKED'],
+    [
+      'DRAFT',
+      'READY_FOR_STAGING',
+      'STAGING_VALIDATED',
+      'READY_FOR_PRODUCTION',
+      'BLOCKED'
+    ],
     500,
     {}
   );

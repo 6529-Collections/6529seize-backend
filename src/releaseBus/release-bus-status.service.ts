@@ -261,7 +261,10 @@ function failureOperation(
 
 function candidateSummary(
   item: ReleaseTrainItemRecord,
-  candidate: ReleaseCandidateRecord | null
+  candidate: ReleaseCandidateRecord | null,
+  currentPhase: string,
+  phaseStateValue: string,
+  currentOperation: ReleaseOperationView | null
 ) {
   return {
     sequence: item.sequence,
@@ -273,7 +276,49 @@ function candidateSummary(
     head_sha: candidate?.head_sha ?? null,
     pr_number: candidate?.pr_number ?? null,
     status: candidate?.status ?? 'UNKNOWN',
+    lifecycle_status: candidate?.status ?? 'UNKNOWN',
+    current_phase: currentPhase,
+    phase_state: phaseStateValue,
+    operation_type: currentOperation?.operation_type ?? null,
+    active_job: currentOperation?.active_job ?? null,
+    active_step: currentOperation?.active_step ?? null,
+    failed_job: currentOperation?.failed_job ?? null,
+    failed_step: currentOperation?.failed_step ?? null,
     hold_reason: candidate?.hold_reason ?? null
+  };
+}
+
+function supersedingBranchHead(candidate: ReleaseCandidateRecord): string | null {
+  if (candidate.status !== 'SUPERSEDED') return null;
+  const match = /^Branch moved to ([a-f0-9]{40})$/.exec(
+    candidate.hold_reason ?? ''
+  );
+  return match?.[1] ?? null;
+}
+
+export function projectReleaseCandidate(candidate: ReleaseCandidateRecord) {
+  const supersedingHead = supersedingBranchHead(candidate);
+  const superseded = candidate.status === 'SUPERSEDED';
+  return {
+    ...candidate,
+    immutable_head_sha: candidate.head_sha,
+    immutable_validation_scope: 'EXACT_SHA',
+    head_relation: superseded
+      ? candidate.hold_reason === 'Branch moved to deleted'
+        ? 'BRANCH_DELETED'
+        : 'SUPERSEDED_BY_UNREGISTERED_HEAD'
+      : candidate.status === 'STAGING_VALIDATED'
+        ? 'VALIDATED_IMMUTABLE_SHA'
+        : 'REGISTERED_IMMUTABLE_SHA',
+    unregistered_branch_head_sha: supersedingHead,
+    requires_new_readiness: superseded,
+    status_summary: superseded
+      ? supersedingHead
+        ? `Historical immutable SHA; branch moved to unregistered head ${supersedingHead}`
+        : 'Historical immutable SHA; branch no longer matches this readiness record'
+      : candidate.status === 'STAGING_VALIDATED'
+        ? 'Staging validation applies only to this immutable SHA'
+        : 'Readiness applies only to this immutable SHA'
   };
 }
 
@@ -351,6 +396,7 @@ function recoveryRecommendation(
 function incidentSummary(
   train: ReleaseTrainRecord,
   candidates: readonly ReturnType<typeof candidateSummary>[],
+  currentPhase: string,
   currentOperation: ReleaseOperationView | null,
   failedOperation: ReleaseOperationView | null,
   controls: readonly ReleaseBusControlRecord[]
@@ -373,6 +419,12 @@ function incidentSummary(
   const quarantinedCandidates = candidates
     .filter((candidate) => candidate.status === 'QUARANTINED')
     .map((candidate) => candidate.id);
+  const retryState =
+    gateReport.retryable === true
+      ? train.status === 'FAILED'
+        ? 'AUTOMATIC_RETRY_EXHAUSTED'
+        : 'AUTOMATIC_RETRY_PENDING'
+      : 'NOT_RETRYABLE';
   const summary = baseFailure
     ? `Existing staging base failed ${operation?.operation_type ?? 'the deterministic gate'} for SHA ${operation?.expected_sha ?? train.frontend_base_sha}. Candidates had not been tested. No candidate was blamed. ${train.target_lane} was paused.`
     : (safeText(train.failure_reason) ??
@@ -383,6 +435,8 @@ function incidentSummary(
       ? 'Existing staging base failed'
       : 'Release train paused',
     summary,
+    phase: currentPhase,
+    retry_state: retryState,
     attribution: failureAttribution(baseFailure, quarantinedCandidates.length),
     failed_gate: operation?.operation_type ?? null,
     failed_job: operation?.failed_job ?? null,
@@ -391,6 +445,11 @@ function incidentSummary(
     failing_tests: failingTestNames(jest),
     returned_candidates: returnedCandidates,
     quarantined_candidates: baseFailure ? [] : quarantinedCandidates,
+    candidate_dispositions: candidates.map((candidate) => ({
+      id: candidate.id,
+      status: candidate.status,
+      hold_reason: candidate.hold_reason
+    })),
     recommended_recovery: recoveryRecommendation(
       baseFailure,
       quarantinedCandidates.length
@@ -508,8 +567,24 @@ export function buildReleaseTrainOverview(input: {
   );
   const backendPreflightOperation =
     backendPreflightOperations[backendPreflightOperations.length - 1];
+  const currentPhase = currentTrainPhase(
+    input.train,
+    input.operations,
+    paused
+  );
+  const currentPhaseState = phaseState(
+    input.train,
+    paused,
+    currentOperation
+  );
   const candidates = input.items.map((item, index) =>
-    candidateSummary(item, input.candidates[index] ?? null)
+    candidateSummary(
+      item,
+      input.candidates[index] ?? null,
+      currentPhase,
+      currentPhaseState,
+      currentOperation
+    )
   );
   const ownedLanes = input.lanes
     .filter(
@@ -533,8 +608,8 @@ export function buildReleaseTrainOverview(input: {
   const failed = failureOperation(input.operations);
   return {
     ...input.train,
-    phase: currentTrainPhase(input.train, input.operations, paused),
-    phase_state: phaseState(input.train, paused, currentOperation),
+    phase: currentPhase,
+    phase_state: currentPhaseState,
     elapsed_ms: Math.max(
       0,
       (input.train.completed_at ?? now) -
@@ -567,6 +642,7 @@ export function buildReleaseTrainOverview(input: {
     incident: incidentSummary(
       input.train,
       candidates,
+      currentPhase,
       currentOperation,
       failed,
       input.controls
