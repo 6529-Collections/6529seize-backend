@@ -108,6 +108,93 @@ describe('release operation idempotency', () => {
     });
   });
 
+  it('reports whether evidence was inserted or already present', async () => {
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce({ affectedRows: 0 });
+    const repository = new ReleaseBusRepository(
+      () =>
+        ({
+          execute,
+          getAffectedRows: (result: { affectedRows?: number }) =>
+            result.affectedRows ?? 0
+        }) as unknown as SqlExecutor
+    );
+    const evidence = {
+      idempotencyKey: 'base-canary-completed:operation-key',
+      trainId: 'train-1',
+      revision: 1,
+      evidenceType: 'BASE_CANARY_COMPLETED',
+      status: 'SUCCEEDED',
+      sourceSha: 'a'.repeat(40)
+    };
+
+    await expect(repository.addEvidence(evidence, {})).resolves.toBe(true);
+    await expect(repository.addEvidence(evidence, {})).resolves.toBe(false);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(sql.trim().split(/\s+/).join(' ')).toContain(
+      'insert ignore into release_train_evidence'
+    );
+    expect(params).toMatchObject({
+      evidenceKey: 'base-canary-completed:operation-key',
+      trainId: 'train-1',
+      sourceSha: 'a'.repeat(40)
+    });
+  });
+
+  it('loads exact-SHA base evidence newest-first with a bounded limit', async () => {
+    const rows = [
+      { id: 'evidence-newer', created_at: 2 },
+      { id: 'evidence-older', created_at: 1 }
+    ];
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce(rows)
+      .mockResolvedValueOnce([]);
+    const repository = new ReleaseBusRepository(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+    const sourceSha = 'b'.repeat(40);
+
+    await expect(
+      repository.listBaseCanaryEvidenceBySha(sourceSha, {}, 999)
+    ).resolves.toEqual(rows);
+    await expect(
+      repository.listBaseCanaryEvidenceBySha(sourceSha, {}, 20)
+    ).resolves.toEqual([]);
+
+    const [sql, params] = execute.mock.calls[0] as [
+      string,
+      Record<string, unknown>
+    ];
+    const normalizedSql = sql.trim().split(/\s+/).join(' ');
+    expect(normalizedSql).toContain(
+      "where evidence_type = 'BASE_CANARY_COMPLETED' and source_sha = :sourceSha"
+    );
+    expect(normalizedSql).toContain(
+      'order by created_at desc, id desc limit 500'
+    );
+    expect(params).toEqual({ sourceSha });
+    expect(execute.mock.calls[1]?.[0]).toContain('limit 20');
+  });
+
+  it('rejects malformed base evidence SHAs before querying', async () => {
+    const execute = jest.fn();
+    const repository = new ReleaseBusRepository(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.listBaseCanaryEvidenceBySha('not-a-sha', {})
+    ).rejects.toThrow('Invalid frontend base evidence SHA');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('advances a train phase only from the expected status', async () => {
     const execute = jest.fn().mockResolvedValue({ affectedRows: 1 });
     const repository = new ReleaseBusRepository(

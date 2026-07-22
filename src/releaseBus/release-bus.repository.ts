@@ -105,6 +105,21 @@ export type ReleaseTrainEventRecord = {
   readonly created_at: number;
 };
 
+export type ReleaseTrainEvidenceRecord = {
+  readonly id: string;
+  readonly evidence_key: string;
+  readonly train_id: string;
+  readonly revision: number;
+  readonly candidate_id: string | null;
+  readonly evidence_type: string;
+  readonly status: string;
+  readonly source_sha: string | null;
+  readonly artifact_digest: string | null;
+  readonly evidence_uri: string | null;
+  readonly metadata_json: unknown;
+  readonly created_at: number | string;
+};
+
 function dbOptions(ctx: RequestContext) {
   return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
 }
@@ -165,11 +180,11 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
        (id, repository, branch_name, head_sha, pr_number, status,
         staging_ready_by_github_login, staging_ready_at,
         production_ready_by_github_login, production_ready_at,
-        deploy_plan_json, metadata_version, current_train_id, hold_reason,
+        deploy_plan_json, force_fresh_base_canary, metadata_version, current_train_id, hold_reason,
         invalidated_at, released_at, created_at, updated_at, row_version)
        values (:id, :repository, :branchName, :headSha, :prNumber, :status,
         :stagingActor, :stagingReadyAt, :productionActor, :productionReadyAt,
-        :deployPlan, :metadataVersion, :currentTrainId, :holdReason,
+        :deployPlan, :forceFreshBaseCanary, :metadataVersion, :currentTrainId, :holdReason,
         :invalidatedAt, :releasedAt, :now, :now, 1)`,
       {
         id: candidate.id,
@@ -185,6 +200,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
         deployPlan: candidate.deploy_plan_json
           ? JSON.stringify(candidate.deploy_plan_json)
           : null,
+        forceFreshBaseCanary: candidate.force_fresh_base_canary,
         metadataVersion: candidate.metadata_version,
         currentTrainId: candidate.current_train_id,
         holdReason: candidate.hold_reason,
@@ -202,6 +218,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     fields: {
       readonly prNumber: number | null;
       readonly deployPlan: ReleaseCandidateRecord['deploy_plan_json'];
+      readonly forceFreshBaseCanary: boolean;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -209,6 +226,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       `update ${RELEASE_READY_DEPLOYMENTS_TABLE}
        set pr_number = coalesce(:prNumber, pr_number),
            deploy_plan_json = coalesce(:deployPlan, deploy_plan_json),
+           force_fresh_base_canary = :forceFreshBaseCanary,
            metadata_version = metadata_version + 1, updated_at = :now,
            row_version = row_version + 1
        where id = :id and row_version = :expectedVersion`,
@@ -219,6 +237,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
         deployPlan: fields.deployPlan
           ? JSON.stringify(fields.deployPlan)
           : null,
+        forceFreshBaseCanary: fields.forceFreshBaseCanary,
         now: Date.now()
       },
       dbOptions(ctx)
@@ -749,7 +768,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       readonly metadata?: unknown;
     },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     const evidenceKey =
       evidence.idempotencyKey ??
       [
@@ -760,7 +779,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
         evidence.sourceSha ?? '-',
         evidence.artifactDigest ?? '-'
       ].join(':');
-    await this.db.execute(
+    const result = await this.db.execute(
       `insert ignore into ${RELEASE_TRAIN_EVIDENCE_TABLE}
        (id, evidence_key, train_id, revision, candidate_id, evidence_type, status, source_sha,
         artifact_digest, evidence_uri, metadata_json, created_at)
@@ -780,6 +799,26 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
         metadata: evidence.metadata ? JSON.stringify(evidence.metadata) : null,
         now: Date.now()
       },
+      dbOptions(ctx)
+    );
+    return this.db.getAffectedRows(result) === 1;
+  }
+
+  public async listBaseCanaryEvidenceBySha(
+    sourceSha: string,
+    ctx: RequestContext,
+    limit = 200
+  ): Promise<ReleaseTrainEvidenceRecord[]> {
+    if (!/^[a-f0-9]{40}$/.test(sourceSha))
+      throw new Error('Invalid frontend base evidence SHA');
+    const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 500));
+    return this.db.execute<ReleaseTrainEvidenceRecord>(
+      `select * from ${RELEASE_TRAIN_EVIDENCE_TABLE}
+       where evidence_type = 'BASE_CANARY_COMPLETED'
+         and source_sha = :sourceSha
+       order by created_at desc, id desc
+       limit ${boundedLimit}`,
+      { sourceSha },
       dbOptions(ctx)
     );
   }
