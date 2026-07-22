@@ -41,6 +41,9 @@ describe('deploy-bus-ui.renderer', () => {
     );
     expect(app).toContain('function safeActionUrl');
     expect(app).toContain('function renderOverview');
+    expect(app).toContain('Lookup decision:');
+    expect(app).toContain('value.lookup_reason');
+    expect(app).toContain('value.lookup_action');
     expect(app).toContain('function renderIncident');
     expect(app).toContain('function renderOperation');
     expect(app).toContain('function renderTimeline');

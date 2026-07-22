@@ -942,6 +942,12 @@ type BaseCanaryEvidenceConfig = {
   readonly reuse: boolean;
   readonly shadow: boolean;
   readonly maxAgeHours: number;
+  readonly source:
+    | 'deployed'
+    | 'runtime_overrides'
+    | 'deployed_fallback'
+    | 'runtime_invalid';
+  readonly disabledReason?: string;
 };
 
 async function resolveBaseCanaryEvidenceConfig(): Promise<BaseCanaryEvidenceConfig> {
@@ -981,13 +987,18 @@ async function resolveBaseCanaryEvidenceConfig(): Promise<BaseCanaryEvidenceConf
       maxAgeHours < 1 ||
       maxAgeHours > 168
     )
-      return { reuse: false, shadow: false, maxAgeHours: 24 };
-    return { reuse, shadow, maxAgeHours };
+      return {
+        reuse: false,
+        shadow: false,
+        maxAgeHours: 24,
+        source: 'runtime_invalid',
+        disabledReason: 'runtime_controls_invalid'
+      };
+    return { reuse, shadow, maxAgeHours, source: 'runtime_overrides' };
   } catch {
     return {
-      reuse: false,
-      shadow: false,
-      maxAgeHours: deployed.maxAgeHours
+      ...deployed,
+      source: 'deployed_fallback'
     };
   }
 }
@@ -1107,9 +1118,15 @@ async function resolveFrontendGateContract(
 
 async function publishBaseEvidenceLookup(
   train: ReleaseTrainRecord,
-  decision: 'HIT' | 'MISS' | 'INVALIDATED' | 'FORCE_FRESH',
-  reason: string
+  decision: 'HIT' | 'MISS' | 'INVALIDATED' | 'FORCE_FRESH' | 'DISABLED',
+  reason: string,
+  options: {
+    readonly action?: 'reuse' | 'fresh_validation' | 'shadow_fresh_validation';
+    readonly configurationSource?: BaseCanaryEvidenceConfig['source'];
+  } = {}
 ): Promise<void> {
+  const action =
+    options.action ?? (decision === 'HIT' ? 'reuse' : 'fresh_validation');
   await publishReleaseBusMetrics([
     {
       MetricName: 'BaseCanaryEvidenceLookup',
@@ -1121,6 +1138,43 @@ async function publishBaseEvidenceLookup(
       ]
     }
   ]);
+  await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const inserted = await releaseBusRepository.addEvidence(
+        {
+          idempotencyKey: `base-evidence-lookup:${train.id}:r${train.revision}:${decision}:${reason}:${action}`,
+          trainId: train.id,
+          revision: train.revision,
+          evidenceType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECISION',
+          status: 'SUCCEEDED',
+          sourceSha: train.frontend_base_sha,
+          metadata: {
+            decision,
+            reason,
+            action,
+            configuration_source: options.configurationSource ?? null
+          }
+        },
+        context
+      );
+      if (!inserted) return;
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+          payload: {
+            base_sha: train.frontend_base_sha,
+            decision,
+            reason,
+            action,
+            configuration_source: options.configurationSource ?? null
+          }
+        },
+        context
+      );
+    }
+  );
 }
 
 type ReleaseBusMetricDatum = Parameters<
@@ -1547,7 +1601,8 @@ async function prepareFreshFrontendBaseCanary(
     await publishBaseEvidenceLookup(
       train,
       'FORCE_FRESH',
-      'operator_force_fresh'
+      'operator_force_fresh',
+      { configurationSource: evidenceConfig.source }
     );
     await releaseBusRepository.appendEvent(
       {
@@ -1562,8 +1617,15 @@ async function prepareFreshFrontendBaseCanary(
     );
     return { gateContract: null, result: null };
   }
-  if (!evidenceConfig.reuse && !evidenceConfig.shadow)
+  if (!evidenceConfig.reuse && !evidenceConfig.shadow) {
+    await publishBaseEvidenceLookup(
+      train,
+      'DISABLED',
+      evidenceConfig.disabledReason ?? 'evidence_reuse_disabled',
+      { configurationSource: evidenceConfig.source }
+    );
     return { gateContract: null, result: null };
+  }
   const identityOperations = latestOperationAttempts(
     await phaseOperations(train.id, 'base-evidence-identity-frontend')
   );
@@ -1635,7 +1697,14 @@ async function prepareFreshFrontendBaseCanary(
     await publishBaseEvidenceLookup(
       train,
       evidenceDecision.decision,
-      evidenceDecision.reason
+      evidenceDecision.reason,
+      {
+        action:
+          evidenceDecision.decision === 'HIT' && !evidenceConfig.reuse
+            ? 'shadow_fresh_validation'
+            : undefined,
+        configurationSource: evidenceConfig.source
+      }
     );
     if (evidenceDecision.decision !== 'HIT')
       return { gateContract, result: null };

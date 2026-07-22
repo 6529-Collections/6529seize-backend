@@ -170,6 +170,43 @@ describe('release train status view', () => {
     expect(result.leases[0]).not.toHaveProperty('lease_token');
   });
 
+  it('surfaces the exact evidence miss and fresh-validation action', () => {
+    const result = overview('RUNNING', {}, {}, {}, [
+      {
+        id: 'event-lookup',
+        train_id: train.id,
+        candidate_id: null,
+        event_type: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+        github_actor: null,
+        payload_json: {
+          decision: 'MISS',
+          reason: 'workflow_digest_mismatch',
+          action: 'fresh_validation',
+          configuration_source: 'deployed_fallback'
+        },
+        created_at: NOW - 500
+      }
+    ]);
+
+    expect(result.base_evidence).toMatchObject({
+      decision: 'FRESH_EXECUTING',
+      canary_skipped: false,
+      lookup_decision: 'MISS',
+      lookup_reason: 'workflow_digest_mismatch',
+      lookup_action: 'fresh_validation',
+      configuration_source: 'deployed_fallback'
+    });
+    expect(result.base_evidence.summary).toContain(
+      'MISS (workflow_digest_mismatch); action: fresh_validation'
+    );
+    expect(result.timeline[0]).toMatchObject({
+      event_type: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+      decision: 'MISS',
+      reason: 'workflow_digest_mismatch',
+      action: 'fresh_validation'
+    });
+  });
+
   it('attributes a base failure to the base and quarantines nobody', () => {
     const result = overview(
       'FAILED',
