@@ -1127,18 +1127,7 @@ async function publishBaseEvidenceLookup(
 ): Promise<void> {
   const action =
     options.action ?? (decision === 'HIT' ? 'reuse' : 'fresh_validation');
-  await publishReleaseBusMetrics([
-    {
-      MetricName: 'BaseCanaryEvidenceLookup',
-      Value: 1,
-      Dimensions: [
-        { Name: 'Lane', Value: train.target_lane },
-        { Name: 'Decision', Value: decision },
-        { Name: 'Reason', Value: reason.slice(0, 100) }
-      ]
-    }
-  ]);
-  await releaseBusRepository.executeNativeQueriesInTransaction(
+  const inserted = await releaseBusRepository.executeNativeQueriesInTransaction(
     async (connection) => {
       const context = { connection };
       const inserted = await releaseBusRepository.addEvidence(
@@ -1158,7 +1147,7 @@ async function publishBaseEvidenceLookup(
         },
         context
       );
-      if (!inserted) return;
+      if (!inserted) return false;
       await releaseBusRepository.appendEvent(
         {
           trainId: train.id,
@@ -1173,8 +1162,21 @@ async function publishBaseEvidenceLookup(
         },
         context
       );
+      return true;
     }
   );
+  if (!inserted) return;
+  await publishReleaseBusMetrics([
+    {
+      MetricName: 'BaseCanaryEvidenceLookup',
+      Value: 1,
+      Dimensions: [
+        { Name: 'Lane', Value: train.target_lane },
+        { Name: 'Decision', Value: decision },
+        { Name: 'Reason', Value: reason.slice(0, 100) }
+      ]
+    }
+  ]);
 }
 
 type ReleaseBusMetricDatum = Parameters<

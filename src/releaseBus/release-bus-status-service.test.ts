@@ -207,6 +207,27 @@ describe('release train status view', () => {
     });
   });
 
+  it('keeps a lookup decision visible when an older producer omitted its reason', () => {
+    const result = overview('RUNNING', {}, {}, {}, [
+      {
+        id: 'event-lookup-without-reason',
+        train_id: train.id,
+        candidate_id: null,
+        event_type: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+        github_actor: null,
+        payload_json: {
+          decision: 'DISABLED',
+          action: 'fresh_validation'
+        },
+        created_at: NOW - 500
+      }
+    ]);
+
+    expect(result.base_evidence.summary).toContain(
+      'Evidence lookup: DISABLED; action: fresh_validation'
+    );
+  });
+
   it('attributes a base failure to the base and quarantines nobody', () => {
     const result = overview(
       'FAILED',

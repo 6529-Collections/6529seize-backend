@@ -175,10 +175,9 @@ function baseEvidenceStatus(
   const lookupDecision = safeText(lookupPayload.decision, 32);
   const lookupReason = safeText(lookupPayload.reason);
   const lookupAction = safeText(lookupPayload.action, 64);
-  const lookupExplanation =
-    lookupDecision && lookupReason
-      ? ` Evidence lookup: ${lookupDecision} (${lookupReason}); action: ${lookupAction ?? 'fresh_validation'}.`
-      : '';
+  const lookupExplanation = lookupDecision
+    ? ` Evidence lookup: ${lookupDecision}${lookupReason ? ` (${lookupReason})` : ''}; action: ${lookupAction ?? 'fresh_validation'}.`
+    : '';
   const baseOperation = operations
     .filter((operation) => operation.operation_type === 'base-canary-frontend')
     .sort((left, right) => right.attempt - left.attempt)[0];
