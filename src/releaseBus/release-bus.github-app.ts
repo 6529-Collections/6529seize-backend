@@ -11,7 +11,24 @@ type GitHubMatchingRef = {
   readonly ref: string;
   readonly object?: { readonly sha?: string };
 };
-type GitHubRun = {
+export type GitHubWorkflowStep = {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+};
+export type GitHubWorkflowJob = {
+  readonly id: number;
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly html_url: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly steps?: GitHubWorkflowStep[];
+};
+export type GitHubRun = {
   readonly id: number;
   readonly name: string;
   readonly display_title: string;
@@ -19,8 +36,11 @@ type GitHubRun = {
   readonly conclusion: string | null;
   readonly head_sha: string;
   readonly html_url: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
   readonly event?: string;
   readonly actor?: { readonly login?: string };
+  readonly jobs?: GitHubWorkflowJob[];
 };
 
 export type ReleaseBusWorkflowRunIdentity = {
@@ -39,11 +59,46 @@ type GitHubCommitStatus = {
   readonly state?: string;
   readonly description?: string | null;
 };
+type GitHubFileContent = {
+  readonly type?: string;
+  readonly encoding?: string;
+  readonly content?: string;
+  readonly size?: number;
+};
+type GitHubActionsVariable = { readonly value?: string };
 
 const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
   frontend: '6529seize-frontend',
   backend: '6529seize-backend'
 };
+const MAX_WORKFLOW_JOBS = 100;
+const MAX_WORKFLOW_STEPS = 100;
+const MAX_WORKFLOW_LABEL_LENGTH = 500;
+
+export function safeGitHubWorkflowLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const sanitized = Array.from(value)
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? ' ' : character;
+    })
+    .join('')
+    .trim();
+  return sanitized ? sanitized.slice(0, MAX_WORKFLOW_LABEL_LENGTH) : null;
+}
+
+export function sanitizeGitHubWorkflowJobs(
+  jobs: readonly GitHubWorkflowJob[]
+): GitHubWorkflowJob[] {
+  return jobs.slice(0, MAX_WORKFLOW_JOBS).map((job) => ({
+    ...job,
+    name: safeGitHubWorkflowLabel(job.name) ?? 'Unnamed workflow job',
+    steps: job.steps?.slice(0, MAX_WORKFLOW_STEPS).map((step) => ({
+      ...step,
+      name: safeGitHubWorkflowLabel(step.name) ?? 'Unnamed workflow step'
+    }))
+  }));
+}
 
 function base64Url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url');
@@ -170,6 +225,63 @@ export class ReleaseBusGitHubApp {
     if (!sha || !/^[a-f0-9]{40}$/i.test(sha))
       throw new Error(`Invalid SHA returned for ${repository}:${ref}`);
     return sha.toLowerCase();
+  }
+
+  public async getFileContent(
+    repository: ReleaseRepository,
+    file: string,
+    ref: string
+  ): Promise<string> {
+    if (
+      !/^[A-Za-z0-9._/-]{1,500}$/.test(file) ||
+      file.startsWith('/') ||
+      file.split('/').includes('..')
+    )
+      throw new Error('Invalid repository file path');
+    if (!/^[a-f0-9]{40}$/.test(ref)) throw new Error('Invalid file ref SHA');
+    const response = await this.request(
+      repository,
+      `/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${ref}`
+    );
+    await this.assertOk(response, `read ${repository} file ${file}`);
+    const payload = (await response.json()) as GitHubFileContent;
+    if (
+      payload.type !== 'file' ||
+      payload.encoding !== 'base64' ||
+      typeof payload.content !== 'string' ||
+      !Number.isInteger(payload.size) ||
+      Number(payload.size) < 0 ||
+      Number(payload.size) > 1_000_000
+    )
+      throw new Error(`Invalid GitHub file response for ${repository}:${file}`);
+    const content = Buffer.from(
+      payload.content.replace(/\s/g, ''),
+      'base64'
+    ).toString('utf8');
+    if (Buffer.byteLength(content) !== payload.size)
+      throw new Error(`GitHub file size mismatch for ${repository}:${file}`);
+    return content;
+  }
+
+  public async getActionsVariable(
+    repository: ReleaseRepository,
+    name: string
+  ): Promise<string | null> {
+    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(name))
+      throw new Error('Invalid GitHub Actions variable name');
+    const response = await this.request(
+      repository,
+      `/actions/variables/${encodeURIComponent(name)}`
+    );
+    if (response.status === 404) return null;
+    await this.assertOk(
+      response,
+      `read ${repository} Actions variable ${name}`
+    );
+    const value = ((await response.json()) as GitHubActionsVariable).value;
+    if (typeof value !== 'string' || value.length > 500)
+      throw new Error(`Invalid ${repository} Actions variable ${name}`);
+    return value;
   }
 
   public async resolveRefIfExists(
@@ -319,7 +431,7 @@ export class ReleaseBusGitHubApp {
         throw new Error(
           `GitHub workflow run ${externalId} does not match operation ${operationKey}`
         );
-      return run;
+      return this.withWorkflowJobs(repository, run);
     }
     const response = await this.request(
       repository,
@@ -329,7 +441,25 @@ export class ReleaseBusGitHubApp {
     const runs =
       ((await response.json()) as { workflow_runs?: GitHubRun[] })
         .workflow_runs ?? [];
-    return runs.find((run) => run.display_title.includes(operationKey)) ?? null;
+    const run =
+      runs.find((candidate) =>
+        candidate.display_title.includes(operationKey)
+      ) ?? null;
+    return run ? this.withWorkflowJobs(repository, run) : null;
+  }
+
+  private async withWorkflowJobs(
+    repository: ReleaseRepository,
+    run: GitHubRun
+  ): Promise<GitHubRun> {
+    const response = await this.request(
+      repository,
+      `/actions/runs/${run.id}/jobs?filter=latest&per_page=100`
+    );
+    await this.assertOk(response, `read ${repository} workflow jobs`);
+    const jobs =
+      ((await response.json()) as { jobs?: GitHubWorkflowJob[] }).jobs ?? [];
+    return { ...run, jobs: sanitizeGitHubWorkflowJobs(jobs) };
   }
 
   public async getWorkflowRunIdentity(

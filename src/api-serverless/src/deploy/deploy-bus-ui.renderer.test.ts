@@ -14,6 +14,10 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('type="submit" disabled');
     expect(html).toContain('Operator controls');
     expect(html).toContain('Pause all');
+    expect(html).toContain('Active train');
+    expect(html).toContain('id="active-train"');
+    expect(html).toContain('id="force-fresh-base-canary"');
+    expect(html).toContain('Current phase, exact wait, workflow progress');
   });
 
   it('resolves a branch head before submitting and escapes server values', () => {
@@ -23,6 +27,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain("request('/deploy/release-candidates/ready'");
     expect(app).toContain('replace(/[&<>"\']/g');
     expect(app).toContain('expected_head_sha:');
+    expect(app).toContain('force_fresh_base_canary:');
+    expect(app).toContain('Fresh base canary required');
     expect(app).toContain("state.mode==='OFF'");
     expect(app).toContain("state.mode==='STAGING'&&lane==='PRODUCTION'");
     expect(app).toContain('SHADOW records decisions only');
@@ -33,5 +39,16 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain(
       'github[.]com/6529-Collections/6529seize-(?:frontend|backend)'
     );
+    expect(app).toContain('function safeActionUrl');
+    expect(app).toContain('function renderOverview');
+    expect(app).toContain('function renderIncident');
+    expect(app).toContain('function renderOperation');
+    expect(app).toContain('function renderTimeline');
+    expect(app).toContain('results[1].active_train');
+    expect(app).toContain("request('/deploy/release-trains/'");
+    expect(app).toContain('Open GitHub Actions run');
+    expect(app).toContain('esc(incident.summary)');
+    expect(app).toContain('esc(operation.active_job');
+    expect(app).not.toContain('href="\'+operation.workflow_url');
   });
 });
