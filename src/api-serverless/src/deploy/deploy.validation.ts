@@ -152,6 +152,13 @@ export const ReleaseBusControlBodySchema = Joi.object({
   reason: Joi.string().trim().min(3).max(1000).required()
 }).required();
 
+export const ReleaseBusExperimentalResetBodySchema = Joi.object({
+  confirmation: Joi.string()
+    .valid('RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY')
+    .required(),
+  reason: Joi.string().trim().min(20).max(1000).required()
+}).required();
+
 const ReleaseBusReportPathSchema = Joi.string()
   .trim()
   .min(1)

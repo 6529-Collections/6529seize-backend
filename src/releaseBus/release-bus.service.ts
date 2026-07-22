@@ -804,6 +804,56 @@ export class ReleaseBusService {
     );
   }
 
+  public async pruneTerminalHistory(
+    cutoffAt: number,
+    batchSize = 100
+  ): Promise<{ trains: number; candidates: number }> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) =>
+        this.repository.pruneTerminalHistory(cutoffAt, batchSize, {
+          connection
+        })
+    );
+  }
+
+  public async resetExperimentalHistory(
+    reason: string,
+    actor: string
+  ): Promise<{ reset_at: number; actor: string }> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        const controls = await this.repository.listControls(ctx, true);
+        if (!controls.every((control) => Boolean(control.paused))) {
+          throw new Error(
+            'All Release Bus controls must be paused before reset'
+          );
+        }
+        if (await this.repository.findActiveTrain(ctx)) {
+          throw new Error('An active release train blocks history reset');
+        }
+        if (await this.repository.findActiveOperation(ctx)) {
+          throw new Error('An active release operation blocks history reset');
+        }
+        const lanes = await this.repository.listLanes(ctx, true);
+        if (
+          lanes.some(
+            (lane) =>
+              lane.train_id !== null ||
+              lane.lease_owner !== null ||
+              lane.lease_token !== null ||
+              lane.heartbeat_at !== null ||
+              lane.expires_at !== null
+          )
+        ) {
+          throw new Error('An owned Release Bus lane blocks history reset');
+        }
+        await this.repository.resetExperimentalHistory(reason, actor, ctx);
+        return { reset_at: Date.now(), actor };
+      }
+    );
+  }
+
   public async pauseForBreakGlass(
     scope: ReleaseControlScope,
     reason: string,

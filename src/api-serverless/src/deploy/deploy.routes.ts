@@ -24,6 +24,7 @@ import {
   DeployRunsQuerySchema,
   ReleaseBusBreakGlassAuthorizationBodySchema,
   ReleaseBusControlBodySchema,
+  ReleaseBusExperimentalResetBodySchema,
   ReleaseBusAuthorizationBodySchema,
   ReleaseBusProgressReportBodySchema,
   ReleaseCandidateListQuerySchema,
@@ -494,6 +495,36 @@ deployRoutes.post('/release-bus/resume', async (req, res) => {
   setNoStoreHeaders(res);
   return res.json(await updateBusControl(req, false));
 });
+
+deployRoutes.post(
+  '/release-bus/reset-experimental-history',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    const body = getValidatedByJoiOrThrow<{
+      confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY';
+      reason: string;
+    }>(req.body, ReleaseBusExperimentalResetBodySchema);
+    try {
+      const result = await releaseBusService.resetExperimentalHistory(
+        body.reason,
+        actor
+      );
+      setNoStoreHeaders(res);
+      return res.json({
+        reset: true,
+        ...result,
+        controls: await releaseBusRepository.listControls({}),
+        mode: getReleaseBusMode()
+      });
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error ? error.message : 'Release Bus reset was blocked'
+      );
+    }
+  }
+);
 
 deployRoutes.post('/release-bus/authorize', async (req, res) => {
   requireWorkflowCredential(req);

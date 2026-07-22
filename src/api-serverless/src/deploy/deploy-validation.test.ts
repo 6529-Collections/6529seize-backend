@@ -2,6 +2,7 @@ import {
   DeployDispatchBodySchema,
   ReleaseBusAuthorizationBodySchema,
   ReleaseBusBreakGlassAuthorizationBodySchema,
+  ReleaseBusExperimentalResetBodySchema,
   ReleaseBusProgressReportBodySchema,
   ReleaseCandidateReadyBodySchema
 } from '@/api/deploy/deploy.validation';
@@ -180,6 +181,27 @@ describe('deploy.validation', () => {
         service: null,
         expected_sha: 'd'.repeat(40),
         reason: ''
+      }).error
+    ).toBeDefined();
+  });
+
+  it('requires an exact destructive reset confirmation and bounded reason', () => {
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Release Bus go-live clean-slate reset after full quiescence'
+      }).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        confirmation: 'reset',
+        reason: 'Release Bus go-live clean-slate reset after full quiescence'
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'too short'
       }).error
     ).toBeDefined();
   });

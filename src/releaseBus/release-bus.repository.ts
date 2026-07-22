@@ -120,6 +120,11 @@ export type ReleaseTrainEvidenceRecord = {
   readonly created_at: number | string;
 };
 
+export type ReleaseBusPruneResult = {
+  readonly trains: number;
+  readonly candidates: number;
+};
+
 function dbOptions(ctx: RequestContext) {
   return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
 }
@@ -860,6 +865,18 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async findActiveOperation(
+    ctx: RequestContext
+  ): Promise<ReleaseOperationRecord | null> {
+    return this.db.oneOrNull<ReleaseOperationRecord>(
+      `select * from ${RELEASE_TRAIN_OPERATIONS_TABLE}
+       where status in ('PENDING', 'DISPATCHED', 'RUNNING')
+       order by created_at limit 1 for update`,
+      undefined,
+      dbOptions(ctx)
+    );
+  }
+
   public async setControl(
     scope: ReleaseControlScope,
     paused: boolean,
@@ -926,11 +943,152 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async listLanes(ctx: RequestContext): Promise<ReleaseLaneRecord[]> {
+  public async listLanes(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseLaneRecord[]> {
     return this.db.execute<ReleaseLaneRecord>(
-      `select * from ${RELEASE_DEPLOYMENT_LANES_TABLE} order by name`,
+      `select * from ${RELEASE_DEPLOYMENT_LANES_TABLE} order by name${forUpdate ? ' for update' : ''}`,
       undefined,
       dbOptions(ctx)
+    );
+  }
+
+  public async pruneTerminalHistory(
+    cutoffAt: number,
+    batchSize: number,
+    ctx: RequestContext
+  ): Promise<ReleaseBusPruneResult> {
+    if (!Number.isSafeInteger(cutoffAt) || cutoffAt <= 0)
+      throw new Error('Invalid release-bus history cutoff');
+    const boundedBatchSize = Math.max(1, Math.min(Math.trunc(batchSize), 100));
+    const terminalCandidateStatuses: ReleaseCandidateStatus[] = [
+      'PRODUCTION_VALIDATED',
+      'STAGING_FAILED',
+      'SUPERSEDED',
+      'QUARANTINED',
+      'CANCELLED'
+    ];
+    const trainRows = await this.db.execute<{ id: string }>(
+      `select id from ${RELEASE_TRAINS_TABLE}
+       where status in ('COMPLETED', 'FAILED', 'ROLLED_BACK', 'CANCELLED')
+         and completed_at is not null and completed_at < :cutoffAt
+       order by completed_at, id limit ${boundedBatchSize}`,
+      { cutoffAt },
+      dbOptions(ctx)
+    );
+    const trainIds = trainRows.map((row) => row.id);
+    if (trainIds.length > 0) {
+      await this.db.execute(
+        `update ${RELEASE_READY_DEPLOYMENTS_TABLE}
+         set current_train_id = null, updated_at = :now, row_version = row_version + 1
+         where current_train_id in (:trainIds)`,
+        { trainIds, now: Date.now() },
+        dbOptions(ctx)
+      );
+      for (const table of [
+        RELEASE_TRAIN_EVENTS_TABLE,
+        RELEASE_TRAIN_EVIDENCE_TABLE,
+        RELEASE_TRAIN_OPERATIONS_TABLE,
+        RELEASE_TRAIN_ITEMS_TABLE
+      ]) {
+        await this.db.execute(
+          `delete from ${table} where train_id in (:trainIds)`,
+          { trainIds },
+          dbOptions(ctx)
+        );
+      }
+      await this.db.execute(
+        `delete from ${RELEASE_TRAINS_TABLE} where id in (:trainIds)`,
+        { trainIds },
+        dbOptions(ctx)
+      );
+    }
+
+    // Candidate history is pruned only after its terminal train items have
+    // been removed. This keeps every retained train membership resolvable even
+    // when train and candidate retention batches are cut at different points.
+    const candidateRows = await this.db.execute<{ id: string }>(
+      `select candidate.id from ${RELEASE_READY_DEPLOYMENTS_TABLE} candidate
+       where candidate.status in (:terminalCandidateStatuses)
+         and candidate.updated_at < :cutoffAt
+         and not exists (
+           select 1 from ${RELEASE_TRAIN_ITEMS_TABLE} item
+           where item.candidate_id = candidate.id
+         )
+         and not exists (
+           select 1 from ${RELEASE_CANDIDATE_DEPENDENCIES_TABLE} dependency
+           join ${RELEASE_READY_DEPLOYMENTS_TABLE} dependant
+             on dependant.id = dependency.candidate_id
+           where dependency.depends_on_candidate_id = candidate.id
+             and dependant.status not in (:terminalCandidateStatuses)
+         )
+       order by candidate.updated_at, candidate.id limit ${boundedBatchSize}`,
+      { cutoffAt, terminalCandidateStatuses },
+      dbOptions(ctx)
+    );
+    const candidateIds = candidateRows.map((row) => row.id);
+    if (candidateIds.length > 0) {
+      await this.db.execute(
+        `delete from ${RELEASE_CANDIDATE_DEPENDENCIES_TABLE}
+         where candidate_id in (:candidateIds)
+            or depends_on_candidate_id in (:candidateIds)`,
+        { candidateIds },
+        dbOptions(ctx)
+      );
+      await this.db.execute(
+        `delete from ${RELEASE_TRAIN_EVENTS_TABLE} where candidate_id in (:candidateIds)`,
+        { candidateIds },
+        dbOptions(ctx)
+      );
+      await this.db.execute(
+        `delete from ${RELEASE_TRAIN_EVIDENCE_TABLE} where candidate_id in (:candidateIds)`,
+        { candidateIds },
+        dbOptions(ctx)
+      );
+      await this.db.execute(
+        `delete from ${RELEASE_READY_DEPLOYMENTS_TABLE} where id in (:candidateIds)`,
+        { candidateIds },
+        dbOptions(ctx)
+      );
+    }
+    return { trains: trainIds.length, candidates: candidateIds.length };
+  }
+
+  public async resetExperimentalHistory(
+    reason: string,
+    actor: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    for (const table of [
+      RELEASE_TRAIN_EVENTS_TABLE,
+      RELEASE_TRAIN_EVIDENCE_TABLE,
+      RELEASE_TRAIN_OPERATIONS_TABLE,
+      RELEASE_TRAIN_ITEMS_TABLE,
+      RELEASE_CANDIDATE_DEPENDENCIES_TABLE,
+      RELEASE_READY_DEPLOYMENTS_TABLE,
+      RELEASE_TRAINS_TABLE
+    ]) {
+      await this.db.execute(`delete from ${table}`, undefined, dbOptions(ctx));
+    }
+    await this.db.execute(
+      `update ${RELEASE_DEPLOYMENT_LANES_TABLE}
+       set train_id = null, lease_owner = null, lease_token = null,
+           heartbeat_at = null, expires_at = null, updated_at = :now,
+           row_version = row_version + 1`,
+      { now: Date.now() },
+      dbOptions(ctx)
+    );
+    for (const scope of ['ALL', 'STAGING', 'PRODUCTION'] as const) {
+      await this.setControl(scope, true, reason, actor, ctx);
+    }
+    await this.appendEvent(
+      {
+        eventType: 'EXPERIMENTAL_HISTORY_RESET',
+        githubActor: actor,
+        payload: { reason }
+      },
+      ctx
     );
   }
 

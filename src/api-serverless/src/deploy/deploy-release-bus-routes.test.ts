@@ -20,6 +20,8 @@ const mockListTrains = jest.fn();
 const mockFindTrain = jest.fn();
 const mockListTrainItems = jest.fn();
 const mockGetReleaseTrainOverview = jest.fn();
+const mockListControls = jest.fn();
+const mockResetExperimentalHistory = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -34,7 +36,8 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     findCandidateById: (...args: unknown[]) => mockFindCandidateById(...args),
     listTrains: (...args: unknown[]) => mockListTrains(...args),
     findTrain: (...args: unknown[]) => mockFindTrain(...args),
-    listTrainItems: (...args: unknown[]) => mockListTrainItems(...args)
+    listTrainItems: (...args: unknown[]) => mockListTrainItems(...args),
+    listControls: (...args: unknown[]) => mockListControls(...args)
   }
 }));
 
@@ -70,7 +73,9 @@ jest.mock('@/releaseBus/release-bus.service', () => ({
   releaseBusService: {
     pauseForBreakGlass: (...args: unknown[]) => mockPauseForBreakGlass(...args),
     markReady: (...args: unknown[]) => mockMarkReady(...args),
-    cancel: (...args: unknown[]) => mockCancel(...args)
+    cancel: (...args: unknown[]) => mockCancel(...args),
+    resetExperimentalHistory: (...args: unknown[]) =>
+      mockResetExperimentalHistory(...args)
   }
 }));
 
@@ -785,6 +790,95 @@ describe('release-bus progress reporting', () => {
     expect(response.body.error).toContain('terminal progress report');
     expect(mockUpdateOperation).not.toHaveBeenCalled();
     expect(mockAppendEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('release-bus experimental history reset', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetViewer.mockResolvedValue({ login: 'operator' });
+    mockIsOrganizationOperator.mockResolvedValue(true);
+    mockResetExperimentalHistory.mockResolvedValue({
+      reset_at: 123456,
+      actor: 'operator'
+    });
+    mockListControls.mockResolvedValue([
+      { scope: 'ALL', paused: 1 },
+      { scope: 'STAGING', paused: 1 },
+      { scope: 'PRODUCTION', paused: 1 }
+    ]);
+  });
+
+  it('requires Release Bus operator authorization', async () => {
+    mockIsOrganizationOperator.mockResolvedValue(false);
+
+    const response = await post(
+      '/deploy/release-bus/reset-experimental-history',
+      {
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Controlled go-live reset after all operations are quiescent'
+      }
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockResetExperimentalHistory).not.toHaveBeenCalled();
+  });
+
+  it('rejects an inexact destructive confirmation', async () => {
+    const response = await post(
+      '/deploy/release-bus/reset-experimental-history',
+      {
+        confirmation: 'reset',
+        reason: 'Controlled go-live reset after all operations are quiescent'
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockResetExperimentalHistory).not.toHaveBeenCalled();
+  });
+
+  it('reports a quiescence race as a conflict', async () => {
+    mockResetExperimentalHistory.mockRejectedValue(
+      new Error('An active release operation blocks history reset')
+    );
+
+    const response = await post(
+      '/deploy/release-bus/reset-experimental-history',
+      {
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Controlled go-live reset after all operations are quiescent'
+      }
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain('active release operation');
+    expect(mockListControls).not.toHaveBeenCalled();
+  });
+
+  it('returns the deterministic paused controls after a reset', async () => {
+    const response = await post(
+      '/deploy/release-bus/reset-experimental-history',
+      {
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Controlled go-live reset after all operations are quiescent'
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      reset: true,
+      reset_at: 123456,
+      actor: 'operator',
+      controls: [
+        { scope: 'ALL', paused: 1 },
+        { scope: 'STAGING', paused: 1 },
+        { scope: 'PRODUCTION', paused: 1 }
+      ]
+    });
+    expect(mockResetExperimentalHistory).toHaveBeenCalledWith(
+      'Controlled go-live reset after all operations are quiescent',
+      'operator'
+    );
   });
 });
 
