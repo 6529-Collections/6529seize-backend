@@ -494,8 +494,9 @@ endpoint is reserved for the controlled pre-go-live clean slate: every control
 must already be paused, and the transaction locks and rejects any active train,
 operation, or lane lease before deleting only Release Bus journal rows in
 dependency-safe order. Schema, controls, lane rows, secrets, and application
-data remain intact; controls remain deterministically paused until a fresh
-operator handshake resumes them.
+data remain intact. A required UUID reset id makes lost-response retries
+idempotent, and controls remain deterministically paused until a fresh operator
+handshake resumes them.
 Backend units whose registry policy is `production-only` are built and tested
 in preflight but cannot be runtime-deployed to staging; their staging gate is
 the combined application E2E suite plus the immutable artifact evidence. The

@@ -877,6 +877,20 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async findExperimentalHistoryReset(
+    resetId: string,
+    ctx: RequestContext
+  ): Promise<ReleaseTrainEventRecord | null> {
+    return this.db.oneOrNull<ReleaseTrainEventRecord>(
+      `select * from ${RELEASE_TRAIN_EVENTS_TABLE}
+       where event_type = 'EXPERIMENTAL_HISTORY_RESET'
+         and json_unquote(json_extract(payload_json, '$.reset_id')) = :resetId
+       order by created_at desc limit 1 for update`,
+      { resetId },
+      dbOptions(ctx)
+    );
+  }
+
   public async setControl(
     scope: ReleaseControlScope,
     paused: boolean,
@@ -1018,10 +1032,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
          )
          and not exists (
            select 1 from ${RELEASE_CANDIDATE_DEPENDENCIES_TABLE} dependency
-           join ${RELEASE_READY_DEPLOYMENTS_TABLE} dependant
-             on dependant.id = dependency.candidate_id
            where dependency.depends_on_candidate_id = candidate.id
-             and dependant.status not in (:terminalCandidateStatuses)
          )
        order by candidate.updated_at, candidate.id limit ${boundedBatchSize}`,
       { cutoffAt, terminalCandidateStatuses },
@@ -1031,8 +1042,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     if (candidateIds.length > 0) {
       await this.db.execute(
         `delete from ${RELEASE_CANDIDATE_DEPENDENCIES_TABLE}
-         where candidate_id in (:candidateIds)
-            or depends_on_candidate_id in (:candidateIds)`,
+         where candidate_id in (:candidateIds)`,
         { candidateIds },
         dbOptions(ctx)
       );
@@ -1058,8 +1068,10 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
   public async resetExperimentalHistory(
     reason: string,
     actor: string,
+    resetId: string,
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<number> {
+    const resetAt = Date.now();
     for (const table of [
       RELEASE_TRAIN_EVENTS_TABLE,
       RELEASE_TRAIN_EVIDENCE_TABLE,
@@ -1076,7 +1088,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
        set train_id = null, lease_owner = null, lease_token = null,
            heartbeat_at = null, expires_at = null, updated_at = :now,
            row_version = row_version + 1`,
-      { now: Date.now() },
+      { now: resetAt },
       dbOptions(ctx)
     );
     for (const scope of ['ALL', 'STAGING', 'PRODUCTION'] as const) {
@@ -1086,10 +1098,12 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       {
         eventType: 'EXPERIMENTAL_HISTORY_RESET',
         githubActor: actor,
-        payload: { reason }
+        payload: { reason, reset_id: resetId },
+        createdAt: resetAt
       },
       ctx
     );
+    return resetAt;
   }
 
   public async releaseLane(
@@ -1212,6 +1226,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
       readonly eventType: string;
       readonly githubActor?: string | null;
       readonly payload?: unknown;
+      readonly createdAt?: number;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -1226,7 +1241,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
         eventType: event.eventType,
         githubActor: event.githubActor ?? null,
         payload: event.payload ? JSON.stringify(event.payload) : null,
-        now: Date.now()
+        now: event.createdAt ?? Date.now()
       },
       dbOptions(ctx)
     );

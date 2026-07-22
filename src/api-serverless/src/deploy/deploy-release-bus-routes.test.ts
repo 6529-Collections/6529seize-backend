@@ -70,6 +70,7 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
 }));
 
 jest.mock('@/releaseBus/release-bus.service', () => ({
+  ...jest.requireActual('@/releaseBus/release-bus.service'),
   releaseBusService: {
     pauseForBreakGlass: (...args: unknown[]) => mockPauseForBreakGlass(...args),
     markReady: (...args: unknown[]) => mockMarkReady(...args),
@@ -83,11 +84,13 @@ import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'node:http';
 import { ApiCompliantException } from '@/exceptions';
 import deployRoutes from '@/api/deploy/deploy.routes';
+import { ReleaseBusHistoryResetBlockedError } from '@/releaseBus/release-bus.service';
 
 const WORKFLOW_TOKEN = 'release-bus-workflow-token';
 const TRAIN_ID = '123e4567-e89b-42d3-a456-426614174000';
 const SHA = 'a'.repeat(40);
 const DIGEST = 'b'.repeat(64);
+const RESET_ID = '123e4567-e89b-42d3-a456-426614174001';
 
 function candidate(status: 'READY_FOR_STAGING' | 'CANCELLED') {
   return {
@@ -800,7 +803,8 @@ describe('release-bus experimental history reset', () => {
     mockIsOrganizationOperator.mockResolvedValue(true);
     mockResetExperimentalHistory.mockResolvedValue({
       reset_at: 123456,
-      actor: 'operator'
+      actor: 'operator',
+      reused: false
     });
     mockListControls.mockResolvedValue([
       { scope: 'ALL', paused: 1 },
@@ -815,6 +819,7 @@ describe('release-bus experimental history reset', () => {
     const response = await post(
       '/deploy/release-bus/reset-experimental-history',
       {
+        reset_id: RESET_ID,
         confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
         reason: 'Controlled go-live reset after all operations are quiescent'
       }
@@ -828,6 +833,7 @@ describe('release-bus experimental history reset', () => {
     const response = await post(
       '/deploy/release-bus/reset-experimental-history',
       {
+        reset_id: RESET_ID,
         confirmation: 'reset',
         reason: 'Controlled go-live reset after all operations are quiescent'
       }
@@ -839,12 +845,15 @@ describe('release-bus experimental history reset', () => {
 
   it('reports a quiescence race as a conflict', async () => {
     mockResetExperimentalHistory.mockRejectedValue(
-      new Error('An active release operation blocks history reset')
+      new ReleaseBusHistoryResetBlockedError(
+        'An active release operation blocks history reset'
+      )
     );
 
     const response = await post(
       '/deploy/release-bus/reset-experimental-history',
       {
+        reset_id: RESET_ID,
         confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
         reason: 'Controlled go-live reset after all operations are quiescent'
       }
@@ -859,6 +868,7 @@ describe('release-bus experimental history reset', () => {
     const response = await post(
       '/deploy/release-bus/reset-experimental-history',
       {
+        reset_id: RESET_ID,
         confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
         reason: 'Controlled go-live reset after all operations are quiescent'
       }
@@ -869,6 +879,7 @@ describe('release-bus experimental history reset', () => {
       reset: true,
       reset_at: 123456,
       actor: 'operator',
+      reused: false,
       controls: [
         { scope: 'ALL', paused: 1 },
         { scope: 'STAGING', paused: 1 },
@@ -877,8 +888,46 @@ describe('release-bus experimental history reset', () => {
     });
     expect(mockResetExperimentalHistory).toHaveBeenCalledWith(
       'Controlled go-live reset after all operations are quiescent',
-      'operator'
+      'operator',
+      RESET_ID
     );
+  });
+
+  it('does not invite a retry when the post-reset controls read fails', async () => {
+    mockListControls.mockRejectedValue(new Error('database read failed'));
+
+    const response = await post(
+      '/deploy/release-bus/reset-experimental-history',
+      {
+        reset_id: RESET_ID,
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Controlled go-live reset after all operations are quiescent'
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      reset: true,
+      controls: null,
+      controls_status: 'unavailable'
+    });
+  });
+
+  it('does not mask an unexpected reset failure as a conflict', async () => {
+    mockResetExperimentalHistory.mockRejectedValue(
+      new Error('database transaction failed')
+    );
+
+    const response = await post(
+      '/deploy/release-bus/reset-experimental-history',
+      {
+        reset_id: RESET_ID,
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Controlled go-live reset after all operations are quiescent'
+      }
+    );
+
+    expect(response.status).toBe(500);
   });
 });
 

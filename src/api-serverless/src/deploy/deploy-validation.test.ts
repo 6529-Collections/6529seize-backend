@@ -188,20 +188,30 @@ describe('deploy.validation', () => {
   it('requires an exact destructive reset confirmation and bounded reason', () => {
     expect(
       ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: '123e4567-e89b-42d3-a456-426614174001',
         confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
         reason: 'Release Bus go-live clean-slate reset after full quiescence'
       }).error
     ).toBeUndefined();
     expect(
       ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: '123e4567-e89b-42d3-a456-426614174001',
         confirmation: 'reset',
         reason: 'Release Bus go-live clean-slate reset after full quiescence'
       }).error
     ).toBeDefined();
     expect(
       ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: '123e4567-e89b-42d3-a456-426614174001',
         confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
         reason: 'too short'
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: 'not-a-uuid',
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Release Bus go-live clean-slate reset after full quiescence'
       }).error
     ).toBeDefined();
   });

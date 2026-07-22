@@ -153,6 +153,9 @@ export const ReleaseBusControlBodySchema = Joi.object({
 }).required();
 
 export const ReleaseBusExperimentalResetBodySchema = Joi.object({
+  reset_id: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .required(),
   confirmation: Joi.string()
     .valid('RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY')
     .required(),

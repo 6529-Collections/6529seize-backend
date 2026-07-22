@@ -38,7 +38,10 @@ import {
   getReleaseBusMode,
   RELEASE_BUS_OPERATOR_TEAM
 } from '@/releaseBus/release-bus.config';
-import { releaseBusService } from '@/releaseBus/release-bus.service';
+import {
+  ReleaseBusHistoryResetBlockedError,
+  releaseBusService
+} from '@/releaseBus/release-bus.service';
 import { getReleaseTrainOverview } from '@/releaseBus/release-bus-status.service';
 import type {
   MarkReleaseReadyInput,
@@ -502,26 +505,34 @@ deployRoutes.post(
     const token = getGitHubTokenOrThrow(req);
     const actor = await requireOperator(token);
     const body = getValidatedByJoiOrThrow<{
+      reset_id: string;
       confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY';
       reason: string;
     }>(req.body, ReleaseBusExperimentalResetBodySchema);
     try {
       const result = await releaseBusService.resetExperimentalHistory(
         body.reason,
-        actor
+        actor,
+        body.reset_id
       );
+      let controls = null;
+      try {
+        controls = await releaseBusRepository.listControls({});
+      } catch {
+        // The reset transaction has already committed. Return its terminal
+        // result so a transient read failure cannot invite a destructive retry.
+      }
       setNoStoreHeaders(res);
       return res.json({
         reset: true,
         ...result,
-        controls: await releaseBusRepository.listControls({}),
+        controls,
+        controls_status: controls ? 'available' : 'unavailable',
         mode: getReleaseBusMode()
       });
     } catch (error) {
-      throw new CustomApiCompliantException(
-        409,
-        error instanceof Error ? error.message : 'Release Bus reset was blocked'
-      );
+      if (!(error instanceof ReleaseBusHistoryResetBlockedError)) throw error;
+      throw new CustomApiCompliantException(409, error.message);
     }
   }
 );

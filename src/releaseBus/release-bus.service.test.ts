@@ -456,6 +456,7 @@ describe('ReleaseBusService history lifecycle', () => {
         calls.push(`controls:${forUpdate}`);
         return pausedControls;
       },
+      findExperimentalHistoryReset: async () => null,
       findActiveTrain: async () => {
         calls.push('active-train');
         return null;
@@ -478,14 +479,20 @@ describe('ReleaseBusService history lifecycle', () => {
       },
       resetExperimentalHistory: async () => {
         calls.push('reset');
+        return 123456;
       }
     } as unknown as ReleaseBusRepository;
 
     const result = await new ReleaseBusService(
       repository
-    ).resetExperimentalHistory('Controlled final go-live reset', 'operator');
+    ).resetExperimentalHistory(
+      'Controlled final go-live reset',
+      'operator',
+      '123e4567-e89b-42d3-a456-426614174001'
+    );
 
     expect(result.actor).toBe('operator');
+    expect(result.reused).toBe(false);
     expect(Number.isSafeInteger(result.reset_at)).toBe(true);
     expect(calls).toEqual([
       'controls:true',
@@ -544,6 +551,7 @@ describe('ReleaseBusService history lifecycle', () => {
         callback: (value: unknown) => unknown
       ) => callback({ transaction: true }),
       listControls: async () => scenario.controls,
+      findExperimentalHistoryReset: async () => null,
       findActiveTrain: async () => scenario.activeTrain,
       findActiveOperation: async () => scenario.activeOperation,
       listLanes: async () => scenario.lanes,
@@ -553,9 +561,38 @@ describe('ReleaseBusService history lifecycle', () => {
     await expect(
       new ReleaseBusService(repository).resetExperimentalHistory(
         'Controlled final go-live reset',
-        'operator'
+        'operator',
+        '123e4567-e89b-42d3-a456-426614174001'
       )
     ).rejects.toThrow(scenario.error);
+    expect(resetExperimentalHistory).not.toHaveBeenCalled();
+  });
+
+  it('returns an already committed reset before rechecking mutable lane state', async () => {
+    const resetExperimentalHistory = jest.fn();
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (value: unknown) => unknown
+      ) => callback({ transaction: true }),
+      listControls: async () => [{ scope: 'STAGING', paused: false }],
+      findExperimentalHistoryReset: async () => ({
+        created_at: 123456,
+        github_actor: 'original-operator'
+      }),
+      resetExperimentalHistory
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).resetExperimentalHistory(
+        'Retry after lost response',
+        'retrying-operator',
+        '123e4567-e89b-42d3-a456-426614174001'
+      )
+    ).resolves.toEqual({
+      reset_at: 123456,
+      actor: 'original-operator',
+      reused: true
+    });
     expect(resetExperimentalHistory).not.toHaveBeenCalled();
   });
 });

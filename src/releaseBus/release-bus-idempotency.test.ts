@@ -303,7 +303,38 @@ describe('release operation idempotency', () => {
     expect(sql[candidateSelect]).toContain(
       'not exists ( select 1 from release_train_items item where item.candidate_id = candidate.id )'
     );
+    expect(sql[candidateSelect]).toContain(
+      'where dependency.depends_on_candidate_id = candidate.id'
+    );
     expect(candidateDelete).toBeGreaterThan(candidateSelect);
+    const dependencyDelete = sql.find((statement) =>
+      statement.startsWith('delete from release_candidate_dependencies')
+    );
+    expect(dependencyDelete).toContain('where candidate_id in (:candidateIds)');
+    expect(dependencyDelete).not.toContain('depends_on_candidate_id in');
+  });
+
+  it('loads an experimental reset by its idempotency key under lock', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const oneOrNull = jest.fn().mockResolvedValue({
+      event_type: 'EXPERIMENTAL_HISTORY_RESET'
+    });
+    const repository = new ReleaseBusRepository(
+      () => ({ execute, oneOrNull }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.findExperimentalHistoryReset(
+        '123e4567-e89b-42d3-a456-426614174001',
+        {}
+      )
+    ).resolves.toMatchObject({ event_type: 'EXPERIMENTAL_HISTORY_RESET' });
+    expect(
+      oneOrNull.mock.calls[0]?.[0].trim().split(/\s+/).join(' ')
+    ).toContain(
+      "json_unquote(json_extract(payload_json, '$.reset_id')) = :resetId"
+    );
+    expect(oneOrNull.mock.calls[0]?.[0]).toContain('for update');
   });
 
   it('resets experimental rows in dependency-safe order and retains an audit event', async () => {
@@ -315,6 +346,7 @@ describe('release operation idempotency', () => {
     await repository.resetExperimentalHistory(
       'Controlled go-live reset',
       'operator',
+      '123e4567-e89b-42d3-a456-426614174001',
       {}
     );
 
@@ -336,7 +368,10 @@ describe('release operation idempotency', () => {
     expect(sql.at(-1)).toContain('insert into release_train_events');
     expect(execute.mock.calls.at(-1)?.[1]).toMatchObject({
       eventType: 'EXPERIMENTAL_HISTORY_RESET',
-      githubActor: 'operator'
+      githubActor: 'operator',
+      trainId: null,
+      candidateId: null,
+      payload: expect.stringContaining('123e4567-e89b-42d3-a456-426614174001')
     });
   });
 });
