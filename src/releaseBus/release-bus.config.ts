@@ -54,3 +54,12 @@ export const RELEASE_BUS_MAX_TRAIN_CANDIDATES =
   configuredMaxTrainCandidates > 0
     ? Math.min(configuredMaxTrainCandidates, 50)
     : 20;
+
+export function getBackendDeployConcurrency(): number {
+  const configured = Number(
+    process.env.RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY ?? 20
+  );
+  return Number.isInteger(configured) && configured > 0
+    ? Math.min(configured, 50)
+    : 20;
+}

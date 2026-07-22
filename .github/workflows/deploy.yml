@@ -85,6 +85,10 @@ on:
         description: 'Publish the accumulated release note for this PR after success'
         required: false
         default: false
+      release_group_services:
+        type: string
+        description: 'Comma-separated services in this Release Bus release group'
+        required: false
       release_train_id:
         type: string
         description: 'Release Bus train id; blank for manual deploys'
@@ -114,10 +118,11 @@ permissions:
   actions: read
   contents: read
 
-# Production deployments share the prod/lambdas Secrets Manager document and
-# must never overlap. Staging remains serialized per service.
+# The workflow-level control mutex keeps manual and break-glass production
+# deployments globally serial. Release Bus operations use their exact operation
+# key here, then share the job-level environment/service mutex with every mode.
 concurrency:
-  group: deploy-${{ github.event.inputs.environment }}-${{ github.event.inputs.environment == 'prod' && 'production' || github.event.inputs.service }}
+  group: deploy-control-${{ github.event.inputs.environment }}-${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || (github.event.inputs.environment == 'prod' && 'manual-production' || github.event.inputs.service) }}
   cancel-in-progress: false
 
 env:
@@ -127,6 +132,7 @@ env:
   RELEASE_BUS_BASE_EVIDENCE_REUSE: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}
   RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW || 'false' }}
   RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS || '24' }}
+  RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY: ${{ vars.RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY || '20' }}
   RELEASE_BUS_GITHUB_ORG: ${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
   RELEASE_BUS_UI_URL: ${{ vars.RELEASE_BUS_UI_URL || 'https://api.6529.io/deploy/ui/bus' }}
   ATTACHMENTS_INGEST_S3_BUCKET_PROD: ${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_PROD }}
@@ -146,6 +152,9 @@ jobs:
   build-and-deploy:
     name: Build and deploy ${{ github.event.inputs.service }} to ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-service-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}
+      cancel-in-progress: false
     env:
       INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
       INPUT_SERVICE: ${{ github.event.inputs.service }}
@@ -661,4 +670,5 @@ jobs:
           CI_RELEASE_NOTES_PROMPT_PATH: ops/release-notes/release-notes.prompt.md
           CI_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
           CI_RELEASE_NOTE_PUBLISH: ${{ github.event.inputs.release_note_publish }}
+          CI_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}
         run: node scripts/notify-ci-wave.mjs

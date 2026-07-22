@@ -174,7 +174,7 @@ describe('release operation idempotency', () => {
     ];
     const normalizedSql = sql.trim().split(/\s+/).join(' ');
     expect(normalizedSql).toContain(
-      "where evidence_type = 'BASE_CANARY_COMPLETED' and source_sha = :sourceSha"
+      "where evidence_type in ('BASE_CANARY_COMPLETED', 'BASE_EVIDENCE_PROMOTED', 'BASE_EVIDENCE_PROMOTION_REJECTED') and source_sha = :sourceSha"
     );
     expect(normalizedSql).toContain(
       'order by created_at desc, id desc limit 500'

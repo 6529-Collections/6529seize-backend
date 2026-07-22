@@ -3,16 +3,24 @@ import deployConfig from '@/config/deploy-services.json';
 import { buildReleaseOperationKey } from '@/releaseBus/release-bus.idempotency';
 import {
   getBaseCanaryEvidenceConfig,
+  getBackendDeployConcurrency,
   getReleaseBusMode,
   RELEASE_BUS_LANE_TTL_MS
 } from '@/releaseBus/release-bus.config';
 import {
+  BASE_EVIDENCE_CONTRACT_MARKER,
+  buildLegacyFrontendGateContract,
+  buildPromotedBaseEvidence,
   buildFrontendGateContract,
   evaluateBaseCanaryEvidence,
   FRONTEND_GATE_BASE_FILES,
+  FRONTEND_BASE_IDENTITY_WORKFLOW,
   FRONTEND_GATE_TOOLING_FILES,
   FRONTEND_GATE_WORKFLOW,
-  type FrontendGateContract,
+  FRONTEND_PREFLIGHT_WORKFLOW,
+  LEGACY_FRONTEND_GATE_TOOLING_FILES,
+  type AnyFrontendGateContract,
+  type BaseEvidenceOperationProof,
   type FrontendGateMode
 } from '@/releaseBus/release-bus.base-canary-evidence';
 import {
@@ -391,6 +399,10 @@ async function retryInfrastructureOperationIfDue(
     requestMetadata: {
       ...(request.gate_contract && typeof request.gate_contract === 'object'
         ? { gate_contract: request.gate_contract }
+        : {}),
+      ...(request.backend_deploy_graph &&
+      typeof request.backend_deploy_graph === 'object'
+        ? { backend_deploy_graph: request.backend_deploy_graph }
         : {}),
       infrastructure_retry_of: operation.operation_key,
       infrastructure_retry_at: Date.now()
@@ -933,12 +945,13 @@ async function resolveBaseCanaryEvidenceConfig(): Promise<BaseCanaryEvidenceConf
 
 function storedFrontendGateContract(
   operation: ReleaseOperationRecord
-): FrontendGateContract | null {
+): AnyFrontendGateContract | null {
   const value = metadata(operation.request_metadata_json).gate_contract;
   if (!value || typeof value !== 'object') return null;
-  const contract = value as Partial<FrontendGateContract>;
+  const contract = value as Partial<AnyFrontendGateContract> &
+    Record<string, unknown>;
   if (
-    contract.schema_version !== 1 ||
+    ![1, 2].includes(contract.schema_version ?? 0) ||
     contract.repository !== 'frontend' ||
     contract.environment !== 'orchestration' ||
     !/^[a-f0-9]{40}$/.test(contract.base_sha ?? '') ||
@@ -948,20 +961,52 @@ function storedFrontendGateContract(
     contract.node_version !== '22' ||
     typeof contract.package_manager !== 'string' ||
     !['legacy', 'shadow', 'sharded'].includes(contract.gate_mode ?? '') ||
-    ![1, 2, 4].includes(contract.shard_count ?? 0)
+    ![1, 2, 4].includes(contract.shard_count ?? 0) ||
+    !contract.component_digests ||
+    typeof contract.component_digests !== 'object'
   )
     return null;
-  return contract as FrontendGateContract;
+  if (
+    contract.schema_version === 2 &&
+    (contract.kind !== 'frontend_base_evidence_contract' ||
+      !/^[a-f0-9]{64}$/.test(contract.behavior_digest ?? '') ||
+      !/^[a-f0-9]{64}$/.test(contract.build_profile_digest ?? ''))
+  )
+    return null;
+  return contract as AnyFrontendGateContract;
 }
 
 async function resolveFrontendGateContract(
-  baseSha: string
-): Promise<FrontendGateContract> {
-  const workflowSha = await releaseBusGitHubApp.resolveRef('frontend', 'main');
-  const workflowFiles = [
-    FRONTEND_GATE_WORKFLOW,
-    ...FRONTEND_GATE_TOOLING_FILES
-  ] as const;
+  baseSha: string,
+  options: {
+    readonly workflowSha?: string;
+    readonly gateMode?: FrontendGateMode;
+    readonly shardCount?: 1 | 2 | 4;
+    readonly buildProfileDigest?: string;
+  } = {}
+): Promise<AnyFrontendGateContract> {
+  const workflowSha =
+    options.workflowSha ??
+    (await releaseBusGitHubApp.resolveRef('frontend', 'main'));
+  const gateEvidenceSource = await releaseBusGitHubApp.getFileContent(
+    'frontend',
+    'scripts/release-bus-gate-evidence.cjs',
+    workflowSha
+  );
+  const supportsCarryForward = gateEvidenceSource.includes(
+    BASE_EVIDENCE_CONTRACT_MARKER
+  );
+  const toolingFiles = supportsCarryForward
+    ? FRONTEND_GATE_TOOLING_FILES
+    : LEGACY_FRONTEND_GATE_TOOLING_FILES;
+  const workflowFiles = supportsCarryForward
+    ? [
+        FRONTEND_GATE_WORKFLOW,
+        FRONTEND_PREFLIGHT_WORKFLOW,
+        FRONTEND_BASE_IDENTITY_WORKFLOW,
+        ...toolingFiles
+      ]
+    : [FRONTEND_GATE_WORKFLOW, ...toolingFiles];
   const [workflowContents, baseContents, modeValue, shardValue] =
     await Promise.all([
       Promise.all(
@@ -983,13 +1028,13 @@ async function resolveFrontendGateContract(
         'FRONTEND_GATE_SHARD_COUNT'
       )
     ]);
-  const gateMode = (modeValue ?? 'legacy').toLowerCase();
+  const gateMode = (options.gateMode ?? modeValue ?? 'legacy').toLowerCase();
   if (!['legacy', 'shadow', 'sharded'].includes(gateMode))
     throw new Error('Invalid frontend gate mode variable');
-  const shardCount = Number(shardValue ?? 1);
+  const shardCount = Number(options.shardCount ?? shardValue ?? 1);
   if (![1, 2, 4].includes(shardCount))
     throw new Error('Invalid frontend gate shard count variable');
-  return buildFrontendGateContract({
+  const contractInput = {
     baseSha,
     workflowSha,
     workflowFileContents: Object.fromEntries(
@@ -1000,7 +1045,13 @@ async function resolveFrontendGateContract(
     ),
     gateMode: gateMode as FrontendGateMode,
     shardCount: shardCount as 1 | 2 | 4
-  });
+  };
+  return supportsCarryForward
+    ? buildFrontendGateContract({
+        ...contractInput,
+        buildProfileDigest: options.buildProfileDigest ?? ''
+      })
+    : buildLegacyFrontendGateContract(contractInput);
 }
 
 async function publishBaseEvidenceLookup(
@@ -1113,14 +1164,19 @@ async function recordFreshBaseCanaryEvidence(
   maxAgeHours: number
 ): Promise<void> {
   if (!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(operation.status)) return;
-  const contract = storedFrontendGateContract(operation);
-  if (!contract) return;
   const result = metadata(operation.result_metadata_json);
   const gateReport = metadata(result.gate_report);
   const summary =
     gateReport.summary && typeof gateReport.summary === 'object'
       ? (gateReport.summary as Record<string, unknown>)
       : null;
+  const storedContract = storedFrontendGateContract(operation);
+  const contract =
+    storedContract ??
+    (summary && operation.expected_sha
+      ? await frontendContractFromSummary(operation.expected_sha, summary)
+      : null);
+  if (!contract) return;
   const createdAt = Number(
     gateReport.reported_at ?? operation.completed_at ?? Date.now()
   );
@@ -1142,9 +1198,12 @@ async function recordFreshBaseCanaryEvidence(
           evidenceUri:
             typeof result.url === 'string' ? result.url.slice(0, 1000) : null,
           metadata: {
-            schema_version: 1,
+            schema_version: contract.schema_version,
+            source_kind: 'fresh_base_canary',
+            anchored_full_proof: true,
             contract,
             summary,
+            gate_stages: gateReport.stages ?? [],
             source_operation_key: operation.operation_key,
             source_run_id: operation.external_id,
             source_train_id: train.id,
@@ -1164,6 +1223,9 @@ async function recordFreshBaseCanaryEvidence(
             run_id: operation.external_id,
             base_sha: contract.base_sha,
             gate_fingerprint: contract.gate_fingerprint,
+            behavior_digest:
+              contract.schema_version === 2 ? contract.behavior_digest : null,
+            artifact_digest: artifactDigest,
             fresh_or_reused: 'fresh',
             status: operation.status
           }
@@ -1178,13 +1240,50 @@ async function recordFreshBaseCanaryEvidence(
   if (metricData.length > 0) await publishReleaseBusMetrics(metricData);
 }
 
+async function frontendContractFromSummary(
+  expectedSha: string,
+  summary: Record<string, unknown>
+): Promise<AnyFrontendGateContract | null> {
+  const workflowSha =
+    typeof summary.workflow_sha === 'string' ? summary.workflow_sha : '';
+  const gateMode = summary.gate_mode;
+  const shardCount = Number(summary.shard_count);
+  const buildProfileDigest = normalizeArtifactDigest(
+    summary.build_profile_digest
+  );
+  if (
+    !/^[a-f0-9]{40}$/.test(workflowSha) ||
+    !['legacy', 'shadow', 'sharded'].includes(String(gateMode)) ||
+    ![1, 2, 4].includes(shardCount) ||
+    !buildProfileDigest
+  )
+    return null;
+  try {
+    const contract = await resolveFrontendGateContract(expectedSha, {
+      workflowSha,
+      gateMode: gateMode as FrontendGateMode,
+      shardCount: shardCount as 1 | 2 | 4,
+      buildProfileDigest
+    });
+    return contract.schema_version === 2 &&
+      contract.gate_fingerprint === summary.gate_fingerprint &&
+      contract.behavior_digest === summary.behavior_digest &&
+      contract.workflow_digest === summary.workflow_digest
+      ? contract
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function reuseBaseCanaryEvidence(
   train: ReleaseTrainRecord,
-  contract: FrontendGateContract,
+  contract: AnyFrontendGateContract,
   evidence: {
     readonly id: string;
     readonly train_id: string;
     readonly revision: number;
+    readonly evidence_type: string;
     readonly artifact_digest: string | null;
     readonly evidence_uri: string | null;
     readonly created_at: number | string;
@@ -1192,6 +1291,26 @@ async function reuseBaseCanaryEvidence(
   sourceMetadata: Record<string, unknown>,
   eventType: 'BASE_CANARY_EVIDENCE_REUSED' | 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
 ): Promise<void> {
+  const sourceProof = metadata(sourceMetadata.proof);
+  const sourcePreflight = metadata(sourceProof.preflight);
+  const sourceDeployment = metadata(sourceProof.deployment);
+  const sourceE2e = metadata(sourceProof.e2e);
+  const carriedForward = evidence.evidence_type === 'BASE_EVIDENCE_PROMOTED';
+  const sourceProofSummary = carriedForward
+    ? {
+        source_proof_digest: sourceMetadata.proof_digest ?? null,
+        source_preflight_run_id: sourcePreflight.run_id ?? null,
+        source_preflight_run_url: sourcePreflight.run_url ?? null,
+        source_preflight_artifact_digest:
+          sourcePreflight.artifact_digest ?? null,
+        source_deployment_run_id: sourceDeployment.run_id ?? null,
+        source_deployment_run_url: sourceDeployment.run_url ?? null,
+        source_deployment_artifact_digest:
+          sourceDeployment.artifact_digest ?? null,
+        source_e2e_run_id: sourceE2e.run_id ?? null,
+        source_e2e_run_url: sourceE2e.run_url ?? null
+      }
+    : {};
   await releaseBusRepository.executeNativeQueriesInTransaction(
     async (connection) => {
       const context = { connection };
@@ -1210,11 +1329,13 @@ async function reuseBaseCanaryEvidence(
             contract,
             fresh_or_reused: eventType.endsWith('_REUSED') ? 'reused' : 'fresh',
             source_evidence_id: evidence.id,
+            source_evidence_type: evidence.evidence_type,
             source_train_id: evidence.train_id,
             source_train_revision: evidence.revision,
             source_run_id: sourceMetadata.source_run_id ?? null,
             source_created_at: Number(evidence.created_at),
             source_expires_at: sourceMetadata.expires_at ?? null,
+            ...sourceProofSummary,
             reused_at: Date.now()
           }
         },
@@ -1230,9 +1351,15 @@ async function reuseBaseCanaryEvidence(
             base_sha: contract.base_sha,
             gate_fingerprint: contract.gate_fingerprint,
             source_evidence_id: evidence.id,
+            source_evidence_type: evidence.evidence_type,
             source_train_id: evidence.train_id,
             source_run_id: sourceMetadata.source_run_id ?? null,
-            evidence_uri: evidence.evidence_uri
+            evidence_uri: evidence.evidence_uri,
+            source_artifact_digest: evidence.artifact_digest,
+            ...sourceProofSummary,
+            reason: carriedForward
+              ? 'exact_sha_and_gate_contract_match_carried_forward_proof'
+              : 'exact_sha_and_gate_contract_match_fresh_canary_proof'
           }
         },
         context
@@ -1316,10 +1443,11 @@ async function existingFrontendBaseCanaryResult(
 
 async function resolveFrontendGateContractFailClosed(
   train: ReleaseTrainRecord,
-  baseSha: string
-): Promise<FrontendGateContract | null> {
+  baseSha: string,
+  options?: Parameters<typeof resolveFrontendGateContract>[1]
+): Promise<AnyFrontendGateContract | null> {
   try {
-    return await resolveFrontendGateContract(baseSha);
+    return await resolveFrontendGateContract(baseSha, options);
   } catch {
     await publishBaseEvidenceLookup(
       train,
@@ -1353,14 +1481,10 @@ async function prepareFreshFrontendBaseCanary(
   candidates: readonly ReleaseCandidateRecord[],
   baseSha: string
 ): Promise<{
-  readonly gateContract: FrontendGateContract | null;
-  readonly result: 'PASS' | null;
+  readonly gateContract: AnyFrontendGateContract | null;
+  readonly result: 'PASS' | 'WAIT' | null;
 }> {
   const evidenceConfig = await resolveBaseCanaryEvidenceConfig();
-  let gateContract = await resolveFrontendGateContractFailClosed(
-    train,
-    baseSha
-  );
   const forceFreshCandidateIds = candidates
     .filter(
       (candidate) =>
@@ -1385,10 +1509,63 @@ async function prepareFreshFrontendBaseCanary(
       },
       {}
     );
-    return { gateContract, result: null };
+    return { gateContract: null, result: null };
   }
   if (!evidenceConfig.reuse && !evidenceConfig.shadow)
-    return { gateContract, result: null };
+    return { gateContract: null, result: null };
+  const identityOperations = latestOperationAttempts(
+    await phaseOperations(train.id, 'base-evidence-identity-frontend')
+  );
+  let identity = identityOperations[0];
+  if (!identity) {
+    await dispatchWorkflow({
+      train,
+      repository: 'frontend',
+      operationType: 'base-evidence-identity-frontend',
+      workflow: 'release-bus-base-evidence-identity.yml',
+      ref: 'main',
+      expectedSha: baseSha,
+      environment: 'orchestration',
+      inputs: { base_sha: baseSha }
+    });
+    await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
+    return { gateContract: null, result: 'WAIT' };
+  }
+  identity = await reconcile(identity);
+  if (workflowResult(identity) === 'WAIT')
+    return { gateContract: null, result: 'WAIT' };
+  if (workflowResult(identity) === 'FAIL') {
+    await publishBaseEvidenceLookup(train, 'INVALIDATED', 'identity_error');
+    await releaseBusRepository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_INVALIDATED',
+        payload: {
+          base_sha: baseSha,
+          reason: 'identity_error',
+          action: 'fresh_validation',
+          identity_operation_key: identity.operation_key
+        }
+      },
+      {}
+    );
+    return { gateContract: null, result: null };
+  }
+  const identityReport = metadata(
+    metadata(identity.result_metadata_json).gate_report
+  );
+  const buildProfileDigest = normalizeArtifactDigest(
+    identityReport.build_profile_digest
+  );
+  if (!buildProfileDigest) {
+    await recordUnavailableBaseEvidenceContract(train, baseSha);
+    return { gateContract: null, result: null };
+  }
+  const gateContract = await resolveFrontendGateContractFailClosed(
+    train,
+    baseSha,
+    { buildProfileDigest }
+  );
   if (!gateContract) {
     await recordUnavailableBaseEvidenceContract(train, baseSha);
     return { gateContract, result: null };
@@ -1425,13 +1602,19 @@ async function prepareFreshFrontendBaseCanary(
       result: evidenceConfig.reuse ? 'PASS' : null
     };
   } catch {
-    await publishBaseEvidenceLookup(
-      train,
-      'INVALIDATED',
-      'contract_unavailable'
+    await publishBaseEvidenceLookup(train, 'INVALIDATED', 'lookup_error');
+    await releaseBusRepository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_INVALIDATED',
+        payload: {
+          base_sha: baseSha,
+          reason: 'lookup_error',
+          action: 'fresh_validation'
+        }
+      },
+      {}
     );
-    gateContract = null;
-    await recordUnavailableBaseEvidenceContract(train, baseSha);
     return { gateContract, result: null };
   }
 }
@@ -1529,25 +1712,62 @@ function backendUnits(
   candidates: readonly ReleaseCandidateRecord[],
   environment?: 'staging' | 'prod'
 ): string[] {
+  return backendDeployGraph(candidates, environment).order;
+}
+
+export function backendDeployGraph(
+  candidates: readonly ReleaseCandidateRecord[],
+  environment?: 'staging' | 'prod'
+) {
   const plans = candidates
     .filter((candidate) => candidate.repository === 'backend')
     .map(parsePlan)
     .filter((plan): plan is ReleaseDeployPlan => Boolean(plan));
+  if (
+    plans.length !==
+    candidates.filter((candidate) => candidate.repository === 'backend').length
+  ) {
+    throw new TerminalReleaseTrainError(
+      'Every backend candidate requires a valid deploy DAG'
+    );
+  }
   const requestedUnits = Array.from(
     new Set(plans.flatMap((plan) => plan.units))
   );
+  const knownServices = new Map(
+    deployConfig.services.map((service) => [service.name, service])
+  );
+  const unknownUnits = requestedUnits.filter(
+    (unit) => !knownServices.has(unit)
+  );
+  if (unknownUnits.length > 0) {
+    throw new TerminalReleaseTrainError(
+      `Backend deploy DAG references unknown units: ${unknownUnits.sort().join(', ')}`
+    );
+  }
   const units = environment
     ? requestedUnits.filter((unit) => {
-        const service = deployConfig.services.find(
-          (candidate) => candidate.name === unit
-        );
+        const service = knownServices.get(unit);
         return service?.allowed_environments.includes(environment) ?? false;
       })
     : requestedUnits;
   const requested = new Set(units);
-  const candidateEdges = plans
-    .flatMap((plan) => plan.edges)
-    .filter(([before, after]) => requested.has(before) && requested.has(after));
+  const allCandidateEdges = plans.flatMap((plan) => plan.edges);
+  const malformedEdges = allCandidateEdges.filter(
+    ([before, after]) =>
+      !requestedUnits.includes(before) || !requestedUnits.includes(after)
+  );
+  if (malformedEdges.length > 0) {
+    throw new TerminalReleaseTrainError(
+      `Backend deploy DAG edge references an unknown selected unit: ${malformedEdges
+        .map(([before, after]) => `${before}->${after}`)
+        .sort()
+        .join(', ')}`
+    );
+  }
+  const candidateEdges = allCandidateEdges.filter(
+    ([before, after]) => requested.has(before) && requested.has(after)
+  );
   const registryEdges = deployConfig.services.flatMap((service) =>
     service.default_dependencies
       .filter(
@@ -1555,7 +1775,24 @@ function backendUnits(
       )
       .map((dependency) => [dependency, service.name] as [string, string])
   );
-  return topologicallySort(units, [...registryEdges, ...candidateEdges]).order;
+  const edges = Array.from(
+    new Map(
+      [...registryEdges, ...candidateEdges].map((edge) => [
+        `${edge[0]}\0${edge[1]}`,
+        edge as readonly [string, string]
+      ])
+    ).values()
+  ).sort(([leftBefore, leftAfter], [rightBefore, rightAfter]) =>
+    `${leftBefore}\0${leftAfter}`.localeCompare(`${rightBefore}\0${rightAfter}`)
+  );
+  try {
+    const graph = topologicallySort(units, edges);
+    return { ...graph, edges };
+  } catch (error) {
+    throw new TerminalReleaseTrainError(
+      error instanceof Error ? error.message : 'Invalid backend deploy DAG'
+    );
+  }
 }
 
 async function ensureLane(
@@ -1642,52 +1879,174 @@ async function externalDeploymentLaneBusy(
   return null;
 }
 
-async function advanceBackendDeploy(
+export async function advanceBackendDeploy(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[],
   environment: 'staging' | 'prod'
-): Promise<'PASS' | 'WAIT' | 'FAIL'> {
-  const units = backendUnits(candidates, environment);
+): Promise<
+  'PASS' | 'WAIT' | 'FAIL' | 'INFRASTRUCTURE_WAIT' | 'INFRASTRUCTURE_EXHAUSTED'
+> {
+  const graph = backendDeployGraph(candidates, environment);
+  const units = graph.order;
   if (environment === 'prod' && units.length > 0 && !train.backend_pr_number) {
     throw new TerminalReleaseTrainError(
       `Missing backend release PR for production train ${train.id}`
     );
   }
-  for (let unitIndex = 0; unitIndex < units.length; unitIndex += 1) {
-    const unit = units[unitIndex];
-    const type = `deploy-backend-${environment}-${unit}`;
-    const existing = (await phaseOperations(train.id, type))[0];
-    if (existing) {
-      const result = workflowResult(await reconcile(existing));
-      if (result !== 'PASS') return result;
+  if (units.length === 0) return 'PASS';
+
+  const prefix = `deploy-backend-${environment}-`;
+  const existing = latestOperationAttempts(
+    await phaseOperations(train.id, prefix)
+  );
+  const unknownOperations = existing.filter(
+    (operation) => !operation.service || !units.includes(operation.service)
+  );
+  if (unknownOperations.length > 0) {
+    throw new TerminalReleaseTrainError(
+      `Backend deploy operation does not belong to the effective DAG: ${unknownOperations
+        .map((operation) => operation.service ?? operation.operation_key)
+        .join(', ')}`
+    );
+  }
+  const settled = await Promise.allSettled(
+    existing.map((operation) => reconcile(operation))
+  );
+  const rejected = settled.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (rejected) throw rejected.reason;
+  const operations = settled.map(
+    (result) => (result as PromiseFulfilledResult<ReleaseOperationRecord>).value
+  );
+  const byService = new Map(
+    operations.map((operation) => [operation.service as string, operation])
+  );
+  const concurrency = getBackendDeployConcurrency();
+  const activeCount = operations.filter((operation) =>
+    ['PENDING', 'DISPATCHED', 'RUNNING', 'AMBIGUOUS'].includes(operation.status)
+  ).length;
+
+  for (let layerIndex = 0; layerIndex < graph.layers.length; layerIndex += 1) {
+    const layer = graph.layers[layerIndex];
+    const layerOperations = layer.flatMap((unit) => {
+      const operation = byService.get(unit);
+      return operation ? [operation] : [];
+    });
+    if (
+      layer.every((unit) => {
+        const operation = byService.get(unit);
+        return operation ? workflowResult(operation) === 'PASS' : false;
+      })
+    ) {
       continue;
     }
-    const ref = environment === 'staging' ? trainBranch(train) : 'main';
-    const sha = await releaseBusGitHubApp.resolveRef('backend', ref);
-    await dispatchWorkflow({
-      train,
-      repository: 'backend',
-      operationType: type,
-      workflow: 'deploy.yml',
-      ref: 'main',
-      expectedSha: sha,
-      environment,
-      service: unit,
-      inputs: {
-        environment,
-        service: unit,
-        artifact_run_id: await preflightRunId(train.id, 'backend'),
-        ...(environment === 'prod'
-          ? {
-              release_pull_request: String(train.backend_pr_number),
-              release_note_publish: String(unitIndex === units.length - 1)
-            }
-          : {})
+
+    const failed = layerOperations.filter(
+      (operation) => workflowResult(operation) === 'FAIL'
+    );
+    const active = layerOperations.filter(
+      (operation) => workflowResult(operation) === 'WAIT'
+    );
+    const missing = layer.filter((unit) => !byService.has(unit));
+
+    // A failed sibling never unlocks dependants. Already-running siblings are
+    // allowed to settle so their immutable success evidence survives retries.
+    if (failed.length > 0) {
+      if (active.length > 0) return 'WAIT';
+      if (failed.every(retryableInfrastructureFailure)) {
+        return retryInfrastructureFailures(train, candidates, failed, prefix);
       }
-    });
+      return 'FAIL';
+    }
+
+    const available = Math.max(0, concurrency - activeCount);
+    const frontier = missing.slice(0, available);
+    if (frontier.length > 0) {
+      const ref = environment === 'staging' ? trainBranch(train) : 'main';
+      const sha = await releaseBusGitHubApp.resolveRef('backend', ref);
+      const artifactRunId = await preflightRunId(train.id, 'backend');
+      const releaseGroupServices = units.join(',');
+      await Promise.allSettled(
+        frontier.map((unit) =>
+          dispatchWorkflow({
+            train,
+            repository: 'backend',
+            operationType: `${prefix}${unit}`,
+            workflow: 'deploy.yml',
+            ref: 'main',
+            expectedSha: sha,
+            environment,
+            service: unit,
+            inputs: {
+              environment,
+              service: unit,
+              artifact_run_id: artifactRunId,
+              ...(environment === 'prod'
+                ? {
+                    release_pull_request: String(train.backend_pr_number),
+                    release_note_publish: 'true',
+                    release_group_services: releaseGroupServices
+                  }
+                : {})
+            },
+            requestMetadata: {
+              backend_deploy_graph: {
+                edges: graph.edges,
+                layers: graph.layers,
+                active_layer: layerIndex,
+                frontier,
+                concurrency
+              }
+            }
+          })
+        )
+      );
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'BACKEND_DEPLOY_FRONTIER_DISPATCHED',
+          payload: {
+            environment,
+            layer: layerIndex,
+            frontier,
+            concurrency,
+            edges: graph.edges,
+            layers: graph.layers
+          }
+        },
+        {}
+      );
+    }
     return 'WAIT';
   }
   return 'PASS';
+}
+
+async function advanceBackendDeploymentPhase(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[],
+  environment: 'staging' | 'prod',
+  nextStatus: ReleaseTrainRecord['status']
+): Promise<WorkerResult> {
+  const lane =
+    environment === 'staging' ? 'global-staging' : 'global-production';
+  const laneWait = await waitForRequiredLane(train, lane);
+  if (laneWait) return laneWait;
+  const result = await advanceBackendDeploy(train, candidates, environment);
+  const infrastructureResult = await infrastructurePhaseResult(
+    train,
+    result,
+    `backend ${environment} deployment`
+  );
+  if (infrastructureResult) return infrastructureResult;
+  if (result === 'FAIL') {
+    throw new TerminalReleaseTrainError(
+      `Backend ${environment} deployment failed`
+    );
+  }
+  if (result === 'WAIT') return waitFor(train, train.status);
+  return continueAtPhase(train, nextStatus);
 }
 
 async function advanceFrontendDeploy(
@@ -2519,6 +2878,186 @@ async function recordSuccessfulOperationEvidence(
   }
 }
 
+function operationProof(
+  operation: ReleaseOperationRecord,
+  artifactDigest: string | null = normalizeArtifactDigest(
+    operation.artifact_digest
+  )
+): BaseEvidenceOperationProof {
+  const result = metadata(operation.result_metadata_json);
+  return {
+    operation_key: operation.operation_key,
+    operation_type: operation.operation_type,
+    status: operation.status,
+    expected_sha: operation.expected_sha ?? '',
+    environment:
+      operation.environment === 'staging' ? 'staging' : 'orchestration',
+    run_id: operation.external_id ?? '',
+    run_url: typeof result.url === 'string' ? result.url : '',
+    artifact_digest: artifactDigest
+  };
+}
+
+async function recordBaseEvidencePromotionDecision(
+  train: ReleaseTrainRecord,
+  finalSha: string,
+  decision:
+    | {
+        readonly promoted: true;
+        readonly artifactDigest: string;
+        readonly evidenceUri: string;
+        readonly metadata: Record<string, unknown>;
+      }
+    | { readonly promoted: false; readonly reason: string }
+): Promise<void> {
+  await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const evidenceType = decision.promoted
+        ? 'BASE_EVIDENCE_PROMOTED'
+        : 'BASE_EVIDENCE_PROMOTION_REJECTED';
+      const decisionKey = decision.promoted
+        ? 'promoted'
+        : `rejected:${decision.reason}`;
+      const inserted = await releaseBusRepository.addEvidence(
+        {
+          idempotencyKey: `base-evidence-promotion:${train.id}:r${train.revision}:${finalSha}:${decisionKey}`,
+          trainId: train.id,
+          revision: train.revision,
+          evidenceType,
+          status: decision.promoted ? 'SUCCEEDED' : 'FAILED',
+          sourceSha: finalSha,
+          artifactDigest: decision.promoted ? decision.artifactDigest : null,
+          evidenceUri: decision.promoted ? decision.evidenceUri : null,
+          metadata: decision.promoted
+            ? decision.metadata
+            : {
+                schema_version: 1,
+                source_kind: 'staging_train_promotion_rejection',
+                source_train_id: train.id,
+                source_train_revision: train.revision,
+                final_sha: finalSha,
+                reason: decision.reason,
+                created_at: Date.now()
+              }
+        },
+        context
+      );
+      if (!inserted) return;
+      const proof = decision.promoted ? metadata(decision.metadata.proof) : {};
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: decision.promoted
+            ? 'BASE_EVIDENCE_PROMOTED'
+            : 'BASE_EVIDENCE_PROMOTION_REJECTED',
+          payload: decision.promoted
+            ? {
+                status: 'promoted',
+                reason: 'fresh_preflight_deploy_e2e_gate_equivalent',
+                source_train_id: train.id,
+                source_train_revision: train.revision,
+                final_sha: finalSha,
+                proof_digest: decision.artifactDigest,
+                preflight_run_id: metadata(proof.preflight).run_id ?? null,
+                preflight_run_url: metadata(proof.preflight).run_url ?? null,
+                preflight_artifact_digest:
+                  metadata(proof.preflight).artifact_digest ?? null,
+                deployment_run_id: metadata(proof.deployment).run_id ?? null,
+                deployment_run_url: metadata(proof.deployment).run_url ?? null,
+                deployment_artifact_digest:
+                  metadata(proof.deployment).artifact_digest ?? null,
+                e2e_run_id: metadata(proof.e2e).run_id ?? null,
+                e2e_run_url: metadata(proof.e2e).run_url ?? null
+              }
+            : {
+                status: 'rejected',
+                reason: decision.reason,
+                source_train_id: train.id,
+                source_train_revision: train.revision,
+                final_sha: finalSha,
+                action: 'fresh_validation_next_train'
+              }
+        },
+        context
+      );
+    }
+  );
+}
+
+export async function promoteSuccessfulStagingBaseEvidence(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[]
+): Promise<void> {
+  if (
+    train.target_lane !== 'STAGING' ||
+    !candidates.some((candidate) => candidate.repository === 'frontend')
+  )
+    return;
+  const operations = await releaseBusRepository.listTrainOperations(
+    train.id,
+    {}
+  );
+  const preflight = operations.find(
+    (operation) => operation.operation_type === 'preflight-frontend'
+  );
+  const deployment = operations.find(
+    (operation) => operation.operation_type === 'deploy-frontend-staging'
+  );
+  const e2e = operations.find(
+    (operation) => operation.operation_type === 'e2e-staging'
+  );
+  const finalSha = preflight?.expected_sha ?? train.frontend_base_sha ?? '';
+  let decision:
+    | ReturnType<typeof buildPromotedBaseEvidence>
+    | { readonly promoted: false; readonly reason: string };
+  if (!preflight || !deployment || !e2e) {
+    decision = { promoted: false, reason: 'missing_required_operation' };
+  } else {
+    const gateReport = metadata(
+      metadata(preflight.result_metadata_json).gate_report
+    );
+    const summary = metadata(gateReport.summary);
+    const contract =
+      storedFrontendGateContract(preflight) ??
+      (await frontendContractFromSummary(finalSha, summary));
+    const summaryDigest = normalizeArtifactDigest(
+      summary.summary_artifact_digest
+    );
+    let stagingRefSha: string | null = null;
+    try {
+      stagingRefSha = await releaseBusGitHubApp.resolveRef(
+        'frontend',
+        '1a-staging'
+      );
+    } catch {
+      stagingRefSha = null;
+    }
+    if (!contract || !summaryDigest) {
+      decision = { promoted: false, reason: 'missing_preflight_contract' };
+    } else if (!stagingRefSha) {
+      decision = { promoted: false, reason: 'staging_ref_lookup_error' };
+    } else {
+      const evidenceConfig = await resolveBaseCanaryEvidenceConfig();
+      decision = buildPromotedBaseEvidence({
+        sourceTrainId: train.id,
+        sourceTrainRevision: train.revision,
+        finalSha,
+        stagingRefSha,
+        contract,
+        summary,
+        stages: gateReport.stages,
+        preflight: operationProof(preflight, summaryDigest),
+        deployment: operationProof(deployment),
+        e2e: operationProof(e2e),
+        now: Date.now(),
+        maxAgeMs: evidenceConfig.maxAgeHours * 60 * 60 * 1000
+      });
+    }
+  }
+  await recordBaseEvidencePromotionDecision(train, finalSha, decision);
+}
+
 async function validateStaging(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[]
@@ -2599,6 +3138,7 @@ async function validateStaging(
       );
     }
   }
+  await promoteSuccessfulStagingBaseEvidence(train, candidates);
 }
 
 async function notifyReleasedSourcePullRequest(
@@ -2991,7 +3531,7 @@ async function finalizeProduction(
   ]);
 }
 
-async function finishStaging(
+export async function finishStaging(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[]
 ): Promise<void> {
@@ -3002,15 +3542,71 @@ async function finishStaging(
         ? train.frontend_base_sha
         : train.backend_base_sha;
     if (!base) continue;
+    const finalSha = await releaseBusGitHubApp.resolveRef(
+      repository,
+      trainBranch(train)
+    );
+    const currentStagingSha = await releaseBusGitHubApp.resolveRef(
+      repository,
+      '1a-staging'
+    );
+    const refUpdateIntentType = `STAGING_REF_UPDATE_INTENT_${repository.toUpperCase()}`;
+    if (currentStagingSha === finalSha) {
+      const intended = await releaseBusRepository.hasTrainEvidence(
+        train.id,
+        train.revision,
+        refUpdateIntentType,
+        finalSha,
+        {}
+      );
+      if (!intended)
+        throw new Error(
+          `1a-staging moved to train final SHA ${finalSha} without a recorded ${repository} Release Bus update intent`
+        );
+      updatedRepositories += 1;
+      continue;
+    }
+    if (currentStagingSha !== base) {
+      const message = `1a-staging moved from expected ${base} to ${currentStagingSha}`;
+      if (updatedRepositories > 0)
+        throw new TerminalReleaseTrainError(
+          `PARTIAL_STAGING_REF_UPDATE: ${message}`
+        );
+      throw new Error(message);
+    }
+    await releaseBusRepository.addEvidence(
+      {
+        idempotencyKey: `staging-ref-update-intent:${train.id}:r${train.revision}:${repository}:${finalSha}`,
+        trainId: train.id,
+        revision: train.revision,
+        evidenceType: refUpdateIntentType,
+        status: 'SUCCEEDED',
+        sourceSha: finalSha,
+        metadata: {
+          repository,
+          expected_old_sha: base,
+          intended_final_sha: finalSha
+        }
+      },
+      {}
+    );
     try {
       await releaseBusGitHubApp.updateRef(
         repository,
         '1a-staging',
         base,
-        await releaseBusGitHubApp.resolveRef(repository, trainBranch(train))
+        finalSha
       );
       updatedRepositories += 1;
     } catch (error) {
+      const reconciledStagingSha = await releaseBusGitHubApp.resolveRef(
+        repository,
+        '1a-staging'
+      );
+      if (reconciledStagingSha === finalSha) {
+        updatedRepositories += 1;
+        continue;
+      }
       if (updatedRepositories > 0)
         throw new TerminalReleaseTrainError(
           `PARTIAL_STAGING_REF_UPDATE: ${error instanceof Error ? error.message : 'target moved'}`
@@ -3272,13 +3868,12 @@ export async function advanceReleaseTrain(
       return continueAtPhase(train, 'DEPLOYING_BACKEND');
     }
     if (train.status === 'DEPLOYING_BACKEND') {
-      return advanceGuardedPhase({
+      return advanceBackendDeploymentPhase(
         train,
-        lane: 'global-staging',
-        run: () => advanceBackendDeploy(train, candidates, 'staging'),
-        failureMessage: 'Backend staging deployment failed',
-        nextStatus: 'DEPLOYING_FRONTEND'
-      });
+        candidates,
+        'staging',
+        'DEPLOYING_FRONTEND'
+      );
     }
     if (train.status === 'DEPLOYING_FRONTEND') {
       return advanceGuardedPhase({
@@ -3383,13 +3978,12 @@ export async function advanceReleaseTrain(
       return continueAtPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
     }
     if (train.status === 'DEPLOYING_BACKEND_PRODUCTION') {
-      return advanceGuardedPhase({
+      return advanceBackendDeploymentPhase(
         train,
-        lane: 'global-production',
-        run: () => advanceBackendDeploy(train, candidates, 'prod'),
-        failureMessage: 'Backend production deployment failed',
-        nextStatus: 'MERGING_FRONTEND_PRODUCTION'
-      });
+        candidates,
+        'prod',
+        'MERGING_FRONTEND_PRODUCTION'
+      );
     }
     if (train.status === 'MERGING_FRONTEND_PRODUCTION') {
       const productionLaneWait = await waitForRequiredLane(

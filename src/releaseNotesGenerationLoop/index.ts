@@ -201,7 +201,20 @@ export async function isReleaseGroupComplete(
     );
     await redis.sAdd(`${groupKey}:services`, service);
     await redis.expire(`${groupKey}:services`, RELEASE_GROUP_TTL_SECONDS);
-    return request.publish_release_note === true;
+    const completedKey = `${groupKey}:completed`;
+    await redis.sAdd(completedKey, service);
+    await redis.expire(completedKey, RELEASE_GROUP_TTL_SECONDS);
+    if (request.publish_release_note !== true) return false;
+    const completedServices = new Set(await redis.sMembers(completedKey));
+    const complete = request.release_group_services.every((expectedService) =>
+      completedServices.has(expectedService)
+    );
+    if (!complete) {
+      logger.warn(
+        `Release group ${request.release_group_id} is incomplete and will not publish until these services succeed: ${request.release_group_services.filter((expectedService) => !completedServices.has(expectedService)).join(', ')}`
+      );
+    }
+    return complete;
   }
 
   if (request.release_group_services.length === 1) {

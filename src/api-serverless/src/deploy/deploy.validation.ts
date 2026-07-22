@@ -190,15 +190,24 @@ const ReleaseBusReportCountSchema = Joi.number()
   .max(10_000_000);
 
 const ReleaseBusAggregateSummarySchema = Joi.object({
+  kind: Joi.string()
+    .valid('base_canary_summary', 'frontend_preflight_base_evidence_summary')
+    .default('base_canary_summary'),
   base_sha: ReleaseShaSchema.required(),
   environment: Joi.string()
     .valid('orchestration', 'staging', 'prod')
     .required(),
   gate_fingerprint: ReleaseBusReportDigestSchema.required(),
+  behavior_digest: ReleaseBusReportDigestSchema.allow(null).default(null),
+  build_profile_digest: ReleaseBusReportDigestSchema.allow(null).default(null),
   workflow_sha: ReleaseShaSchema.required(),
   workflow_digest: ReleaseBusReportDigestSchema.required(),
   node_version: Joi.string().trim().min(1).max(64).required(),
   package_manager: Joi.string().trim().min(1).max(128).required(),
+  gate_mode: Joi.string()
+    .valid('legacy', 'shadow', 'sharded')
+    .allow(null)
+    .default(null),
   shard_count: Joi.number().integer().min(1).max(256).required(),
   summary_artifact_name: ReleaseBusReportPathSchema.required(),
   summary_artifact_digest: ReleaseBusReportDigestSchema.required(),
@@ -215,7 +224,8 @@ const ReleaseBusAggregateSummarySchema = Joi.object({
     tests: ReleaseBusReportCountSchema,
     failed_test_suites: ReleaseBusReportCountSchema.required(),
     failed_tests: ReleaseBusReportCountSchema.required(),
-    skipped_tests: ReleaseBusReportCountSchema
+    skipped_tests: ReleaseBusReportCountSchema.default(0),
+    skipped_test_suites: ReleaseBusReportCountSchema.default(0)
   }).required(),
   fresh_or_reused: Joi.string().valid('fresh', 'reused').required(),
   shards: Joi.array()
@@ -252,8 +262,155 @@ const ReleaseBusAggregateSummarySchema = Joi.object({
     .items(ReleaseBusReportPathSchema)
     .max(200)
     .unique()
-    .default([])
+    .default([]),
+  unexpected_files: Joi.array()
+    .items(ReleaseBusReportPathSchema)
+    .max(200)
+    .unique()
+    .default([]),
+  proof_origin: Joi.string().valid('fresh_preflight').allow(null).default(null),
+  build_environments: Joi.array()
+    .items(Joi.string().valid('staging', 'production'))
+    .max(2)
+    .unique()
+    .default([]),
+  build_coverage: Joi.alternatives()
+    .try(
+      Joi.object({
+        authoritative_profile: Joi.string()
+          .valid('SUCCEEDED', 'FAILED')
+          .required(),
+        compilation_count: Joi.number().integer().valid(1).required(),
+        deployed_artifact_bound: Joi.boolean().required()
+      }),
+      Joi.object({
+        base_canary_profile: Joi.string()
+          .valid('SUCCEEDED', 'NOT_PROVEN', 'FAILED')
+          .required(),
+        deploy_artifact_profile: Joi.string()
+          .valid('SUCCEEDED', 'NOT_PROVEN', 'FAILED')
+          .required()
+      })
+    )
+    .allow(null)
+    .default(null),
+  immutable_artifact: Joi.object({
+    artifact_name: ReleaseBusReportPathSchema.required(),
+    run_id: Joi.string().pattern(/^\d+$/).required(),
+    source_sha: ReleaseShaSchema.required(),
+    environment: Joi.string().valid('staging', 'production').required(),
+    package_digest: ReleaseBusReportDigestSchema.required(),
+    upload_digest: ReleaseBusReportDigestSchema.required(),
+    build_profile_digest: ReleaseBusReportDigestSchema.required()
+  })
+    .allow(null)
+    .default(null)
 }).required();
+
+const ReleaseBusBackendEvidenceSchema = Joi.object({
+  schema_version: Joi.number().integer().valid(1).required(),
+  kind: Joi.string().valid('release_bus_backend_preflight_evidence').required(),
+  source_sha: ReleaseShaSchema.required(),
+  source_tree: ReleaseShaSchema.required(),
+  workflow_sha: ReleaseShaSchema.required(),
+  workflow_digest: ReleaseBusReportDigestSchema.required(),
+  behavior_digest: ReleaseBusReportDigestSchema.required(),
+  gate_fingerprint: ReleaseBusReportDigestSchema.required(),
+  component_digests: Joi.object()
+    .pattern(/^[A-Za-z0-9._/-]+$/, ReleaseBusReportDigestSchema)
+    .min(1)
+    .max(100)
+    .required(),
+  node_version: Joi.string().valid('22').required(),
+  package_manager: Joi.string()
+    .pattern(/^npm@[A-Za-z0-9.+-]{1,122}$/)
+    .required(),
+  execution: Joi.string().valid('executed_exact_composed_tree').required(),
+  reuse_reason: Joi.string()
+    .valid('no_exact_composed_tree_evidence_selected')
+    .required(),
+  lint: Joi.string().valid('success').required(),
+  typecheck: Joi.string().valid('success').required(),
+  tests: Joi.object({
+    schema_version: Joi.number().integer().valid(1).required(),
+    kind: Joi.string().valid('release_bus_backend_test_evidence').required(),
+    source_sha: ReleaseShaSchema.required(),
+    source_tree: ReleaseShaSchema.required(),
+    gate_fingerprint: ReleaseBusReportDigestSchema.required(),
+    behavior_digest: ReleaseBusReportDigestSchema.required(),
+    execution: Joi.string().valid('executed').required(),
+    jest_max_workers: Joi.number().integer().valid(2).required(),
+    expected_files: ReleaseBusReportCountSchema.required(),
+    executed_files: ReleaseBusReportCountSchema.required(),
+    missing_files: Joi.array()
+      .items(ReleaseBusReportPathSchema)
+      .length(0)
+      .required(),
+    unexpected_files: Joi.array()
+      .items(ReleaseBusReportPathSchema)
+      .length(0)
+      .required(),
+    duplicate_inventory_files: Joi.array()
+      .items(ReleaseBusReportPathSchema)
+      .length(0)
+      .required(),
+    duplicate_files: Joi.array()
+      .items(ReleaseBusReportPathSchema)
+      .length(0)
+      .required(),
+    duplicate_test_identities: Joi.array()
+      .items(ReleaseBusReportDigestSchema)
+      .length(0)
+      .required(),
+    malformed_test_results: Joi.number().integer().valid(0).required(),
+    executed_test_results: ReleaseBusReportCountSchema.required(),
+    failed_tests: Joi.number().integer().valid(0).required(),
+    failed_test_suites: Joi.number().integer().valid(0).required(),
+    skipped_tests: Joi.number().integer().valid(0).required(),
+    skipped_test_suites: Joi.number().integer().valid(0).required(),
+    total_tests: ReleaseBusReportCountSchema.required(),
+    total_test_suites: ReleaseBusReportCountSchema.required(),
+    status: Joi.string().valid('SUCCEEDED').required()
+  }).required(),
+  selected_units: Joi.array()
+    .items(Joi.string().pattern(/^[A-Za-z0-9_-]+$/))
+    .min(1)
+    .max(100)
+    .unique()
+    .required(),
+  package_build_count: Joi.number().integer().min(1).max(100).required(),
+  package_digests: Joi.object()
+    .pattern(/^[A-Za-z0-9_-]+$/, ReleaseBusReportDigestSchema)
+    .min(1)
+    .max(100)
+    .required(),
+  status: Joi.string().valid('SUCCEEDED').required(),
+  artifact_digest: ReleaseBusReportDigestSchema.required()
+}).custom((value, helpers) => {
+  const tests = value.tests;
+  const selectedUnits = [...value.selected_units].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const packageUnits = Object.keys(value.package_digests).sort((a, b) =>
+    a.localeCompare(b)
+  );
+  if (
+    tests.source_sha !== value.source_sha ||
+    tests.source_tree !== value.source_tree ||
+    tests.gate_fingerprint !== value.gate_fingerprint ||
+    tests.behavior_digest !== value.behavior_digest ||
+    tests.expected_files <= 0 ||
+    tests.total_tests <= 0 ||
+    tests.total_test_suites <= 0 ||
+    tests.expected_files !== tests.executed_files ||
+    tests.executed_test_results !== tests.total_tests ||
+    value.package_build_count !== selectedUnits.length ||
+    JSON.stringify(packageUnits) !== JSON.stringify(selectedUnits)
+  ) {
+    return helpers.error('any.invalid');
+  }
+  return value;
+});
 
 export const ReleaseBusProgressReportBodySchema = Joi.object({
   train_id: Joi.string()
@@ -306,7 +463,9 @@ export const ReleaseBusProgressReportBodySchema = Joi.object({
   })
     .allow(null)
     .default(null),
-  summary: ReleaseBusAggregateSummarySchema.allow(null).default(null)
+  summary: ReleaseBusAggregateSummarySchema.allow(null).default(null),
+  build_profile_digest: ReleaseBusReportDigestSchema.allow(null).default(null),
+  backend_evidence: ReleaseBusBackendEvidenceSchema.allow(null).default(null)
 })
   .custom((value, helpers) => {
     if (

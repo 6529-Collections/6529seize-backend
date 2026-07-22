@@ -172,11 +172,15 @@ describe('processRequest', () => {
     expect(generateAndPost).not.toHaveBeenCalled();
   });
 
-  it('publishes all successful PR services when the final deploy says publish', async () => {
+  it('publishes once only after every concurrently signalled PR service succeeds', async () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
 
-    await processRequest(request, { redis: redis as any, generateAndPost });
+    await processRequest(
+      { ...request, publish_release_note: true },
+      { redis: redis as any, generateAndPost }
+    );
+    expect(generateAndPost).not.toHaveBeenCalled();
 
     await processRequest(
       {
@@ -186,7 +190,7 @@ describe('processRequest', () => {
         run_url: 'https://github.com/example/actions/runs/456',
         sha: 'later-sha',
         service: 'worker',
-        release_group_services: ['worker'],
+        release_group_services: ['api', 'worker'],
         publish_release_note: true
       },
       {
@@ -288,7 +292,11 @@ describe('processRequest', () => {
     const redis = buildRedis();
 
     await processRequest(
-      { ...request, publish_release_note: true },
+      {
+        ...request,
+        release_group_services: ['api'],
+        publish_release_note: true
+      },
       {
         redis: redis as any,
         generateAndPost: jest.fn().mockResolvedValue('no-baseline')

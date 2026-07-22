@@ -1,6 +1,7 @@
 const mockFindCandidateById = jest.fn();
 const mockUpdateCandidateLifecycle = jest.fn();
 const mockAddEvidence = jest.fn();
+const mockHasTrainEvidence = jest.fn();
 const mockListBaseCanaryEvidenceBySha = jest.fn();
 const mockEnsureCommitStatus = jest.fn();
 const mockCommentOnPullRequest = jest.fn();
@@ -24,6 +25,7 @@ const mockUpdateOperationIfVersion = jest.fn();
 const mockSetControl = jest.fn();
 const mockExecuteTransaction = jest.fn();
 const mockResolveRef = jest.fn();
+const mockUpdateRef = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
 const mockGetFileContent = jest.fn();
@@ -35,6 +37,7 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     updateCandidateLifecycle: (...args: unknown[]) =>
       mockUpdateCandidateLifecycle(...args),
     addEvidence: (...args: unknown[]) => mockAddEvidence(...args),
+    hasTrainEvidence: (...args: unknown[]) => mockHasTrainEvidence(...args),
     listBaseCanaryEvidenceBySha: (...args: unknown[]) =>
       mockListBaseCanaryEvidenceBySha(...args),
     updateTrain: (...args: unknown[]) => mockUpdateTrain(...args),
@@ -68,6 +71,7 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
       mockCommentOnPullRequest(...args),
     refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args),
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
+    updateRef: (...args: unknown[]) => mockUpdateRef(...args),
     findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args),
     dispatchWorkflow: (...args: unknown[]) => mockDispatchWorkflow(...args),
     getFileContent: (...args: unknown[]) => mockGetFileContent(...args),
@@ -86,18 +90,24 @@ import type {
 } from '@/releaseBus/release-bus.types';
 import {
   buildFrontendGateContract,
+  FRONTEND_BASE_IDENTITY_WORKFLOW,
   FRONTEND_GATE_BASE_FILES,
   FRONTEND_GATE_TOOLING_FILES,
-  FRONTEND_GATE_WORKFLOW
+  FRONTEND_GATE_WORKFLOW,
+  FRONTEND_PREFLIGHT_WORKFLOW
 } from '@/releaseBus/release-bus.base-canary-evidence';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+  advanceBackendDeploy,
   advanceReleaseTrain,
+  backendDeployGraph,
   baseCanaryInfrastructureRetryDelayMs,
   finishIncompleteComposition,
+  finishStaging,
   mergeWorkflowProgress,
   operationFailureReason,
+  promoteSuccessfulStagingBaseEvidence,
   reconcile,
   workflowProgress
 } from '@/releaseBus/worker';
@@ -369,30 +379,42 @@ describe('frontend base canary', () => {
         : `content:${file}`
     ])
   );
+  const workflowFileContent = (file: string): string => {
+    if (file === FRONTEND_GATE_WORKFLOW) return 'workflow-content';
+    if (file === 'scripts/release-bus-gate-evidence.cjs')
+      return `workflow-content:${file}\nBASE_EVIDENCE_CONTRACT_VERSION = 2`;
+    return `workflow-content:${file}`;
+  };
   const gateContract = buildFrontendGateContract({
     baseSha: frozenTrain.frontend_base_sha as string,
     workflowSha,
     workflowFileContents: Object.fromEntries(
-      [FRONTEND_GATE_WORKFLOW, ...FRONTEND_GATE_TOOLING_FILES].map((file) => [
-        file,
-        file === FRONTEND_GATE_WORKFLOW
-          ? 'workflow-content'
-          : `workflow-content:${file}`
-      ])
+      [
+        FRONTEND_GATE_WORKFLOW,
+        FRONTEND_PREFLIGHT_WORKFLOW,
+        FRONTEND_BASE_IDENTITY_WORKFLOW,
+        ...FRONTEND_GATE_TOOLING_FILES
+      ].map((file) => [file, workflowFileContent(file)])
     ),
     baseFileContents,
     gateMode: 'sharded',
-    shardCount: 4
+    shardCount: 4,
+    buildProfileDigest: 'e'.repeat(64)
   });
   const artifactDigest = '9'.repeat(64);
   const reusableSummary = {
+    kind: 'base_canary_summary',
+    status: 'SUCCEEDED',
     base_sha: gateContract.base_sha,
     environment: gateContract.environment,
     gate_fingerprint: gateContract.gate_fingerprint,
+    behavior_digest: gateContract.behavior_digest,
+    build_profile_digest: gateContract.build_profile_digest,
     workflow_sha: gateContract.workflow_sha,
     workflow_digest: gateContract.workflow_digest,
     node_version: gateContract.node_version,
     package_manager: gateContract.package_manager,
+    gate_mode: gateContract.gate_mode,
     shard_count: gateContract.shard_count,
     summary_artifact_name: 'release-bus-base-canary-summary-123',
     summary_artifact_digest: artifactDigest,
@@ -403,7 +425,8 @@ describe('frontend base canary', () => {
       tests: 4,
       failed_test_suites: 0,
       failed_tests: 0,
-      skipped_tests: 0
+      skipped_tests: 0,
+      skipped_test_suites: 0
     },
     fresh_or_reused: 'fresh',
     shards: Array.from({ length: 4 }, (_, index) => ({
@@ -416,8 +439,39 @@ describe('frontend base canary', () => {
       failed_tests: 0
     })),
     missing_files: [],
-    duplicate_files: []
+    duplicate_files: [],
+    unexpected_files: []
   };
+  const successfulIdentityOperation = {
+    id: 'operation-base-evidence-identity',
+    operation_key: 'train-1:r1:base-evidence-identity-frontend',
+    train_id: frozenTrain.id,
+    revision: frozenTrain.revision,
+    operation_type: 'base-evidence-identity-frontend',
+    repository: 'frontend',
+    environment: 'orchestration',
+    service: null,
+    expected_sha: frozenTrain.frontend_base_sha,
+    artifact_digest: null,
+    attempt: 1,
+    status: 'SUCCEEDED',
+    external_id: 'identity-run-123',
+    request_metadata_json: {
+      workflow: 'release-bus-base-evidence-identity.yml'
+    },
+    result_metadata_json: {
+      gate_report: {
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        build_profile_digest: gateContract.build_profile_digest
+      }
+    },
+    started_at: 1,
+    completed_at: 2,
+    created_at: 1,
+    updated_at: 2,
+    row_version: 2
+  } as const;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -442,7 +496,9 @@ describe('frontend base canary', () => {
       callback({ transaction: 'test' })
     );
     mockAddEvidence.mockResolvedValue(true);
+    mockHasTrainEvidence.mockResolvedValue(false);
     mockResolveRef.mockResolvedValue(workflowSha);
+    mockUpdateRef.mockResolvedValue(undefined);
     mockGetActionsVariable.mockImplementation(
       async (repository: string, name: string) => {
         if (repository !== 'frontend') return null;
@@ -451,9 +507,7 @@ describe('frontend base canary', () => {
     );
     mockGetFileContent.mockImplementation(
       async (_repository: string, file: string) =>
-        file === FRONTEND_GATE_WORKFLOW
-          ? 'workflow-content'
-          : (baseFileContents[file] ?? `workflow-content:${file}`)
+        baseFileContents[file] ?? workflowFileContent(file)
     );
   });
 
@@ -1040,20 +1094,29 @@ describe('frontend base canary', () => {
         return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
       }
     );
-    mockListTrainOperations.mockResolvedValue([]);
+    mockListTrainOperations.mockResolvedValue([successfulIdentityOperation]);
     mockListBaseCanaryEvidenceBySha.mockResolvedValue([
       {
         id: 'source-evidence',
         train_id: 'source-train',
         revision: 3,
         status: 'SUCCEEDED',
+        evidence_type: 'BASE_CANARY_COMPLETED',
         source_sha: gateContract.base_sha,
         artifact_digest: artifactDigest,
         evidence_uri:
           'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
         metadata_json: {
+          source_kind: 'fresh_base_canary',
+          anchored_full_proof: true,
           contract: gateContract,
           summary: reusableSummary,
+          gate_stages: [
+            { name: 'lint', status: 'SUCCEEDED' },
+            { name: 'typecheck', status: 'SUCCEEDED' },
+            { name: 'unit_tests', status: 'SUCCEEDED' },
+            { name: 'build', status: 'SUCCEEDED' }
+          ],
           source_run_id: '123',
           created_at: Date.now() - 1_000,
           expires_at: Date.now() + 60_000
@@ -1128,9 +1191,8 @@ describe('frontend base canary', () => {
       'main',
       expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
     );
-    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).toHaveProperty(
-      'gate_contract',
-      JSON.stringify(gateContract)
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).not.toHaveProperty(
+      'gate_contract'
     );
   });
 
@@ -1158,7 +1220,42 @@ describe('frontend base canary', () => {
     );
   });
 
-  it('reports contract resolution failure in default fresh mode', async () => {
+  it('keeps the exact contract while falling back fresh after an evidence lookup error', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockListBaseCanaryEvidenceBySha.mockRejectedValue(
+      new Error('temporary evidence store error')
+    );
+    mockListTrainOperations.mockResolvedValue([successfulIdentityOperation]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({
+        base_sha: frozenTrain.frontend_base_sha,
+        expected_sha: frozenTrain.frontend_base_sha
+      })
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_INVALIDATED',
+        payload: expect.objectContaining({ reason: 'lookup_error' })
+      }),
+      {}
+    );
+  });
+
+  it('dispatches a fresh canary without resolving a reuse contract in default mode', async () => {
     mockResolveRef.mockRejectedValue(new Error('GitHub unavailable'));
     mockListTrainOperations.mockResolvedValue([]);
     mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
@@ -1172,17 +1269,8 @@ describe('frontend base canary', () => {
       status: 'BASE_CANARY_RUNNING'
     });
 
-    expect(mockPublishReleaseBusMetrics).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          MetricName: 'BaseCanaryEvidenceLookup',
-          Dimensions: expect.arrayContaining([
-            { Name: 'Decision', Value: 'INVALIDATED' },
-            { Name: 'Reason', Value: 'contract_unavailable' }
-          ])
-        })
-      ])
-    );
+    expect(mockResolveRef).not.toHaveBeenCalled();
+    expect(mockGetFileContent).not.toHaveBeenCalled();
     const workflowInputs = mockDispatchWorkflow.mock.calls[0]?.[3];
     expect(workflowInputs).toEqual(
       expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
@@ -1220,8 +1308,12 @@ describe('frontend base canary', () => {
       'release-bus-base-canary.yml',
       'main',
       expect.objectContaining({
-        gate_contract: JSON.stringify(gateContract)
+        base_sha: frozenTrain.frontend_base_sha,
+        expected_sha: frozenTrain.frontend_base_sha
       })
+    );
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).not.toHaveProperty(
+      'gate_contract'
     );
     expect(mockAppendEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1232,20 +1324,29 @@ describe('frontend base canary', () => {
   });
   it('records a would-reuse decision but dispatches fresh in shadow mode', async () => {
     process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW = 'true';
-    mockListTrainOperations.mockResolvedValue([]);
+    mockListTrainOperations.mockResolvedValue([successfulIdentityOperation]);
     mockListBaseCanaryEvidenceBySha.mockResolvedValue([
       {
         id: 'shadow-source-evidence',
         train_id: 'shadow-source-train',
         revision: 2,
         status: 'SUCCEEDED',
+        evidence_type: 'BASE_CANARY_COMPLETED',
         source_sha: gateContract.base_sha,
         artifact_digest: artifactDigest,
         evidence_uri:
           'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
         metadata_json: {
+          source_kind: 'fresh_base_canary',
+          anchored_full_proof: true,
           contract: gateContract,
           summary: reusableSummary,
+          gate_stages: [
+            { name: 'lint', status: 'SUCCEEDED' },
+            { name: 'typecheck', status: 'SUCCEEDED' },
+            { name: 'unit_tests', status: 'SUCCEEDED' },
+            { name: 'build', status: 'SUCCEEDED' }
+          ],
           source_run_id: '123',
           created_at: Date.now() - 1_000,
           expires_at: Date.now() + 60_000
@@ -1275,6 +1376,202 @@ describe('frontend base canary', () => {
       'release-bus-base-canary.yml',
       'main',
       expect.objectContaining({ gate_contract: JSON.stringify(gateContract) })
+    );
+  });
+
+  it('promotes a completed staging train exactly once across worker retries', async () => {
+    const finalContract = buildFrontendGateContract({
+      baseSha: frontendCandidate.head_sha,
+      workflowSha,
+      workflowFileContents: Object.fromEntries(
+        [
+          FRONTEND_GATE_WORKFLOW,
+          FRONTEND_PREFLIGHT_WORKFLOW,
+          FRONTEND_BASE_IDENTITY_WORKFLOW,
+          ...FRONTEND_GATE_TOOLING_FILES
+        ].map((file) => [file, workflowFileContent(file)])
+      ),
+      baseFileContents,
+      gateMode: 'sharded',
+      shardCount: 4,
+      buildProfileDigest: 'e'.repeat(64)
+    });
+    const finalSummary = {
+      ...reusableSummary,
+      kind: 'frontend_preflight_base_evidence_summary',
+      base_sha: finalContract.base_sha,
+      gate_fingerprint: finalContract.gate_fingerprint,
+      behavior_digest: finalContract.behavior_digest,
+      build_profile_digest: finalContract.build_profile_digest,
+      proof_origin: 'fresh_preflight',
+      build_environments: ['staging'],
+      build_coverage: {
+        authoritative_profile: 'SUCCEEDED',
+        compilation_count: 1,
+        deployed_artifact_bound: true
+      },
+      immutable_artifact: {
+        artifact_name: `release-bus-frontend-${frozenTrain.id}-r${frozenTrain.revision}-staging`,
+        run_id: '101',
+        source_sha: finalContract.base_sha,
+        environment: 'staging',
+        package_digest: '8'.repeat(64),
+        upload_digest: '7'.repeat(64),
+        build_profile_digest: finalContract.build_profile_digest
+      }
+    };
+    const operation = (
+      type: string,
+      environment: 'orchestration' | 'staging',
+      runId: string,
+      digest: string | null,
+      extra: Record<string, unknown> = {}
+    ) => ({
+      id: `operation-${type}`,
+      operation_key: `operation:${type}`,
+      train_id: frozenTrain.id,
+      revision: frozenTrain.revision,
+      operation_type: type,
+      repository: 'frontend',
+      environment,
+      service: null,
+      expected_sha: finalContract.base_sha,
+      artifact_digest: digest,
+      attempt: 1,
+      status: 'SUCCEEDED',
+      external_id: runId,
+      request_metadata_json: {},
+      result_metadata_json: {
+        url: `https://github.com/6529-Collections/6529seize-frontend/actions/runs/${runId}`
+      },
+      started_at: 1_000,
+      completed_at: 2_000,
+      created_at: 1_000,
+      updated_at: 2_000,
+      row_version: 2,
+      ...extra
+    });
+    mockListTrainOperations.mockResolvedValue([
+      operation('preflight-frontend', 'orchestration', '101', artifactDigest, {
+        request_metadata_json: { gate_contract: finalContract },
+        result_metadata_json: {
+          url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/101',
+          gate_report: {
+            summary: finalSummary,
+            stages: [
+              { name: 'lint', status: 'SUCCEEDED' },
+              { name: 'typecheck', status: 'SUCCEEDED' },
+              { name: 'unit_tests', status: 'SUCCEEDED' },
+              { name: 'build', status: 'SUCCEEDED' }
+            ]
+          }
+        }
+      }),
+      operation('deploy-frontend-staging', 'staging', '102', '8'.repeat(64)),
+      operation('e2e-staging', 'staging', '103', null)
+    ]);
+    mockResolveRef.mockImplementation(
+      async (_repository: string, ref: string) =>
+        ref === '1a-staging' ? finalContract.base_sha : workflowSha
+    );
+    mockAddEvidence.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    await promoteSuccessfulStagingBaseEvidence(frozenTrain, [
+      frontendCandidate
+    ]);
+    await promoteSuccessfulStagingBaseEvidence(frozenTrain, [
+      frontendCandidate
+    ]);
+
+    expect(mockAddEvidence).toHaveBeenCalledTimes(2);
+    expect(mockAddEvidence).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        idempotencyKey: expect.stringContaining(':promoted'),
+        evidenceType: 'BASE_EVIDENCE_PROMOTED',
+        status: 'SUCCEEDED',
+        sourceSha: finalContract.base_sha,
+        artifactDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        metadata: expect.objectContaining({
+          source_kind: 'staging_train_full_gate_preflight_deploy_e2e',
+          anchored_full_proof: true
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledTimes(1);
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'BASE_EVIDENCE_PROMOTED' }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('rejects an unowned manual move of staging to the train final SHA', async () => {
+    mockResolveRef.mockResolvedValue(frontendCandidate.head_sha);
+    mockHasTrainEvidence.mockResolvedValue(false);
+
+    await expect(
+      finishStaging(frozenTrain, [frontendCandidate])
+    ).rejects.toThrow('without a recorded frontend Release Bus update intent');
+
+    expect(mockUpdateTrain).not.toHaveBeenCalled();
+  });
+
+  it('records durable ref-update intent before advancing staging', async () => {
+    mockResolveRef
+      .mockResolvedValueOnce(frontendCandidate.head_sha)
+      .mockResolvedValueOnce(frozenTrain.frontend_base_sha)
+      .mockResolvedValue(frontendCandidate.head_sha);
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetLane.mockResolvedValue(null);
+
+    await finishStaging(frozenTrain, [frontendCandidate]);
+
+    expect(mockAddEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: expect.stringContaining('staging-ref-update-intent:'),
+        evidenceType: 'STAGING_REF_UPDATE_INTENT_FRONTEND',
+        sourceSha: frontendCandidate.head_sha,
+        metadata: {
+          repository: 'frontend',
+          expected_old_sha: frozenTrain.frontend_base_sha,
+          intended_final_sha: frontendCandidate.head_sha
+        }
+      }),
+      {}
+    );
+    expect(mockUpdateRef).toHaveBeenCalledWith(
+      'frontend',
+      '1a-staging',
+      frozenTrain.frontend_base_sha,
+      frontendCandidate.head_sha
+    );
+    expect(mockAddEvidence.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUpdateRef.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('continues idempotently after its recorded staging ref update survives a worker restart', async () => {
+    mockResolveRef.mockResolvedValue(frontendCandidate.head_sha);
+    mockHasTrainEvidence.mockResolvedValue(true);
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetLane.mockResolvedValue(null);
+
+    await expect(
+      finishStaging(frozenTrain, [frontendCandidate])
+    ).resolves.toBeUndefined();
+
+    expect(mockHasTrainEvidence).toHaveBeenCalledWith(
+      frozenTrain.id,
+      frozenTrain.revision,
+      'STAGING_REF_UPDATE_INTENT_FRONTEND',
+      frontendCandidate.head_sha,
+      {}
+    );
+    expect(mockUpdateTrain).toHaveBeenCalledWith(
+      frozenTrain.id,
+      expect.objectContaining({ status: 'COMPLETED' }),
+      {}
     );
   });
 });
@@ -1450,6 +1747,318 @@ const train: ReleaseTrainRecord = {
   updated_at: 1,
   row_version: 1
 };
+
+describe('backend deployment DAG frontiers', () => {
+  const units = [
+    'aggregatedActivityLoop',
+    'attachmentsOrchestrator',
+    'attachmentsProcessor'
+  ] as const;
+  const backendCandidate = (
+    selected: readonly string[],
+    edges: ReadonlyArray<readonly [string, string]> = []
+  ): ReleaseCandidateRecord => ({
+    ...candidate('candidate-backend-deploy', 'backend', SHA_A, 1776),
+    deploy_plan_json: { units: [...selected], edges: [...edges] }
+  });
+  const preflightOperation = {
+    id: 'operation-preflight-backend',
+    operation_key: 'train-1:r1:preflight-backend',
+    train_id: train.id,
+    revision: train.revision,
+    operation_type: 'preflight-backend',
+    repository: 'backend',
+    environment: 'orchestration',
+    service: null,
+    expected_sha: SHA_C,
+    artifact_digest: '8'.repeat(64),
+    attempt: 1,
+    status: 'SUCCEEDED',
+    external_id: '29919223502',
+    request_metadata_json: { workflow: 'release-bus-preflight.yml' },
+    result_metadata_json: {},
+    started_at: 1,
+    completed_at: 2,
+    created_at: 1,
+    updated_at: 2,
+    row_version: 2
+  } as const;
+  const deploymentOperation = (
+    service: string,
+    status: 'RUNNING' | 'SUCCEEDED' | 'FAILED',
+    resultMetadata: Record<string, unknown> = {}
+  ) =>
+    ({
+      id: `operation-${service}`,
+      operation_key: `train-1:r1:deploy-backend-staging-${service}:backend:staging:${service}`,
+      train_id: train.id,
+      revision: train.revision,
+      operation_type: `deploy-backend-staging-${service}`,
+      repository: 'backend',
+      environment: 'staging',
+      service,
+      expected_sha: SHA_C,
+      artifact_digest: '7'.repeat(64),
+      attempt: 1,
+      status,
+      external_id: `run-${service}`,
+      request_metadata_json: {
+        workflow: 'deploy.yml',
+        ref: 'main',
+        inputs: {
+          environment: 'staging',
+          service,
+          artifact_run_id: preflightOperation.external_id
+        }
+      },
+      result_metadata_json: resultMetadata,
+      started_at: 1,
+      completed_at: status === 'RUNNING' ? null : 2,
+      created_at: 1,
+      updated_at: 2,
+      row_version: 2
+    }) as const;
+
+  let deployOperations: Array<ReturnType<typeof deploymentOperation>>;
+  let createdOperations: Map<string, Record<string, unknown>>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY;
+    deployOperations = [];
+    createdOperations = new Map();
+    mockListTrainOperations.mockImplementation(async () => [
+      preflightOperation,
+      ...deployOperations
+    ]);
+    mockResolveRef.mockResolvedValue(SHA_C);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockAppendEvent.mockResolvedValue(undefined);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => {
+      const row = {
+        id: `created-${String(operation.operation_key)}`,
+        ...operation,
+        created_at: 1,
+        updated_at: 1,
+        row_version: 1
+      };
+      createdOperations.set(String(operation.operation_key), row);
+      return row;
+    });
+    mockUpdateOperation.mockImplementation(async (operationKey, update) => {
+      const current = createdOperations.get(operationKey) ?? {};
+      createdOperations.set(operationKey, {
+        ...current,
+        status: update.status ?? current.status,
+        external_id: update.externalId ?? current.external_id,
+        result_metadata_json:
+          update.resultMetadata ?? current.result_metadata_json
+      });
+    });
+    mockFindOperation.mockImplementation(async (operationKey) =>
+      createdOperations.get(operationKey)
+    );
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
+    mockUpdateOperationIfVersion.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    delete process.env.RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY;
+  });
+
+  it('unions registry and candidate edges into deterministic frontiers', () => {
+    const graph = backendDeployGraph([
+      backendCandidate(
+        ['api', 'dbMigrationsLoop', 'attachmentsProcessor'],
+        [['attachmentsProcessor', 'api']]
+      )
+    ]);
+
+    expect(graph.edges).toEqual([
+      ['attachmentsProcessor', 'api'],
+      ['dbMigrationsLoop', 'api']
+    ]);
+    expect(graph.layers).toEqual([
+      ['attachmentsProcessor', 'dbMigrationsLoop'],
+      ['api']
+    ]);
+  });
+
+  it('rejects a cycle introduced by the registry and candidate edge union', () => {
+    expect(() =>
+      backendDeployGraph([
+        backendCandidate(
+          ['api', 'dbMigrationsLoop'],
+          [['api', 'dbMigrationsLoop']]
+        )
+      ])
+    ).toThrow('DAG cycle detected');
+  });
+
+  it.each(['staging', 'prod'] as const)(
+    'dispatches three independent %s units together',
+    async (environment) => {
+      const environmentTrain = {
+        ...train,
+        target_lane: environment === 'prod' ? 'PRODUCTION' : 'STAGING',
+        backend_pr_number: environment === 'prod' ? 1800 : null
+      } as ReleaseTrainRecord;
+
+      await expect(
+        advanceBackendDeploy(
+          environmentTrain,
+          [backendCandidate(units)],
+          environment
+        )
+      ).resolves.toBe('WAIT');
+
+      expect(mockDispatchWorkflow).toHaveBeenCalledTimes(3);
+      expect(
+        mockDispatchWorkflow.mock.calls
+          .map((call) => call[3].service)
+          .sort((a, b) => String(a).localeCompare(String(b)))
+      ).toEqual([...units].sort((a, b) => a.localeCompare(b)));
+      for (const call of mockDispatchWorkflow.mock.calls) {
+        expect(call[3]).toEqual(
+          expect.objectContaining({
+            environment,
+            artifact_run_id: preflightOperation.external_id
+          })
+        );
+        if (environment === 'prod') {
+          expect(call[3]).toEqual(
+            expect.objectContaining({
+              release_pull_request: '1800',
+              release_note_publish: 'true',
+              release_group_services: [...units]
+                .sort((a, b) => a.localeCompare(b))
+                .join(',')
+            })
+          );
+        } else {
+          expect(call[3]).not.toHaveProperty('release_note_publish');
+        }
+      }
+    }
+  );
+
+  it('dispatches A and B together and waits for both before D', async () => {
+    const dependent = 'aggregatedActivityLoop';
+    const parents = ['attachmentsOrchestrator', 'attachmentsProcessor'];
+    const selected = [...parents, dependent];
+    const candidateWithBarrier = backendCandidate(selected, [
+      [parents[0], dependent],
+      [parents[1], dependent]
+    ]);
+
+    await expect(
+      advanceBackendDeploy(train, [candidateWithBarrier], 'staging')
+    ).resolves.toBe('WAIT');
+    expect(
+      mockDispatchWorkflow.mock.calls.map((call) => call[3].service).sort()
+    ).toEqual([...parents].sort());
+
+    deployOperations = parents.map((service) =>
+      deploymentOperation(service, 'SUCCEEDED')
+    );
+    mockDispatchWorkflow.mockClear();
+    await expect(
+      advanceBackendDeploy(train, [candidateWithBarrier], 'staging')
+    ).resolves.toBe('WAIT');
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3].service).toBe(dependent);
+  });
+
+  it('settles a running sibling and never unlocks a failed sibling downstream', async () => {
+    const dependent = 'aggregatedActivityLoop';
+    const parents = ['attachmentsOrchestrator', 'attachmentsProcessor'];
+    const candidateWithBarrier = backendCandidate(
+      [...parents, dependent],
+      parents.map((parent) => [parent, dependent] as const)
+    );
+    deployOperations = [
+      deploymentOperation(parents[0], 'FAILED'),
+      deploymentOperation(parents[1], 'RUNNING')
+    ];
+
+    await expect(
+      advanceBackendDeploy(train, [candidateWithBarrier], 'staging')
+    ).resolves.toBe('WAIT');
+    expect(mockFindWorkflowRun).toHaveBeenCalledWith(
+      'backend',
+      'deploy.yml',
+      deployOperations[1].operation_key,
+      deployOperations[1].external_id
+    );
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
+
+    deployOperations = [
+      deploymentOperation(parents[0], 'FAILED'),
+      deploymentOperation(parents[1], 'SUCCEEDED')
+    ];
+    await expect(
+      advanceBackendDeploy(train, [candidateWithBarrier], 'staging')
+    ).resolves.toBe('FAIL');
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('reconciles successful and running services without duplicate dispatch', async () => {
+    deployOperations = [
+      deploymentOperation(units[0], 'SUCCEEDED'),
+      deploymentOperation(units[1], 'RUNNING')
+    ];
+
+    await expect(
+      advanceBackendDeploy(train, [backendCandidate(units)], 'staging')
+    ).resolves.toBe('WAIT');
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3].service).toBe(units[2]);
+
+    const created = Array.from(createdOperations.values())[0];
+    deployOperations.push({
+      ...(created as ReturnType<typeof deploymentOperation>),
+      status: 'RUNNING'
+    });
+    mockDispatchWorkflow.mockClear();
+    await expect(
+      advanceBackendDeploy(train, [backendCandidate(units)], 'staging')
+    ).resolves.toBe('WAIT');
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('retries only the failed infrastructure sibling and preserves successes', async () => {
+    deployOperations = [
+      deploymentOperation(units[0], 'FAILED', {
+        gate_report: {
+          status: 'FAILED',
+          failure_class: 'INFRASTRUCTURE_TRANSIENT',
+          failure_phase: 'workflow_runtime',
+          retryable: true
+        }
+      }),
+      deploymentOperation(units[1], 'SUCCEEDED'),
+      deploymentOperation(units[2], 'SUCCEEDED')
+    ];
+
+    await expect(
+      advanceBackendDeploy(train, [backendCandidate(units)], 'staging')
+    ).resolves.toBe('INFRASTRUCTURE_WAIT');
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({ service: units[0] })
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'OPERATION_INFRASTRUCTURE_RETRY_DISPATCHED',
+        payload: expect.objectContaining({ next_attempt: 2 })
+      }),
+      {}
+    );
+  });
+});
 
 describe('finishIncompleteComposition', () => {
   const composeWorkflow = readFileSync(

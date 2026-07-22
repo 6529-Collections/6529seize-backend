@@ -589,6 +589,7 @@ describe('release-bus progress reporting', () => {
     mockExecuteTransaction.mockImplementation(async (callback) =>
       callback({ transaction: 'test' })
     );
+    mockBindOperationAuthorization.mockResolvedValue(true);
     mockUpdateOperation.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
   });
@@ -628,7 +629,12 @@ describe('release-bus progress reporting', () => {
         resultMetadata: expect.objectContaining({
           gate_report: expect.objectContaining({
             phase: 'complete',
-            summary: aggregateSummary()
+            summary: expect.objectContaining({
+              ...aggregateSummary(),
+              totals: expect.objectContaining(aggregateSummary().totals),
+              unexpected_files: [],
+              kind: 'base_canary_summary'
+            })
           }),
           last_progress_at: expect.any(Number)
         })
@@ -640,9 +646,53 @@ describe('release-bus progress reporting', () => {
         eventType: 'OPERATION_GATE_REPORT',
         payload: expect.objectContaining({
           phase: 'complete',
-          summary: aggregateSummary()
+          summary: expect.objectContaining({
+            ...aggregateSummary(),
+            totals: expect.objectContaining(aggregateSummary().totals),
+            unexpected_files: [],
+            kind: 'base_canary_summary'
+          })
         })
       }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('binds an exact preflight base-evidence summary digest to its operation', async () => {
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      operation_type: 'preflight-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
+      artifact_digest: null,
+      status: 'DISPATCHED',
+      row_version: 1,
+      result_metadata_json: {
+        url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+      }
+    });
+    const report = progressBody();
+
+    const response = await post('/deploy/release-bus/report-progress', {
+      ...report,
+      summary: {
+        ...report.summary,
+        kind: 'frontend_preflight_base_evidence_summary',
+        proof_origin: 'fresh_preflight',
+        build_environments: ['staging'],
+        build_coverage: {
+          base_canary_profile: 'SUCCEEDED',
+          deploy_artifact_profile: 'SUCCEEDED'
+        }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockBindOperationAuthorization).toHaveBeenCalledWith(
+      report.operation_key,
+      report.workflow_run_id,
+      'f'.repeat(64),
       { connection: { transaction: 'test' } }
     );
   });

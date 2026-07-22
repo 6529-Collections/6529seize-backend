@@ -652,13 +652,17 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       failing_tests: Array<{ suite: string; test: string }>;
     } | null;
     summary: {
+      kind: 'base_canary_summary' | 'frontend_preflight_base_evidence_summary';
       base_sha: string;
       environment: 'orchestration' | 'staging' | 'prod';
       gate_fingerprint: string;
+      behavior_digest: string | null;
+      build_profile_digest: string | null;
       workflow_sha: string;
       workflow_digest: string;
       node_version: string;
       package_manager: string;
+      gate_mode: 'legacy' | 'shadow' | 'sharded' | null;
       shard_count: number;
       summary_artifact_name: string;
       summary_artifact_digest: string;
@@ -668,7 +672,20 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       shards: Array<Record<string, string | number>>;
       missing_files: string[];
       duplicate_files: string[];
+      unexpected_files: string[];
+      proof_origin: string | null;
+      build_environments: string[];
+      build_coverage: {
+        authoritative_profile?: string;
+        compilation_count?: number;
+        deployed_artifact_bound?: boolean;
+        base_canary_profile?: string;
+        deploy_artifact_profile?: string;
+      } | null;
+      immutable_artifact: Record<string, unknown> | null;
     } | null;
+    build_profile_digest: string | null;
+    backend_evidence: Record<string, unknown> | null;
   }>(req.body, ReleaseBusProgressReportBodySchema);
   const reportContent = {
     phase: body.phase,
@@ -678,7 +695,9 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
     retryable: body.retryable,
     stages: body.stages,
     jest: body.jest,
-    summary: body.summary
+    summary: body.summary,
+    build_profile_digest: body.build_profile_digest,
+    backend_evidence: body.backend_evidence
   };
   const result = await releaseBusRepository.executeNativeQueriesInTransaction(
     async (connection) => {
@@ -699,6 +718,19 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       }
       const isFrontendBaseCanary =
         operation.operation_type === 'base-canary-frontend';
+      const isFrontendBaseIdentity =
+        operation.operation_type === 'base-evidence-identity-frontend';
+      const isBackendPreflight =
+        operation.operation_type === 'preflight-backend';
+      const isFrontendBaseEvidenceProducer =
+        isFrontendBaseCanary ||
+        operation.operation_type === 'preflight-frontend';
+      const summaryKindMatchesOperation = body.summary
+        ? (isFrontendBaseCanary &&
+            body.summary.kind === 'base_canary_summary') ||
+          (operation.operation_type === 'preflight-frontend' &&
+            body.summary.kind === 'frontend_preflight_base_evidence_summary')
+        : true;
       // Aggregate summaries are base-canary evidence. Other operations report
       // bounded stages/Jest data but must not claim reusable base evidence.
       if (isFrontendBaseCanary && body.phase === 'complete' && !body.summary) {
@@ -708,8 +740,37 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
         );
       }
       if (
+        (body.build_profile_digest && !isFrontendBaseIdentity) ||
+        (isFrontendBaseIdentity &&
+          body.phase === 'complete' &&
+          body.status === 'SUCCEEDED' &&
+          !body.build_profile_digest)
+      ) {
+        throw new CustomApiCompliantException(
+          422,
+          'Build-profile identity does not match this Release Bus operation'
+        );
+      }
+      if (
+        (body.backend_evidence &&
+          (!isBackendPreflight ||
+            body.status !== 'SUCCEEDED' ||
+            operation.expected_sha?.toLowerCase() !==
+              String(body.backend_evidence.source_sha).toLowerCase())) ||
+        (isBackendPreflight &&
+          body.phase === 'complete' &&
+          body.status === 'SUCCEEDED' &&
+          !body.backend_evidence)
+      ) {
+        throw new CustomApiCompliantException(
+          422,
+          'Backend exact-tree evidence does not match this preflight operation'
+        );
+      }
+      if (
         body.summary &&
-        (!isFrontendBaseCanary ||
+        (!isFrontendBaseEvidenceProducer ||
+          !summaryKindMatchesOperation ||
           operation.expected_sha?.toLowerCase() !==
             body.summary.base_sha.toLowerCase() ||
           operation.environment?.toLowerCase() !==
@@ -717,7 +778,7 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
       ) {
         throw new CustomApiCompliantException(
           403,
-          'Release progress aggregate does not match the authorized base canary operation'
+          'Release progress aggregate does not match the authorized base canary operation or preflight base-evidence operation'
         );
       }
       const existingResult = (() => {
@@ -747,6 +808,39 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
             'A terminal progress report is already recorded for this operation'
           );
         }
+        const persistedSummary =
+          existingGateReport.summary &&
+          typeof existingGateReport.summary === 'object'
+            ? (existingGateReport.summary as Record<string, unknown>)
+            : null;
+        const persistedTotals =
+          persistedSummary?.totals &&
+          typeof persistedSummary.totals === 'object'
+            ? (persistedSummary.totals as Record<string, unknown>)
+            : null;
+        const normalizedPersistedSummary = persistedSummary
+          ? {
+              kind: persistedSummary.kind ?? 'base_canary_summary',
+              ...persistedSummary,
+              behavior_digest: persistedSummary.behavior_digest ?? null,
+              build_profile_digest:
+                persistedSummary.build_profile_digest ?? null,
+              gate_mode: persistedSummary.gate_mode ?? null,
+              totals: persistedTotals
+                ? {
+                    ...persistedTotals,
+                    skipped_tests: persistedTotals.skipped_tests ?? 0,
+                    skipped_test_suites:
+                      persistedTotals.skipped_test_suites ?? 0
+                  }
+                : persistedTotals,
+              unexpected_files: persistedSummary.unexpected_files ?? [],
+              proof_origin: persistedSummary.proof_origin ?? null,
+              build_environments: persistedSummary.build_environments ?? [],
+              build_coverage: persistedSummary.build_coverage ?? null,
+              immutable_artifact: persistedSummary.immutable_artifact ?? null
+            }
+          : null;
         const persistedContent = {
           phase: existingGateReport.phase,
           status: existingGateReport.status,
@@ -755,7 +849,9 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
           retryable: existingGateReport.retryable === true,
           stages: existingGateReport.stages,
           jest: existingGateReport.jest,
-          summary: existingGateReport.summary ?? null
+          summary: normalizedPersistedSummary,
+          build_profile_digest: existingGateReport.build_profile_digest ?? null,
+          backend_evidence: existingGateReport.backend_evidence ?? null
         };
         if (!isDeepStrictEqual(persistedContent, reportContent)) {
           throw new CustomApiCompliantException(
@@ -767,6 +863,59 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
           idempotent: true,
           reportedAt: existingGateReport.reported_at
         };
+      }
+      if (body.summary) {
+        const summaryDigest = body.summary.summary_artifact_digest.replace(
+          /^sha256:/,
+          ''
+        );
+        const boundDigest = operation.artifact_digest?.replace(/^sha256:/, '');
+        if (boundDigest && boundDigest !== summaryDigest) {
+          throw new CustomApiCompliantException(
+            409,
+            'A different aggregate artifact digest already claimed this release operation'
+          );
+        }
+        if (
+          !boundDigest &&
+          !(await releaseBusRepository.bindOperationAuthorization(
+            body.operation_key,
+            body.workflow_run_id,
+            summaryDigest,
+            context
+          ))
+        ) {
+          throw new CustomApiCompliantException(
+            409,
+            'The aggregate artifact digest could not be bound to this release operation'
+          );
+        }
+      }
+      if (body.backend_evidence) {
+        const artifactDigest = String(
+          body.backend_evidence.artifact_digest
+        ).replace(/^sha256:/, '');
+        const boundDigest = operation.artifact_digest?.replace(/^sha256:/, '');
+        if (boundDigest && boundDigest !== artifactDigest) {
+          throw new CustomApiCompliantException(
+            409,
+            'A different backend preflight artifact digest already claimed this operation'
+          );
+        }
+        if (
+          !boundDigest &&
+          !(await releaseBusRepository.bindOperationAuthorization(
+            body.operation_key,
+            body.workflow_run_id,
+            artifactDigest,
+            context
+          ))
+        ) {
+          throw new CustomApiCompliantException(
+            409,
+            'The backend preflight artifact digest could not be bound to this operation'
+          );
+        }
       }
       const reportedAt = Date.now();
       const gateReport = {
@@ -798,7 +947,9 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
             retryable: body.retryable,
             failed_test_suites: body.jest?.num_failed_test_suites ?? 0,
             failed_tests: body.jest?.num_failed_tests ?? 0,
-            summary: body.summary
+            summary: body.summary,
+            build_profile_digest: body.build_profile_digest,
+            backend_evidence: body.backend_evidence
           }
         },
         context
