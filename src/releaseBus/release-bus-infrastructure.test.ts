@@ -186,6 +186,10 @@ describe('release bus infrastructure contract', () => {
       'group: deploy-service-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}'
     );
     expect(deployWorkflow).toContain(
+      'Install Node.js with cached deploy-tool downloads'
+    );
+    expect(deployWorkflow).toContain('Activate pinned npm');
+    expect(deployWorkflow).toContain(
       "github.event.inputs.operation_key != '' && github.event.inputs.service"
     );
     expect(deployWorkflow).toContain(

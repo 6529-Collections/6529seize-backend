@@ -94,7 +94,9 @@ import {
   FRONTEND_GATE_BASE_FILES,
   FRONTEND_GATE_TOOLING_FILES,
   FRONTEND_GATE_WORKFLOW,
-  FRONTEND_PREFLIGHT_WORKFLOW
+  FRONTEND_PREFLIGHT_WORKFLOW,
+  FRONTEND_STAGING_DEPLOY_WORKFLOW,
+  FRONTEND_STAGING_E2E_WORKFLOW
 } from '@/releaseBus/release-bus.base-canary-evidence';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -393,6 +395,8 @@ describe('frontend base canary', () => {
         FRONTEND_GATE_WORKFLOW,
         FRONTEND_PREFLIGHT_WORKFLOW,
         FRONTEND_BASE_IDENTITY_WORKFLOW,
+        FRONTEND_STAGING_DEPLOY_WORKFLOW,
+        FRONTEND_STAGING_E2E_WORKFLOW,
         ...FRONTEND_GATE_TOOLING_FILES
       ].map((file) => [file, workflowFileContent(file)])
     ),
@@ -1388,6 +1392,8 @@ describe('frontend base canary', () => {
           FRONTEND_GATE_WORKFLOW,
           FRONTEND_PREFLIGHT_WORKFLOW,
           FRONTEND_BASE_IDENTITY_WORKFLOW,
+          FRONTEND_STAGING_DEPLOY_WORKFLOW,
+          FRONTEND_STAGING_E2E_WORKFLOW,
           ...FRONTEND_GATE_TOOLING_FILES
         ].map((file) => [file, workflowFileContent(file)])
       ),

@@ -301,6 +301,19 @@ jobs:
           ref: \${{ github.event.inputs.expected_sha || steps.extract_branch.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Install Node.js with cached deploy-tool downloads
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Activate pinned npm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          corepack enable npm
+          corepack install
+          test "$(npm --version)" = "$(node -p \"require('./package.json').packageManager.split('npm@')[1]\")"
       - name: Resolve Release Bus GitHub App installation
         if: github.event.inputs.service == 'releaseBus' || (github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod')
         id: release_bus_app

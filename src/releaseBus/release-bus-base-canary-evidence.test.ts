@@ -7,6 +7,8 @@ import {
   FRONTEND_GATE_TOOLING_FILES,
   FRONTEND_GATE_WORKFLOW,
   FRONTEND_PREFLIGHT_WORKFLOW,
+  FRONTEND_STAGING_DEPLOY_WORKFLOW,
+  FRONTEND_STAGING_E2E_WORKFLOW,
   type BaseCanaryEvidenceRecord,
   type FrontendGateContract
 } from '@/releaseBus/release-bus.base-canary-evidence';
@@ -34,6 +36,8 @@ function workflowContents(suffix = ''): Record<string, string> {
       FRONTEND_GATE_WORKFLOW,
       FRONTEND_PREFLIGHT_WORKFLOW,
       FRONTEND_BASE_IDENTITY_WORKFLOW,
+      FRONTEND_STAGING_DEPLOY_WORKFLOW,
+      FRONTEND_STAGING_E2E_WORKFLOW,
       ...FRONTEND_GATE_TOOLING_FILES
     ].map((file) => [file, `${file}:${suffix}`])
   );
@@ -122,7 +126,7 @@ function preflightSummary(
       deployed_artifact_bound: true
     },
     immutable_artifact: {
-      artifact_name: 'release-bus-frontend-train-r2-staging',
+      artifact_name: 'release-bus-frontend-train-source-r2-staging',
       run_id: '101',
       source_sha: value.base_sha,
       environment: 'staging',
@@ -242,6 +246,8 @@ describe('frontend base-canary evidence contract', () => {
           [FRONTEND_GATE_WORKFLOW]: 'workflow',
           '.github/workflows/release-bus-preflight.yml': 'preflight workflow',
           [FRONTEND_BASE_IDENTITY_WORKFLOW]: 'identity workflow',
+          [FRONTEND_STAGING_DEPLOY_WORKFLOW]: 'deploy workflow',
+          [FRONTEND_STAGING_E2E_WORKFLOW]: 'e2e workflow',
           'scripts/release-bus-authorize-operation.sh': 'authorize',
           'scripts/release-bus-build-profile.cjs': 'build profile',
           'scripts/release-bus-frontend-gate.sh': 'gate',
@@ -256,7 +262,7 @@ describe('frontend base-canary evidence contract', () => {
       })
     ).toMatchObject({
       gate_fingerprint:
-        '9dc75f4bd421a5f77fcb8272eb1c7e8faec2c847d8018810b55e3f4ddd0abfd8',
+        'f63f7296553d8c97445170479610ce7d58eb0ec3862b89fc38c5f73b16736025',
       workflow_digest:
         'da7f739f627198465eeab537a6f7a435dc4a0c332f9e4a8462293eb3f4ab7ee0'
     });
@@ -352,6 +358,16 @@ describe('frontend base-canary evidence contract', () => {
         e2e: {
           ...operationProof('e2e-staging', BASE_SHA, '103', null),
           status: 'FAILED'
+        }
+      },
+      'invalid_e2e_proof'
+    ],
+    [
+      'malformed E2E artifact provenance',
+      {
+        e2e: {
+          ...operationProof('e2e-staging', BASE_SHA, '103', null),
+          artifact_digest: 'f'.repeat(64)
         }
       },
       'invalid_e2e_proof'

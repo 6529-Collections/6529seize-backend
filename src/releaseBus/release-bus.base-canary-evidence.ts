@@ -32,6 +32,10 @@ export const FRONTEND_PREFLIGHT_WORKFLOW =
   '.github/workflows/release-bus-preflight.yml';
 export const FRONTEND_BASE_IDENTITY_WORKFLOW =
   '.github/workflows/release-bus-base-evidence-identity.yml';
+export const FRONTEND_STAGING_DEPLOY_WORKFLOW =
+  '.github/workflows/release-bus-deploy-staging.yml';
+export const FRONTEND_STAGING_E2E_WORKFLOW =
+  '.github/workflows/staging-e2e.yml';
 export const BASE_EVIDENCE_CONTRACT_MARKER =
   'BASE_EVIDENCE_CONTRACT_VERSION = 2';
 
@@ -168,6 +172,8 @@ export function buildFrontendGateContract(input: {
     FRONTEND_GATE_WORKFLOW,
     FRONTEND_PREFLIGHT_WORKFLOW,
     FRONTEND_BASE_IDENTITY_WORKFLOW,
+    FRONTEND_STAGING_DEPLOY_WORKFLOW,
+    FRONTEND_STAGING_E2E_WORKFLOW,
     ...FRONTEND_GATE_TOOLING_FILES
   ] as const;
   const missingWorkflowFile = workflowFiles.find(
@@ -482,10 +488,16 @@ function validOperationProof(
   )
     return false;
   const artifactDigest = digest(operation.artifact_digest);
-  return expected.artifactRequired ? artifactDigest !== null : true;
+  return expected.artifactRequired
+    ? artifactDigest !== null
+    : operation.artifact_digest === null;
 }
 
-function validPromotedBuildCoverage(summary: Record<string, unknown>): boolean {
+function validPromotedBuildCoverage(
+  summary: Record<string, unknown>,
+  sourceTrainId: string,
+  sourceTrainRevision: number
+): boolean {
   if (
     summary.kind !== 'frontend_preflight_base_evidence_summary' ||
     summary.proof_origin !== 'fresh_preflight'
@@ -503,10 +515,12 @@ function validPromotedBuildCoverage(summary: Record<string, unknown>): boolean {
     immutableArtifact.build_profile_digest === summary.build_profile_digest &&
     digest(immutableArtifact.package_digest) !== null &&
     digest(immutableArtifact.upload_digest) !== null &&
-    typeof immutableArtifact.artifact_name === 'string' &&
+    immutableArtifact.artifact_name ===
+      `release-bus-frontend-${sourceTrainId}-r${sourceTrainRevision}-staging` &&
     typeof immutableArtifact.run_id === 'string' &&
     Array.isArray(summary.build_environments) &&
-    summary.build_environments.includes('staging')
+    summary.build_environments.length === 1 &&
+    summary.build_environments[0] === 'staging'
   );
 }
 
@@ -554,7 +568,13 @@ export function buildPromotedBaseEvidence(input: {
   if (summaryError) return { promoted: false, reason: summaryError };
   if (!validGateStages(input.stages))
     return { promoted: false, reason: 'incomplete_gate_stages' };
-  if (!validPromotedBuildCoverage(input.summary))
+  if (
+    !validPromotedBuildCoverage(
+      input.summary,
+      input.sourceTrainId,
+      input.sourceTrainRevision
+    )
+  )
     return { promoted: false, reason: 'incomplete_build_coverage' };
   if (
     !validOperationProof(input.preflight, {
@@ -686,7 +706,8 @@ function validatePromotedEvidence(
   )
     return 'invalid_promoted_operation_proof';
   if (!validGateStages(preflight.stages)) return 'incomplete_gate_stages';
-  if (!validPromotedBuildCoverage(summary)) return 'incomplete_build_coverage';
+  if (!validPromotedBuildCoverage(summary, row.train_id, row.revision))
+    return 'incomplete_build_coverage';
   const summaryDigest = digest(summary.summary_artifact_digest);
   if (
     !summaryDigest ||
