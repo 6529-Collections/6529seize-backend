@@ -679,6 +679,54 @@ async function updateTrainPhase(
   );
 }
 
+async function retryInfrastructureFailures(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[],
+  failed: readonly ReleaseOperationRecord[],
+  prefix: string
+): Promise<'INFRASTRUCTURE_WAIT' | 'INFRASTRUCTURE_EXHAUSTED'> {
+  const exhausted = failed.find(
+    (operation) => operation.attempt >= INFRASTRUCTURE_MAX_WORKFLOW_ATTEMPTS
+  );
+  if (exhausted) {
+    await failInfrastructureTrainWithoutPausing(
+      train,
+      candidates,
+      exhausted,
+      prefix.replace(/-$/, '')
+    );
+    return 'INFRASTRUCTURE_EXHAUSTED';
+  }
+  const retryResults = await Promise.allSettled(
+    failed.map((operation) =>
+      retryInfrastructureOperationIfDue(train, operation)
+    )
+  );
+  const rejected = retryResults.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (rejected?.reason instanceof TerminalReleaseTrainError)
+    throw rejected.reason;
+  if (rejected) {
+    await releaseBusRepository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'OPERATION_INFRASTRUCTURE_RETRY_DEFERRED',
+        payload: {
+          phase: prefix.replace(/-$/, ''),
+          message:
+            rejected.reason instanceof Error
+              ? rejected.reason.message
+              : 'Infrastructure retry dispatch failed',
+          lane_paused: false
+        }
+      },
+      {}
+    );
+  }
+  return 'INFRASTRUCTURE_WAIT';
+}
+
 async function pollPhase(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[],
@@ -698,53 +746,37 @@ async function pollPhase(
   );
   if (failed.length > 0) {
     if (failed.every(retryableInfrastructureFailure)) {
-      const exhausted = failed.find(
-        (operation) => operation.attempt >= INFRASTRUCTURE_MAX_WORKFLOW_ATTEMPTS
-      );
-      if (exhausted) {
-        await failInfrastructureTrainWithoutPausing(
-          train,
-          candidates,
-          exhausted,
-          prefix.replace(/-$/, '')
-        );
-        return 'INFRASTRUCTURE_EXHAUSTED';
-      }
-      const retryResults = await Promise.allSettled(
-        failed.map((operation) =>
-          retryInfrastructureOperationIfDue(train, operation)
-        )
-      );
-      const rejected = retryResults.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === 'rejected'
-      );
-      if (rejected?.reason instanceof TerminalReleaseTrainError)
-        throw rejected.reason;
-      if (rejected) {
-        await releaseBusRepository.appendEvent(
-          {
-            trainId: train.id,
-            eventType: 'OPERATION_INFRASTRUCTURE_RETRY_DEFERRED',
-            payload: {
-              phase: prefix.replace(/-$/, ''),
-              message:
-                rejected.reason instanceof Error
-                  ? rejected.reason.message
-                  : 'Infrastructure retry dispatch failed',
-              lane_paused: false
-            }
-          },
-          {}
-        );
-      }
-      return 'INFRASTRUCTURE_WAIT';
+      return retryInfrastructureFailures(train, candidates, failed, prefix);
     }
     return 'FAIL';
   }
   return reconciled.every((operation) => workflowResult(operation) === 'PASS')
     ? 'PASS'
     : 'WAIT';
+}
+
+async function infrastructurePhaseResult(
+  train: ReleaseTrainRecord,
+  result:
+    | 'PASS'
+    | 'WAIT'
+    | 'INFRASTRUCTURE_WAIT'
+    | 'INFRASTRUCTURE_EXHAUSTED'
+    | 'FAIL',
+  phase: string
+): Promise<WorkerResult | null> {
+  if (result === 'INFRASTRUCTURE_EXHAUSTED')
+    return {
+      decision: 'FAILED',
+      train_id: train.id,
+      status: 'FAILED',
+      message: `Release ${phase} infrastructure retries were exhausted; candidates were returned to the running lane`
+    };
+  if (result !== 'INFRASTRUCTURE_WAIT') return null;
+  return waitFor(train, train.status, {
+    code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+    summary: `Release ${phase} hit transient CI infrastructure. The exact failed operation will retry automatically; candidates remain attached and the lane is not paused.`
+  });
 }
 
 async function beginComposition(
@@ -3101,20 +3133,12 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'COMPOSING') {
       const result = await pollPhase(train, candidates, 'compose-');
-      if (result === 'INFRASTRUCTURE_EXHAUSTED')
-        return {
-          decision: 'FAILED',
-          train_id: train.id,
-          status: 'FAILED',
-          message:
-            'Release composition infrastructure retries were exhausted; candidates were returned to the running lane'
-        };
-      if (result === 'INFRASTRUCTURE_WAIT')
-        return waitFor(train, train.status, {
-          code: 'INFRASTRUCTURE_RETRY_BACKOFF',
-          summary:
-            'Release composition hit transient CI infrastructure. The exact failed operation will retry automatically; candidates remain attached and the lane is not paused.'
-        });
+      const infrastructureResult = await infrastructurePhaseResult(
+        train,
+        result,
+        'composition'
+      );
+      if (infrastructureResult) return infrastructureResult;
       if (result === 'FAIL') {
         await beginFailureIsolation(
           train,
@@ -3140,20 +3164,12 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'PREFLIGHTING') {
       const result = await pollPhase(train, candidates, 'preflight-');
-      if (result === 'INFRASTRUCTURE_EXHAUSTED')
-        return {
-          decision: 'FAILED',
-          train_id: train.id,
-          status: 'FAILED',
-          message:
-            'Release preflight infrastructure retries were exhausted; candidates were returned to the running lane'
-        };
-      if (result === 'INFRASTRUCTURE_WAIT')
-        return waitFor(train, train.status, {
-          code: 'INFRASTRUCTURE_RETRY_BACKOFF',
-          summary:
-            'Release preflight hit transient CI infrastructure. The exact failed operation will retry automatically; candidates remain attached and the lane is not paused.'
-        });
+      const infrastructureResult = await infrastructurePhaseResult(
+        train,
+        result,
+        'preflight'
+      );
+      if (infrastructureResult) return infrastructureResult;
       if (result === 'FAIL') {
         await beginFailureIsolation(
           train,
