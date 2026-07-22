@@ -103,11 +103,21 @@ describe('release bus infrastructure contract', () => {
     expect(preflightWorkflow).not.toContain('--runInBand');
     expect(isolationWorkflow).toContain('npm test -- --maxWorkers=2');
     expect(isolationWorkflow).not.toContain('--runInBand');
-    expect(testsJob.indexOf(installCommand)).toBeGreaterThan(-1);
-    expect(testsJob.indexOf('npm test -- --maxWorkers=2')).toBeGreaterThan(
-      testsJob.indexOf(installCommand)
-    );
+    expect(testsJob).toContain('npm test -- --maxWorkers=2');
+    expect(testsJob).not.toContain('--runInBand');
+    const testsInstallIndex = testsJob.indexOf(installCommand);
+    expect(testsInstallIndex).toBeGreaterThan(-1);
+    for (const marker of [
+      'Stage immutable evidence contract and tool',
+      'Capture complete Jest file inventory',
+      'npm test -- --maxWorkers=2'
+    ]) {
+      expect(testsJob.indexOf(marker)).toBeGreaterThan(testsInstallIndex);
+    }
     expect(packageJob).toContain('package-lock.json');
+    expect(packageJob).toContain(
+      'npm --prefix "$package_dir" ci --ignore-scripts'
+    );
     expect(packageJob.indexOf('- *install-root')).toBeGreaterThan(-1);
     expect(
       packageJob.indexOf('Install frozen selected-unit dependencies')
