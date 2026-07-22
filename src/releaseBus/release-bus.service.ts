@@ -29,6 +29,14 @@ import type {
   ReleaseTrainRecord
 } from '@/releaseBus/release-bus.types';
 
+export const RECONCILABLE_CANDIDATE_STATUSES = [
+  'DRAFT',
+  'READY_FOR_STAGING',
+  'STAGING_VALIDATED',
+  'READY_FOR_PRODUCTION',
+  'BLOCKED'
+] as const satisfies readonly ReleaseCandidateRecord['status'][];
+
 export type ResolvedDependency = {
   readonly repository: ReleaseRepository;
   readonly branch: string;
@@ -565,13 +573,9 @@ export class ReleaseBusService {
         for (const candidate of candidates) {
           if (
             candidate.head_sha === newHeadSha ||
-            ![
-              'DRAFT',
-              'READY_FOR_STAGING',
-              'STAGING_VALIDATED',
-              'READY_FOR_PRODUCTION',
-              'BLOCKED'
-            ].includes(candidate.status)
+            !RECONCILABLE_CANDIDATE_STATUSES.includes(
+              candidate.status as (typeof RECONCILABLE_CANDIDATE_STATUSES)[number]
+            )
           )
             continue;
           assertCandidateTransition(candidate.status, 'SUPERSEDED');

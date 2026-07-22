@@ -12,98 +12,349 @@ on:
       deploy_units: { type: string, required: true }
       expected_sha: { type: string, required: true }
 
-permissions:
-  contents: read
+permissions: {}
 
 run-name: Preflight backend train ${{ inputs.release_train_id }} [${{ inputs.operation_key }}]
 
 jobs:
-  preflight:
+  authorize:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      contract: ${{ steps.contract.outputs.contract }}
+      unit_matrix: ${{ steps.inputs.outputs.unit_matrix }}
     steps:
-      - name: Validate and authorize immutable inputs
+      - &checkout
+        name: Check out exact composed train SHA
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate immutable inputs
+        id: inputs
         env:
           DEPLOY_UNITS: ${{ inputs.deploy_units }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           OPERATION_KEY: ${{ inputs.operation_key }}
           RELEASE_BRANCH: ${{ inputs.release_branch }}
-          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
-          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
           TARGET_LANE: ${{ inputs.target_lane }}
           TRAIN_ID: ${{ inputs.release_train_id }}
           TRAIN_REVISION: ${{ inputs.release_train_revision }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           [[ "$TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
           [[ "$TRAIN_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]
           [[ "$OPERATION_KEY" =~ ^[A-Za-z0-9:._-]{1,180}$ ]]
           [[ "$TARGET_LANE" =~ ^(STAGING|PRODUCTION)$ ]]
           [[ "$RELEASE_BRANCH" =~ ^release-bus/(staging|production)-train-[A-Za-z0-9._-]+$ ]]
-          jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and test("^[A-Za-z0-9_-]+$"))' <<< "$DEPLOY_UNITS"
+          jq -e 'type == "array" and length > 0 and length == (unique | length) and all(.[]; type == "string" and test("^[A-Za-z0-9_-]+$"))' <<< "$DEPLOY_UNITS"
+          while IFS= read -r unit; do
+            jq -e --arg unit "$unit" '.services | any(.name == $unit)' src/config/deploy-services.json >/dev/null
+          done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
+          echo "unit_matrix=$(jq -c '{unit:.}' <<< "$DEPLOY_UNITS")" >> "$GITHUB_OUTPUT"
+      - &setup-node-root
+        name: Install Node.js with cached dependency downloads
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Derive exact composed-tree gate contract
+        id: contract
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$WORKFLOW_SHA^{commit}" 2>/dev/null || git fetch --no-tags origin "$WORKFLOW_SHA"
+          tool="$RUNNER_TEMP/release-bus-backend-evidence.cjs"
+          git show "$WORKFLOW_SHA:scripts/release-bus-backend-evidence.cjs" > "$tool"
+          node "$tool" fingerprint \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --source-sha "$EXPECTED_SHA" \
+            --workflow-sha "$WORKFLOW_SHA" \
+            --output "$RUNNER_TEMP/release-bus-backend-contract.json"
+          echo "contract=$(jq -c . "$RUNNER_TEMP/release-bus-backend-contract.json")" >> "$GITHUB_OUTPUT"
+      - name: Authorize Release Bus operation
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          OPERATION_KEY: ${{ inputs.operation_key }}
+          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          TRAIN_ID: ${{ inputs.release_train_id }}
+        run: |
+          set -euo pipefail
           payload="$(jq -n --arg train_id "$TRAIN_ID" --arg operation_key "$OPERATION_KEY" --arg workflow_run_id "$GITHUB_RUN_ID" --arg expected_sha "$EXPECTED_SHA" '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:null,repository:"backend",environment:"orchestration",service:null,expected_sha:$expected_sha,artifact_digest:null}')"
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
             -H 'Content-Type: application/json' \
             --data "$payload" \
             "$RELEASE_BUS_API_URL/deploy/release-bus/authorize"
-      - name: Check out exact train SHA
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ inputs.expected_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Validate train and deploy units
+      - name: Verify authorization did not mutate source
+        run: git diff --exit-code
+
+  lint:
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *setup-node-root
+      - &activate-npm
+        name: Activate pinned npm
         env:
-          DEPLOY_UNITS: ${{ inputs.deploy_units }}
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          jq -e 'type == "array" and all(.[]; type == "string")' <<< "$DEPLOY_UNITS"
-          while IFS= read -r unit; do
-            jq -e --arg unit "$unit" '.services | any(.name == $unit)' src/config/deploy-services.json >/dev/null
-          done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
-      - name: Install dependencies
+          corepack enable npm
+          corepack install
+          test "$(npm --version)" = "$(node -p 'require("./package.json").packageManager.split("npm@")[1]')"
+      - &install-root
+        name: Install frozen root dependencies
         run: npm ci
+      - name: Lint without source mutation
+        run: ./node_modules/.bin/eslint "src/**/*.ts" --max-warnings=0
+      - name: Verify lint did not mutate source
+        run: git diff --exit-code
+
+  typecheck:
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *setup-node-root
+      - *activate-npm
+      - *install-root
       - name: Install API type dependencies without lifecycle scripts
         run: npm --prefix src/api-serverless ci --ignore-scripts
-      - name: Lint and typecheck
-        run: |
-          npx eslint "src/**/*.ts" --max-warnings=0
-          NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
-      - name: Run backend tests
-        run: npm test -- --runInBand
-      - name: Verify validation did not mutate source
+      - name: Typecheck the exact composed tree
+        run: NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
+      - name: Verify typecheck did not mutate source
         run: git diff --exit-code
-      - name: Package selected units
+
+  tests:
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *setup-node-root
+      - *activate-npm
+      - *install-root
+      - name: Stage immutable evidence contract and tool
+        env:
+          CONTRACT: ${{ needs.authorize.outputs.contract }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$CONTRACT" > "$RUNNER_TEMP/release-bus-backend-contract.json"
+          git show "$WORKFLOW_SHA:scripts/release-bus-backend-evidence.cjs" > "$RUNNER_TEMP/release-bus-backend-evidence.cjs"
+      - name: Capture complete Jest file inventory
+        run: ./node_modules/.bin/jest --listTests --json > "$RUNNER_TEMP/release-bus-backend-test-inventory.json"
+      - name: Execute backend Jest with bounded native parallelism
+        id: jest
+        continue-on-error: true
+        run: npm test -- --maxWorkers=2 --json --outputFile="$RUNNER_TEMP/release-bus-backend-test-results.json"
+      - name: Verify deterministic complete test evidence
+        id: evidence
+        if: always()
+        continue-on-error: true
+        run: |
+          node "$RUNNER_TEMP/release-bus-backend-evidence.cjs" verify-tests \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --contract "$RUNNER_TEMP/release-bus-backend-contract.json" \
+            --inventory "$RUNNER_TEMP/release-bus-backend-test-inventory.json" \
+            --results "$RUNNER_TEMP/release-bus-backend-test-results.json" \
+            --output "$RUNNER_TEMP/release-bus-backend-test-evidence.json"
+      - name: Verify tests did not mutate source
+        id: source
+        if: always()
+        continue-on-error: true
+        run: git diff --exit-code
+      - name: Upload test completeness evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-bus-backend-test-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-bus-backend-test-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Return authoritative test result
+        if: always()
+        env:
+          EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}
+          JEST_OUTCOME: ${{ steps.jest.outcome }}
+          SOURCE_OUTCOME: ${{ steps.source.outcome }}
+        run: test "$JEST_OUTCOME" = success -a "$EVIDENCE_OUTCOME" = success -a "$SOURCE_OUTCOME" = success
+
+  package:
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.authorize.outputs.unit_matrix) }}
+    name: Package ${{ matrix.unit }} exactly once
+    steps:
+      - *checkout
+      - name: Install Node.js with cached unit dependency downloads
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ${{ matrix.unit == 'api' && 'src/api-serverless/package-lock.json' || format('src/{0}/package-lock.json', matrix.unit) }}
+      - *activate-npm
+      - name: Build selected unit once and record its immutable digest
+        env:
+          CONTRACT: ${{ needs.authorize.outputs.contract }}
+          UNIT: ${{ matrix.unit }}
+        run: |
+          set -euo pipefail
+          package_dir="src/$UNIT"
+          if [ "$UNIT" = api ]; then package_dir=src/api-serverless; fi
+          (cd "$package_dir" && npm ci --ignore-scripts && npm run build)
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p "release-bus-unit/packages/$UNIT" release-bus-unit/evidence
+          cp "$package_dir/dist/index.zip" "release-bus-unit/packages/$UNIT/index.zip"
+          package_digest="$(sha256sum "release-bus-unit/packages/$UNIT/index.zip" | cut -d' ' -f1)"
+          jq -n \
+            --arg unit "$UNIT" \
+            --arg source_sha "$(jq -r '.source_sha' <<< "$CONTRACT")" \
+            --arg source_tree "$(jq -r '.source_tree' <<< "$CONTRACT")" \
+            --arg package_digest "$package_digest" \
+            '{schema_version:1,kind:"release_bus_backend_package_evidence",unit:$unit,source_sha:$source_sha,source_tree:$source_tree,build_count:1,package_digest:$package_digest}' \
+            > "release-bus-unit/evidence/$UNIT.json"
+      - name: Upload immutable unit package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-bus-backend-unit-${{ matrix.unit }}-${{ github.run_id }}
+          path: release-bus-unit
+          if-no-files-found: error
+          retention-days: 14
+
+  aggregate:
+    if: always() && needs.authorize.result == 'success'
+    needs: [authorize, lint, typecheck, tests, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - *checkout
+      - *setup-node-root
+      - name: Stage immutable aggregate tool and contract
+        env:
+          CONTRACT: ${{ needs.authorize.outputs.contract }}
+          DEPLOY_UNITS: ${{ inputs.deploy_units }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$CONTRACT" > "$RUNNER_TEMP/release-bus-backend-contract.json"
+          printf '%s\n' "$DEPLOY_UNITS" > "$RUNNER_TEMP/release-bus-backend-units.json"
+          git show "$WORKFLOW_SHA:scripts/release-bus-backend-evidence.cjs" > "$RUNNER_TEMP/release-bus-backend-evidence.cjs"
+      - name: Download exact unit packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-bus-backend-unit-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-bus-backend-units
+          merge-multiple: true
+      - name: Download authoritative test evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-bus-backend-test-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-bus-backend-tests
+      - name: Aggregate fail-closed exact-tree evidence
+        id: evidence
+        continue-on-error: true
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          TEST_RESULT: ${{ needs.tests.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+        run: |
+          test "$TEST_RESULT" = success -a "$PACKAGE_RESULT" = success
+          node "$RUNNER_TEMP/release-bus-backend-evidence.cjs" aggregate \
+            --contract "$RUNNER_TEMP/release-bus-backend-contract.json" \
+            --test-evidence "$RUNNER_TEMP/release-bus-backend-tests/release-bus-backend-test-evidence.json" \
+            --units "$RUNNER_TEMP/release-bus-backend-units.json" \
+            --packages-root "$RUNNER_TEMP/release-bus-backend-units" \
+            --lint-result "$LINT_RESULT" \
+            --typecheck-result "$TYPECHECK_RESULT" \
+            --output "$RUNNER_TEMP/release-bus-backend-summary.json"
+      - name: Assemble selected immutable packages without rebuilding
+        if: steps.evidence.outcome == 'success'
         env:
           DEPLOY_UNITS: ${{ inputs.deploy_units }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           TRAIN_ID: ${{ inputs.release_train_id }}
         run: |
           set -euo pipefail
-          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
-          mkdir -p release-bus-artifact/packages
-          while IFS= read -r unit; do
-            if [ "$unit" = api ]; then
-              (cd src/api-serverless && npm ci && npm run build)
-              mkdir -p "release-bus-artifact/packages/api"
-              cp src/api-serverless/dist/index.zip "release-bus-artifact/packages/api/index.zip"
-            else
-              (cd "src/$unit" && npm ci && npm run build)
-              mkdir -p "release-bus-artifact/packages/$unit"
-              cp "src/$unit/dist/index.zip" "release-bus-artifact/packages/$unit/index.zip"
-            fi
-          done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
+          mkdir -p release-bus-artifact
+          cp -r "$RUNNER_TEMP/release-bus-backend-units/packages" release-bus-artifact/packages
           jq -n --arg train_id "$TRAIN_ID" --arg source_sha "$EXPECTED_SHA" --argjson units "$DEPLOY_UNITS" '{train_id:$train_id,source_sha:$source_sha,units:$units}' > release-bus-artifact/manifest.json
           (cd release-bus-artifact && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
-      - name: Upload immutable packages
+      - name: Upload immutable backend packages
+        id: immutable-artifact
+        if: steps.evidence.outcome == 'success'
+        # The pinned v4 commit declares the artifact-digest output in action.yml.
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-bus-backend-${{ inputs.release_train_id }}-r${{ inputs.release_train_revision }}
           path: release-bus-artifact
           if-no-files-found: error
           retention-days: 90
+      - name: Report executed-versus-reused evidence
+        if: always()
+        env:
+          ARTIFACT_DIGEST: ${{ steps.immutable-artifact.outputs.artifact-digest }}
+          EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}
+          OPERATION_KEY: ${{ inputs.operation_key }}
+          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          TRAIN_ID: ${{ inputs.release_train_id }}
+        run: |
+          set -euo pipefail
+          status=FAILED
+          backend_evidence=null
+          if [ "$EVIDENCE_OUTCOME" = success ] && [ -f "$RUNNER_TEMP/release-bus-backend-summary.json" ]; then
+            status=SUCCEEDED
+            digest="${ARTIFACT_DIGEST#sha256:}"
+            [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+            backend_evidence="$(jq --arg artifact_digest "$digest" '. + {artifact_digest:$artifact_digest}' "$RUNNER_TEMP/release-bus-backend-summary.json")"
+          fi
+          payload="$(jq -n \
+            --arg train_id "$TRAIN_ID" \
+            --arg operation_key "$OPERATION_KEY" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --arg status "$status" \
+            --arg lint "${{ needs.lint.result }}" \
+            --arg typecheck "${{ needs.typecheck.result }}" \
+            --arg tests "${{ needs.tests.result }}" \
+            --arg build "${{ needs.package.result }}" \
+            --argjson backend_evidence "$backend_evidence" \
+            '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,phase:"complete",status:$status,failure_class:(if $status == "SUCCEEDED" then null else "SOURCE" end),failure_phase:(if $status == "SUCCEEDED" then null else "gate" end),retryable:false,stages:[{name:"lint",status:(if $lint == "success" then "SUCCEEDED" else "FAILED" end)},{name:"typecheck",status:(if $typecheck == "success" then "SUCCEEDED" else "FAILED" end)},{name:"unit_tests",status:(if $tests == "success" then "SUCCEEDED" else "FAILED" end)},{name:"build",status:(if $build == "success" then "SUCCEEDED" else "FAILED" end)}],jest:null,summary:null,backend_evidence:$backend_evidence}')"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$RELEASE_BUS_API_URL/deploy/release-bus/report-progress"
+      - name: Return aggregate result
+        if: always()
+        env:
+          EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.immutable-artifact.outcome }}
+        run: test "$EVIDENCE_OUTCOME" = success -a "$UPLOAD_OUTCOME" = success

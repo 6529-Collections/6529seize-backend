@@ -6,11 +6,28 @@ import {
 
 describe('release bus DAG', () => {
   it('orders dependencies before dependants while keeping independent work', () => {
-    expect(topologicallySort(['a', 'b', 'c'], [['b', 'a']]).order).toEqual([
-      'b',
-      'a',
-      'c'
+    const graph = topologicallySort(['a', 'b', 'c'], [['b', 'a']]);
+    expect(graph.order).toEqual(['b', 'a', 'c']);
+    expect(graph.layers).toEqual([['b', 'c'], ['a']]);
+    expect(graph.dependencies.get('a')).toEqual(['b']);
+  });
+
+  it('puts every independent node in the same deterministic frontier', () => {
+    expect(topologicallySort(['c', 'a', 'b'], []).layers).toEqual([
+      ['a', 'b', 'c']
     ]);
+  });
+
+  it('waits for both independent parents before unlocking a dependant', () => {
+    expect(
+      topologicallySort(
+        ['d', 'b', 'a'],
+        [
+          ['a', 'd'],
+          ['b', 'd']
+        ]
+      ).layers
+    ).toEqual([['a', 'b'], ['d']]);
   });
 
   it('rejects cycles', () => {

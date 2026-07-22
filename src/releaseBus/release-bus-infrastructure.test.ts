@@ -60,20 +60,58 @@ describe('release bus infrastructure contract', () => {
     );
   });
 
-  it('installs API dependencies before root typechecking', () => {
+  it('parallelizes exact-tree gates while preserving frozen dependency setup', () => {
     const installCommand =
       'npm --prefix src/api-serverless ci --ignore-scripts';
-    const preflightInstallIndex = preflightWorkflow.indexOf(installCommand);
     const isolationInstallIndex = isolationWorkflow.indexOf(installCommand);
+    const typecheckJob = preflightWorkflow.slice(
+      preflightWorkflow.indexOf('\n  typecheck:'),
+      preflightWorkflow.indexOf('\n  tests:')
+    );
+    const aggregateJob = preflightWorkflow.slice(
+      preflightWorkflow.indexOf('\n  aggregate:')
+    );
 
-    expect(preflightInstallIndex).toBeGreaterThan(-1);
-    expect(preflightWorkflow.indexOf('npx eslint')).toBeGreaterThan(
-      preflightInstallIndex
+    expect(typecheckJob.indexOf(installCommand)).toBeGreaterThan(-1);
+    expect(typecheckJob.indexOf('./node_modules/.bin/tsc')).toBeGreaterThan(
+      typecheckJob.indexOf(installCommand)
     );
     expect(isolationInstallIndex).toBeGreaterThan(-1);
     expect(isolationWorkflow.indexOf('npx eslint')).toBeGreaterThan(
       isolationInstallIndex
     );
+    expect(preflightWorkflow).toContain('\n  lint:\n');
+    expect(preflightWorkflow).toContain('\n  typecheck:\n');
+    expect(preflightWorkflow).toContain('\n  tests:\n');
+    expect(preflightWorkflow).toContain('\n  package:\n');
+    expect(preflightWorkflow).toContain('cache: npm');
+    expect(preflightWorkflow).toContain(
+      `node -p 'require("./package.json").packageManager.split("npm@")[1]'`
+    );
+    expect(preflightWorkflow).not.toContain('node -p \\"');
+    expect(preflightWorkflow).toContain(
+      'npm test -- --maxWorkers=2 --json --outputFile='
+    );
+    expect(preflightWorkflow).not.toContain('--runInBand');
+    expect(preflightWorkflow).toContain(
+      'test "$TEST_RESULT" = success -a "$PACKAGE_RESULT" = success'
+    );
+    expect(preflightWorkflow).toContain(
+      'Verify deterministic complete test evidence'
+    );
+    expect(preflightWorkflow).toContain(
+      'git status --porcelain --untracked-files=no'
+    );
+    expect(preflightWorkflow).toContain(
+      'name: Package ${{ matrix.unit }} exactly once'
+    );
+    expect(aggregateJob).toContain(
+      'Assemble selected immutable packages without rebuilding'
+    );
+    expect(aggregateJob).toContain(
+      'steps.immutable-artifact.outputs.artifact-digest'
+    );
+    expect(aggregateJob).not.toContain('npm run build');
   });
 
   it('injects the GitHub App identity into every Release Bus Lambda', () => {
@@ -147,11 +185,53 @@ describe('release bus infrastructure contract', () => {
     expect(deployWorkflow).toContain(
       'name: Verify production Lambda secret exists'
     );
+    expect(deployWorkflow).toContain("'manual-production'");
     expect(deployWorkflow).toContain(
-      "github.event.inputs.environment == 'prod' && 'production'"
+      'group: deploy-control-${{ github.event.inputs.environment }}-'
+    );
+    expect(deployWorkflow).toContain(
+      'group: deploy-service-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}'
+    );
+    expect(deployWorkflow).toContain(
+      'Install Node.js with cached deploy-tool downloads'
+    );
+    expect(deployWorkflow).toContain('Activate pinned npm');
+    expect(deployWorkflow).toContain(
+      "github.event.inputs.operation_key != '' && github.event.inputs.service"
+    );
+    expect(deployWorkflow).toContain(
+      'CI_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}'
     );
     expect(deployWorkflow).toContain(
       'del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
+    );
+  });
+
+  it('parallelizes only Release Bus services while preserving deployment ordering', () => {
+    expect(deployWorkflow).toContain(
+      "github.event.inputs.operation_key != '' && github.event.inputs.service"
+    );
+    expect(deployWorkflow).toContain("'manual-production'");
+    expect(deployWorkflow).toContain('cancel-in-progress: false');
+    expect(releaseBusWorker).toContain(
+      "'staging',\n        'DEPLOYING_FRONTEND'"
+    );
+    expect(releaseBusWorker).toContain(
+      "'prod',\n        'MERGING_FRONTEND_PRODUCTION'"
+    );
+    expect(
+      releaseBusWorker.indexOf("if (train.status === 'DEPLOYING_BACKEND')")
+    ).toBeLessThan(
+      releaseBusWorker.indexOf("if (train.status === 'DEPLOYING_FRONTEND')")
+    );
+    expect(
+      releaseBusWorker.indexOf(
+        "if (train.status === 'DEPLOYING_BACKEND_PRODUCTION')"
+      )
+    ).toBeLessThan(
+      releaseBusWorker.indexOf(
+        "if (train.status === 'DEPLOYING_FRONTEND_PRODUCTION')"
+      )
     );
   });
 

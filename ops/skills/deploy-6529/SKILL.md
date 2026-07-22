@@ -92,8 +92,11 @@ use the documented break-glass input. Never bypass a blocked workflow.
 2. List all required candidate dependencies. Backend candidates may depend on
    other backend candidates, but must not require frontend-first deployment.
 3. Select only committed service names from `src/config/deploy-services.json`.
-4. Declare ordering edges such as `dbMigrationsLoop -> api`. Never put shell
-   commands, regions, function names, or credentials in readiness metadata.
+4. Treat the unit list as an unordered selection. Declare an edge such as
+   `dbMigrationsLoop -> api` only when a real deployment dependency requires
+   it. Never invent chain edges to match the visual list order, and never put
+   shell commands, regions, function names, or credentials in readiness
+   metadata.
 5. Submit staging readiness and monitor until the exact SHA is
    `STAGING_VALIDATED`.
 6. Submit production readiness separately only while the branch still has the
@@ -102,6 +105,15 @@ use the documented break-glass input. Never bypass a blocked workflow.
 The registry supplies allowed environments, deploy adapter, regions,
 verification targets, default dependencies, validation policy, and rollback
 capability. The candidate supplies only unit names and extra ordering edges.
+
+Backend preflight fingerprints the exact composed commit and Git tree together
+with the workflow, gate tool, Node/npm contract, Jest worker policy, lockfiles,
+and registry. Lint, typecheck, Jest, and independent package jobs run in
+parallel. Jest uses bounded native workers, never `--runInBand`, and the
+aggregate requires the complete discovered suite inventory with zero missing,
+duplicate, unexpected, skipped, failed, or todo work. Exact-tree evidence may
+be reused only when that entire identity is byte-for-byte equal; candidate-head
+evidence is not evidence for a different composed tree.
 
 ## Service order and zero downtime
 
@@ -114,9 +126,15 @@ capability. The candidate supplies only unit names and extra ordering edges.
 - A backend change that truly requires frontend first must be redesigned; the
   bus rejects that ordering.
 
-The bus packages the exact train SHA once, verifies checksums and operation
-authorization, deploys one backend unit at a time, and verifies every configured
-Lambda/API target before advancing.
+The bus tests the exact composed tree once and packages every selected deploy
+unit exactly once. It verifies checksums and operation authorization, unions
+registry and candidate edges, rejects unknown nodes or cycles, then dispatches
+each deterministic dependency frontier concurrently up to the configured safe
+limit. A dependent frontier starts only after every parent succeeded. Retries
+reconcile per-service idempotency keys, preserve successful siblings, and never
+redeliver an already-running or successful unit. Backend still completes before
+frontend deployment. Production release-note signaling is grouped and publishes
+once only after every required backend unit succeeds.
 
 ## Failure handling
 
