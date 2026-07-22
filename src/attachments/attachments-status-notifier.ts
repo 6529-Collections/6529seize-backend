@@ -72,19 +72,28 @@ export class AttachmentsStatusNotifier {
       const dropsPromise = dropsService
         ? this.attachmentsDb
             .findAttachmentDropIds(attachmentId, consistentCtx.connection)
-            .then((dropIds) =>
-              Promise.all(
-                dropIds.map((dropId) =>
-                  dropsService.findDropByIdOrThrow(
-                    {
-                      dropId,
-                      skipEligibilityCheck: true
-                    },
-                    consistentCtx
-                  )
-                )
-              )
-            )
+            .then(async (dropIds) => {
+              const drops = await Promise.all(
+                dropIds.map(async (dropId) => {
+                  try {
+                    return await dropsService.findDropByIdOrThrow(
+                      {
+                        dropId,
+                        skipEligibilityCheck: true
+                      },
+                      consistentCtx
+                    );
+                  } catch (error) {
+                    this.logger.error(
+                      `Failed to load drop ${dropId} for attachment ${attachmentId}`,
+                      error
+                    );
+                    return null;
+                  }
+                })
+              );
+              return drops.filter((drop): drop is ApiDrop => drop !== null);
+            })
             .catch((error) => {
               this.logger.error(
                 `Failed to load full drop updates for attachment ${attachmentId}`,

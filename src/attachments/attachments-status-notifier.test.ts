@@ -163,6 +163,33 @@ describe('AttachmentsStatusNotifier', () => {
     expect(wsListenersNotifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
   });
 
+  it('broadcasts successful drops when another full drop fails to load', async () => {
+    const drop = { id: 'drop-2' } as ApiDrop;
+    (attachmentsDb.findAttachmentDropIds as jest.Mock).mockResolvedValue([
+      'drop-1',
+      drop.id
+    ]);
+    (dropsService.findDropByIdOrThrow as jest.Mock).mockImplementation(
+      async ({ dropId }: { dropId: string }) => {
+        if (dropId === 'drop-1') {
+          throw new Error('drop load failed');
+        }
+        return drop;
+      }
+    );
+
+    await notifier.notifyStatusTransition(baseAttachment);
+
+    expect(
+      wsListenersNotifier.notifyAboutAttachmentStatusUpdate
+    ).toHaveBeenCalled();
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+      drop,
+      {},
+      { useSystemBroadcastAudience: true }
+    );
+  });
+
   it('maps BLOCKED to bad and surfaces error_reason and ipfs_url', async () => {
     (attachmentsDb.findAttachmentWaveIds as jest.Mock).mockResolvedValue([]);
     await notifier.notifyStatusTransition({
