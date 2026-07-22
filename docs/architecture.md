@@ -224,6 +224,26 @@ WebSocket notification subscription replacement is transactional. New connection
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
 
+Waves have an additive competition read boundary under `/v3/waves`. A wave is
+the chat/visibility hub and owns zero, one, or many competition resources. The
+competition service resolves each resource through either the immutable legacy
+adapter or the native competition repositories; it never infers an
+"active/current competition." Existing unversioned and v2 wave/drop GETs remain
+permanent façades over the original legacy wave configuration. A future native
+hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
+another competition cannot change a legacy Rank/Approve projection.
+
+Competition storage and execution ownership are explicit per competition.
+Legacy-primary mappings keep existing decision and leaderboard workers active;
+native execution additionally requires its global kill switch and is disabled
+by default. `dbMigrationsLoop` creates the additive competition/read-model
+tables and backfills stable legacy mappings before API or worker deployments.
+The independent unified-read, native-write, native-execution, native-hub, and
+sampled-shadow flags default off. Shadow observations persist only canonical
+hashes and identifiers, never vote/signature/private payloads.
+Operational deployment, verification, and rollback are documented in the
+[competition read boundary runbook](./competition-read-boundary-runbook.md).
+
 Important API responsibilities:
 
 - Authentication and refresh-token flows. Legacy wallet auth keeps `/auth/nonce`,

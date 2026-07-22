@@ -10,6 +10,10 @@ import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVot
 import { BadRequestException } from '../exceptions';
 import { collections } from '../collections';
 import { numbers } from '../numbers';
+import {
+  competitionExecutionRouter,
+  CompetitionExecutionRouter
+} from '@/competitions/competition-execution.router';
 
 type DropVoteState =
   | DropRealVoteInTimeWithoutId
@@ -23,13 +27,28 @@ interface WeightedThresholdIntervalAnalysis {
 export class WaveLeaderboardCalculationService {
   private readonly logger = Logger.get(WaveLeaderboardCalculationService.name);
 
-  constructor(private readonly dropVotingDb: DropVotingDb) {}
+  constructor(
+    private readonly dropVotingDb: DropVotingDb,
+    private readonly executionRouter: CompetitionExecutionRouter = competitionExecutionRouter
+  ) {}
 
   async refreshLeaderboardEntriesForDropsInNeed(timer: Timer) {
     const ctx: RequestContext = { timer };
     const now = Time.now();
-    const dropsInNeedOfLeaderboardUpdate =
+    const discoveredDrops =
       await this.dropVotingDb.getDropsInNeedOfLeaderboardUpdate(ctx);
+    const legacyExecutionByWave = new Map<string, boolean>();
+    for (const waveId of collections.distinct(
+      discoveredDrops.map((it) => it.wave_id)
+    )) {
+      legacyExecutionByWave.set(
+        waveId,
+        await this.executionRouter.shouldUseLegacyWaveExecution(waveId, ctx)
+      );
+    }
+    const dropsInNeedOfLeaderboardUpdate = discoveredDrops.filter(
+      (drop) => legacyExecutionByWave.get(drop.wave_id) === true
+    );
     this.logger.info(
       `Found ${dropsInNeedOfLeaderboardUpdate.length} drops in need of leaderboard update. Will update them`
     );
@@ -552,4 +571,7 @@ export class WaveLeaderboardCalculationService {
 }
 
 export const waveLeaderboardCalculationService =
-  new WaveLeaderboardCalculationService(dropVotingDb);
+  new WaveLeaderboardCalculationService(
+    dropVotingDb,
+    competitionExecutionRouter
+  );

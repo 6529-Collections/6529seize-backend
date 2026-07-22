@@ -79,6 +79,7 @@ import {
   withWaveOverviewCandidateCache
 } from './wave-overview-candidate-cache';
 import { compareCacheStrings } from './wave-cache-key';
+import { competitionRepository } from '@/competitions/competition.repository';
 
 const logger = Logger.get('WAVES_API_DB');
 
@@ -1298,6 +1299,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       },
       ctx
     );
+    await competitionRepository.ensureLegacyMappingForWave(wave, ctx);
     ctx.timer?.stop('waveApiDb->insertWave');
   }
 
