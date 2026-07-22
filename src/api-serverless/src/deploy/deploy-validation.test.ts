@@ -269,6 +269,34 @@ describe('deploy.validation', () => {
     expect(error).toBeUndefined();
   });
 
+  it('accepts only infrastructure-retryable release-branch publication failures', () => {
+    const report = {
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:compose:frontend:a1',
+      workflow_run_id: '29926766725',
+      phase: 'complete',
+      status: 'FAILED',
+      failure_class: 'INFRASTRUCTURE_TRANSIENT',
+      failure_phase: 'release_branch_publication',
+      retryable: true,
+      stages: [],
+      jest: null,
+      summary: null,
+      build_profile_digest: null,
+      backend_evidence: null
+    };
+
+    expect(
+      ReleaseBusProgressReportBodySchema.validate(report).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...report,
+        failure_class: 'SOURCE'
+      }).error
+    ).toBeDefined();
+  });
+
   it('rejects unsafe aggregate paths and unbounded unknown fields', () => {
     const invalid = {
       train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',

@@ -645,7 +645,11 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
     phase: 'lint' | 'typecheck' | 'unit_tests' | 'build' | 'complete';
     status: 'RUNNING' | 'SUCCEEDED' | 'FAILED';
     failure_class: 'SOURCE' | 'INFRASTRUCTURE_TRANSIENT' | 'UNKNOWN' | null;
-    failure_phase: 'dependency_install' | 'gate' | null;
+    failure_phase:
+      | 'dependency_install'
+      | 'gate'
+      | 'release_branch_publication'
+      | null;
     retryable: boolean;
     stages: Array<{
       name: 'lint' | 'typecheck' | 'unit_tests' | 'build';

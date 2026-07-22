@@ -288,7 +288,9 @@ function candidateSummary(
   };
 }
 
-function supersedingBranchHead(candidate: ReleaseCandidateRecord): string | null {
+function supersedingBranchHead(
+  candidate: ReleaseCandidateRecord
+): string | null {
   if (candidate.status !== 'SUPERSEDED') return null;
   const match = /^Branch moved to ([a-f0-9]{40})$/.exec(
     candidate.hold_reason ?? ''
@@ -567,16 +569,8 @@ export function buildReleaseTrainOverview(input: {
   );
   const backendPreflightOperation =
     backendPreflightOperations[backendPreflightOperations.length - 1];
-  const currentPhase = currentTrainPhase(
-    input.train,
-    input.operations,
-    paused
-  );
-  const currentPhaseState = phaseState(
-    input.train,
-    paused,
-    currentOperation
-  );
+  const currentPhase = currentTrainPhase(input.train, input.operations, paused);
+  const currentPhaseState = phaseState(input.train, paused, currentOperation);
   const candidates = input.items.map((item, index) =>
     candidateSummary(
       item,

@@ -427,7 +427,7 @@ export const ReleaseBusProgressReportBodySchema = Joi.object({
     .allow(null)
     .default(null),
   failure_phase: Joi.string()
-    .valid('dependency_install', 'gate')
+    .valid('dependency_install', 'gate', 'release_branch_publication')
     .allow(null)
     .default(null),
   retryable: Joi.boolean().default(false),
@@ -479,7 +479,9 @@ export const ReleaseBusProgressReportBodySchema = Joi.object({
     if (
       value.retryable &&
       (value.failure_class !== 'INFRASTRUCTURE_TRANSIENT' ||
-        value.failure_phase !== 'dependency_install')
+        !['dependency_install', 'release_branch_publication'].includes(
+          value.failure_phase
+        ))
     ) {
       return helpers.error('any.invalid');
     }

@@ -15,7 +15,10 @@ import { Logger } from '@/logging';
 import { getReleaseBusMode } from '@/releaseBus/release-bus.config';
 import { releaseBusGitHubApp } from '@/releaseBus/release-bus.github-app';
 import { releaseBusRepository } from '@/releaseBus/release-bus.repository';
-import { releaseBusService } from '@/releaseBus/release-bus.service';
+import {
+  RECONCILABLE_CANDIDATE_STATUSES,
+  releaseBusService
+} from '@/releaseBus/release-bus.service';
 import { advanceReleaseTrain } from '@/releaseBus/worker';
 import { publishReleaseBusMetrics } from '@/releaseBus/release-bus.metrics';
 import * as releaseEntities from '@/entities/entities';
@@ -36,13 +39,7 @@ const TERMINAL_TRAIN_STATUSES = new Set([
 
 async function reconcileQueuedCandidateHeads(): Promise<void> {
   const queued = await releaseBusRepository.listCandidates(
-    [
-      'DRAFT',
-      'READY_FOR_STAGING',
-      'STAGING_VALIDATED',
-      'READY_FOR_PRODUCTION',
-      'BLOCKED'
-    ],
+    [...RECONCILABLE_CANDIDATE_STATUSES],
     500,
     {}
   );

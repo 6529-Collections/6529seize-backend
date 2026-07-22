@@ -280,15 +280,46 @@ export function baseCanaryInfrastructureRetryDelayMs(attempt: number): number {
   return BASE_CANARY_INFRASTRUCTURE_BACKOFF_MS[attempt] ?? 10 * 60_000;
 }
 
+const COMPOSITION_PUBLICATION_INFRASTRUCTURE_STEPS = new Set([
+  'Claim the idempotent publish operation',
+  'Create scoped GitHub App token',
+  'Download isolated composition',
+  'Publish release branch',
+  'Return release branch publication result'
+]);
+
+function retryableCompositionPublicationFailure(
+  operation: ReleaseOperationRecord
+): boolean {
+  if (!operation.operation_type.startsWith('compose-')) return false;
+  const result = metadata(operation.result_metadata_json);
+  const gateReport = metadata(result.gate_report);
+  if (
+    gateReport.failure_class === 'INFRASTRUCTURE_TRANSIENT' &&
+    gateReport.retryable === true &&
+    gateReport.failure_phase === 'release_branch_publication'
+  )
+    return true;
+  return (
+    result.workflow_conclusion === 'failure' &&
+    COMPOSITION_PUBLICATION_INFRASTRUCTURE_STEPS.has(
+      String(result.failed_step ?? '')
+    )
+  );
+}
+
 function retryableInfrastructureFailure(
   operation: ReleaseOperationRecord
 ): boolean {
   const result = metadata(operation.result_metadata_json);
   const gateReport = metadata(result.gate_report);
-  return (
-    gateReport.failure_class === 'INFRASTRUCTURE_TRANSIENT' &&
-    gateReport.retryable === true
-  );
+  if (gateReport.failure_class !== undefined) {
+    return (
+      gateReport.failure_class === 'INFRASTRUCTURE_TRANSIENT' &&
+      gateReport.retryable === true
+    );
+  }
+  return retryableCompositionPublicationFailure(operation);
 }
 
 const E2E_INFRASTRUCTURE_SETUP_STEPS = new Set([
@@ -385,6 +416,17 @@ async function retryInfrastructureOperationIfDue(
     throw new TerminalReleaseTrainError(
       `Infrastructure retry operation ${operation.operation_key} is missing its expected SHA`
     );
+  const requestInputs = stringRecord(request.inputs);
+  if (retryableCompositionPublicationFailure(operation)) {
+    const artifactRunId =
+      requestInputs.composition_artifact_run_id || operation.external_id;
+    if (!artifactRunId || !/^[1-9][0-9]{0,19}$/.test(artifactRunId)) {
+      throw new TerminalReleaseTrainError(
+        `Composition publication retry ${operation.operation_key} is missing its verified artifact run`
+      );
+    }
+    requestInputs.composition_artifact_run_id = artifactRunId;
+  }
   await dispatchWorkflow({
     train,
     repository: operation.repository as ReleaseRepository,
@@ -397,7 +439,7 @@ async function retryInfrastructureOperationIfDue(
     expectedSha: operation.expected_sha,
     environment,
     service: operation.service,
-    inputs: stringRecord(request.inputs),
+    inputs: requestInputs,
     requestMetadata: {
       ...(request.gate_contract && typeof request.gate_contract === 'object'
         ? { gate_contract: request.gate_contract }
@@ -2058,6 +2100,12 @@ async function advanceBackendDeploymentPhase(
   return continueAtPhase(train, nextStatus);
 }
 
+export function frontendArtifactEnvironment(
+  train: Pick<ReleaseTrainRecord, 'target_lane'>
+): 'staging' | 'production' {
+  return train.target_lane === 'PRODUCTION' ? 'production' : 'staging';
+}
+
 async function advanceFrontendDeploy(
   train: ReleaseTrainRecord,
   environment: 'staging' | 'prod'
@@ -2081,7 +2129,8 @@ async function advanceFrontendDeploy(
     environment,
     inputs: {
       source_ref: ref,
-      artifact_run_id: await preflightRunId(train.id, 'frontend')
+      artifact_run_id: await preflightRunId(train.id, 'frontend'),
+      artifact_environment: frontendArtifactEnvironment(train)
     }
   });
   return 'WAIT';
@@ -2281,9 +2330,7 @@ export function candidatePhaseDescription(
   train: ReleaseTrainRecord
 ): string | null {
   const label = CANDIDATE_PHASE_LABELS[train.status];
-  return label
-    ? `Release Bus: ${label} (train ${train.id.slice(0, 8)})`
-    : null;
+  return label ? `Release Bus: ${label} (train ${train.id.slice(0, 8)})` : null;
 }
 
 async function publishCandidatePhaseStatuses(
@@ -3762,7 +3809,6 @@ export async function advanceReleaseTrain(
         status: train.status,
         message: train.failure_reason ?? undefined
       };
-    await publishCandidatePhaseStatuses(train, candidates);
     const mode = getReleaseBusMode();
     if (mode === 'OFF')
       return waitFor(train, train.status, {
@@ -3784,6 +3830,7 @@ export async function advanceReleaseTrain(
             ? 'Waiting because SHADOW mode records decisions without executing the train.'
             : 'Waiting because production train execution is not enabled.'
       });
+    await publishCandidatePhaseStatuses(train, candidates);
     if (!(await ensureLane('global-orchestration', train))) {
       return waitFor(
         train,

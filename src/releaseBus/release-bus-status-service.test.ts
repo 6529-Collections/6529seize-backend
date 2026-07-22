@@ -1,4 +1,7 @@
-import { buildReleaseTrainOverview } from '@/releaseBus/release-bus-status.service';
+import {
+  buildReleaseTrainOverview,
+  projectReleaseCandidate
+} from '@/releaseBus/release-bus-status.service';
 import type {
   ReleaseOperationRecord,
   ReleaseTrainEventRecord,
@@ -251,5 +254,33 @@ describe('release train status view', () => {
       source_artifact_digest: 'f'.repeat(64)
     });
     expect(result.base_evidence.summary).toContain('Base canary skipped');
+  });
+});
+
+describe('release candidate exact-SHA projection', () => {
+  it('makes an old validated SHA and a newer unregistered branch head unmistakable', () => {
+    const oldSha = '28c9f12373c65886b609accaf1a41c38d190b990';
+    const newSha = '820f0e98183a1ab62ce88e942cda27375f46781f';
+
+    expect(
+      projectReleaseCandidate({
+        ...candidate,
+        id: 'a61dad7f-3085-4d8c-953c-2f2e1dc807cd',
+        repository: 'backend',
+        branch_name: 'agent/fix-attachment-realtime-race-be',
+        head_sha: oldSha,
+        status: 'SUPERSEDED',
+        current_train_id: null,
+        hold_reason: `Branch moved to ${newSha}`
+      })
+    ).toMatchObject({
+      status: 'SUPERSEDED',
+      immutable_head_sha: oldSha,
+      immutable_validation_scope: 'EXACT_SHA',
+      head_relation: 'SUPERSEDED_BY_UNREGISTERED_HEAD',
+      unregistered_branch_head_sha: newSha,
+      requires_new_readiness: true,
+      status_summary: expect.stringContaining(newSha)
+    });
   });
 });

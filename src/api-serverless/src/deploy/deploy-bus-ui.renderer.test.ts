@@ -49,6 +49,11 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('Open GitHub Actions run');
     expect(app).toContain('esc(incident.summary)');
     expect(app).toContain('esc(operation.active_job');
+    expect(app).toContain('SUPERSEDED_BY_UNREGISTERED_HEAD');
+    expect(app).toContain('Historical immutable SHA');
+    expect(app).toContain('item.current_phase');
+    expect(app).toContain('item.phase_state');
+    expect(app).toContain('incident.retry_state');
     expect(app).not.toContain('href="\'+operation.workflow_url');
   });
 });

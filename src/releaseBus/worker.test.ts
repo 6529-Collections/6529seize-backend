@@ -107,6 +107,7 @@ import {
   baseCanaryInfrastructureRetryDelayMs,
   finishIncompleteComposition,
   finishStaging,
+  frontendArtifactEnvironment,
   mergeWorkflowProgress,
   operationFailureReason,
   promoteSuccessfulStagingBaseEvidence,
@@ -147,6 +148,17 @@ describe('base canary infrastructure retry backoff', () => {
     expect(baseCanaryInfrastructureRetryDelayMs(3)).toBe(5 * 60_000);
     expect(baseCanaryInfrastructureRetryDelayMs(4)).toBe(10 * 60_000);
     expect(baseCanaryInfrastructureRetryDelayMs(50)).toBe(10 * 60_000);
+  });
+});
+
+describe('frontend immutable artifact selection', () => {
+  it('reuses the train target profile through staging and production deploys', () => {
+    expect(frontendArtifactEnvironment({ target_lane: 'STAGING' })).toBe(
+      'staging'
+    );
+    expect(frontendArtifactEnvironment({ target_lane: 'PRODUCTION' })).toBe(
+      'production'
+    );
   });
 });
 
@@ -929,6 +941,91 @@ describe('frontend base canary', () => {
       expect.objectContaining({ status: 'ISOLATING_FAILURE' }),
       {}
     );
+    expect(mockSetControl).not.toHaveBeenCalled();
+  });
+
+  it('retries a GitHub App composition publish failure without blaming candidates', async () => {
+    const composingTrain = {
+      ...frozenTrain,
+      status: 'COMPOSING' as const,
+      frontend_release_branch: `release-bus/staging-train-${frozenTrain.id}-r1`
+    };
+    const failedOperation = {
+      id: 'operation-compose-attempt-1',
+      operation_key: 'train-1:r1:compose-frontend:a1',
+      train_id: composingTrain.id,
+      revision: composingTrain.revision,
+      operation_type: 'compose-frontend',
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: composingTrain.frontend_base_sha,
+      artifact_digest: null,
+      attempt: 1,
+      status: 'FAILED',
+      external_id: '29926766725',
+      request_metadata_json: {
+        workflow: 'release-bus-compose.yml',
+        ref: 'main',
+        inputs: {
+          target_lane: 'STAGING',
+          base_sha: composingTrain.frontend_base_sha,
+          candidate_shas: JSON.stringify([frontendCandidate.head_sha]),
+          release_branch: composingTrain.frontend_release_branch
+        }
+      },
+      result_metadata_json: {
+        url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/29926766725',
+        workflow_conclusion: 'failure',
+        failed_job: 'publish',
+        failed_step: 'Publish release branch'
+      },
+      started_at: 1,
+      completed_at: 2,
+      created_at: 1,
+      updated_at: 2,
+      row_version: 2
+    } as const;
+    mockFindTrain.mockResolvedValue(composingTrain);
+    mockListTrainOperations.mockResolvedValue([failedOperation]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({
+      ...failedOperation,
+      operation_key: 'train-1:r1:compose-frontend:a2',
+      attempt: 2,
+      status: 'DISPATCHED'
+    });
+
+    await expect(advanceReleaseTrain(composingTrain.id)).resolves.toMatchObject(
+      {
+        decision: 'WAIT',
+        status: 'COMPOSING',
+        wait_reason: {
+          code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+          summary: expect.stringContaining('retry automatically')
+        }
+      }
+    );
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-compose.yml',
+      'main',
+      expect.objectContaining({
+        composition_artifact_run_id: failedOperation.external_id,
+        operation_key: expect.stringMatching(/:a2$/),
+        expected_sha: composingTrain.frontend_base_sha
+      })
+    );
+    expect(mockUpdateTrain).not.toHaveBeenCalledWith(
+      composingTrain.id,
+      expect.objectContaining({ status: 'ISOLATING_FAILURE' }),
+      {}
+    );
+    expect(mockUpdateCandidateLifecycle).not.toHaveBeenCalled();
     expect(mockSetControl).not.toHaveBeenCalled();
   });
 
@@ -2100,6 +2197,19 @@ describe('finishIncompleteComposition', () => {
       'Incomplete composition does not contain a strict candidate prefix.'
     );
     expect(composeWorkflow).toContain('test "$missing_seen" = true');
+  });
+
+  it('retries backend publication from the original verified composition artifact', () => {
+    expect(composeWorkflow).toContain('composition_artifact_run_id');
+    expect(composeWorkflow).toContain(
+      "if: inputs.composition_artifact_run_id == ''"
+    );
+    expect(composeWorkflow).toContain(
+      'run-id: ${{ inputs.composition_artifact_run_id || github.run_id }}'
+    );
+    expect(composeWorkflow).toContain('release_branch_publication');
+    expect(composeWorkflow).toContain('INFRASTRUCTURE_TRANSIENT');
+    expect(composeWorkflow).toContain('403|5[0-9]{2}');
   });
 
   it('quarantines the first omitted candidate and requeues later unattempted work', async () => {
