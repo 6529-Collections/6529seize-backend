@@ -2,6 +2,8 @@ import {
   DeployDispatchBodySchema,
   ReleaseBusAuthorizationBodySchema,
   ReleaseBusBreakGlassAuthorizationBodySchema,
+  ReleaseBusExperimentalResetBodySchema,
+  ReleaseBusProgressReportBodySchema,
   ReleaseCandidateReadyBodySchema
 } from '@/api/deploy/deploy.validation';
 
@@ -42,7 +44,7 @@ describe('deploy.validation', () => {
   });
 
   it('accepts an immutable cross-repository release candidate', () => {
-    const { error } = ReleaseCandidateReadyBodySchema.validate({
+    const { error, value } = ReleaseCandidateReadyBodySchema.validate({
       repository: 'frontend',
       branch: 'feature/ui',
       expected_head_sha: 'a'.repeat(40),
@@ -52,6 +54,22 @@ describe('deploy.validation', () => {
     });
 
     expect(error).toBeUndefined();
+    expect(value.force_fresh_base_canary).toBe(false);
+  });
+
+  it('accepts an explicit frontend force-fresh base-canary choice', () => {
+    const { error, value } = ReleaseCandidateReadyBodySchema.validate({
+      repository: 'frontend',
+      branch: 'feature/ui',
+      expected_head_sha: 'a'.repeat(40),
+      target_lane: 'STAGING',
+      dependencies: [],
+      deploy_plan: null,
+      force_fresh_base_canary: true
+    });
+
+    expect(error).toBeUndefined();
+    expect(value.force_fresh_base_canary).toBe(true);
   });
 
   it('requires workflow and artifact run identity at the mutation gate', () => {
@@ -164,6 +182,123 @@ describe('deploy.validation', () => {
         expected_sha: 'd'.repeat(40),
         reason: ''
       }).error
+    ).toBeDefined();
+  });
+
+  it('requires an exact destructive reset confirmation and bounded reason', () => {
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: '123e4567-e89b-42d3-a456-426614174001',
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Release Bus go-live clean-slate reset after full quiescence'
+      }).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: '123e4567-e89b-42d3-a456-426614174001',
+        confirmation: 'reset',
+        reason: 'Release Bus go-live clean-slate reset after full quiescence'
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: '123e4567-e89b-42d3-a456-426614174001',
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'too short'
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusExperimentalResetBodySchema.validate({
+        reset_id: 'not-a-uuid',
+        confirmation: 'RESET_RELEASE_BUS_EXPERIMENTAL_HISTORY',
+        reason: 'Release Bus go-live clean-slate reset after full quiescence'
+      }).error
+    ).toBeDefined();
+  });
+
+  it('accepts a strict bounded base-canary aggregate summary', () => {
+    const { error } = ReleaseBusProgressReportBodySchema.validate({
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:key',
+      workflow_run_id: '12345',
+      phase: 'complete',
+      status: 'SUCCEEDED',
+      stages: [{ name: 'unit_tests', status: 'SUCCEEDED' }],
+      jest: {
+        num_failed_test_suites: 0,
+        num_failed_tests: 0,
+        failing_suites: [],
+        failing_tests: []
+      },
+      summary: {
+        base_sha: 'a'.repeat(40),
+        environment: 'orchestration',
+        gate_fingerprint: 'b'.repeat(64),
+        workflow_sha: 'c'.repeat(40),
+        workflow_digest: 'd'.repeat(64),
+        node_version: '24.6.0',
+        package_manager: 'npm@11.5.1',
+        shard_count: 1,
+        summary_artifact_name: 'release-bus/summary.json',
+        summary_artifact_digest: 'e'.repeat(64),
+        phase_durations_ms: { unit_tests: 1000, total: 1000 },
+        totals: {
+          files: 10,
+          test_suites: 8,
+          tests: 100,
+          failed_test_suites: 0,
+          failed_tests: 0
+        },
+        fresh_or_reused: 'fresh',
+        shards: [
+          {
+            index: 0,
+            count: 1,
+            coordinate: '0/1',
+            status: 'SUCCEEDED',
+            duration_ms: 1000,
+            failed_test_suites: 0,
+            failed_tests: 0
+          }
+        ],
+        missing_files: [],
+        duplicate_files: []
+      }
+    });
+
+    expect(error).toBeUndefined();
+  });
+
+  it('rejects unsafe aggregate paths and unbounded unknown fields', () => {
+    const invalid = {
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:key',
+      workflow_run_id: '12345',
+      phase: 'complete',
+      status: 'FAILED',
+      summary: {
+        base_sha: 'a'.repeat(40),
+        environment: 'orchestration',
+        gate_fingerprint: 'b'.repeat(64),
+        workflow_sha: 'c'.repeat(40),
+        workflow_digest: 'd'.repeat(64),
+        node_version: '24.6.0',
+        package_manager: 'npm@11.5.1',
+        shard_count: 1,
+        summary_artifact_name: '../raw.log',
+        summary_artifact_digest: 'e'.repeat(64),
+        phase_durations_ms: { total: 1000 },
+        totals: { failed_test_suites: 1, failed_tests: 1 },
+        fresh_or_reused: 'fresh',
+        shards: [],
+        missing_files: ['../secret.env'],
+        duplicate_files: [],
+        raw_logs: 'must never be accepted'
+      }
+    };
+
+    expect(
+      ReleaseBusProgressReportBodySchema.validate(invalid).error
     ).toBeDefined();
   });
 });

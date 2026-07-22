@@ -1,10 +1,12 @@
 const mockFindCandidateById = jest.fn();
 const mockUpdateCandidateLifecycle = jest.fn();
 const mockAddEvidence = jest.fn();
+const mockListBaseCanaryEvidenceBySha = jest.fn();
 const mockEnsureCommitStatus = jest.fn();
 const mockCommentOnPullRequest = jest.fn();
 const mockRefContainsCommit = jest.fn();
 const mockUpdateTrain = jest.fn();
+const mockAdvanceTrainPhase = jest.fn();
 const mockGetLane = jest.fn();
 const mockReleaseLane = jest.fn();
 const mockAppendEvent = jest.fn();
@@ -14,13 +16,18 @@ const mockListTrainItems = jest.fn();
 const mockHeartbeatLane = jest.fn();
 const mockListControls = jest.fn();
 const mockListTrainOperations = jest.fn();
+const mockListTrainEvents = jest.fn();
 const mockGetOrCreateOperation = jest.fn();
 const mockFindOperation = jest.fn();
 const mockUpdateOperation = jest.fn();
+const mockUpdateOperationIfVersion = jest.fn();
 const mockSetControl = jest.fn();
+const mockExecuteTransaction = jest.fn();
 const mockResolveRef = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
+const mockGetFileContent = jest.fn();
+const mockGetActionsVariable = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -28,7 +35,10 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     updateCandidateLifecycle: (...args: unknown[]) =>
       mockUpdateCandidateLifecycle(...args),
     addEvidence: (...args: unknown[]) => mockAddEvidence(...args),
+    listBaseCanaryEvidenceBySha: (...args: unknown[]) =>
+      mockListBaseCanaryEvidenceBySha(...args),
     updateTrain: (...args: unknown[]) => mockUpdateTrain(...args),
+    advanceTrainPhase: (...args: unknown[]) => mockAdvanceTrainPhase(...args),
     getLane: (...args: unknown[]) => mockGetLane(...args),
     releaseLane: (...args: unknown[]) => mockReleaseLane(...args),
     appendEvent: (...args: unknown[]) => mockAppendEvent(...args),
@@ -38,11 +48,16 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
     listControls: (...args: unknown[]) => mockListControls(...args),
     listTrainOperations: (...args: unknown[]) =>
       mockListTrainOperations(...args),
+    listTrainEvents: (...args: unknown[]) => mockListTrainEvents(...args),
     getOrCreateOperation: (...args: unknown[]) =>
       mockGetOrCreateOperation(...args),
     findOperation: (...args: unknown[]) => mockFindOperation(...args),
     updateOperation: (...args: unknown[]) => mockUpdateOperation(...args),
-    setControl: (...args: unknown[]) => mockSetControl(...args)
+    updateOperationIfVersion: (...args: unknown[]) =>
+      mockUpdateOperationIfVersion(...args),
+    setControl: (...args: unknown[]) => mockSetControl(...args),
+    executeNativeQueriesInTransaction: (...args: unknown[]) =>
+      mockExecuteTransaction(...args)
   }
 }));
 
@@ -54,7 +69,9 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args),
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args),
-    dispatchWorkflow: (...args: unknown[]) => mockDispatchWorkflow(...args)
+    dispatchWorkflow: (...args: unknown[]) => mockDispatchWorkflow(...args),
+    getFileContent: (...args: unknown[]) => mockGetFileContent(...args),
+    getActionsVariable: (...args: unknown[]) => mockGetActionsVariable(...args)
   }
 }));
 
@@ -67,12 +84,21 @@ import type {
   ReleaseCandidateRecord,
   ReleaseTrainRecord
 } from '@/releaseBus/release-bus.types';
+import {
+  buildFrontendGateContract,
+  FRONTEND_GATE_BASE_FILES,
+  FRONTEND_GATE_TOOLING_FILES,
+  FRONTEND_GATE_WORKFLOW
+} from '@/releaseBus/release-bus.base-canary-evidence';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   advanceReleaseTrain,
   finishIncompleteComposition,
-  operationFailureReason
+  mergeWorkflowProgress,
+  operationFailureReason,
+  reconcile,
+  workflowProgress
 } from '@/releaseBus/worker';
 
 const SHA_A = 'a'.repeat(40);
@@ -98,6 +124,200 @@ describe('operationFailureReason', () => {
         result_metadata_json: { url: 'https://example.com/untrusted' }
       } as never)
     ).toBe('Frontend base failed.');
+  });
+});
+
+describe('workflowProgress', () => {
+  it('records the active and failed GitHub job and step without raw logs', () => {
+    expect(
+      workflowProgress({
+        id: 12345,
+        name: 'Release Bus base canary',
+        display_title: 'Base canary',
+        status: 'completed',
+        conclusion: 'failure',
+        head_sha: SHA_A,
+        html_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+        created_at: '2026-07-21T10:00:00Z',
+        updated_at: '2026-07-21T10:05:00Z',
+        jobs: [
+          {
+            id: 1,
+            name: 'Frontend gate',
+            status: 'completed',
+            conclusion: 'failure',
+            started_at: '2026-07-21T10:01:00Z',
+            completed_at: '2026-07-21T10:05:00Z',
+            html_url:
+              'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345/job/1',
+            steps: [
+              {
+                name: 'Run unit tests',
+                status: 'completed',
+                conclusion: 'failure',
+                started_at: '2026-07-21T10:02:00Z',
+                completed_at: '2026-07-21T10:05:00Z'
+              }
+            ]
+          }
+        ]
+      })
+    ).toEqual(
+      expect.objectContaining({
+        failed_job: 'Frontend gate',
+        failed_step: 'Run unit tests',
+        last_progress_at: Date.parse('2026-07-21T10:05:00Z')
+      })
+    );
+    expect(workflowProgress({} as never)).not.toHaveProperty('logs');
+  });
+
+  it('bounds labels and rejects future GitHub progress timestamps', () => {
+    const now = Date.parse('2026-07-21T10:00:00Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const progress = workflowProgress({
+        id: 12345,
+        name: 'Release Bus base canary',
+        display_title: 'Base canary',
+        status: 'completed',
+        conclusion: 'failure',
+        head_sha: SHA_A,
+        html_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+        updated_at: '2099-01-01T00:00:00Z',
+        jobs: [
+          {
+            id: 1,
+            name: `${'x'.repeat(600)}\u0000`,
+            status: 'completed',
+            conclusion: 'failure',
+            started_at: null,
+            completed_at: '2099-01-01T00:00:00Z',
+            html_url: '',
+            steps: []
+          }
+        ]
+      });
+
+      expect(progress.failed_job).toHaveLength(500);
+      expect(progress.failed_job).not.toContain('\u0000');
+      expect(progress.last_progress_at).toBeNull();
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('preserves a fresher workflow-reported progress heartbeat', () => {
+    const now = Date.parse('2026-07-21T10:10:00Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const progress = mergeWorkflowProgress(
+        {
+          gate_report: { phase: 'unit_tests', status: 'RUNNING' },
+          last_progress_at: now - 30_000
+        },
+        {
+          id: 12345,
+          name: 'Release Bus base canary',
+          display_title: 'Base canary',
+          status: 'in_progress',
+          conclusion: null,
+          head_sha: SHA_A,
+          html_url:
+            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+          updated_at: '2026-07-21T10:05:00Z'
+        }
+      );
+
+      expect(progress.last_progress_at).toBe(now - 30_000);
+      expect(progress.gate_report).toEqual({
+        phase: 'unit_tests',
+        status: 'RUNNING'
+      });
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+});
+
+describe('workflow reconciliation contention', () => {
+  const operation = {
+    id: 'operation-1',
+    operation_key: 'train-1:r1:base-canary-frontend',
+    train_id: 'train-1',
+    revision: 1,
+    operation_type: 'base-canary-frontend',
+    repository: 'frontend',
+    environment: 'orchestration',
+    service: null,
+    expected_sha: SHA_A,
+    artifact_digest: null,
+    attempt: 1,
+    status: 'RUNNING',
+    external_id: '12345',
+    request_metadata_json: { workflow: 'release-bus-base-canary.yml' },
+    result_metadata_json: {
+      gate_report: { phase: 'complete', status: 'SUCCEEDED' }
+    },
+    started_at: 1,
+    completed_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  } as const;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFindWorkflowRun.mockResolvedValue({
+      id: 12345,
+      name: 'Release Bus base canary',
+      display_title: operation.operation_key,
+      status: 'completed',
+      conclusion: 'success',
+      head_sha: SHA_A,
+      html_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+      updated_at: '2026-07-21T10:05:00Z'
+    });
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
+    mockAppendEvent.mockResolvedValue(undefined);
+  });
+
+  it('retries a terminal GitHub result after a row-version race', async () => {
+    const refreshed = { ...operation, row_version: 2 };
+    const completed = {
+      ...refreshed,
+      status: 'SUCCEEDED',
+      row_version: 3
+    } as const;
+    mockUpdateOperationIfVersion
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockFindOperation
+      .mockResolvedValueOnce(refreshed)
+      .mockResolvedValueOnce(completed);
+
+    await expect(reconcile(operation)).resolves.toEqual(completed);
+
+    expect(mockUpdateOperationIfVersion).toHaveBeenNthCalledWith(
+      1,
+      operation.operation_key,
+      1,
+      expect.objectContaining({ status: 'SUCCEEDED' }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockUpdateOperationIfVersion).toHaveBeenNthCalledWith(
+      2,
+      operation.operation_key,
+      2,
+      expect.objectContaining({ status: 'SUCCEEDED' }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -129,6 +349,64 @@ describe('frontend base canary', () => {
     updated_at: 1,
     row_version: 1
   };
+  const workflowSha = 'f'.repeat(40);
+  const baseFileContents = Object.fromEntries(
+    FRONTEND_GATE_BASE_FILES.map((file) => [
+      file,
+      file === 'package.json'
+        ? JSON.stringify({ packageManager: 'pnpm@10.14.0' })
+        : `content:${file}`
+    ])
+  );
+  const gateContract = buildFrontendGateContract({
+    baseSha: frozenTrain.frontend_base_sha as string,
+    workflowSha,
+    workflowFileContents: Object.fromEntries(
+      [FRONTEND_GATE_WORKFLOW, ...FRONTEND_GATE_TOOLING_FILES].map((file) => [
+        file,
+        file === FRONTEND_GATE_WORKFLOW
+          ? 'workflow-content'
+          : `workflow-content:${file}`
+      ])
+    ),
+    baseFileContents,
+    gateMode: 'sharded',
+    shardCount: 4
+  });
+  const artifactDigest = '9'.repeat(64);
+  const reusableSummary = {
+    base_sha: gateContract.base_sha,
+    environment: gateContract.environment,
+    gate_fingerprint: gateContract.gate_fingerprint,
+    workflow_sha: gateContract.workflow_sha,
+    workflow_digest: gateContract.workflow_digest,
+    node_version: gateContract.node_version,
+    package_manager: gateContract.package_manager,
+    shard_count: gateContract.shard_count,
+    summary_artifact_name: 'release-bus-base-canary-summary-123',
+    summary_artifact_digest: artifactDigest,
+    phase_durations_ms: { total: 100 },
+    totals: {
+      files: 4,
+      test_suites: 4,
+      tests: 4,
+      failed_test_suites: 0,
+      failed_tests: 0,
+      skipped_tests: 0
+    },
+    fresh_or_reused: 'fresh',
+    shards: Array.from({ length: 4 }, (_, index) => ({
+      index: index + 1,
+      count: 4,
+      coordinate: `${index + 1}/4`,
+      status: 'SUCCEEDED',
+      duration_ms: 25,
+      failed_test_suites: 0,
+      failed_tests: 0
+    })),
+    missing_files: [],
+    duplicate_files: []
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -144,17 +422,45 @@ describe('frontend base canary', () => {
     mockReleaseLane.mockResolvedValue(undefined);
     mockSetControl.mockResolvedValue(undefined);
     mockUpdateTrain.mockResolvedValue(undefined);
+    mockAdvanceTrainPhase.mockResolvedValue(true);
+    mockUpdateOperationIfVersion.mockResolvedValue(true);
     mockUpdateCandidateLifecycle.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
+    mockListTrainEvents.mockResolvedValue([]);
+    mockExecuteTransaction.mockImplementation(async (callback) =>
+      callback({ transaction: 'test' })
+    );
+    mockAddEvidence.mockResolvedValue(true);
+    mockResolveRef.mockResolvedValue(workflowSha);
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository !== 'frontend') return null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
+    mockGetFileContent.mockImplementation(
+      async (_repository: string, file: string) =>
+        file === FRONTEND_GATE_WORKFLOW
+          ? 'workflow-content'
+          : (baseFileContents[file] ?? `workflow-content:${file}`)
+    );
   });
 
   afterEach(() => {
     delete process.env.RELEASE_BUS_MODE;
+    delete process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE;
+    delete process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW;
+    delete process.env.RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS;
   });
 
   it('dispatches the immutable base canary before composition', async () => {
     mockListTrainOperations.mockResolvedValue([]);
-    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockGetOrCreateOperation
+      .mockImplementationOnce(async (operation) => operation)
+      .mockImplementationOnce(async (operation) => ({
+        ...operation,
+        status: 'DISPATCHED'
+      }));
     mockFindWorkflowRun.mockResolvedValue(null);
     mockDispatchWorkflow.mockResolvedValue(undefined);
     mockUpdateOperation.mockResolvedValue(undefined);
@@ -162,7 +468,11 @@ describe('frontend base canary', () => {
 
     await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
       decision: 'WAIT',
-      status: 'FROZEN'
+      status: 'BASE_CANARY_RUNNING',
+      wait_reason: {
+        code: 'GITHUB_WORKFLOW_RUNNING',
+        summary: expect.stringContaining('Candidates have not been tested yet')
+      }
     });
 
     expect(mockDispatchWorkflow).toHaveBeenCalledWith(
@@ -174,7 +484,98 @@ describe('frontend base canary', () => {
         expected_sha: frozenTrain.frontend_base_sha
       })
     );
-    expect(mockUpdateTrain).not.toHaveBeenCalled();
+    expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
+      frozenTrain.id,
+      'FROZEN',
+      frozenTrain.row_version,
+      'BASE_CANARY_RUNNING',
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('does not advance or append an event after the train phase diverges', async () => {
+    const advancedTrain = {
+      ...frozenTrain,
+      status: 'BASE_CANARY_RUNNING' as const,
+      row_version: 2
+    };
+    mockFindTrain
+      .mockResolvedValueOnce(frozenTrain)
+      .mockResolvedValueOnce(advancedTrain)
+      .mockResolvedValueOnce(advancedTrain);
+    const completedCanary = {
+      id: 'operation-base-canary',
+      operation_key: 'train-1:r1:base-canary-frontend',
+      train_id: frozenTrain.id,
+      revision: frozenTrain.revision,
+      operation_type: 'base-canary-frontend',
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: frozenTrain.frontend_base_sha,
+      artifact_digest: null,
+      attempt: 1,
+      status: 'SUCCEEDED',
+      external_id: '12345',
+      request_metadata_json: {
+        workflow: 'release-bus-base-canary.yml'
+      },
+      result_metadata_json: {},
+      started_at: 1,
+      completed_at: 2,
+      created_at: 1,
+      updated_at: 2,
+      row_version: 2
+    } as const;
+    mockListTrainOperations
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([completedCanary]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+    mockAdvanceTrainPhase.mockResolvedValue(false);
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      train_id: frozenTrain.id,
+      status: 'BASE_CANARY_RUNNING',
+      wait_reason: {
+        code: 'PHASE_TRANSITION',
+        summary: expect.stringContaining('next guarded worker tick')
+      },
+      current_operation: null
+    });
+
+    expect(mockAdvanceTrainPhase).toHaveBeenCalledWith(
+      frozenTrain.id,
+      'FROZEN',
+      frozenTrain.row_version,
+      'BASE_CANARY_RUNNING',
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TRAIN_PHASE_CHANGED' }),
+      expect.anything()
+    );
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      train_id: frozenTrain.id,
+      status: 'COMPOSING'
+    });
+    expect(mockUpdateTrain).toHaveBeenCalledWith(
+      frozenTrain.id,
+      expect.objectContaining({ status: 'COMPOSING' }),
+      {}
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('requeues candidates and pauses with evidence when the base fails', async () => {
@@ -200,7 +601,7 @@ describe('frontend base canary', () => {
       expect.objectContaining({
         status: 'READY_FOR_STAGING',
         currentTrainId: null,
-        holdReason: 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
+        holdReason: 'BASE_FAILURE_NO_CANDIDATE_BLAMED'
       }),
       {}
     );
@@ -210,6 +611,346 @@ describe('frontend base canary', () => {
       expect.stringContaining('/actions/runs/12345'),
       'release-bus-worker',
       {}
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'TRAIN_FAILED_AND_LANE_PAUSED',
+        payload: expect.objectContaining({
+          attribution: 'PRE_EXISTING_BASE',
+          returned_candidates: [frontendCandidate.id],
+          quarantined_candidates: []
+        })
+      }),
+      {}
+    );
+  });
+
+  it('records fresh terminal evidence and provenance in one transaction', async () => {
+    const freshSummary = {
+      ...reusableSummary,
+      shards: [{ ...reusableSummary.shards[0], coordinate: { unsafe: true } }]
+    };
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend')
+          return name === 'RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS'
+            ? '12'
+            : null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
+    mockListTrainOperations.mockResolvedValue([
+      {
+        id: 'operation-base-canary',
+        operation_key: 'train-1:r1:base-canary-frontend',
+        train_id: frozenTrain.id,
+        revision: frozenTrain.revision,
+        operation_type: 'base-canary-frontend',
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: frozenTrain.frontend_base_sha,
+        artifact_digest: null,
+        attempt: 1,
+        status: 'SUCCEEDED',
+        external_id: '123',
+        request_metadata_json: { gate_contract: gateContract },
+        result_metadata_json: {
+          url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+          gate_report: { summary: freshSummary, reported_at: 1_500 }
+        },
+        started_at: 1_000,
+        completed_at: 2_000,
+        created_at: 1_000,
+        updated_at: 2_000,
+        row_version: 2
+      }
+    ]);
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT'
+    });
+
+    expect(mockAddEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evidenceType: 'BASE_CANARY_COMPLETED',
+        status: 'SUCCEEDED',
+        sourceSha: frozenTrain.frontend_base_sha,
+        artifactDigest,
+        evidenceUri:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+        metadata: expect.objectContaining({
+          contract: gateContract,
+          summary: freshSummary,
+          source_run_id: '123',
+          created_at: 1_500,
+          expires_at: 1_500 + 12 * 60 * 60 * 1_000
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_RECORDED',
+        payload: expect.objectContaining({ fresh_or_reused: 'fresh' })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockPublishReleaseBusMetrics).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          MetricName: 'BaseCanaryShardDurationSeconds',
+          Dimensions: expect.arrayContaining([
+            { Name: 'Shard', Value: 'unknown' }
+          ])
+        })
+      ])
+    );
+  });
+
+  it('advances from reusable exact-SHA evidence in one worker cycle', async () => {
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend')
+          return name === 'RELEASE_BUS_BASE_EVIDENCE_REUSE' ? 'true' : null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
+    mockListTrainOperations.mockResolvedValue([]);
+    mockListBaseCanaryEvidenceBySha.mockResolvedValue([
+      {
+        id: 'source-evidence',
+        train_id: 'source-train',
+        revision: 3,
+        status: 'SUCCEEDED',
+        source_sha: gateContract.base_sha,
+        artifact_digest: artifactDigest,
+        evidence_uri:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+        metadata_json: {
+          contract: gateContract,
+          summary: reusableSummary,
+          source_run_id: '123',
+          created_at: Date.now() - 1_000,
+          expires_at: Date.now() + 60_000
+        },
+        created_at: Date.now() - 1_000
+      }
+    ]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'COMPOSING'
+    });
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-compose.yml',
+      'main',
+      expect.any(Object)
+    );
+    expect(mockAddEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evidenceType: 'BASE_CANARY_EVIDENCE_REUSED',
+        sourceSha: frozenTrain.frontend_base_sha,
+        metadata: expect.objectContaining({
+          source_evidence_id: 'source-evidence',
+          source_train_id: 'source-train',
+          source_run_id: '123'
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_REUSED',
+        payload: expect.objectContaining({ status: 'reused' })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('disables evidence reuse from a runtime variable without redeployment', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend')
+          return name === 'RELEASE_BUS_BASE_EVIDENCE_REUSE' ? 'false' : null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockListBaseCanaryEvidenceBySha).not.toHaveBeenCalled();
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
+    );
+    expect(mockDispatchWorkflow.mock.calls[0]?.[3]).toHaveProperty(
+      'gate_contract',
+      JSON.stringify(gateContract)
+    );
+  });
+
+  it('fails closed to fresh validation when runtime controls are unreadable', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockGetActionsVariable.mockRejectedValue(new Error('GitHub unavailable'));
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockListBaseCanaryEvidenceBySha).not.toHaveBeenCalled();
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
+    );
+  });
+
+  it('reports contract resolution failure in default fresh mode', async () => {
+    mockResolveRef.mockRejectedValue(new Error('GitHub unavailable'));
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockPublishReleaseBusMetrics).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          MetricName: 'BaseCanaryEvidenceLookup',
+          Dimensions: expect.arrayContaining([
+            { Name: 'Decision', Value: 'INVALIDATED' },
+            { Name: 'Reason', Value: 'contract_unavailable' }
+          ])
+        })
+      ])
+    );
+    const workflowInputs = mockDispatchWorkflow.mock.calls[0]?.[3];
+    expect(workflowInputs).toEqual(
+      expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
+    );
+    expect(workflowInputs).not.toHaveProperty('gate_contract');
+    expect(mockAppendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_INVALIDATED'
+      }),
+      expect.anything()
+    );
+  });
+
+  it('honors an operator force-fresh choice', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockFindCandidateById.mockResolvedValue({
+      ...frontendCandidate,
+      force_fresh_base_canary: true
+    });
+    mockListTrainOperations.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockListBaseCanaryEvidenceBySha).not.toHaveBeenCalled();
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({
+        gate_contract: JSON.stringify(gateContract)
+      })
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_FORCE_FRESH'
+      }),
+      {}
+    );
+  });
+  it('records a would-reuse decision but dispatches fresh in shadow mode', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW = 'true';
+    mockListTrainOperations.mockResolvedValue([]);
+    mockListBaseCanaryEvidenceBySha.mockResolvedValue([
+      {
+        id: 'shadow-source-evidence',
+        train_id: 'shadow-source-train',
+        revision: 2,
+        status: 'SUCCEEDED',
+        source_sha: gateContract.base_sha,
+        artifact_digest: artifactDigest,
+        evidence_uri:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/123',
+        metadata_json: {
+          contract: gateContract,
+          summary: reusableSummary,
+          source_run_id: '123',
+          created_at: Date.now() - 1_000,
+          expires_at: Date.now() + 60_000
+        },
+        created_at: Date.now() - 1_000
+      }
+    ]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockAddEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evidenceType: 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ gate_contract: JSON.stringify(gateContract) })
     );
   });
 });
@@ -232,6 +973,7 @@ function candidate(
     production_ready_by_github_login: null,
     production_ready_at: null,
     deploy_plan_json: null,
+    force_fresh_base_canary: false,
     metadata_version: 1,
     current_train_id: 'train-1',
     hold_reason: null,

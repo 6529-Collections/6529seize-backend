@@ -485,7 +485,18 @@ mode in Lambda configuration, while the staging API is explicitly forced to
 `RELEASE_BUS_MODE` intentionally controls the production-region API, starter,
 and worker; the orchestrator is not deployed separately in staging. The
 cleaner shares the App identity because it lists and deletes expired temporary
-branches in both repositories.
+branches in both repositories. It also prunes terminal Release Bus trains and
+unreferenced terminal candidates in transactionally bounded batches after
+`RELEASE_BUS_HISTORY_RETENTION_DAYS` (30 days by default, constrained to
+1–365 days). Retained train membership always keeps its candidate rows.
+The operator-only `POST /deploy/release-bus/reset-experimental-history`
+endpoint is reserved for the controlled pre-go-live clean slate: every control
+must already be paused, and the transaction locks and rejects any active train,
+operation, or lane lease before deleting only Release Bus journal rows in
+dependency-safe order. Schema, controls, lane rows, secrets, and application
+data remain intact. A required UUID reset id makes lost-response retries
+idempotent, and controls remain deterministically paused until a fresh operator
+handshake resumes them.
 Backend units whose registry policy is `production-only` are built and tested
 in preflight but cannot be runtime-deployed to staging; their staging gate is
 the combined application E2E suite plus the immutable artifact evidence. The

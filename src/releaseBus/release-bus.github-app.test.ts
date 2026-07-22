@@ -1,0 +1,42 @@
+import {
+  safeGitHubWorkflowLabel,
+  sanitizeGitHubWorkflowJobs,
+  type GitHubWorkflowJob
+} from '@/releaseBus/release-bus.github-app';
+
+function job(index: number): GitHubWorkflowJob {
+  return {
+    id: index,
+    name: ` Job ${index}\u0000 `,
+    status: 'completed',
+    conclusion: 'success',
+    html_url: `https://github.com/example/actions/jobs/${index}`,
+    started_at: null,
+    completed_at: null,
+    steps: Array.from({ length: 101 }, (_, stepIndex) => ({
+      name: ` Step ${stepIndex}\u0007 `,
+      status: 'completed',
+      conclusion: 'success',
+      started_at: null,
+      completed_at: null
+    }))
+  };
+}
+
+describe('GitHub workflow progress sanitization', () => {
+  it('bounds job and step counts and strips control characters', () => {
+    const jobs = sanitizeGitHubWorkflowJobs(
+      Array.from({ length: 101 }, (_, index) => job(index))
+    );
+
+    expect(jobs).toHaveLength(100);
+    expect(jobs[0].name).toBe('Job 0');
+    expect(jobs[0].steps).toHaveLength(100);
+    expect(jobs[0].steps?.[0].name).toBe('Step 0');
+  });
+
+  it('bounds persisted labels and drops empty values', () => {
+    expect(safeGitHubWorkflowLabel('x'.repeat(501))).toHaveLength(500);
+    expect(safeGitHubWorkflowLabel('\u0000\u0007')).toBeNull();
+  });
+});

@@ -23,6 +23,10 @@ const releaseBusGitHubApp = readFileSync(
   'src/releaseBus/release-bus.github-app.ts',
   'utf8'
 );
+const forceFreshMigration = readFileSync(
+  'migrations/20260721114000-add-release-bus-force-fresh-base-canary.js',
+  'utf8'
+);
 
 describe('release bus infrastructure contract', () => {
   it('invokes the worker version pinned into the train execution', () => {
@@ -99,6 +103,33 @@ describe('release bus infrastructure contract', () => {
     );
     expect(deployWorkflow).toContain(
       'del(.RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
+    );
+  });
+
+  it('ships fail-closed base evidence controls to the worker', () => {
+    expect(releaseBusServerless).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_REUSE: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE, 'false'}"
+    );
+    expect(releaseBusServerless).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW, 'false'}"
+    );
+    expect(releaseBusServerless).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: ${env:RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS, '24'}"
+    );
+    expect(deployWorkflow).toContain(
+      "RELEASE_BUS_BASE_EVIDENCE_REUSE: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}"
+    );
+    expect(deployWorkflow).toContain('RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS');
+  });
+
+  it('adds force-fresh storage before worker code relies on it', () => {
+    expect(forceFreshMigration).toContain(
+      'ADD COLUMN force_fresh_base_canary tinyint(1) NOT NULL DEFAULT 0'
+    );
+    expect(forceFreshMigration).toContain('ALGORITHM=INPLACE, LOCK=NONE');
+    expect(forceFreshMigration).toContain("['ER_DUP_FIELDNAME']");
+    expect(forceFreshMigration).not.toContain(
+      'DROP COLUMN force_fresh_base_canary'
     );
   });
 

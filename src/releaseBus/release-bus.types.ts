@@ -38,14 +38,23 @@ export const RELEASE_TRAIN_STATUSES = [
   'COLLECTING_STAGING',
   'COLLECTING_PRODUCTION',
   'FROZEN',
+  'BASE_CANARY_RUNNING',
   'COMPOSING',
   'PREFLIGHTING',
   'ISOLATING_FAILURE',
   'STAGING',
+  'DEPLOYING_BACKEND',
+  'DEPLOYING_FRONTEND',
+  'E2E_RUNNING',
   'VALIDATING_STAGING',
   'MERGING_PRODUCTION',
   'DEPLOYING_PRODUCTION',
+  'DEPLOYING_BACKEND_PRODUCTION',
+  'MERGING_FRONTEND_PRODUCTION',
+  'DEPLOYING_FRONTEND_PRODUCTION',
+  'PRODUCTION_E2E_RUNNING',
   'VALIDATING_PRODUCTION',
+  'SYNCING_STAGING',
   'PAUSED',
   'COMPLETED',
   'FAILED',
@@ -87,6 +96,7 @@ export type MarkReleaseReadyInput = {
   readonly target_lane: ReleaseLane;
   readonly dependencies: ReleaseDependencyInput[];
   readonly deploy_plan: ReleaseDeployPlan | null;
+  readonly force_fresh_base_canary: boolean;
 };
 
 export type ReleaseCandidateRecord = {
@@ -101,6 +111,7 @@ export type ReleaseCandidateRecord = {
   readonly production_ready_by_github_login: string | null;
   readonly production_ready_at: number | null;
   readonly deploy_plan_json: ReleaseDeployPlan | null;
+  readonly force_fresh_base_canary: boolean;
   readonly metadata_version: number;
   readonly current_train_id: string | null;
   readonly hold_reason: string | null;
