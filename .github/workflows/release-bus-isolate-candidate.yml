@@ -95,7 +95,7 @@ jobs:
             npm --prefix src/api-serverless ci --ignore-scripts
             npx eslint "src/**/*.ts" --max-warnings=0
             NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
-            npm test -- --runInBand
+            npm test -- --maxWorkers=2
             while IFS= read -r unit; do
               if [ "$unit" = api ]; then
                 (cd src/api-serverless && npm ci && npm run build)
