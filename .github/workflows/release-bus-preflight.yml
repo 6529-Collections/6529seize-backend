@@ -152,6 +152,8 @@ jobs:
       - *setup-node-root
       - *activate-npm
       - *install-root
+      - name: Install API test dependencies without lifecycle scripts
+        run: npm --prefix src/api-serverless ci --ignore-scripts
       - name: Stage immutable evidence contract and tool
         env:
           CONTRACT: ${{ needs.authorize.outputs.contract }}
@@ -215,8 +217,19 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: ${{ matrix.unit == 'api' && 'src/api-serverless/package-lock.json' || format('src/{0}/package-lock.json', matrix.unit) }}
+          cache-dependency-path: |
+            package-lock.json
+            ${{ matrix.unit == 'api' && 'src/api-serverless/package-lock.json' || format('src/{0}/package-lock.json', matrix.unit) }}
       - *activate-npm
+      - *install-root
+      - name: Install frozen selected-unit dependencies without lifecycle scripts
+        env:
+          UNIT: ${{ matrix.unit }}
+        run: |
+          set -euo pipefail
+          package_dir="src/$UNIT"
+          if [ "$UNIT" = api ]; then package_dir=src/api-serverless; fi
+          npm --prefix "$package_dir" ci --ignore-scripts
       - name: Build selected unit once and record its immutable digest
         env:
           CONTRACT: ${{ needs.authorize.outputs.contract }}
@@ -225,7 +238,7 @@ jobs:
           set -euo pipefail
           package_dir="src/$UNIT"
           if [ "$UNIT" = api ]; then package_dir=src/api-serverless; fi
-          (cd "$package_dir" && npm ci --ignore-scripts && npm run build)
+          npm --prefix "$package_dir" run build
           test -z "$(git status --porcelain --untracked-files=no)"
           mkdir -p "release-bus-unit/packages/$UNIT" release-bus-unit/evidence
           cp "$package_dir/dist/index.zip" "release-bus-unit/packages/$UNIT/index.zip"
