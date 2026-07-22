@@ -152,7 +152,10 @@ function eventView(event: ReleaseTrainEventRecord) {
     evidence_uri: safeText(payload.evidence_uri, 1000),
     source_artifact_digest: safeText(payload.source_artifact_digest, 80),
     proof_digest: safeText(payload.proof_digest, 80),
-    final_sha: safeText(payload.final_sha, 40)
+    final_sha: safeText(payload.final_sha, 40),
+    decision: safeText(payload.decision, 32),
+    action: safeText(payload.action, 64),
+    configuration_source: safeText(payload.configuration_source, 64)
   };
 }
 
@@ -165,6 +168,16 @@ function baseEvidenceStatus(
     (event) => event.event_type === 'BASE_CANARY_EVIDENCE_REUSED'
   );
   const reusePayload = metadata(reused?.payload_json);
+  const lookup = events.find(
+    (event) => event.event_type === 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED'
+  );
+  const lookupPayload = metadata(lookup?.payload_json);
+  const lookupDecision = safeText(lookupPayload.decision, 32);
+  const lookupReason = safeText(lookupPayload.reason);
+  const lookupAction = safeText(lookupPayload.action, 64);
+  const lookupExplanation = lookupDecision
+    ? ` Evidence lookup: ${lookupDecision}${lookupReason ? ` (${lookupReason})` : ''}; action: ${lookupAction ?? 'fresh_validation'}.`
+    : '';
   const baseOperation = operations
     .filter((operation) => operation.operation_type === 'base-canary-frontend')
     .sort((left, right) => right.attempt - left.attempt)[0];
@@ -185,8 +198,8 @@ function baseEvidenceStatus(
     );
     decision = terminal ? 'FRESH_EXECUTED' : 'FRESH_EXECUTING';
     summary = terminal
-      ? `Base canary executed fresh for this train (${baseOperation.status}).`
-      : 'Base canary is executing fresh for this train.';
+      ? `Base canary executed fresh for this train (${baseOperation.status}).${lookupExplanation}`
+      : `Base canary is executing fresh for this train.${lookupExplanation}`;
   } else if (
     !candidates.some((candidate) => candidate.repository === 'frontend')
   ) {
@@ -194,8 +207,7 @@ function baseEvidenceStatus(
     summary = 'No frontend candidate; a frontend base canary was not required.';
   } else {
     decision = 'FRESH_PENDING';
-    summary =
-      'No reusable exact evidence was selected; fresh validation is pending.';
+    summary = `No reusable exact evidence was selected; fresh validation is pending.${lookupExplanation}`;
   }
   const promotion = events.find((event) =>
     ['BASE_EVIDENCE_PROMOTED', 'BASE_EVIDENCE_PROMOTION_REJECTED'].includes(
@@ -207,6 +219,10 @@ function baseEvidenceStatus(
     decision,
     summary,
     canary_skipped: Boolean(reused),
+    lookup_decision: lookupDecision,
+    lookup_reason: lookupReason,
+    lookup_action: lookupAction,
+    configuration_source: safeText(lookupPayload.configuration_source, 64),
     source_train_id: safeText(reusePayload.source_train_id, 100),
     source_run_id: safeText(reusePayload.source_run_id, 100),
     source_evidence_id: safeText(reusePayload.source_evidence_id, 100),

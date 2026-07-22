@@ -1295,11 +1295,104 @@ describe('frontend base canary', () => {
     expect(mockDispatchWorkflow.mock.calls[0]?.[3]).not.toHaveProperty(
       'gate_contract'
     );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+        payload: expect.objectContaining({
+          decision: 'DISABLED',
+          reason: 'evidence_reuse_disabled',
+          action: 'fresh_validation',
+          configuration_source: 'runtime_overrides'
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
   });
 
-  it('fails closed to fresh validation when runtime controls are unreadable', async () => {
+  it('uses signed deployed reuse configuration when runtime controls are unreadable', async () => {
     process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
-    mockGetActionsVariable.mockRejectedValue(new Error('GitHub unavailable'));
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend') throw new Error('GitHub unavailable');
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
+    mockListTrainOperations.mockResolvedValue([successfulIdentityOperation]);
+    mockListBaseCanaryEvidenceBySha.mockResolvedValue([
+      {
+        id: 'fallback-source-evidence',
+        train_id: 'fallback-source-train',
+        revision: 4,
+        status: 'SUCCEEDED',
+        evidence_type: 'BASE_CANARY_COMPLETED',
+        source_sha: gateContract.base_sha,
+        artifact_digest: artifactDigest,
+        evidence_uri:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
+        metadata_json: {
+          source_kind: 'fresh_base_canary',
+          anchored_full_proof: true,
+          contract: gateContract,
+          summary: reusableSummary,
+          gate_stages: [
+            { name: 'lint', status: 'SUCCEEDED' },
+            { name: 'typecheck', status: 'SUCCEEDED' },
+            { name: 'unit_tests', status: 'SUCCEEDED' },
+            { name: 'build', status: 'SUCCEEDED' }
+          ],
+          source_run_id: '456',
+          created_at: Date.now() - 1_000,
+          expires_at: Date.now() + 60_000
+        },
+        created_at: Date.now() - 1_000
+      }
+    ]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'COMPOSING'
+    });
+
+    expect(mockListBaseCanaryEvidenceBySha).toHaveBeenCalledWith(
+      frozenTrain.frontend_base_sha,
+      {}
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-compose.yml',
+      'main',
+      expect.any(Object)
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+        payload: expect.objectContaining({
+          decision: 'HIT',
+          reason: 'reusable_success',
+          action: 'reuse',
+          configuration_source: 'deployed_fallback'
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('fails closed and reports the exact reason when runtime controls are malformed', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockGetActionsVariable.mockImplementation(
+      async (repository: string, name: string) => {
+        if (repository === 'backend')
+          return name === 'RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS'
+            ? '999'
+            : null;
+        return name === 'RELEASE_BUS_FRONTEND_GATE_MODE' ? 'sharded' : '4';
+      }
+    );
     mockListTrainOperations.mockResolvedValue([]);
     mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
     mockFindWorkflowRun.mockResolvedValue(null);
@@ -1318,6 +1411,78 @@ describe('frontend base canary', () => {
       'release-bus-base-canary.yml',
       'main',
       expect.objectContaining({ base_sha: frozenTrain.frontend_base_sha })
+    );
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+        payload: expect.objectContaining({
+          decision: 'DISABLED',
+          reason: 'runtime_controls_invalid',
+          action: 'fresh_validation',
+          configuration_source: 'runtime_invalid'
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('reports an exact evidence miss before dispatching a fresh canary', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockListTrainOperations.mockResolvedValue([successfulIdentityOperation]);
+    mockListBaseCanaryEvidenceBySha.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+        payload: expect.objectContaining({
+          decision: 'MISS',
+          reason: 'no_exact_sha_evidence',
+          action: 'fresh_validation'
+        })
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ gate_contract: JSON.stringify(gateContract) })
+    );
+    expect(mockPublishReleaseBusMetrics).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not duplicate a lookup metric after the durable decision already exists', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE = 'true';
+    mockListTrainOperations.mockResolvedValue([successfulIdentityOperation]);
+    mockListBaseCanaryEvidenceBySha.mockResolvedValue([]);
+    mockAddEvidence.mockResolvedValue(false);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockPublishReleaseBusMetrics).not.toHaveBeenCalled();
+    expect(mockAppendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED'
+      }),
+      expect.anything()
     );
   });
 
@@ -1469,6 +1634,40 @@ describe('frontend base canary', () => {
     expect(mockAddEvidence).toHaveBeenCalledWith(
       expect.objectContaining({
         evidenceType: 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+      }),
+      { connection: { transaction: 'test' } }
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({ gate_contract: JSON.stringify(gateContract) })
+    );
+  });
+
+  it('dispatches a fresh canary and reports a miss in shadow mode', async () => {
+    process.env.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW = 'true';
+    mockListTrainOperations.mockResolvedValue([successfulIdentityOperation]);
+    mockListBaseCanaryEvidenceBySha.mockResolvedValue([]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({ status: 'DISPATCHED' });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING'
+    });
+
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_DECIDED',
+        payload: expect.objectContaining({
+          decision: 'MISS',
+          reason: 'no_exact_sha_evidence',
+          action: 'fresh_validation'
+        })
       }),
       { connection: { transaction: 'test' } }
     );
