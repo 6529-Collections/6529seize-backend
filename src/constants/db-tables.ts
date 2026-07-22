@@ -196,6 +196,24 @@ export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';
 export const MENTION_ALIASES_TABLE = 'mention_aliases';
 export const MENTION_ALIAS_MEMBERS_TABLE = 'mention_alias_members';
+export const COMPETITIONS_TABLE = 'competitions';
+export const COMPETITION_CONFIG_VERSIONS_TABLE = 'competition_config_versions';
+export const COMPETITION_ENTRIES_TABLE = 'competition_entries';
+export const COMPETITION_CAPABILITIES_TABLE = 'competition_capabilities';
+export const COMPETITION_LIFECYCLE_EVENTS_TABLE =
+  'competition_lifecycle_events';
+export const COMPETITION_VOTES_TABLE = 'competition_votes';
+export const COMPETITION_LEADERBOARD_ENTRIES_TABLE =
+  'competition_leaderboard_entries';
+export const COMPETITION_DECISIONS_TABLE = 'competition_decisions';
+export const COMPETITION_DECISION_WINNERS_TABLE =
+  'competition_decision_winners';
+export const COMPETITION_OUTCOMES_TABLE = 'competition_outcomes';
+export const COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
+  'competition_outcome_distribution_items';
+export const COMPETITION_PAUSES_TABLE = 'competition_pauses';
+export const COMPETITION_PARITY_OBSERVATIONS_TABLE =
+  'competition_parity_observations';
 export const ACTIVITY_EVENTS_TABLE = 'activity_events';
 export const XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX = 'xtdh_token_grant_stats_';
 export const XTDH_TOKEN_STATS_TABLE_PREFIX = 'xtdh_token_stats_';

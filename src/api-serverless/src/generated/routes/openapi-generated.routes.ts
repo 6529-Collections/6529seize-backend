@@ -5,6 +5,8 @@ import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth'
 import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
+import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
+import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetDmDropsUnread } from '@/api/dm-drops/dm-drops.handlers';
 import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
@@ -640,6 +642,160 @@ router.get(
     res: Response<ApiResponse<SearchDropsInWaveV2Response>>
   ) => {
     res.send(await handleSearchDropsInWaveV2(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetWaveHubV3Request,
+    res: Response<ApiResponse<GetWaveHubV3Response>>
+  ) => {
+    res.send(await handleGetWaveHubV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListWaveCompetitionsV3Request,
+    res: Response<ApiResponse<ListWaveCompetitionsV3Response>>
+  ) => {
+    res.send(await handleListWaveCompetitionsV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetWaveCompetitionV3Request,
+    res: Response<ApiResponse<GetWaveCompetitionV3Response>>
+  ) => {
+    res.send(await handleGetWaveCompetitionV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/decisions',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionDecisionsV3Request,
+    res: Response<ApiResponse<ListCompetitionDecisionsV3Response>>
+  ) => {
+    res.send(await handleListCompetitionDecisionsV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionEntriesV3Request,
+    res: Response<ApiResponse<ListCompetitionEntriesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionEntriesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetCompetitionEntryV3Request,
+    res: Response<ApiResponse<GetCompetitionEntryV3Response>>
+  ) => {
+    res.send(await handleGetCompetitionEntryV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id/votes',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionEntryVotesV3Request,
+    res: Response<ApiResponse<ListCompetitionEntryVotesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionEntryVotesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/leaderboard',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionLeaderboardV3Request,
+    res: Response<ApiResponse<ListCompetitionLeaderboardV3Response>>
+  ) => {
+    res.send(await handleListCompetitionLeaderboardV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/outcomes',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionOutcomesV3Request,
+    res: Response<ApiResponse<ListCompetitionOutcomesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionOutcomesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/outcomes/:outcome_id/distribution',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionOutcomeDistributionV3Request,
+    res: Response<ApiResponse<ListCompetitionOutcomeDistributionV3Response>>
+  ) => {
+    res.send(await handleListCompetitionOutcomeDistributionV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/pauses',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionPausesV3Request,
+    res: Response<ApiResponse<ListCompetitionPausesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionPausesV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/versions',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionVersionsV3Request,
+    res: Response<ApiResponse<ListCompetitionVersionsV3Response>>
+  ) => {
+    res.send(await handleListCompetitionVersionsV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/voters',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionVotersV3Request,
+    res: Response<ApiResponse<ListCompetitionVotersV3Response>>
+  ) => {
+    res.send(await handleListCompetitionVotersV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/winners',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionWinnersV3Request,
+    res: Response<ApiResponse<ListCompetitionWinnersV3Response>>
+  ) => {
+    res.send(await handleListCompetitionWinnersV3(req));
   }
 );
 

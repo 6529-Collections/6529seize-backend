@@ -638,6 +638,9 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
     workflow_run_id: string;
     phase: 'lint' | 'typecheck' | 'unit_tests' | 'build' | 'complete';
     status: 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+    failure_class: 'SOURCE' | 'INFRASTRUCTURE_TRANSIENT' | 'UNKNOWN' | null;
+    failure_phase: 'dependency_install' | 'gate' | null;
+    retryable: boolean;
     stages: Array<{
       name: 'lint' | 'typecheck' | 'unit_tests' | 'build';
       status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'SKIPPED';
@@ -670,6 +673,9 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
   const reportContent = {
     phase: body.phase,
     status: body.status,
+    failure_class: body.failure_class,
+    failure_phase: body.failure_phase,
+    retryable: body.retryable,
     stages: body.stages,
     jest: body.jest,
     summary: body.summary
@@ -744,6 +750,9 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
         const persistedContent = {
           phase: existingGateReport.phase,
           status: existingGateReport.status,
+          failure_class: existingGateReport.failure_class ?? null,
+          failure_phase: existingGateReport.failure_phase ?? null,
+          retryable: existingGateReport.retryable === true,
           stages: existingGateReport.stages,
           jest: existingGateReport.jest,
           summary: existingGateReport.summary ?? null
@@ -784,6 +793,9 @@ deployRoutes.post('/release-bus/report-progress', async (req, res) => {
             operation_key: body.operation_key,
             phase: body.phase,
             status: body.status,
+            failure_class: body.failure_class,
+            failure_phase: body.failure_phase,
+            retryable: body.retryable,
             failed_test_suites: body.jest?.num_failed_test_suites ?? 0,
             failed_tests: body.jest?.num_failed_tests ?? 0,
             summary: body.summary
