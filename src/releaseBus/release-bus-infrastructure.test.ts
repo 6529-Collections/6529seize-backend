@@ -68,6 +68,14 @@ describe('release bus infrastructure contract', () => {
       preflightWorkflow.indexOf('\n  typecheck:'),
       preflightWorkflow.indexOf('\n  tests:')
     );
+    const testsJob = preflightWorkflow.slice(
+      preflightWorkflow.indexOf('\n  tests:'),
+      preflightWorkflow.indexOf('\n  package:')
+    );
+    const packageJob = preflightWorkflow.slice(
+      preflightWorkflow.indexOf('\n  package:'),
+      preflightWorkflow.indexOf('\n  aggregate:')
+    );
     const aggregateJob = preflightWorkflow.slice(
       preflightWorkflow.indexOf('\n  aggregate:')
     );
@@ -93,6 +101,22 @@ describe('release bus infrastructure contract', () => {
       'npm test -- --maxWorkers=2 --json --outputFile='
     );
     expect(preflightWorkflow).not.toContain('--runInBand');
+    expect(isolationWorkflow).toContain('npm test -- --maxWorkers=2');
+    expect(isolationWorkflow).not.toContain('--runInBand');
+    expect(testsJob.indexOf(installCommand)).toBeGreaterThan(-1);
+    expect(testsJob.indexOf('npm test -- --maxWorkers=2')).toBeGreaterThan(
+      testsJob.indexOf(installCommand)
+    );
+    expect(packageJob).toContain('package-lock.json');
+    expect(packageJob.indexOf('- *install-root')).toBeGreaterThan(-1);
+    expect(
+      packageJob.indexOf('Install frozen selected-unit dependencies')
+    ).toBeGreaterThan(packageJob.indexOf('- *install-root'));
+    expect(
+      packageJob.indexOf('npm --prefix "$package_dir" run build')
+    ).toBeGreaterThan(
+      packageJob.indexOf('Install frozen selected-unit dependencies')
+    );
     expect(preflightWorkflow).toContain(
       'test "$TEST_RESULT" = success -a "$PACKAGE_RESULT" = success'
     );
