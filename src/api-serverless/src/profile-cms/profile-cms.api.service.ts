@@ -10,6 +10,7 @@ import {
 } from '@/entities/IProfileCmsPointerEvent';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
@@ -47,9 +48,14 @@ import {
   profileCmsStorageReceiptVerifier
 } from '@/profile-cms/profile-cms-storage';
 import {
+  canonicalizeJson,
   cmsPackageSchema,
   CmsPackageV1,
+  CmsSignatureEnvelopeV1,
+  CmsStorageReceiptV1,
   CmsValidationResultV1,
+  computeCmsPackageHash,
+  toPackageHashInput,
   validateCmsPackageV1
 } from '@/profile-cms/protocol/v1';
 import { RequestContext } from '@/request.context';
@@ -59,6 +65,8 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '@/api/identities/identity.fetcher';
+import { ArweaveFileUploader, arweaveFileUploader } from '@/arweave';
+import { Logger } from '@/logging';
 
 export interface SaveProfileCmsPackageDraftRequest {
   readonly profile_id: string;
@@ -90,6 +98,10 @@ export interface RollbackProfileCmsPackageRequest {
 
 export interface ArchiveProfileCmsPackageRequest {
   readonly expected_package_hash?: string;
+}
+
+export interface ProfileCmsPackageStorageUploadResponse {
+  readonly receipt: CmsStorageReceiptV1;
 }
 
 export interface ProfileCmsPackageResponse {
@@ -161,6 +173,8 @@ interface ProfileHandleIdentity {
 
 const PROFILE_CMS_PUBLISH_MAX_DEADLINE_MS = 15 * 60 * 1000;
 
+const logger = Logger.get('ProfileCmsApiService');
+
 export class ProfileCmsApiService {
   constructor(
     private readonly packagesDb: ProfileCmsPackagesDb,
@@ -168,7 +182,8 @@ export class ProfileCmsApiService {
     private readonly pointerEventsDb: ProfileCmsPointerEventsDb,
     private readonly publishSignaturesDb: ProfileCmsPublishSignaturesDb,
     private readonly storageReceiptVerifier: ProfileCmsStorageReceiptVerifier,
-    private readonly publishSignatureVerifier = verifyProfileCmsPublishSignature
+    private readonly publishSignatureVerifier = verifyProfileCmsPublishSignature,
+    private readonly arweaveUploader: ArweaveFileUploader = arweaveFileUploader
   ) {}
 
   async saveDraft(
@@ -301,38 +316,13 @@ export class ProfileCmsApiService {
     this.assertPublishSignatureRequest(request);
     this.assertPublishDeadline(request.deadline);
 
-    const validationResult = validateCmsPackageV1(entity.cms_package, {
-      allowFixtureSignatures: false,
-      allowFixtureStorage: false,
-      enforceHashes: true
-    });
-
-    if (!validationResult.valid) {
-      await this.markPublishFailed(
-        entity.id,
-        validationResult,
-        this.getValidationErrorMessage(validationResult),
-        ctx
-      );
-      throw new BadRequestException('CMS package is not valid for publish');
-    }
-
-    const cmsPackage = entity.cms_package as CmsPackageV1;
-    const storageValidation =
-      this.storageReceiptVerifier.validateForPublish(cmsPackage);
-    if (!storageValidation.valid || !storageValidation.canonical_receipt) {
-      await this.markPublishFailed(
-        entity.id,
-        validationResult,
-        storageValidation.reason ?? 'storage_receipt_invalid',
-        ctx
-      );
-      throw new BadRequestException(
-        `CMS package storage receipt is not valid for publish: ${
-          storageValidation.reason ?? 'unknown'
-        }`
-      );
-    }
+    // Verify the EIP-712 request signature FIRST. It derives everything from
+    // the entity + request (via the client-signed canonical storage receipt)
+    // and does not depend on the validity of the stored package's fixture
+    // placeholders.
+    const storedPackage = this.parsePackageOrThrow(entity.cms_package);
+    const signedCanonicalReceipt =
+      this.getSignedCanonicalReceiptOrThrow(storedPackage);
 
     const profile = await this.getProfileIdentityOrThrow(
       entity.profile_id,
@@ -350,9 +340,9 @@ export class ProfileCmsApiService {
         payloadHash: entity.payload_hash,
         packageHash: entity.package_hash,
         primaryPath: entity.primary_path,
-        storageProvider: storageValidation.canonical_receipt.provider,
-        storageUri: storageValidation.canonical_receipt.uri,
-        storageContentHash: storageValidation.canonical_receipt.content_hash,
+        storageProvider: signedCanonicalReceipt.provider,
+        storageUri: signedCanonicalReceipt.uri,
+        storageContentHash: signedCanonicalReceipt.content_hash,
         deadline: request.deadline
       }
     });
@@ -361,6 +351,65 @@ export class ProfileCmsApiService {
       signatureVerification.signer_address,
       profile
     );
+
+    // Rebuild the package the server will serve: discard client-provided
+    // fixture signatures/storage and replace them with the real, server-
+    // verified signature envelope and the real decentralized storage
+    // receipt(s). The hash preimage (toPackageHashInput) strips signatures and
+    // storage, so package_hash MUST remain unchanged.
+    const rebuiltPackage = this.buildRebuiltPublishPackage(
+      storedPackage,
+      signatureVerification,
+      request
+    );
+    if (computeCmsPackageHash(rebuiltPackage) !== entity.package_hash) {
+      await this.markPublishFailed(
+        entity.id,
+        this.buildPublishFailureValidation(entity),
+        'rebuilt_package_hash_mismatch',
+        ctx
+      );
+      throw new BadRequestException(
+        'Rebuilt CMS package hash does not match the stored draft'
+      );
+    }
+
+    // Run production validation against the REBUILT package (never the stored
+    // draft that still carries fixture placeholders).
+    const validationResult = validateCmsPackageV1(rebuiltPackage, {
+      allowFixtureSignatures: false,
+      allowFixtureStorage: false,
+      enforceHashes: true
+    });
+    if (!validationResult.valid) {
+      await this.markPublishFailed(
+        entity.id,
+        validationResult,
+        this.getValidationErrorMessage(validationResult),
+        ctx
+      );
+      throw new BadRequestException('CMS package is not valid for publish');
+    }
+
+    const rebuiltStorageValidation =
+      this.storageReceiptVerifier.validateForPublish(rebuiltPackage);
+    if (
+      !rebuiltStorageValidation.valid ||
+      !rebuiltStorageValidation.canonical_receipt
+    ) {
+      await this.markPublishFailed(
+        entity.id,
+        validationResult,
+        rebuiltStorageValidation.reason ?? 'storage_receipt_invalid',
+        ctx
+      );
+      throw new BadRequestException(
+        `CMS package storage receipt is not valid for publish: ${
+          rebuiltStorageValidation.reason ?? 'unknown'
+        }`
+      );
+    }
+    const rebuiltCanonicalReceipt = rebuiltStorageValidation.canonical_receipt;
 
     const publishedAt = Time.currentMillis();
     const publishedByProfileId = this.getLoggedInProfileId(
@@ -400,6 +449,15 @@ export class ProfileCmsApiService {
           publishedAt,
           txCtx
         );
+        // Persist the rebuilt package (real signature envelope + real storage)
+        // so the served primary package carries decentralized verifiability.
+        await this.persistRebuiltPublishPackage(
+          lockedEntity.id,
+          rebuiltPackage,
+          rebuiltCanonicalReceipt,
+          publishedAt,
+          txCtx
+        );
         await this.packagesDb.supersedePrimaryForProfile(
           lockedEntity.profile_id,
           lockedEntity.id,
@@ -422,7 +480,7 @@ export class ProfileCmsApiService {
               actorProfileId: publishedByProfileId,
               signatureVerification,
               signatureRequest: request,
-              storageReceipt: storageValidation.canonical_receipt,
+              storageReceipt: rebuiltCanonicalReceipt,
               createdAt: publishedAt
             }),
             ...(previousPrimary
@@ -434,7 +492,7 @@ export class ProfileCmsApiService {
                     actorProfileId: publishedByProfileId,
                     signatureVerification,
                     signatureRequest: request,
-                    storageReceipt: storageValidation.canonical_receipt,
+                    storageReceipt: rebuiltCanonicalReceipt,
                     createdAt: publishedAt
                   })
                 ]
@@ -446,7 +504,7 @@ export class ProfileCmsApiService {
               actorProfileId: publishedByProfileId,
               signatureVerification,
               signatureRequest: request,
-              storageReceipt: storageValidation.canonical_receipt,
+              storageReceipt: rebuiltCanonicalReceipt,
               createdAt: publishedAt
             })
           ],
@@ -599,6 +657,170 @@ export class ProfileCmsApiService {
       }
     );
     return this.toPackageResponse(await this.getPackageEntityOrThrow(id, ctx));
+  }
+
+  async uploadToStorage(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageStorageUploadResponse> {
+    const entity = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    this.assertDraftCanBePublished(entity);
+
+    const cmsPackage = this.parsePackageOrThrow(entity.cms_package);
+    this.assertStoredPackageHashMatches(cmsPackage, entity);
+
+    const existingReceipt = this.findCanonicalArweaveReceipt(
+      cmsPackage,
+      entity.package_hash
+    );
+    if (existingReceipt) {
+      return { receipt: existingReceipt };
+    }
+
+    const canonicalBytes = Buffer.from(
+      canonicalizeJson(toPackageHashInput(cmsPackage)),
+      'utf8'
+    );
+    const transactionId =
+      await this.uploadCanonicalJsonToArweave(canonicalBytes);
+
+    const receipt: CmsStorageReceiptV1 = {
+      provider: 'arweave',
+      uri: `ar://${transactionId}`,
+      content_hash: entity.package_hash,
+      provider_content_id: transactionId,
+      canonical: true,
+      recorded_at: this.getCurrentIsoDate()
+    };
+
+    return this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        const lockedEntity = await this.packagesDb.findByIdForUpdate(
+          entity.id,
+          txCtx
+        );
+        if (!lockedEntity) {
+          throw new NotFoundException(
+            `Profile CMS package ${entity.id} was not found`
+          );
+        }
+        this.assertDraftCanBePublished(lockedEntity);
+        const lockedPackage = this.parsePackageOrThrow(
+          lockedEntity.cms_package
+        );
+        this.assertStoredPackageHashMatches(lockedPackage, lockedEntity);
+        if (lockedEntity.package_hash !== entity.package_hash) {
+          throw new BadRequestException(
+            'CMS package hash does not match the stored draft; refusing to upload'
+          );
+        }
+        const concurrentReceipt = this.findCanonicalArweaveReceipt(
+          lockedPackage,
+          lockedEntity.package_hash
+        );
+        if (concurrentReceipt) {
+          return { receipt: concurrentReceipt };
+        }
+        await this.persistStorageReceipt(
+          lockedEntity,
+          lockedPackage,
+          receipt,
+          txCtx
+        );
+        return { receipt };
+      }
+    );
+  }
+
+  private assertStoredPackageHashMatches(
+    cmsPackage: CmsPackageV1,
+    entity: ProfileCmsPackageEntity
+  ): void {
+    if (computeCmsPackageHash(cmsPackage) !== entity.package_hash) {
+      throw new BadRequestException(
+        'CMS package hash does not match the stored draft; refusing to upload'
+      );
+    }
+  }
+
+  private findCanonicalArweaveReceipt(
+    cmsPackage: CmsPackageV1,
+    packageHash: string
+  ): CmsStorageReceiptV1 | undefined {
+    return cmsPackage.storage.find(
+      (receipt) =>
+        receipt.provider === 'arweave' &&
+        receipt.canonical &&
+        receipt.content_hash === packageHash
+    );
+  }
+
+  private async uploadCanonicalJsonToArweave(
+    fileBuffer: Buffer
+  ): Promise<string> {
+    if (!process.env.ARWEAVE_KEY) {
+      throw new CustomApiCompliantException(
+        500,
+        'Arweave storage is not configured'
+      );
+    }
+    let transactionId: string;
+    try {
+      ({ transaction_id: transactionId } =
+        await this.arweaveUploader.uploadFileWithTransactionId(
+          fileBuffer,
+          'application/json'
+        ));
+    } catch (error) {
+      logger.error(`Arweave upload failed: ${error}`);
+      throw new CustomApiCompliantException(
+        502,
+        'Failed to upload CMS package to Arweave storage'
+      );
+    }
+    if (!isLikelyArweaveTransactionId(transactionId)) {
+      logger.error(
+        `Arweave upload returned an unexpected transaction id: ${transactionId}`
+      );
+      throw new CustomApiCompliantException(
+        502,
+        'Failed to upload CMS package to Arweave storage'
+      );
+    }
+    return transactionId;
+  }
+
+  private async persistStorageReceipt(
+    entity: ProfileCmsPackageEntity,
+    cmsPackage: CmsPackageV1,
+    receipt: CmsStorageReceiptV1,
+    ctx: RequestContext
+  ): Promise<void> {
+    const otherReceipts = cmsPackage.storage.filter(
+      (existing) => !(existing.provider === 'arweave' && existing.canonical)
+    );
+    const updatedPackage: CmsPackageV1 = {
+      ...cmsPackage,
+      storage: [...otherReceipts, receipt]
+    };
+    await this.packagesDb.updateStorageReceipt(
+      {
+        id: entity.id,
+        cms_package: updatedPackage,
+        storage_receipts: updatedPackage.storage,
+        storage_provider: receipt.provider,
+        storage_uri: receipt.uri,
+        storage_content_hash: receipt.content_hash,
+        storage_provider_content_id: receipt.provider_content_id ?? null,
+        storage_recorded_at: receipt.recorded_at,
+        storage_pinned: receipt.pinned ?? null,
+        storage_canonical: receipt.canonical ?? null,
+        updated_at: Time.currentMillis()
+      },
+      ctx
+    );
   }
 
   async exportPackage(
@@ -768,6 +990,97 @@ export class ProfileCmsApiService {
       validationResult,
       validationError,
       failedAt,
+      ctx
+    );
+  }
+
+  private buildPublishFailureValidation(
+    entity: ProfileCmsPackageEntity
+  ): CmsValidationResultV1 {
+    return validateCmsPackageV1(entity.cms_package, {
+      allowFixtureSignatures: false,
+      allowFixtureStorage: false,
+      enforceHashes: true
+    });
+  }
+
+  private getSignedCanonicalReceiptOrThrow(
+    storedPackage: CmsPackageV1
+  ): CmsStorageReceiptV1 {
+    const canonicalReceipts = storedPackage.storage.filter(
+      (receipt) => receipt.canonical
+    );
+    if (canonicalReceipts.length !== 1) {
+      throw new BadRequestException(
+        'CMS package must have exactly one canonical storage receipt to publish'
+      );
+    }
+    return canonicalReceipts[0];
+  }
+
+  private buildRebuiltPublishPackage(
+    storedPackage: CmsPackageV1,
+    signatureVerification: ProfileCmsPublishSignatureVerificationResult,
+    signatureRequest: ProfileCmsPublishSignatureRequest
+  ): CmsPackageV1 {
+    if (!signatureVerification.signer_address) {
+      throw new BadRequestException('CMS publish signature signer is missing');
+    }
+    const deepCopy = JSON.parse(JSON.stringify(storedPackage)) as CmsPackageV1;
+    return {
+      ...deepCopy,
+      signatures: [
+        this.buildPublishSignatureEnvelope(
+          signatureVerification,
+          signatureRequest
+        )
+      ],
+      // Drop every fixture-provider receipt; keep the real receipts (including
+      // the real canonical one the storage validator will re-check).
+      storage: deepCopy.storage.filter(
+        (receipt) => receipt.provider !== 'fixture'
+      )
+    };
+  }
+
+  private buildPublishSignatureEnvelope(
+    signatureVerification: ProfileCmsPublishSignatureVerificationResult,
+    signatureRequest: ProfileCmsPublishSignatureRequest
+  ): CmsSignatureEnvelopeV1 {
+    return {
+      type: 'eip712',
+      signer: signatureVerification.signer_address as string,
+      signature: signatureRequest.signature,
+      signed_at: this.getCurrentIsoDate(),
+      domain: {
+        ...signatureVerification.typed_data.domain,
+        typed_data_hash: signatureVerification.typed_data_hash
+      }
+    };
+  }
+
+  private async persistRebuiltPublishPackage(
+    id: string,
+    rebuiltPackage: CmsPackageV1,
+    canonicalReceipt: CmsStorageReceiptV1,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.packagesDb.updateStorageReceipt(
+      {
+        id,
+        cms_package: rebuiltPackage,
+        storage_receipts: rebuiltPackage.storage,
+        storage_provider: canonicalReceipt.provider,
+        storage_uri: canonicalReceipt.uri,
+        storage_content_hash: canonicalReceipt.content_hash,
+        storage_provider_content_id:
+          canonicalReceipt.provider_content_id ?? null,
+        storage_recorded_at: canonicalReceipt.recorded_at,
+        storage_pinned: canonicalReceipt.pinned ?? null,
+        storage_canonical: canonicalReceipt.canonical ?? null,
+        updated_at: now
+      },
       ctx
     );
   }
@@ -1245,6 +1558,10 @@ export const profileCmsApiService = new ProfileCmsApiService(
 
 function normalizeWallet(wallet: string | null | undefined): string | null {
   return typeof wallet === 'string' ? wallet.toLowerCase() : null;
+}
+
+function isLikelyArweaveTransactionId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{43}$/.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

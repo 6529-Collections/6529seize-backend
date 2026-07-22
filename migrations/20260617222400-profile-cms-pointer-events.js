@@ -4,7 +4,14 @@ const path = require('path');
 async function runSqlFile(db, fileName) {
   const filePath = path.join(__dirname, 'sqls', fileName);
   const data = fs.readFileSync(filePath, { encoding: 'utf8' });
-  await db.runSql(data);
+  const statements = data
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+
+  for (const statement of statements) {
+    await db.runSql(statement);
+  }
 }
 
 exports.up = async function (db) {

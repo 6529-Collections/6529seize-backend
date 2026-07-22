@@ -48,6 +48,7 @@ import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfil
 import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
+import { ApiProfileCmsPackageStorageUploadResult } from '@/api/generated/models/ApiProfileCmsPackageStorageUploadResult';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
@@ -309,6 +310,22 @@ export type RollbackProfileCmsPackageRequest = Request<
   ApiResponse<RollbackProfileCmsPackageResponse>,
   ApiRollbackProfileCmsPackageRequest,
   RollbackProfileCmsPackageQuery,
+  Record<string, never>
+>;
+
+export interface UploadProfileCmsPackageStoragePathParams {
+  "id": string;
+}
+
+export type UploadProfileCmsPackageStorageQuery = Record<string, never>;
+
+export type UploadProfileCmsPackageStorageResponse = ApiProfileCmsPackageStorageUploadResult;
+
+export type UploadProfileCmsPackageStorageRequest = Request<
+  UploadProfileCmsPackageStoragePathParams,
+  ApiResponse<UploadProfileCmsPackageStorageResponse>,
+  never,
+  UploadProfileCmsPackageStorageQuery,
   Record<string, never>
 >;
 

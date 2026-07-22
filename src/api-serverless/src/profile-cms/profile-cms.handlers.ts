@@ -6,6 +6,7 @@ import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/
 import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
 import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
+import { ApiProfileCmsPackageStorageUploadResult } from '@/api/generated/models/ApiProfileCmsPackageStorageUploadResult';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
@@ -25,6 +26,7 @@ import {
   PublishProfileCmsPackageRequest,
   RollbackProfileCmsPackageRequest,
   SaveProfileCmsPackageDraftRequest,
+  UploadProfileCmsPackageStorageRequest,
   ValidateProfileCmsAgentPatchRequest,
   ValidateProfileCmsPackageRequest
 } from '@/api/generated/routes/operations';
@@ -190,6 +192,20 @@ export async function handleValidateProfileCmsAgentPatch(
     body,
     ctx
   ) as unknown as Promise<ApiProfileCmsAgentPatchValidationResult>;
+}
+
+export async function handleUploadProfileCmsPackageStorage(
+  req: UploadProfileCmsPackageStorageRequest
+): Promise<ApiProfileCmsPackageStorageUploadResult> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const ctx = await getRequestContext(req);
+  return profileCmsApiService.uploadToStorage(
+    id,
+    ctx
+  ) as unknown as Promise<ApiProfileCmsPackageStorageUploadResult>;
 }
 
 export async function handlePublishProfileCmsPackage(
