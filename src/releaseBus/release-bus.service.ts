@@ -52,6 +52,14 @@ export type FreezeTrainInput = {
   readonly allowShadowDependencyEvidence?: boolean;
 };
 
+export class ReleaseBusHistoryResetBlockedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'ReleaseBusHistoryResetBlockedError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 function normalizeDeployPlan(
   plan: ReleaseDeployPlan | null
 ): ReleaseDeployPlan | null {
@@ -801,6 +809,79 @@ export class ReleaseBusService {
         payload: { scope, reason }
       },
       {}
+    );
+  }
+
+  public async pruneTerminalHistory(
+    cutoffAt: number,
+    batchSize = 100
+  ): Promise<{ trains: number; candidates: number }> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) =>
+        this.repository.pruneTerminalHistory(cutoffAt, batchSize, {
+          connection
+        })
+    );
+  }
+
+  public async resetExperimentalHistory(
+    reason: string,
+    actor: string,
+    resetId: string
+  ): Promise<{ reset_at: number; actor: string; reused: boolean }> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        const controls = await this.repository.listControls(ctx, true);
+        const priorReset = await this.repository.findExperimentalHistoryReset(
+          resetId,
+          ctx
+        );
+        if (priorReset) {
+          return {
+            reset_at: Number(priorReset.created_at),
+            actor: priorReset.github_actor ?? actor,
+            reused: true
+          };
+        }
+        if (!controls.every((control) => Boolean(control.paused))) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'All Release Bus controls must be paused before reset'
+          );
+        }
+        if (await this.repository.findActiveTrain(ctx)) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'An active release train blocks history reset'
+          );
+        }
+        if (await this.repository.findActiveOperation(ctx)) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'An active release operation blocks history reset'
+          );
+        }
+        const lanes = await this.repository.listLanes(ctx, true);
+        if (
+          lanes.some(
+            (lane) =>
+              lane.train_id !== null ||
+              lane.lease_owner !== null ||
+              lane.lease_token !== null ||
+              lane.heartbeat_at !== null ||
+              lane.expires_at !== null
+          )
+        ) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'An owned Release Bus lane blocks history reset'
+          );
+        }
+        const resetAt = await this.repository.resetExperimentalHistory(
+          reason,
+          actor,
+          resetId,
+          ctx
+        );
+        return { reset_at: resetAt, actor, reused: false };
+      }
     );
   }
 

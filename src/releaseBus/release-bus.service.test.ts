@@ -417,3 +417,182 @@ describe('ReleaseBusService break glass', () => {
     expect(calls).toEqual(['lock-controls', 'pause', 'audit']);
   });
 });
+
+describe('ReleaseBusService history lifecycle', () => {
+  const pausedControls = [
+    { scope: 'ALL', paused: 1 },
+    { scope: 'STAGING', paused: true },
+    { scope: 'PRODUCTION', paused: 1 }
+  ];
+
+  it('prunes terminal history in one transaction', async () => {
+    const connection = { transaction: true };
+    const pruneTerminalHistory = jest.fn().mockResolvedValue({
+      trains: 2,
+      candidates: 3
+    });
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (value: unknown) => unknown
+      ) => callback(connection),
+      pruneTerminalHistory
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).pruneTerminalHistory(1234, 25)
+    ).resolves.toEqual({ trains: 2, candidates: 3 });
+    expect(pruneTerminalHistory).toHaveBeenCalledWith(1234, 25, {
+      connection
+    });
+  });
+
+  it('resets experimental history only after a locked quiescence proof', async () => {
+    const calls: string[] = [];
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (value: unknown) => unknown
+      ) => callback({ transaction: true }),
+      listControls: async (_ctx: unknown, forUpdate: boolean) => {
+        calls.push(`controls:${forUpdate}`);
+        return pausedControls;
+      },
+      findExperimentalHistoryReset: async () => null,
+      findActiveTrain: async () => {
+        calls.push('active-train');
+        return null;
+      },
+      findActiveOperation: async () => {
+        calls.push('active-operation');
+        return null;
+      },
+      listLanes: async (_ctx: unknown, forUpdate: boolean) => {
+        calls.push(`lanes:${forUpdate}`);
+        return [
+          {
+            train_id: null,
+            lease_owner: null,
+            lease_token: null,
+            heartbeat_at: null,
+            expires_at: null
+          }
+        ];
+      },
+      resetExperimentalHistory: async () => {
+        calls.push('reset');
+        return 123456;
+      }
+    } as unknown as ReleaseBusRepository;
+
+    const result = await new ReleaseBusService(
+      repository
+    ).resetExperimentalHistory(
+      'Controlled final go-live reset',
+      'operator',
+      '123e4567-e89b-42d3-a456-426614174001'
+    );
+
+    expect(result.actor).toBe('operator');
+    expect(result.reused).toBe(false);
+    expect(Number.isSafeInteger(result.reset_at)).toBe(true);
+    expect(calls).toEqual([
+      'controls:true',
+      'active-train',
+      'active-operation',
+      'lanes:true',
+      'reset'
+    ]);
+  });
+
+  it.each([
+    {
+      name: 'an unpaused control',
+      controls: [{ scope: 'STAGING', paused: false }],
+      activeTrain: null,
+      activeOperation: null,
+      lanes: [],
+      error: 'controls must be paused'
+    },
+    {
+      name: 'an active train',
+      controls: pausedControls,
+      activeTrain: { id: 'train-active' },
+      activeOperation: null,
+      lanes: [],
+      error: 'active release train'
+    },
+    {
+      name: 'an active operation',
+      controls: pausedControls,
+      activeTrain: null,
+      activeOperation: { id: 'operation-active' },
+      lanes: [],
+      error: 'active release operation'
+    },
+    {
+      name: 'an owned lane',
+      controls: pausedControls,
+      activeTrain: null,
+      activeOperation: null,
+      lanes: [
+        {
+          train_id: 'train-old',
+          lease_owner: null,
+          lease_token: null,
+          heartbeat_at: null,
+          expires_at: null
+        }
+      ],
+      error: 'owned Release Bus lane'
+    }
+  ])('fails closed on $name', async (scenario) => {
+    const resetExperimentalHistory = jest.fn();
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (value: unknown) => unknown
+      ) => callback({ transaction: true }),
+      listControls: async () => scenario.controls,
+      findExperimentalHistoryReset: async () => null,
+      findActiveTrain: async () => scenario.activeTrain,
+      findActiveOperation: async () => scenario.activeOperation,
+      listLanes: async () => scenario.lanes,
+      resetExperimentalHistory
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).resetExperimentalHistory(
+        'Controlled final go-live reset',
+        'operator',
+        '123e4567-e89b-42d3-a456-426614174001'
+      )
+    ).rejects.toThrow(scenario.error);
+    expect(resetExperimentalHistory).not.toHaveBeenCalled();
+  });
+
+  it('returns an already committed reset before rechecking mutable lane state', async () => {
+    const resetExperimentalHistory = jest.fn();
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (value: unknown) => unknown
+      ) => callback({ transaction: true }),
+      listControls: async () => [{ scope: 'STAGING', paused: false }],
+      findExperimentalHistoryReset: async () => ({
+        created_at: 123456,
+        github_actor: 'original-operator'
+      }),
+      resetExperimentalHistory
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).resetExperimentalHistory(
+        'Retry after lost response',
+        'retrying-operator',
+        '123e4567-e89b-42d3-a456-426614174001'
+      )
+    ).resolves.toEqual({
+      reset_at: 123456,
+      actor: 'original-operator',
+      reused: true
+    });
+    expect(resetExperimentalHistory).not.toHaveBeenCalled();
+  });
+});
