@@ -253,6 +253,7 @@ function incidentSummary(
   failedOperation: ReleaseOperationView | null,
   controls: readonly ReleaseBusControlRecord[]
 ) {
+  if (train.status === 'COMPLETED') return null;
   const runningIncident = runningBaseIncident(currentOperation);
   if (runningIncident) return runningIncident;
   if (train.status !== 'FAILED' && !controlPaused(train, controls)) return null;

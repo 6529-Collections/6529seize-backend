@@ -17,6 +17,7 @@ function candidate(status: ReleaseCandidateRecord['status']) {
     production_ready_by_github_login: null,
     production_ready_at: null,
     deploy_plan_json: null,
+    force_fresh_base_canary: false,
     metadata_version: 1,
     current_train_id: null,
     hold_reason: null,
@@ -47,6 +48,7 @@ describe('ReleaseBusService readiness', () => {
         target_lane: 'PRODUCTION',
         dependencies: [],
         deploy_plan: null,
+        force_fresh_base_canary: false,
         actor: 'developer',
         prNumber: 123,
         resolvedDependencies: []
@@ -64,6 +66,7 @@ describe('ReleaseBusService readiness', () => {
         target_lane: 'STAGING',
         dependencies: [],
         deploy_plan: { units: ['api'], edges: [] },
+        force_fresh_base_canary: false,
         actor: 'developer',
         prNumber: 124,
         resolvedDependencies: [
@@ -96,12 +99,14 @@ describe('ReleaseBusService readiness', () => {
         fields: {
           prNumber: number | null;
           deployPlan: ReleaseCandidateRecord['deploy_plan_json'];
+          forceFreshBaseCanary: boolean;
         }
       ) => {
         row = {
           ...row,
           pr_number: fields.prNumber,
           deploy_plan_json: fields.deployPlan,
+          force_fresh_base_canary: fields.forceFreshBaseCanary,
           row_version: row.row_version + 1
         };
       },
@@ -126,6 +131,7 @@ describe('ReleaseBusService readiness', () => {
       target_lane: 'STAGING',
       dependencies: [],
       deploy_plan: { units: ['api'], edges: [] },
+      force_fresh_base_canary: false,
       actor: 'developer',
       prNumber: 321,
       resolvedDependencies: []
@@ -163,6 +169,7 @@ describe('ReleaseBusService readiness', () => {
         target_lane: 'STAGING',
         dependencies: [],
         deploy_plan: null,
+        force_fresh_base_canary: false,
         actor: 'developer',
         prNumber: row.pr_number,
         resolvedDependencies: []
@@ -214,6 +221,7 @@ describe('ReleaseBusService readiness', () => {
       target_lane: 'PRODUCTION',
       dependencies: [],
       deploy_plan: null,
+      force_fresh_base_canary: false,
       actor: 'developer',
       prNumber: row.pr_number,
       resolvedDependencies: []
