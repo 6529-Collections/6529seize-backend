@@ -1,8 +1,34 @@
 import {
   safeGitHubWorkflowLabel,
   sanitizeGitHubWorkflowJobs,
+  workflowRunMatchesOperation,
   type GitHubWorkflowJob
 } from '@/releaseBus/release-bus.github-app';
+
+describe('GitHub workflow operation identity', () => {
+  it('matches only the exact bracketed operation key', () => {
+    const operationKey = 'rb:train-1:r1:preflight:aabbcc:a2';
+
+    expect(
+      workflowRunMatchesOperation(
+        `Preflight backend train train-1 [${operationKey}]`,
+        operationKey
+      )
+    ).toBe(true);
+    expect(
+      workflowRunMatchesOperation(
+        `Preflight backend train train-1 [prefix-${operationKey}]`,
+        operationKey
+      )
+    ).toBe(false);
+    expect(
+      workflowRunMatchesOperation(
+        `Preflight backend train train-1 [${operationKey}-suffix]`,
+        operationKey
+      )
+    ).toBe(false);
+  });
+});
 
 function job(index: number): GitHubWorkflowJob {
   return {

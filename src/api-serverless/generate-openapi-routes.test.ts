@@ -93,6 +93,56 @@ describe('generateOpenApiRouteFiles', () => {
     expect(operations).not.toContain('GetDropsV2Handler');
   });
 
+  it('can isolate operation type imports into stable merge groups', () => {
+    const response = {
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ApiWave' }
+        }
+      }
+    };
+    const document: OpenApiDocument = {
+      paths: {
+        '/v2/waves': {
+          get: {
+            operationId: 'getWavesV2',
+            'x-6529-router': {
+              enabled: true,
+              handler: {
+                import: '@/api/waves/waves-v2.handlers',
+                name: 'handleGetWavesV2'
+              }
+            },
+            responses: { '200': response }
+          }
+        },
+        '/v3/waves/{wave_id}': {
+          get: {
+            operationId: 'getWaveHubV3',
+            'x-6529-router': {
+              enabled: true,
+              typeImportGroup: 'competitions-v3',
+              handler: {
+                import: '@/api/competitions/competitions-v3.handlers',
+                name: 'handleGetWaveHubV3'
+              }
+            },
+            responses: { '200': response }
+          }
+        }
+      }
+    };
+
+    const routes = getFile(document, 'openapi-generated.routes.ts');
+
+    expect(routes).toContain(
+      "import { GetWavesV2Request, GetWavesV2Response } from './operations';"
+    );
+    expect(routes).toContain(
+      "import { GetWaveHubV3Request, GetWaveHubV3Response } from './operations';"
+    );
+  });
+
   it('generates required auth and path params', () => {
     const document: OpenApiDocument = {
       paths: {

@@ -129,6 +129,7 @@ describe('frontend base-canary evidence contract', () => {
           [FRONTEND_GATE_WORKFLOW]: 'workflow',
           'scripts/release-bus-frontend-gate.sh': 'gate',
           'scripts/release-bus-gate-evidence.cjs': 'evidence',
+          'scripts/release-bus-install-dependencies.cjs': 'installer',
           'scripts/release-bus-report-progress.mjs': 'reporter'
         },
         gateMode: 'sharded',
@@ -136,7 +137,7 @@ describe('frontend base-canary evidence contract', () => {
       })
     ).toMatchObject({
       gate_fingerprint:
-        '78870a761c2c085d2ca6a9386a3c6e77ccda5348667526972718a5832c530b49',
+        '5487ed669eda658ff826089662d5ec558f59e8883b0070554e3d052b4ef79f3d',
       workflow_digest:
         'da7f739f627198465eeab537a6f7a435dc4a0c332f9e4a8462293eb3f4ab7ee0'
     });

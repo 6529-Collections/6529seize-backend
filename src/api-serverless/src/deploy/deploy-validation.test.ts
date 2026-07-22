@@ -301,4 +301,43 @@ describe('deploy.validation', () => {
       ReleaseBusProgressReportBodySchema.validate(invalid).error
     ).toBeDefined();
   });
+
+  it('accepts only dependency infrastructure failures as retryable', () => {
+    const base = {
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:key',
+      workflow_run_id: '12345',
+      phase: 'complete',
+      status: 'FAILED',
+      stages: [],
+      jest: null,
+      summary: null
+    };
+
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...base,
+        failure_class: 'INFRASTRUCTURE_TRANSIENT',
+        failure_phase: 'dependency_install',
+        retryable: true
+      }).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...base,
+        failure_class: 'SOURCE',
+        failure_phase: 'gate',
+        retryable: true
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...base,
+        status: 'SUCCEEDED',
+        failure_class: 'INFRASTRUCTURE_TRANSIENT',
+        failure_phase: 'dependency_install',
+        retryable: true
+      }).error
+    ).toBeDefined();
+  });
 });
