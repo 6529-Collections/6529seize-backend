@@ -2,12 +2,35 @@ import { topologicallySort } from '@/releaseBus/release-bus.dag';
 import deployConfig from '@/config/deploy-services.json';
 import { buildReleaseOperationKey } from '@/releaseBus/release-bus.idempotency';
 import {
+  getBaseCanaryEvidenceConfig,
   getReleaseBusMode,
   RELEASE_BUS_LANE_TTL_MS
 } from '@/releaseBus/release-bus.config';
-import { releaseBusGitHubApp } from '@/releaseBus/release-bus.github-app';
+import {
+  buildFrontendGateContract,
+  evaluateBaseCanaryEvidence,
+  FRONTEND_GATE_BASE_FILES,
+  FRONTEND_GATE_TOOLING_FILES,
+  FRONTEND_GATE_WORKFLOW,
+  type FrontendGateContract,
+  type FrontendGateMode
+} from '@/releaseBus/release-bus.base-canary-evidence';
+import {
+  releaseBusGitHubApp,
+  type GitHubRun,
+  type GitHubWorkflowJob,
+  type GitHubWorkflowStep
+} from '@/releaseBus/release-bus.github-app';
+import {
+  leaseWaitReason,
+  selectCurrentOperation,
+  toOperationView,
+  type ReleaseOperationView,
+  type ReleaseWaitReason
+} from '@/releaseBus/release-bus.observability';
 import {
   releaseBusRepository,
+  type ReleaseBusControlRecord,
   type ReleaseOperationRecord
 } from '@/releaseBus/release-bus.repository';
 import type {
@@ -24,9 +47,18 @@ export type WorkerResult = {
   readonly train_id: string;
   readonly status: string;
   readonly message?: string;
+  readonly wait_reason?: ReleaseWaitReason;
+  readonly current_operation?: ReleaseOperationView | null;
 };
 
 class TerminalReleaseTrainError extends Error {}
+
+class ConcurrentReleaseTrainPhaseError extends Error {
+  public constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, ConcurrentReleaseTrainPhaseError.prototype);
+  }
+}
 
 function metadata(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {
@@ -80,6 +112,109 @@ function workflowResult(
   return 'WAIT';
 }
 
+const FAILURE_CONCLUSIONS = new Set([
+  'action_required',
+  'cancelled',
+  'failure',
+  'startup_failure',
+  'timed_out'
+]);
+
+function boundedWorkflowLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const sanitized = Array.from(value)
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? ' ' : character;
+    })
+    .join('')
+    .trim();
+  return sanitized ? sanitized.slice(0, 500) : null;
+}
+
+function latestTimestamp(values: readonly (string | null | undefined)[]) {
+  const now = Date.now();
+  const timestamps = values
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter((value) => Number.isFinite(value) && value <= now);
+  return timestamps.length > 0 ? Math.max(...timestamps) : null;
+}
+
+export function workflowProgress(run: GitHubRun): Record<string, unknown> {
+  const jobs = run.jobs ?? [];
+  const activeJob = jobs.find((job) => job.status === 'in_progress') ?? null;
+  const activeStep =
+    activeJob?.steps?.find((step) => step.status === 'in_progress') ?? null;
+  const failedJob =
+    jobs.find((job) => FAILURE_CONCLUSIONS.has(job.conclusion ?? '')) ?? null;
+  const failedStep =
+    failedJob?.steps?.find((step) =>
+      FAILURE_CONCLUSIONS.has(step.conclusion ?? '')
+    ) ?? null;
+  const jobTimestamps = jobs.flatMap((job: GitHubWorkflowJob) => [
+    job.started_at,
+    job.completed_at,
+    ...(job.steps ?? []).flatMap((step: GitHubWorkflowStep) => [
+      step.started_at,
+      step.completed_at
+    ])
+  ]);
+  return {
+    url: run.html_url,
+    workflow_status: run.status,
+    workflow_conclusion: run.conclusion,
+    active_job: boundedWorkflowLabel(activeJob?.name),
+    active_step: boundedWorkflowLabel(activeStep?.name),
+    failed_job: boundedWorkflowLabel(failedJob?.name),
+    failed_step: boundedWorkflowLabel(failedStep?.name),
+    last_progress_at: latestTimestamp([
+      run.created_at,
+      run.updated_at,
+      ...jobTimestamps
+    ])
+  };
+}
+
+function validProgressTimestamp(value: unknown, now: number): number | null {
+  let timestamp = Number.NaN;
+  if (typeof value === 'number') timestamp = value;
+  else if (typeof value === 'string') timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp >= 0 && timestamp <= now
+    ? timestamp
+    : null;
+}
+
+export function mergeWorkflowProgress(
+  previousResult: Record<string, unknown>,
+  run: GitHubRun
+): Record<string, unknown> {
+  const currentProgress = workflowProgress(run);
+  const now = Date.now();
+  const timestamps = [
+    validProgressTimestamp(previousResult.last_progress_at, now),
+    validProgressTimestamp(currentProgress.last_progress_at, now)
+  ].filter((value): value is number => value !== null);
+  return {
+    ...previousResult,
+    ...currentProgress,
+    last_progress_at: timestamps.length > 0 ? Math.max(...timestamps) : null
+  };
+}
+
+function meaningfulWorkflowProgressChanged(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): boolean {
+  return [
+    'workflow_status',
+    'workflow_conclusion',
+    'active_job',
+    'active_step',
+    'failed_job',
+    'failed_step'
+  ].some((key) => before[key] !== after[key]);
+}
+
 function githubActionsRunUrl(operation: ReleaseOperationRecord): string | null {
   const result = metadata(operation.result_metadata_json);
   const url = result.url;
@@ -111,6 +246,7 @@ async function dispatchWorkflow(params: {
   readonly environment?: 'orchestration' | 'staging' | 'prod' | null;
   readonly service?: string | null;
   readonly inputs: Record<string, string>;
+  readonly requestMetadata?: Record<string, unknown>;
 }): Promise<ReleaseOperationRecord> {
   const operationKey = buildReleaseOperationKey({
     trainId: params.train.id,
@@ -138,7 +274,8 @@ async function dispatchWorkflow(params: {
       request_metadata_json: {
         workflow: params.workflow,
         ref: params.ref,
-        inputs: params.inputs
+        inputs: params.inputs,
+        ...params.requestMetadata
       },
       result_metadata_json: null,
       started_at: null,
@@ -199,8 +336,9 @@ async function dispatchWorkflow(params: {
   return operation;
 }
 
-async function reconcile(
-  operation: ReleaseOperationRecord
+export async function reconcile(
+  operation: ReleaseOperationRecord,
+  remainingWriteAttempts = 2
 ): Promise<ReleaseOperationRecord> {
   if (!['DISPATCHED', 'RUNNING', 'AMBIGUOUS'].includes(operation.status))
     return operation;
@@ -213,38 +351,66 @@ async function reconcile(
     operation.external_id
   );
   if (!run) return operation;
+  const previousResult = metadata(operation.result_metadata_json);
+  const progress = mergeWorkflowProgress(previousResult, run);
+  let nextStatus: ReleaseOperationRecord['status'];
   if (run.status !== 'completed') {
-    await releaseBusRepository.updateOperation(
-      operation.operation_key,
-      {
-        status: 'RUNNING',
-        externalId: String(run.id),
-        resultMetadata: { url: run.html_url }
-      },
-      {}
-    );
+    nextStatus = 'RUNNING';
   } else if (run.conclusion === 'success') {
-    await releaseBusRepository.updateOperation(
-      operation.operation_key,
-      {
-        status: 'SUCCEEDED',
-        externalId: String(run.id),
-        resultMetadata: { url: run.html_url, head_sha: run.head_sha },
-        completedAt: Date.now()
-      },
-      {}
-    );
+    nextStatus = 'SUCCEEDED';
+    progress.head_sha = run.head_sha;
   } else {
-    await releaseBusRepository.updateOperation(
+    nextStatus = 'FAILED';
+  }
+  const updated = await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const operationUpdated =
+        await releaseBusRepository.updateOperationIfVersion(
+          operation.operation_key,
+          operation.row_version,
+          {
+            status: nextStatus,
+            externalId: String(run.id),
+            resultMetadata: progress,
+            completedAt: run.status === 'completed' ? Date.now() : undefined
+          },
+          context
+        );
+      if (!operationUpdated) return false;
+      if (
+        operation.status !== nextStatus ||
+        meaningfulWorkflowProgressChanged(previousResult, progress)
+      ) {
+        await releaseBusRepository.appendEvent(
+          {
+            trainId: operation.train_id,
+            eventType: 'OPERATION_PROGRESS',
+            payload: {
+              operation_key: operation.operation_key,
+              operation_type: operation.operation_type,
+              status: nextStatus,
+              workflow_url: run.html_url,
+              active_job: progress.active_job,
+              active_step: progress.active_step,
+              failed_job: progress.failed_job,
+              failed_step: progress.failed_step
+            }
+          },
+          context
+        );
+      }
+      return true;
+    }
+  );
+  if (!updated) {
+    const refreshed = await releaseBusRepository.findOperation(
       operation.operation_key,
-      {
-        status: 'FAILED',
-        externalId: String(run.id),
-        resultMetadata: { url: run.html_url, conclusion: run.conclusion },
-        completedAt: Date.now()
-      },
       {}
     );
+    if (!refreshed || remainingWriteAttempts === 0)
+      return refreshed ?? operation;
+    return reconcile(refreshed, remainingWriteAttempts - 1);
   }
   return (await releaseBusRepository.findOperation(
     operation.operation_key,
@@ -261,13 +427,125 @@ async function phaseOperations(
   );
 }
 
+function operationWaitReason(
+  operation: ReleaseOperationView | null
+): ReleaseWaitReason {
+  if (!operation) {
+    return {
+      code: 'OPERATION_RECONCILING',
+      summary: 'Waiting for the next deterministic Release Bus operation.'
+    };
+  }
+  if (operation.health === 'STALLED') {
+    return {
+      code: 'OPERATION_STALLED',
+      summary: `${operation.operation_type} is stalled: ${operation.stalled_reason}.`
+    };
+  }
+  if (operation.phase === 'BASE_CANARY_RUNNING') {
+    return {
+      code: 'GITHUB_WORKFLOW_RUNNING',
+      summary: `Frontend base canary running for staging SHA ${operation.expected_sha ?? 'unknown'}. Candidates have not been tested yet.`
+    };
+  }
+  const external = operation.workflow_url ? ' GitHub Actions workflow' : '';
+  return {
+    code: operation.workflow_url
+      ? 'GITHUB_WORKFLOW_RUNNING'
+      : 'OPERATION_RUNNING',
+    summary: `Waiting for ${operation.operation_type}${external} to complete.`
+  };
+}
+
+async function waitFor(
+  train: ReleaseTrainRecord,
+  status: string,
+  waitReason?: ReleaseWaitReason
+): Promise<WorkerResult> {
+  const operations = await releaseBusRepository.listTrainOperations(
+    train.id,
+    {}
+  );
+  const operation = selectCurrentOperation(operations);
+  const currentOperation = operation ? toOperationView(operation) : null;
+  const reason = waitReason ?? operationWaitReason(currentOperation);
+  const fingerprint = JSON.stringify({
+    code: reason.code,
+    lease: reason.lease?.name ?? null,
+    operation_key: currentOperation?.operation_key ?? null,
+    stalled_reason: currentOperation?.stalled_reason ?? null
+  });
+  const latestEvent = (
+    await releaseBusRepository.listTrainEvents(train.id, 1, {})
+  )[0];
+  const latestPayload = metadata(latestEvent?.payload_json);
+  if (
+    latestEvent?.event_type !== 'TRAIN_WAITING' ||
+    latestPayload.fingerprint !== fingerprint
+  ) {
+    await releaseBusRepository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'TRAIN_WAITING',
+        payload: {
+          fingerprint,
+          phase: currentOperation?.phase ?? status,
+          wait_reason: reason,
+          operation_key: currentOperation?.operation_key ?? null
+        }
+      },
+      {}
+    );
+  }
+  return {
+    decision: 'WAIT',
+    train_id: train.id,
+    status,
+    message: reason.summary,
+    wait_reason: reason,
+    current_operation: currentOperation
+  };
+}
+
+async function updateTrainPhase(
+  train: ReleaseTrainRecord,
+  status: ReleaseTrainRecord['status']
+): Promise<void> {
+  await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const advanced = await releaseBusRepository.advanceTrainPhase(
+        train.id,
+        train.status,
+        train.row_version,
+        status,
+        context
+      );
+      if (!advanced)
+        throw new ConcurrentReleaseTrainPhaseError(
+          `Release train ${train.id} changed concurrently from ${train.status}`
+        );
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'TRAIN_PHASE_CHANGED',
+          payload: { from: train.status, to: status }
+        },
+        context
+      );
+    }
+  );
+}
+
 async function pollPhase(
   train: ReleaseTrainRecord,
   prefix: string
 ): Promise<'PASS' | 'WAIT' | 'FAIL'> {
   const operations = await phaseOperations(train.id, prefix);
   if (operations.length === 0) return 'WAIT';
-  const reconciled = await Promise.all(operations.map(reconcile));
+  const reconciled = await Promise.all(
+    operations.map((operation) => reconcile(operation))
+  );
   if (reconciled.some((operation) => workflowResult(operation) === 'FAIL'))
     return 'FAIL';
   return reconciled.every((operation) => workflowResult(operation) === 'PASS')
@@ -325,15 +603,383 @@ async function beginComposition(
   );
 }
 
-async function advanceFrontendBaseCanary(
+function normalizeArtifactDigest(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/^sha256:/, '').toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+type BaseCanaryEvidenceConfig = {
+  readonly reuse: boolean;
+  readonly shadow: boolean;
+  readonly maxAgeHours: number;
+};
+
+async function resolveBaseCanaryEvidenceConfig(): Promise<BaseCanaryEvidenceConfig> {
+  const deployed = getBaseCanaryEvidenceConfig();
+  try {
+    const [reuseValue, shadowValue, maxAgeValue] = await Promise.all([
+      releaseBusGitHubApp.getActionsVariable(
+        'backend',
+        'RELEASE_BUS_BASE_EVIDENCE_REUSE'
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'backend',
+        'RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW'
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'backend',
+        'RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS'
+      )
+    ]);
+    const toggle = (
+      value: string | null,
+      fallback: boolean
+    ): boolean | null => {
+      if (value === null) return fallback;
+      const normalized = value.toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+      return null;
+    };
+    const reuse = toggle(reuseValue, deployed.reuse);
+    const shadow = toggle(shadowValue, deployed.shadow);
+    const maxAgeHours = Number(maxAgeValue ?? deployed.maxAgeHours);
+    if (
+      reuse === null ||
+      shadow === null ||
+      !Number.isInteger(maxAgeHours) ||
+      maxAgeHours < 1 ||
+      maxAgeHours > 168
+    )
+      return { reuse: false, shadow: false, maxAgeHours: 24 };
+    return { reuse, shadow, maxAgeHours };
+  } catch {
+    return {
+      reuse: false,
+      shadow: false,
+      maxAgeHours: deployed.maxAgeHours
+    };
+  }
+}
+
+function storedFrontendGateContract(
+  operation: ReleaseOperationRecord
+): FrontendGateContract | null {
+  const value = metadata(operation.request_metadata_json).gate_contract;
+  if (!value || typeof value !== 'object') return null;
+  const contract = value as Partial<FrontendGateContract>;
+  if (
+    contract.schema_version !== 1 ||
+    contract.repository !== 'frontend' ||
+    contract.environment !== 'orchestration' ||
+    !/^[a-f0-9]{40}$/.test(contract.base_sha ?? '') ||
+    !/^[a-f0-9]{64}$/.test(contract.gate_fingerprint ?? '') ||
+    !/^[a-f0-9]{40}$/.test(contract.workflow_sha ?? '') ||
+    !/^[a-f0-9]{64}$/.test(contract.workflow_digest ?? '') ||
+    contract.node_version !== '22' ||
+    typeof contract.package_manager !== 'string' ||
+    !['legacy', 'shadow', 'sharded'].includes(contract.gate_mode ?? '') ||
+    ![1, 2, 4].includes(contract.shard_count ?? 0)
+  )
+    return null;
+  return contract as FrontendGateContract;
+}
+
+async function resolveFrontendGateContract(
+  baseSha: string
+): Promise<FrontendGateContract> {
+  const workflowSha = await releaseBusGitHubApp.resolveRef('frontend', 'main');
+  const workflowFiles = [
+    FRONTEND_GATE_WORKFLOW,
+    ...FRONTEND_GATE_TOOLING_FILES
+  ] as const;
+  const [workflowContents, baseContents, modeValue, shardValue] =
+    await Promise.all([
+      Promise.all(
+        workflowFiles.map((file) =>
+          releaseBusGitHubApp.getFileContent('frontend', file, workflowSha)
+        )
+      ),
+      Promise.all(
+        FRONTEND_GATE_BASE_FILES.map((file) =>
+          releaseBusGitHubApp.getFileContent('frontend', file, baseSha)
+        )
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'frontend',
+        'RELEASE_BUS_FRONTEND_GATE_MODE'
+      ),
+      releaseBusGitHubApp.getActionsVariable(
+        'frontend',
+        'FRONTEND_GATE_SHARD_COUNT'
+      )
+    ]);
+  const gateMode = (modeValue ?? 'legacy').toLowerCase();
+  if (!['legacy', 'shadow', 'sharded'].includes(gateMode))
+    throw new Error('Invalid frontend gate mode variable');
+  const shardCount = Number(shardValue ?? 1);
+  if (![1, 2, 4].includes(shardCount))
+    throw new Error('Invalid frontend gate shard count variable');
+  return buildFrontendGateContract({
+    baseSha,
+    workflowSha,
+    workflowFileContents: Object.fromEntries(
+      workflowFiles.map((file, index) => [file, workflowContents[index]])
+    ),
+    baseFileContents: Object.fromEntries(
+      FRONTEND_GATE_BASE_FILES.map((file, index) => [file, baseContents[index]])
+    ),
+    gateMode: gateMode as FrontendGateMode,
+    shardCount: shardCount as 1 | 2 | 4
+  });
+}
+
+async function publishBaseEvidenceLookup(
   train: ReleaseTrainRecord,
-  candidates: readonly ReleaseCandidateRecord[]
-): Promise<'PASS' | 'WAIT' | 'FAIL'> {
-  if (!candidates.some((candidate) => candidate.repository === 'frontend'))
-    return 'PASS';
-  const baseSha = train.frontend_base_sha;
-  if (!baseSha)
-    throw new TerminalReleaseTrainError('Missing frontend base SHA');
+  decision: 'HIT' | 'MISS' | 'INVALIDATED' | 'FORCE_FRESH',
+  reason: string
+): Promise<void> {
+  await publishReleaseBusMetrics([
+    {
+      MetricName: 'BaseCanaryEvidenceLookup',
+      Value: 1,
+      Dimensions: [
+        { Name: 'Lane', Value: train.target_lane },
+        { Name: 'Decision', Value: decision },
+        { Name: 'Reason', Value: reason.slice(0, 100) }
+      ]
+    }
+  ]);
+}
+
+type ReleaseBusMetricDatum = Parameters<
+  typeof publishReleaseBusMetrics
+>[0][number];
+
+function metricLabel(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function baseCanaryMetrics(
+  train: ReleaseTrainRecord,
+  operation: ReleaseOperationRecord,
+  gateReport: Record<string, unknown>,
+  summary: Record<string, unknown> | null
+): ReleaseBusMetricDatum[] {
+  const phaseDurations = metadata(summary?.phase_durations_ms);
+  const operationStartedAt = Number(operation.started_at);
+  const operationCompletedAt = Number(operation.completed_at);
+  const observedOperationDuration = operationCompletedAt - operationStartedAt;
+  const totalDuration =
+    Number.isFinite(observedOperationDuration) && observedOperationDuration >= 0
+      ? observedOperationDuration
+      : Number(phaseDurations.total);
+  const metricData: ReleaseBusMetricDatum[] = [];
+  if (Number.isFinite(totalDuration) && totalDuration >= 0) {
+    metricData.push({
+      MetricName: 'BaseCanaryFreshDurationSeconds',
+      Unit: 'Seconds',
+      Value: totalDuration / 1000,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    });
+  }
+  const shards = Array.isArray(summary?.shards) ? summary.shards : [];
+  const shardDurations: number[] = [];
+  for (const value of shards) {
+    const shard = metadata(value);
+    const duration = Number(shard.duration_ms);
+    if (!Number.isFinite(duration) || duration < 0) continue;
+    shardDurations.push(duration);
+    metricData.push({
+      MetricName: 'BaseCanaryShardDurationSeconds',
+      Unit: 'Seconds',
+      Value: duration / 1000,
+      Dimensions: [
+        { Name: 'Lane', Value: train.target_lane },
+        { Name: 'Shard', Value: metricLabel(shard.coordinate, 'unknown') }
+      ]
+    });
+  }
+  if (shardDurations.length > 0) {
+    metricData.push({
+      MetricName: 'BaseCanaryShardImbalanceSeconds',
+      Unit: 'Seconds',
+      Value: (Math.max(...shardDurations) - Math.min(...shardDurations)) / 1000,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    });
+  }
+  const missing = Array.isArray(summary?.missing_files)
+    ? summary.missing_files.length
+    : 1;
+  const duplicate = Array.isArray(summary?.duplicate_files)
+    ? summary.duplicate_files.length
+    : 1;
+  if (missing + duplicate > 0) {
+    metricData.push({
+      MetricName: 'BaseCanaryCountMismatch',
+      Value: missing + duplicate,
+      Dimensions: [{ Name: 'Lane', Value: train.target_lane }]
+    });
+  }
+  if (operation.status !== 'SUCCEEDED') {
+    const stages = Array.isArray(gateReport.stages) ? gateReport.stages : [];
+    const failed = stages
+      .map(metadata)
+      .find((stage) => stage.status === 'FAILED');
+    metricData.push({
+      MetricName: 'BaseCanaryFailure',
+      Value: 1,
+      Dimensions: [
+        { Name: 'Lane', Value: train.target_lane },
+        { Name: 'Phase', Value: metricLabel(failed?.name, 'workflow') }
+      ]
+    });
+  }
+  return metricData;
+}
+
+async function recordFreshBaseCanaryEvidence(
+  train: ReleaseTrainRecord,
+  operation: ReleaseOperationRecord,
+  maxAgeHours: number
+): Promise<void> {
+  if (!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(operation.status)) return;
+  const contract = storedFrontendGateContract(operation);
+  if (!contract) return;
+  const result = metadata(operation.result_metadata_json);
+  const gateReport = metadata(result.gate_report);
+  const summary =
+    gateReport.summary && typeof gateReport.summary === 'object'
+      ? (gateReport.summary as Record<string, unknown>)
+      : null;
+  const createdAt = Number(
+    gateReport.reported_at ?? operation.completed_at ?? Date.now()
+  );
+  const artifactDigest = normalizeArtifactDigest(
+    summary?.summary_artifact_digest
+  );
+  const inserted = await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const evidenceInserted = await releaseBusRepository.addEvidence(
+        {
+          idempotencyKey: `base-canary-completed:${operation.operation_key}`,
+          trainId: train.id,
+          revision: train.revision,
+          evidenceType: 'BASE_CANARY_COMPLETED',
+          status: operation.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+          sourceSha: contract.base_sha,
+          artifactDigest,
+          evidenceUri:
+            typeof result.url === 'string' ? result.url.slice(0, 1000) : null,
+          metadata: {
+            schema_version: 1,
+            contract,
+            summary,
+            source_operation_key: operation.operation_key,
+            source_run_id: operation.external_id,
+            source_train_id: train.id,
+            created_at: createdAt,
+            expires_at: createdAt + maxAgeHours * 60 * 60 * 1000
+          }
+        },
+        context
+      );
+      if (!evidenceInserted) return false;
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'BASE_CANARY_EVIDENCE_RECORDED',
+          payload: {
+            operation_key: operation.operation_key,
+            run_id: operation.external_id,
+            base_sha: contract.base_sha,
+            gate_fingerprint: contract.gate_fingerprint,
+            fresh_or_reused: 'fresh',
+            status: operation.status
+          }
+        },
+        context
+      );
+      return true;
+    }
+  );
+  if (!inserted) return;
+  const metricData = baseCanaryMetrics(train, operation, gateReport, summary);
+  if (metricData.length > 0) await publishReleaseBusMetrics(metricData);
+}
+
+async function reuseBaseCanaryEvidence(
+  train: ReleaseTrainRecord,
+  contract: FrontendGateContract,
+  evidence: {
+    readonly id: string;
+    readonly train_id: string;
+    readonly revision: number;
+    readonly artifact_digest: string | null;
+    readonly evidence_uri: string | null;
+    readonly created_at: number | string;
+  },
+  sourceMetadata: Record<string, unknown>,
+  eventType: 'BASE_CANARY_EVIDENCE_REUSED' | 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+): Promise<void> {
+  await releaseBusRepository.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const context = { connection };
+      const inserted = await releaseBusRepository.addEvidence(
+        {
+          idempotencyKey: `${eventType.toLowerCase()}:${train.id}:r${train.revision}:${contract.base_sha}`,
+          trainId: train.id,
+          revision: train.revision,
+          evidenceType: eventType,
+          status: 'SUCCEEDED',
+          sourceSha: contract.base_sha,
+          artifactDigest: evidence.artifact_digest,
+          evidenceUri: evidence.evidence_uri,
+          metadata: {
+            schema_version: 1,
+            contract,
+            fresh_or_reused: eventType.endsWith('_REUSED') ? 'reused' : 'fresh',
+            source_evidence_id: evidence.id,
+            source_train_id: evidence.train_id,
+            source_train_revision: evidence.revision,
+            source_run_id: sourceMetadata.source_run_id ?? null,
+            source_created_at: Number(evidence.created_at),
+            source_expires_at: sourceMetadata.expires_at ?? null,
+            reused_at: Date.now()
+          }
+        },
+        context
+      );
+      if (!inserted) return;
+      await releaseBusRepository.appendEvent(
+        {
+          trainId: train.id,
+          eventType,
+          payload: {
+            status: eventType.endsWith('_REUSED') ? 'reused' : 'would-reuse',
+            base_sha: contract.base_sha,
+            gate_fingerprint: contract.gate_fingerprint,
+            source_evidence_id: evidence.id,
+            source_train_id: evidence.train_id,
+            source_run_id: sourceMetadata.source_run_id ?? null,
+            evidence_uri: evidence.evidence_uri
+          }
+        },
+        context
+      );
+    }
+  );
+}
+
+type FrontendBaseCanaryResult = 'PASS' | 'WAIT' | 'FAIL';
+
+async function existingFrontendBaseCanaryResult(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[],
+  baseSha: string
+): Promise<FrontendBaseCanaryResult | null> {
   const existingOperations = await phaseOperations(
     train.id,
     'base-canary-frontend'
@@ -343,21 +989,182 @@ async function advanceFrontendBaseCanary(
       `Release train ${train.id} has multiple frontend base canary operations`
     );
   const existing = existingOperations[0];
-  if (existing) {
-    const operation = await reconcile(existing);
-    const result = workflowResult(operation);
-    if (result !== 'FAIL') return result;
-    await failAndPauseTrain(
+  if (!existing) return null;
+  const operation = await reconcile(existing);
+  const result = workflowResult(operation);
+  if (result !== 'WAIT') {
+    const evidenceConfig = await resolveBaseCanaryEvidenceConfig();
+    await recordFreshBaseCanaryEvidence(
       train,
-      candidates,
-      operationFailureReason(
-        'The fresh frontend base failed its exact Release Bus canary; candidates were not blamed.',
-        operation
-      ),
-      'REQUEUE'
+      operation,
+      evidenceConfig.maxAgeHours
     );
-    return 'FAIL';
   }
+  if (result !== 'FAIL') {
+    if (train.status === 'FROZEN')
+      await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
+    return result;
+  }
+  await failAndPauseTrain(
+    train,
+    candidates,
+    operationFailureReason(
+      `Existing staging base failed the frontend base canary for SHA ${baseSha}. Candidates had not been tested. No candidate was blamed. ${train.target_lane} was paused. Repair and validate the existing base, deploy that isolated repair, then resume ${train.target_lane}.`,
+      operation
+    ),
+    'REQUEUE',
+    {
+      attribution: 'PRE_EXISTING_BASE',
+      recommendedRecovery:
+        'Repair and validate the existing staging base, deploy that isolated repair, then resume the paused lane.'
+    }
+  );
+  return 'FAIL';
+}
+
+async function resolveFrontendGateContractFailClosed(
+  train: ReleaseTrainRecord,
+  baseSha: string
+): Promise<FrontendGateContract | null> {
+  try {
+    return await resolveFrontendGateContract(baseSha);
+  } catch {
+    await publishBaseEvidenceLookup(
+      train,
+      'INVALIDATED',
+      'contract_unavailable'
+    );
+    return null;
+  }
+}
+
+async function recordUnavailableBaseEvidenceContract(
+  train: ReleaseTrainRecord,
+  baseSha: string
+): Promise<void> {
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: train.id,
+      eventType: 'BASE_CANARY_EVIDENCE_LOOKUP_INVALIDATED',
+      payload: {
+        base_sha: baseSha,
+        reason: 'contract_unavailable',
+        action: 'fresh_validation'
+      }
+    },
+    {}
+  );
+}
+
+async function prepareFreshFrontendBaseCanary(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[],
+  baseSha: string
+): Promise<{
+  readonly gateContract: FrontendGateContract | null;
+  readonly result: 'PASS' | null;
+}> {
+  const evidenceConfig = await resolveBaseCanaryEvidenceConfig();
+  let gateContract = await resolveFrontendGateContractFailClosed(
+    train,
+    baseSha
+  );
+  const forceFreshCandidateIds = candidates
+    .filter(
+      (candidate) =>
+        candidate.repository === 'frontend' &&
+        Boolean(candidate.force_fresh_base_canary)
+    )
+    .map((candidate) => candidate.id);
+  if (forceFreshCandidateIds.length > 0) {
+    await publishBaseEvidenceLookup(
+      train,
+      'FORCE_FRESH',
+      'operator_force_fresh'
+    );
+    await releaseBusRepository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'BASE_CANARY_EVIDENCE_FORCE_FRESH',
+        payload: {
+          base_sha: baseSha,
+          candidate_ids: forceFreshCandidateIds
+        }
+      },
+      {}
+    );
+    return { gateContract, result: null };
+  }
+  if (!evidenceConfig.reuse && !evidenceConfig.shadow)
+    return { gateContract, result: null };
+  if (!gateContract) {
+    await recordUnavailableBaseEvidenceContract(train, baseSha);
+    return { gateContract, result: null };
+  }
+  try {
+    const rows = await releaseBusRepository.listBaseCanaryEvidenceBySha(
+      baseSha,
+      {}
+    );
+    const evidenceDecision = evaluateBaseCanaryEvidence({
+      rows,
+      contract: gateContract,
+      now: Date.now(),
+      maxAgeMs: evidenceConfig.maxAgeHours * 60 * 60 * 1000
+    });
+    await publishBaseEvidenceLookup(
+      train,
+      evidenceDecision.decision,
+      evidenceDecision.reason
+    );
+    if (evidenceDecision.decision !== 'HIT')
+      return { gateContract, result: null };
+    await reuseBaseCanaryEvidence(
+      train,
+      gateContract,
+      evidenceDecision.evidence,
+      evidenceDecision.metadata,
+      evidenceConfig.reuse
+        ? 'BASE_CANARY_EVIDENCE_REUSED'
+        : 'BASE_CANARY_EVIDENCE_WOULD_REUSE'
+    );
+    return {
+      gateContract,
+      result: evidenceConfig.reuse ? 'PASS' : null
+    };
+  } catch {
+    await publishBaseEvidenceLookup(
+      train,
+      'INVALIDATED',
+      'contract_unavailable'
+    );
+    gateContract = null;
+    await recordUnavailableBaseEvidenceContract(train, baseSha);
+    return { gateContract, result: null };
+  }
+}
+
+async function advanceFrontendBaseCanary(
+  train: ReleaseTrainRecord,
+  candidates: readonly ReleaseCandidateRecord[]
+): Promise<FrontendBaseCanaryResult> {
+  if (!candidates.some((candidate) => candidate.repository === 'frontend'))
+    return 'PASS';
+  const baseSha = train.frontend_base_sha;
+  if (!baseSha)
+    throw new TerminalReleaseTrainError('Missing frontend base SHA');
+  const existingResult = await existingFrontendBaseCanaryResult(
+    train,
+    candidates,
+    baseSha
+  );
+  if (existingResult) return existingResult;
+  const prepared = await prepareFreshFrontendBaseCanary(
+    train,
+    candidates,
+    baseSha
+  );
+  if (prepared.result) return prepared.result;
   await dispatchWorkflow({
     train,
     repository: 'frontend',
@@ -366,8 +1173,19 @@ async function advanceFrontendBaseCanary(
     ref: 'main',
     expectedSha: baseSha,
     environment: 'orchestration',
-    inputs: { base_sha: baseSha }
+    inputs: {
+      base_sha: baseSha,
+      ...(prepared.gateContract
+        ? {
+            gate_contract: JSON.stringify(prepared.gateContract)
+          }
+        : {})
+    },
+    requestMetadata: prepared.gateContract
+      ? { gate_contract: prepared.gateContract }
+      : undefined
   });
+  await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
   return 'WAIT';
 }
 
@@ -474,15 +1292,62 @@ async function ensureLane(
   );
 }
 
+async function waitForRequiredLane(
+  train: ReleaseTrainRecord,
+  laneName: 'global-staging' | 'global-production'
+): Promise<WorkerResult | null> {
+  if (await ensureLane(laneName, train)) return null;
+  return waitFor(
+    train,
+    train.status,
+    leaseWaitReason(laneName, await releaseBusRepository.getLane(laneName, {}))
+  );
+}
+
+async function continueAtPhase(
+  train: ReleaseTrainRecord,
+  status: ReleaseTrainRecord['status']
+): Promise<WorkerResult> {
+  await updateTrainPhase(train, status);
+  return { decision: 'CONTINUE', train_id: train.id, status };
+}
+
+async function reloadTrain(trainId: string): Promise<ReleaseTrainRecord> {
+  return (await releaseBusRepository.findTrain(
+    trainId,
+    {}
+  )) as ReleaseTrainRecord;
+}
+
+async function advanceGuardedPhase(params: {
+  readonly train: ReleaseTrainRecord;
+  readonly lane: 'global-staging' | 'global-production';
+  readonly run: () => Promise<'PASS' | 'WAIT' | 'FAIL'>;
+  readonly failureMessage: string;
+  readonly nextStatus: ReleaseTrainRecord['status'];
+}): Promise<WorkerResult> {
+  const laneWait = await waitForRequiredLane(params.train, params.lane);
+  if (laneWait) return laneWait;
+  // The phase write is not a mutex. Every run callback is built from durable
+  // operation keys or expected-SHA branch updates, so a duplicate tick first
+  // reconciles the same external effect instead of starting a second one.
+  const result = await params.run();
+  if (result === 'FAIL')
+    throw new TerminalReleaseTrainError(params.failureMessage);
+  if (result === 'WAIT') return waitFor(params.train, params.train.status);
+  return continueAtPhase(params.train, params.nextStatus);
+}
+
 async function externalDeploymentLaneBusy(
   environment: 'staging' | 'prod'
-): Promise<boolean> {
-  const states = await Promise.all(
-    (['frontend', 'backend'] as const).map((repository) =>
-      releaseBusGitHubApp.hasActiveDeploymentRun(repository, environment)
+): Promise<ReleaseRepository | null> {
+  for (const repository of ['frontend', 'backend'] as const) {
+    if (
+      await releaseBusGitHubApp.hasActiveDeploymentRun(repository, environment)
     )
-  );
-  return states.some(Boolean);
+      return repository;
+  }
+  return null;
 }
 
 async function advanceBackendDeploy(
@@ -846,55 +1711,92 @@ export async function finishIncompleteComposition(
   return offender;
 }
 
+type FailureDisposition = 'QUARANTINE' | 'REQUEUE';
+
+function failureLifecycle(
+  train: ReleaseTrainRecord,
+  reason: string,
+  disposition: FailureDisposition,
+  attribution: 'PRE_EXISTING_BASE' | 'CANDIDATE' | 'TRAIN' | undefined
+) {
+  if (disposition === 'QUARANTINE') {
+    return {
+      status: 'QUARANTINED' as const,
+      currentTrainId: null,
+      holdReason: reason.slice(0, 500)
+    };
+  }
+  return {
+    status: readyStatusForTrain(train),
+    currentTrainId: null,
+    holdReason:
+      attribution === 'PRE_EXISTING_BASE'
+        ? 'BASE_FAILURE_NO_CANDIDATE_BLAMED'
+        : 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
+  };
+}
+
+async function releaseCandidateAfterTrainFailure(
+  train: ReleaseTrainRecord,
+  candidate: ReleaseCandidateRecord,
+  reason: string,
+  disposition: FailureDisposition,
+  attribution: 'PRE_EXISTING_BASE' | 'CANDIDATE' | 'TRAIN' | undefined
+): Promise<FailureDisposition | null> {
+  const current = await releaseBusRepository.findCandidateById(
+    candidate.id,
+    {}
+  );
+  if (
+    !current ||
+    ['QUARANTINED', 'CANCELLED', 'SUPERSEDED'].includes(current.status) ||
+    ![
+      'STAGING_CLAIMED',
+      'STAGING_VALIDATING',
+      'PRODUCTION_CLAIMED',
+      'PRODUCTION_VALIDATING'
+    ].includes(current.status)
+  )
+    return null;
+  await releaseBusRepository.updateCandidateLifecycle(
+    current.id,
+    current.row_version,
+    failureLifecycle(train, reason, disposition, attribution),
+    {}
+  );
+  await publishCandidateStatus(
+    train,
+    candidate,
+    disposition === 'QUARANTINE' ? 'failure' : 'error',
+    disposition === 'QUARANTINE'
+      ? `Quarantined by release train ${train.id}`
+      : `Release lane paused; candidate preserved (${train.id})`
+  );
+  return disposition;
+}
+
 async function failAndPauseTrain(
   train: ReleaseTrainRecord,
   candidates: readonly ReleaseCandidateRecord[],
   reason: string,
-  candidateDisposition: 'QUARANTINE' | 'REQUEUE' = 'QUARANTINE'
+  candidateDisposition: FailureDisposition = 'QUARANTINE',
+  details: {
+    readonly attribution?: 'PRE_EXISTING_BASE' | 'CANDIDATE' | 'TRAIN';
+    readonly recommendedRecovery?: string;
+  } = {}
 ): Promise<void> {
+  const returnedCandidates: string[] = [];
+  const quarantinedCandidates: string[] = [];
   for (const candidate of candidates) {
-    const current = await releaseBusRepository.findCandidateById(
-      candidate.id,
-      {}
-    );
-    if (
-      !current ||
-      ['QUARANTINED', 'CANCELLED', 'SUPERSEDED'].includes(current.status)
-    )
-      continue;
-    if (
-      ![
-        'STAGING_CLAIMED',
-        'STAGING_VALIDATING',
-        'PRODUCTION_CLAIMED',
-        'PRODUCTION_VALIDATING'
-      ].includes(current.status)
-    )
-      continue;
-    await releaseBusRepository.updateCandidateLifecycle(
-      current.id,
-      current.row_version,
-      {
-        status:
-          candidateDisposition === 'QUARANTINE'
-            ? 'QUARANTINED'
-            : readyStatusForTrain(train),
-        currentTrainId: null,
-        holdReason:
-          candidateDisposition === 'QUARANTINE'
-            ? reason.slice(0, 500)
-            : 'TRAIN_PAUSED_UNATTRIBUTED_FAILURE'
-      },
-      {}
-    );
-    await publishCandidateStatus(
+    const disposition = await releaseCandidateAfterTrainFailure(
       train,
       candidate,
-      candidateDisposition === 'QUARANTINE' ? 'failure' : 'error',
-      candidateDisposition === 'QUARANTINE'
-        ? `Quarantined by release train ${train.id}`
-        : `Release lane paused; candidate preserved (${train.id})`
+      reason,
+      candidateDisposition,
+      details.attribution
     );
+    if (disposition === 'QUARANTINE') quarantinedCandidates.push(candidate.id);
+    if (disposition === 'REQUEUE') returnedCandidates.push(candidate.id);
   }
   await releaseBusRepository.setControl(
     train.target_lane,
@@ -913,7 +1815,16 @@ async function failAndPauseTrain(
     {
       trainId: train.id,
       eventType: 'TRAIN_FAILED_AND_LANE_PAUSED',
-      payload: { reason, candidate_disposition: candidateDisposition }
+      payload: {
+        reason,
+        candidate_disposition: candidateDisposition,
+        attribution: details.attribution ?? 'TRAIN',
+        returned_candidates: returnedCandidates,
+        quarantined_candidates: quarantinedCandidates,
+        recommended_recovery:
+          details.recommendedRecovery ??
+          'Inspect deterministic workflow evidence, repair the attributed failure, then resume the lane explicitly.'
+      }
     },
     {}
   );
@@ -957,10 +1868,15 @@ async function finishFailureIsolation(
       train,
       candidates,
       operationFailureReason(
-        `The fresh ${baselineFailure.repository} base failed the isolation gate; candidates were not blamed.`,
+        `Existing ${baselineFailure.repository} base failed the isolation gate for SHA ${baselineFailure.expected_sha}. Candidates had not been tested in isolation. No candidate was blamed. ${train.target_lane} was paused. Repair and validate the existing base, deploy that isolated repair, then resume ${train.target_lane}.`,
         baselineFailure
       ),
-      'REQUEUE'
+      'REQUEUE',
+      {
+        attribution: 'PRE_EXISTING_BASE',
+        recommendedRecovery:
+          'Repair and validate the existing base, deploy that isolated repair, then resume the paused lane.'
+      }
     );
     return 'FAILED';
   }
@@ -1113,12 +2029,16 @@ function readyStatusForTrain(
     : 'READY_FOR_PRODUCTION';
 }
 
-async function isTrainLanePaused(train: ReleaseTrainRecord): Promise<boolean> {
+async function pausedControlForTrain(
+  train: ReleaseTrainRecord
+): Promise<ReleaseBusControlRecord | null> {
   const controls = await releaseBusRepository.listControls({});
-  return controls.some(
-    (control) =>
-      Boolean(control.paused) &&
-      (control.scope === 'ALL' || control.scope === train.target_lane)
+  return (
+    controls.find(
+      (control) =>
+        Boolean(control.paused) &&
+        (control.scope === 'ALL' || control.scope === train.target_lane)
+    ) ?? null
   );
 }
 
@@ -1812,7 +2732,10 @@ export async function advanceReleaseTrain(
       };
     const mode = getReleaseBusMode();
     if (mode === 'OFF')
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
+      return waitFor(train, train.status, {
+        code: 'ROLLOUT_MODE_OFF',
+        summary: 'Waiting because the Release Bus rollout mode is OFF.'
+      });
     if (mode === 'SHADOW' && train.status === 'FROZEN') {
       await shadowComplete(train, candidates);
       return { decision: 'COMPLETE', train_id: train.id, status: 'COMPLETED' };
@@ -1821,14 +2744,38 @@ export async function advanceReleaseTrain(
       mode === 'SHADOW' ||
       (train.target_lane === 'PRODUCTION' && mode !== 'PRODUCTION')
     )
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
-    if (!(await ensureLane('global-orchestration', train)))
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
-    if (await isTrainLanePaused(train)) {
-      await heartbeatOwnedTrainLanes(train);
-      return { decision: 'WAIT', train_id: train.id, status: train.status };
+      return waitFor(train, train.status, {
+        code: mode === 'SHADOW' ? 'SHADOW_MODE' : 'PRODUCTION_MODE_DISABLED',
+        summary:
+          mode === 'SHADOW'
+            ? 'Waiting because SHADOW mode records decisions without executing the train.'
+            : 'Waiting because production train execution is not enabled.'
+      });
+    if (!(await ensureLane('global-orchestration', train))) {
+      return waitFor(
+        train,
+        train.status,
+        leaseWaitReason(
+          'global-orchestration',
+          await releaseBusRepository.getLane('global-orchestration', {})
+        )
+      );
     }
-    if (train.status === 'FROZEN') {
+    const pausedControl = await pausedControlForTrain(train);
+    if (pausedControl) {
+      await heartbeatOwnedTrainLanes(train);
+      return waitFor(train, train.status, {
+        code: 'CONTROL_PAUSED',
+        summary: `${pausedControl.scope} is paused: ${pausedControl.reason ?? 'No reason recorded'}`,
+        control: {
+          scope: pausedControl.scope,
+          reason: pausedControl.reason,
+          actor: pausedControl.github_actor,
+          updated_at: Number(pausedControl.updated_at)
+        }
+      });
+    }
+    if (['FROZEN', 'BASE_CANARY_RUNNING'].includes(train.status)) {
       const baseCanary = await advanceFrontendBaseCanary(train, candidates);
       if (baseCanary === 'FAIL')
         return {
@@ -1839,9 +2786,12 @@ export async function advanceReleaseTrain(
             'Frontend base canary failed; candidates were returned to the queue'
         };
       if (baseCanary === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+        return waitFor(train, 'BASE_CANARY_RUNNING', {
+          code: 'GITHUB_WORKFLOW_RUNNING',
+          summary: `Frontend base canary running for staging SHA ${train.frontend_base_sha ?? 'unknown'}. Candidates have not been tested yet.`
+        });
       await beginComposition(train, candidates);
-      return { decision: 'WAIT', train_id: train.id, status: 'COMPOSING' };
+      return waitFor(train, 'COMPOSING');
     }
     if (train.status === 'COMPOSING') {
       const result = await pollPhase(train, 'compose-');
@@ -1851,14 +2801,9 @@ export async function advanceReleaseTrain(
           candidates,
           'Release branch composition failed after bounded conflict resolution'
         );
-        return {
-          decision: 'WAIT',
-          train_id: train.id,
-          status: 'ISOLATING_FAILURE'
-        };
+        return waitFor(train, 'ISOLATING_FAILURE');
       }
-      if (result === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (result === 'WAIT') return waitFor(train, train.status);
       // A successful compose workflow may intentionally publish only its
       // conflict-free prefix when Codex is disabled. Never dispatch preflight
       // until every frozen candidate SHA is proven reachable from its branch.
@@ -1871,7 +2816,7 @@ export async function advanceReleaseTrain(
           message: `Candidate ${offender.id} requires merge-conflict resolution; other candidates were returned to the queue`
         };
       await beginPreflight(train, candidates);
-      return { decision: 'WAIT', train_id: train.id, status: 'PREFLIGHTING' };
+      return waitFor(train, 'PREFLIGHTING');
     }
     if (train.status === 'PREFLIGHTING') {
       const result = await pollPhase(train, 'preflight-');
@@ -1881,25 +2826,29 @@ export async function advanceReleaseTrain(
           candidates,
           'Release preflight failed'
         );
-        return {
-          decision: 'WAIT',
-          train_id: train.id,
-          status: 'ISOLATING_FAILURE'
-        };
+        return waitFor(train, 'ISOLATING_FAILURE');
       }
-      if (result === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      if (
-        (await externalDeploymentLaneBusy('staging')) ||
-        !(await ensureLane('global-staging', train))
-      )
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'STAGING' },
-        {}
-      );
-      return { decision: 'CONTINUE', train_id: train.id, status: 'STAGING' };
+      if (result === 'WAIT') return waitFor(train, train.status);
+      const busyRepository = await externalDeploymentLaneBusy('staging');
+      if (busyRepository)
+        return waitFor(train, train.status, {
+          code: 'EXTERNAL_DEPLOYMENT_ACTIVE',
+          summary: `Waiting for an existing ${busyRepository} staging deployment to finish.`,
+          external_operation: {
+            repository: busyRepository,
+            environment: 'staging'
+          }
+        });
+      if (!(await ensureLane('global-staging', train)))
+        return waitFor(
+          train,
+          train.status,
+          leaseWaitReason(
+            'global-staging',
+            await releaseBusRepository.getLane('global-staging', {})
+          )
+        );
+      return continueAtPhase(train, 'DEPLOYING_BACKEND');
     }
     if (train.status === 'ISOLATING_FAILURE') {
       const result = await finishFailureIsolation(train, candidates);
@@ -1910,49 +2859,50 @@ export async function advanceReleaseTrain(
           status: 'CANCELLED',
           message: 'Transient gate failure; candidates returned to the queue'
         };
+      if (result === 'WAIT') return waitFor(train, train.status);
       return {
-        decision: result === 'WAIT' ? 'WAIT' : 'FAILED',
+        decision: 'FAILED',
         train_id: train.id,
-        status: result === 'WAIT' ? train.status : 'FAILED',
+        status: 'FAILED',
         message: train.failure_reason ?? undefined
       };
     }
     if (train.status === 'STAGING') {
-      if (!(await ensureLane('global-staging', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const backend = await advanceBackendDeploy(train, candidates, 'staging');
-      if (backend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Backend staging deployment failed'
-        );
-      if (backend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const frontend = await advanceFrontendDeploy(train, 'staging');
-      if (frontend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Frontend staging deployment failed'
-        );
-      if (frontend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const e2e = await advanceE2e(train, 'staging');
-      if (e2e === 'FAIL')
-        throw new TerminalReleaseTrainError('Staging E2E failed');
-      if (e2e === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'VALIDATING_STAGING' },
-        {}
-      );
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'VALIDATING_STAGING'
-      };
+      return continueAtPhase(train, 'DEPLOYING_BACKEND');
+    }
+    if (train.status === 'DEPLOYING_BACKEND') {
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-staging',
+        run: () => advanceBackendDeploy(train, candidates, 'staging'),
+        failureMessage: 'Backend staging deployment failed',
+        nextStatus: 'DEPLOYING_FRONTEND'
+      });
+    }
+    if (train.status === 'DEPLOYING_FRONTEND') {
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-staging',
+        run: () => advanceFrontendDeploy(train, 'staging'),
+        failureMessage: 'Frontend staging deployment failed',
+        nextStatus: 'E2E_RUNNING'
+      });
+    }
+    if (train.status === 'E2E_RUNNING') {
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-staging',
+        run: () => advanceE2e(train, 'staging'),
+        failureMessage: 'Staging E2E failed',
+        nextStatus: 'VALIDATING_STAGING'
+      });
     }
     if (train.status === 'VALIDATING_STAGING') {
-      if (!(await ensureLane('global-staging', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      const stagingLaneWait = await waitForRequiredLane(
+        train,
+        'global-staging'
+      );
+      if (stagingLaneWait) return stagingLaneWait;
       if (train.target_lane === 'STAGING') {
         try {
           await finishStaging(train, candidates);
@@ -1977,29 +2927,30 @@ export async function advanceReleaseTrain(
       }
       await validateStaging(train, candidates);
       await createReleasePullRequests(train, candidates);
-      if (
-        (await externalDeploymentLaneBusy('prod')) ||
-        !(await ensureLane('global-production', train))
-      )
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'MERGING_PRODUCTION' },
-        {}
+      const busyRepository = await externalDeploymentLaneBusy('prod');
+      if (busyRepository)
+        return waitFor(train, train.status, {
+          code: 'EXTERNAL_DEPLOYMENT_ACTIVE',
+          summary: `Waiting for an existing ${busyRepository} production deployment to finish.`,
+          external_operation: {
+            repository: busyRepository,
+            environment: 'prod'
+          }
+        });
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
       );
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'MERGING_PRODUCTION'
-      };
+      if (productionLaneWait) return productionLaneWait;
+      return continueAtPhase(train, 'MERGING_PRODUCTION');
     }
     if (train.status === 'MERGING_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const latest = (await releaseBusRepository.findTrain(
-        train.id,
-        {}
-      )) as ReleaseTrainRecord;
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      const latest = await reloadTrain(train.id);
       const backendMerge = await mergeReleasePullRequest(latest, 'backend');
       if (backendMerge === 'STALE') {
         await requeueMovedTarget(
@@ -2018,33 +2969,28 @@ export async function advanceReleaseTrain(
           'Backend production release PR merge failed'
         );
       }
-      if (backendMerge === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'DEPLOYING_PRODUCTION' },
-        {}
-      );
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'DEPLOYING_PRODUCTION'
-      };
+      if (backendMerge === 'WAIT') return waitFor(train, train.status);
+      return continueAtPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
     }
     if (train.status === 'DEPLOYING_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const backend = await advanceBackendDeploy(train, candidates, 'prod');
-      if (backend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Backend production deployment failed'
-        );
-      if (backend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const latest = (await releaseBusRepository.findTrain(
-        train.id,
-        {}
-      )) as ReleaseTrainRecord;
+      return continueAtPhase(train, 'DEPLOYING_BACKEND_PRODUCTION');
+    }
+    if (train.status === 'DEPLOYING_BACKEND_PRODUCTION') {
+      return advanceGuardedPhase({
+        train,
+        lane: 'global-production',
+        run: () => advanceBackendDeploy(train, candidates, 'prod'),
+        failureMessage: 'Backend production deployment failed',
+        nextStatus: 'MERGING_FRONTEND_PRODUCTION'
+      });
+    }
+    if (train.status === 'MERGING_FRONTEND_PRODUCTION') {
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      const latest = await reloadTrain(train.id);
       const frontendMerge = await mergeReleasePullRequest(latest, 'frontend');
       if (frontendMerge === 'STALE') {
         if (!latest.backend_release_branch) {
@@ -2068,41 +3014,49 @@ export async function advanceReleaseTrain(
           'Frontend production release PR merge failed'
         );
       }
-      if (frontendMerge === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const frontend = await advanceFrontendDeploy(latest, 'prod');
-      if (frontend === 'FAIL')
-        throw new TerminalReleaseTrainError(
-          'Frontend production deployment failed'
-        );
-      if (frontend === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      const e2e = await advanceE2e(latest, 'prod');
-      if (e2e === 'FAIL')
-        throw new TerminalReleaseTrainError('Production E2E failed');
-      if (e2e === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
-      await releaseBusRepository.updateTrain(
-        train.id,
-        { status: 'VALIDATING_PRODUCTION' },
-        {}
-      );
-      return {
-        decision: 'CONTINUE',
-        train_id: train.id,
-        status: 'VALIDATING_PRODUCTION'
-      };
+      if (frontendMerge === 'WAIT') return waitFor(train, train.status);
+      return continueAtPhase(train, 'DEPLOYING_FRONTEND_PRODUCTION');
+    }
+    if (train.status === 'DEPLOYING_FRONTEND_PRODUCTION') {
+      const latest = await reloadTrain(train.id);
+      return advanceGuardedPhase({
+        train: latest,
+        lane: 'global-production',
+        run: () => advanceFrontendDeploy(latest, 'prod'),
+        failureMessage: 'Frontend production deployment failed',
+        nextStatus: 'PRODUCTION_E2E_RUNNING'
+      });
+    }
+    if (train.status === 'PRODUCTION_E2E_RUNNING') {
+      const latest = await reloadTrain(train.id);
+      return advanceGuardedPhase({
+        train: latest,
+        lane: 'global-production',
+        run: () => advanceE2e(latest, 'prod'),
+        failureMessage: 'Production E2E failed',
+        nextStatus: 'VALIDATING_PRODUCTION'
+      });
     }
     if (train.status === 'VALIDATING_PRODUCTION') {
-      if (!(await ensureLane('global-production', train)))
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
+      return continueAtPhase(train, 'SYNCING_STAGING');
+    }
+    if (train.status === 'SYNCING_STAGING') {
+      const productionLaneWait = await waitForRequiredLane(
+        train,
+        'global-production'
+      );
+      if (productionLaneWait) return productionLaneWait;
       const sync = await advanceStagingSync(train, candidates);
       if (sync === 'FAIL')
         throw new TerminalReleaseTrainError(
           'Failed to sync main back into staging'
         );
-      if (sync === 'WAIT')
-        return { decision: 'WAIT', train_id: train.id, status: train.status };
+      if (sync === 'WAIT') return waitFor(train, train.status);
       await finalizeProduction(train, candidates);
       return { decision: 'COMPLETE', train_id: train.id, status: 'COMPLETED' };
     }
@@ -2110,6 +3064,26 @@ export async function advanceReleaseTrain(
       `Unsupported release train status ${train.status}`
     );
   } catch (error) {
+    if (error instanceof ConcurrentReleaseTrainPhaseError) {
+      const latest = await reloadTrain(train.id);
+      if (['COMPLETED', 'ROLLED_BACK', 'CANCELLED'].includes(latest.status))
+        return {
+          decision: 'COMPLETE',
+          train_id: latest.id,
+          status: latest.status
+        };
+      if (latest.status === 'FAILED')
+        return {
+          decision: 'FAILED',
+          train_id: latest.id,
+          status: latest.status,
+          message: latest.failure_reason ?? undefined
+        };
+      return waitFor(latest, latest.status, {
+        code: 'PHASE_TRANSITION',
+        summary: `Train phase changed concurrently to ${latest.status}; waiting for the next guarded worker tick.`
+      });
+    }
     if (!(error instanceof TerminalReleaseTrainError)) throw error;
     const message =
       error instanceof Error

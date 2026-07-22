@@ -142,6 +142,9 @@ env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: \${{ secrets.SENTRY_AUTH_TOKEN }}
   RELEASE_BUS_MODE: \${{ vars.RELEASE_BUS_MODE || 'OFF' }}
+  RELEASE_BUS_BASE_EVIDENCE_REUSE: \${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}
+  RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: \${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW || 'false' }}
+  RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: \${{ vars.RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS || '24' }}
   RELEASE_BUS_GITHUB_ORG: \${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
   RELEASE_BUS_UI_URL: \${{ vars.RELEASE_BUS_UI_URL || 'https://api.6529.io/deploy/ui/bus' }}
   ATTACHMENTS_INGEST_S3_BUCKET_PROD: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_PROD }}
@@ -200,6 +203,9 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
+          [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE" =~ ^(false|true)$ ]]
+          [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW" =~ ^(false|true)$ ]]
+          [[ "$RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS" =~ ^([1-9]|[1-9][0-9]|1[0-5][0-9]|16[0-8])$ ]]
           [[ "$RELEASE_BUS_GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]]
           test -n "$RELEASE_BUS_GITHUB_PRIVATE_KEY"
       - name: Validate Release Bus API configuration

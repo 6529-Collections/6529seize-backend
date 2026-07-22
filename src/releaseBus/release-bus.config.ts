@@ -18,6 +18,29 @@ export function releaseBusAllowsProduction(): boolean {
   return getReleaseBusMode() === 'PRODUCTION';
 }
 
+function enabled(name: string): boolean {
+  return (process.env[name] ?? 'false').toLowerCase() === 'true';
+}
+
+export function getBaseCanaryEvidenceConfig(): {
+  readonly reuse: boolean;
+  readonly shadow: boolean;
+  readonly maxAgeHours: number;
+} {
+  const configuredMaxAge = Number(
+    process.env.RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS ?? 24
+  );
+  const maxAgeIsValid =
+    Number.isInteger(configuredMaxAge) &&
+    configuredMaxAge >= 1 &&
+    configuredMaxAge <= 168;
+  return {
+    reuse: maxAgeIsValid && enabled('RELEASE_BUS_BASE_EVIDENCE_REUSE'),
+    shadow: maxAgeIsValid && enabled('RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW'),
+    maxAgeHours: maxAgeIsValid ? configuredMaxAge : 24
+  };
+}
+
 export const RELEASE_BUS_OPERATOR_TEAM =
   process.env.RELEASE_BUS_OPERATOR_TEAM ?? 'release-bus-operators';
 export const RELEASE_BUS_ORG =

@@ -351,14 +351,26 @@ const worker: Handler<{ train_id: string; worker_arn: string }> = async (
 const cleaner: Handler = async () =>
   doInDbContext(
     async () => {
-      const retentionMs =
-        Number(process.env.RELEASE_BUS_BRANCH_RETENTION_DAYS ?? '7') *
-        24 *
-        60 *
-        60 *
-        1000;
-      if (!Number.isFinite(retentionMs) || retentionMs < 24 * 60 * 60 * 1000)
+      const branchRetentionDays = Number(
+        process.env.RELEASE_BUS_BRANCH_RETENTION_DAYS ?? '7'
+      );
+      if (
+        !Number.isSafeInteger(branchRetentionDays) ||
+        branchRetentionDays < 1 ||
+        branchRetentionDays > 365
+      )
         throw new Error('Invalid release-bus branch retention');
+      const retentionMs = branchRetentionDays * 24 * 60 * 60 * 1000;
+      const historyRetentionDays = Number(
+        process.env.RELEASE_BUS_HISTORY_RETENTION_DAYS ?? '30'
+      );
+      if (
+        !Number.isSafeInteger(historyRetentionDays) ||
+        historyRetentionDays < 1 ||
+        historyRetentionDays > 365
+      )
+        throw new Error('Invalid release-bus history retention');
+      const historyRetentionMs = historyRetentionDays * 24 * 60 * 60 * 1000;
       const trains = await releaseBusRepository.listTrains(500, {});
       const protectedRefs = new Set(
         trains
@@ -383,7 +395,10 @@ const cleaner: Handler = async () =>
           deleted.push(`${repository}:${ref.ref}`);
         }
       }
-      return { deleted };
+      const history = await releaseBusService.pruneTerminalHistory(
+        Date.now() - historyRetentionMs
+      );
+      return { deleted, history };
     },
     { logger, entities, skipRedis: true }
   );

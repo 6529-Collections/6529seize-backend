@@ -52,6 +52,14 @@ export type FreezeTrainInput = {
   readonly allowShadowDependencyEvidence?: boolean;
 };
 
+export class ReleaseBusHistoryResetBlockedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'ReleaseBusHistoryResetBlockedError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 function normalizeDeployPlan(
   plan: ReleaseDeployPlan | null
 ): ReleaseDeployPlan | null {
@@ -132,6 +140,11 @@ export class ReleaseBusService {
         'Frontend candidates cannot declare backend deploy units'
       );
     }
+    if (request.repository === 'backend' && request.force_fresh_base_canary) {
+      throw new Error(
+        'Only frontend candidates can force a fresh frontend base canary'
+      );
+    }
     if (
       request.repository === 'backend' &&
       request.resolvedDependencies.some(
@@ -166,6 +179,7 @@ export class ReleaseBusService {
             production_ready_by_github_login: null,
             production_ready_at: null,
             deploy_plan_json: deployPlan,
+            force_fresh_base_canary: request.force_fresh_base_canary,
             metadata_version: 1,
             current_train_id: null,
             hold_reason: null,
@@ -202,16 +216,31 @@ export class ReleaseBusService {
           );
         }
         if (
+          !metadataMutable &&
+          Boolean(candidate.force_fresh_base_canary) !==
+            request.force_fresh_base_canary
+        ) {
+          throw new Error(
+            'The force-fresh base-canary choice is immutable; cancel the candidate before resubmitting'
+          );
+        }
+        if (
           metadataMutable &&
           ((request.prNumber !== null &&
             candidate.pr_number !== request.prNumber) ||
             (request.repository === 'backend' &&
-              !deployPlansEqual(existingPlan, deployPlan)))
+              !deployPlansEqual(existingPlan, deployPlan)) ||
+            Boolean(candidate.force_fresh_base_canary) !==
+              request.force_fresh_base_canary)
         ) {
           await this.repository.updateCandidateMetadata(
             candidate.id,
             candidate.row_version,
-            { prNumber: request.prNumber, deployPlan },
+            {
+              prNumber: request.prNumber,
+              deployPlan,
+              forceFreshBaseCanary: request.force_fresh_base_canary
+            },
             ctx
           );
           const refreshed = await this.repository.findCandidateById(
@@ -260,6 +289,7 @@ export class ReleaseBusService {
               production_ready_by_github_login: null,
               production_ready_at: null,
               deploy_plan_json: null,
+              force_fresh_base_canary: false,
               metadata_version: 1,
               current_train_id: null,
               hold_reason: null,
@@ -425,7 +455,12 @@ export class ReleaseBusService {
           [
             'MERGING_PRODUCTION',
             'DEPLOYING_PRODUCTION',
-            'VALIDATING_PRODUCTION'
+            'DEPLOYING_BACKEND_PRODUCTION',
+            'MERGING_FRONTEND_PRODUCTION',
+            'DEPLOYING_FRONTEND_PRODUCTION',
+            'PRODUCTION_E2E_RUNNING',
+            'VALIDATING_PRODUCTION',
+            'SYNCING_STAGING'
           ].includes(train.status)
         ) {
           throw new Error(
@@ -774,6 +809,79 @@ export class ReleaseBusService {
         payload: { scope, reason }
       },
       {}
+    );
+  }
+
+  public async pruneTerminalHistory(
+    cutoffAt: number,
+    batchSize = 100
+  ): Promise<{ trains: number; candidates: number }> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) =>
+        this.repository.pruneTerminalHistory(cutoffAt, batchSize, {
+          connection
+        })
+    );
+  }
+
+  public async resetExperimentalHistory(
+    reason: string,
+    actor: string,
+    resetId: string
+  ): Promise<{ reset_at: number; actor: string; reused: boolean }> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        const controls = await this.repository.listControls(ctx, true);
+        const priorReset = await this.repository.findExperimentalHistoryReset(
+          resetId,
+          ctx
+        );
+        if (priorReset) {
+          return {
+            reset_at: Number(priorReset.created_at),
+            actor: priorReset.github_actor ?? actor,
+            reused: true
+          };
+        }
+        if (!controls.every((control) => Boolean(control.paused))) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'All Release Bus controls must be paused before reset'
+          );
+        }
+        if (await this.repository.findActiveTrain(ctx)) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'An active release train blocks history reset'
+          );
+        }
+        if (await this.repository.findActiveOperation(ctx)) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'An active release operation blocks history reset'
+          );
+        }
+        const lanes = await this.repository.listLanes(ctx, true);
+        if (
+          lanes.some(
+            (lane) =>
+              lane.train_id !== null ||
+              lane.lease_owner !== null ||
+              lane.lease_token !== null ||
+              lane.heartbeat_at !== null ||
+              lane.expires_at !== null
+          )
+        ) {
+          throw new ReleaseBusHistoryResetBlockedError(
+            'An owned Release Bus lane blocks history reset'
+          );
+        }
+        const resetAt = await this.repository.resetExperimentalHistory(
+          reason,
+          actor,
+          resetId,
+          ctx
+        );
+        return { reset_at: resetAt, actor, reused: false };
+      }
     );
   }
 

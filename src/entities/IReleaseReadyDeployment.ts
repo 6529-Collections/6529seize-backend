@@ -41,6 +41,8 @@ export class ReleaseReadyDeploymentEntity {
   readonly production_ready_at!: number | null;
   @Column({ type: 'json', nullable: true })
   readonly deploy_plan_json!: ReleaseDeployPlan | null;
+  @Column({ type: 'boolean', default: false })
+  readonly force_fresh_base_canary!: boolean;
   @Column({ type: 'int', default: 1 }) readonly metadata_version!: number;
   @Column({ type: 'varchar', length: 36, nullable: true, default: null })
   readonly current_train_id!: string | null;
