@@ -11,6 +11,7 @@ export const FRONTEND_GATE_BASE_FILES = [
 export const FRONTEND_GATE_TOOLING_FILES = [
   'scripts/release-bus-frontend-gate.sh',
   'scripts/release-bus-gate-evidence.cjs',
+  'scripts/release-bus-install-dependencies.cjs',
   'scripts/release-bus-report-progress.mjs'
 ] as const;
 

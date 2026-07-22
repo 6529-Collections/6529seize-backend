@@ -236,6 +236,123 @@ export function operationFailureReason(
   return evidenceUrl ? `${reason} Evidence: ${evidenceUrl}` : reason;
 }
 
+const BASE_CANARY_INFRASTRUCTURE_BACKOFF_MS = [
+  0,
+  0,
+  0,
+  5 * 60_000,
+  10 * 60_000
+];
+const BASE_CANARY_INFRASTRUCTURE_MAX_BACKOFF_MS = 15 * 60_000;
+
+export function baseCanaryInfrastructureRetryDelayMs(attempt: number): number {
+  return (
+    BASE_CANARY_INFRASTRUCTURE_BACKOFF_MS[attempt] ??
+    BASE_CANARY_INFRASTRUCTURE_MAX_BACKOFF_MS
+  );
+}
+
+function retryableInfrastructureFailure(
+  operation: ReleaseOperationRecord
+): boolean {
+  const result = metadata(operation.result_metadata_json);
+  const gateReport = metadata(result.gate_report);
+  return (
+    gateReport.failure_class === 'INFRASTRUCTURE_TRANSIENT' &&
+    gateReport.retryable === true
+  );
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(metadata(value)).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string'
+    )
+  );
+}
+
+function latestOperationAttempts(
+  operations: readonly ReleaseOperationRecord[]
+): ReleaseOperationRecord[] {
+  const latest = new Map<string, ReleaseOperationRecord>();
+  for (const operation of operations) {
+    const key = [
+      operation.operation_type,
+      operation.repository,
+      operation.environment ?? '',
+      operation.service ?? ''
+    ].join(':');
+    const previous = latest.get(key);
+    if (!previous || operation.attempt > previous.attempt) {
+      latest.set(key, operation);
+    }
+  }
+  return Array.from(latest.values());
+}
+
+async function retryInfrastructureOperationIfDue(
+  train: ReleaseTrainRecord,
+  operation: ReleaseOperationRecord
+): Promise<'DISPATCHED' | 'BACKOFF'> {
+  const delayMs = baseCanaryInfrastructureRetryDelayMs(operation.attempt);
+  const completedAt = Number(operation.completed_at ?? Date.now());
+  const retryAt =
+    Number.isFinite(completedAt) && completedAt > 0
+      ? completedAt + delayMs
+      : Date.now() + delayMs;
+  if (Date.now() < retryAt) return 'BACKOFF';
+
+  const request = metadata(operation.request_metadata_json);
+  const environment = ['orchestration', 'staging', 'prod'].includes(
+    operation.environment ?? ''
+  )
+    ? (operation.environment as 'orchestration' | 'staging' | 'prod')
+    : null;
+  if (!operation.expected_sha)
+    throw new TerminalReleaseTrainError(
+      `Infrastructure retry operation ${operation.operation_key} is missing its expected SHA`
+    );
+  await dispatchWorkflow({
+    train,
+    repository: operation.repository as ReleaseRepository,
+    operationType: operation.operation_type,
+    workflow:
+      typeof request.workflow === 'string'
+        ? request.workflow
+        : 'release-bus-base-canary.yml',
+    ref: typeof request.ref === 'string' ? request.ref : 'main',
+    expectedSha: operation.expected_sha,
+    environment,
+    service: operation.service,
+    inputs: stringRecord(request.inputs),
+    requestMetadata: {
+      ...(request.gate_contract && typeof request.gate_contract === 'object'
+        ? { gate_contract: request.gate_contract }
+        : {}),
+      infrastructure_retry_of: operation.operation_key,
+      infrastructure_retry_at: Date.now()
+    },
+    attempt: operation.attempt + 1
+  });
+  await releaseBusRepository.appendEvent(
+    {
+      trainId: train.id,
+      eventType: 'OPERATION_INFRASTRUCTURE_RETRY_DISPATCHED',
+      payload: {
+        operation_type: operation.operation_type,
+        failed_operation_key: operation.operation_key,
+        failed_attempt: operation.attempt,
+        next_attempt: operation.attempt + 1,
+        expected_sha: operation.expected_sha,
+        delay_ms: delayMs,
+        lane_paused: false
+      }
+    },
+    {}
+  );
+  return 'DISPATCHED';
+}
+
 async function dispatchWorkflow(params: {
   readonly train: ReleaseTrainRecord;
   readonly repository: ReleaseRepository;
@@ -247,6 +364,7 @@ async function dispatchWorkflow(params: {
   readonly service?: string | null;
   readonly inputs: Record<string, string>;
   readonly requestMetadata?: Record<string, unknown>;
+  readonly attempt?: number;
 }): Promise<ReleaseOperationRecord> {
   const operationKey = buildReleaseOperationKey({
     trainId: params.train.id,
@@ -255,7 +373,8 @@ async function dispatchWorkflow(params: {
     repository: params.repository,
     environment: params.environment ?? undefined,
     service: params.service ?? undefined,
-    expectedSha: params.expectedSha
+    expectedSha: params.expectedSha,
+    attempt: params.attempt
   });
   let operation = await releaseBusRepository.getOrCreateOperation(
     {
@@ -268,7 +387,7 @@ async function dispatchWorkflow(params: {
       service: params.service ?? null,
       expected_sha: params.expectedSha,
       artifact_digest: null,
-      attempt: 1,
+      attempt: params.attempt ?? 1,
       status: 'PENDING',
       external_id: null,
       request_metadata_json: {
@@ -540,14 +659,28 @@ async function updateTrainPhase(
 async function pollPhase(
   train: ReleaseTrainRecord,
   prefix: string
-): Promise<'PASS' | 'WAIT' | 'FAIL'> {
-  const operations = await phaseOperations(train.id, prefix);
+): Promise<'PASS' | 'WAIT' | 'INFRASTRUCTURE_WAIT' | 'FAIL'> {
+  const operations = latestOperationAttempts(
+    await phaseOperations(train.id, prefix)
+  );
   if (operations.length === 0) return 'WAIT';
   const reconciled = await Promise.all(
     operations.map((operation) => reconcile(operation))
   );
-  if (reconciled.some((operation) => workflowResult(operation) === 'FAIL'))
+  const failed = reconciled.filter(
+    (operation) => workflowResult(operation) === 'FAIL'
+  );
+  if (failed.length > 0) {
+    if (failed.every(retryableInfrastructureFailure)) {
+      await Promise.all(
+        failed.map((operation) =>
+          retryInfrastructureOperationIfDue(train, operation)
+        )
+      );
+      return 'INFRASTRUCTURE_WAIT';
+    }
     return 'FAIL';
+  }
   return reconciled.every((operation) => workflowResult(operation) === 'PASS')
     ? 'PASS'
     : 'WAIT';
@@ -973,7 +1106,11 @@ async function reuseBaseCanaryEvidence(
   );
 }
 
-type FrontendBaseCanaryResult = 'PASS' | 'WAIT' | 'FAIL';
+type FrontendBaseCanaryResult =
+  | 'PASS'
+  | 'WAIT'
+  | 'INFRASTRUCTURE_WAIT'
+  | 'FAIL';
 
 async function existingFrontendBaseCanaryResult(
   train: ReleaseTrainRecord,
@@ -984,11 +1121,16 @@ async function existingFrontendBaseCanaryResult(
     train.id,
     'base-canary-frontend'
   );
-  if (existingOperations.length > 1)
+  if (
+    new Set(existingOperations.map((operation) => operation.attempt)).size !==
+    existingOperations.length
+  )
     throw new TerminalReleaseTrainError(
-      `Release train ${train.id} has multiple frontend base canary operations`
+      `Release train ${train.id} has duplicate frontend base canary attempts`
     );
-  const existing = existingOperations[0];
+  const existing = [...existingOperations].sort(
+    (left, right) => right.attempt - left.attempt
+  )[0];
   if (!existing) return null;
   const operation = await reconcile(existing);
   const result = workflowResult(operation);
@@ -1004,6 +1146,12 @@ async function existingFrontendBaseCanaryResult(
     if (train.status === 'FROZEN')
       await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
     return result;
+  }
+  if (retryableInfrastructureFailure(operation)) {
+    if (train.status === 'FROZEN')
+      await updateTrainPhase(train, 'BASE_CANARY_RUNNING');
+    await retryInfrastructureOperationIfDue(train, operation);
+    return 'INFRASTRUCTURE_WAIT';
   }
   await failAndPauseTrain(
     train,
@@ -2785,6 +2933,12 @@ export async function advanceReleaseTrain(
           message:
             'Frontend base canary failed; candidates were returned to the queue'
         };
+      if (baseCanary === 'INFRASTRUCTURE_WAIT')
+        return waitFor(train, 'BASE_CANARY_RUNNING', {
+          code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+          summary:
+            'Frontend base validation hit transient CI infrastructure. The same immutable canary will retry automatically; candidates remain attached and the lane is not paused.'
+        });
       if (baseCanary === 'WAIT')
         return waitFor(train, 'BASE_CANARY_RUNNING', {
           code: 'GITHUB_WORKFLOW_RUNNING',
@@ -2795,6 +2949,12 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'COMPOSING') {
       const result = await pollPhase(train, 'compose-');
+      if (result === 'INFRASTRUCTURE_WAIT')
+        return waitFor(train, train.status, {
+          code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+          summary:
+            'Release composition hit transient CI infrastructure. The exact failed operation will retry automatically; candidates remain attached and the lane is not paused.'
+        });
       if (result === 'FAIL') {
         await beginFailureIsolation(
           train,
@@ -2820,6 +2980,12 @@ export async function advanceReleaseTrain(
     }
     if (train.status === 'PREFLIGHTING') {
       const result = await pollPhase(train, 'preflight-');
+      if (result === 'INFRASTRUCTURE_WAIT')
+        return waitFor(train, train.status, {
+          code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+          summary:
+            'Release preflight hit transient CI infrastructure. The exact failed operation will retry automatically; candidates remain attached and the lane is not paused.'
+        });
       if (result === 'FAIL') {
         await beginFailureIsolation(
           train,

@@ -94,6 +94,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   advanceReleaseTrain,
+  baseCanaryInfrastructureRetryDelayMs,
   finishIncompleteComposition,
   mergeWorkflowProgress,
   operationFailureReason,
@@ -124,6 +125,16 @@ describe('operationFailureReason', () => {
         result_metadata_json: { url: 'https://example.com/untrusted' }
       } as never)
     ).toBe('Frontend base failed.');
+  });
+});
+
+describe('base canary infrastructure retry backoff', () => {
+  it('retries the first two failures promptly and then caps periodic probes', () => {
+    expect(baseCanaryInfrastructureRetryDelayMs(1)).toBe(0);
+    expect(baseCanaryInfrastructureRetryDelayMs(2)).toBe(0);
+    expect(baseCanaryInfrastructureRetryDelayMs(3)).toBe(5 * 60_000);
+    expect(baseCanaryInfrastructureRetryDelayMs(4)).toBe(10 * 60_000);
+    expect(baseCanaryInfrastructureRetryDelayMs(50)).toBe(15 * 60_000);
   });
 });
 
@@ -623,6 +634,175 @@ describe('frontend base canary', () => {
       }),
       {}
     );
+  });
+
+  it('retries a classified infrastructure failure without pausing the lane', async () => {
+    const failedOperation = {
+      id: 'operation-base-canary-attempt-1',
+      operation_key: 'train-1:r1:base-canary-frontend:attempt-1',
+      train_id: frozenTrain.id,
+      revision: frozenTrain.revision,
+      operation_type: 'base-canary-frontend',
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: frozenTrain.frontend_base_sha,
+      artifact_digest: null,
+      attempt: 1,
+      status: 'FAILED',
+      external_id: '12345',
+      request_metadata_json: {
+        workflow: 'release-bus-base-canary.yml',
+        ref: 'main',
+        inputs: {
+          base_sha: frozenTrain.frontend_base_sha,
+          gate_contract: JSON.stringify(gateContract)
+        },
+        gate_contract: gateContract
+      },
+      result_metadata_json: {
+        url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+        gate_report: {
+          phase: 'complete',
+          status: 'FAILED',
+          failure_class: 'INFRASTRUCTURE_TRANSIENT',
+          failure_phase: 'dependency_install',
+          retryable: true,
+          summary: reusableSummary
+        }
+      },
+      started_at: 1,
+      completed_at: 2,
+      created_at: 1,
+      updated_at: 2,
+      row_version: 2
+    } as const;
+    mockListTrainOperations.mockResolvedValue([failedOperation]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({
+      ...failedOperation,
+      attempt: 2,
+      status: 'DISPATCHED'
+    });
+
+    await expect(advanceReleaseTrain(frozenTrain.id)).resolves.toMatchObject({
+      decision: 'WAIT',
+      status: 'BASE_CANARY_RUNNING',
+      wait_reason: {
+        code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+        summary: expect.stringContaining('retry automatically')
+      }
+    });
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-base-canary.yml',
+      'main',
+      expect.objectContaining({
+        base_sha: frozenTrain.frontend_base_sha,
+        expected_sha: frozenTrain.frontend_base_sha,
+        operation_key: expect.stringMatching(/:a2$/)
+      })
+    );
+    expect(mockSetControl).not.toHaveBeenCalled();
+    expect(mockUpdateCandidateLifecycle).not.toHaveBeenCalled();
+    expect(mockAppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'OPERATION_INFRASTRUCTURE_RETRY_DISPATCHED',
+        payload: expect.objectContaining({
+          next_attempt: 2,
+          lane_paused: false
+        })
+      }),
+      {}
+    );
+  });
+
+  it('retries classified preflight infrastructure without entering isolation', async () => {
+    const preflightTrain = {
+      ...frozenTrain,
+      status: 'PREFLIGHTING' as const,
+      frontend_release_branch: 'release-bus/train-1'
+    };
+    const failedOperation = {
+      id: 'operation-preflight-attempt-1',
+      operation_key: 'train-1:r1:preflight-frontend:attempt-1',
+      train_id: preflightTrain.id,
+      revision: preflightTrain.revision,
+      operation_type: 'preflight-frontend',
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA_B,
+      artifact_digest: null,
+      attempt: 1,
+      status: 'FAILED',
+      external_id: '22345',
+      request_metadata_json: {
+        workflow: 'release-bus-preflight.yml',
+        ref: 'main',
+        inputs: {
+          target_lane: 'STAGING',
+          release_branch: 'release-bus/train-1'
+        }
+      },
+      result_metadata_json: {
+        gate_report: {
+          phase: 'complete',
+          status: 'FAILED',
+          failure_class: 'INFRASTRUCTURE_TRANSIENT',
+          failure_phase: 'dependency_install',
+          retryable: true
+        }
+      },
+      started_at: 1,
+      completed_at: 2,
+      created_at: 1,
+      updated_at: 2,
+      row_version: 2
+    } as const;
+    mockFindTrain.mockResolvedValue(preflightTrain);
+    mockListTrainOperations.mockResolvedValue([failedOperation]);
+    mockGetOrCreateOperation.mockImplementation(async (operation) => operation);
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockResolvedValue(undefined);
+    mockUpdateOperation.mockResolvedValue(undefined);
+    mockFindOperation.mockResolvedValue({
+      ...failedOperation,
+      attempt: 2,
+      status: 'DISPATCHED'
+    });
+
+    await expect(advanceReleaseTrain(preflightTrain.id)).resolves.toMatchObject(
+      {
+        decision: 'WAIT',
+        status: 'PREFLIGHTING',
+        wait_reason: {
+          code: 'INFRASTRUCTURE_RETRY_BACKOFF',
+          summary: expect.stringContaining('preflight')
+        }
+      }
+    );
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-preflight.yml',
+      'main',
+      expect.objectContaining({
+        operation_key: expect.stringMatching(/:a2$/),
+        expected_sha: SHA_B,
+        target_lane: 'STAGING'
+      })
+    );
+    expect(mockUpdateTrain).not.toHaveBeenCalledWith(
+      preflightTrain.id,
+      expect.objectContaining({ status: 'ISOLATING_FAILURE' }),
+      {}
+    );
+    expect(mockSetControl).not.toHaveBeenCalled();
   });
 
   it('records fresh terminal evidence and provenance in one transaction', async () => {

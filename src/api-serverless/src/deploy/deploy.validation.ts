@@ -265,6 +265,15 @@ export const ReleaseBusProgressReportBodySchema = Joi.object({
     .valid('lint', 'typecheck', 'unit_tests', 'build', 'complete')
     .required(),
   status: Joi.string().valid('RUNNING', 'SUCCEEDED', 'FAILED').required(),
+  failure_class: Joi.string()
+    .valid('SOURCE', 'INFRASTRUCTURE_TRANSIENT', 'UNKNOWN')
+    .allow(null)
+    .default(null),
+  failure_phase: Joi.string()
+    .valid('dependency_install', 'gate')
+    .allow(null)
+    .default(null),
+  retryable: Joi.boolean().default(false),
   stages: Joi.array()
     .items(
       Joi.object({
@@ -298,7 +307,26 @@ export const ReleaseBusProgressReportBodySchema = Joi.object({
     .allow(null)
     .default(null),
   summary: ReleaseBusAggregateSummarySchema.allow(null).default(null)
-}).required();
+})
+  .custom((value, helpers) => {
+    if (
+      value.status !== 'FAILED' &&
+      (value.failure_class !== null ||
+        value.failure_phase !== null ||
+        value.retryable)
+    ) {
+      return helpers.error('any.invalid');
+    }
+    if (
+      value.retryable &&
+      (value.failure_class !== 'INFRASTRUCTURE_TRANSIENT' ||
+        value.failure_phase !== 'dependency_install')
+    ) {
+      return helpers.error('any.invalid');
+    }
+    return value;
+  })
+  .required();
 
 // Non-orchestration deploy operations remain artifact-required. These are the
 // only workflows that authorize staging/prod evidence or synchronization
