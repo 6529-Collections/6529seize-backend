@@ -16,6 +16,12 @@ const mockListReleaseBusRefs = jest.fn(async () => {
   expect(process.env.RELEASE_BUS_GITHUB_PRIVATE_KEY).toBe('private-key');
   return [];
 });
+const mockPruneTerminalHistory = jest.fn(async (cutoffAt: number) => {
+  callOrder.push('history');
+  expect(cutoffAt).toBeGreaterThan(0);
+  expect(cutoffAt).toBeLessThan(Date.now());
+  return { trains: 0, candidates: 0 };
+});
 
 jest.mock('@/env', () => ({ prepEnvironment: mockPrepEnvironment }));
 jest.mock('@/db', () => ({
@@ -42,7 +48,9 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
   }
 }));
 jest.mock('@/releaseBus/release-bus.service', () => ({
-  releaseBusService: {}
+  releaseBusService: {
+    pruneTerminalHistory: mockPruneTerminalHistory
+  }
 }));
 jest.mock('@/releaseBus/release-bus.metrics', () => ({
   publishReleaseBusMetrics: jest.fn()
@@ -73,7 +81,8 @@ describe('Release Bus handler secret ordering', () => {
       'database',
       'repository',
       'github',
-      'github'
+      'github',
+      'history'
     ]);
   });
 });

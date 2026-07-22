@@ -261,4 +261,117 @@ describe('release operation idempotency', () => {
     ).rejects.toThrow('exceeds the maximum 50');
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it('prunes terminal trains before unreferenced terminal candidates', async () => {
+    const execute = jest.fn(async (sql: string) => {
+      const normalized = sql.trim().split(/\s+/).join(' ');
+      if (normalized.startsWith('select id from release_trains'))
+        return [{ id: 'train-old' }];
+      if (
+        normalized.startsWith(
+          'select candidate.id from release_ready_deployments candidate'
+        )
+      )
+        return [{ id: 'candidate-old' }];
+      return { affectedRows: 1 };
+    });
+    const repository = new ReleaseBusRepository(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.pruneTerminalHistory(123456, 500, {})
+    ).resolves.toEqual({ trains: 1, candidates: 1 });
+
+    const sql = execute.mock.calls.map(([statement]) =>
+      statement.trim().split(/\s+/).join(' ')
+    );
+    const trainItemDelete = sql.findIndex((statement) =>
+      statement.startsWith('delete from release_train_items')
+    );
+    const candidateSelect = sql.findIndex((statement) =>
+      statement.startsWith(
+        'select candidate.id from release_ready_deployments candidate'
+      )
+    );
+    const candidateDelete = sql.findIndex((statement) =>
+      statement.startsWith('delete from release_ready_deployments')
+    );
+    expect(sql[0]).toContain('limit 100');
+    expect(trainItemDelete).toBeGreaterThan(0);
+    expect(candidateSelect).toBeGreaterThan(trainItemDelete);
+    expect(sql[candidateSelect]).toContain(
+      'not exists ( select 1 from release_train_items item where item.candidate_id = candidate.id )'
+    );
+    expect(sql[candidateSelect]).toContain(
+      'where dependency.depends_on_candidate_id = candidate.id'
+    );
+    expect(candidateDelete).toBeGreaterThan(candidateSelect);
+    const dependencyDelete = sql.find((statement) =>
+      statement.startsWith('delete from release_candidate_dependencies')
+    );
+    expect(dependencyDelete).toContain('where candidate_id in (:candidateIds)');
+    expect(dependencyDelete).not.toContain('depends_on_candidate_id in');
+  });
+
+  it('loads an experimental reset by its idempotency key under lock', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const oneOrNull = jest.fn().mockResolvedValue({
+      event_type: 'EXPERIMENTAL_HISTORY_RESET'
+    });
+    const repository = new ReleaseBusRepository(
+      () => ({ execute, oneOrNull }) as unknown as SqlExecutor
+    );
+
+    await expect(
+      repository.findExperimentalHistoryReset(
+        '123e4567-e89b-42d3-a456-426614174001',
+        {}
+      )
+    ).resolves.toMatchObject({ event_type: 'EXPERIMENTAL_HISTORY_RESET' });
+    expect(
+      oneOrNull.mock.calls[0]?.[0].trim().split(/\s+/).join(' ')
+    ).toContain(
+      "json_unquote(json_extract(payload_json, '$.reset_id')) = :resetId"
+    );
+    expect(oneOrNull.mock.calls[0]?.[0]).toContain('for update');
+  });
+
+  it('resets experimental rows in dependency-safe order and retains an audit event', async () => {
+    const execute = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const repository = new ReleaseBusRepository(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+
+    await repository.resetExperimentalHistory(
+      'Controlled go-live reset',
+      'operator',
+      '123e4567-e89b-42d3-a456-426614174001',
+      {}
+    );
+
+    const sql = execute.mock.calls.map(([statement]) =>
+      statement.trim().split(/\s+/).join(' ')
+    );
+    expect(sql.slice(0, 7)).toEqual([
+      'delete from release_train_events',
+      'delete from release_train_evidence',
+      'delete from release_train_operations',
+      'delete from release_train_items',
+      'delete from release_candidate_dependencies',
+      'delete from release_ready_deployments',
+      'delete from release_trains'
+    ]);
+    expect(sql[7]).toContain(
+      'update release_deployment_lanes set train_id = null, lease_owner = null, lease_token = null'
+    );
+    expect(sql.at(-1)).toContain('insert into release_train_events');
+    expect(execute.mock.calls.at(-1)?.[1]).toMatchObject({
+      eventType: 'EXPERIMENTAL_HISTORY_RESET',
+      githubActor: 'operator',
+      trainId: null,
+      candidateId: null,
+      payload: expect.stringContaining('123e4567-e89b-42d3-a456-426614174001')
+    });
+  });
 });
