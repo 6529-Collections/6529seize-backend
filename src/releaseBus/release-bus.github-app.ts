@@ -144,6 +144,20 @@ export function sanitizeGitHubWorkflowJobs(
   }));
 }
 
+export function releaseBusPullRequestMergeStateEligible(
+  mergeable: boolean | null | undefined,
+  mergeableState: string | undefined
+): boolean {
+  if (mergeable === false) return false;
+  if (['clean', 'unstable', 'behind'].includes(mergeableState ?? ''))
+    return true;
+  // The Release Bus GitHub App is a pull-request-mode ruleset bypass actor.
+  // GitHub still reports `blocked` for maintainer-review requirements, so only
+  // accept that state when the merge tree itself is explicitly mergeable. The
+  // exact merge-tree checks are independently required below.
+  return mergeable === true && mergeableState === 'blocked';
+}
+
 function base64Url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url');
 }
@@ -386,8 +400,10 @@ export class ReleaseBusGitHubApp {
     if (!mergeSha || !/^[a-f0-9]{40}$/.test(mergeSha))
       throw new Error('Pull request has no exact merge-tree SHA');
     if (
-      pull.mergeable === false ||
-      !['clean', 'unstable', 'behind'].includes(pull.mergeable_state ?? '')
+      !releaseBusPullRequestMergeStateEligible(
+        pull.mergeable,
+        pull.mergeable_state
+      )
     )
       throw new Error(
         `Pull request is not eligible against its current base (${pull.mergeable_state ?? 'unknown'}); required checks or mergeability are unresolved`
