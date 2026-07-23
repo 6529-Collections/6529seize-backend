@@ -62,6 +62,20 @@ functions:
     environment:
       RELEASE_BUS_BRANCH_RETENTION_DAYS: ${env:RELEASE_BUS_BRANCH_RETENTION_DAYS, '7'}
       SENTRY_DSN: ${env:SENTRY_DSN}
+  v2Reconciler:
+    handler: index.v2ReconcilerHandler
+    name: releaseBusV2Reconciler
+    reservedConcurrency: 1
+    timeout: 60
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    events:
+      - schedule: rate(1 minute)
+    environment:
+      RELEASE_BUS_V2_MODE: ${env:RELEASE_BUS_V2_MODE, 'OFF'}
+      SENTRY_DSN: ${env:SENTRY_DSN}
 
 resources:
   Resources:
@@ -84,6 +98,8 @@ resources:
                   Resource:
                     - !GetAtt WorkerLambdaFunction.Arn
                     - !Join [':', [!GetAtt WorkerLambdaFunction.Arn, '*']]
+                    - !GetAtt V2ReconcilerLambdaFunction.Arn
+                    - !Join [':', [!GetAtt V2ReconcilerLambdaFunction.Arn, '*']]
     ReleaseBusStarterExecutionPolicy:
       Type: AWS::IAM::Policy
       Properties:

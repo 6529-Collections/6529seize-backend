@@ -231,6 +231,17 @@ export { ReleaseTrainEvidenceEntity } from './IReleaseTrainEvidence';
 export { ReleaseDeploymentLaneEntity } from './IReleaseDeploymentLane';
 export { ReleaseBusControlEntity } from './IReleaseBusControl';
 export { ReleaseTrainEventEntity } from './IReleaseTrainEvent';
+export {
+  ReleaseBusV2CandidateDependencyEntity,
+  ReleaseBusV2CandidateEntity,
+  ReleaseBusV2ControlEntity,
+  ReleaseBusV2EventEntity,
+  ReleaseBusV2LockEntity,
+  ReleaseBusV2ManifestEntity,
+  ReleaseBusV2OperationEntity,
+  ReleaseBusV2TrainCandidateEntity,
+  ReleaseBusV2TrainEntity
+} from './IReleaseBusV2';
 export { XTdhGrantEntity } from './IXTdhGrant';
 export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
 export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';
