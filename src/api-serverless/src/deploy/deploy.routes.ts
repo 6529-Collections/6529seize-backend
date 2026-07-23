@@ -35,6 +35,7 @@ import {
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
   ReleaseBusV2ControlBodySchema,
+  ReleaseBusV2AuthorizationBodySchema,
   ReleaseBusV2ProgressBodySchema
 } from '@/api/deploy/deploy.validation';
 import { setNoStoreHeaders } from '@/api/response-headers';
@@ -105,7 +106,17 @@ function requireWorkflowCredential(req: Request): void {
 }
 
 const deployRoutes = asyncRouter();
-const lambdaClient = new LambdaClient({});
+const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION });
+
+function workflowRequest(value: unknown): { workflow?: unknown } | null {
+  try {
+    return typeof value === 'string'
+      ? (JSON.parse(value) as { workflow?: unknown })
+      : (value as { workflow?: unknown } | null);
+  } catch {
+    return null;
+  }
+}
 
 function targetForRepository(repository: ReleaseRepository) {
   return repository === 'frontend' ? 'frontend' : 'backend';
@@ -753,10 +764,7 @@ deployRoutes.get('/release-bus-v2/trains/:id', async (req, res) => {
         !/^\d+$/.test(operation.external_id)
       )
         return operation;
-      const request =
-        typeof operation.request_json === 'string'
-          ? (JSON.parse(operation.request_json) as { workflow?: unknown })
-          : (operation.request_json as { workflow?: unknown } | null);
+      const request = workflowRequest(operation.request_json);
       if (typeof request?.workflow !== 'string') return operation;
       try {
         const workflow = await releaseBusGitHubApp.findWorkflowRun(
@@ -860,16 +868,36 @@ deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
     {}
   );
   const mode = getReleaseBusV2Mode();
-  if (mode !== 'OFF')
-    await lambdaClient.send(
-      new InvokeCommand({
-        FunctionName: 'releaseBusV2Reconciler',
-        InvocationType: 'Event',
-        Payload: Buffer.from(
-          JSON.stringify({ requested_by: actor, requested_at: Date.now() })
-        )
-      })
-    );
+  if (mode !== 'OFF') {
+    try {
+      await lambdaClient.send(
+        new InvokeCommand({
+          FunctionName: 'releaseBusV2Reconciler',
+          InvocationType: 'Event',
+          Payload: Buffer.from(
+            JSON.stringify({ requested_by: actor, requested_at: Date.now() })
+          )
+        })
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Release Bus v2 reconciler invocation failed';
+      await releaseBusV2Repository.appendEvent(
+        {
+          eventType: 'MANUAL_RECONCILE_DISPATCH_FAILED',
+          actor,
+          payload: { failed_at: Date.now(), message }
+        },
+        {}
+      );
+      throw new CustomApiCompliantException(
+        503,
+        `Release Bus v2 reconciliation was not queued: ${message}`
+      );
+    }
+  }
   setNoStoreHeaders(res);
   return res.status(202).json({
     accepted: mode !== 'OFF',
@@ -891,7 +919,7 @@ deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
     service: string | null;
     expected_sha: string;
     artifact_digest: string | null;
-  }>(req.body, ReleaseBusAuthorizationBodySchema);
+  }>(req.body, ReleaseBusV2AuthorizationBodySchema);
   try {
     const result = await releaseBusV2Operations.authorize(body);
     setNoStoreHeaders(res);
@@ -943,24 +971,6 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
     expected_sha: string;
     artifact_digest: string | null;
   }>(req.body, ReleaseBusAuthorizationBodySchema);
-  if (body.operation_key.startsWith('rb2:')) {
-    try {
-      const result = await releaseBusV2Operations.authorize(body);
-      setNoStoreHeaders(res);
-      return res.json({
-        ...result,
-        train_id: body.train_id,
-        operation_key: body.operation_key
-      });
-    } catch (error) {
-      throw new CustomApiCompliantException(
-        409,
-        error instanceof Error
-          ? error.message
-          : 'Release Bus v2 authorization failed'
-      );
-    }
-  }
   const operation = await releaseBusRepository.findOperation(
     body.operation_key,
     {}
@@ -1043,27 +1053,6 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
 
 deployRoutes.post('/release-bus/report-progress', async (req, res) => {
   requireWorkflowCredential(req);
-  if (
-    typeof req.body?.operation_key === 'string' &&
-    req.body.operation_key.startsWith('rb2:')
-  ) {
-    const v2Body = getValidatedByJoiOrThrow<ReleaseBusV2Progress>(
-      req.body,
-      ReleaseBusV2ProgressBodySchema
-    );
-    try {
-      const v2Result = await releaseBusV2Operations.reportProgress(v2Body);
-      setNoStoreHeaders(res);
-      return res.json(v2Result);
-    } catch (error) {
-      throw new CustomApiCompliantException(
-        409,
-        error instanceof Error
-          ? error.message
-          : 'Release Bus v2 progress report failed'
-      );
-    }
-  }
   const body = getValidatedByJoiOrThrow<{
     train_id: string;
     operation_key: string;

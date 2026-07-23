@@ -13,16 +13,14 @@ on:
       reuse_artifact_name: { type: string, required: false, default: '' }
       reuse_artifact_digest: { type: string, required: false, default: '' }
 
-permissions:
-  actions: read
-  contents: read
-
 run-name: Preflight backend v2 train ${{ inputs.release_train_id }} [${{ inputs.operation_key }}]
 
 jobs:
   authorize:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     outputs:
       unit_matrix: ${{ steps.validate.outputs.unit_matrix }}
     steps:
@@ -77,6 +75,8 @@ jobs:
     needs: authorize
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
     steps:
       - name: Bind exact green PR artifact identity
         id: identity
@@ -173,6 +173,8 @@ jobs:
         shard: [lint, typecheck, inventory, tests-1, tests-2, tests-3, tests-4]
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
       - name: Check out exact composed SHA
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -186,7 +188,7 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Install frozen root dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Run shard
         env:
           SHARD: ${{ matrix.shard }}
@@ -234,6 +236,8 @@ jobs:
       matrix: ${{ fromJSON(needs.authorize.outputs.unit_matrix) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - name: Check out exact composed SHA
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -248,7 +252,7 @@ jobs:
           UNIT: ${{ matrix.unit }}
         run: |
           set -euo pipefail
-          npm ci
+          npm ci --ignore-scripts
           package_dir="src/$UNIT"
           if [ "$UNIT" = api ]; then package_dir=src/api-serverless; fi
           npm --prefix "$package_dir" ci --ignore-scripts
@@ -268,6 +272,8 @@ jobs:
     needs: [authorize, quality, package]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      actions: read
     steps:
       - name: Download exact Jest inventory evidence
         id: inventory_download

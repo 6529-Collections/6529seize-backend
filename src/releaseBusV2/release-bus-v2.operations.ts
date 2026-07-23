@@ -97,7 +97,7 @@ function parseAttemptOperationKey(value: string): {
   readonly idempotencyKey: string;
   readonly attempt: number;
 } {
-  const match = /^(.*):a([1-9][0-9]{0,8})$/.exec(value);
+  const match = /^(.*):a([1-9]\d{0,8})$/.exec(value);
   if (!match?.[1]) throw new Error('Invalid Release Bus v2 attempt key');
   return { idempotencyKey: match[1], attempt: Number(match[2]) };
 }

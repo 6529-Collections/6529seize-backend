@@ -28,6 +28,10 @@ const mockV2ListControls = jest.fn();
 const mockV2ListLocks = jest.fn();
 const mockV2ListDependencies = jest.fn();
 const mockV2AppendEvent = jest.fn();
+const mockV2FindTrain = jest.fn();
+const mockV2ListTrainCandidates = jest.fn();
+const mockV2ListOperations = jest.fn();
+const mockV2ListEvents = jest.fn();
 const mockLambdaSend = jest.fn();
 
 jest.mock('@aws-sdk/client-lambda', () => ({
@@ -111,11 +115,12 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
     listDependencies: (...args: unknown[]) => mockV2ListDependencies(...args),
     appendEvent: (...args: unknown[]) => mockV2AppendEvent(...args),
     listTrains: jest.fn(async () => []),
-    findTrain: jest.fn(async () => null),
+    findTrain: (...args: unknown[]) => mockV2FindTrain(...args),
     listManifests: jest.fn(async () => []),
-    listTrainCandidates: jest.fn(async () => []),
-    listOperations: jest.fn(async () => []),
-    listEvents: jest.fn(async () => [])
+    listTrainCandidates: (...args: unknown[]) =>
+      mockV2ListTrainCandidates(...args),
+    listOperations: (...args: unknown[]) => mockV2ListOperations(...args),
+    listEvents: (...args: unknown[]) => mockV2ListEvents(...args)
   }
 }));
 
@@ -1180,6 +1185,10 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     ]);
     mockIsOrganizationOperator.mockResolvedValue(true);
     mockLambdaSend.mockResolvedValue({ StatusCode: 202 });
+    mockV2FindTrain.mockResolvedValue(null);
+    mockV2ListTrainCandidates.mockResolvedValue([]);
+    mockV2ListOperations.mockResolvedValue([]);
+    mockV2ListEvents.mockResolvedValue([]);
   });
 
   afterAll(() => {
@@ -1277,5 +1286,42 @@ describe('Release Bus v2 route authorization and exact actions', () => {
         })
       })
     );
+  });
+
+  it('reports a reconciliation dispatch failure without claiming it was queued', async () => {
+    mockLambdaSend.mockRejectedValueOnce(new Error('lambda throttled'));
+
+    const response = await post('/deploy/release-bus-v2/reconcile', {});
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toContain('was not queued');
+    expect(mockV2AppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'MANUAL_RECONCILE_DISPATCH_FAILED',
+        actor: 'developer',
+        payload: expect.objectContaining({ message: 'lambda throttled' })
+      }),
+      {}
+    );
+  });
+
+  it('degrades gracefully when stored workflow request JSON is malformed', async () => {
+    mockV2FindTrain.mockResolvedValue({ id: TRAIN_ID, status: 'PREFLIGHTING' });
+    mockV2ListOperations.mockResolvedValue([
+      {
+        id: 'operation-id',
+        status: 'RUNNING',
+        repository: 'backend',
+        external_id: '12345',
+        request_json: '{not-json'
+      }
+    ]);
+
+    const response = await get(`/deploy/release-bus-v2/trains/${TRAIN_ID}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.operations).toEqual([
+      expect.objectContaining({ id: 'operation-id', status: 'RUNNING' })
+    ]);
   });
 });

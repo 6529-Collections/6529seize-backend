@@ -104,5 +104,11 @@ exports.up = function (db) {
   });
 };
 
-exports.down = function () { return Promise.resolve(); };
+exports.down = function () {
+  // Intentionally non-destructive: v2 is additive and its immutable manifests,
+  // operations, and audit events must survive an application rollback for
+  // diagnosis. A later, separately authorized retirement migration may remove
+  // these tables only after both v1 rollback and v2 retention windows close.
+  return Promise.resolve();
+};
 exports._meta = { version: 1 };

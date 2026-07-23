@@ -277,13 +277,13 @@ export class ReleaseBusV2Service {
                 (dependency) =>
                   `${dependency.candidate_id}:${dependency.environment}`
               )
-              .sort();
+              .sort((left, right) => left.localeCompare(right));
             const storedDependencies = existingDependencies
               .map(
                 (dependency) =>
                   `${dependency.prerequisite_candidate_id}:${dependency.environment}`
               )
-              .sort();
+              .sort((left, right) => left.localeCompare(right));
             if (
               candidate.branch_name !== input.branch_name ||
               !isDeepStrictEqual(

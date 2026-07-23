@@ -246,10 +246,10 @@ export const ReleaseBusV2ProgressBodySchema = Joi.object({
     .guid({ version: ['uuidv4'] })
     .required(),
   operation_key: Joi.string()
-    .pattern(/^rb2:[A-Za-z0-9:._-]{1,200}:a[1-9][0-9]{0,8}$/)
+    .pattern(/^rb2:[A-Za-z0-9:._-]{1,200}:a[1-9]\d{0,8}$/)
     .required(),
   workflow_run_id: Joi.string()
-    .pattern(/^[1-9][0-9]{0,19}$/)
+    .pattern(/^[1-9]\d{0,19}$/)
     .required(),
   phase: Joi.string().trim().min(1).max(100).required(),
   status: Joi.string().valid('RUNNING', 'SUCCEEDED', 'FAILED').required(),
@@ -618,16 +618,14 @@ const ARTIFACT_FREE_RELEASE_OPERATIONS = [
 ] as const;
 
 const RELEASE_OPERATION_KEY_PATTERN =
-  /^rb:[A-Za-z0-9._-]+:r[1-9][0-9]*:([A-Za-z0-9._-]{1,48}):[a-f0-9]{32}:a[1-9][0-9]*$/;
+  /^rb:[A-Za-z0-9._-]+:r[1-9]\d*:([A-Za-z0-9._-]{1,48}):[a-f0-9]{32}:a[1-9]\d*$/;
 
 export const ReleaseBusAuthorizationBodySchema = Joi.object({
   train_id: Joi.string()
     .guid({ version: ['uuidv4'] })
     .required(),
   operation_key: Joi.string().max(180).required(),
-  workflow_run_id: Joi.string()
-    .pattern(/^[0-9]+$/)
-    .required(),
+  workflow_run_id: Joi.string().pattern(/^\d+$/).required(),
   artifact_run_id: Joi.when('environment', {
     is: 'orchestration',
     then: Joi.valid(null).required(),
@@ -673,6 +671,23 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
     return value;
   })
   .required();
+
+const RELEASE_BUS_V2_OPERATION_KEY_PATTERN =
+  /^rb2:[a-f0-9-]{36}:[A-Za-z0-9._:-]+:a[1-9]\d{0,8}$/;
+
+export const ReleaseBusV2AuthorizationBodySchema =
+  ReleaseBusAuthorizationBodySchema.keys({
+    operation_key: Joi.string()
+      .pattern(RELEASE_BUS_V2_OPERATION_KEY_PATTERN)
+      .max(180)
+      .required()
+  })
+    .custom((value, helpers) => {
+      if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
+        return helpers.error('any.invalid');
+      return value;
+    })
+    .required();
 
 export const ReleaseBusBreakGlassAuthorizationBodySchema = Joi.object({
   workflow_run_id: Joi.string().pattern(/^\d+$/).required(),

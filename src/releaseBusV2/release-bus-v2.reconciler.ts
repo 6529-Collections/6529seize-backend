@@ -2081,7 +2081,7 @@ export class ReleaseBusV2Reconciler {
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const previous =
       current.failure_class === 'INFRASTRUCTURE'
-        ? /^Transient control transport failure ([0-9]+)\/3:/.exec(
+        ? /^Transient control transport failure (\d+)\/3:/.exec(
             current.failure_message ?? ''
           )
         : null;
