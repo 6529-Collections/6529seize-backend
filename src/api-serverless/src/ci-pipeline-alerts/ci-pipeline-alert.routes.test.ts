@@ -444,6 +444,27 @@ describe('ci pipeline alert routes', () => {
     );
   });
 
+  it('rejects unknown services inside a structured release-note group', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          service: 'api',
+          release_note_groups: [
+            {
+              ...structuredGroup,
+              release_group_services: ['api', 'notADeployService']
+            }
+          ]
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'release_group_services must contain only allowlisted backend deploy services'
+    );
+  });
+
   it('rejects duplicate structured release-note group ids', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
 
