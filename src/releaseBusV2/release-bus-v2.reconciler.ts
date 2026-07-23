@@ -1706,8 +1706,7 @@ export class ReleaseBusV2Reconciler {
           train,
           deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
           deployed.failedOperation.failure_message ??
-            'Staging deployment failed',
-          lease
+            'Staging deployment failed'
         );
         return;
       }
@@ -1738,8 +1737,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
+          e2e.failure_message ?? 'Staging E2E failed'
         );
         return;
       }
@@ -1762,8 +1760,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
+          e2e.failure_message ?? 'Staging E2E failed'
         );
         return;
       }
@@ -1890,8 +1887,7 @@ export class ReleaseBusV2Reconciler {
       await this.failTrain(
         train,
         'CONTROL_PLANE',
-        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence',
-        lease
+        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence'
       );
       return false;
     }
@@ -1932,8 +1928,7 @@ export class ReleaseBusV2Reconciler {
       await this.failTrain(
         train,
         'CONTROL_PLANE',
-        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment',
-        lease
+        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment'
       );
       return false;
     }
@@ -2156,8 +2151,7 @@ export class ReleaseBusV2Reconciler {
           train,
           deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
           deployed.failedOperation.failure_message ??
-            'Production deployment failed',
-          lease
+            'Production deployment failed'
         );
         return;
       }
@@ -2167,8 +2161,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Production E2E failed',
-          lease
+          e2e.failure_message ?? 'Production E2E failed'
         );
         return;
       }
@@ -2301,9 +2294,51 @@ export class ReleaseBusV2Reconciler {
         : train.backend_composed_sha;
     if (!base || !composed)
       throw new Error(`Missing ${repository} release SHA`);
-    if (observedSha === base)
-      await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
-    else if (observedSha !== composed)
+    if (observedSha === base) {
+      try {
+        await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
+      } catch (error) {
+        // A ref update can fail after GitHub accepted it. Re-read the ref before
+        // deciding whether the durable operation is complete, retryable, or a
+        // terminal control-plane failure. This keeps exact main advancement
+        // idempotent and prevents a known-rejected update from leaving a
+        // permanently PENDING operation behind a terminal train lock.
+        const afterFailure = await releaseBusGitHubApp.resolveRef(
+          repository,
+          'main'
+        );
+        if (afterFailure !== composed) {
+          if (afterFailure !== base)
+            throw new MainMovedError(
+              `${repository} main moved from ${base} to ${afterFailure}`
+            );
+          if (!isGitHubInfrastructureError(error)) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : `Failed to advance ${repository} main`;
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: 'FAILED',
+                  failureClass: 'CONTROL_PLANE',
+                  failureMessage: message,
+                  completedAt: Date.now()
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw error;
+          }
+          throw error;
+        }
+      }
+    } else if (observedSha !== composed)
       throw new MainMovedError(
         `${repository} main moved from ${base} to ${observedSha}`
       );
@@ -2815,8 +2850,7 @@ export class ReleaseBusV2Reconciler {
   private async failTrain(
     train: ReleaseBusV2TrainRecord,
     failureClass: ReleaseBusV2FailureClass,
-    message: string,
-    lease?: ReleaseBusV2LockRecord
+    message: string
   ): Promise<void> {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
@@ -2863,14 +2897,10 @@ export class ReleaseBusV2Reconciler {
           : 'Exact state is retained for idempotent diagnosis or retry',
       completedAt: Date.now()
     });
-    if (lease) {
-      await this.releaseEnvironmentLease(
-        current.lane === 'PRODUCTION'
-          ? 'production-environment'
-          : 'staging-environment',
-        lease
-      );
-    }
+    // Release ownership only after the train and every operation are terminal.
+    // If a mutation outcome is still ambiguous, the nonterminal operation
+    // deliberately retains the lease until reconciliation can prove its state.
+    await this.releaseTerminalEnvironmentLocks();
   }
 
   private async deferTrainForInfrastructure(

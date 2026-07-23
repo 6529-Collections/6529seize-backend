@@ -15,11 +15,11 @@ node ops/scripts/release-bus-status.mjs
 The helper prefers `/deploy/release-bus-v2/controls` and temporarily falls back
 to the v1 endpoint only before the additive v2 API exists.
 
-| Mode         | Staging                        | Production                                                                      |
-| ------------ | ------------------------------ | ------------------------------------------------------------------------------- |
-| `OFF`        | Serialized legacy manual route | Serialized manual route with explicit owner authority; no staging evidence gate |
+| Mode         | Staging                        | Production                                                                         |
+| ------------ | ------------------------------ | ---------------------------------------------------------------------------------- |
+| `OFF`        | Serialized legacy manual route | Serialized manual route with explicit owner authority; no staging evidence gate    |
 | `STAGING`    | V2 readiness                   | Manual/disabled by default; exact operator-only production beta may be allowlisted |
-| `PRODUCTION` | V2 readiness                   | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate          |
+| `PRODUCTION` | V2 readiness                   | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate             |
 
 For an active mode, `ALL` and the target lane must be running. In `OFF`, v2
 controls are non-authoritative and the manual fallback remains available when
@@ -103,6 +103,13 @@ from current `main`:
   verify exact versions, run production-safe read-only E2E, and mark
   `PRODUCTION_DEPLOYED`.
 
+The dedicated Release Bus GitHub App must be an `always` bypass actor on the
+default-branch ruleset in both repositories. V2 uses that narrowly scoped App
+to perform a non-force fast-forward to the exact staging-validated commit; a
+pull-request-only bypass would require GitHub to manufacture a different merge
+commit and therefore fails closed. Human and team bypass actors remain
+pull-request-only.
+
 V2 never authors or posts release notes itself. Production operations must feed
 the existing autonomous release-note bot complete, canonical grouping metadata
 and an idempotent finalize signal. Internal operational candidates may opt out
@@ -110,13 +117,13 @@ explicitly.
 
 ## Failure behavior
 
-| Class                | Behavior                                                                             |
-| -------------------- | ------------------------------------------------------------------------------------ |
-| Candidate merge/test | Mark the direct candidate `NEEDS_REBASE` or failed; hold only transitive dependants  |
-| Infrastructure       | Bounded idempotent retry; no candidate isolation                                     |
-| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence                |
-| Control plane        | Fail the train, requeue candidates, pause automated claiming, retain manual fallback |
-| E2E                  | Keep the manifest unvalidated; do not globally pause unless state is unverifiable    |
+| Class                | Behavior                                                                                                                                           |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Candidate merge/test | Mark the direct candidate `NEEDS_REBASE` or failed; hold only transitive dependants                                                                |
+| Infrastructure       | Bounded idempotent retry; no candidate isolation                                                                                                   |
+| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence                                                                              |
+| Control plane        | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback |
+| E2E                  | Keep the manifest unvalidated; do not globally pause unless state is unverifiable                                                                  |
 
 Every pending GitHub status must map to a visible candidate/train/operation state
 and recovery message. Duplicate callbacks and worker invocations reuse immutable

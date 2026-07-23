@@ -394,6 +394,101 @@ class InMemoryAcceptanceRepository {
     return this.operations.filter((item) => item.train_id === trainId);
   }
 
+  public async findOperation(
+    idempotencyKey: string
+  ): Promise<ReleaseBusV2OperationRecord | null> {
+    return (
+      this.operations.find((item) => item.idempotency_key === idempotencyKey) ??
+      null
+    );
+  }
+
+  public async getOrCreateOperation(input: {
+    readonly idempotencyKey: string;
+    readonly trainId: string;
+    readonly operationType: string;
+    readonly repository: 'frontend' | 'backend';
+    readonly service: string | null;
+    readonly environment: string;
+    readonly expectedSha: string | null;
+    readonly artifactDigest: string | null;
+    readonly request: unknown;
+    readonly maxAttempts: number;
+  }): Promise<ReleaseBusV2OperationRecord> {
+    const existing = await this.findOperation(input.idempotencyKey);
+    if (existing) return existing;
+    const now = Date.now();
+    const created: ReleaseBusV2OperationRecord = {
+      id: `operation-${this.operations.length + 1}`,
+      idempotency_key: input.idempotencyKey,
+      train_id: input.trainId,
+      operation_type: input.operationType,
+      repository: input.repository,
+      service: input.service,
+      environment: input.environment,
+      expected_sha: input.expectedSha,
+      artifact_digest: input.artifactDigest,
+      external_id: null,
+      status: 'PENDING',
+      attempt: 1,
+      max_attempts: input.maxAttempts,
+      next_retry_at: null,
+      failure_class: null,
+      failure_message: null,
+      request_json: input.request,
+      result_json: null,
+      started_at: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      row_version: 1
+    };
+    this.operations.push(created);
+    return created;
+  }
+
+  public async updateOperation(
+    id: string,
+    rowVersion: number,
+    fields: Partial<{
+      readonly status: ReleaseBusV2OperationRecord['status'];
+      readonly externalId: string | null;
+      readonly result: unknown;
+      readonly failureClass: ReleaseBusV2OperationRecord['failure_class'];
+      readonly failureMessage: string | null;
+      readonly completedAt: number | null;
+    }>
+  ): Promise<boolean> {
+    const index = this.operations.findIndex((item) => item.id === id);
+    const current = this.operations[index];
+    if (!current || current.row_version !== rowVersion) return false;
+    this.operations[index] = {
+      ...current,
+      status: fields.status ?? current.status,
+      external_id:
+        fields.externalId === undefined
+          ? current.external_id
+          : fields.externalId,
+      result_json:
+        fields.result === undefined ? current.result_json : fields.result,
+      failure_class:
+        fields.failureClass === undefined
+          ? current.failure_class
+          : fields.failureClass,
+      failure_message:
+        fields.failureMessage === undefined
+          ? current.failure_message
+          : fields.failureMessage,
+      completed_at:
+        fields.completedAt === undefined
+          ? current.completed_at
+          : fields.completedAt,
+      updated_at: Date.now(),
+      row_version: current.row_version + 1
+    };
+    return true;
+  }
+
   public async createManifest(
     input: Omit<ReleaseBusV2ManifestRecord, 'id' | 'created_at' | 'updated_at'>
   ): Promise<ReleaseBusV2ManifestRecord> {
@@ -1399,6 +1494,79 @@ describe('Release Bus v2 offline acceptance harness', () => {
       ).advanceProductionRefs(context)
     ).rejects.toThrow('main moved');
     expect(mockUpdateRef).not.toHaveBeenCalled();
+  });
+
+  it('terminalizes a rejected exact main update and safely releases its production lock', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    state.repository.memberships.forEach((membership, index) => {
+      state.repository.memberships[index] = {
+        ...membership,
+        train_id: production.id
+      };
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      production.id,
+      `train:${production.id}`
+    );
+    mockResolveRef.mockResolvedValue(production.backend_base_sha);
+    mockUpdateRef.mockRejectedValue(
+      new Error('Repository rule violations found')
+    );
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).rejects.toThrow('Repository rule violations found');
+
+    const mainOperation = state.repository.operations.find(
+      (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+    );
+    expect(mainOperation).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: expect.any(Number)
+      })
+    );
+
+    await (
+      state.reconciler as unknown as {
+        failTrain(
+          input: ReleaseBusV2TrainRecord,
+          failureClass: 'CONTROL_PLANE',
+          message: string
+        ): Promise<void>;
+      }
+    ).failTrain(production, 'CONTROL_PLANE', 'ruleset rejected update');
+
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+        trainId: production.id,
+        payload: expect.objectContaining({
+          lock: 'production-environment',
+          train_status: 'FAILED'
+        })
+      })
+    );
   });
 
   it('pauses only automation and requeues candidates on a control-plane defect', async () => {
