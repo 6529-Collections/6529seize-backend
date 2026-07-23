@@ -12,12 +12,12 @@ export class MembershipWatermarkEntity {
   readonly dimension!: string;
 
   @Column({ type: 'bigint', nullable: false })
-  readonly watermark_millis!: number;
+  readonly watermark_millis!: string;
 
   // Future chain-height/block mapping for the watermark.
   @Column({ type: 'varchar', length: 200, nullable: true, default: null })
   readonly detail!: string | null;
 
   @Column({ type: 'bigint', nullable: false })
-  readonly updated_at_millis!: number;
+  readonly updated_at_millis!: string;
 }

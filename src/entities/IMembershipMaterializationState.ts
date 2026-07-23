@@ -25,8 +25,8 @@ export class MembershipMaterializationStateEntity {
   readonly spec_version!: number;
 
   @Column({ type: 'bigint', nullable: false })
-  readonly as_of_millis!: number;
+  readonly as_of_millis!: string;
 
   @Column({ type: 'bigint', nullable: false })
-  readonly updated_at_millis!: number;
+  readonly updated_at_millis!: string;
 }

@@ -26,5 +26,5 @@ export class UserGroupMemberEntity {
 
   // Watermark: when the derivation observed its inputs.
   @Column({ type: 'bigint', nullable: false })
-  readonly as_of_millis!: number;
+  readonly as_of_millis!: string;
 }
