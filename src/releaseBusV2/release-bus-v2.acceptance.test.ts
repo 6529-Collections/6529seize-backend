@@ -394,6 +394,103 @@ class InMemoryAcceptanceRepository {
     return this.operations.filter((item) => item.train_id === trainId);
   }
 
+  public async findOperation(
+    idempotencyKey: string
+  ): Promise<ReleaseBusV2OperationRecord | null> {
+    return (
+      this.operations.find((item) => item.idempotency_key === idempotencyKey) ??
+      null
+    );
+  }
+
+  public async getOrCreateOperation(input: {
+    readonly idempotencyKey: string;
+    readonly trainId: string;
+    readonly operationType: string;
+    readonly repository: 'frontend' | 'backend';
+    readonly service: string | null;
+    readonly environment: string;
+    readonly expectedSha: string | null;
+    readonly artifactDigest: string | null;
+    readonly request: unknown;
+    readonly maxAttempts: number;
+  }): Promise<ReleaseBusV2OperationRecord> {
+    const existing = await this.findOperation(input.idempotencyKey);
+    if (existing) return existing;
+    const now = Date.now();
+    const created: ReleaseBusV2OperationRecord = {
+      id: `operation-${this.operations.length + 1}`,
+      idempotency_key: input.idempotencyKey,
+      train_id: input.trainId,
+      operation_type: input.operationType,
+      repository: input.repository,
+      service: input.service,
+      environment: input.environment,
+      expected_sha: input.expectedSha,
+      artifact_digest: input.artifactDigest,
+      external_id: null,
+      status: 'PENDING',
+      attempt: 1,
+      max_attempts: input.maxAttempts,
+      next_retry_at: null,
+      failure_class: null,
+      failure_message: null,
+      request_json: input.request,
+      result_json: null,
+      started_at: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      row_version: 1
+    };
+    this.operations.push(created);
+    return created;
+  }
+
+  public async updateOperation(
+    id: string,
+    rowVersion: number,
+    fields: Partial<{
+      readonly status: ReleaseBusV2OperationRecord['status'];
+      readonly externalId: string | null;
+      readonly result: unknown;
+      readonly failureClass: ReleaseBusV2OperationRecord['failure_class'];
+      readonly failureMessage: string | null;
+      readonly attempt: number;
+      readonly completedAt: number | null;
+    }>
+  ): Promise<boolean> {
+    const index = this.operations.findIndex((item) => item.id === id);
+    const current = this.operations[index];
+    if (!current || current.row_version !== rowVersion) return false;
+    this.operations[index] = {
+      ...current,
+      status: fields.status ?? current.status,
+      external_id:
+        fields.externalId === undefined
+          ? current.external_id
+          : fields.externalId,
+      result_json:
+        fields.result === undefined ? current.result_json : fields.result,
+      failure_class:
+        fields.failureClass === undefined
+          ? current.failure_class
+          : fields.failureClass,
+      failure_message:
+        fields.failureMessage === undefined
+          ? current.failure_message
+          : fields.failureMessage,
+      attempt: fields.attempt ?? current.attempt,
+      completed_at:
+        fields.completedAt === undefined
+          ? current.completed_at
+          : fields.completedAt,
+      updated_at: Date.now(),
+      row_version: current.row_version + 1
+    };
+    return true;
+  }
+
   public async createManifest(
     input: Omit<ReleaseBusV2ManifestRecord, 'id' | 'created_at' | 'updated_at'>
   ): Promise<ReleaseBusV2ManifestRecord> {
@@ -567,6 +664,117 @@ describe('Release Bus v2 offline acceptance harness', () => {
       expect.objectContaining({
         eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
         trainId: 'train-1'
+      })
+    );
+  });
+
+  it('reconciles a stranded terminal main operation before releasing its lock', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const failed = train('terminal-production', {
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: 4
+    });
+    state.repository.trains.set(failed.id, failed);
+    state.repository.operations.push({
+      ...operation(failed.id, 'ADVANCE_MAIN_BACKEND', 'backend', 'unused'),
+      id: 'stranded-main-operation',
+      idempotency_key: `rb2:${failed.id}:advance-main:backend`,
+      expected_sha: failed.backend_composed_sha,
+      external_id: null,
+      status: 'PENDING',
+      failure_class: null,
+      failure_message: null,
+      completed_at: null
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      failed.id,
+      `train:${failed.id}`
+    );
+    mockResolveRef.mockResolvedValue(failed.backend_base_sha);
+
+    await state.reconciler.runOnce('acceptance-terminal-ref-reconciliation');
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.id === 'stranded-main-operation'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: expect.any(Number)
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'TERMINAL_INTERNAL_REF_OPERATION_RECONCILED',
+          trainId: failed.id,
+          payload: expect.objectContaining({
+            repository: 'backend',
+            operation_status: 'FAILED',
+            observed_sha: failed.backend_base_sha
+          })
+        }),
+        expect.objectContaining({
+          eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+          trainId: failed.id
+        })
+      ])
+    );
+  });
+
+  it('retains a terminal lock when a stranded main operation is still ambiguous', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const failed = train('ambiguous-production', {
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: 4
+    });
+    state.repository.trains.set(failed.id, failed);
+    state.repository.operations.push({
+      ...operation(failed.id, 'ADVANCE_MAIN_BACKEND', 'backend', 'unused'),
+      id: 'ambiguous-main-operation',
+      idempotency_key: `rb2:${failed.id}:advance-main:backend`,
+      expected_sha: failed.backend_composed_sha,
+      external_id: null,
+      status: 'PENDING',
+      completed_at: null
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      failed.id,
+      `train:${failed.id}`
+    );
+    mockResolveRef.mockResolvedValue('9'.repeat(40));
+
+    await state.reconciler.runOnce('acceptance-ambiguous-terminal-ref');
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.id === 'ambiguous-main-operation'
+      )?.status
+    ).toBe('PENDING');
+    expect(state.repository.lock.owner_train_id).toBe(failed.id);
+    expect(state.repository.events).not.toContainEqual(
+      expect.objectContaining({
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+        trainId: failed.id
       })
     );
   });
@@ -1399,6 +1607,244 @@ describe('Release Bus v2 offline acceptance harness', () => {
       ).advanceProductionRefs(context)
     ).rejects.toThrow('main moved');
     expect(mockUpdateRef).not.toHaveBeenCalled();
+  });
+
+  it('terminalizes a rejected exact main update and safely releases its production lock', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    state.repository.memberships.forEach((membership, index) => {
+      state.repository.memberships[index] = {
+        ...membership,
+        train_id: production.id
+      };
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      production.id,
+      `train:${production.id}`
+    );
+    mockResolveRef.mockResolvedValue(production.backend_base_sha);
+    mockUpdateRef.mockRejectedValue(
+      new Error('Repository rule violations found')
+    );
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).rejects.toThrow('Repository rule violations found');
+
+    const mainOperation = state.repository.operations.find(
+      (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+    );
+    expect(mainOperation).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: expect.any(Number)
+      })
+    );
+
+    await (
+      state.reconciler as unknown as {
+        failTrain(
+          input: ReleaseBusV2TrainRecord,
+          failureClass: 'CONTROL_PLANE',
+          message: string
+        ): Promise<void>;
+      }
+    ).failTrain(production, 'CONTROL_PLANE', 'ruleset rejected update');
+
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+        trainId: production.id,
+        payload: expect.objectContaining({
+          lock: 'production-environment',
+          train_status: 'FAILED'
+        })
+      })
+    );
+  });
+
+  it('accepts an exact main update that succeeded before its transport error', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('accepted-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    mockUpdateRef.mockRejectedValue(new Error('response connection reset'));
+    mockResolveRef.mockResolvedValue(production.backend_composed_sha);
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).resolves.toBeUndefined();
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'SUCCEEDED',
+        external_id: production.backend_composed_sha,
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('bounds exact main infrastructure retries in the durable operation', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('retry-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    const infrastructureError = new Error('GitHub returned 503');
+    infrastructureError.name = 'ReleaseBusGitHubInfrastructureError';
+    mockUpdateRef.mockRejectedValue(infrastructureError);
+    mockResolveRef.mockResolvedValue(production.backend_base_sha);
+    const advance = () =>
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(
+        production,
+        'backend',
+        production.backend_base_sha ?? ''
+      );
+
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+
+    expect(mockUpdateRef).toHaveBeenCalledTimes(3);
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        attempt: 3,
+        max_attempts: 3,
+        failure_class: 'INFRASTRUCTURE',
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('cancels a main operation when its post-failure ref is an unexpected third SHA', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('moved-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    mockUpdateRef.mockRejectedValue(new Error('update rejected'));
+    mockResolveRef.mockResolvedValue('9'.repeat(40));
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).rejects.toThrow('main moved');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        failure_class: 'INTERACTION',
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('pauses for exact reconciliation after a partial multi-repository main advance', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('partial-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'backend'
+        ? production.backend_base_sha
+        : production.frontend_base_sha
+    );
+    mockUpdateRef.mockImplementation(async (repository: string) => {
+      if (repository === 'frontend')
+        throw new Error('frontend update rejected');
+    });
+    let frontendReads = 0;
+    mockResolveRef.mockImplementation(async (repository: string) => {
+      if (repository === 'backend') return production.backend_base_sha;
+      frontendReads += 1;
+      return frontendReads > 1 ? '9'.repeat(40) : production.frontend_base_sha;
+    });
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceProductionRefs(input: typeof context): Promise<void>;
+        }
+      ).advanceProductionRefs(context)
+    ).rejects.toThrow('Partial production main advance: backend');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )?.status
+    ).toBe('SUCCEEDED');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_FRONTEND'
+      )?.status
+    ).toBe('CANCELLED');
   });
 
   it('pauses only automation and requeues candidates on a control-plane defect', async () => {

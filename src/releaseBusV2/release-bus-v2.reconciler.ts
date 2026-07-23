@@ -1706,8 +1706,7 @@ export class ReleaseBusV2Reconciler {
           train,
           deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
           deployed.failedOperation.failure_message ??
-            'Staging deployment failed',
-          lease
+            'Staging deployment failed'
         );
         return;
       }
@@ -1738,8 +1737,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
+          e2e.failure_message ?? 'Staging E2E failed'
         );
         return;
       }
@@ -1762,8 +1760,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
+          e2e.failure_message ?? 'Staging E2E failed'
         );
         return;
       }
@@ -1890,8 +1887,7 @@ export class ReleaseBusV2Reconciler {
       await this.failTrain(
         train,
         'CONTROL_PLANE',
-        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence',
-        lease
+        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence'
       );
       return false;
     }
@@ -1932,8 +1928,7 @@ export class ReleaseBusV2Reconciler {
       await this.failTrain(
         train,
         'CONTROL_PLANE',
-        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment',
-        lease
+        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment'
       );
       return false;
     }
@@ -2156,8 +2151,7 @@ export class ReleaseBusV2Reconciler {
           train,
           deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
           deployed.failedOperation.failure_message ??
-            'Production deployment failed',
-          lease
+            'Production deployment failed'
         );
         return;
       }
@@ -2167,8 +2161,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Production E2E failed',
-          lease
+          e2e.failure_message ?? 'Production E2E failed'
         );
         return;
       }
@@ -2257,8 +2250,21 @@ export class ReleaseBusV2Reconciler {
         );
       throw new MainMovedError(message);
     }
-    for (const item of current)
-      await this.advanceMainRef(train, item.repository, item.sha);
+    const advanced: ReleaseBusV2Repository[] = [];
+    for (const item of current) {
+      try {
+        await this.advanceMainRef(train, item.repository, item.sha);
+        advanced.push(item.repository);
+      } catch (error) {
+        if (advanced.length > 0)
+          throw new Error(
+            `Partial production main advance: ${advanced.join(', ')} reached the exact composed SHA before ${item.repository} failed; automation must remain paused for exact reconciliation. ${
+              error instanceof Error ? error.message : 'Unknown ref failure'
+            }`
+          );
+        throw error;
+      }
+    }
   }
 
   private async advanceMainRef(
@@ -2286,7 +2292,7 @@ export class ReleaseBusV2Reconciler {
               ? train.frontend_base_sha
               : train.backend_base_sha
         },
-        maxAttempts: 1
+        maxAttempts: 3
       },
       {}
     );
@@ -2301,9 +2307,88 @@ export class ReleaseBusV2Reconciler {
         : train.backend_composed_sha;
     if (!base || !composed)
       throw new Error(`Missing ${repository} release SHA`);
-    if (observedSha === base)
-      await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
-    else if (observedSha !== composed)
+    if (observedSha === base) {
+      try {
+        await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
+      } catch (error) {
+        // A ref update can fail after GitHub accepted it. Re-read the ref before
+        // deciding whether the durable operation is complete, retryable, or a
+        // terminal control-plane failure. This keeps exact main advancement
+        // idempotent and prevents a known-rejected update from leaving a
+        // permanently PENDING operation behind a terminal train lock.
+        const afterFailure = await releaseBusGitHubApp.resolveRef(
+          repository,
+          'main'
+        );
+        if (afterFailure !== composed) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : `Failed to advance ${repository} main`;
+          if (afterFailure !== base) {
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: 'CANCELLED',
+                  failureClass: 'INTERACTION',
+                  failureMessage: `${repository} main moved to ${afterFailure} during exact advancement`,
+                  completedAt: Date.now()
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw new MainMovedError(
+              `${repository} main moved from ${base} to ${afterFailure}`
+            );
+          }
+          if (isGitHubInfrastructureError(error)) {
+            const exhausted = operation.attempt >= operation.max_attempts;
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: exhausted ? 'FAILED' : 'PENDING',
+                  failureClass: 'INFRASTRUCTURE',
+                  failureMessage: `Exact ${repository} main advancement transport failure ${operation.attempt}/${operation.max_attempts}: ${message}`,
+                  attempt: exhausted
+                    ? operation.attempt
+                    : operation.attempt + 1,
+                  completedAt: exhausted ? Date.now() : null
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw error;
+          }
+          if (
+            !(await this.repository.updateOperation(
+              operation.id,
+              operation.row_version,
+              {
+                status: 'FAILED',
+                failureClass: 'CONTROL_PLANE',
+                failureMessage: message,
+                completedAt: Date.now()
+              },
+              {}
+            ))
+          )
+            throw new Error(
+              `${repository} main operation changed concurrently`
+            );
+          throw error;
+        }
+      }
+    } else if (observedSha !== composed)
       throw new MainMovedError(
         `${repository} main moved from ${base} to ${observedSha}`
       );
@@ -2780,7 +2865,86 @@ export class ReleaseBusV2Reconciler {
         continue;
       const train = await this.repository.findTrain(lock.owner_train_id, {});
       if (!train || !TERMINAL_TRAINS.has(train.status)) continue;
-      const operations = await this.repository.listOperations(train.id, {});
+      let operations = await this.repository.listOperations(train.id, {});
+      for (const operation of operations) {
+        if (
+          operation.status !== 'PENDING' ||
+          !['ADVANCE_MAIN_BACKEND', 'ADVANCE_MAIN_FRONTEND'].includes(
+            operation.operation_type
+          ) ||
+          !operation.repository ||
+          !operation.expected_sha
+        )
+          continue;
+        const base =
+          operation.repository === 'frontend'
+            ? train.frontend_base_sha
+            : train.backend_base_sha;
+        if (!base) continue;
+        let observedSha: string;
+        try {
+          observedSha = await releaseBusGitHubApp.resolveRef(
+            operation.repository,
+            'main'
+          );
+        } catch {
+          // A terminal cleanup may never guess at an ambiguous ref outcome.
+          // Retain the lock and retry the read on a later invocation.
+          continue;
+        }
+        const status =
+          observedSha === operation.expected_sha
+            ? ('SUCCEEDED' as const)
+            : observedSha === base
+              ? ('FAILED' as const)
+              : null;
+        if (!status) continue;
+        if (
+          await this.repository.updateOperation(
+            operation.id,
+            operation.row_version,
+            {
+              status,
+              externalId:
+                status === 'SUCCEEDED' ? operation.expected_sha : undefined,
+              result: {
+                base_sha: base,
+                deployed_sha:
+                  status === 'SUCCEEDED' ? operation.expected_sha : null,
+                observed_sha: observedSha,
+                reconciled_after_terminal_train: true
+              },
+              failureClass:
+                status === 'FAILED'
+                  ? (train.failure_class ?? 'CONTROL_PLANE')
+                  : null,
+              failureMessage:
+                status === 'FAILED'
+                  ? 'Terminal train retained main at its exact recorded base'
+                  : null,
+              completedAt: Date.now()
+            },
+            {}
+          )
+        )
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TERMINAL_INTERNAL_REF_OPERATION_RECONCILED',
+              actor: 'release-bus-v2',
+              payload: {
+                operation_id: operation.id,
+                repository: operation.repository,
+                operation_status: status,
+                observed_sha: observedSha,
+                expected_base_sha: base,
+                expected_target_sha: operation.expected_sha
+              }
+            },
+            {}
+          );
+      }
+      operations = await this.repository.listOperations(train.id, {});
       if (
         operations.some(
           (operation) => !TERMINAL_OPERATIONS.has(operation.status)
@@ -2815,8 +2979,7 @@ export class ReleaseBusV2Reconciler {
   private async failTrain(
     train: ReleaseBusV2TrainRecord,
     failureClass: ReleaseBusV2FailureClass,
-    message: string,
-    lease?: ReleaseBusV2LockRecord
+    message: string
   ): Promise<void> {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
@@ -2863,14 +3026,10 @@ export class ReleaseBusV2Reconciler {
           : 'Exact state is retained for idempotent diagnosis or retry',
       completedAt: Date.now()
     });
-    if (lease) {
-      await this.releaseEnvironmentLease(
-        current.lane === 'PRODUCTION'
-          ? 'production-environment'
-          : 'staging-environment',
-        lease
-      );
-    }
+    // Release ownership only after the train and every operation are terminal.
+    // If a mutation outcome is still ambiguous, the nonterminal operation
+    // deliberately retains the lease until reconciliation can prove its state.
+    await this.releaseTerminalEnvironmentLocks();
   }
 
   private async deferTrainForInfrastructure(
