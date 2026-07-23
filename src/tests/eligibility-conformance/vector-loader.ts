@@ -409,10 +409,16 @@ function materializeVector(
       'grant',
       vector.name
     )!;
+    const ownerWallet = walletsByIdentitySym[ownership.owner]?.[0];
+    if (!ownerWallet) {
+      throw new Error(
+        `Vector ${vector.name} external ownership references unknown wallet of "${ownership.owner}"`
+      );
+    }
     return {
       partition: grantsById[grantId].partition,
       token_id: ownership.token_id,
-      owner: walletsByIdentitySym[ownership.owner]?.[0] ?? '',
+      owner: ownerWallet,
       since_block: 1,
       since_time: 1,
       sale_epoch_start_block: null,

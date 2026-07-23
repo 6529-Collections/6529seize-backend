@@ -90,7 +90,7 @@ function isProfileGrantBeneficiary(
   matchMode: GroupBeneficiaryGrantMatchMode,
   ownedTokensByPartition: Record<string, string[]>
 ): boolean {
-  if (!grant || grant.status !== 'GRANTED') {
+  if (grant?.status !== 'GRANTED') {
     return false;
   }
   const ownedInPartition = ownedTokensByPartition[grant.partition] ?? [];

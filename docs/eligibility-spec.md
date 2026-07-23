@@ -104,7 +104,7 @@ Normative order of evaluation, per
 All numeric window checks reduce to `isRatingOutOfBounds`
 (`src/groups/user-group-predicates.ts`):
 
-```
+```text
 inBounds(min, max, real) := (min = null ∨ real ≥ min) ∧ (max = null ∨ real ≤ max)
 ```
 
@@ -389,6 +389,11 @@ means "everyone except the excluded" (in-memory:
 ### 9.4 Degenerate empty group
 
 No criteria, no inclusion, no exclusion: **nobody** is eligible.
+
+The `groupId = null` system member-set request is not a group evaluation. It
+intentionally means "all identities" for broadcasts with no configured group
+restriction, so this degenerate-group rule applies only to persisted group
+definitions.
 
 ## 10. Visibility and privacy
 

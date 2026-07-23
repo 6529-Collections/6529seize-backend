@@ -254,6 +254,27 @@
     "expected": { "eligible_group_ids": ["g-artist-min-8"] }
   },
   {
+    "name": "rep-by-category-nonzero-required",
+    "dimension": "rep",
+    "description": "By-category rep with both bounds null requires a non-zero category total.",
+    "identities": [{ "id": "subject", "rep": 5 }, { "id": "alice" }],
+    "subject": "subject",
+    "ratings": [
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      }
+    ],
+    "groups": [
+      { "id": "g-artist-nobounds", "rep_category": "artist" },
+      { "id": "g-dev-nobounds", "rep_category": "dev" }
+    ],
+    "expected": { "eligible_group_ids": ["g-artist-nobounds"] }
+  },
+  {
     "name": "rep-by-category-case-sensitive",
     "dimension": "rep",
     "description": "Category comparison is binary/case-sensitive on both engines (JS === and utf8_bin collation) - 'Artist' does not match 'artist' (spec §5).",
