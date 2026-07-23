@@ -250,6 +250,213 @@ describe('GitHub staging idle handshake', () => {
       fetchMock.mockReset();
     }
   });
+
+  it('detects a completed staging deploy after the handshake and ignores exact train runs', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 100,
+              name: 'Deploy api to staging train exact [rb2:exact]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging train exact [rb2:exact]',
+              created_at: '2026-07-23T13:22:10Z'
+            },
+            {
+              id: 101,
+              name: 'Deploy api to staging [manual]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging [manual]',
+              created_at: '2026-07-23T13:23:22Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('backend', since, ['100'])
+      ).resolves.toBe(true);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        'created=%3E%3D2026-07-23T13%3A22%3A00.000Z'
+      );
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('does not treat ignored exact train workflows as external mutation', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 100,
+              name: 'Release Bus - Staging E2E exact train',
+              path: '.github/workflows/staging-e2e.yml',
+              display_title: 'Exact train E2E',
+              created_at: '2026-07-23T13:22:20Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('frontend', since, ['100'])
+      ).resolves.toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('excludes a date-filter result created before the fence window', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 99,
+              name: 'Deploy api to staging [manual]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging [manual]',
+              created_at: '2026-07-23T13:21:59Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('backend', since)
+      ).resolves.toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('paginates the beta fence history before accepting an idle result', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: Array.from({ length: 100 }, (_, index) => ({
+              id: index + 1,
+              name: 'Unrelated CI',
+              path: '.github/workflows/ci.yml',
+              display_title: 'Unrelated CI',
+              created_at: '2026-07-23T13:23:00Z'
+            }))
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 101,
+                name: 'Web Deploy - STAGING',
+                path: '.github/workflows/deploy-staging.yml',
+                display_title: 'Web Deploy - STAGING',
+                created_at: '2026-07-23T13:22:30Z'
+              }
+            ]
+          })
+        )
+      );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('frontend', since)
+      ).resolves.toBe(true);
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain('page=2');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('does not confuse a staging-canary title with shared staging', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 101,
+              name: 'Deploy api to staging-canary [manual]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging-canary [manual]',
+              created_at: '2026-07-23T13:22:30Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('backend', since)
+      ).resolves.toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('fails closed on a malformed exact train workflow id', async () => {
+    const app = new ReleaseBusGitHubApp();
+
+    await expect(
+      app.hasStagingMutationOrE2ERunSince(
+        'backend',
+        Date.parse('2026-07-23T13:22:00Z'),
+        ['reserved:operation']
+      )
+    ).rejects.toThrow('Invalid staging workflow fence run id');
+  });
 });
 
 function job(index: number): GitHubWorkflowJob {
