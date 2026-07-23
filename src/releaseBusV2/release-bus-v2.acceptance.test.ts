@@ -666,9 +666,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRefIfExists.mockImplementation(
       async (repository: 'frontend' | 'backend', ref: string) => {
         expect(ref).toBe('1a-staging');
-        return repository === 'frontend'
-          ? 'f'.repeat(40)
-          : backendStagingSha;
+        return repository === 'frontend' ? 'f'.repeat(40) : backendStagingSha;
       }
     );
 
