@@ -3,13 +3,14 @@ import { DropVotingDb } from '@/api-serverless/src/drops/drop-voting.db';
 import { DeployerDropper } from '@/deployer-dropper';
 import { DropsDb } from '@/drops/drops.db';
 import { WinnerDropVoterVoteEntity } from '@/entities/IWinnerDropVoterVote';
-import { Time } from '@/time';
+import { Time, Timer } from '@/time';
 import { wavesApiDb } from '@/api-serverless/src/waves/waves.api.db';
 import { WaveDecisionsDb } from '@/waves/wave-decisions.db';
 import { WaveDecisionsService } from '@/waves/wave-decisions.service';
 import { WaveLeaderboardCalculationService } from '@/waves/wave-leaderboard-calculation.service';
 import * as pushNotificationsService from '@/api/push-notifications/push-notifications.service';
 import { waveScoreService } from '@/api/waves/wave-score.service';
+import { CompetitionExecutionRouter } from '@/competitions/competition-execution.router';
 
 describe('WaveDecisionsService', () => {
   let service: WaveDecisionsService;
@@ -18,6 +19,7 @@ describe('WaveDecisionsService', () => {
   let dropVotingDb: DropVotingDb;
   let dropsDb: DropsDb;
   let deployerDropper: DeployerDropper;
+  let executionRouter: CompetitionExecutionRouter;
 
   beforeEach(() => {
     waveDecisionsDb = mock();
@@ -25,6 +27,10 @@ describe('WaveDecisionsService', () => {
     dropVotingDb = mock();
     dropsDb = mock();
     deployerDropper = mock();
+    executionRouter = mock();
+    (
+      executionRouter.shouldUseLegacyWaveExecution as jest.Mock
+    ).mockResolvedValue(true);
     jest
       .spyOn(pushNotificationsService, 'sendIdentityPushNotifications')
       .mockResolvedValue(undefined);
@@ -41,8 +47,36 @@ describe('WaveDecisionsService', () => {
       waveLeaderboardCalculationService,
       dropVotingDb,
       dropsDb,
-      deployerDropper
+      deployerDropper,
+      executionRouter
     );
+  });
+
+  it('never lets the legacy decision worker own a native-routed wave', async () => {
+    (
+      waveDecisionsDb.getWavesWithDecisionTimesBeforeGivenTime as jest.Mock
+    ).mockResolvedValue([
+      {
+        wave_id: 'native-wave',
+        latest_decision_time: null,
+        decisions_strategy: {},
+        time_lock_ms: null
+      }
+    ]);
+    (
+      executionRouter.shouldUseLegacyWaveExecution as jest.Mock
+    ).mockResolvedValue(false);
+    (
+      waveLeaderboardCalculationService.refreshLeaderboardEntriesForDropsInNeed as jest.Mock
+    ).mockResolvedValue(undefined);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      []
+    );
+    const execute = jest.spyOn(service, 'createDecisionsForWave');
+
+    await service.createMissingDecisionsForAllWaves(new Timer('test'));
+
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('archives current voter states for non-timelocked winner decisions', async () => {

@@ -15,6 +15,213 @@ import { DropType } from '@/entities/IDrop';
 import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
+  it('groups active and winning submissions by author and wave', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue([
+      {
+        wave_id: 'wave-2',
+        author_id: 'author-1',
+        is_participant: 1,
+        is_winner: 0
+      },
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        is_participant: 0,
+        is_winner: 1
+      },
+      {
+        wave_id: 'wave-2',
+        author_id: 'author-outside-requested-pair',
+        is_participant: 1,
+        is_winner: 1
+      },
+      {
+        wave_id: 'wave-3',
+        author_id: 'author-1',
+        is_participant: 1,
+        is_winner: 1
+      }
+    ]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findAuthorWaveParticipationByDropContexts(
+      [
+        { wave_id: 'wave-1', author_id: 'author-1' },
+        { wave_id: 'wave-1', author_id: 'author-1' },
+        { wave_id: 'wave-2', author_id: 'author-1' },
+        { wave_id: 'wave-2', author_id: 'author-2' },
+        { wave_id: 'wave-3', author_id: 'author-1' }
+      ],
+      {
+        connection: { connection } as any,
+        timer: undefined
+      }
+    );
+
+    expect(result).toEqual({
+      'wave-1': {
+        'author-1': {
+          is_participant: false,
+          is_winner: true
+        }
+      },
+      'wave-2': {
+        'author-1': {
+          is_participant: true,
+          is_winner: false
+        },
+        'author-2': {
+          is_participant: false,
+          is_winner: false
+        }
+      },
+      'wave-3': {
+        'author-1': {
+          is_participant: true,
+          is_winner: true
+        }
+      }
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain(
+      'max(case when drop_type = :participant_type then 1 else 0 end)'
+    );
+    expect(sql).toContain('max(case when drop_type = :winner_type');
+    expect(sql).toContain('wave_id in (:wave_ids)');
+    expect(sql).toContain('author_id in (:author_ids)');
+    expect(sql).toContain('group by wave_id, author_id');
+    expect(sql).not.toContain('exists(');
+    expect(sql).not.toContain('union all');
+    expect(params).toEqual({
+      wave_ids: ['wave-1', 'wave-2', 'wave-3'],
+      author_ids: ['author-1', 'author-2'],
+      participant_type: DropType.PARTICIPATORY,
+      winner_type: DropType.WINNER
+    });
+    expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
+  it('does not treat a promoted winner row as an active participant', async () => {
+    const execute = jest.fn().mockResolvedValue([
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        is_participant: 0,
+        is_winner: 1
+      }
+    ]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findAuthorWaveParticipationByDropContexts(
+      [{ wave_id: 'wave-1', author_id: 'author-1' }],
+      {
+        connection: { connection: {} } as any,
+        timer: undefined
+      }
+    );
+
+    expect(result['wave-1']?.['author-1']).toEqual({
+      is_participant: false,
+      is_winner: true
+    });
+    expect(execute.mock.calls[0]?.[0]).toContain(
+      'max(case when drop_type = :participant_type then 1 else 0 end)'
+    );
+  });
+
+  it('does not query participation for an empty drop context list', async () => {
+    const execute = jest.fn();
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findAuthorWaveParticipationByDropContexts([], {
+      connection: { connection: {} } as any,
+      timer: undefined
+    });
+
+    expect(result).toEqual({});
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('hard deletes drops so removed entries cannot affect participation flags', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue(undefined);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.deleteDropEntity('drop-1', {
+      connection: { connection } as any,
+      timer: undefined
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      `delete from ${DROPS_TABLE} where id = :dropId`,
+      { dropId: 'drop-1' },
+      { wrappedConnection: { connection } }
+    );
+  });
+
+  it('pages full competition drops for one author in one wave', async () => {
+    const connection = {};
+    const drops = [{ id: 'entry-1' }, { id: 'entry-2' }];
+    const execute = jest.fn().mockResolvedValue(drops);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await repo.findWaveCompetitionDropsByAuthor(
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        drop_type: DropType.PARTICIPATORY,
+        limit: 51,
+        offset: 50
+      },
+      {
+        connection: { connection } as any,
+        timer: undefined
+      }
+    );
+
+    expect(result).toBe(drops);
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain('wave_id = :wave_id');
+    expect(sql).toContain('author_id = :author_id');
+    expect(sql).toContain('drop_type = :drop_type');
+    expect(sql).toContain('limit :limit offset :offset');
+    expect(params).toEqual({
+      wave_id: 'wave-1',
+      author_id: 'author-1',
+      drop_type: DropType.PARTICIPATORY,
+      limit: 51,
+      offset: 50
+    });
+    expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
   it('applies a bounded metrics delta when a drop is deleted', async () => {
     const connection = {};
     const execute = jest.fn().mockResolvedValue([]);

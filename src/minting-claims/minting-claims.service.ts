@@ -26,6 +26,11 @@ import { numbers } from '@/numbers';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
+import { env } from '@/env';
+import {
+  memeCardDropMappingsDb,
+  MemeCardDropMappingsDb
+} from '@/minting-claims/meme-card-drop-mappings.db';
 
 const MEME_CALENDAR_API_BASE = 'https://6529.io/api/meme-calendar';
 const MEME_CALENDAR_TIMEOUT_MS = 10_000;
@@ -129,7 +134,9 @@ export class MintingClaimsService {
 
   constructor(
     private readonly dropsDb: DropsDb,
-    private readonly mintingClaimsDb: MintingClaimsDb
+    private readonly mintingClaimsDb: MintingClaimsDb,
+    private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
+    private readonly getMainStageWaveId: () => string | null
   ) {}
 
   async createClaimForDropIfMissing(dropId: string): Promise<void> {
@@ -182,6 +189,7 @@ export class MintingClaimsService {
     );
     const enriched = await this.enrichRowWithComputedDetails(row);
     await this.mintingClaimsDb.createMintingClaim([enriched], ctx);
+    await this.saveMemeCardMappingIfMainStageWinner(dropId, nextClaimId, ctx);
 
     const teamWalletRows = await fetchTeamWalletRows();
     const airdropConfigEntries = parseAirdropConfigFromMetadatas(metadatas);
@@ -270,6 +278,30 @@ export class MintingClaimsService {
     return maxMemeId + 1;
   }
 
+  private async saveMemeCardMappingIfMainStageWinner(
+    dropId: string,
+    memeCardId: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    const mainStageWaveId = this.getMainStageWaveId();
+    if (
+      !mainStageWaveId ||
+      !(await this.memeCardDropMappingsDb.isMainStageWinnerDrop(
+        dropId,
+        mainStageWaveId,
+        ctx
+      ))
+    ) {
+      return;
+    }
+    await this.memeCardDropMappingsDb.setMemeCardIdForDrop(
+      dropId,
+      memeCardId,
+      mainStageWaveId,
+      ctx
+    );
+  }
+
   private async enrichRowWithComputedDetails(
     row: MintingClaimRowInput
   ): Promise<MintingClaimRowInput> {
@@ -299,5 +331,7 @@ export class MintingClaimsService {
 
 export const mintingClaimsService = new MintingClaimsService(
   dropsDb,
-  mintingClaimsDb
+  mintingClaimsDb,
+  memeCardDropMappingsDb,
+  () => env.getStringOrNull('MAIN_STAGE_WAVE_ID')
 );

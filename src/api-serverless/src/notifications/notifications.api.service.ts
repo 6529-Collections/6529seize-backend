@@ -58,6 +58,10 @@ import {
   waveGroupNotificationSubscriptionsDb,
   WaveGroupNotificationSubscriptionsDb
 } from '@/notifications/wave-group-notification-subscriptions.db';
+import {
+  wsListenersNotifier as defaultWsListenersNotifier,
+  WsListenersNotifier
+} from '@/api/ws/ws-listeners-notifier';
 
 interface DropReactedNotificationAdditionalContextV2 {
   reaction: string;
@@ -96,7 +100,8 @@ export class NotificationsApiService {
     private readonly wavesApiDb: WavesApiDb,
     private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb,
     private readonly reactionsDb: ReactionsDb = defaultReactionsDb,
-    private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper = defaultApiWaveOverviewMapper
+    private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper = defaultApiWaveOverviewMapper,
+    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -107,6 +112,9 @@ export class NotificationsApiService {
       ...param,
       readAt: Time.currentMillis()
     });
+    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+      param.identity_id
+    ]);
   }
 
   public async markNotificationAsUnread(param: {
@@ -117,6 +125,9 @@ export class NotificationsApiService {
       ...param,
       readAt: null
     });
+    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+      param.identity_id
+    ]);
   }
 
   public async markAllNotificationsAsRead(
@@ -128,6 +139,9 @@ export class NotificationsApiService {
       identityId,
       ctx
     );
+    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+      identityId
+    ]);
     ctx.timer?.stop(`${this.constructor.name}->markAllNotificationsAsRead`);
   }
 
@@ -151,6 +165,9 @@ export class NotificationsApiService {
       identityId,
       waveId
     });
+    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+      identityId
+    ]);
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
   }
 

@@ -1,3 +1,28 @@
+# Simple Release Bus v2
+
+- Never register with Release Bus v1. It remains disabled rollback reference.
+- Before staging, production, promotion, or release mutation, run
+  `node ops/scripts/release-bus-status.mjs` and follow `deploy-6529`.
+- `OFF` uses the serialized manual fallback and requires enforcement absent or
+  `false`. `STAGING` routes staging readiness through v2. `PRODUCTION` routes
+  staging through v2 and requires a separate explicit exact-SHA production
+  action after `STAGING_VALIDATED`.
+- While `OFF`, dispatch backend `Deploy a service` workflows one at a time and
+  wait for exact success before starting the next. Its shared concurrency can
+  cancel sibling service runs, including independent DAG-frontier units.
+- Stop an active v2 lane when `ALL` or that lane is paused. In `OFF`, v2
+  controls are non-authoritative and do not block manual staging or production.
+  Explicit owner production authorization is sufficient; prior staging
+  deployment or validation is not required.
+- For coupled work, declare backend dependencies and preserve backend-before-
+  frontend ordering. Within v2, only independent backend DAG frontier units run
+  together.
+- `STAGING_DEPLOYED` is not validation. Do not mutate staging during manifest-
+  bound E2E, and never infer production readiness from staging validation.
+- Never cancel another actor's workflow, force-push a shared ref, or bypass exact
+  SHA/artifact checks. Never author or post release notes manually; preserve the
+  autonomous bot's complete grouping metadata and finalize signal.
+
 # Commiting to Git
 
 Use DCO signoff commits. Before committing, verify `git config user.name` and `git config user.email`; for GitHub commits, `user.email` should be the matching `accountcode+username@users.noreply.github.com` address unless the user explicitly wants another verified email. Commit with `git commit -s -m "<message>"` so Git appends `Signed-off-by: <user.name> <user.email>`.

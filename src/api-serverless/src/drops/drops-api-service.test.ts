@@ -697,7 +697,7 @@ describe('DropsApiService', () => {
     { page: 0, page_size: 2 },
     { page: 1, page_size: 0 }
   ])(
-    'rejects invalid curation drops pagination before querying drops',
+    'rejects invalid curation drops pagination before querying drops (page=$page, page_size=$page_size)',
     async ({ page, page_size }) => {
       const { service, dropsDb, dropsMappers, curationsDb, ctx } =
         createService();

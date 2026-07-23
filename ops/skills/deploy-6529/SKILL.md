@@ -1,244 +1,102 @@
 ---
 name: deploy-6529
-description: Merge and deploy 6529 backend releases through staging and production with explicit requested-scope gates, GitHub Actions service deploys, Lambda/API smoke validation, autonomous failed-gate recovery, rollback or fix-forward handling, deploy-service ordering, and coordination with frontend releases when needed. Use when Codex is asked to merge backend PRs, deploy backend services or lambdas, validate staging, promote to production, validate production, recover from failed deploy/smoke checks, or coordinate backend deployment with 6529seize-frontend release work.
+description: Route and execute 6529 backend, frontend, or coupled staging and production releases through Simple Release Bus v2 by exact PR head SHA, or use the serialized manual fallback only while v2 reports OFF. Use for staging, deploy, promotion, release merge, pause, resume, recovery, or rollout coordination; never submit to Release Bus v1.
 ---
 
-# Deploy 6529
+# Deploy 6529 Backend
 
-Carry an approved 6529 backend release through staging validation and, when production is in the requested scope, production deployment and validation. Identify exact refs and services, check the deploy lane, deploy in the right order, and keep working failed gates until the release is fixed, redeployed, and validated. Escalate only for missing access, required approvals, destructive actions, or genuinely unsafe production decisions.
+## Live routing gate
 
-## Hard Gates
+1. Run `node ops/scripts/release-bus-status.mjs` at the start and again before
+   any readiness or environment mutation. The helper uses authenticated `gh`,
+   prefers the v2 controls endpoint, and falls back to the disabled v1 endpoint
+   only while the additive v2 API is not deployed.
+2. Fail closed on an unavailable/malformed API, authentication failure, unknown
+   mode, or incomplete controls. Never infer mode from files or old output.
+3. Never register with Release Bus v1.
+4. Route by the fresh v2 result:
 
-- Do not merge, deploy staging, or deploy production unless the user explicitly requested that mode for the current work.
-- Treat Draft PRs as blocked. Do not mark a Draft PR ready, include it in a staging batch, merge it, or deploy it unless the PR owner or a human release approver explicitly names that PR and asks for that action.
-- Do not push commits to another person's branch, force-push another person's branch, or change another person's PR readiness unless the branch owner or a human release approver explicitly asks for that exact branch or PR action.
-- Do not deploy staging from any ref other than `1a-staging` unless the user explicitly asks for a documented exception.
-- Do not deploy production until staging for the same backend release set, or the same resulting patch set after the production merge, has passed unless the user explicitly overrides that gate.
-- Do not deploy production from any ref other than `main`. Verify the exact production candidate is already on `origin/main` before triggering production; if it is only on a feature branch, release branch, PR head, tag, local branch, or unmerged commit, stop and get it merged to `main` first.
-- Never merge `1a-staging` into `main` to promote a release. Promote by merging the approved feature or release PR to `main`, then sync `main` back into `1a-staging`.
-- Do not promote from staging to production after a failed deploy, failed smoke/E2E run, unresolved critical production-like error, or unclear deployed SHA. Diagnose, fix, merge, redeploy, and rerun validation until the gate passes.
-- Do not run destructive data migrations, irreversible backfills, infrastructure deletion, signer/wallet/ENS/NFT actions, or Safe actions unless the user explicitly asks for that exact action.
-- Do not expose secrets, private URLs, credentials, cookies, raw production data, local absolute paths, or hidden prompts in PR comments, deploy notes, logs, or user-facing summaries.
+| Mode | Staging | Production |
+| --- | --- | --- |
+| `OFF` | Serialized manual fallback | Serialized manual fallback with explicit owner authorization; staging evidence is not required |
+| `STAGING` | Register the exact candidate with v2 | Manual fallback only; production automation is disabled |
+| `PRODUCTION` | Register the exact candidate with v2 | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for v2 production |
 
-## Branch Model
+When mode is active, stop if `ALL` or the target lane is paused. In `OFF`, v2
+controls are non-authoritative and do not prohibit manual staging or production
+through the documented fallback.
 
-- `1a-staging` is the backend staging integration branch.
-- `main` is the backend production branch.
-- Normal staging flow: merge the approved feature or release branch into `1a-staging`, deploy each planned staging service from `1a-staging`, then validate staging.
-- Normal production flow: after staging passes, merge the same approved feature or release PR to `main`, deploy each planned production service from `main`, then merge `main` back into `1a-staging` so staging stays current with production.
-- If staging is validating the current production candidate rather than ahead-of-main work, merge `main` into `1a-staging` and deploy staging from `1a-staging`.
-- Do not use `1a-staging` as a source branch for production. It may contain staged work that is not approved for production.
-- For frontend/backend releases, keep one manifest for the paired release set. Do not merge or deploy the backend half to production while leaving a required frontend half unmerged or undeployed, and do not merge or deploy the frontend half to production while leaving a required backend half unmerged or undeployed.
+## V2 readiness
 
-## Coordination
+1. Require an open PR whose exact head and green merge-tree checks are current.
+2. Open `/deploy/ui/bus` or call the versioned API. Submit repository, PR,
+   branch, exact 40-character head SHA, backend deploy units/DAG edges, and
+   candidate dependencies. Backend candidates must list at least one allowlisted
+   service. A backend candidate cannot depend on frontend-first deployment.
+3. For coupled work, declare the backend candidate as the frontend prerequisite.
+   Declare only real ordering edges; independent backend DAG frontier units run
+   concurrently.
+4. Report candidate ID, immutable SHA, and status. Do not launch a parallel
+   manual deploy after v2 accepts the candidate.
+5. Wait for `STAGING_VALIDATED`. `STAGING_DEPLOYED` means E2E is still pending
+   and is not production evidence.
+6. Production is a separate explicit action. Re-resolve the branch and mark
+   ready only when it still equals the exact staging-validated SHA. Staging
+   validation never schedules production automatically.
 
-Before deploying, check what else is already deploying to the same environment. Inspect active GitHub Actions deploy runs and any obvious active Codex/human release thread. If the lane is busy, wait or coordinate just enough to avoid overlapping deploys. Treat each active backend staging or production service lane as owned by one release captain until it is terminal and handed off.
+V2 composes from current `main`, reuses exact green PR merge-tree evidence when
+eligible, otherwise runs one combined preflight and one immutable build, owns
+shared staging only for deploy plus manifest-bound E2E, and reuses the same
+qualified artifacts for production. It updates `main` only after exact
+qualification. It never authors or posts release notes; every production
+operation emits the autonomous bot's canonical grouping metadata and finalize
+signal unless the candidate explicitly opts out.
 
-## Release Manifest
+## Manual fallback while OFF
 
-- Record a staging manifest summary before deployment: staging source ref,
-  `1a-staging` SHA, production target `main`, validated release set,
-  release equivalence, included PRs, deploy service list and order, frontend
-  dependencies, validation owners, required checks, and rollback or fix-forward
-  notes.
-- After staging deploys, assign validation for each included backend service,
-  migration, API behavior, loop behavior, and frontend dependency. Production is
-  blocked until required validation passes or the failed/held work is excluded
-  from the production candidate.
-- If `origin/main` advances after staging passed, do not deploy unvalidated
-  changes. Confirm the new `origin/main` contains only the staging-passed
-  release set plus explicitly approved already-validated changes, or rerun
-  staging for the new production candidate.
-- For production gating, exact SHAs may differ between `1a-staging` and `main`.
-  The release captain must verify the resulting production patch set, included
-  PRs, deploy service order, and frontend/backend dependencies match what
-  passed staging.
+1. Require `RELEASE_BUS_ENFORCEMENT` to be absent or exactly `false` in every
+   repository in the release set.
+2. Fetch the exact remote target head and inspect active frontend/backend
+   staging, production, and E2E workflows. Wait; never cancel another actor.
+3. Re-fetch immediately before pushing. If a shared ref moved, recompute from
+   the new head. Never force-push.
+4. Merge the development branch into current `1a-staging`. Deploy required
+   backend units in DAG order through `Deploy a service`. Dispatch exactly one
+   service at a time and wait for exact success before dispatching the next;
+   shared workflow concurrency can cancel sibling runs, even for independent
+   DAG-frontier units.
+5. For coupled work, verify required backend units before merging/deploying
+   frontend.
+6. Record exact deployed frontend/backend SHAs before E2E and freeze staging
+   until E2E is terminal.
+7. In `OFF`, production requires explicit owner authorization but not prior
+   staging deployment or validation. Re-fetch `main` and preserve dependency
+   order. Pass the same merged PR number and full canonical service set to every
+   backend production run; set `release_note_publish=true` only on the final
+   sequential service. For an explicitly authorized internal operation that
+   must not create a release note, omit the PR/group metadata, set
+   `release_note_opt_out=true`, and leave `release_note_publish=false`; opt-out
+   and publish are mutually exclusive. Never author or post the note—the
+   autonomous bot owns it.
 
-## Preflight
+## Monitoring and recovery
 
-1. Identify the release set:
-   - backend PRs, branch owners, draft/ready state, and target branch
-   - services/lambdas to deploy
-   - entity/schema sync, migrations, backfills, SQS/SNS/EventBridge wiring, API/OpenAPI/generated-model changes, feature flags, and frontend dependencies
-   - staging source ref, normally feature branch to `1a-staging`
-   - production target ref, always `main`
-   - expected user-facing or API behavior to validate
-2. Inspect current deploy docs and workflows before acting:
-   - `.github/workflows/deploy.yml`
-   - `src/config/deploy-services.json`
-   - `scripts/generate-deploy-config.mjs`
-   - `bin/ghdeploy`
-   - touched service `serverless.yaml` files
-3. Verify PR readiness before any staging or production branch movement:
-   - PR is not Draft unless the PR owner or a human release approver explicitly requested this action
-   - branch owner has not asked agents to stop touching the branch or PR
-   - agent review complete
-   - review bots addressed or explicitly deferred
-   - required CI and DCO passing
-   - human approval present when required
-   - deploy order and rollback/fix-forward path understood
-4. Respect backend repo command and commit rules:
-   - use `npm` commands from this repo; do not invent frontend wrappers
-   - never commit unless the user explicitly asked for commit/PR/release ownership
-   - when committing is authorized, include the required DCO signoff
-
-## Deployment Plan
-
-Always determine the exact services to deploy before merging or deploying:
-
-- Deploy `dbMigrationsLoop` before services that depend on new entity sync, schema behavior, data migrations, or backfills.
-- Deploy `api` for API routes, OpenAPI/generated models, auth, rate limiting, API services, websocket/API packaging, or shared code used by the API.
-- Deploy each changed loop service whose `src/<service>/` implementation, dependencies, or deploy config changed.
-- For shared code used by multiple deployed services, include every affected service, not only the edited file's nearest folder.
-- If deploy config changed, edit `src/config/deploy-services.json`, run `npm run generate:deploy-config`, and include the generated `.github/workflows/deploy.yml` change.
-- Honor generated workflow environment restrictions; some services are prod-only or staging-only.
-
-## Branch Movement
-
-1. Confirm the PR is the one the user asked to stage or ship.
-2. Re-check latest head SHA, approvals, required checks, and unresolved review threads.
-3. For staging, merge the approved feature or release branch into `1a-staging` and record:
-   - PR number
-   - feature or release branch
-   - `1a-staging` merge commit SHA
-   - deploy service list and order
-   - frontend dependency notes when present
-4. For production, merge the same approved feature or release PR to `main` through the repo-approved GitHub path and record:
-   - PR number
-   - `main` merge commit SHA
-   - equivalence to the staging-validated release set
-   - deploy service list and order
-   - frontend dependency notes when present
-5. After production merge or deploy, merge `main` back into `1a-staging` to keep staging current with production.
-6. If any merge fails, resolve the merge blocker through the normal PR cycle before deployment. Re-check CI and review state after every fix.
-
-## Staging Deployment
-
-1. Confirm no active staging deploy is already using the same backend deploy lane.
-2. Deploy the exact intended backend staging commit from `1a-staging` through `.github/workflows/deploy.yml`. The workflow dispatch accepts `environment=staging` and one `service` at a time.
-3. Deploy services in the plan order, with one workflow dispatch per service. Use `bin/ghdeploy` from a clean, upstream-synced `1a-staging` worktree when it fits; otherwise trigger `deploy.yml` with explicit verified ref `1a-staging` and service.
-4. Watch each staging deploy to a terminal state. Capture the run URL, status, service, environment, and deployed SHA.
-5. If a staging deploy fails, inspect logs, identify the owner layer, fix through the normal PR cycle, merge the fix, and redeploy from the new SHA. Keep iterating until staging deploys cleanly or a safety/access boundary requires user input.
-
-## Staging Validation
-
-1. Run the strongest staging validation available for the changed surface:
-   - API health and changed endpoints
-   - affected loop invocation or observable loop output when safe
-   - migration/backfill result checks for `dbMigrationsLoop`
-   - queue/topic/event behavior when touched
-   - frontend smoke on staging when the backend release supports frontend-visible behavior
-2. Avoid unsafe writes, public posts, purchases, transfers, irreversible backfills, or destructive data operations unless the user explicitly requested that live action.
-3. If staging validation fails, hold production promotion and work the fix loop:
-   - release bug: fix backend, test locally, open/update PR, merge, redeploy staging, and rerun validation
-   - environment/data issue: document evidence, coordinate owner, apply or request the correction, and rerun after correction
-   - flaky test/tool issue: rerun once with evidence, then harden the test or investigate the service if the signal repeats
-   - user-visible/API breakage: treat it as a release bug even if the automated signal is noisy
-
-## Production Deployment
-
-1. Proceed to production when the user already asked to take the release through production, such as "take it all the way through prod." Ask only when the current request did not include production deployment.
-2. Reconfirm staging passed for the same backend release set and service order. Exact SHAs may differ after the production merge to `main`; verify that the resulting production patch set is equivalent to what passed staging and contains no unvalidated extras.
-3. Verify the production candidate is the current `origin/main` SHA and no newer unvalidated commit landed after staging passed. If `origin/main` advanced with unvalidated changes, rerun staging for the new release set before production.
-4. Confirm no active production deploy is in progress for the same service lane.
-5. Deploy production through `.github/workflows/deploy.yml` with explicit verified ref `main`, `environment=prod`, and one workflow dispatch per planned service, in order. Use `bin/ghdeploy` only from a clean, upstream-synced `main` worktree when it fits.
-6. When coordinating with frontend, deploy backend production before frontend production when frontend depends on new backend behavior. Prefer backward-compatible backend changes so frontend and backend can roll independently.
-7. Watch each production deploy to completion. Record workflow run URL, service, environment, and deployed SHA/version evidence.
-
-## Production Validation And Watch
-
-1. Validate production after each service reports healthy.
-2. Run production-safe smoke checks for changed behavior. Avoid live writes or irreversible data operations unless the user explicitly requested them.
-3. Check high-signal production health:
-   - changed API endpoints succeed
-   - critical Lambda errors are absent for changed services
-   - queue/event processing moves as expected
-   - frontend-visible behavior works when applicable
-   - deployed commit/version expectations match when visible
-4. If production validation fails:
-   - coordinate immediately and keep ownership of the incident loop
-   - decide rollback versus fix-forward based on severity and reversibility, then execute the chosen path if it is within existing authorization
-   - do not start unrelated deploys until production is stable or explicitly handed off
-   - after rollback or fix-forward, rerun production validation until the failure is resolved or a safety/access boundary requires user input
-   - record the incident evidence, chosen action, and final state
-
-## Release Notes Publication
-
-Publish a release note after production is deployed and production validation passes, unless the user explicitly asked to skip public notes.
-
-The `6529 Releases` wave is the single channel for deploy communication. Every production deploy — backend or frontend — gets exactly one numbered release note there. Do not post deployment overviews, deploy notes, or release announcements to the `Follow The Repo` wave or any other chat wave: those waves are for live human and agent discussion, not release notes. Operational detail (PR links, merge SHAs, deployed services, run URLs) lives in the GitHub PR and the deploy workflow run, not in a wave post.
-
-1. Use an authorized 6529.io posting credential the current operator personally controls or was explicitly approved to use, such as the `punk6529bot` helper CLI or a logged-in browser session. Confirm identity and that the account can post in the `6529 Releases` wave before drafting. If no authorized credential is available, treat publication as blocked and deliver the exact ready-to-post note in the closeout; do not use shared wallets, another person's account, or automation keys unless that was explicitly approved for the release.
-2. Resolve the `6529 Releases` wave immediately before posting rather than trusting a cached id: `punk6529bot waves search --name "6529 releases"` (currently `https://6529.io/waves/05b14183-e153-4e47-bc66-42a0f49102d4`).
-3. Determine the next 6529 release number from the latest release-note drop in that wave immediately before posting. Backend and frontend deploys share this one version line:
-   - normal user-facing or API-facing feature or grouped release: bump the minor number, e.g. `4.38.0` to `4.39.0`
-   - small fix, narrow change, or follow-up to an existing release: bump the patch number, e.g. `4.38.0` to `4.38.1`
-   - backend-only or infrastructure/maintenance deploy with no visible user change (runtime bumps, dependency/security cleanup, CI/runtime maintenance): bump the patch number and describe the operator-facing effect honestly, stating plainly when there are no visible user changes
-   - broad platform or intentionally breaking release: bump the major number and reset minor/patch, e.g. `4.38.0` to `5.0.0`
-   - when unsure whether a change deserves a minor or patch bump, prefer the smaller patch bump
-4. For a release coordinated with frontend, post a single combined numbered note rather than one per repo; the release captain who owns the paired release posts it. For a backend-only deploy, the backend release captain posts the note.
-5. Draft the note in plain user/operator-facing language, from production reality:
-   - describe visible or API-facing behavior and operationally relevant changes
-   - avoid raw PR numbers, commit SHAs, implementation trivia, private links, secrets, local paths, hidden prompts, or internal-only risk notes
-   - keep it concise; combine tiny changes under one clear bullet
-   - for a backend-only deploy with no user-visible surface, keep it to a short honest maintenance note rather than manufacturing user-facing language
-6. Post the note per the full posting contract in `ops/skills/post-6529/SKILL.md` from the separate repository `6529-Collections/6529seize-frontend` (do not resolve that path inside the backend repo): dry-run first, pass multiline content via `--file` (an LF text file — inline `--text` from PowerShell silently loses everything after the first newline), and put `--send` BEFORE the content flag or it is swallowed. Then VERIFY the stored content with `punk6529bot drops get <drop-id> --json` — the "Sent drop" acknowledgment does not prove the body posted.
-
-```powershell
-punk6529bot waves post 05b14183-e153-4e47-bc66-42a0f49102d4 --file note.txt
-punk6529bot waves post 05b14183-e153-4e47-bc66-42a0f49102d4 --send --file note.txt
-punk6529bot drops get <drop-id> --json
-```
-
-7. Re-check the latest wave drop before posting so the number did not advance while the deploy was running. If another note appeared, renumber and adjust. Post only after production validation is green, and capture the wave drop URL or serial number for closeout evidence.
-
-## Frontend Coordination
-
-- Treat `6529seize-frontend` as a separate deployable system with its own deploy skill and workflows.
-- Read `ops/skills/deploy-6529/SKILL.md` from the separate repository `6529-Collections/6529seize-frontend` when a release includes frontend work. Do not resolve that path inside the backend repo.
-- Use the shared branch model for paired releases: backend feature branch to backend `1a-staging`, frontend feature branch to frontend `1a-staging`, validate together, then merge the same release set to `main` in both repos and deploy production in the required order.
-- Deploy additive backend/API changes before frontend usage.
-- Keep old API behavior available until frontend production is updated when possible.
-- Gate frontend UI behavior when backend rollout may lag.
-- Validate backend staging and production alongside frontend staging and production when both are part of the release.
-
-## Useful Commands
-
-Use exact commands only after checking current repo state and available tooling:
-
-```bash
-gh run list -R 6529-Collections/6529seize-backend --workflow deploy.yml --branch <branch> -L 20
-gh run watch <run-id> -R 6529-Collections/6529seize-backend
-gh run view <run-id> -R 6529-Collections/6529seize-backend --log-failed
-gh pr view <pr-number> -R 6529-Collections/6529seize-backend --json isDraft,author,headRefName,baseRefName,headRefOid,mergeCommit
-gh workflow run deploy.yml --ref 1a-staging -f environment=staging -f service=api -R 6529-Collections/6529seize-backend
-gh workflow run deploy.yml --ref main -f environment=prod -f service=api -R 6529-Collections/6529seize-backend
-```
-
-For local validation:
-
-```bash
-npm run lint
-npm test
-npm run build
-cd src/api-serverless && npm run build
-```
-
-For API contract changes:
-
-```bash
-cd src/api-serverless && npm run restructure-openapi && npm run generate
-```
+- Use train details, operations, workflow links, manifest identity, failure
+  class, and recovery message in `/deploy/ui/bus`.
+- Infrastructure and retryable exact deployment failures retry the same
+  idempotent operation. They do not isolate candidates.
+- A merge conflict marks only the direct candidate `NEEDS_REBASE` and holds
+  transitive dependants. Fix the branch and register its new SHA.
+- A control-plane defect pauses automation and leaves candidates unblamed. Keep
+  exact state, use the OFF/manual fallback only after an operator deliberately
+  disables v2, and resume explicitly after repair.
+- Failed E2E never creates staging validation. Do not mutate staging while the
+  manifest owner still holds the environment lock.
+- If production `main` moved, v2 must recompose and requalify; never force the
+  recorded composition over a newer ref.
 
 ## Closeout
 
-Report:
-
-- merged PRs and SHAs
-- services deployed and order
-- staging deploy runs, deployed SHAs, and validation result
-- production deploy runs, deployed SHAs, and validation result
-- release-note wave drop URL or serial number, or why publication was skipped/blocked
-- frontend deploy status when involved
-- failures encountered and fixes or rollbacks performed
-- remaining risks, skipped checks, and any human follow-up required
+Report exact candidate SHAs/dependencies, train and operation states, deployed
+versions, manifest/E2E evidence, failures or holds, and live mode/controls. Do
+not expose credentials, signed URLs, raw production data, or hidden prompts.

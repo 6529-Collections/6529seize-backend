@@ -398,6 +398,48 @@ describe('uploadMintingClaimToArweave', () => {
     );
   });
 
+  it('trims dirty claim metadata before uploading JSON', async () => {
+    const dirtyAttributes = buildMemesRawAttributes().map((attribute) => ({
+      ...attribute,
+      trait_type: ` ${attribute.trait_type} `,
+      value:
+        typeof attribute.value === 'string'
+          ? ` ${attribute.value} `
+          : attribute.value
+    }));
+
+    await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        name: ' The Loom ',
+        description: '  Loom  description  ',
+        external_url: ' https://6529.io/the-memes/519 ',
+        claim_id: 519,
+        attributes: JSON.stringify(dirtyAttributes)
+      })
+    );
+
+    expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+    const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
+
+    expect(uploadedMetadata.name).toBe('The Loom');
+    expect(uploadedMetadata.description).toBe('Loom  description');
+    expect(uploadedMetadata.external_url).toBe('https://6529.io/the-memes/519');
+    expect(uploadedMetadata.attributes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          trait_type: 'Artist',
+          value: 'awhurst'
+        }),
+        expect.objectContaining({
+          trait_type: 'Gear',
+          value: 'gold chain'
+        })
+      ])
+    );
+  });
+
   it('does not re-emit stored media resolver URLs on image reuse', async () => {
     uploadFileMock.mockReset();
     uploadFileMock.mockResolvedValueOnce({

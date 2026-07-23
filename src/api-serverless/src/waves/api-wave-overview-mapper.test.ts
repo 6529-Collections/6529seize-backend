@@ -449,6 +449,7 @@ describe('ApiWaveOverviewMapper', () => {
         can_chat: true,
         unread_drops: 7,
         first_unread_drop_serial_no: 19,
+        subwave_unread_drops: 0,
         followed_subwaves_count: 0,
         hidden_followed_subwave_unread_drops: 0,
         muted: true
@@ -514,6 +515,7 @@ describe('ApiWaveOverviewMapper', () => {
       can_chat: false,
       next_drop_allowed: nextDropTimestamp,
       unread_drops: 0,
+      subwave_unread_drops: 0,
       followed_subwaves_count: 0,
       hidden_followed_subwave_unread_drops: 0,
       muted: false
@@ -533,6 +535,7 @@ describe('ApiWaveOverviewMapper', () => {
         'wave-1': {
           followed_subwaves_count: 2,
           latest_followed_subwave_activity_timestamp: 999,
+          subwave_unread_drops: 9,
           hidden_followed_subwave_unread_drops: 5,
           first_hidden_followed_subwave_unread_drop_serial_no: 77
         }
@@ -560,6 +563,7 @@ describe('ApiWaveOverviewMapper', () => {
           subscribed: false,
           pinned: false,
           unread_drops: 0,
+          subwave_unread_drops: 9,
           followed_subwaves_count: 2,
           latest_followed_subwave_activity_timestamp: 999,
           hidden_followed_subwave_unread_drops: 5,

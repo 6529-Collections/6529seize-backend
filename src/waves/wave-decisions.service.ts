@@ -35,6 +35,10 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
+import {
+  competitionExecutionRouter,
+  CompetitionExecutionRouter
+} from '@/competitions/competition-execution.router';
 
 interface WaveOutcome {
   type: WaveOutcomeType;
@@ -71,7 +75,8 @@ export class WaveDecisionsService {
     private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService,
     private readonly dropVotingDb: DropVotingDb,
     private readonly dropsDb: DropsDb,
-    private readonly deployerDropper: DeployerDropper
+    private readonly deployerDropper: DeployerDropper,
+    private readonly executionRouter: CompetitionExecutionRouter = competitionExecutionRouter
   ) {}
 
   public async createMissingDecisionsForAllWaves(timer: Timer): Promise<void> {
@@ -87,12 +92,22 @@ export class WaveDecisionsService {
       wavesLatestDecisionTimesWithStrategies.map((it) => it.wave_id)
     );
     const outcomesByWaveId = await this.loadWaveOutcomes(waveIds, timer);
-    const withOutcomes = wavesLatestDecisionTimesWithStrategies.map((it) => ({
+    const legacyOwned = [];
+    for (const wave of wavesLatestDecisionTimesWithStrategies) {
+      if (
+        await this.executionRouter.shouldUseLegacyWaveExecution(wave.wave_id, {
+          timer
+        })
+      ) {
+        legacyOwned.push(wave);
+      }
+    }
+    const withOutcomes = legacyOwned.map((it) => ({
       ...it,
       outcomes: outcomesByWaveId[it.wave_id] ?? []
     }));
     this.logger.info(
-      `Found ${wavesLatestDecisionTimesWithStrategies.length} waves with past execution deadlines. Starting to execute decisions`
+      `Found ${legacyOwned.length} legacy-owned waves with past execution deadlines. Starting to execute decisions`
     );
     for (const wavesLatestDecisionTimesWithStrategy of withOutcomes) {
       await this.createDecisionsForWave(
@@ -233,14 +248,29 @@ export class WaveDecisionsService {
       currentTime,
       { timer }
     );
+    const executableWaveIds = new Set<string>();
+    for (const waveId of collections.distinct(
+      candidates.map((it) => it.wave_id)
+    )) {
+      if (
+        await this.executionRouter.shouldUseLegacyWaveExecution(waveId, {
+          timer
+        })
+      ) {
+        executableWaveIds.add(waveId);
+      }
+    }
+    const executableCandidates = candidates.filter((candidate) =>
+      executableWaveIds.has(candidate.wave_id)
+    );
     const outcomesByWaveId = await this.loadWaveOutcomes(
-      collections.distinct(candidates.map((it) => it.wave_id)),
+      collections.distinct(executableCandidates.map((it) => it.wave_id)),
       timer
     );
     this.logger.info(
-      `Found ${candidates.length} APPROVE winner candidates to formalize`
+      `Found ${executableCandidates.length} legacy-owned APPROVE winner candidates to formalize`
     );
-    const candidatesByWaveId = candidates.reduce(
+    const candidatesByWaveId = executableCandidates.reduce(
       (acc, candidate) => {
         if (!acc[candidate.wave_id]) {
           acc[candidate.wave_id] = [];
@@ -797,5 +827,6 @@ export const waveDecisionsService = new WaveDecisionsService(
   waveLeaderboardCalculationService,
   dropVotingDb,
   dropsDb,
-  deployerDropper
+  deployerDropper,
+  competitionExecutionRouter
 );

@@ -146,6 +146,7 @@ export const WAVES_DECISION_PAUSES_TABLE = 'waves_decision_pauses';
 export const WAVES_ARCHIVE_TABLE = 'waves_archive';
 export const WAVES_DECISIONS_TABLE = 'wave_decisions';
 export const WAVES_DECISION_WINNER_DROPS_TABLE = 'wave_decision_winner_drops';
+export const MEME_CARD_DROP_MAPPINGS_TABLE = 'meme_card_drop_mappings';
 export const MINTING_CLAIMS_TABLE = 'minting_claims';
 export const MINTING_CLAIM_ACTIONS_TABLE = 'minting_claim_actions';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
@@ -196,8 +197,49 @@ export const IDENTITY_MUTES_TABLE = 'identity_mutes';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';
+export const COMPETITIONS_TABLE = 'competitions';
+export const COMPETITION_CONFIG_VERSIONS_TABLE = 'competition_config_versions';
+export const COMPETITION_ENTRIES_TABLE = 'competition_entries';
+export const COMPETITION_CAPABILITIES_TABLE = 'competition_capabilities';
+export const COMPETITION_LIFECYCLE_EVENTS_TABLE =
+  'competition_lifecycle_events';
+export const COMPETITION_VOTES_TABLE = 'competition_votes';
+export const COMPETITION_LEADERBOARD_ENTRIES_TABLE =
+  'competition_leaderboard_entries';
+export const COMPETITION_DECISIONS_TABLE = 'competition_decisions';
+export const COMPETITION_DECISION_WINNERS_TABLE =
+  'competition_decision_winners';
+export const COMPETITION_OUTCOMES_TABLE = 'competition_outcomes';
+export const COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
+  'competition_outcome_distribution_items';
+export const COMPETITION_PAUSES_TABLE = 'competition_pauses';
+export const COMPETITION_PARITY_OBSERVATIONS_TABLE =
+  'competition_parity_observations';
 export const ACTIVITY_EVENTS_TABLE = 'activity_events';
 export const XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX = 'xtdh_token_grant_stats_';
 export const XTDH_TOKEN_STATS_TABLE_PREFIX = 'xtdh_token_stats_';
 export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
+export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
+  'ws_notification_subscriptions';
+export const RELEASE_READY_DEPLOYMENTS_TABLE = 'release_ready_deployments';
+export const RELEASE_CANDIDATE_DEPENDENCIES_TABLE =
+  'release_candidate_dependencies';
+export const RELEASE_TRAINS_TABLE = 'release_trains';
+export const RELEASE_TRAIN_ITEMS_TABLE = 'release_train_items';
+export const RELEASE_TRAIN_OPERATIONS_TABLE = 'release_train_operations';
+export const RELEASE_TRAIN_EVIDENCE_TABLE = 'release_train_evidence';
+export const RELEASE_DEPLOYMENT_LANES_TABLE = 'release_deployment_lanes';
+export const RELEASE_BUS_CONTROLS_TABLE = 'release_bus_controls';
+export const RELEASE_TRAIN_EVENTS_TABLE = 'release_train_events';
+export const RELEASE_BUS_V2_CANDIDATES_TABLE = 'release_bus_v2_candidates';
+export const RELEASE_BUS_V2_CANDIDATE_DEPENDENCIES_TABLE =
+  'release_bus_v2_candidate_dependencies';
+export const RELEASE_BUS_V2_TRAINS_TABLE = 'release_bus_v2_trains';
+export const RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE =
+  'release_bus_v2_train_candidates';
+export const RELEASE_BUS_V2_OPERATIONS_TABLE = 'release_bus_v2_operations';
+export const RELEASE_BUS_V2_LOCKS_TABLE = 'release_bus_v2_locks';
+export const RELEASE_BUS_V2_MANIFESTS_TABLE = 'release_bus_v2_manifests';
+export const RELEASE_BUS_V2_CONTROLS_TABLE = 'release_bus_v2_controls';
+export const RELEASE_BUS_V2_EVENTS_TABLE = 'release_bus_v2_events';

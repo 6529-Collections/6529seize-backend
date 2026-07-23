@@ -46,6 +46,8 @@ import {
   sendMessages
 } from '@/pushNotificationsHandler/sendPushNotifications';
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
+import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
+import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -253,6 +255,12 @@ export async function sendIdentityNotificationsBatch(
   const notificationsById = new Map(
     notifications.map((notification) => [Number(notification.id), notification])
   );
+  // These rows are already durable and visible in the authenticated REST feed.
+  // Mobile push mute/device/delivery rules do not suppress feed notifications,
+  // so realtime invalidation intentionally remains independent and idempotent.
+  await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
+    notifications.map((notification) => notification.identity_id)
+  );
   const mutedNotificationIds = await findMutedNotificationIds(notifications);
 
   uniqueIds
@@ -260,6 +268,7 @@ export async function sendIdentityNotificationsBatch(
     .forEach((id) => logger.error(`Notification not found: ${id}`));
 
   const failedIds: number[] = [];
+  const waveAccessCache = new Map<string, Promise<boolean>>();
   const messagesByNotification = await Promise.all(
     uniqueIds.map(async (id) => {
       const notification = notificationsById.get(id);
@@ -273,7 +282,10 @@ export async function sendIdentityNotificationsBatch(
         return [];
       }
       try {
-        return await buildIdentityNotificationMessages(notification);
+        return await buildIdentityNotificationMessages(
+          notification,
+          waveAccessCache
+        );
       } catch (error) {
         logger.error(`Failed to build notification ${id}: ${error}`);
         failedIds.push(id);
@@ -330,7 +342,8 @@ async function findMutedNotificationIds(
 }
 
 async function buildIdentityNotificationMessages(
-  notification: IdentityNotificationEntity
+  notification: IdentityNotificationEntity,
+  waveAccessCache?: Map<string, Promise<boolean>>
 ): Promise<IdentityPushNotificationMessage[]> {
   if (notification.read_at) {
     logger.info(
@@ -387,6 +400,18 @@ async function buildIdentityNotificationMessages(
     multiProfileTitlePrefix = buildMultiProfileTitlePrefix(targetProfileHandle);
   }
 
+  const canRecipientReadRelatedContent =
+    await identityPushNotificationAccess.canRecipientReadRelatedContent(
+      notification,
+      waveAccessCache
+    );
+  if (!canRecipientReadRelatedContent) {
+    logger.warn(
+      `[ID ${notification.id}] Skipping push because identity ${notification.identity_id} cannot read the related content in wave ${notification.wave_id}`
+    );
+    return [];
+  }
+
   const notificationData = await generateNotificationData(notification);
   if (notificationData === SKIP_NOTIFICATION_PUSH) {
     logger.info(`[ID ${notification.id}] Skipping push notification`);
@@ -436,12 +461,8 @@ async function buildIdentityNotificationMessages(
               const eligibleGroupIds =
                 await userGroupsService.getGroupsUserIsEligibleFor(profileId);
               const options: {
-                includeNotificationId?: number;
                 enabledCauses?: IdentityNotificationCause[];
               } = { enabledCauses };
-              if (profileId === notification.identity_id) {
-                options.includeNotificationId = notification.id;
-              }
               return identityNotificationsDb.countUnreadNotificationsForIdentity(
                 profileId,
                 eligibleGroupIds,
