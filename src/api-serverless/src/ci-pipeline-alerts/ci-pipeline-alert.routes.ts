@@ -7,6 +7,7 @@ import { getRedisClient } from '@/redis';
 import { Timer } from '@/time';
 import { asyncRouter } from '@/api/async.router';
 import { ApiResponse } from '@/api/api-response';
+import { isDeployService } from '@/api/deploy/deploy.config';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
 import {
@@ -68,13 +69,67 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .allow(null)
       .optional(),
     publish_release_note: Joi.boolean().strict().optional(),
+    release_note_groups: Joi.array()
+      .items(
+        Joi.object({
+          release_group_id: Joi.string().trim().min(1).max(200).required(),
+          release_group_services: Joi.array()
+            .items(Joi.string().trim().min(1).max(200))
+            .min(1)
+            .max(100)
+            .unique()
+            .required(),
+          pull_request_number: Joi.number()
+            .integer()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER)
+            .required(),
+          publish_release_note: Joi.boolean().strict().required()
+        }).unknown(false)
+      )
+      .min(1)
+      .max(100)
+      .unique('pull_request_number')
+      .unique('release_group_id')
+      .optional(),
     deployed_at: Joi.string()
       .isoDate()
       .pattern(RELEASE_NOTE_DEPLOYED_AT_PATTERN)
       .strict()
       .allow(null, '')
       .optional()
-  }).unknown(false);
+  })
+    .unknown(false)
+    .custom((value, helpers) => {
+      const groups = value.release_note_groups;
+      if (!groups) return value;
+      const service = value.service?.trim();
+      if (!service) {
+        return helpers.message({
+          custom: 'service is required with release_note_groups'
+        });
+      }
+      if (!isDeployService(service)) {
+        return helpers.message({
+          custom: 'service must be an allowlisted backend deploy service'
+        });
+      }
+      for (const group of groups) {
+        if (!group.release_group_services.every(isDeployService)) {
+          return helpers.message({
+            custom:
+              'release_group_services must contain only allowlisted backend deploy services'
+          });
+        }
+        if (!group.release_group_services.includes(service)) {
+          return helpers.message({
+            custom:
+              'every release_note_groups entry must contain the deployed service'
+          });
+        }
+      }
+      return value;
+    });
 
 type SignatureVerificationResult =
   | { readonly ok: true }

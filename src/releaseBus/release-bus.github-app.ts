@@ -743,6 +743,75 @@ export class ReleaseBusGitHubApp {
     repository: ReleaseRepository,
     environment: 'staging' | 'prod'
   ): Promise<boolean> {
+    return this.hasActiveWorkflowRun(
+      repository,
+      `${environment} deployment`,
+      (run) => {
+        if (repository === 'backend') {
+          return (
+            run.name === 'Deploy a service' &&
+            run.display_title.includes(` to ${environment}`)
+          );
+        }
+        const names =
+          environment === 'prod'
+            ? ['Web Deploy - PROD', 'Release Bus - Deploy Frontend Production']
+            : ['Web Deploy - STAGING', 'Release Bus - Deploy Frontend Staging'];
+        return names.includes(run.name);
+      }
+    );
+  }
+
+  public async hasActiveStagingMutationOrE2ERun(
+    repository: ReleaseRepository
+  ): Promise<boolean> {
+    return this.hasActiveWorkflowRun(
+      repository,
+      'staging mutation or E2E',
+      (run) => {
+        if (repository === 'backend') {
+          return (
+            run.name === 'Deploy a service' &&
+            run.display_title.includes(' to staging')
+          );
+        }
+        return [
+          'Web Deploy - STAGING',
+          'Release Bus - Deploy Frontend Staging',
+          'Release Bus - Sync Main To Staging',
+          'Staging E2E'
+        ].includes(run.name);
+      }
+    );
+  }
+
+  public async hasActiveProductionMutationOrE2ERun(
+    repository: ReleaseRepository
+  ): Promise<boolean> {
+    return this.hasActiveWorkflowRun(
+      repository,
+      'production mutation or E2E',
+      (run) => {
+        if (repository === 'backend') {
+          return (
+            run.name === 'Deploy a service' &&
+            run.display_title.includes(' to prod')
+          );
+        }
+        return [
+          'Web Deploy - PROD',
+          'Release Bus - Deploy Frontend Production',
+          'Production E2E'
+        ].includes(run.name);
+      }
+    );
+  }
+
+  private async hasActiveWorkflowRun(
+    repository: ReleaseRepository,
+    description: string,
+    matches: (run: GitHubRun) => boolean
+  ): Promise<boolean> {
     for (const status of ['queued', 'in_progress']) {
       const response = await this.request(
         repository,
@@ -750,33 +819,12 @@ export class ReleaseBusGitHubApp {
       );
       await this.assertOk(
         response,
-        `list active ${repository} ${environment} workflow runs`
+        `list active ${repository} ${description} workflow runs`
       );
       const runs =
         ((await response.json()) as { workflow_runs?: GitHubRun[] })
           .workflow_runs ?? [];
-      if (
-        runs.some((run) => {
-          if (repository === 'backend') {
-            return (
-              run.name === 'Deploy a service' &&
-              run.display_title.includes(` to ${environment}`)
-            );
-          }
-          const names =
-            environment === 'prod'
-              ? [
-                  'Web Deploy - PROD',
-                  'Release Bus - Deploy Frontend Production'
-                ]
-              : [
-                  'Web Deploy - STAGING',
-                  'Release Bus - Deploy Frontend Staging'
-                ];
-          return names.includes(run.name);
-        })
-      )
-        return true;
+      if (runs.some(matches)) return true;
     }
     return false;
   }
