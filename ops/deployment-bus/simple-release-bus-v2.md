@@ -60,6 +60,9 @@ register backend first and declare it as the frontend prerequisite.
    each application runs one combined sharded preflight and one immutable build.
 4. Preparation may finish while another train owns staging.
 5. The train acquires the staging lock only for deployment plus E2E.
+   Under that lock it binds every unchanged repository to the exact current
+   `1a-staging` ref, so a frontend-only or backend-only manifest describes the
+   environment E2E actually sees rather than the unrelated `main` ref.
 6. Independent backend DAG frontier units deploy concurrently; dependency edges
    serialize only required units. Dependent frontend deploys after backend.
 7. The controller persists `STAGING_DEPLOYED` with exact SHAs, artifact
@@ -83,6 +86,9 @@ from current `main`:
   validation and immutable artifacts;
 - otherwise enqueue an exact `PRODUCTION_QUALIFICATION` staging train, run
   manifest-bound E2E, then continue automatically;
+- qualification waits without retaining the staging lock when any unchanged
+  repository in staging differs from the exact production target; it must not
+  validate a subset against unrelated staged content;
 - immediately before mutation, require every `main` ref to equal its recorded
   base. A moved ref cancels and requeues the set for fresh qualification;
 - advance exact tested commits, deploy the same artifacts in dependency order,

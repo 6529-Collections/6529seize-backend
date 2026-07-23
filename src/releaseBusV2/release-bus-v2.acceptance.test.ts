@@ -271,6 +271,14 @@ class InMemoryAcceptanceRepository {
       ...current,
       status:
         (fields.status as ReleaseBusV2TrainRecord['status']) ?? current.status,
+      frontend_composed_sha:
+        fields.frontendComposedSha === undefined
+          ? current.frontend_composed_sha
+          : (fields.frontendComposedSha as string | null),
+      backend_composed_sha:
+        fields.backendComposedSha === undefined
+          ? current.backend_composed_sha
+          : (fields.backendComposedSha as string | null),
       manifest_id:
         fields.manifestId === undefined
           ? current.manifest_id
@@ -640,6 +648,158 @@ describe('Release Bus v2 offline acceptance harness', () => {
           staging_lock: 'owned',
           workflow_fence_started_at: expect.any(Number),
           verified_at: expect.any(Number)
+        })
+      })
+    );
+  });
+
+  it('binds an unchanged repository to the exact shared staging ref before deployment', async () => {
+    const state = harness('SUCCEEDED');
+    const backendStagingSha = 'e'.repeat(40);
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      state.repository.memberships.find(
+        ({ candidate_id }) => candidate_id === 'frontend-candidate'
+      )!
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend') =>
+        repository === 'frontend' ? 'f'.repeat(40) : backendStagingSha
+    );
+
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'DEPLOYING',
+        frontend_composed_sha: FRONTEND_SHA,
+        backend_composed_sha: backendStagingSha
+      })
+    );
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'STAGING_ENVIRONMENT_IDENTITY_BOUND',
+        trainId: 'train-1',
+        payload: expect.objectContaining({
+          frontend_sha: FRONTEND_SHA,
+          backend_sha: backendStagingSha,
+          frontend_from_existing_staging: false,
+          backend_from_existing_staging: true
+        })
+      })
+    );
+  });
+
+  it('holds exact production qualification when an unchanged repository differs in staging', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { lane: 'PRODUCTION_QUALIFICATION' })
+    );
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      state.repository.memberships.find(
+        ({ candidate_id }) => candidate_id === 'frontend-candidate'
+      )!
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend') =>
+        repository === 'frontend' ? FRONTEND_SHA : 'e'.repeat(40)
+    );
+
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_ENVIRONMENT',
+        backend_composed_sha: BACKEND_SHA,
+        recovery_message: expect.stringContaining(
+          'unchanged repositories in staging'
+        )
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(mockReconcileWorkflow).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationType: expect.stringMatching(/^DEPLOY_/)
+      })
+    );
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_QUALIFICATION_ENVIRONMENT_HOLD',
+        trainId: 'train-1'
+      })
+    );
+  });
+
+  it('starts exact production qualification after unchanged staging matches the target', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { lane: 'PRODUCTION_QUALIFICATION' })
+    );
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      state.repository.memberships.find(
+        ({ candidate_id }) => candidate_id === 'frontend-candidate'
+      )!
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend') =>
+        repository === 'frontend' ? 'e'.repeat(40) : BACKEND_SHA
+    );
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'DEPLOYING',
+        frontend_composed_sha: FRONTEND_SHA,
+        backend_composed_sha: BACKEND_SHA
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBe('train-1');
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'STAGING_ENVIRONMENT_IDENTITY_BOUND',
+        trainId: 'train-1',
+        payload: expect.objectContaining({
+          frontend_sha: FRONTEND_SHA,
+          backend_sha: BACKEND_SHA,
+          backend_from_existing_staging: false
         })
       })
     );

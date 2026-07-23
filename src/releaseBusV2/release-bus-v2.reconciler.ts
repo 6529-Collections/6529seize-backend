@@ -96,6 +96,13 @@ type StagingIdleHandshakeSnapshot = StagingIdleSnapshot & {
   readonly verified_at: number;
 };
 
+type StagingEnvironmentBinding = {
+  readonly frontendSha: string;
+  readonly backendSha: string;
+  readonly frontendFromExistingStaging: boolean;
+  readonly backendFromExistingStaging: boolean;
+};
+
 type ProductionIdleSnapshot = {
   readonly frontend_main_sha: string;
   readonly backend_main_sha: string;
@@ -1379,21 +1386,25 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext
   ): Promise<void> {
     const train = context.train;
+    const requiresIdleHandshake = [
+      'PREPARED',
+      'WAITING_FOR_ENVIRONMENT'
+    ].includes(train.status);
     const requiresBetaIdleHandshake =
-      getReleaseBusV2Mode() === 'OFF' &&
-      ['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status);
+      getReleaseBusV2Mode() === 'OFF' && requiresIdleHandshake;
     const workflowFenceStartedAt = requiresBetaIdleHandshake
       ? Date.now()
       : null;
-    const beforeLock = requiresBetaIdleHandshake
+    const beforeLock = requiresIdleHandshake
       ? await this.captureStagingIdleSnapshot()
       : null;
-    if (requiresBetaIdleHandshake && !beforeLock) {
+    if (requiresIdleHandshake && !beforeLock) {
       if (train.status === 'PREPARED')
         await this.transitionTrain(train, {
           status: 'WAITING_FOR_ENVIRONMENT',
-          recoveryMessage:
-            'Operator beta is waiting for an idle shared staging deployment, E2E, and ref handshake'
+          recoveryMessage: requiresBetaIdleHandshake
+            ? 'Operator beta is waiting for an idle shared staging deployment, E2E, and ref handshake'
+            : 'Waiting for an idle shared staging deployment, E2E, and ref handshake'
         });
       return;
     }
@@ -1410,7 +1421,8 @@ export class ReleaseBusV2Reconciler {
         });
       return;
     }
-    if (requiresBetaIdleHandshake && beforeLock) {
+    let environmentBinding: StagingEnvironmentBinding | null = null;
+    if (requiresIdleHandshake && beforeLock) {
       let afterLock: StagingIdleSnapshot | null;
       try {
         afterLock = await this.captureStagingIdleSnapshot();
@@ -1418,11 +1430,11 @@ export class ReleaseBusV2Reconciler {
         await this.releaseEnvironmentLease('staging-environment', lease);
         throw error;
       }
-      const stable =
-        afterLock !== null &&
-        afterLock.frontend_staging_sha === beforeLock.frontend_staging_sha &&
-        afterLock.backend_staging_sha === beforeLock.backend_staging_sha;
-      if (!stable) {
+      if (
+        !afterLock ||
+        afterLock.frontend_staging_sha !== beforeLock.frontend_staging_sha ||
+        afterLock.backend_staging_sha !== beforeLock.backend_staging_sha
+      ) {
         await this.releaseEnvironmentLease('staging-environment', lease);
         if (train.status === 'PREPARED')
           await this.transitionTrain(train, {
@@ -1432,21 +1444,78 @@ export class ReleaseBusV2Reconciler {
           });
         return;
       }
+      if (!afterLock.frontend_staging_sha || !afterLock.backend_staging_sha) {
+        await this.releaseEnvironmentLease('staging-environment', lease);
+        await this.failTrain(
+          train,
+          'CONTROL_PLANE',
+          'Shared staging has no exact frontend or backend ref identity'
+        );
+        return;
+      }
+      environmentBinding = this.bindStagingEnvironmentIdentity(
+        context,
+        afterLock
+      );
+      if (!environmentBinding) {
+        await this.releaseEnvironmentLease('staging-environment', lease);
+        if (train.status === 'PREPARED') {
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'PRODUCTION_QUALIFICATION_ENVIRONMENT_HOLD',
+              actor: 'release-bus-v2',
+              payload: {
+                target_frontend_sha: train.frontend_composed_sha,
+                target_backend_sha: train.backend_composed_sha,
+                staging_frontend_sha: afterLock.frontend_staging_sha,
+                staging_backend_sha: afterLock.backend_staging_sha
+              }
+            },
+            {}
+          );
+          await this.transitionTrain(train, {
+            status: 'WAITING_FOR_ENVIRONMENT',
+            recoveryMessage:
+              'Exact production qualification is waiting for unchanged repositories in staging to match the production target manifest'
+          });
+        }
+        return;
+      }
       await this.repository.appendEvent(
         {
           trainId: train.id,
-          eventType: 'BETA_STAGING_IDLE_HANDSHAKE',
-          actor: 'release-bus-v2-beta',
+          eventType: 'STAGING_ENVIRONMENT_IDENTITY_BOUND',
+          actor: 'release-bus-v2',
           payload: {
-            ...afterLock,
-            beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
-            staging_lock: 'owned',
-            workflow_fence_started_at: workflowFenceStartedAt,
-            verified_at: Date.now()
+            lane: train.lane,
+            frontend_sha: environmentBinding.frontendSha,
+            backend_sha: environmentBinding.backendSha,
+            frontend_from_existing_staging:
+              environmentBinding.frontendFromExistingStaging,
+            backend_from_existing_staging:
+              environmentBinding.backendFromExistingStaging
           }
         },
         {}
       );
+      if (requiresBetaIdleHandshake) {
+        await this.repository.appendEvent(
+          {
+            trainId: train.id,
+            eventType: 'BETA_STAGING_IDLE_HANDSHAKE',
+            actor: 'release-bus-v2-beta',
+            payload: {
+              ...afterLock,
+              beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
+              staging_lock: 'owned',
+              workflow_fence_started_at: workflowFenceStartedAt,
+              verified_at: Date.now()
+            }
+          },
+          {}
+        );
+      }
     }
     const sourceTrainId = train.parent_train_id ?? train.id;
     if (['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status)) {
@@ -1458,6 +1527,8 @@ export class ReleaseBusV2Reconciler {
         );
       await this.transitionTrain(train, {
         status: 'DEPLOYING',
+        frontendComposedSha: environmentBinding?.frontendSha,
+        backendComposedSha: environmentBinding?.backendSha,
         recoveryMessage:
           'Staging ownership acquired; exact immutable artifacts are deploying'
       });
@@ -1640,6 +1711,42 @@ export class ReleaseBusV2Reconciler {
       });
       await this.releaseEnvironmentLease('staging-environment', lease);
     }
+  }
+
+  private bindStagingEnvironmentIdentity(
+    context: TrainContext,
+    snapshot: StagingIdleSnapshot
+  ): StagingEnvironmentBinding | null {
+    const train = context.train;
+    const frontendTarget = train.frontend_composed_sha;
+    const backendTarget = train.backend_composed_sha;
+    const frontendStaging = snapshot.frontend_staging_sha;
+    const backendStaging = snapshot.backend_staging_sha;
+    if (
+      !frontendTarget ||
+      !backendTarget ||
+      !frontendStaging ||
+      !backendStaging
+    )
+      throw new Error('Staging environment identity is incomplete');
+    const hasFrontend = relevantCandidates(context, 'frontend').length > 0;
+    const hasBackend = relevantCandidates(context, 'backend').length > 0;
+    if (train.lane === 'PRODUCTION_QUALIFICATION') {
+      if (!hasFrontend && frontendStaging !== frontendTarget) return null;
+      if (!hasBackend && backendStaging !== backendTarget) return null;
+    }
+    return {
+      frontendSha:
+        train.lane === 'STAGING' && !hasFrontend
+          ? frontendStaging
+          : frontendTarget,
+      backendSha:
+        train.lane === 'STAGING' && !hasBackend
+          ? backendStaging
+          : backendTarget,
+      frontendFromExistingStaging: train.lane === 'STAGING' && !hasFrontend,
+      backendFromExistingStaging: train.lane === 'STAGING' && !hasBackend
+    };
   }
 
   private async captureStagingIdleSnapshot(fence?: {
