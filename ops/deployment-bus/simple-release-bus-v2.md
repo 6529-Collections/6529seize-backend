@@ -108,7 +108,8 @@ Rollback:
 1. pause v2 `ALL` and set mode `OFF`;
 2. allow any already-dispatched exact operation to reach a safe terminal state;
 3. verify no v2 train owns staging or production;
-4. use the serialized manual fallback;
+4. use the serialized manual fallback, dispatching backend `Deploy a service`
+   workflows one at a time because shared concurrency can cancel sibling runs;
 5. preserve v2 rows and v1 code for diagnosis—do not destructively delete them.
 
 Never cancel another actor's shared workflow or force-push a shared ref.

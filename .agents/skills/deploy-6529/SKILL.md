@@ -59,8 +59,10 @@ qualification and never publishes release notes.
 3. Re-fetch immediately before pushing. If a shared ref moved, recompute from
    the new head. Never force-push.
 4. Merge the development branch into current `1a-staging`. Deploy required
-   backend units in DAG order; independent frontier units may run concurrently
-   only when workflow concurrency cannot cancel siblings.
+   backend units in DAG order through `Deploy a service`. Dispatch exactly one
+   service at a time and wait for exact success before dispatching the next;
+   shared workflow concurrency can cancel sibling runs, even for independent
+   DAG-frontier units.
 5. For coupled work, verify required backend units before merging/deploying
    frontend.
 6. Record exact deployed frontend/backend SHAs before E2E and freeze staging
