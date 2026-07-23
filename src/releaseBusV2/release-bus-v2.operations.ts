@@ -26,6 +26,10 @@ export type ReleaseBusV2WorkflowSpec = {
   readonly artifactDigest: string | null;
   readonly inputs: Readonly<Record<string, string>>;
   readonly maxAttempts?: number;
+  readonly betaInfrastructureFailureInjection?: {
+    readonly candidateId: string;
+    readonly testId: string;
+  };
 };
 
 export type ReleaseBusV2Authorization = {
@@ -78,14 +82,60 @@ function retryDelayMs(attempt: number): number {
   return Math.min(30_000 * 2 ** Math.max(0, attempt - 1), 5 * 60_000);
 }
 
+const DISPATCH_DISCOVERY_GRACE_MS = 30_000;
+
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
+  const candidate = error as {
+    readonly code?: unknown;
+    readonly headers?: unknown;
+    readonly name?: unknown;
+    readonly retryAfter?: unknown;
+    readonly status?: unknown;
+    readonly statusCode?: unknown;
+  };
+  const code = typeof candidate?.code === 'string' ? candidate.code : '';
+  const status = Number(candidate?.status ?? candidate?.statusCode ?? 0);
+  const headers = candidate?.headers as
+    | { readonly get?: (name: string) => string | null }
+    | Readonly<Record<string, unknown>>
+    | undefined;
+  const headerValue = (name: string): unknown => {
+    if (typeof headers?.get === 'function') return headers.get(name);
+    if (!headers || typeof headers !== 'object') return undefined;
+    const record = headers as Readonly<Record<string, unknown>>;
+    return (
+      record[name] ??
+      Object.entries(record).find(
+        ([key]) => key.toLowerCase() === name.toLowerCase()
+      )?.[1]
+    );
+  };
+  const retrySignaled =
+    candidate?.retryAfter !== undefined ||
+    headerValue('retry-after') !== undefined ||
+    headerValue('x-ratelimit-remaining') === '0';
   return (
     error instanceof Error &&
     ((typeof infrastructureType === 'function' &&
       error instanceof infrastructureType) ||
       error.name === 'ReleaseBusGitHubInfrastructureError' ||
-      error.constructor.name === 'ReleaseBusGitHubInfrastructureError')
+      error.constructor.name === 'ReleaseBusGitHubInfrastructureError' ||
+      ['AbortError', 'FetchError', 'TimeoutError'].includes(error.name) ||
+      [
+        'ECONNABORTED',
+        'ECONNREFUSED',
+        'ECONNRESET',
+        'EAI_AGAIN',
+        'ENETDOWN',
+        'ENETUNREACH',
+        'ENOTFOUND',
+        'ETIMEDOUT'
+      ].includes(code) ||
+      status === 408 ||
+      status === 429 ||
+      (status === 403 && retrySignaled) ||
+      status >= 500)
   );
 }
 
@@ -158,6 +208,26 @@ export class ReleaseBusV2Operations {
   public async reconcileWorkflow(
     spec: ReleaseBusV2WorkflowSpec
   ): Promise<ReleaseBusV2OperationRecord> {
+    try {
+      return await this.reconcileWorkflowOnce(spec);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'Release Bus v2 operation changed concurrently'
+      ) {
+        const current = await this.repository.findOperation(
+          spec.idempotencyKey,
+          {}
+        );
+        if (current) return current;
+      }
+      throw error;
+    }
+  }
+
+  private async reconcileWorkflowOnce(
+    spec: ReleaseBusV2WorkflowSpec
+  ): Promise<ReleaseBusV2OperationRecord> {
     let operation = await this.repository.getOrCreateOperation(
       {
         idempotencyKey: spec.idempotencyKey,
@@ -171,7 +241,9 @@ export class ReleaseBusV2Operations {
         request: {
           workflow: spec.workflow,
           ref: spec.ref,
-          inputs: spec.inputs
+          inputs: spec.inputs,
+          beta_infrastructure_failure_injection:
+            spec.betaInfrastructureFailureInjection ?? null
         },
         maxAttempts: spec.maxAttempts
       },
@@ -214,6 +286,42 @@ export class ReleaseBusV2Operations {
         operation;
     }
 
+    if (
+      operation.status === 'PENDING' &&
+      operation.attempt === 1 &&
+      operation.external_id === null &&
+      spec.betaInfrastructureFailureInjection
+    ) {
+      const nextRetryAt = Date.now() + retryDelayMs(operation.attempt);
+      await this.update(operation, {
+        status: 'RETRY_WAIT',
+        nextRetryAt,
+        failureClass: 'INFRASTRUCTURE',
+        failureMessage:
+          'Injected operator beta infrastructure failure before dispatch'
+      });
+      await this.repository.appendEvent(
+        {
+          trainId: operation.train_id,
+          candidateId: spec.betaInfrastructureFailureInjection.candidateId,
+          eventType: 'BETA_INFRASTRUCTURE_FAILURE_INJECTED',
+          actor: 'release-bus-v2-beta',
+          payload: {
+            attempt: operation.attempt,
+            next_retry_at: nextRetryAt,
+            operation_id: operation.id,
+            operation_type: operation.operation_type,
+            test_id: spec.betaInfrastructureFailureInjection.testId
+          }
+        },
+        {}
+      );
+      return (
+        (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+        operation
+      );
+    }
+
     const attemptKey = attemptOperationKey(
       operation.idempotency_key,
       operation.attempt
@@ -242,24 +350,45 @@ export class ReleaseBusV2Operations {
         );
       }
       if (!run && operation.status === 'PENDING') {
+        // Reserve the exact attempt before calling GitHub. Concurrent
+        // reconcilers race on this optimistic update, so only one winner can
+        // dispatch while the workflow is not yet discoverable.
+        await this.update(operation, { status: 'DISPATCHED', result: null });
+        operation =
+          (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+          operation;
         await releaseBusGitHubApp.dispatchWorkflow(
           spec.repository,
           spec.workflow,
           spec.ref,
           dispatchInputs
         );
+        return operation;
       }
     } catch (error) {
       if (isGitHubInfrastructureError(error))
         return this.deferTransportRetry(operation, error.message);
+      if (operation.status === 'DISPATCHED' && operation.external_id === null)
+        await this.update(operation, {
+          status: 'FAILED',
+          failureClass: 'CONTROL_PLANE',
+          failureMessage: `GitHub workflow dispatch was rejected before creation: ${
+            error instanceof Error ? error.message : 'unknown dispatch error'
+          }`,
+          completedAt: Date.now()
+        });
       throw error;
     }
-    if (!run && operation.status === 'PENDING') {
-      await this.update(operation, { status: 'DISPATCHED', result: null });
-      return (
-        (await this.repository.findOperation(spec.idempotencyKey, {})) ??
-        operation
-      );
+    if (!run && operation.status === 'DISPATCHED') {
+      if (
+        Date.now() - Number(operation.updated_at) >=
+        DISPATCH_DISCOVERY_GRACE_MS
+      )
+        return this.deferTransportRetry(
+          operation,
+          'Reserved dispatch was not discoverable after the indexing grace period'
+        );
+      return operation;
     }
     if (!run) return operation;
     if (
