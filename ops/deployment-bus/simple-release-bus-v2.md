@@ -18,7 +18,7 @@ to the v1 endpoint only before the additive v2 API exists.
 | Mode         | Staging                        | Production                                                                      |
 | ------------ | ------------------------------ | ------------------------------------------------------------------------------- |
 | `OFF`        | Serialized legacy manual route | Serialized manual route with explicit owner authority; no staging evidence gate |
-| `STAGING`    | V2 readiness                   | Production remains manual/disabled                                              |
+| `STAGING`    | V2 readiness                   | Manual/disabled by default; exact operator-only production beta may be allowlisted |
 | `PRODUCTION` | V2 readiness                   | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate          |
 
 For an active mode, `ALL` and the target lane must be running. In `OFF`, v2

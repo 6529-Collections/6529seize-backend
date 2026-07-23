@@ -390,7 +390,8 @@ export class ReleaseBusV2Service {
                   head_sha: candidate.head_sha,
                   operator_beta: isBetaRegistration,
                   beta_test_id: isBetaRegistration
-                    ? betaAllowlist[0]?.test_id
+                    ? // Config validation requires one shared test_id.
+                      betaAllowlist[0]?.test_id
                     : null
                 }
               },
@@ -787,6 +788,7 @@ export class ReleaseBusV2Service {
                 lane,
                 candidate_ids: order,
                 operator_beta: betaLaneEnabled,
+                // Config validation requires one shared test_id.
                 beta_test_id: betaLaneEnabled ? betaAllowlist[0]?.test_id : null
               }
             },

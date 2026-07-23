@@ -32,6 +32,7 @@ import { ReleaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
+  ReleaseBusV2ControlRecord,
   ReleaseBusV2DependencyRecord,
   ReleaseBusV2LockRecord,
   ReleaseBusV2ManifestRecord,
@@ -156,6 +157,22 @@ class InMemoryAcceptanceRepository {
     readonly payload?: unknown;
     readonly createdAt: number;
   }> = [];
+  public readonly controls = new Map<
+    ReleaseBusV2ControlRecord['scope'],
+    ReleaseBusV2ControlRecord
+  >(
+    (['ALL', 'STAGING', 'PRODUCTION'] as const).map((scope) => [
+      scope,
+      {
+        scope,
+        paused: false,
+        reason: null,
+        github_actor: null,
+        updated_at: 1,
+        row_version: 1
+      }
+    ])
+  );
   private eventClock = Date.now();
   public lock: ReleaseBusV2LockRecord = {
     name: 'staging-environment',
@@ -168,14 +185,8 @@ class InMemoryAcceptanceRepository {
     row_version: 1
   };
 
-  public async listControls(): Promise<
-    Array<{ readonly scope: string; readonly paused: boolean }>
-  > {
-    return [
-      { scope: 'ALL', paused: false },
-      { scope: 'STAGING', paused: false },
-      { scope: 'PRODUCTION', paused: false }
-    ];
+  public async listControls(): Promise<ReleaseBusV2ControlRecord[]> {
+    return Array.from(this.controls.values());
   }
 
   public async listTrains(): Promise<ReleaseBusV2TrainRecord[]> {
@@ -464,7 +475,25 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
   );
   const service = {
     claimLane: jest.fn(async () => null),
-    setPaused: jest.fn(async () => undefined),
+    setPaused: jest.fn(
+      async (
+        scope: ReleaseBusV2ControlRecord['scope'],
+        paused: boolean,
+        reason: string,
+        actor: string
+      ) => {
+        const prior = repository.controls.get(scope);
+        if (!prior) throw new Error(`Missing ${scope} control`);
+        repository.controls.set(scope, {
+          ...prior,
+          paused,
+          reason,
+          github_actor: actor,
+          updated_at: prior.updated_at + 1,
+          row_version: prior.row_version + 1
+        });
+      }
+    ),
     invalidateBranch: jest.fn(async () => undefined),
     isBetaTrainAllowed: jest.fn(async () => true)
   };
@@ -591,6 +620,51 @@ describe('Release Bus v2 offline acceptance harness', () => {
       FRONTEND_SHA,
       BACKEND_SHA,
       'acceptance-invalid-production-beta:staging'
+    );
+  });
+
+  it('resumes only a beta-owned production pause after allowlist repair', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-repaired',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-production-subset-repaired',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.controls.set('PRODUCTION', {
+      scope: 'PRODUCTION',
+      paused: true,
+      reason: 'invalid beta config',
+      github_actor: 'release-bus-v2-beta',
+      updated_at: 2,
+      row_version: 2
+    });
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-repaired-production-beta')
+    ).resolves.toEqual({ mode: 'STAGING', claimed: [], advanced: [] });
+    expect(state.service.setPaused).toHaveBeenCalledWith(
+      'PRODUCTION',
+      false,
+      expect.stringContaining('recovered'),
+      'release-bus-v2-beta'
+    );
+    expect(state.service.claimLane).toHaveBeenCalledTimes(2);
+    expect(state.service.claimLane).toHaveBeenNthCalledWith(
+      2,
+      'PRODUCTION',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-repaired-production-beta:production'
     );
   });
 

@@ -486,8 +486,10 @@ export class ReleaseBusV2Reconciler {
     await this.releaseTerminalEnvironmentLocks();
     let betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [];
     if (mode === 'OFF' || mode === 'STAGING') {
+      let betaAllowlistValid = false;
       try {
         betaAllowlist = getReleaseBusV2BetaAllowlist();
+        betaAllowlistValid = true;
       } catch {
         const scope = mode === 'OFF' ? 'ALL' : 'PRODUCTION';
         const controls = await this.repository.listControls({});
@@ -503,6 +505,24 @@ export class ReleaseBusV2Reconciler {
           );
         if (mode === 'OFF') return { mode, claimed, advanced: [] };
         betaAllowlist = [];
+      }
+      if (betaAllowlistValid) {
+        const betaScope = mode === 'OFF' ? 'ALL' : 'PRODUCTION';
+        const betaControl = (await this.repository.listControls({})).find(
+          (item) => item.scope === betaScope
+        );
+        if (
+          betaControl?.paused &&
+          betaControl.github_actor === 'release-bus-v2-beta'
+        )
+          await this.service.setPaused(
+            betaScope,
+            false,
+            mode === 'OFF'
+              ? 'Release Bus v2 beta allowlist configuration recovered; OFF manual fallback remains authoritative'
+              : 'Release Bus v2 production beta allowlist configuration recovered',
+            'release-bus-v2-beta'
+          );
       }
       if (mode === 'OFF' && betaAllowlist.length === 0)
         return { mode, claimed, advanced: [] };
@@ -1996,6 +2016,7 @@ export class ReleaseBusV2Reconciler {
           actor: 'release-bus-v2-beta',
           payload: {
             ...afterLock,
+            // Config validation requires one shared test_id across all entries.
             beta_test_id: betaAllowlist[0]?.test_id,
             production_lock: 'owned',
             verified_at: Date.now()
