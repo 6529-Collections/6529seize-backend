@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
+  MEMBERSHIP_MATERIALIZATION_STATES_TABLE,
   MEMBERSHIP_REFRESH_REQUESTS_TABLE,
   MEMBERSHIP_WATERMARKS_TABLE,
   USER_GROUP_MEMBERS_TABLE
@@ -76,6 +77,39 @@ describeWithSeed('Membership materialization schema', [], () => {
     expect(rows[0].last_error).toBeNull();
     expect(Number(rows[0].created_at)).toBe(1751900000001);
     expect(Number(rows[0].updated_at)).toBe(1751900000001);
+  });
+
+  it('membership_materialization_states: records an authoritative empty result', async () => {
+    await sqlExecutor.execute(
+      `insert into ${MEMBERSHIP_MATERIALIZATION_STATES_TABLE}
+         (scope, target_id, spec_version, as_of_millis, updated_at_millis)
+       values (:scope, :targetId, :specVersion, :asOfMillis, :updatedAtMillis)`,
+      {
+        scope: 'PROFILE',
+        targetId: 'profile-with-no-groups',
+        specVersion: 1,
+        asOfMillis: 1751900000002,
+        updatedAtMillis: 1751900000003
+      }
+    );
+    const rows = await sqlExecutor.execute<{
+      scope: string;
+      target_id: string;
+      spec_version: number;
+      as_of_millis: number | string;
+      updated_at_millis: number | string;
+    }>(
+      `select scope, target_id, spec_version, as_of_millis, updated_at_millis
+       from ${MEMBERSHIP_MATERIALIZATION_STATES_TABLE}
+       where scope = :scope and target_id = :targetId`,
+      { scope: 'PROFILE', targetId: 'profile-with-no-groups' }
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].scope).toBe('PROFILE');
+    expect(rows[0].target_id).toBe('profile-with-no-groups');
+    expect(Number(rows[0].spec_version)).toBe(1);
+    expect(Number(rows[0].as_of_millis)).toBe(1751900000002);
+    expect(Number(rows[0].updated_at_millis)).toBe(1751900000003);
   });
 
   it('membership_watermarks: inserts and reads back a row', async () => {
