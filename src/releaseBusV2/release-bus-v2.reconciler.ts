@@ -2815,7 +2815,86 @@ export class ReleaseBusV2Reconciler {
         continue;
       const train = await this.repository.findTrain(lock.owner_train_id, {});
       if (!train || !TERMINAL_TRAINS.has(train.status)) continue;
-      const operations = await this.repository.listOperations(train.id, {});
+      let operations = await this.repository.listOperations(train.id, {});
+      for (const operation of operations) {
+        if (
+          operation.status !== 'PENDING' ||
+          !['ADVANCE_MAIN_BACKEND', 'ADVANCE_MAIN_FRONTEND'].includes(
+            operation.operation_type
+          ) ||
+          !operation.repository ||
+          !operation.expected_sha
+        )
+          continue;
+        const base =
+          operation.repository === 'frontend'
+            ? train.frontend_base_sha
+            : train.backend_base_sha;
+        if (!base) continue;
+        let observedSha: string;
+        try {
+          observedSha = await releaseBusGitHubApp.resolveRef(
+            operation.repository,
+            'main'
+          );
+        } catch {
+          // A terminal cleanup may never guess at an ambiguous ref outcome.
+          // Retain the lock and retry the read on a later invocation.
+          continue;
+        }
+        const status =
+          observedSha === operation.expected_sha
+            ? ('SUCCEEDED' as const)
+            : observedSha === base
+              ? ('FAILED' as const)
+              : null;
+        if (!status) continue;
+        if (
+          await this.repository.updateOperation(
+            operation.id,
+            operation.row_version,
+            {
+              status,
+              externalId:
+                status === 'SUCCEEDED' ? operation.expected_sha : undefined,
+              result: {
+                base_sha: base,
+                deployed_sha:
+                  status === 'SUCCEEDED' ? operation.expected_sha : null,
+                observed_sha: observedSha,
+                reconciled_after_terminal_train: true
+              },
+              failureClass:
+                status === 'FAILED'
+                  ? (train.failure_class ?? 'CONTROL_PLANE')
+                  : null,
+              failureMessage:
+                status === 'FAILED'
+                  ? 'Terminal train retained main at its exact recorded base'
+                  : null,
+              completedAt: Date.now()
+            },
+            {}
+          )
+        )
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TERMINAL_INTERNAL_REF_OPERATION_RECONCILED',
+              actor: 'release-bus-v2',
+              payload: {
+                operation_id: operation.id,
+                repository: operation.repository,
+                operation_status: status,
+                observed_sha: observedSha,
+                expected_base_sha: base,
+                expected_target_sha: operation.expected_sha
+              }
+            },
+            {}
+          );
+      }
+      operations = await this.repository.listOperations(train.id, {});
       if (
         operations.some(
           (operation) => !TERMINAL_OPERATIONS.has(operation.status)

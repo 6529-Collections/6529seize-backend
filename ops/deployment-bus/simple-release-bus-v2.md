@@ -180,11 +180,14 @@ read-only shadow checks. Shadow checks may resolve exact refs, PR qualification,
 current locks, and active workflow state, but must not update a shared ref,
 dispatch a deploy/E2E workflow, or create/claim a live candidate. With the
 allowlist absent, a worker invocation must claim and advance nothing.
-The only permitted OFF/empty maintenance mutation is releasing an environment
-lock already owned by a terminal train after every one of that train's
-operations is terminal. That cleanup emits
-`TERMINAL_ENVIRONMENT_LOCK_RELEASED`; it cannot claim a candidate, advance a
-train, update a shared ref, or dispatch a workflow.
+The only permitted OFF/empty maintenance mutations are reconciling a stranded
+internal `ADVANCE_MAIN_*` operation from a read-only exact `main` ref check and
+releasing an environment lock already owned by a terminal train after every one
+of that train's operations is terminal. The cleanup emits
+`TERMINAL_INTERNAL_REF_OPERATION_RECONCILED` and
+`TERMINAL_ENVIRONMENT_LOCK_RELEASED`; an unknown ref identity retains the lock.
+Cleanup cannot claim a candidate, advance a train, update a shared ref, or
+dispatch a workflow.
 
 For each single bounded staging test:
 

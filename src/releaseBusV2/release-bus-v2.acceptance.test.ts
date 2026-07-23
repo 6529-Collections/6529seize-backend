@@ -666,6 +666,117 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
+  it('reconciles a stranded terminal main operation before releasing its lock', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const failed = train('terminal-production', {
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: 4
+    });
+    state.repository.trains.set(failed.id, failed);
+    state.repository.operations.push({
+      ...operation(failed.id, 'ADVANCE_MAIN_BACKEND', 'backend', 'unused'),
+      id: 'stranded-main-operation',
+      idempotency_key: `rb2:${failed.id}:advance-main:backend`,
+      expected_sha: failed.backend_composed_sha,
+      external_id: null,
+      status: 'PENDING',
+      failure_class: null,
+      failure_message: null,
+      completed_at: null
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      failed.id,
+      `train:${failed.id}`
+    );
+    mockResolveRef.mockResolvedValue(failed.backend_base_sha);
+
+    await state.reconciler.runOnce('acceptance-terminal-ref-reconciliation');
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.id === 'stranded-main-operation'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: expect.any(Number)
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'TERMINAL_INTERNAL_REF_OPERATION_RECONCILED',
+          trainId: failed.id,
+          payload: expect.objectContaining({
+            repository: 'backend',
+            operation_status: 'FAILED',
+            observed_sha: failed.backend_base_sha
+          })
+        }),
+        expect.objectContaining({
+          eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+          trainId: failed.id
+        })
+      ])
+    );
+  });
+
+  it('retains a terminal lock when a stranded main operation is still ambiguous', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const failed = train('ambiguous-production', {
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: 4
+    });
+    state.repository.trains.set(failed.id, failed);
+    state.repository.operations.push({
+      ...operation(failed.id, 'ADVANCE_MAIN_BACKEND', 'backend', 'unused'),
+      id: 'ambiguous-main-operation',
+      idempotency_key: `rb2:${failed.id}:advance-main:backend`,
+      expected_sha: failed.backend_composed_sha,
+      external_id: null,
+      status: 'PENDING',
+      completed_at: null
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      failed.id,
+      `train:${failed.id}`
+    );
+    mockResolveRef.mockResolvedValue('9'.repeat(40));
+
+    await state.reconciler.runOnce('acceptance-ambiguous-terminal-ref');
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.id === 'ambiguous-main-operation'
+      )?.status
+    ).toBe('PENDING');
+    expect(state.repository.lock.owner_train_id).toBe(failed.id);
+    expect(state.repository.events).not.toContainEqual(
+      expect.objectContaining({
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+        trainId: failed.id
+      })
+    );
+  });
+
   it('pauses only beta automation when the OFF allowlist is malformed', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'OFF';
