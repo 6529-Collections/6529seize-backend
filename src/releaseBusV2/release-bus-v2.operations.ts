@@ -324,6 +324,15 @@ export class ReleaseBusV2Operations {
     } catch (error) {
       if (isGitHubInfrastructureError(error))
         return this.deferTransportRetry(operation, error.message);
+      if (operation.status === 'DISPATCHED' && operation.external_id === null)
+        await this.update(operation, {
+          status: 'FAILED',
+          failureClass: 'CONTROL_PLANE',
+          failureMessage: `GitHub workflow dispatch was rejected before creation: ${
+            error instanceof Error ? error.message : 'unknown dispatch error'
+          }`,
+          completedAt: Date.now()
+        });
       throw error;
     }
     if (!run && operation.status === 'DISPATCHED') {

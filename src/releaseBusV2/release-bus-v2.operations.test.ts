@@ -99,6 +99,7 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
           fields.completedAt === undefined
             ? current.completed_at
             : (fields.completedAt as number | null),
+        updated_at: Date.now(),
         row_version: current.row_version + 1
       };
       return true;
@@ -121,12 +122,20 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
         ...fields,
         row_version: current.row_version + 1
       };
+    },
+    ageUpdatedAt: (milliseconds: number) => {
+      current = { ...current, updated_at: current.updated_at - milliseconds };
     }
   };
 }
 
 describe('Release Bus v2 exact operation callbacks', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetWorkflowRunIdentity.mockReset();
+    mockFindWorkflowRun.mockReset();
+    mockDispatchWorkflow.mockReset();
+  });
 
   it('injects one transparent beta infrastructure retry before dispatch', async () => {
     const state = repositoryFor(
@@ -266,6 +275,47 @@ describe('Release Bus v2 exact operation callbacks', () => {
       external_id: null,
       status: 'DISPATCHED',
       attempt: 1
+    });
+
+    state.ageUpdatedAt(31_000);
+    await service.reconcileWorkflow(spec);
+    expect(state.current()).toMatchObject({
+      status: 'RETRY_WAIT',
+      attempt: 1,
+      result_json: { retry_same_attempt: true, transport_failures: 1 }
+    });
+  });
+
+  it('preserves a hard dispatch rejection as a control-plane failure', async () => {
+    const state = repositoryFor(
+      operation({ external_id: null, status: 'PENDING' })
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockRejectedValueOnce(
+      new Error('HTTP 422 workflow input rejected')
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reconcileWorkflow({
+        idempotencyKey: 'rb2:train-id:prepare:frontend',
+        trainId: 'train-id',
+        operationType: 'PREPARE_ARTIFACT_FRONTEND',
+        repository: 'frontend',
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        environment: 'orchestration',
+        service: null,
+        expectedSha: 'a'.repeat(40),
+        artifactDigest: null,
+        inputs: {}
+      })
+    ).rejects.toThrow('HTTP 422 workflow input rejected');
+    expect(state.current()).toMatchObject({
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      failure_message:
+        'GitHub workflow dispatch was rejected before creation: HTTP 422 workflow input rejected'
     });
   });
 
