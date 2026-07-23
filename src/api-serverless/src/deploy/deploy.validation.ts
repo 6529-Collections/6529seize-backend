@@ -675,19 +675,56 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
 const RELEASE_BUS_V2_OPERATION_KEY_PATTERN =
   /^rb2:[a-f0-9-]{36}:[A-Za-z0-9._:-]+:a[1-9]\d{0,8}$/;
 
-export const ReleaseBusV2AuthorizationBodySchema =
-  ReleaseBusAuthorizationBodySchema.keys({
-    operation_key: Joi.string()
-      .pattern(RELEASE_BUS_V2_OPERATION_KEY_PATTERN)
-      .max(180)
+export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
+  train_id: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .required(),
+  operation_key: Joi.string()
+    .pattern(RELEASE_BUS_V2_OPERATION_KEY_PATTERN)
+    .max(180)
+    .required(),
+  workflow_run_id: Joi.string().pattern(/^\d+$/).required(),
+  artifact_run_id: Joi.when('environment', {
+    is: 'orchestration',
+    then: Joi.valid(null).required(),
+    otherwise: Joi.alternatives()
+      .try(Joi.string().pattern(/^\d+$/), Joi.valid(null))
       .required()
+  }),
+  repository: ReleaseRepositorySchema.required(),
+  environment: Joi.string()
+    .valid('orchestration', 'staging', 'prod')
+    .required(),
+  service: Joi.string().max(100).allow(null).required(),
+  expected_sha: ReleaseShaSchema.required(),
+  artifact_digest: Joi.alternatives()
+    .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
+    .required()
+})
+  .custom((value, helpers) => {
+    if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
+      return helpers.error('any.invalid');
+    if (value.environment === 'orchestration') {
+      return value.artifact_run_id === null && value.artifact_digest === null
+        ? value
+        : helpers.error('any.invalid');
+    }
+    const isExactManifestE2E = value.operation_key.includes(
+      `:e2e:${value.environment}:`
+    );
+    if (isExactManifestE2E) {
+      return value.repository === 'frontend' &&
+        value.service === null &&
+        value.artifact_run_id === null &&
+        value.artifact_digest !== null
+        ? value
+        : helpers.error('any.invalid');
+    }
+    return value.artifact_run_id !== null && value.artifact_digest !== null
+      ? value
+      : helpers.error('any.invalid');
   })
-    .custom((value, helpers) => {
-      if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
-        return helpers.error('any.invalid');
-      return value;
-    })
-    .required();
+  .required();
 
 export const ReleaseBusBreakGlassAuthorizationBodySchema = Joi.object({
   workflow_run_id: Joi.string().pattern(/^\d+$/).required(),
