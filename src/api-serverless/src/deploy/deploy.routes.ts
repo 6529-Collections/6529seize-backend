@@ -965,9 +965,9 @@ deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
 
 async function requireV2TrainAutomationAllowed(trainId: string) {
   if (getReleaseBusV2Mode() !== 'OFF') return;
-  const train = await releaseBusV2Repository.findTrain(trainId, {});
   let allowed = false;
   try {
+    const train = await releaseBusV2Repository.findTrain(trainId, {});
     allowed = Boolean(
       train && (await releaseBusV2Service.isBetaTrainAllowed(train))
     );

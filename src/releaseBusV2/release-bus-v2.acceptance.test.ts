@@ -4,6 +4,7 @@ const mockResolveRef = jest.fn();
 const mockResolveRefIfExists = jest.fn();
 const mockUpdateRef = jest.fn();
 const mockHasActiveStagingRun = jest.fn();
+const mockHasActiveProductionRun = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   releaseBusV2Operations: {
@@ -18,7 +19,9 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     resolveRefIfExists: (...args: unknown[]) => mockResolveRefIfExists(...args),
     updateRef: (...args: unknown[]) => mockUpdateRef(...args),
     hasActiveStagingMutationOrE2ERun: (...args: unknown[]) =>
-      mockHasActiveStagingRun(...args)
+      mockHasActiveStagingRun(...args),
+    hasActiveProductionMutationOrE2ERun: (...args: unknown[]) =>
+      mockHasActiveProductionRun(...args)
   }
 }));
 
@@ -438,9 +441,13 @@ describe('Release Bus v2 offline acceptance harness', () => {
     process.env.RELEASE_BUS_V2_MODE = 'STAGING';
     delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
     mockHasActiveStagingRun.mockResolvedValue(false);
+    mockHasActiveProductionRun.mockResolvedValue(false);
     mockResolveRefIfExists.mockImplementation(
       async (repository: 'frontend' | 'backend') =>
         repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
+    );
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
     );
   });
 
@@ -563,6 +570,41 @@ describe('Release Bus v2 offline acceptance harness', () => {
         payload: expect.objectContaining({ staging_lock: 'owned' })
       })
     );
+  });
+
+  it('releases the production beta lock when the post-lock idle snapshot fails', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    let resolveCalls = 0;
+    mockResolveRef.mockImplementation(async (repository: string) => {
+      resolveCalls += 1;
+      if (resolveCalls > 2) throw new Error('GitHub ref lookup failed');
+      return repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA;
+    });
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceProduction(input: typeof context): Promise<void>;
+        }
+      ).advanceProduction(context)
+    ).rejects.toThrow('GitHub ref lookup failed');
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.lock.lease_token).toBeNull();
+    expect(mockUpdateRef).not.toHaveBeenCalled();
   });
 
   afterAll(() => {

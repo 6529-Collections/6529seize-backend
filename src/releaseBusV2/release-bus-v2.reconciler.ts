@@ -1363,7 +1363,13 @@ export class ReleaseBusV2Reconciler {
       return;
     }
     if (requiresBetaIdleHandshake && beforeLock) {
-      const afterLock = await this.captureStagingIdleSnapshot();
+      let afterLock: StagingIdleSnapshot | null;
+      try {
+        afterLock = await this.captureStagingIdleSnapshot();
+      } catch (error) {
+        await this.releaseEnvironmentLease('staging-environment', lease);
+        throw error;
+      }
       const stable =
         afterLock !== null &&
         afterLock.frontend_staging_sha === beforeLock.frontend_staging_sha &&
@@ -1608,7 +1614,13 @@ export class ReleaseBusV2Reconciler {
     );
     if (!lease) return;
     if (requiresBetaIdleHandshake && beforeLock) {
-      const afterLock = await this.captureProductionIdleSnapshot();
+      let afterLock: ProductionIdleSnapshot | null;
+      try {
+        afterLock = await this.captureProductionIdleSnapshot();
+      } catch (error) {
+        await this.releaseEnvironmentLease('production-environment', lease);
+        throw error;
+      }
       const stable =
         afterLock !== null &&
         afterLock.frontend_main_sha === beforeLock.frontend_main_sha &&

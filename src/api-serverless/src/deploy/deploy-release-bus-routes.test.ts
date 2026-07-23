@@ -1338,6 +1338,26 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     expect(mockLambdaSend).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects an allowlisted beta actor who is no longer an org operator', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'frontend-only-1',
+        candidate_id: candidateId,
+        repository: 'frontend',
+        branch_name: 'agent/rb2-beta-frontend-one',
+        operator: 'developer',
+        lanes: ['STAGING']
+      }
+    ]);
+    mockIsOrganizationOperator.mockResolvedValue(false);
+
+    const response = await post('/deploy/release-bus-v2/reconcile', {});
+
+    expect(response.status).toBe(403);
+    expect(mockLambdaSend).not.toHaveBeenCalled();
+  });
+
   it('fails closed when an OFF workflow train is not beta-allowlisted', async () => {
     process.env.RELEASE_BUS_V2_MODE = 'OFF';
     process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
@@ -1352,6 +1372,27 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     ]);
     mockV2FindTrain.mockResolvedValue({ id: TRAIN_ID, lane: 'STAGING' });
     mockV2IsBetaTrainAllowed.mockResolvedValue(false);
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:frontend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null
+    };
+
+    const response = await post('/deploy/release-bus-v2/authorize', body);
+
+    expect(response.status).toBe(403);
+    expect(mockV2Authorize).not.toHaveBeenCalled();
+  });
+
+  it('returns a uniform 403 when an OFF workflow train lookup fails', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    mockV2FindTrain.mockRejectedValue(new Error('database unavailable'));
     const body = {
       train_id: TRAIN_ID,
       operation_key: `rb2:${TRAIN_ID}:prepare:frontend:a1`,
