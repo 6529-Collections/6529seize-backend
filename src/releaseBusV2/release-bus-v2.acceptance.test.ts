@@ -826,6 +826,12 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(workflow).toContain(
       'shard: [lint, typecheck, inventory, tests-1, tests-2, tests-3, tests-4]'
     );
+    expect(workflow).toContain(
+      "matrix.shard == 'typecheck' || startsWith(matrix.shard, 'tests-')"
+    );
+    expect(workflow).toContain(
+      'npm --prefix src/api-serverless ci --ignore-scripts'
+    );
     expect(workflow).toContain('uniq -d shards.sorted');
     expect(workflow).toContain('diff -u complete.sorted shards.sorted');
     expect(workflow).toContain("steps.inventory_verify.outcome == 'success'");
