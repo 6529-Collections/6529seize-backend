@@ -180,7 +180,14 @@ For each single bounded staging test:
    releases the lock without mutation.
 4. Run exactly one case to a terminal state. Record ready-to-deployed timing;
    report E2E separately. Verify transparent checks, exact artifacts/manifests,
-   one build per artifact, and no duplicate workflow dispatch.
+   one build per artifact, and no duplicate workflow dispatch. Before a green
+   E2E result may become `STAGING_VALIDATED`, re-check both staging refs and
+   every staging deploy/E2E workflow created since the first pre-lock idle
+   snapshot, ignoring only the train's exact workflow run IDs. Paginate the
+   history and fail closed if its bounded scan cap is exhausted. Any unrelated
+   active or completed mutation fails closed as a control-plane error, marks
+   the mixed manifest failed, requeues rather than isolates candidates, pauses
+   v2 automation, and releases staging ownership.
 5. Clear the allowlist, deploy API then `releaseBus` with the empty value, and
    prove helpers still report `OFF`, the train is terminal, all related
    workflows are terminal, and the staging lock is free before the next case.
@@ -193,18 +200,43 @@ the allowlist empty and automation globally `OFF` until repaired.
 
 Production beta is a separate allowlist installation after all staging cases
 pass. Use only exact `STAGING_VALIDATED` candidate IDs, list only the explicit
-production subset, and require the operator's separate mark-ready action. The
-first production beta must reuse exact qualification; if a qualification train
-appears, stop with mode `OFF` and do not mutate staging. Before production
-mutation the reconciler performs the analogous double active-workflow/main-ref
-snapshot under `production-environment` and records
+production subset, and require the operator's separate mark-ready action.
+With exact validated candidates A/B/C and a reusable exact manifest, prove the
+production train is claimable and prepares while an unrelated D/E staging
+train is active, acquires only `production-environment`, and completes without
+waiting for, cancelling, or interfering with D/E. Record overlapping train and
+operation run IDs, distinct environment-lock ownership, and timings; the
+scheduler lock must be claim-only and brief rather than serializing either
+lane's workflows. Separately prove that an exact A/B/C set without a reusable
+validated manifest enters `PRODUCTION_QUALIFICATION` and waits for
+`staging-environment` behind D/E instead of contaminating D/E E2E, then may
+proceed after qualification. Any dependency on D/E must hold A/B/C throughout.
+Before production mutation the reconciler performs the analogous double
+active-workflow/main-ref snapshot under `production-environment` and records
 `BETA_PRODUCTION_IDLE_HANDSHAKE`. Prove 3–5 minute backend or 10–15 minute
-frontend promotion, then clear/deploy the empty allowlist and return to idle.
+frontend promotion, exactly-once deployment and release-note finalization,
+then clear/deploy the empty allowlist and return to idle.
 
 General `STAGING` or `PRODUCTION` mode enablement is forbidden until every case
 above passes and the owner explicitly authorizes cutover.
 
 Rollback:
+
+Run the account-guarded fast path from the backend repository:
+
+```bash
+node ops/scripts/release-bus-v2-fast-off.mjs --execute
+```
+
+It best-effort pauses only v2, disables the reconciler schedule, clears the
+operator beta and sets both repository variables to `OFF`, updates production
+API then reconciler with Lambda revision guards while preserving unrelated
+environment values, and verifies empty `OFF`. Manual workflows and
+`RELEASE_BUS_ENFORCEMENT` are untouched. Every mutation is idempotent; if a
+concurrent deploy or transient failure interrupts the command, run the same
+command again until its final verification succeeds. The GitHub OFF source and
+disabled schedule are intentionally retained after partial failure because
+they are the safe direction, not compensated back to enabled automation.
 
 1. clear the beta allowlist, pause v2 `ALL` if state is uncertain, and keep mode
    `OFF`;
