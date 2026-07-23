@@ -222,6 +222,18 @@ above passes and the owner explicitly authorizes cutover.
 
 Rollback:
 
+Run the account-guarded fast path from the backend repository:
+
+```bash
+node ops/scripts/release-bus-v2-fast-off.mjs --execute
+```
+
+It best-effort pauses only v2, disables the reconciler schedule, clears the
+operator beta and sets both repository variables to `OFF`, updates production
+API then reconciler with Lambda revision guards while preserving unrelated
+environment values, and verifies empty `OFF`. Manual workflows and
+`RELEASE_BUS_ENFORCEMENT` are untouched.
+
 1. clear the beta allowlist, pause v2 `ALL` if state is uncertain, and keep mode
    `OFF`;
 2. allow any already-dispatched exact operation to reach a safe terminal state;
