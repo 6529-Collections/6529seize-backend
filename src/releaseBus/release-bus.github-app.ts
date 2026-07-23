@@ -25,6 +25,15 @@ export function workflowRunMatchesOperation(
 ): boolean {
   return displayTitle.includes(`[${operationKey}]`);
 }
+
+export function isValidGitHubWorkflowActor(actor: string): boolean {
+  // GitHub App workflow actors use the app slug followed by the literal
+  // `[bot]` suffix. Human logins retain GitHub's 39-character limit.
+  return (
+    /^[A-Za-z0-9-]{1,39}$/.test(actor) ||
+    /^[A-Za-z0-9-]{1,100}\[bot\]$/.test(actor)
+  );
+}
 export type GitHubWorkflowJob = {
   readonly id: number;
   readonly name: string;
@@ -716,7 +725,7 @@ export class ReleaseBusGitHubApp {
     await this.assertOk(response, `read ${repository} workflow run`);
     const run = (await response.json()) as GitHubRun;
     const actor = run.actor?.login ?? '';
-    if (!/^[A-Za-z0-9-]{1,39}$/.test(actor))
+    if (!isValidGitHubWorkflowActor(actor))
       throw new Error('GitHub workflow run has no valid actor');
     if (!/^[a-f0-9]{40}$/i.test(run.head_sha))
       throw new Error('GitHub workflow run has no valid head SHA');

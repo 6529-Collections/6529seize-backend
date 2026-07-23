@@ -1,5 +1,6 @@
 import fetch, { Response } from 'node-fetch';
 import {
+  isValidGitHubWorkflowActor,
   ReleaseBusGitHubApp,
   releaseBusPullRequestMergeStateEligible,
   safeGitHubWorkflowLabel,
@@ -117,6 +118,13 @@ describe('GitHub pull request release eligibility', () => {
 });
 
 describe('GitHub workflow operation identity', () => {
+  it('accepts human and GitHub App workflow actors', () => {
+    expect(isValidGitHubWorkflowActor('GelatoGenesis')).toBe(true);
+    expect(isValidGitHubWorkflowActor('6529-release-bus[bot]')).toBe(true);
+    expect(isValidGitHubWorkflowActor('release-bus[admin]')).toBe(false);
+    expect(isValidGitHubWorkflowActor(`${'a'.repeat(40)}`)).toBe(false);
+  });
+
   it('matches only the exact bracketed operation key', () => {
     const operationKey = 'rb:train-1:r1:preflight:aabbcc:a2';
 
