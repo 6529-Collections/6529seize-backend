@@ -536,6 +536,29 @@ describe('Release Bus v2 validation', () => {
         operation_key: `rb2:${trainId}:deploy:staging:frontend:a1`
       }).error
     ).toBeDefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: `rb2:${trainId}:deploy:e2e:staging:a1`
+      }).error
+    ).toBeDefined();
+
+    const deployAuthorization = {
+      ...authorization,
+      operation_key: `rb2:${trainId}:deploy:staging:backend:api:a1`,
+      artifact_run_id: '29984625887',
+      repository: 'backend',
+      service: 'api'
+    };
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate(deployAuthorization).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...deployAuthorization,
+        artifact_run_id: null
+      }).error
+    ).toBeDefined();
   });
 
   it('accepts an exact backend PR candidate with an acyclic deploy plan', () => {
