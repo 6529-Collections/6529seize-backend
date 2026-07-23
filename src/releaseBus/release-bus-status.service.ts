@@ -144,7 +144,109 @@ function eventView(event: ReleaseTrainEventRecord) {
     failed_job: safeText(payload.failed_job, 200),
     failed_step: safeText(payload.failed_step, 200),
     reason: safeText(payload.reason),
-    candidate_disposition: safeText(payload.candidate_disposition, 32)
+    candidate_disposition: safeText(payload.candidate_disposition, 32),
+    source_train_id: safeText(payload.source_train_id, 100),
+    source_run_id: safeText(payload.source_run_id, 100),
+    source_evidence_id: safeText(payload.source_evidence_id, 100),
+    source_evidence_type: safeText(payload.source_evidence_type, 100),
+    evidence_uri: safeText(payload.evidence_uri, 1000),
+    source_artifact_digest: safeText(payload.source_artifact_digest, 80),
+    proof_digest: safeText(payload.proof_digest, 80),
+    final_sha: safeText(payload.final_sha, 40)
+  };
+}
+
+function baseEvidenceStatus(
+  events: readonly ReleaseTrainEventRecord[],
+  operations: readonly ReleaseOperationRecord[],
+  candidates: readonly ReturnType<typeof candidateSummary>[]
+) {
+  const reused = events.find(
+    (event) => event.event_type === 'BASE_CANARY_EVIDENCE_REUSED'
+  );
+  const reusePayload = metadata(reused?.payload_json);
+  const baseOperation = operations
+    .filter((operation) => operation.operation_type === 'base-canary-frontend')
+    .sort((left, right) => right.attempt - left.attempt)[0];
+  let decision: string;
+  let summary: string;
+  if (reused) {
+    const carriedForward =
+      reusePayload.source_evidence_type === 'BASE_EVIDENCE_PROMOTED';
+    decision = carriedForward
+      ? 'CARRIED_FORWARD_REUSED'
+      : 'BASE_CANARY_EVIDENCE_REUSED';
+    summary = carriedForward
+      ? 'Base canary skipped: exact staging SHA and gate contract matched carried-forward evidence.'
+      : 'Base canary skipped: exact staging SHA and gate contract matched fresh base-canary evidence.';
+  } else if (baseOperation) {
+    const terminal = ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(
+      baseOperation.status
+    );
+    decision = terminal ? 'FRESH_EXECUTED' : 'FRESH_EXECUTING';
+    summary = terminal
+      ? `Base canary executed fresh for this train (${baseOperation.status}).`
+      : 'Base canary is executing fresh for this train.';
+  } else if (
+    !candidates.some((candidate) => candidate.repository === 'frontend')
+  ) {
+    decision = 'NOT_REQUIRED';
+    summary = 'No frontend candidate; a frontend base canary was not required.';
+  } else {
+    decision = 'FRESH_PENDING';
+    summary =
+      'No reusable exact evidence was selected; fresh validation is pending.';
+  }
+  const promotion = events.find((event) =>
+    ['BASE_EVIDENCE_PROMOTED', 'BASE_EVIDENCE_PROMOTION_REJECTED'].includes(
+      event.event_type
+    )
+  );
+  const promotionPayload = metadata(promotion?.payload_json);
+  return {
+    decision,
+    summary,
+    canary_skipped: Boolean(reused),
+    source_train_id: safeText(reusePayload.source_train_id, 100),
+    source_run_id: safeText(reusePayload.source_run_id, 100),
+    source_evidence_id: safeText(reusePayload.source_evidence_id, 100),
+    source_evidence_type: safeText(reusePayload.source_evidence_type, 100),
+    evidence_uri: safeText(reusePayload.evidence_uri, 1000),
+    source_artifact_digest: safeText(reusePayload.source_artifact_digest, 80),
+    source_workflow_runs: {
+      preflight: {
+        run_id: safeText(reusePayload.source_preflight_run_id, 100),
+        run_url: safeText(reusePayload.source_preflight_run_url, 1000),
+        artifact_digest: safeText(
+          reusePayload.source_preflight_artifact_digest,
+          80
+        )
+      },
+      deployment: {
+        run_id: safeText(reusePayload.source_deployment_run_id, 100),
+        run_url: safeText(reusePayload.source_deployment_run_url, 1000),
+        artifact_digest: safeText(
+          reusePayload.source_deployment_artifact_digest,
+          80
+        )
+      },
+      e2e: {
+        run_id: safeText(reusePayload.source_e2e_run_id, 100),
+        run_url: safeText(reusePayload.source_e2e_run_url, 1000),
+        artifact_digest: null
+      }
+    },
+    promotion: promotion
+      ? {
+          status:
+            promotion.event_type === 'BASE_EVIDENCE_PROMOTED'
+              ? 'PROMOTED'
+              : 'REJECTED',
+          reason: safeText(promotionPayload.reason),
+          final_sha: safeText(promotionPayload.final_sha, 40),
+          proof_digest: safeText(promotionPayload.proof_digest, 80)
+        }
+      : null
   };
 }
 
@@ -159,7 +261,10 @@ function failureOperation(
 
 function candidateSummary(
   item: ReleaseTrainItemRecord,
-  candidate: ReleaseCandidateRecord | null
+  candidate: ReleaseCandidateRecord | null,
+  currentPhase: string,
+  phaseStateValue: string,
+  currentOperation: ReleaseOperationView | null
 ) {
   return {
     sequence: item.sequence,
@@ -171,7 +276,51 @@ function candidateSummary(
     head_sha: candidate?.head_sha ?? null,
     pr_number: candidate?.pr_number ?? null,
     status: candidate?.status ?? 'UNKNOWN',
+    lifecycle_status: candidate?.status ?? 'UNKNOWN',
+    current_phase: currentPhase,
+    phase_state: phaseStateValue,
+    operation_type: currentOperation?.operation_type ?? null,
+    active_job: currentOperation?.active_job ?? null,
+    active_step: currentOperation?.active_step ?? null,
+    failed_job: currentOperation?.failed_job ?? null,
+    failed_step: currentOperation?.failed_step ?? null,
     hold_reason: candidate?.hold_reason ?? null
+  };
+}
+
+function supersedingBranchHead(
+  candidate: ReleaseCandidateRecord
+): string | null {
+  if (candidate.status !== 'SUPERSEDED') return null;
+  const match = /^Branch moved to ([a-f0-9]{40})$/.exec(
+    candidate.hold_reason ?? ''
+  );
+  return match?.[1] ?? null;
+}
+
+export function projectReleaseCandidate(candidate: ReleaseCandidateRecord) {
+  const supersedingHead = supersedingBranchHead(candidate);
+  const superseded = candidate.status === 'SUPERSEDED';
+  return {
+    ...candidate,
+    immutable_head_sha: candidate.head_sha,
+    immutable_validation_scope: 'EXACT_SHA',
+    head_relation: superseded
+      ? candidate.hold_reason === 'Branch moved to deleted'
+        ? 'BRANCH_DELETED'
+        : 'SUPERSEDED_BY_UNREGISTERED_HEAD'
+      : candidate.status === 'STAGING_VALIDATED'
+        ? 'VALIDATED_IMMUTABLE_SHA'
+        : 'REGISTERED_IMMUTABLE_SHA',
+    unregistered_branch_head_sha: supersedingHead,
+    requires_new_readiness: superseded,
+    status_summary: superseded
+      ? supersedingHead
+        ? `Historical immutable SHA; branch moved to unregistered head ${supersedingHead}`
+        : 'Historical immutable SHA; branch no longer matches this readiness record'
+      : candidate.status === 'STAGING_VALIDATED'
+        ? 'Staging validation applies only to this immutable SHA'
+        : 'Readiness applies only to this immutable SHA'
   };
 }
 
@@ -249,6 +398,7 @@ function recoveryRecommendation(
 function incidentSummary(
   train: ReleaseTrainRecord,
   candidates: readonly ReturnType<typeof candidateSummary>[],
+  currentPhase: string,
   currentOperation: ReleaseOperationView | null,
   failedOperation: ReleaseOperationView | null,
   controls: readonly ReleaseBusControlRecord[]
@@ -271,6 +421,12 @@ function incidentSummary(
   const quarantinedCandidates = candidates
     .filter((candidate) => candidate.status === 'QUARANTINED')
     .map((candidate) => candidate.id);
+  const retryState =
+    gateReport.retryable === true
+      ? train.status === 'FAILED'
+        ? 'AUTOMATIC_RETRY_EXHAUSTED'
+        : 'AUTOMATIC_RETRY_PENDING'
+      : 'NOT_RETRYABLE';
   const summary = baseFailure
     ? `Existing staging base failed ${operation?.operation_type ?? 'the deterministic gate'} for SHA ${operation?.expected_sha ?? train.frontend_base_sha}. Candidates had not been tested. No candidate was blamed. ${train.target_lane} was paused.`
     : (safeText(train.failure_reason) ??
@@ -281,6 +437,8 @@ function incidentSummary(
       ? 'Existing staging base failed'
       : 'Release train paused',
     summary,
+    phase: currentPhase,
+    retry_state: retryState,
     attribution: failureAttribution(baseFailure, quarantinedCandidates.length),
     failed_gate: operation?.operation_type ?? null,
     failed_job: operation?.failed_job ?? null,
@@ -289,6 +447,11 @@ function incidentSummary(
     failing_tests: failingTestNames(jest),
     returned_candidates: returnedCandidates,
     quarantined_candidates: baseFailure ? [] : quarantinedCandidates,
+    candidate_dispositions: candidates.map((candidate) => ({
+      id: candidate.id,
+      status: candidate.status,
+      hold_reason: candidate.hold_reason
+    })),
     recommended_recovery: recoveryRecommendation(
       baseFailure,
       quarantinedCandidates.length
@@ -312,6 +475,76 @@ function laneState(lane: ReleaseLaneRecord, now: number): string {
   return 'ACTIVE';
 }
 
+function backendDeployStatus(operations: readonly ReleaseOperationRecord[]) {
+  const allBackendOperations = operations.filter((operation) =>
+    operation.operation_type.startsWith('deploy-backend-')
+  );
+  const latestByService = new Map<string, ReleaseOperationRecord>();
+  for (const operation of allBackendOperations) {
+    if (!operation.service) continue;
+    const current = latestByService.get(operation.service);
+    if (
+      !current ||
+      operation.attempt > current.attempt ||
+      (operation.attempt === current.attempt &&
+        Number(operation.updated_at) > Number(current.updated_at))
+    ) {
+      latestByService.set(operation.service, operation);
+    }
+  }
+  const backendOperations = Array.from(latestByService.values()).sort(
+    (left, right) => String(left.service).localeCompare(String(right.service))
+  );
+  const graphOperation = [...backendOperations]
+    .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+    .find(
+      (operation) =>
+        Object.keys(
+          metadata(
+            metadata(operation.request_metadata_json).backend_deploy_graph
+          )
+        ).length > 0
+    );
+  if (!graphOperation) return null;
+  const graph = metadata(
+    metadata(graphOperation.request_metadata_json).backend_deploy_graph
+  );
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.flatMap((entry) => {
+          const text = safeText(entry, 100);
+          return text ? [text] : [];
+        })
+      : [];
+  return {
+    environment: graphOperation.environment,
+    concurrency: Number(graph.concurrency) || null,
+    active_layer: Number.isInteger(graph.active_layer)
+      ? Number(graph.active_layer)
+      : null,
+    frontier: strings(graph.frontier),
+    layers: Array.isArray(graph.layers)
+      ? graph.layers.slice(0, 50).map(strings)
+      : [],
+    edges: Array.isArray(graph.edges)
+      ? graph.edges.slice(0, 200).map(strings)
+      : [],
+    active_services: backendOperations
+      .filter((operation) =>
+        ['PENDING', 'DISPATCHED', 'RUNNING', 'AMBIGUOUS'].includes(
+          operation.status
+        )
+      )
+      .flatMap((operation) => (operation.service ? [operation.service] : [])),
+    succeeded_services: backendOperations
+      .filter((operation) => operation.status === 'SUCCEEDED')
+      .flatMap((operation) => (operation.service ? [operation.service] : [])),
+    failed_services: backendOperations
+      .filter((operation) => ['FAILED', 'CANCELLED'].includes(operation.status))
+      .flatMap((operation) => (operation.service ? [operation.service] : []))
+  };
+}
+
 export function buildReleaseTrainOverview(input: {
   readonly train: ReleaseTrainRecord;
   readonly items: readonly ReleaseTrainItemRecord[];
@@ -328,8 +561,24 @@ export function buildReleaseTrainOverview(input: {
   const currentOperation = currentRecord
     ? toOperationView(currentRecord, now)
     : null;
+  const operationViews = input.operations.map((operation) =>
+    toOperationView(operation, now)
+  );
+  const backendPreflightOperations = operationViews.filter(
+    (operation) => operation.operation_type === 'preflight-backend'
+  );
+  const backendPreflightOperation =
+    backendPreflightOperations[backendPreflightOperations.length - 1];
+  const currentPhase = currentTrainPhase(input.train, input.operations, paused);
+  const currentPhaseState = phaseState(input.train, paused, currentOperation);
   const candidates = input.items.map((item, index) =>
-    candidateSummary(item, input.candidates[index] ?? null)
+    candidateSummary(
+      item,
+      input.candidates[index] ?? null,
+      currentPhase,
+      currentPhaseState,
+      currentOperation
+    )
   );
   const ownedLanes = input.lanes
     .filter(
@@ -353,23 +602,41 @@ export function buildReleaseTrainOverview(input: {
   const failed = failureOperation(input.operations);
   return {
     ...input.train,
-    phase: currentTrainPhase(input.train, input.operations, paused),
-    phase_state: phaseState(input.train, paused, currentOperation),
+    phase: currentPhase,
+    phase_state: currentPhaseState,
     elapsed_ms: Math.max(
       0,
       (input.train.completed_at ?? now) -
         (input.train.started_at ?? input.train.created_at)
     ),
     current_operation: currentOperation,
+    active_operations: operationViews.filter((operation) =>
+      ['PENDING', 'DISPATCHED', 'RUNNING', 'AMBIGUOUS'].includes(
+        operation.status
+      )
+    ),
+    backend_preflight_evidence:
+      backendPreflightOperation?.gate_report &&
+      typeof backendPreflightOperation.gate_report === 'object'
+        ? ((backendPreflightOperation.gate_report as Record<string, unknown>)
+            .backend_evidence ?? null)
+        : null,
+    backend_deploy: backendDeployStatus(input.operations),
     wait_reason: latestWaitReason(input.events, currentOperation),
     latest_worker_heartbeat_at: workerHeartbeat ?? null,
     leases: ownedLanes,
     last_progress_event: meaningfulEvent ? eventView(meaningfulEvent) : null,
     timeline: input.events.slice(0, 100).map(eventView),
     included_candidates: candidates,
+    base_evidence: baseEvidenceStatus(
+      input.events,
+      input.operations,
+      candidates
+    ),
     incident: incidentSummary(
       input.train,
       candidates,
+      currentPhase,
       currentOperation,
       failed,
       input.controls

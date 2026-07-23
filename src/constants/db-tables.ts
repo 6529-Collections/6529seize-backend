@@ -229,3 +229,14 @@ export const RELEASE_TRAIN_EVIDENCE_TABLE = 'release_train_evidence';
 export const RELEASE_DEPLOYMENT_LANES_TABLE = 'release_deployment_lanes';
 export const RELEASE_BUS_CONTROLS_TABLE = 'release_bus_controls';
 export const RELEASE_TRAIN_EVENTS_TABLE = 'release_train_events';
+export const RELEASE_BUS_V2_CANDIDATES_TABLE = 'release_bus_v2_candidates';
+export const RELEASE_BUS_V2_CANDIDATE_DEPENDENCIES_TABLE =
+  'release_bus_v2_candidate_dependencies';
+export const RELEASE_BUS_V2_TRAINS_TABLE = 'release_bus_v2_trains';
+export const RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE =
+  'release_bus_v2_train_candidates';
+export const RELEASE_BUS_V2_OPERATIONS_TABLE = 'release_bus_v2_operations';
+export const RELEASE_BUS_V2_LOCKS_TABLE = 'release_bus_v2_locks';
+export const RELEASE_BUS_V2_MANIFESTS_TABLE = 'release_bus_v2_manifests';
+export const RELEASE_BUS_V2_CONTROLS_TABLE = 'release_bus_v2_controls';
+export const RELEASE_BUS_V2_EVENTS_TABLE = 'release_bus_v2_events';

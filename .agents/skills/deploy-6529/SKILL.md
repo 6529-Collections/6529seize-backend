@@ -1,84 +1,92 @@
 ---
 name: deploy-6529
-description: Determine the live 6529 Release Bus mode through authenticated gh, then route exact backend SHAs and allowlisted service DAGs through the required manual, shadow, staging-bus, production-bus, or operator break-glass path. Use when Codex is asked to stage, deploy, promote, merge for release, validate, pause, resume, recover, or coordinate a backend or combined frontend/backend release.
+description: Route and execute 6529 backend, frontend, or coupled staging and production releases through Simple Release Bus v2 by exact PR head SHA, or use the serialized manual fallback only while v2 reports OFF. Use for staging, deploy, promotion, release merge, pause, resume, recovery, or rollout coordination; never submit to Release Bus v1.
 ---
 
 # Deploy 6529 Backend
 
-Determine the live mode before choosing `/deploy/ui/bus` or the manual path.
+## Live routing gate
 
-## Mandatory live preflight
+1. Run `node ops/scripts/release-bus-status.mjs` at the start and again before
+   any readiness or environment mutation. The helper uses authenticated `gh`,
+   prefers the v2 controls endpoint, and falls back to the disabled v1 endpoint
+   only while the additive v2 API is not deployed.
+2. Fail closed on an unavailable/malformed API, authentication failure, unknown
+   mode, or incomplete controls. Never infer mode from files or old output.
+3. Never register with Release Bus v1.
+4. Route by the fresh v2 result:
 
-Run `node ops/scripts/release-bus-status.mjs` when a staging, production,
-promotion, merge-for-release, or deployment request arrives; immediately before
-readiness; immediately before a manual merge or workflow dispatch; and again
-before production after a significant wait.
+| Mode | Staging | Production |
+| --- | --- | --- |
+| `OFF` | Serialized manual fallback | Serialized manual fallback with explicit owner authorization and exact staging evidence |
+| `STAGING` | Register the exact candidate with v2 | Manual fallback only; production automation is disabled |
+| `PRODUCTION` | Register the exact candidate with v2 | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for v2 production |
 
-The helper obtains the token internally from authenticated `gh`. Do not infer
-mode from docs, prior conversation, an earlier status, workflows, AWS,
-repository files, or browser login, and never fall back to AWS CLI. If `gh` is
-missing or unauthenticated, require installation or `gh auth login`. If the API
-is unavailable, unauthorized, malformed, or unknown, stop before mutation.
-Never treat uncertainty as `OFF` or as an enabled bus.
+When mode is active, stop if `ALL` or the target lane is paused. A pause while
+mode is `OFF` intentionally disables v2 and does not prohibit the documented
+manual fallback.
 
-Stop when `ALL` or the target lane is `PAUSED` unless an authorized operator
-deliberately follows audited break glass.
+## V2 readiness
 
-## Mode routing
+1. Require an open PR whose exact head and green merge-tree checks are current.
+2. Open `/deploy/ui/bus` or call the versioned API. Submit repository, PR,
+   branch, exact 40-character head SHA, backend deploy units/DAG edges, and
+   candidate dependencies. Backend candidates must list at least one allowlisted
+   service. A backend candidate cannot depend on frontend-first deployment.
+3. For coupled work, declare the backend candidate as the frontend prerequisite.
+   Declare only real ordering edges; independent backend DAG frontier units run
+   concurrently.
+4. Report candidate ID, immutable SHA, and status. Do not launch a parallel
+   manual deploy after v2 accepts the candidate.
+5. Wait for `STAGING_VALIDATED`. `STAGING_DEPLOYED` means E2E is still pending
+   and is not production evidence.
+6. Production is a separate explicit action. Re-resolve the branch and mark
+   ready only when it still equals the exact staging-validated SHA. Staging
+   validation never schedules production automatically.
 
-| Live mode    | Staging behavior                                                 | Production behavior                                                         |
-| ------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `OFF`        | Use the legacy manual path; do not queue in the bus              | Use the legacy manual path                                                  |
-| `SHADOW`     | Record the candidate for shadow evaluation, then deploy manually | Record shadow evidence as designed, then deploy manually                    |
-| `STAGING`    | Submit through the Release Bus and wait for validation           | Follow the operator/manual production path; do not queue a production train |
-| `PRODUCTION` | Submit through the Release Bus                                   | Submit the staging-validated SHA through the Release Bus                    |
+V2 composes from current `main`, reuses exact green PR merge-tree evidence when
+eligible, otherwise runs one combined preflight and one immutable build, owns
+shared staging only for deploy plus manifest-bound E2E, and reuses the same
+qualified artifacts for production. It updates `main` only after exact
+qualification and never publishes release notes.
 
-After an active lane accepts a candidate, never start a parallel manual deploy.
+## Manual fallback while OFF
 
-## Manual-route enforcement gate
+1. Require `RELEASE_BUS_ENFORCEMENT` to be absent or exactly `false` in every
+   repository in the release set.
+2. Fetch the exact remote target head and inspect active frontend/backend
+   staging, production, and E2E workflows. Wait; never cancel another actor.
+3. Re-fetch immediately before pushing. If a shared ref moved, recompute from
+   the new head. Never force-push.
+4. Merge the development branch into current `1a-staging`. Deploy required
+   backend units in DAG order; independent frontier units may run concurrently
+   only when workflow concurrency cannot cancel siblings.
+5. For coupled work, verify required backend units before merging/deploying
+   frontend.
+6. Record exact deployed frontend/backend SHAs before E2E and freeze staging
+   until E2E is terminal.
+7. Production requires explicit owner authorization and successful validation
+   of the intended exact release set. Re-fetch `main`, preserve dependency
+   order, and never publish a release note manually.
 
-For each affected repository, inspect `RELEASE_BUS_ENFORCEMENT` with
-authenticated `gh variable list --repo 6529-Collections/<repository> --json
-name,value`. A successful list with no entry or exact `false` means disabled;
-exact `true` means enabled. Stop on command failure or another non-empty value.
-`OFF` or `SHADOW` plus enabled enforcement is a configuration mismatch. If the
-manual route is enforced, verify organization-owner or active
-`release-bus-operators` membership and require a non-empty audited break-glass
-reason. Never bypass a blocked workflow.
+## Monitoring and recovery
 
-## Bus readiness path
+- Use train details, operations, workflow links, manifest identity, failure
+  class, and recovery message in `/deploy/ui/bus`.
+- Infrastructure and retryable exact deployment failures retry the same
+  idempotent operation. They do not isolate candidates.
+- A merge conflict marks only the direct candidate `NEEDS_REBASE` and holds
+  transitive dependants. Fix the branch and register its new SHA.
+- A control-plane defect pauses automation and leaves candidates unblamed. Keep
+  exact state, use the OFF/manual fallback only after an operator deliberately
+  disables v2, and resume explicitly after repair.
+- Failed E2E never creates staging validation. Do not mutate staging while the
+  manifest owner still holds the environment lock.
+- If production `main` moved, v2 must recompose and requalify; never force the
+  recorded composition over a newer ref.
 
-1. Resolve the backend branch's exact head SHA.
-2. Declare immutable frontend/backend candidate dependencies.
-3. Select allowlisted service units from `src/config/deploy-services.json` and
-   add only required ordering edges.
-4. Mark the SHA ready for `STAGING`; do not merge or dispatch manually.
-5. After exact-SHA staging validation, separately mark the same SHA ready for
-   `PRODUCTION`.
-6. Let the bus package and deploy backend units in DAG order before dependent
-   frontend deployment.
+## Closeout
 
-A new branch head is a new candidate. Never silently move readiness. Backend
-candidates must not depend on frontend-first deployment.
-
-## Safety
-
-- Prefer additive migrations and backward-compatible API behavior.
-- Never merge `1a-staging` into `main`.
-- Do not overlap bus or manual deployments.
-- Do not fabricate release-bus workflow inputs or operation keys.
-- Treat Codex as a conflict resolver on temporary branches or a read-only
-  diagnostic, never as deploy/ejection authority.
-- After production mutation begins, pause and use only declared rollback or a
-  validated operator fix-forward.
-- Do not publish release notes; the independent service owns them.
-
-## Break glass
-
-Only a `release-bus-operators` member or organization owner may pause the bus
-and use `/deploy/ui` or `deploy.yml` with an audited reason. Wait for active
-mutation to finish, deploy one verified unit at a time, validate health and
-code hashes, reconcile state, and resume explicitly.
-
-Report exact SHAs, service order, workflow/deployed evidence, and final bus
-state.
+Report exact candidate SHAs/dependencies, train and operation states, deployed
+versions, manifest/E2E evidence, failures or holds, and live mode/controls. Do
+not expose credentials, signed URLs, raw production data, or hidden prompts.
