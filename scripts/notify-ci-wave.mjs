@@ -17,6 +17,8 @@ const {
   CI_RELEASE_GROUP_SERVICES,
   CI_RELEASE_PULL_REQUEST,
   CI_RELEASE_NOTE_PUBLISH,
+  CI_RELEASE_NOTE_GROUPS,
+  CI_RELEASE_NOTE_OPT_OUT,
   GITHUB_REPOSITORY,
   GITHUB_WORKFLOW,
   GITHUB_RUN_ID,
@@ -37,9 +39,7 @@ function requireValue(name, value) {
 }
 
 function normalizeTargetEnvironment(value) {
-  const targetEnv = (value || '')
-    .trim()
-    .toLowerCase();
+  const targetEnv = (value || '').trim().toLowerCase();
   if (!targetEnv) {
     return null;
   }
@@ -54,11 +54,77 @@ function normalizeTargetEnvironment(value) {
 
 function getFetchFailureMessage(error) {
   if (error instanceof Error) {
-    return error.name === 'AbortError'
-      ? 'request timed out'
-      : error.message;
+    return error.name === 'AbortError' ? 'request timed out' : error.message;
   }
   return 'unknown request error';
+}
+
+function validateOptionalBoolean(name, value) {
+  if (value && value !== 'true' && value !== 'false') {
+    throw new Error(`${name} must be true or false`);
+  }
+}
+
+function canonicalServices(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .filter((service) => typeof service === 'string')
+        .map((service) => service.trim())
+        .filter(Boolean)
+    )
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function parseReleaseNoteGroup(group, deployedService) {
+  if (!group || typeof group !== 'object' || Array.isArray(group)) {
+    throw new Error('CI_RELEASE_NOTE_GROUPS entries must be objects');
+  }
+  const services = canonicalServices(group.release_group_services);
+  if (
+    typeof group.release_group_id !== 'string' ||
+    !group.release_group_id.trim() ||
+    !Number.isSafeInteger(group.pull_request_number) ||
+    group.pull_request_number <= 0 ||
+    typeof group.publish_release_note !== 'boolean' ||
+    !services.length ||
+    (deployedService && !services.includes(deployedService))
+  ) {
+    throw new Error('CI_RELEASE_NOTE_GROUPS contains an invalid group');
+  }
+  return {
+    release_group_id: group.release_group_id.trim(),
+    release_group_services: services,
+    pull_request_number: group.pull_request_number,
+    publish_release_note: group.publish_release_note
+  };
+}
+
+function parseReleaseNoteGroups(value, deployedService) {
+  if (!value) return null;
+  const parsed = JSON.parse(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error('CI_RELEASE_NOTE_GROUPS must be an array');
+  }
+  const groups = parsed.map((group) =>
+    parseReleaseNoteGroup(group, deployedService)
+  );
+  const pullRequests = new Set(
+    groups.map((group) => group.pull_request_number)
+  );
+  if (pullRequests.size !== groups.length) {
+    throw new Error('CI_RELEASE_NOTE_GROUPS contains duplicate PR groups');
+  }
+  return groups;
+}
+
+function releaseNoteMetadataErrorMessage(error) {
+  if (error instanceof SyntaxError) {
+    return 'CI_RELEASE_NOTE_GROUPS is not valid JSON';
+  }
+  if (error instanceof Error) return error.message;
+  return 'Release-note metadata is invalid';
 }
 
 const targetEnvironment = normalizeTargetEnvironment(
@@ -85,7 +151,8 @@ const triggeredByGithubLogin = GITHUB_TRIGGERING_ACTOR || GITHUB_ACTOR || null;
 const isReleaseNotesEligible =
   status === 'success' &&
   targetEnvironment === 'prod' &&
-  Boolean(CI_RELEASE_NOTES_PROMPT_PATH);
+  Boolean(CI_RELEASE_NOTES_PROMPT_PATH) &&
+  CI_RELEASE_NOTE_OPT_OUT !== 'true';
 const releaseGroupServices = (
   CI_RELEASE_GROUP_SERVICES ||
   CI_PIPELINES_SERVICE ||
@@ -104,12 +171,33 @@ if (
   console.error('CI_RELEASE_PULL_REQUEST must be a positive integer');
   process.exit(1);
 }
+let releaseNoteGroups = null;
+try {
+  validateOptionalBoolean('CI_RELEASE_NOTE_PUBLISH', CI_RELEASE_NOTE_PUBLISH);
+  validateOptionalBoolean('CI_RELEASE_NOTE_OPT_OUT', CI_RELEASE_NOTE_OPT_OUT);
+  releaseNoteGroups = parseReleaseNoteGroups(
+    CI_RELEASE_NOTE_GROUPS,
+    CI_PIPELINES_SERVICE
+  );
+} catch (error) {
+  console.error(releaseNoteMetadataErrorMessage(error));
+  process.exit(1);
+}
 if (
-  CI_RELEASE_NOTE_PUBLISH &&
-  CI_RELEASE_NOTE_PUBLISH !== 'true' &&
-  CI_RELEASE_NOTE_PUBLISH !== 'false'
+  CI_RELEASE_NOTE_OPT_OUT === 'true' &&
+  ((releaseNoteGroups?.length ?? 0) > 0 || CI_RELEASE_NOTE_PUBLISH === 'true')
 ) {
-  console.error('CI_RELEASE_NOTE_PUBLISH must be true or false');
+  console.error(
+    'Release-note opt-out cannot include release-note groups or a publish request'
+  );
+  process.exit(1);
+}
+if (
+  isReleaseNotesEligible &&
+  CI_RELEASE_NOTE_GROUPS &&
+  releaseNoteGroups?.length === 0
+) {
+  console.error('CI_RELEASE_NOTE_GROUPS must not be empty without opt-out');
   process.exit(1);
 }
 const releaseNotesFields = isReleaseNotesEligible
@@ -117,10 +205,15 @@ const releaseNotesFields = isReleaseNotesEligible
       release_notes_prompt_path: CI_RELEASE_NOTES_PROMPT_PATH,
       release_group_id:
         CI_RELEASE_GROUP_ID ||
-        (pullRequestNumber ? `pr-${pullRequestNumber}` : `${repository}:${runId}`),
+        (pullRequestNumber
+          ? `pr-${pullRequestNumber}`
+          : `${repository}:${runId}`),
       release_group_services: releaseGroupServices,
       pull_request_number: pullRequestNumber,
       publish_release_note: CI_RELEASE_NOTE_PUBLISH === 'true',
+      ...(releaseNoteGroups?.length
+        ? { release_note_groups: releaseNoteGroups }
+        : {}),
       deployed_at: new Date().toISOString()
     }
   : {};

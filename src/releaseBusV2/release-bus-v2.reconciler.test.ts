@@ -1,5 +1,6 @@
 import {
   backendGraph,
+  backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
   candidateExclusionClosure,
   dagLayers,
@@ -70,6 +71,67 @@ describe('Release Bus v2 deterministic orchestration', () => {
     ).toEqual({
       units: ['api', 'releaseBus'],
       edges: [['api', 'releaseBus']]
+    });
+  });
+
+  it('keeps v2 release notes PR-scoped across overlapping service plans', () => {
+    const first = {
+      ...candidate('first', 'd'.repeat(40)),
+      pr_number: 1801,
+      deploy_plan_json: { units: ['worker', 'api'], edges: [] }
+    };
+    const second = {
+      ...candidate('second', 'e'.repeat(40)),
+      pr_number: 1802,
+      deploy_plan_json: { units: ['api'], edges: [] }
+    };
+    const internal = {
+      ...candidate('internal', 'f'.repeat(40)),
+      pr_number: 1803,
+      deploy_plan_json: {
+        units: ['api'],
+        edges: [],
+        publish_release_notes: false
+      }
+    };
+
+    expect(backendReleaseNoteGroups([first, second, internal], 'api')).toEqual([
+      {
+        release_group_id: 'pr-1801',
+        release_group_services: ['api', 'worker'],
+        pull_request_number: 1801,
+        publish_release_note: false
+      },
+      {
+        release_group_id: 'pr-1802',
+        release_group_services: ['api'],
+        pull_request_number: 1802,
+        publish_release_note: true
+      }
+    ]);
+    expect(
+      backendReleaseNoteGroups([first, second, internal], 'worker')
+    ).toEqual([
+      {
+        release_group_id: 'pr-1801',
+        release_group_services: ['api', 'worker'],
+        pull_request_number: 1801,
+        publish_release_note: true
+      }
+    ]);
+  });
+
+  it('preserves an explicit release-note opt-out in a backend deploy plan', () => {
+    expect(
+      normalizeDeployPlan('backend', {
+        units: ['api'],
+        edges: [],
+        publish_release_notes: false
+      })
+    ).toEqual({
+      units: ['api'],
+      edges: [],
+      publish_release_notes: false
     });
   });
 

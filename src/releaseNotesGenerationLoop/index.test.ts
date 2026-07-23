@@ -171,7 +171,7 @@ describe('processRequest', () => {
     expect(generateAndPost).not.toHaveBeenCalled();
   });
 
-  it('publishes once only after every concurrently signalled PR service succeeds', async () => {
+  it('persists an early publish request until every PR service succeeds', async () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
 
@@ -190,7 +190,7 @@ describe('processRequest', () => {
         sha: 'later-sha',
         service: 'worker',
         release_group_services: ['api', 'worker'],
-        publish_release_note: true
+        publish_release_note: false
       },
       {
         redis: redis as any,
@@ -206,7 +206,7 @@ describe('processRequest', () => {
         run_url: 'https://github.com/example/actions/runs/456',
         sha: 'later-sha',
         service: 'worker',
-        publish_release_note: true,
+        publish_release_note: false,
         release_group_services: ['api', 'worker'],
         release_group_runs: [
           {
@@ -234,6 +234,11 @@ describe('processRequest', () => {
         run_number: '45',
         run_url: 'https://github.com/example/actions/runs/123'
       }),
+      { EX: 7776000 }
+    );
+    expect(redis.set).toHaveBeenCalledWith(
+      'release-note-group:6529seize-backend:pr-1749:publish-requested',
+      '1',
       { EX: 7776000 }
     );
     expect(redis.set).toHaveBeenCalledWith(

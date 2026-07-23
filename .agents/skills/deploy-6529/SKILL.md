@@ -48,7 +48,9 @@ V2 composes from current `main`, reuses exact green PR merge-tree evidence when
 eligible, otherwise runs one combined preflight and one immutable build, owns
 shared staging only for deploy plus manifest-bound E2E, and reuses the same
 qualified artifacts for production. It updates `main` only after exact
-qualification and never publishes release notes.
+qualification. It never authors or posts release notes; every production
+operation emits the autonomous bot's canonical grouping metadata and finalize
+signal unless the candidate explicitly opts out.
 
 ## Manual fallback while OFF
 

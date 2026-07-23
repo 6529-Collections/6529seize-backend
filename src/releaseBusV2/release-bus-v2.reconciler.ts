@@ -286,6 +286,58 @@ export function backendGraph(
   };
 }
 
+export type ReleaseBusV2ReleaseNoteGroup = {
+  readonly release_group_id: string;
+  readonly release_group_services: readonly string[];
+  readonly pull_request_number: number;
+  readonly publish_release_note: boolean;
+};
+
+/**
+ * Each backend candidate remains its own PR-scoped release-note group even
+ * when v2 deploys multiple candidates or overlapping service plans together.
+ * Exactly one deterministic service requests publication. The consumer
+ * persists that request, so parallel completion order cannot lose it.
+ */
+export function backendReleaseNoteGroups(
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  service: string
+): ReleaseBusV2ReleaseNoteGroup[] {
+  const groups = new Map<number, ReleaseBusV2ReleaseNoteGroup>();
+  for (const candidate of candidates) {
+    if (candidate.repository !== 'backend') continue;
+    const plan = storedDeployPlan(candidate);
+    if (
+      !plan ||
+      plan.publish_release_notes === false ||
+      !plan.units.includes(service)
+    )
+      continue;
+    const services = Array.from(new Set(plan.units)).sort((left, right) =>
+      left.localeCompare(right)
+    );
+    const group: ReleaseBusV2ReleaseNoteGroup = {
+      release_group_id: `pr-${candidate.pr_number}`,
+      release_group_services: services,
+      pull_request_number: candidate.pr_number,
+      publish_release_note: service === services.at(-1)
+    };
+    const existing = groups.get(candidate.pr_number);
+    if (
+      existing &&
+      JSON.stringify(existing.release_group_services) !==
+        JSON.stringify(group.release_group_services)
+    )
+      throw new Error(
+        `PR ${candidate.pr_number} has conflicting release-note service groups`
+      );
+    groups.set(candidate.pr_number, group);
+  }
+  return Array.from(groups.values()).sort(
+    (left, right) => left.pull_request_number - right.pull_request_number
+  );
+}
+
 function relevantCandidates(
   context: TrainContext,
   repository?: ReleaseBusV2Repository
@@ -1571,7 +1623,8 @@ export class ReleaseBusV2Reconciler {
   ): Promise<DeployResult> {
     const train = context.train;
     const source = await this.artifactSource(artifactSourceTrainId);
-    const graph = backendGraph(relevantCandidates(context, 'backend'));
+    const backendCandidates = relevantCandidates(context, 'backend');
+    const graph = backendGraph(backendCandidates);
     const operations: ReleaseBusV2OperationRecord[] = [];
     let backendComplete = graph.units.length === 0;
     for (const layer of graph.layers) {
@@ -1599,7 +1652,7 @@ export class ReleaseBusV2Reconciler {
             artifactSourceTrainId,
             source.backendRunId,
             unit,
-            graph.units
+            backendCandidates
           )
         )
       );
@@ -1641,12 +1694,18 @@ export class ReleaseBusV2Reconciler {
     artifactTrainId: string,
     artifactRunId: string | null,
     service: string,
-    allServices: readonly string[]
+    candidates: readonly ReleaseBusV2CandidateRecord[]
   ): Promise<ReleaseBusV2OperationRecord> {
     if (!artifactRunId)
       throw new Error('Missing backend artifact workflow run');
     const expectedSha = train.backend_composed_sha;
     if (!expectedSha) throw new Error('Missing backend composed SHA');
+    const releaseNoteGroups =
+      environment === 'prod'
+        ? backendReleaseNoteGroups(candidates, service)
+        : [];
+    const legacyReleaseNoteGroup =
+      releaseNoteGroups.length === 1 ? releaseNoteGroups[0] : null;
     return releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(
         train.id,
@@ -1671,8 +1730,19 @@ export class ReleaseBusV2Reconciler {
         artifact_run_id: artifactRunId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.backend_artifact_digest ?? '',
-        release_group_services: allServices.join(','),
-        release_note_publish: 'false'
+        release_pull_request: legacyReleaseNoteGroup
+          ? String(legacyReleaseNoteGroup.pull_request_number)
+          : '',
+        release_group_services:
+          legacyReleaseNoteGroup?.release_group_services.join(',') ?? '',
+        release_note_publish: String(
+          legacyReleaseNoteGroup?.publish_release_note ?? false
+        ),
+        release_note_groups:
+          environment === 'prod' ? JSON.stringify(releaseNoteGroups) : '',
+        release_note_opt_out: String(
+          environment === 'prod' && releaseNoteGroups.length === 0
+        )
       }
     });
   }

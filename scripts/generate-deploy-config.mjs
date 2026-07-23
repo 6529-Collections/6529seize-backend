@@ -107,6 +107,15 @@ ${indent(yamlList(serviceNames))}
         type: string
         description: 'Comma-separated services in this Release Bus release group'
         required: false
+      release_note_groups:
+        type: string
+        description: 'Release Bus v2 JSON array of per-PR release-note groups'
+        required: false
+      release_note_opt_out:
+        type: boolean
+        description: 'Explicitly skip autonomous release notes for an internal operation'
+        required: false
+        default: false
       release_train_id:
         type: string
         description: 'Release Bus train id; blank for manual deploys'
@@ -835,6 +844,8 @@ jobs:
           CI_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
           CI_RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
           CI_RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
+          CI_RELEASE_NOTE_GROUPS: \${{ github.event.inputs.release_note_groups }}
+          CI_RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
         run: node scripts/notify-ci-wave.mjs
 `;
 }

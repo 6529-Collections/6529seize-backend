@@ -249,6 +249,12 @@ describe('release bus infrastructure contract', () => {
       'CI_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}'
     );
     expect(deployWorkflow).toContain(
+      'CI_RELEASE_NOTE_GROUPS: ${{ github.event.inputs.release_note_groups }}'
+    );
+    expect(deployWorkflow).toContain(
+      'CI_RELEASE_NOTE_OPT_OUT: ${{ github.event.inputs.release_note_opt_out }}'
+    );
+    expect(deployWorkflow).toContain(
       'release_group_services must contain the full canonical production service set'
     );
     expect(deployWorkflow).toContain(

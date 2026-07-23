@@ -18,6 +18,13 @@ import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompt
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
 
+export interface CiPipelineReleaseNoteGroup {
+  readonly release_group_id: string;
+  readonly release_group_services: string[];
+  readonly pull_request_number: number;
+  readonly publish_release_note: boolean;
+}
+
 export interface CiPipelineAlertRequest {
   readonly repo: string;
   readonly workflow: string;
@@ -37,7 +44,15 @@ export interface CiPipelineAlertRequest {
   readonly release_group_services?: string[];
   readonly pull_request_number?: number | null;
   readonly publish_release_note?: boolean;
+  readonly release_note_groups?: CiPipelineReleaseNoteGroup[];
   readonly deployed_at?: string | null;
+}
+
+interface NormalizedReleaseNoteGroup {
+  readonly releaseGroupId: string;
+  readonly releaseGroupServices: string[];
+  readonly pullRequestNumber: number | null;
+  readonly publishReleaseNote: boolean;
 }
 
 interface MentionedProfile {
@@ -71,6 +86,52 @@ function normalizeOptionalValue(
 ): string | null {
   const trimmed = value?.trim();
   return trimmed || null;
+}
+
+function requestedReleaseNoteGroups(
+  request: CiPipelineAlertRequest
+): CiPipelineReleaseNoteGroup[] {
+  return (
+    request.release_note_groups ?? [
+      {
+        release_group_id:
+          normalizeOptionalValue(request.release_group_id) ?? '',
+        release_group_services: request.release_group_services ?? [],
+        pull_request_number: request.pull_request_number ?? 0,
+        publish_release_note: request.publish_release_note ?? false
+      }
+    ]
+  );
+}
+
+function normalizeReleaseNoteGroup(
+  group: CiPipelineReleaseNoteGroup,
+  service: string | null | undefined,
+  requiresPullRequest: boolean
+): NormalizedReleaseNoteGroup | null {
+  const releaseGroupId = normalizeOptionalValue(group.release_group_id);
+  const releaseGroupServices = Array.from(
+    new Set(
+      group.release_group_services
+        .map((groupService) => groupService.trim())
+        .filter(Boolean)
+    )
+  ).sort((left, right) => left.localeCompare(right));
+  const pullRequestNumber = group.pull_request_number || null;
+  if (
+    !releaseGroupId ||
+    !releaseGroupServices.length ||
+    (service && !releaseGroupServices.includes(service)) ||
+    (requiresPullRequest && pullRequestNumber === null)
+  ) {
+    return null;
+  }
+  return {
+    releaseGroupId,
+    releaseGroupServices,
+    pullRequestNumber,
+    publishReleaseNote: group.publish_release_note
+  };
 }
 
 export function parseProfileHandles(value: string | null): string[] {
@@ -279,12 +340,7 @@ export class CiPipelineAlertService {
       request.release_notes_prompt_path
     );
     const sha = normalizeOptionalValue(request.sha);
-    const releaseGroupId = normalizeOptionalValue(request.release_group_id);
     const deployedAt = normalizeOptionalValue(request.deployed_at);
-    const releaseGroupServices = (request.release_group_services ?? [])
-      .map((service) => service.trim())
-      .filter(Boolean);
-    const pullRequestNumber = request.pull_request_number ?? null;
     const isBackendRelease =
       request.repo.split('/').pop() === '6529seize-backend';
     if (
@@ -292,9 +348,6 @@ export class CiPipelineAlertService {
       normalizeTargetEnvironment(request.environment) !== 'prod' ||
       !promptPath ||
       !sha ||
-      !releaseGroupId ||
-      !releaseGroupServices.length ||
-      (isBackendRelease && pullRequestNumber === null) ||
       !deployedAt
     ) {
       return;
@@ -306,23 +359,36 @@ export class CiPipelineAlertService {
       return;
     }
 
-    await this.releaseNotesQueue.enqueueBestEffort({
-      repo: request.repo,
-      workflow: request.workflow,
-      run_id: request.run_id,
-      run_number: request.run_number,
-      run_url: request.run_url,
-      sha,
-      branch: request.branch,
-      environment: 'prod',
-      service: request.service,
-      prompt_path: promptPath,
-      release_group_id: releaseGroupId,
-      release_group_services: releaseGroupServices,
-      pull_request_number: pullRequestNumber,
-      publish_release_note: request.publish_release_note ?? false,
-      deployed_at: deployedAt
-    });
+    for (const group of requestedReleaseNoteGroups(request)) {
+      const normalizedGroup = normalizeReleaseNoteGroup(
+        group,
+        request.service,
+        isBackendRelease
+      );
+      if (!normalizedGroup) {
+        this.logger.warn(
+          `Skipping malformed release-note group ${group.release_group_id || 'missing'} for ${request.repo} run ${request.run_id}`
+        );
+        continue;
+      }
+      await this.releaseNotesQueue.enqueueBestEffort({
+        repo: request.repo,
+        workflow: request.workflow,
+        run_id: request.run_id,
+        run_number: request.run_number,
+        run_url: request.run_url,
+        sha,
+        branch: request.branch,
+        environment: 'prod',
+        service: request.service,
+        prompt_path: promptPath,
+        release_group_id: normalizedGroup.releaseGroupId,
+        release_group_services: normalizedGroup.releaseGroupServices,
+        pull_request_number: normalizedGroup.pullRequestNumber,
+        publish_release_note: normalizedGroup.publishReleaseNote,
+        deployed_at: deployedAt
+      });
+    }
   }
 
   private async resolveAlertMentions(

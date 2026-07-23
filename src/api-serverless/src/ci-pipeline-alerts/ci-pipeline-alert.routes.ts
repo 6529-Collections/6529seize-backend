@@ -68,6 +68,28 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .allow(null)
       .optional(),
     publish_release_note: Joi.boolean().strict().optional(),
+    release_note_groups: Joi.array()
+      .items(
+        Joi.object({
+          release_group_id: Joi.string().trim().min(1).max(200).required(),
+          release_group_services: Joi.array()
+            .items(Joi.string().trim().min(1).max(200))
+            .min(1)
+            .max(100)
+            .unique()
+            .required(),
+          pull_request_number: Joi.number()
+            .integer()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER)
+            .required(),
+          publish_release_note: Joi.boolean().strict().required()
+        }).unknown(false)
+      )
+      .min(1)
+      .max(100)
+      .unique('pull_request_number')
+      .optional(),
     deployed_at: Joi.string()
       .isoDate()
       .pattern(RELEASE_NOTE_DEPLOYED_AT_PATTERN)
