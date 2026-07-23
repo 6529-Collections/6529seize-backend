@@ -177,6 +177,30 @@ describe('release-bus-status helper', () => {
     }
   );
 
+  it('falls back to the disabled legacy endpoint before v2 is deployed', async () => {
+    const paths: string[] = [];
+    const testServer = await startServer((request, response) => {
+      paths.push(request.url ?? '');
+      if (request.url === '/deploy/release-bus-v2/controls') {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ mode: 'OFF', controls: VALID_CONTROLS }));
+    });
+    try {
+      const result = await runHelper({ RELEASE_BUS_API_URL: testServer.url });
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout).mode).toBe('OFF');
+      expect(paths).toEqual([
+        '/deploy/release-bus-v2/controls',
+        '/deploy/release-bus/controls'
+      ]);
+    } finally {
+      await stopServer(testServer.server);
+    }
+  });
+
   it('fails when gh is missing', async () => {
     const result = await runHelper({ PATH: emptyBin });
 

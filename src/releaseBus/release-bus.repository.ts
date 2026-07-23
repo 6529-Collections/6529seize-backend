@@ -420,6 +420,26 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     return Number(row?.count ?? 0) > 0;
   }
 
+  public async hasTrainEvidence(
+    trainId: string,
+    revision: number,
+    evidenceType: string,
+    sourceSha: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ count: number | string }>(
+      `select count(*) as count from ${RELEASE_TRAIN_EVIDENCE_TABLE}
+       where train_id = :trainId
+         and revision = :revision
+         and evidence_type = :evidenceType
+         and source_sha = :sourceSha
+         and status = 'SUCCEEDED'`,
+      { trainId, revision, evidenceType, sourceSha },
+      dbOptions(ctx)
+    );
+    return Number(row?.count ?? 0) > 0;
+  }
+
   public async listCandidateIdsWithEvidence(
     candidateIds: readonly string[],
     evidenceType: string,
@@ -819,7 +839,7 @@ export class ReleaseBusRepository extends LazyDbAccessCompatibleService {
     const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 500));
     return this.db.execute<ReleaseTrainEvidenceRecord>(
       `select * from ${RELEASE_TRAIN_EVIDENCE_TABLE}
-       where evidence_type = 'BASE_CANARY_COMPLETED'
+       where evidence_type in ('BASE_CANARY_COMPLETED', 'BASE_EVIDENCE_PROMOTED', 'BASE_EVIDENCE_PROMOTION_REJECTED')
          and source_sha = :sourceSha
        order by created_at desc, id desc
        limit ${boundedLimit}`,

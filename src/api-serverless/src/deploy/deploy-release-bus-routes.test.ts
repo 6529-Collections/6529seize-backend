@@ -22,6 +22,32 @@ const mockListTrainItems = jest.fn();
 const mockGetReleaseTrainOverview = jest.fn();
 const mockListControls = jest.fn();
 const mockResetExperimentalHistory = jest.fn();
+const mockV2FindCandidateById = jest.fn();
+const mockV2ListCandidates = jest.fn();
+const mockV2ListControls = jest.fn();
+const mockV2ListLocks = jest.fn();
+const mockV2ListDependencies = jest.fn();
+const mockV2AppendEvent = jest.fn();
+const mockV2FindTrain = jest.fn();
+const mockV2ListTrainCandidates = jest.fn();
+const mockV2ListOperations = jest.fn();
+const mockV2ListEvents = jest.fn();
+const mockLambdaSend = jest.fn();
+
+jest.mock('@aws-sdk/client-lambda', () => ({
+  InvokeCommand: class InvokeCommand {
+    public constructor(public readonly input: unknown) {}
+  },
+  LambdaClient: class LambdaClient {
+    public send(...args: unknown[]) {
+      return mockLambdaSend(...args);
+    }
+  }
+}));
+const mockV2MarkReadyForProduction = jest.fn();
+const mockV2Cancel = jest.fn();
+const mockV2Authorize = jest.fn();
+const mockV2ReportProgress = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -77,6 +103,43 @@ jest.mock('@/releaseBus/release-bus.service', () => ({
     cancel: (...args: unknown[]) => mockCancel(...args),
     resetExperimentalHistory: (...args: unknown[]) =>
       mockResetExperimentalHistory(...args)
+  }
+}));
+
+jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
+  releaseBusV2Repository: {
+    findCandidateById: (...args: unknown[]) => mockV2FindCandidateById(...args),
+    listCandidates: (...args: unknown[]) => mockV2ListCandidates(...args),
+    listControls: (...args: unknown[]) => mockV2ListControls(...args),
+    listLocks: (...args: unknown[]) => mockV2ListLocks(...args),
+    listDependencies: (...args: unknown[]) => mockV2ListDependencies(...args),
+    appendEvent: (...args: unknown[]) => mockV2AppendEvent(...args),
+    listTrains: jest.fn(async () => []),
+    findTrain: (...args: unknown[]) => mockV2FindTrain(...args),
+    listManifests: jest.fn(async () => []),
+    listTrainCandidates: (...args: unknown[]) =>
+      mockV2ListTrainCandidates(...args),
+    listOperations: (...args: unknown[]) => mockV2ListOperations(...args),
+    listEvents: (...args: unknown[]) => mockV2ListEvents(...args)
+  }
+}));
+
+jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
+  releaseBusV2Service: {
+    register: jest.fn(),
+    markReadyForProduction: (...args: unknown[]) =>
+      mockV2MarkReadyForProduction(...args),
+    revokeProductionReadiness: jest.fn(),
+    cancel: (...args: unknown[]) => mockV2Cancel(...args),
+    setPaused: jest.fn(),
+    invalidateBranch: jest.fn()
+  }
+}));
+
+jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
+  releaseBusV2Operations: {
+    authorize: (...args: unknown[]) => mockV2Authorize(...args),
+    reportProgress: (...args: unknown[]) => mockV2ReportProgress(...args)
   }
 }));
 
@@ -589,6 +652,7 @@ describe('release-bus progress reporting', () => {
     mockExecuteTransaction.mockImplementation(async (callback) =>
       callback({ transaction: 'test' })
     );
+    mockBindOperationAuthorization.mockResolvedValue(true);
     mockUpdateOperation.mockResolvedValue(undefined);
     mockAppendEvent.mockResolvedValue(undefined);
   });
@@ -628,7 +692,12 @@ describe('release-bus progress reporting', () => {
         resultMetadata: expect.objectContaining({
           gate_report: expect.objectContaining({
             phase: 'complete',
-            summary: aggregateSummary()
+            summary: expect.objectContaining({
+              ...aggregateSummary(),
+              totals: expect.objectContaining(aggregateSummary().totals),
+              unexpected_files: [],
+              kind: 'base_canary_summary'
+            })
           }),
           last_progress_at: expect.any(Number)
         })
@@ -640,11 +709,82 @@ describe('release-bus progress reporting', () => {
         eventType: 'OPERATION_GATE_REPORT',
         payload: expect.objectContaining({
           phase: 'complete',
-          summary: aggregateSummary()
+          summary: expect.objectContaining({
+            ...aggregateSummary(),
+            totals: expect.objectContaining(aggregateSummary().totals),
+            unexpected_files: [],
+            kind: 'base_canary_summary'
+          })
         })
       }),
       { connection: { transaction: 'test' } }
     );
+  });
+
+  it('binds an exact preflight base-evidence summary digest to its operation', async () => {
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      operation_type: 'preflight-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
+      artifact_digest: null,
+      status: 'DISPATCHED',
+      row_version: 1,
+      result_metadata_json: {
+        url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+      }
+    });
+    const report = progressBody();
+
+    const response = await post('/deploy/release-bus/report-progress', {
+      ...report,
+      summary: {
+        ...report.summary,
+        kind: 'frontend_preflight_base_evidence_summary',
+        proof_origin: 'fresh_preflight',
+        build_environments: ['staging'],
+        build_coverage: {
+          base_canary_profile: 'SUCCEEDED',
+          deploy_artifact_profile: 'SUCCEEDED'
+        }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockBindOperationAuthorization).toHaveBeenCalledWith(
+      report.operation_key,
+      report.workflow_run_id,
+      'f'.repeat(64),
+      { connection: { transaction: 'test' } }
+    );
+  });
+
+  it('rejects a frontend preflight summary whose kind was omitted and defaulted to base canary', async () => {
+    mockFindOperation.mockResolvedValue({
+      train_id: TRAIN_ID,
+      external_id: '12345',
+      operation_type: 'preflight-frontend',
+      expected_sha: SHA,
+      environment: 'orchestration',
+      artifact_digest: null,
+      status: 'DISPATCHED',
+      row_version: 1,
+      result_metadata_json: {
+        url: 'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345'
+      }
+    });
+    const report = progressBody();
+    const summary = { ...report.summary } as Record<string, unknown>;
+    delete summary.kind;
+
+    const response = await post('/deploy/release-bus/report-progress', {
+      ...report,
+      summary
+    });
+
+    expect(response.status).toBe(403);
+    expect(mockBindOperationAuthorization).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -988,5 +1128,205 @@ describe('release train observability responses', () => {
     expect(mockGetReleaseTrainOverview).toHaveBeenCalledWith(
       expect.objectContaining({ id: TRAIN_ID })
     );
+  });
+});
+
+describe('Release Bus v2 route authorization and exact actions', () => {
+  const candidateId = '123e4567-e89b-42d3-a456-426614174099';
+  const v2Candidate = {
+    id: candidateId,
+    repository: 'frontend',
+    pr_number: 321,
+    branch_name: 'feature/v2',
+    head_sha: SHA,
+    requested_by: 'developer',
+    status: 'STAGING_VALIDATED',
+    deploy_plan_json: null,
+    pr_evidence_json: null,
+    current_train_id: null,
+    staging_validated_train_id: TRAIN_ID,
+    staging_validated_manifest_id: RESET_ID,
+    production_requested_at: null,
+    production_requested_by: null,
+    hold_reason: null,
+    superseded_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 4
+  } as const;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    process.env.RELEASE_BUS_WORKFLOW_AUTH_TOKEN = WORKFLOW_TOKEN;
+    mockGetViewer.mockResolvedValue({ login: 'developer' });
+    mockAssertRepositoryWriteAccess.mockResolvedValue(undefined);
+    mockV2FindCandidateById.mockResolvedValue(v2Candidate);
+    mockV2MarkReadyForProduction.mockResolvedValue({
+      ...v2Candidate,
+      status: 'READY_FOR_PRODUCTION',
+      row_version: 5
+    });
+    mockV2Cancel.mockResolvedValue({
+      ...v2Candidate,
+      status: 'CANCELLED',
+      row_version: 5
+    });
+    mockV2Authorize.mockResolvedValue({ authorized: true, reused: false });
+    mockV2ListCandidates.mockResolvedValue([v2Candidate]);
+    mockV2ListDependencies.mockResolvedValue([
+      {
+        id: 'dependency-id',
+        candidate_id: candidateId,
+        prerequisite_candidate_id: '123e4567-e89b-42d3-a456-426614174088',
+        environment: 'BOTH',
+        created_at: 1
+      }
+    ]);
+    mockIsOrganizationOperator.mockResolvedValue(true);
+    mockLambdaSend.mockResolvedValue({ StatusCode: 202 });
+    mockV2FindTrain.mockResolvedValue(null);
+    mockV2ListTrainCandidates.mockResolvedValue([]);
+    mockV2ListOperations.mockResolvedValue([]);
+    mockV2ListEvents.mockResolvedValue([]);
+  });
+
+  afterAll(() => {
+    delete process.env.RELEASE_BUS_V2_MODE;
+    delete process.env.RELEASE_BUS_WORKFLOW_AUTH_TOKEN;
+  });
+
+  it('requires repository write access before explicit production readiness', async () => {
+    const response = await post(
+      `/deploy/release-bus-v2/candidates/${candidateId}/mark-ready-for-production`,
+      { expected_head_sha: SHA, expected_row_version: 4 }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockAssertRepositoryWriteAccess).toHaveBeenCalledWith(
+      WORKFLOW_TOKEN,
+      'frontend'
+    );
+    expect(mockV2MarkReadyForProduction).toHaveBeenCalledWith(
+      candidateId,
+      SHA,
+      4,
+      'developer'
+    );
+  });
+
+  it('does not expose candidate mutation when the exact candidate is missing', async () => {
+    mockV2FindCandidateById.mockResolvedValue(null);
+    const response = await post(
+      `/deploy/release-bus-v2/candidates/${candidateId}/cancel`,
+      { expected_row_version: 4 }
+    );
+
+    expect(response.status).toBe(404);
+    expect(mockAssertRepositoryWriteAccess).not.toHaveBeenCalled();
+    expect(mockV2Cancel).not.toHaveBeenCalled();
+  });
+
+  it('accepts the exact artifact-free compose and preflight authorization payload', async () => {
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:frontend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null
+    };
+    const response = await post('/deploy/release-bus-v2/authorize', body);
+
+    expect(response.status).toBe(200);
+    expect(mockV2Authorize).toHaveBeenCalledWith(body);
+    expect(response.body).toMatchObject({
+      authorized: true,
+      train_id: TRAIN_ID,
+      operation_key: body.operation_key
+    });
+  });
+
+  it('returns readable dependency edges with each candidate', async () => {
+    const response = await get('/deploy/release-bus-v2/candidates');
+    const body = response.body as {
+      readonly candidates: ReadonlyArray<{
+        readonly dependencies: readonly unknown[];
+      }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.candidates[0]?.dependencies).toEqual([
+      expect.objectContaining({
+        candidate_id: candidateId,
+        environment: 'BOTH'
+      })
+    ]);
+  });
+
+  it('allows an operator to request one audited reconciliation', async () => {
+    const response = await post('/deploy/release-bus-v2/reconcile', {});
+
+    expect(response.status).toBe(202);
+    expect(mockV2AppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'MANUAL_RECONCILE_REQUESTED',
+        actor: 'developer'
+      }),
+      {}
+    );
+    expect(mockLambdaSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          FunctionName: 'releaseBusV2Reconciler',
+          InvocationType: 'Event'
+        })
+      })
+    );
+  });
+
+  it('reports a reconciliation dispatch failure without claiming it was queued', async () => {
+    mockLambdaSend.mockRejectedValueOnce(new Error('lambda throttled'));
+
+    const response = await post('/deploy/release-bus-v2/reconcile', {});
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      accepted: false,
+      mode: 'PRODUCTION',
+      execution: 'dispatch_failed'
+    });
+    expect(response.body.error).toContain('was not queued');
+    expect(mockV2AppendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'MANUAL_RECONCILE_DISPATCH_FAILED',
+        actor: 'developer',
+        payload: expect.objectContaining({ message: 'lambda throttled' })
+      }),
+      {}
+    );
+  });
+
+  it('degrades gracefully when stored workflow request JSON is malformed', async () => {
+    mockV2FindTrain.mockResolvedValue({ id: TRAIN_ID, status: 'PREFLIGHTING' });
+    mockV2ListOperations.mockResolvedValue([
+      {
+        id: 'operation-id',
+        status: 'RUNNING',
+        repository: 'backend',
+        external_id: '12345',
+        request_json: '{not-json'
+      }
+    ]);
+
+    const response = await get(`/deploy/release-bus-v2/trains/${TRAIN_ID}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.operations).toEqual([
+      expect.objectContaining({ id: 'operation-id', status: 'RUNNING' })
+    ]);
   });
 });

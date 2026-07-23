@@ -38,6 +38,7 @@ export type GitHubWorkflowJob = {
 export type GitHubRun = {
   readonly id: number;
   readonly name: string;
+  readonly path?: string;
   readonly display_title: string;
   readonly status: string;
   readonly conclusion: string | null;
@@ -55,6 +56,7 @@ export type ReleaseBusWorkflowRunIdentity = {
   readonly event: string;
   readonly headSha: string;
   readonly name: string;
+  readonly path: string;
   readonly displayTitle: string;
 };
 type GitHubMembership = {
@@ -73,6 +75,30 @@ type GitHubFileContent = {
   readonly size?: number;
 };
 type GitHubActionsVariable = { readonly value?: string };
+type GitHubPullRequestDetails = {
+  readonly number?: number;
+  readonly state?: string;
+  readonly mergeable?: boolean | null;
+  readonly mergeable_state?: string;
+  readonly head?: { readonly sha?: string; readonly ref?: string };
+  readonly base?: { readonly sha?: string; readonly ref?: string };
+  readonly merge_commit_sha?: string | null;
+};
+type GitHubCheckRun = {
+  readonly id?: number;
+  readonly name?: string;
+  readonly status?: string;
+  readonly conclusion?: string | null;
+  readonly details_url?: string | null;
+  readonly completed_at?: string | null;
+};
+type GitHubArtifact = {
+  readonly id?: number;
+  readonly name?: string;
+  readonly digest?: string | null;
+  readonly expired?: boolean;
+  readonly workflow_run?: { readonly id?: number; readonly head_sha?: string };
+};
 
 const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
   frontend: '6529seize-frontend',
@@ -81,6 +107,17 @@ const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
 const MAX_WORKFLOW_JOBS = 100;
 const MAX_WORKFLOW_STEPS = 100;
 const MAX_WORKFLOW_LABEL_LENGTH = 500;
+
+export class ReleaseBusGitHubInfrastructureError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'ReleaseBusGitHubInfrastructureError';
+  }
+}
+
+function isInfrastructureStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
 
 export function safeGitHubWorkflowLabel(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -107,6 +144,20 @@ export function sanitizeGitHubWorkflowJobs(
   }));
 }
 
+export function releaseBusPullRequestMergeStateEligible(
+  mergeable: boolean | null | undefined,
+  mergeableState: string | undefined
+): boolean {
+  if (mergeable === false) return false;
+  if (['clean', 'unstable', 'behind'].includes(mergeableState ?? ''))
+    return true;
+  // The Release Bus GitHub App is a pull-request-mode ruleset bypass actor.
+  // GitHub still reports `blocked` for maintainer-review requirements, so only
+  // accept that state when the merge tree itself is explicitly mergeable. The
+  // exact merge-tree checks are independently required below.
+  return mergeable === true && mergeableState === 'blocked';
+}
+
 function base64Url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url');
 }
@@ -128,7 +179,10 @@ function assertAllowedWritableRef(ref: string): void {
   if (
     ref === 'main' ||
     ref === '1a-staging' ||
-    /^release-bus\/(staging|production)-train-[A-Za-z0-9._-]+$/.test(ref)
+    /^release-bus\/(staging|production)-train-[A-Za-z0-9._-]+$/.test(ref) ||
+    /^release-bus-v2\/(staging|production|qualification)-train-[A-Za-z0-9._-]+$/.test(
+      ref
+    )
   )
     return;
   throw new Error(`Release Bus GitHub App cannot write ref ${ref}`);
@@ -155,13 +209,20 @@ export class ReleaseBusGitHubApp {
     );
     if (!appId || !installationId || !privateKey)
       throw new Error('GitHub App credentials are not configured');
-    const response = await fetch(
-      `https://api.github.com/app/installations/${installationId}/access_tokens`,
-      {
-        method: 'POST',
-        headers: this.headers(appJwt(appId, privateKey))
-      }
-    );
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://api.github.com/app/installations/${installationId}/access_tokens`,
+        {
+          method: 'POST',
+          headers: this.headers(appJwt(appId, privateKey))
+        }
+      );
+    } catch {
+      throw new ReleaseBusGitHubInfrastructureError(
+        'GitHub App token request failed before a response was received'
+      );
+    }
     await this.assertOk(response, 'create GitHub App installation token');
     const payload = (await response.json()) as InstallationToken;
     this.cachedToken = {
@@ -187,13 +248,19 @@ export class ReleaseBusGitHubApp {
     options: RequestInit = {}
   ): Promise<Response> {
     const token = await this.token();
-    return fetch(
-      `https://api.github.com/repos/${this.owner}/${REPOSITORIES[repository]}${path}`,
-      {
-        ...options,
-        headers: { ...this.headers(token), ...(options.headers ?? {}) }
-      }
-    );
+    try {
+      return await fetch(
+        `https://api.github.com/repos/${this.owner}/${REPOSITORIES[repository]}${path}`,
+        {
+          ...options,
+          headers: { ...this.headers(token), ...(options.headers ?? {}) }
+        }
+      );
+    } catch {
+      throw new ReleaseBusGitHubInfrastructureError(
+        `GitHub ${repository} request failed before a response was received`
+      );
+    }
   }
 
   private async organizationRequest(
@@ -201,10 +268,16 @@ export class ReleaseBusGitHubApp {
     options: RequestInit = {}
   ): Promise<Response> {
     const token = await this.token();
-    return fetch(`https://api.github.com${path}`, {
-      ...options,
-      headers: { ...this.headers(token), ...(options.headers ?? {}) }
-    });
+    try {
+      return await fetch(`https://api.github.com${path}`, {
+        ...options,
+        headers: { ...this.headers(token), ...(options.headers ?? {}) }
+      });
+    } catch {
+      throw new ReleaseBusGitHubInfrastructureError(
+        'GitHub organization request failed before a response was received'
+      );
+    }
   }
 
   private async assertOk(response: Response, operation: string): Promise<void> {
@@ -216,7 +289,10 @@ export class ReleaseBusGitHubApp {
     } catch {
       /* redacted status is enough */
     }
-    throw new Error(`Failed to ${operation}: ${message}`);
+    const errorMessage = `Failed to ${operation}: ${message}`;
+    if (isInfrastructureStatus(response.status))
+      throw new ReleaseBusGitHubInfrastructureError(errorMessage);
+    throw new Error(errorMessage);
   }
 
   public async resolveRef(
@@ -289,6 +365,132 @@ export class ReleaseBusGitHubApp {
     if (typeof value !== 'string' || value.length > 500)
       throw new Error(`Invalid ${repository} Actions variable ${name}`);
     return value;
+  }
+
+  public async getPullRequestQualification(
+    repository: ReleaseRepository,
+    pullNumber: number,
+    expectedHeadSha: string
+  ): Promise<{
+    readonly baseSha: string;
+    readonly mergeSha: string;
+    readonly checksRunId: string;
+    readonly checksCompletedAt: number;
+    readonly artifactRunId: string | null;
+    readonly artifactName: string | null;
+    readonly artifactDigest: string | null;
+  }> {
+    if (!Number.isSafeInteger(pullNumber) || pullNumber < 1)
+      throw new Error('Invalid pull request number');
+    const response = await this.request(repository, `/pulls/${pullNumber}`);
+    await this.assertOk(
+      response,
+      `read ${repository} pull request ${pullNumber}`
+    );
+    const pull = (await response.json()) as GitHubPullRequestDetails;
+    const headSha = pull.head?.sha?.toLowerCase();
+    const baseSha = pull.base?.sha?.toLowerCase();
+    const mergeSha = pull.merge_commit_sha?.toLowerCase();
+    if (pull.state !== 'open' || headSha !== expectedHeadSha.toLowerCase())
+      throw new Error(
+        'Pull request is not open at the exact requested head SHA'
+      );
+    if (!baseSha || !/^[a-f0-9]{40}$/.test(baseSha))
+      throw new Error('Pull request has no valid base SHA');
+    if (!mergeSha || !/^[a-f0-9]{40}$/.test(mergeSha))
+      throw new Error('Pull request has no exact merge-tree SHA');
+    if (
+      !releaseBusPullRequestMergeStateEligible(
+        pull.mergeable,
+        pull.mergeable_state
+      )
+    )
+      throw new Error(
+        `Pull request is not eligible against its current base (${pull.mergeable_state ?? 'unknown'}); required checks or mergeability are unresolved`
+      );
+
+    const checksResponse = await this.request(
+      repository,
+      `/commits/${headSha}/check-runs?per_page=100`
+    );
+    await this.assertOk(
+      checksResponse,
+      `read ${repository} pull request checks`
+    );
+    const checks =
+      ((await checksResponse.json()) as { check_runs?: GitHubCheckRun[] })
+        .check_runs ?? [];
+    if (checks.length === 0)
+      throw new Error('Pull request head has no check evidence');
+    const incomplete = checks.filter((check) => check.status !== 'completed');
+    if (incomplete.length > 0)
+      throw new Error(
+        `Pull request checks are still running: ${incomplete.map((check) => check.name ?? 'unnamed').join(', ')}`
+      );
+    const allowedConclusions = new Set(['success', 'neutral', 'skipped']);
+    const failed = checks.filter(
+      (check) => !check.conclusion || !allowedConclusions.has(check.conclusion)
+    );
+    if (failed.length > 0)
+      throw new Error(
+        `Pull request checks are not green: ${failed.map((check) => check.name ?? 'unnamed').join(', ')}`
+      );
+    const completedAt = Math.max(
+      ...checks
+        .map((check) => Date.parse(check.completed_at ?? ''))
+        .filter(Number.isFinite)
+    );
+    const checksRunId =
+      checks
+        .map((check) => check.details_url ?? '')
+        .map((url) => /\/actions\/runs\/(\d+)/.exec(url)?.[1])
+        .find((id): id is string => Boolean(id)) ??
+      String(checks[0]?.id ?? '0');
+    const greenWorkflowRunIds = new Set(
+      checks
+        .map((check) => check.details_url ?? '')
+        .map((url) => /\/actions\/runs\/(\d+)/.exec(url)?.[1])
+        .filter((id): id is string => Boolean(id))
+    );
+
+    const artifactsResponse = await this.request(
+      repository,
+      `/actions/artifacts?name=${encodeURIComponent(`release-bus-v2-pr-${mergeSha}`)}&per_page=100`
+    );
+    await this.assertOk(
+      artifactsResponse,
+      `read ${repository} pull request artifacts`
+    );
+    const artifact = (
+      ((await artifactsResponse.json()) as { artifacts?: GitHubArtifact[] })
+        .artifacts ?? []
+    )
+      .filter(
+        (item) =>
+          !item.expired &&
+          item.name === `release-bus-v2-pr-${mergeSha}` &&
+          item.workflow_run?.head_sha?.toLowerCase() ===
+            expectedHeadSha.toLowerCase() &&
+          Boolean(
+            item.workflow_run?.id &&
+            greenWorkflowRunIds.has(String(item.workflow_run.id))
+          ) &&
+          /^sha256:[a-f0-9]{64}$/.test(item.digest ?? '')
+      )
+      .sort((left, right) => Number(right.id ?? 0) - Number(left.id ?? 0))[0];
+    return {
+      baseSha,
+      mergeSha,
+      checksRunId,
+      checksCompletedAt: Number.isFinite(completedAt)
+        ? completedAt
+        : Date.now(),
+      artifactRunId: artifact?.workflow_run?.id
+        ? String(artifact.workflow_run.id)
+        : null,
+      artifactName: artifact?.name ?? null,
+      artifactDigest: artifact?.digest?.replace(/^sha256:/, '') ?? null
+    };
   }
 
   public async resolveRefIfExists(
@@ -365,6 +567,22 @@ export class ReleaseBusGitHubApp {
       .filter((item) => item.sha.length > 0);
   }
 
+  public async listReleaseBusV2Refs(
+    repository: ReleaseRepository
+  ): Promise<Array<{ ref: string; sha: string }>> {
+    const response = await this.request(
+      repository,
+      '/git/matching-refs/heads/release-bus-v2/'
+    );
+    await this.assertOk(response, `list ${repository} release-bus-v2 refs`);
+    return ((await response.json()) as GitHubMatchingRef[])
+      .map((item) => ({
+        ref: item.ref.replace(/^refs\/heads\//, ''),
+        sha: item.object?.sha ?? ''
+      }))
+      .filter((item) => item.sha.length > 0);
+  }
+
   public async commitTimestamp(
     repository: ReleaseRepository,
     sha: string
@@ -389,6 +607,22 @@ export class ReleaseBusGitHubApp {
     assertAllowedWritableRef(ref);
     if (!ref.startsWith('release-bus/'))
       throw new Error(`Ref ${ref} is not a temporary release-bus branch`);
+    const response = await this.request(
+      repository,
+      `/git/refs/heads/${encodeURIComponent(ref)}`,
+      { method: 'DELETE' }
+    );
+    if (response.status === 404) return;
+    await this.assertOk(response, `delete ${repository} ref ${ref}`);
+  }
+
+  public async deleteReleaseBusV2Ref(
+    repository: ReleaseRepository,
+    ref: string
+  ): Promise<void> {
+    assertAllowedWritableRef(ref);
+    if (!ref.startsWith('release-bus-v2/'))
+      throw new Error(`Ref ${ref} is not a temporary release-bus-v2 branch`);
     const response = await this.request(
       repository,
       `/git/refs/heads/${encodeURIComponent(ref)}`,
@@ -491,6 +725,7 @@ export class ReleaseBusGitHubApp {
       event: run.event ?? '',
       headSha: run.head_sha.toLowerCase(),
       name: run.name,
+      path: run.path ?? '',
       displayTitle: run.display_title
     };
   }
@@ -583,7 +818,8 @@ export class ReleaseBusGitHubApp {
     repository: ReleaseRepository,
     sha: string,
     state: 'error' | 'failure' | 'pending' | 'success',
-    description: string
+    description: string,
+    context = 'Release Bus'
   ): Promise<void> {
     const normalizedDescription = description.slice(0, 140);
     const existing = await this.request(
@@ -592,7 +828,7 @@ export class ReleaseBusGitHubApp {
     );
     await this.assertOk(existing, `read ${repository} commit statuses`);
     const latest = ((await existing.json()) as GitHubCommitStatus[]).find(
-      (status) => status.context === 'Release Bus'
+      (status) => status.context === context
     );
     if (latest?.state === state && latest.description === normalizedDescription)
       return;
@@ -600,7 +836,7 @@ export class ReleaseBusGitHubApp {
       method: 'POST',
       body: JSON.stringify({
         state,
-        context: 'Release Bus',
+        context,
         description: normalizedDescription,
         target_url: process.env.RELEASE_BUS_UI_URL
       })

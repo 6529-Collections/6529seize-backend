@@ -3,6 +3,8 @@ export type DagEdge = readonly [string, string];
 export type OrderedDag = {
   readonly order: string[];
   readonly dependants: ReadonlyMap<string, readonly string[]>;
+  readonly dependencies: ReadonlyMap<string, readonly string[]>;
+  readonly layers: readonly (readonly string[])[];
 };
 
 function sorted(values: Iterable<string>): string[] {
@@ -17,6 +19,7 @@ export function topologicallySort(
   const nodeSet = new Set(nodes);
   const incoming = new Map(nodes.map((node) => [node, 0]));
   const dependants = new Map(nodes.map((node) => [node, new Set<string>()]));
+  const dependencies = new Map(nodes.map((node) => [node, new Set<string>()]));
 
   for (const [dependency, dependant] of edges) {
     if (!nodeSet.has(dependency) || !nodeSet.has(dependant)) {
@@ -30,6 +33,7 @@ export function topologicallySort(
     const children = dependants.get(dependency) as Set<string>;
     if (!children.has(dependant)) {
       children.add(dependant);
+      (dependencies.get(dependant) as Set<string>).add(dependency);
       incoming.set(dependant, (incoming.get(dependant) ?? 0) + 1);
     }
   }
@@ -58,6 +62,27 @@ export function topologicallySort(
     throw new Error(`DAG cycle detected: ${cyclic.join(', ')}`);
   }
 
+  const resolved = new Set<string>();
+  const remaining = new Set(nodes);
+  const layers: string[][] = [];
+  while (remaining.size > 0) {
+    const layer = Array.from(remaining)
+      .filter((node) =>
+        Array.from(dependencies.get(node) ?? []).every((dependency) =>
+          resolved.has(dependency)
+        )
+      )
+      .sort(compare);
+    if (layer.length === 0) {
+      throw new Error('DAG cycle detected while computing dependency layers');
+    }
+    layers.push(layer);
+    for (const node of layer) {
+      remaining.delete(node);
+      resolved.add(node);
+    }
+  }
+
   return {
     order,
     dependants: new Map(
@@ -65,7 +90,14 @@ export function topologicallySort(
         node,
         sorted(children)
       ])
-    )
+    ),
+    dependencies: new Map(
+      Array.from(dependencies.entries()).map(([node, parents]) => [
+        node,
+        sorted(parents)
+      ])
+    ),
+    layers
   };
 }
 

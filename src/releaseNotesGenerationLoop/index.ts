@@ -143,6 +143,53 @@ function buildReleaseGroupKey(request: ReleaseNoteGenerationRequest): string {
   return `release-note-group:${repo}:${group}:${sha}`;
 }
 
+async function canonicalReleaseGroupServices(
+  request: ReleaseNoteGenerationRequest,
+  redis: ReleaseNotesRedis
+): Promise<string[]> {
+  const expectedKey = `${buildReleaseGroupKey(request)}:expected`;
+  const proposed = JSON.stringify(request.release_group_services);
+  await redis.set(expectedKey, proposed, {
+    NX: true,
+    EX: RELEASE_GROUP_TTL_SECONDS
+  });
+  const stored = await redis.get(expectedKey);
+  if (!stored) {
+    throw new Error(
+      `Release group ${request.release_group_id} has no canonical service set`
+    );
+  }
+  let expected: unknown;
+  try {
+    expected = JSON.parse(stored) as unknown;
+  } catch {
+    throw new Error(
+      `Release group ${request.release_group_id} has invalid canonical services`
+    );
+  }
+  if (
+    !Array.isArray(expected) ||
+    expected.length === 0 ||
+    expected.some((service) => typeof service !== 'string')
+  ) {
+    throw new Error(
+      `Release group ${request.release_group_id} has invalid canonical services`
+    );
+  }
+  const canonical = [...expected].sort((left, right) =>
+    left.localeCompare(right)
+  );
+  if (
+    new Set(canonical).size !== canonical.length ||
+    JSON.stringify(canonical) !== proposed
+  ) {
+    throw new Error(
+      `Release group ${request.release_group_id} changed its canonical service set`
+    );
+  }
+  return canonical;
+}
+
 function buildRunReference(
   request: ReleaseNoteGenerationRequest,
   service: string
@@ -187,12 +234,13 @@ export async function isReleaseGroupComplete(
   redis: ReleaseNotesRedis
 ): Promise<boolean> {
   const service = request.service?.trim();
+  const expectedServices = await canonicalReleaseGroupServices(request, redis);
+  if (!service || !expectedServices.includes(service)) {
+    throw new Error(
+      `Release group ${request.release_group_id} received unexpected service ${service ?? 'missing'}`
+    );
+  }
   if (request.pull_request_number) {
-    if (!service) {
-      throw new Error(
-        `Release group ${request.release_group_id} received a missing service`
-      );
-    }
     const groupKey = buildReleaseGroupKey(request);
     await redis.set(
       `${groupKey}:run:${service}`,
@@ -201,16 +249,26 @@ export async function isReleaseGroupComplete(
     );
     await redis.sAdd(`${groupKey}:services`, service);
     await redis.expire(`${groupKey}:services`, RELEASE_GROUP_TTL_SECONDS);
-    return request.publish_release_note === true;
+    const completedKey = `${groupKey}:completed`;
+    await redis.sAdd(completedKey, service);
+    await redis.expire(completedKey, RELEASE_GROUP_TTL_SECONDS);
+    if (request.publish_release_note !== true) return false;
+    const completedServices = new Set(await redis.sMembers(completedKey));
+    const complete =
+      completedServices.size === expectedServices.length &&
+      expectedServices.every((expectedService) =>
+        completedServices.has(expectedService)
+      );
+    if (!complete) {
+      logger.warn(
+        `Release group ${request.release_group_id} is incomplete and will not publish until these services succeed: ${expectedServices.filter((expectedService) => !completedServices.has(expectedService)).join(', ')}`
+      );
+    }
+    return complete;
   }
 
-  if (request.release_group_services.length === 1) {
+  if (expectedServices.length === 1) {
     return true;
-  }
-  if (!service || !request.release_group_services.includes(service)) {
-    throw new Error(
-      `Release group ${request.release_group_id} received unexpected service ${service ?? 'missing'}`
-    );
   }
 
   const groupKey = buildReleaseGroupKey(request);
@@ -225,12 +283,14 @@ export async function isReleaseGroupComplete(
   await redis.sAdd(completedKey, service);
   await redis.expire(completedKey, RELEASE_GROUP_TTL_SECONDS);
   const completedServices = new Set(await redis.sMembers(completedKey));
-  const isComplete = request.release_group_services.every((expectedService) =>
-    completedServices.has(expectedService)
-  );
+  const isComplete =
+    completedServices.size === expectedServices.length &&
+    expectedServices.every((expectedService) =>
+      completedServices.has(expectedService)
+    );
   if (!isComplete) {
     logger.warn(
-      `Release group ${request.release_group_id} is incomplete and will not publish until these services succeed: ${request.release_group_services.filter((expectedService) => !completedServices.has(expectedService)).join(', ')}`
+      `Release group ${request.release_group_id} is incomplete and will not publish until these services succeed: ${expectedServices.filter((expectedService) => !completedServices.has(expectedService)).join(', ')}`
     );
   }
   return isComplete;
@@ -243,12 +303,9 @@ async function getReleaseGroupState(
   readonly services: string[];
   readonly runs: ReleaseNoteRunReference[];
 }> {
-  if (
-    !request.pull_request_number &&
-    request.release_group_services.length === 1
-  ) {
-    const service =
-      request.service?.trim() || request.release_group_services[0];
+  const expectedServices = await canonicalReleaseGroupServices(request, redis);
+  if (!request.pull_request_number && expectedServices.length === 1) {
+    const service = request.service?.trim() || expectedServices[0];
     return {
       services: [service],
       runs: [buildRunReference(request, service)]
@@ -256,11 +313,7 @@ async function getReleaseGroupState(
   }
 
   const groupKey = buildReleaseGroupKey(request);
-  const services = request.pull_request_number
-    ? (await redis.sMembers(`${groupKey}:services`)).sort((a, b) =>
-        a.localeCompare(b)
-      )
-    : request.release_group_services;
+  const services = expectedServices;
   const runs = await Promise.all(
     services.map(async (service) => {
       const stored = await redis.get(`${groupKey}:run:${service}`);

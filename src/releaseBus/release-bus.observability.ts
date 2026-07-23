@@ -217,13 +217,17 @@ function sanitizeGateReport(value: unknown): unknown {
   const rawSummary = objectMetadata(report.summary);
   const summary = Object.keys(rawSummary).length
     ? {
+        kind: boundedText(rawSummary.kind, 80),
         base_sha: boundedText(rawSummary.base_sha, 40),
         environment: boundedText(rawSummary.environment, 32),
         gate_fingerprint: boundedText(rawSummary.gate_fingerprint, 80),
+        behavior_digest: boundedText(rawSummary.behavior_digest, 80),
+        build_profile_digest: boundedText(rawSummary.build_profile_digest, 80),
         workflow_sha: boundedText(rawSummary.workflow_sha, 40),
         workflow_digest: boundedText(rawSummary.workflow_digest, 80),
         node_version: boundedText(rawSummary.node_version, 64),
         package_manager: boundedText(rawSummary.package_manager, 128),
+        gate_mode: boundedText(rawSummary.gate_mode, 16),
         shard_count: boundedInteger(rawSummary.shard_count, 256),
         summary_artifact_name: boundedText(
           rawSummary.summary_artifact_name,
@@ -292,7 +296,111 @@ function sanitizeGateReport(value: unknown): unknown {
                 return text ? [text] : [];
               })
               .slice(0, 200)
-          : []
+          : [],
+        unexpected_files: Array.isArray(rawSummary.unexpected_files)
+          ? rawSummary.unexpected_files
+              .flatMap((file) => {
+                const text = boundedText(file, 500);
+                return text ? [text] : [];
+              })
+              .slice(0, 200)
+          : [],
+        proof_origin: boundedText(rawSummary.proof_origin, 64),
+        build_environments: Array.isArray(rawSummary.build_environments)
+          ? rawSummary.build_environments
+              .flatMap((environment) => {
+                const text = boundedText(environment, 32);
+                return text ? [text] : [];
+              })
+              .slice(0, 2)
+          : [],
+        build_coverage: (() => {
+          const coverage = objectMetadata(rawSummary.build_coverage);
+          return Object.keys(coverage).length
+            ? {
+                authoritative_profile: boundedText(
+                  coverage.authoritative_profile,
+                  32
+                ),
+                compilation_count: boundedInteger(
+                  coverage.compilation_count,
+                  10
+                ),
+                deployed_artifact_bound:
+                  coverage.deployed_artifact_bound === true,
+                base_canary_profile: boundedText(
+                  coverage.base_canary_profile,
+                  32
+                ),
+                deploy_artifact_profile: boundedText(
+                  coverage.deploy_artifact_profile,
+                  32
+                )
+              }
+            : null;
+        })(),
+        immutable_artifact: (() => {
+          const artifact = objectMetadata(rawSummary.immutable_artifact);
+          return Object.keys(artifact).length
+            ? {
+                artifact_name: boundedText(artifact.artifact_name, 500),
+                run_id: boundedText(artifact.run_id, 100),
+                source_sha: boundedText(artifact.source_sha, 40),
+                environment: boundedText(artifact.environment, 32),
+                package_digest: boundedText(artifact.package_digest, 80),
+                upload_digest: boundedText(artifact.upload_digest, 80),
+                build_profile_digest: boundedText(
+                  artifact.build_profile_digest,
+                  80
+                )
+              }
+            : null;
+        })()
+      }
+    : null;
+  const rawBackendEvidence = objectMetadata(report.backend_evidence);
+  const rawBackendTests = objectMetadata(rawBackendEvidence.tests);
+  const backendEvidence = Object.keys(rawBackendEvidence).length
+    ? {
+        source_sha: boundedText(rawBackendEvidence.source_sha, 40),
+        source_tree: boundedText(rawBackendEvidence.source_tree, 40),
+        gate_fingerprint: boundedText(rawBackendEvidence.gate_fingerprint, 80),
+        behavior_digest: boundedText(rawBackendEvidence.behavior_digest, 80),
+        execution: boundedText(rawBackendEvidence.execution, 64),
+        reuse_reason: boundedText(rawBackendEvidence.reuse_reason, 100),
+        selected_units: Array.isArray(rawBackendEvidence.selected_units)
+          ? rawBackendEvidence.selected_units
+              .flatMap((unit) => {
+                const text = boundedText(unit, 100);
+                return text ? [text] : [];
+              })
+              .slice(0, 100)
+          : [],
+        package_build_count: boundedInteger(
+          rawBackendEvidence.package_build_count,
+          100
+        ),
+        artifact_digest: boundedText(rawBackendEvidence.artifact_digest, 80),
+        tests: {
+          status: boundedText(rawBackendTests.status, 32),
+          jest_max_workers: boundedInteger(
+            rawBackendTests.jest_max_workers,
+            16
+          ),
+          expected_files: boundedInteger(
+            rawBackendTests.expected_files,
+            10_000_000
+          ),
+          executed_files: boundedInteger(
+            rawBackendTests.executed_files,
+            10_000_000
+          ),
+          total_tests: boundedInteger(rawBackendTests.total_tests, 10_000_000),
+          skipped_tests: boundedInteger(
+            rawBackendTests.skipped_tests,
+            10_000_000
+          )
+        }
       }
     : null;
   return {
@@ -301,6 +409,8 @@ function sanitizeGateReport(value: unknown): unknown {
     stages,
     jest,
     summary,
+    build_profile_digest: boundedText(report.build_profile_digest, 80),
+    backend_evidence: backendEvidence,
     reported_at: boundedInteger(report.reported_at, Number.MAX_SAFE_INTEGER)
   };
 }
