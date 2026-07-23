@@ -17,13 +17,14 @@ to the v1 endpoint only before the additive v2 API exists.
 
 | Mode | Staging | Production |
 | --- | --- | --- |
-| `OFF` | Serialized legacy manual route | Serialized manual route with explicit owner authority and exact staging evidence |
+| `OFF` | Serialized legacy manual route | Serialized manual route with explicit owner authority; no staging evidence gate |
 | `STAGING` | V2 readiness | Production remains manual/disabled |
 | `PRODUCTION` | V2 readiness | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate |
 
-For an active mode, `ALL` and the target lane must be running. In `OFF`, paused
-v2 controls are expected and the manual fallback remains available when
-`RELEASE_BUS_ENFORCEMENT` is absent or `false`.
+For an active mode, `ALL` and the target lane must be running. In `OFF`, v2
+controls are non-authoritative and the manual fallback remains available when
+`RELEASE_BUS_ENFORCEMENT` is absent or `false`, including owner-authorized
+production without prior staging evidence.
 
 ## Candidate contract
 
@@ -79,7 +80,10 @@ from current `main`:
   verify exact versions, run production-safe read-only E2E, and mark
   `PRODUCTION_DEPLOYED`.
 
-V2 does not publish release notes.
+V2 never authors or posts release notes itself. Production operations must feed
+the existing autonomous release-note bot complete, canonical grouping metadata
+and an idempotent finalize signal. Internal operational candidates may opt out
+explicitly.
 
 ## Failure behavior
 
@@ -108,7 +112,8 @@ Rollback:
 1. pause v2 `ALL` and set mode `OFF`;
 2. allow any already-dispatched exact operation to reach a safe terminal state;
 3. verify no v2 train owns staging or production;
-4. use the serialized manual fallback;
+4. use the serialized manual fallback, dispatching backend `Deploy a service`
+   workflows one at a time because shared concurrency can cancel sibling runs;
 5. preserve v2 rows and v1 code for diagnosis—do not destructively delete them.
 
 Never cancel another actor's shared workflow or force-push a shared ref.
