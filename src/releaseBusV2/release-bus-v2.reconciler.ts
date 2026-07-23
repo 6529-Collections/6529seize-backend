@@ -752,6 +752,38 @@ export class ReleaseBusV2Reconciler {
       candidateStatusForBuild(train.lane),
       train.id
     );
+    const exactProductionManifest =
+      await this.findExactValidatedProductionManifest(context);
+    if (exactProductionManifest) {
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'EXACT_STAGING_MANIFEST_REUSED',
+          actor: 'release-bus-v2',
+          payload: {
+            manifest_id: exactProductionManifest.id,
+            source_train_id: exactProductionManifest.train_id,
+            candidate_ids: relevantCandidates(context).map(({ id }) => id),
+            manifest_identity_sha256: exactProductionManifest.identity_sha256,
+            frontend_sha: exactProductionManifest.frontend_sha,
+            backend_sha: exactProductionManifest.backend_sha
+          }
+        },
+        {}
+      );
+      await this.transitionTrain(train, {
+        status: 'PREPARED',
+        frontendComposedSha: exactProductionManifest.frontend_sha,
+        backendComposedSha: exactProductionManifest.backend_sha,
+        frontendArtifactDigest:
+          exactProductionManifest.frontend_artifact_digest,
+        backendArtifactDigest: exactProductionManifest.backend_artifact_digest,
+        manifestId: exactProductionManifest.id,
+        recoveryMessage:
+          'The exact candidate set, staging-validated manifest, immutable artifacts, and original base SHAs were reused without composition or preflight'
+      });
+      return;
+    }
     const compositionOnly =
       train.lane === 'PRODUCTION' &&
       ['CLAIMED', 'COMPOSING'].includes(train.status);
@@ -820,6 +852,79 @@ export class ReleaseBusV2Reconciler {
         ? 'Exact artifacts prepared; waiting only for environment ownership'
         : 'Frontend and backend preparation are reconciling concurrently'
     });
+  }
+
+  private async findExactValidatedProductionManifest(
+    context: TrainContext
+  ): Promise<ReleaseBusV2ManifestRecord | null> {
+    if (context.train.lane !== 'PRODUCTION') return null;
+    const candidates = relevantCandidates(context);
+    const manifestIds = Array.from(
+      new Set(
+        candidates
+          .map(({ staging_validated_manifest_id }) =>
+            staging_validated_manifest_id?.trim()
+          )
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+    if (manifestIds.length !== 1) return null;
+    if (
+      candidates.some(
+        ({ staging_validated_manifest_id }) =>
+          staging_validated_manifest_id !== manifestIds[0]
+      )
+    )
+      return null;
+    const manifest = await this.repository.findManifest(manifestIds[0], {});
+    if (manifest?.status !== 'STAGING_VALIDATED') return null;
+    const sourceTrain = await this.repository.findTrain(manifest.train_id, {});
+    if (!sourceTrain) return null;
+    const sourceMemberships = await this.repository.listTrainCandidates(
+      sourceTrain.id,
+      {}
+    );
+    const sourceCandidateIds = sourceMemberships
+      .filter(({ disposition }) => disposition === 'INCLUDED')
+      .map(({ candidate_id }) => candidate_id)
+      .sort(compareInvariant);
+    const productionCandidateIds = candidates
+      .map(({ id }) => id)
+      .sort(compareInvariant);
+    // Production readiness transitions the same durable candidate rows that
+    // staging validated; the model does not create lane-scoped candidates.
+    if (
+      sourceCandidateIds.length !== productionCandidateIds.length ||
+      sourceCandidateIds.some(
+        (candidateId, index) => candidateId !== productionCandidateIds[index]
+      )
+    )
+      return null;
+    const hasFrontend = candidates.some(
+      ({ repository }) => repository === 'frontend'
+    );
+    const hasBackend = candidates.some(
+      ({ repository }) => repository === 'backend'
+    );
+    // A candidate-bearing composition is base-dependent: if main advanced,
+    // the exact set must be requalified rather than rewinding the shared ref.
+    // A repository absent from the subset is not deployed; it needs no digest,
+    // but its manifest SHA must still be the current base.
+    if (
+      !manifest.frontend_sha ||
+      !manifest.backend_sha ||
+      (hasFrontend && !manifest.frontend_artifact_digest) ||
+      (hasBackend && !manifest.backend_artifact_digest) ||
+      (hasFrontend &&
+        sourceTrain.frontend_base_sha !== context.train.frontend_base_sha) ||
+      (hasBackend &&
+        sourceTrain.backend_base_sha !== context.train.backend_base_sha) ||
+      (!hasFrontend &&
+        manifest.frontend_sha !== context.train.frontend_base_sha) ||
+      (!hasBackend && manifest.backend_sha !== context.train.backend_base_sha)
+    )
+      return null;
+    return manifest;
   }
 
   private async prepareRepository(
