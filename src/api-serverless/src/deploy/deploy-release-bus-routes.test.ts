@@ -46,6 +46,8 @@ jest.mock('@aws-sdk/client-lambda', () => ({
 }));
 const mockV2MarkReadyForProduction = jest.fn();
 const mockV2Cancel = jest.fn();
+const mockV2Register = jest.fn();
+const mockV2IsBetaTrainAllowed = jest.fn();
 const mockV2Authorize = jest.fn();
 const mockV2ReportProgress = jest.fn();
 
@@ -126,13 +128,15 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
 
 jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
   releaseBusV2Service: {
-    register: jest.fn(),
+    register: (...args: unknown[]) => mockV2Register(...args),
     markReadyForProduction: (...args: unknown[]) =>
       mockV2MarkReadyForProduction(...args),
     revokeProductionReadiness: jest.fn(),
     cancel: (...args: unknown[]) => mockV2Cancel(...args),
     setPaused: jest.fn(),
-    invalidateBranch: jest.fn()
+    invalidateBranch: jest.fn(),
+    isBetaTrainAllowed: (...args: unknown[]) =>
+      mockV2IsBetaTrainAllowed(...args)
   }
 }));
 
@@ -1158,6 +1162,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
     process.env.RELEASE_BUS_WORKFLOW_AUTH_TOKEN = WORKFLOW_TOKEN;
     mockGetViewer.mockResolvedValue({ login: 'developer' });
     mockAssertRepositoryWriteAccess.mockResolvedValue(undefined);
@@ -1189,10 +1194,12 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     mockV2ListTrainCandidates.mockResolvedValue([]);
     mockV2ListOperations.mockResolvedValue([]);
     mockV2ListEvents.mockResolvedValue([]);
+    mockV2IsBetaTrainAllowed.mockResolvedValue(true);
   });
 
   afterAll(() => {
     delete process.env.RELEASE_BUS_V2_MODE;
+    delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
     delete process.env.RELEASE_BUS_WORKFLOW_AUTH_TOKEN;
   });
 
@@ -1286,6 +1293,81 @@ describe('Release Bus v2 route authorization and exact actions', () => {
         })
       })
     );
+  });
+
+  it('keeps ordinary candidate registration disabled while global mode is OFF', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    mockIsOrganizationOperator.mockResolvedValue(false);
+
+    const response = await post('/deploy/release-bus-v2/candidates', {
+      candidate_id: candidateId,
+      repository: 'frontend',
+      pr_number: 321,
+      branch_name: 'agent/rb2-beta-frontend-one',
+      expected_head_sha: SHA,
+      deploy_plan: null,
+      dependencies: []
+    });
+
+    expect(response.status).toBe(403);
+    expect(mockV2Register).not.toHaveBeenCalled();
+    expect(mockAssertRepositoryWriteAccess).not.toHaveBeenCalled();
+  });
+
+  it('queues an operator-only beta reconciliation while reporting global OFF', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'frontend-only-1',
+        candidate_id: candidateId,
+        repository: 'frontend',
+        branch_name: 'agent/rb2-beta-frontend-one',
+        operator: 'developer',
+        lanes: ['STAGING']
+      }
+    ]);
+
+    const response = await post('/deploy/release-bus-v2/reconcile', {});
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      accepted: true,
+      mode: 'OFF',
+      execution: 'queued_operator_beta'
+    });
+    expect(mockLambdaSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when an OFF workflow train is not beta-allowlisted', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'frontend-only-1',
+        candidate_id: candidateId,
+        repository: 'frontend',
+        branch_name: 'agent/rb2-beta-frontend-one',
+        operator: 'developer',
+        lanes: ['STAGING']
+      }
+    ]);
+    mockV2FindTrain.mockResolvedValue({ id: TRAIN_ID, lane: 'STAGING' });
+    mockV2IsBetaTrainAllowed.mockResolvedValue(false);
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:frontend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null
+    };
+
+    const response = await post('/deploy/release-bus-v2/authorize', body);
+
+    expect(response.status).toBe(403);
+    expect(mockV2Authorize).not.toHaveBeenCalled();
   });
 
   it('reports a reconciliation dispatch failure without claiming it was queued', async () => {

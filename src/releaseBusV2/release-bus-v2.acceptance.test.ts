@@ -3,6 +3,7 @@ const mockEnsureCommitStatus = jest.fn();
 const mockResolveRef = jest.fn();
 const mockResolveRefIfExists = jest.fn();
 const mockUpdateRef = jest.fn();
+const mockHasActiveStagingRun = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   releaseBusV2Operations: {
@@ -15,7 +16,9 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args),
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     resolveRefIfExists: (...args: unknown[]) => mockResolveRefIfExists(...args),
-    updateRef: (...args: unknown[]) => mockUpdateRef(...args)
+    updateRef: (...args: unknown[]) => mockUpdateRef(...args),
+    hasActiveStagingMutationOrE2ERun: (...args: unknown[]) =>
+      mockHasActiveStagingRun(...args)
   }
 }));
 
@@ -412,7 +415,8 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
   const service = {
     claimLane: jest.fn(async () => null),
     setPaused: jest.fn(async () => undefined),
-    invalidateBranch: jest.fn(async () => undefined)
+    invalidateBranch: jest.fn(async () => undefined),
+    isBetaTrainAllowed: jest.fn(async () => true)
   };
   return {
     repository,
@@ -427,10 +431,13 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
 
 describe('Release Bus v2 offline acceptance harness', () => {
   const previousMode = process.env.RELEASE_BUS_V2_MODE;
+  const previousBetaAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
 
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+    mockHasActiveStagingRun.mockResolvedValue(false);
     mockResolveRefIfExists.mockImplementation(
       async (repository: 'frontend' | 'backend') =>
         repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
@@ -451,9 +458,119 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.trains.get('train-1')?.status).toBe('PREPARED');
   });
 
+  it('pauses only beta automation when the OFF allowlist is malformed', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = 'not-json';
+
+    await expect(
+      state.reconciler.runOnce('acceptance-invalid-beta')
+    ).resolves.toEqual({
+      mode: 'OFF',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.setPaused).toHaveBeenCalledWith(
+      'ALL',
+      true,
+      expect.stringContaining('allowlist is invalid'),
+      'release-bus-v2-beta'
+    );
+    expect(state.service.claimLane).not.toHaveBeenCalled();
+  });
+
+  it('enters the OFF beta lane but does not advance an unallowlisted active train', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'backend-only-1',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-beta-backend-one',
+        operator: 'beta-operator',
+        lanes: ['STAGING']
+      }
+    ]);
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
+    );
+    state.service.isBetaTrainAllowed.mockResolvedValue(false);
+
+    await expect(state.reconciler.runOnce('acceptance-beta')).resolves.toEqual({
+      mode: 'OFF',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.claimLane).toHaveBeenCalledTimes(1);
+    expect(state.service.claimLane).toHaveBeenCalledWith(
+      'STAGING',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-beta:staging'
+    );
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+    expect(state.repository.trains.get('train-1')?.status).toBe('PREPARED');
+  });
+
+  it('double-checks idle refs around the staging lock before a beta mutation', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'backend-only-1',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-beta-backend-one',
+        operator: 'beta-operator',
+        lanes: ['STAGING']
+      }
+    ]);
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
+    );
+    const updateTrain = state.repository.updateTrain.bind(state.repository);
+    jest
+      .spyOn(state.repository, 'updateTrain')
+      .mockImplementation(async (id, rowVersion, fields) => {
+        const updated = await updateTrain(id, rowVersion, fields);
+        const trainAfterUpdate = state.repository.trains.get(id);
+        if (updated && trainAfterUpdate) {
+          state.repository.trains.set(id, {
+            ...trainAfterUpdate,
+            row_version: rowVersion
+          });
+        }
+        return updated;
+      });
+
+    const result = await state.reconciler.runOnce('acceptance-beta-idle');
+    expect({
+      result,
+      train: state.repository.trains.get('train-1'),
+      events: state.repository.events,
+      lock: state.repository.lock
+    }).toMatchObject({
+      result: { mode: 'OFF', claimed: [], advanced: ['train-1'] },
+      train: { status: 'DEPLOYING' },
+      lock: { owner_train_id: 'train-1' }
+    });
+    expect(mockHasActiveStagingRun).toHaveBeenCalledTimes(4);
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'BETA_STAGING_IDLE_HANDSHAKE',
+        trainId: 'train-1',
+        payload: expect.objectContaining({ staging_lock: 'owned' })
+      })
+    );
+  });
+
   afterAll(() => {
     if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
     else process.env.RELEASE_BUS_V2_MODE = previousMode;
+    if (previousBetaAllowlist === undefined)
+      delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+    else process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = previousBetaAllowlist;
   });
 
   it('serializes only dependency edges, binds E2E to the exact manifest, and is duplicate-safe', async () => {

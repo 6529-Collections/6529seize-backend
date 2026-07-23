@@ -143,6 +143,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async createCandidate(
     input: {
+      readonly candidateId?: string;
       readonly repository: ReleaseBusV2RepositoryName;
       readonly prNumber: number;
       readonly branchName: string;
@@ -153,7 +154,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<ReleaseBusV2CandidateRecord> {
-    const id = randomUUID();
+    const id = input.candidateId ?? randomUUID();
     const now = Date.now();
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_CANDIDATES_TABLE}

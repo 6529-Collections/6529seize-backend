@@ -4,7 +4,13 @@ import {
   releaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError
 } from '@/releaseBus/release-bus.github-app';
-import { getReleaseBusV2Mode } from '@/releaseBusV2/release-bus-v2.config';
+import {
+  getReleaseBusV2BetaAllowlist,
+  getReleaseBusV2Mode,
+  releaseBusV2BetaAllowsCandidate,
+  releaseBusV2BetaAllowsLane,
+  type ReleaseBusV2BetaEntry
+} from '@/releaseBusV2/release-bus-v2.config';
 import {
   releaseBusV2Operations,
   type ReleaseBusV2WorkflowSpec
@@ -72,6 +78,16 @@ type DeployResult = {
   readonly complete: boolean;
   readonly failedOperation: ReleaseBusV2OperationRecord | null;
   readonly operations: readonly ReleaseBusV2OperationRecord[];
+};
+
+type StagingIdleSnapshot = {
+  readonly frontend_staging_sha: string | null;
+  readonly backend_staging_sha: string | null;
+};
+
+type ProductionIdleSnapshot = {
+  readonly frontend_main_sha: string;
+  readonly backend_main_sha: string;
 };
 
 type IsolationSubsetResult =
@@ -433,18 +449,41 @@ export class ReleaseBusV2Reconciler {
   }> {
     const mode = getReleaseBusV2Mode();
     const claimed: string[] = [];
-    if (mode === 'OFF') return { mode, claimed, advanced: [] };
+    let betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [];
+    if (mode === 'OFF') {
+      try {
+        betaAllowlist = getReleaseBusV2BetaAllowlist();
+      } catch {
+        const controls = await this.repository.listControls({});
+        const allControl = controls.find(({ scope }) => scope === 'ALL');
+        if (!allControl?.paused)
+          await this.service.setPaused(
+            'ALL',
+            true,
+            'Release Bus v2 OFF beta allowlist is invalid; automation remains disabled',
+            'release-bus-v2-beta'
+          );
+        return { mode, claimed, advanced: [] };
+      }
+      if (betaAllowlist.length === 0) return { mode, claimed, advanced: [] };
+    }
     const controls = await this.repository.listControls({});
     const isPaused = (scope: 'ALL' | 'STAGING' | 'PRODUCTION') =>
       controls.some(
         (control) => control.scope === scope && Boolean(control.paused)
       );
     if (isPaused('ALL')) return { mode, claimed, advanced: [] };
-    const stagingEnabled = !isPaused('STAGING');
-    const productionEnabled = mode === 'PRODUCTION' && !isPaused('PRODUCTION');
+    const stagingEnabled =
+      !isPaused('STAGING') &&
+      (mode !== 'OFF' || releaseBusV2BetaAllowsLane(betaAllowlist, 'STAGING'));
+    const productionEnabled =
+      !isPaused('PRODUCTION') &&
+      (mode === 'PRODUCTION' ||
+        (mode === 'OFF' &&
+          releaseBusV2BetaAllowsLane(betaAllowlist, 'PRODUCTION')));
     if (stagingEnabled || productionEnabled) {
       try {
-        await this.reconcileQueuedCandidateHeads();
+        await this.reconcileQueuedCandidateHeads(betaAllowlist);
         const [frontendMain, backendMain] = await Promise.all([
           releaseBusGitHubApp.resolveRef('frontend', 'main'),
           releaseBusGitHubApp.resolveRef('backend', 'main')
@@ -481,26 +520,34 @@ export class ReleaseBusV2Reconciler {
       }
     }
 
-    const active = (await this.repository.listTrains(100, {}))
+    const activeByLane = (await this.repository.listTrains(100, {}))
       .filter((train) => !TERMINAL_TRAINS.has(train.status))
       .filter((train) => {
         if (train.lane === 'STAGING') return stagingEnabled;
         if (train.lane === 'PRODUCTION') return productionEnabled;
         return stagingEnabled && productionEnabled;
-      })
-      .sort((left, right) => {
-        if (
-          left.lane === 'PRODUCTION_QUALIFICATION' &&
-          right.lane !== 'PRODUCTION_QUALIFICATION'
-        )
-          return -1;
-        if (
-          right.lane === 'PRODUCTION_QUALIFICATION' &&
-          left.lane !== 'PRODUCTION_QUALIFICATION'
-        )
-          return 1;
-        return Number(left.created_at) - Number(right.created_at);
       });
+    const active: ReleaseBusV2TrainRecord[] = [];
+    for (const train of activeByLane) {
+      if (
+        mode !== 'OFF' ||
+        (await this.service.isBetaTrainAllowed(train, betaAllowlist, {}))
+      )
+        active.push(train);
+    }
+    active.sort((left, right) => {
+      if (
+        left.lane === 'PRODUCTION_QUALIFICATION' &&
+        right.lane !== 'PRODUCTION_QUALIFICATION'
+      )
+        return -1;
+      if (
+        right.lane === 'PRODUCTION_QUALIFICATION' &&
+        left.lane !== 'PRODUCTION_QUALIFICATION'
+      )
+        return 1;
+      return Number(left.created_at) - Number(right.created_at);
+    });
     const advanced: string[] = [];
     for (const train of active) {
       try {
@@ -525,12 +572,21 @@ export class ReleaseBusV2Reconciler {
     return { mode, claimed: Array.from(new Set(claimed)), advanced };
   }
 
-  private async reconcileQueuedCandidateHeads(): Promise<void> {
-    const candidates = await this.repository.listCandidates(
-      ['READY_FOR_STAGING', 'WAITING_FOR_DEPENDENCY', 'READY_FOR_PRODUCTION'],
-      500,
-      {}
-    );
+  private async reconcileQueuedCandidateHeads(
+    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = []
+  ): Promise<void> {
+    const candidates = (
+      await this.repository.listCandidates(
+        ['READY_FOR_STAGING', 'WAITING_FOR_DEPENDENCY', 'READY_FOR_PRODUCTION'],
+        500,
+        {}
+      )
+    ).filter((candidate) => {
+      if (betaAllowlist.length === 0) return true;
+      const lane =
+        candidate.status === 'READY_FOR_PRODUCTION' ? 'PRODUCTION' : 'STAGING';
+      return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
+    });
     const branchHeads = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
@@ -1278,6 +1334,21 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext
   ): Promise<void> {
     const train = context.train;
+    const requiresBetaIdleHandshake =
+      getReleaseBusV2Mode() === 'OFF' &&
+      ['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status);
+    const beforeLock = requiresBetaIdleHandshake
+      ? await this.captureStagingIdleSnapshot()
+      : null;
+    if (requiresBetaIdleHandshake && !beforeLock) {
+      if (train.status === 'PREPARED')
+        await this.transitionTrain(train, {
+          status: 'WAITING_FOR_ENVIRONMENT',
+          recoveryMessage:
+            'Operator beta is waiting for an idle shared staging deployment, E2E, and ref handshake'
+        });
+      return;
+    }
     const lease = await this.acquireEnvironmentLease(
       'staging-environment',
       train
@@ -1290,6 +1361,37 @@ export class ReleaseBusV2Reconciler {
             'Artifacts are ready; waiting for staging deployment and E2E ownership'
         });
       return;
+    }
+    if (requiresBetaIdleHandshake && beforeLock) {
+      const afterLock = await this.captureStagingIdleSnapshot();
+      const stable =
+        afterLock !== null &&
+        afterLock.frontend_staging_sha === beforeLock.frontend_staging_sha &&
+        afterLock.backend_staging_sha === beforeLock.backend_staging_sha;
+      if (!stable) {
+        await this.releaseEnvironmentLease('staging-environment', lease);
+        if (train.status === 'PREPARED')
+          await this.transitionTrain(train, {
+            status: 'WAITING_FOR_ENVIRONMENT',
+            recoveryMessage:
+              'Shared staging changed during the beta idle handshake; lock released without mutation'
+          });
+        return;
+      }
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'BETA_STAGING_IDLE_HANDSHAKE',
+          actor: 'release-bus-v2-beta',
+          payload: {
+            ...afterLock,
+            beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
+            staging_lock: 'owned',
+            verified_at: Date.now()
+          }
+        },
+        {}
+      );
     }
     const sourceTrainId = train.parent_train_id ?? train.id;
     if (['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status)) {
@@ -1401,6 +1503,21 @@ export class ReleaseBusV2Reconciler {
     }
   }
 
+  private async captureStagingIdleSnapshot(): Promise<StagingIdleSnapshot | null> {
+    const [frontendActive, backendActive, frontendSha, backendSha] =
+      await Promise.all([
+        releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun('frontend'),
+        releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun('backend'),
+        releaseBusGitHubApp.resolveRefIfExists('frontend', '1a-staging'),
+        releaseBusGitHubApp.resolveRefIfExists('backend', '1a-staging')
+      ]);
+    if (frontendActive || backendActive) return null;
+    return {
+      frontend_staging_sha: frontendSha,
+      backend_staging_sha: backendSha
+    };
+  }
+
   private async advanceProduction(context: TrainContext): Promise<void> {
     const train = context.train;
     if (train.status === 'PREPARED') {
@@ -1479,11 +1596,42 @@ export class ReleaseBusV2Reconciler {
       return;
     }
 
+    const requiresBetaIdleHandshake =
+      getReleaseBusV2Mode() === 'OFF' && train.status === 'MERGING_PRODUCTION';
+    const beforeLock = requiresBetaIdleHandshake
+      ? await this.captureProductionIdleSnapshot()
+      : null;
+    if (requiresBetaIdleHandshake && !beforeLock) return;
     const lease = await this.acquireEnvironmentLease(
       'production-environment',
       train
     );
     if (!lease) return;
+    if (requiresBetaIdleHandshake && beforeLock) {
+      const afterLock = await this.captureProductionIdleSnapshot();
+      const stable =
+        afterLock !== null &&
+        afterLock.frontend_main_sha === beforeLock.frontend_main_sha &&
+        afterLock.backend_main_sha === beforeLock.backend_main_sha;
+      if (!stable) {
+        await this.releaseEnvironmentLease('production-environment', lease);
+        return;
+      }
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'BETA_PRODUCTION_IDLE_HANDSHAKE',
+          actor: 'release-bus-v2-beta',
+          payload: {
+            ...afterLock,
+            beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
+            production_lock: 'owned',
+            verified_at: Date.now()
+          }
+        },
+        {}
+      );
+    }
     if (train.status === 'MERGING_PRODUCTION') {
       await this.advanceProductionRefs(context);
       await this.updateCandidateStatuses(
@@ -1552,6 +1700,21 @@ export class ReleaseBusV2Reconciler {
         'Exact v2 production deployment completed'
       );
     }
+  }
+
+  private async captureProductionIdleSnapshot(): Promise<ProductionIdleSnapshot | null> {
+    const [frontendActive, backendActive, frontendSha, backendSha] =
+      await Promise.all([
+        releaseBusGitHubApp.hasActiveProductionMutationOrE2ERun('frontend'),
+        releaseBusGitHubApp.hasActiveProductionMutationOrE2ERun('backend'),
+        releaseBusGitHubApp.resolveRef('frontend', 'main'),
+        releaseBusGitHubApp.resolveRef('backend', 'main')
+      ]);
+    if (frontendActive || backendActive) return null;
+    return {
+      frontend_main_sha: frontendSha,
+      backend_main_sha: backendSha
+    };
   }
 
   private async advanceProductionRefs(context: TrainContext): Promise<void> {

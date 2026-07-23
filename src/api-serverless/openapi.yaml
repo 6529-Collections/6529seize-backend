@@ -23826,6 +23826,10 @@ components:
         - branch_name
         - expected_head_sha
       properties:
+        candidate_id:
+          type: string
+          format: uuid
+          description: Exact synthetic candidate id required only for the operator-only beta while global mode is OFF.
         repository:
           type: string
           enum:

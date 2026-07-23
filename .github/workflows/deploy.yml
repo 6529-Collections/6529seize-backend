@@ -147,6 +147,7 @@ env:
   SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
   RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
   RELEASE_BUS_V2_MODE: ${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
+  RELEASE_BUS_V2_BETA_ALLOWLIST: ${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
   RELEASE_BUS_BASE_EVIDENCE_REUSE: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}
   RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW || 'false' }}
   RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS || '24' }}
@@ -221,6 +222,9 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
           [[ "$RELEASE_BUS_V2_MODE" =~ ^(OFF|STAGING|PRODUCTION)$ ]]
+          if [ -n "$RELEASE_BUS_V2_BETA_ALLOWLIST" ]; then
+            jq -e 'type == "array" and length > 0' <<< "$RELEASE_BUS_V2_BETA_ALLOWLIST" > /dev/null
+          fi
           [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE" =~ ^(false|true)$ ]]
           [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW" =~ ^(false|true)$ ]]
           [[ "$RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS" =~ ^([1-9]|[1-9][0-9]|1[0-5][0-9]|16[0-8])$ ]]
@@ -238,6 +242,9 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
           [[ "$RELEASE_BUS_V2_MODE" =~ ^(OFF|STAGING|PRODUCTION)$ ]]
+          if [ -n "$RELEASE_BUS_V2_BETA_ALLOWLIST" ]; then
+            jq -e 'type == "array" and length > 0' <<< "$RELEASE_BUS_V2_BETA_ALLOWLIST" > /dev/null
+          fi
           [[ "$RELEASE_BUS_GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]]
           test -n "$RELEASE_BUS_GITHUB_PRIVATE_KEY"
           test -n "$RELEASE_BUS_GITHUB_WEBHOOK_SECRET"
@@ -557,6 +564,7 @@ jobs:
           RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}
           RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
           RELEASE_BUS_V2_MODE: ${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
+          RELEASE_BUS_V2_BETA_ALLOWLIST: ${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_BUS_GITHUB_INSTALLATION_ID"
@@ -570,6 +578,7 @@ jobs:
           RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}
           RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
           RELEASE_BUS_V2_MODE: ${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
+          RELEASE_BUS_V2_BETA_ALLOWLIST: ${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
         run: |
           set -euo pipefail
           set +x
@@ -588,9 +597,9 @@ jobs:
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
           jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
           if [ "${{ github.event.inputs.environment }}" = prod ]; then
-            jq --arg mode "$RELEASE_BUS_MODE" --arg v2Mode "$RELEASE_BUS_V2_MODE" --arg appId "$RELEASE_BUS_GITHUB_APP_ID" --arg installationId "$RELEASE_BUS_GITHUB_INSTALLATION_ID" '. + {RELEASE_BUS_MODE: $mode, RELEASE_BUS_V2_MODE: $v2Mode, RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+            jq --arg mode "$RELEASE_BUS_MODE" --arg v2Mode "$RELEASE_BUS_V2_MODE" --arg v2BetaAllowlist "$RELEASE_BUS_V2_BETA_ALLOWLIST" --arg appId "$RELEASE_BUS_GITHUB_APP_ID" --arg installationId "$RELEASE_BUS_GITHUB_INSTALLATION_ID" '. + {RELEASE_BUS_MODE: $mode, RELEASE_BUS_V2_MODE: $v2Mode, RELEASE_BUS_V2_BETA_ALLOWLIST: $v2BetaAllowlist, RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           else
-            jq '. + {RELEASE_BUS_MODE: "OFF", RELEASE_BUS_V2_MODE: "OFF"} | del(.RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+            jq '. + {RELEASE_BUS_MODE: "OFF", RELEASE_BUS_V2_MODE: "OFF"} | del(.RELEASE_BUS_V2_BETA_ALLOWLIST, .RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           fi
           jq '{Variables: .}' /tmp/runtime_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
