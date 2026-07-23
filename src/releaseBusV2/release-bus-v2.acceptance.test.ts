@@ -1647,7 +1647,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
         ...context,
         train: { ...production, backend_base_sha: '9'.repeat(40) }
       })
-    ).resolves.toMatchObject({ id: manifestId });
+    ).resolves.toBeNull();
 
     const frontendSourceMembershipIndex =
       state.repository.memberships.findIndex(

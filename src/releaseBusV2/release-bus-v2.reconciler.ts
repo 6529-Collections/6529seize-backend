@@ -877,7 +877,7 @@ export class ReleaseBusV2Reconciler {
     )
       return null;
     const manifest = await this.repository.findManifest(manifestIds[0], {});
-    if (!manifest || manifest.status !== 'STAGING_VALIDATED') return null;
+    if (manifest?.status !== 'STAGING_VALIDATED') return null;
     const sourceTrain = await this.repository.findTrain(manifest.train_id, {});
     if (!sourceTrain) return null;
     const sourceMemberships = await this.repository.listTrainCandidates(
@@ -906,13 +906,19 @@ export class ReleaseBusV2Reconciler {
     const hasBackend = candidates.some(
       ({ repository }) => repository === 'backend'
     );
-    // A repository absent from the subset is not deployed. It therefore needs
-    // no artifact digest, but its manifest SHA must still be the current base.
+    // A candidate-bearing composition is base-dependent: if main advanced,
+    // the exact set must be requalified rather than rewinding the shared ref.
+    // A repository absent from the subset is not deployed; it needs no digest,
+    // but its manifest SHA must still be the current base.
     if (
       !manifest.frontend_sha ||
       !manifest.backend_sha ||
       (hasFrontend && !manifest.frontend_artifact_digest) ||
       (hasBackend && !manifest.backend_artifact_digest) ||
+      (hasFrontend &&
+        sourceTrain.frontend_base_sha !== context.train.frontend_base_sha) ||
+      (hasBackend &&
+        sourceTrain.backend_base_sha !== context.train.backend_base_sha) ||
       (!hasFrontend &&
         manifest.frontend_sha !== context.train.frontend_base_sha) ||
       (!hasBackend && manifest.backend_sha !== context.train.backend_base_sha)
