@@ -256,6 +256,34 @@ describe('processRequest', () => {
     );
   });
 
+  it('uses the processing lock as the sole winner for concurrent completion', async () => {
+    const redis = buildRedis();
+    const generateAndPost = jest.fn().mockResolvedValue(undefined);
+    const completedRequest = {
+      ...request,
+      release_group_services: ['api'],
+      publish_release_note: true
+    };
+
+    await Promise.all([
+      processRequest(completedRequest, {
+        redis: redis as any,
+        generateAndPost
+      }),
+      processRequest(completedRequest, {
+        redis: redis as any,
+        generateAndPost
+      })
+    ]);
+
+    expect(generateAndPost).toHaveBeenCalledTimes(1);
+    expect(redis.set).toHaveBeenCalledWith(
+      'release-note:6529seize-backend:pr-1749:processing',
+      '1',
+      { NX: true, EX: 1200 }
+    );
+  });
+
   it('rejects a divergent release-group service set after the canonical set is persisted', async () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);

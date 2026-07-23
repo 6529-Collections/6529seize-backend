@@ -74,7 +74,7 @@ function canonicalServices(value) {
         .map((service) => service.trim())
         .filter(Boolean)
     )
-  ).sort((left, right) => left.localeCompare(right));
+  ).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 function parseReleaseNoteGroup(group, deployedService) {
@@ -89,7 +89,8 @@ function parseReleaseNoteGroup(group, deployedService) {
     group.pull_request_number <= 0 ||
     typeof group.publish_release_note !== 'boolean' ||
     !services.length ||
-    (deployedService && !services.includes(deployedService))
+    !deployedService ||
+    !services.includes(deployedService)
   ) {
     throw new Error('CI_RELEASE_NOTE_GROUPS contains an invalid group');
   }
@@ -113,8 +114,9 @@ function parseReleaseNoteGroups(value, deployedService) {
   const pullRequests = new Set(
     groups.map((group) => group.pull_request_number)
   );
-  if (pullRequests.size !== groups.length) {
-    throw new Error('CI_RELEASE_NOTE_GROUPS contains duplicate PR groups');
+  const groupIds = new Set(groups.map((group) => group.release_group_id));
+  if (pullRequests.size !== groups.length || groupIds.size !== groups.length) {
+    throw new Error('CI_RELEASE_NOTE_GROUPS contains duplicate groups');
   }
   return groups;
 }
@@ -201,21 +203,24 @@ if (
   process.exit(1);
 }
 const releaseNotesFields = isReleaseNotesEligible
-  ? {
-      release_notes_prompt_path: CI_RELEASE_NOTES_PROMPT_PATH,
-      release_group_id:
-        CI_RELEASE_GROUP_ID ||
-        (pullRequestNumber
-          ? `pr-${pullRequestNumber}`
-          : `${repository}:${runId}`),
-      release_group_services: releaseGroupServices,
-      pull_request_number: pullRequestNumber,
-      publish_release_note: CI_RELEASE_NOTE_PUBLISH === 'true',
-      ...(releaseNoteGroups?.length
-        ? { release_note_groups: releaseNoteGroups }
-        : {}),
-      deployed_at: new Date().toISOString()
-    }
+  ? releaseNoteGroups?.length
+    ? {
+        release_notes_prompt_path: CI_RELEASE_NOTES_PROMPT_PATH,
+        release_note_groups: releaseNoteGroups,
+        deployed_at: new Date().toISOString()
+      }
+    : {
+        release_notes_prompt_path: CI_RELEASE_NOTES_PROMPT_PATH,
+        release_group_id:
+          CI_RELEASE_GROUP_ID ||
+          (pullRequestNumber
+            ? `pr-${pullRequestNumber}`
+            : `${repository}:${runId}`),
+        release_group_services: releaseGroupServices,
+        pull_request_number: pullRequestNumber,
+        publish_release_note: CI_RELEASE_NOTE_PUBLISH === 'true',
+        deployed_at: new Date().toISOString()
+      }
   : {};
 
 const payload = {

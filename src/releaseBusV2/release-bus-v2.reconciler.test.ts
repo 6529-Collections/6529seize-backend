@@ -1,5 +1,6 @@
 import {
   backendGraph,
+  backendReleaseNoteInputs,
   backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
   candidateExclusionClosure,
@@ -100,7 +101,7 @@ describe('Release Bus v2 deterministic orchestration', () => {
         release_group_id: 'pr-1801',
         release_group_services: ['api', 'worker'],
         pull_request_number: 1801,
-        publish_release_note: false
+        publish_release_note: true
       },
       {
         release_group_id: 'pr-1802',
@@ -132,6 +133,60 @@ describe('Release Bus v2 deterministic orchestration', () => {
       units: ['api'],
       edges: [],
       publish_release_notes: false
+    });
+  });
+
+  it('serializes mixed overlapping groups and explicit opt-outs unambiguously', () => {
+    const first = {
+      ...candidate('first', 'd'.repeat(40)),
+      pr_number: 1801,
+      deploy_plan_json: { units: ['worker', 'api'], edges: [] }
+    };
+    const second = {
+      ...candidate('second', 'e'.repeat(40)),
+      pr_number: 1802,
+      deploy_plan_json: { units: ['api'], edges: [] }
+    };
+    const internal = {
+      ...candidate('internal', 'f'.repeat(40)),
+      pr_number: 1803,
+      deploy_plan_json: {
+        units: ['releaseBus'],
+        edges: [],
+        publish_release_notes: false
+      }
+    };
+
+    expect(
+      backendReleaseNoteInputs([first, second, internal], 'api', 'prod')
+    ).toEqual({
+      release_pull_request: '',
+      release_group_services: '',
+      release_note_publish: 'false',
+      release_note_groups: JSON.stringify([
+        {
+          release_group_id: 'pr-1801',
+          release_group_services: ['api', 'worker'],
+          pull_request_number: 1801,
+          publish_release_note: true
+        },
+        {
+          release_group_id: 'pr-1802',
+          release_group_services: ['api'],
+          pull_request_number: 1802,
+          publish_release_note: true
+        }
+      ]),
+      release_note_opt_out: 'false'
+    });
+    expect(
+      backendReleaseNoteInputs([first, second, internal], 'releaseBus', 'prod')
+    ).toEqual({
+      release_pull_request: '',
+      release_group_services: '',
+      release_note_publish: 'false',
+      release_note_groups: '[]',
+      release_note_opt_out: 'true'
     });
   });
 

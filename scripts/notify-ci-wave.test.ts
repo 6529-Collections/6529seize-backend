@@ -91,6 +91,80 @@ describe('notify-ci-wave release-note metadata', () => {
         ]
       }
     });
+    expect(result.payload).not.toHaveProperty('release_group_id');
+    expect(result.payload).not.toHaveProperty('release_group_services');
+    expect(result.payload).not.toHaveProperty('pull_request_number');
+    expect(result.payload).not.toHaveProperty('publish_release_note');
+  });
+
+  it('sends overlapping structured groups for the deployed service', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_PULL_REQUEST: '9999',
+      CI_RELEASE_GROUP_SERVICES: 'wrongLegacyService',
+      CI_RELEASE_NOTE_PUBLISH: 'false',
+      CI_RELEASE_NOTE_GROUPS: JSON.stringify([
+        {
+          release_group_id: 'pr-1801',
+          release_group_services: ['worker', 'api'],
+          pull_request_number: 1801,
+          publish_release_note: true
+        },
+        {
+          release_group_id: 'pr-1802',
+          release_group_services: ['api'],
+          pull_request_number: 1802,
+          publish_release_note: true
+        }
+      ])
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.payload?.release_note_groups).toHaveLength(2);
+    expect(result.payload).not.toHaveProperty('release_group_id');
+    expect(result.payload).not.toHaveProperty('pull_request_number');
+  });
+
+  it('rejects structured groups without a deployed service', async () => {
+    const result = await runNotifier({
+      CI_PIPELINES_SERVICE: '',
+      CI_RELEASE_NOTE_GROUPS: JSON.stringify([
+        {
+          release_group_id: 'pr-1801',
+          release_group_services: ['api'],
+          pull_request_number: 1801,
+          publish_release_note: true
+        }
+      ])
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'CI_RELEASE_NOTE_GROUPS contains an invalid group'
+    );
+  });
+
+  it('rejects duplicate structured group ids', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_NOTE_GROUPS: JSON.stringify([
+        {
+          release_group_id: 'same-group',
+          release_group_services: ['api'],
+          pull_request_number: 1801,
+          publish_release_note: true
+        },
+        {
+          release_group_id: 'same-group',
+          release_group_services: ['api'],
+          pull_request_number: 1802,
+          publish_release_note: true
+        }
+      ])
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'CI_RELEASE_NOTE_GROUPS contains duplicate groups'
+    );
   });
 
   it('never sends release-note fields for staging', async () => {

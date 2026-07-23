@@ -88,6 +88,10 @@ function normalizeOptionalValue(
   return trimmed || null;
 }
 
+function compareInvariant(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function requestedReleaseNoteGroups(
   request: CiPipelineAlertRequest
 ): CiPipelineReleaseNoteGroup[] {
@@ -116,7 +120,7 @@ function normalizeReleaseNoteGroup(
         .map((groupService) => groupService.trim())
         .filter(Boolean)
     )
-  ).sort((left, right) => left.localeCompare(right));
+  ).sort(compareInvariant);
   const pullRequestNumber = group.pull_request_number || null;
   if (
     !releaseGroupId ||
@@ -359,6 +363,7 @@ export class CiPipelineAlertService {
       return;
     }
 
+    const structuredGroups = request.release_note_groups !== undefined;
     for (const group of requestedReleaseNoteGroups(request)) {
       const normalizedGroup = normalizeReleaseNoteGroup(
         group,
@@ -366,6 +371,11 @@ export class CiPipelineAlertService {
         isBackendRelease
       );
       if (!normalizedGroup) {
+        if (structuredGroups) {
+          throw new Error(
+            `Malformed structured release-note group ${group.release_group_id || 'missing'} for ${request.repo} run ${request.run_id}`
+          );
+        }
         this.logger.warn(
           `Skipping malformed release-note group ${group.release_group_id || 'missing'} for ${request.repo} run ${request.run_id}`
         );

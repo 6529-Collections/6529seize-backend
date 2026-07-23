@@ -73,7 +73,11 @@ signal unless the candidate explicitly opts out.
    staging deployment or validation. Re-fetch `main` and preserve dependency
    order. Pass the same merged PR number and full canonical service set to every
    backend production run; set `release_note_publish=true` only on the final
-   sequential service. Never author or post the note—the autonomous bot owns it.
+   sequential service. For an explicitly authorized internal operation that
+   must not create a release note, omit the PR/group metadata, set
+   `release_note_opt_out=true`, and leave `release_note_publish=false`; opt-out
+   and publish are mutually exclusive. Never author or post the note—the
+   autonomous bot owns it.
 
 ## Monitoring and recovery
 
