@@ -91,6 +91,11 @@ type StagingIdleSnapshot = {
   readonly backend_staging_sha: string | null;
 };
 
+type StagingIdleHandshakeSnapshot = StagingIdleSnapshot & {
+  readonly workflow_fence_started_at: number;
+  readonly verified_at: number;
+};
+
 type ProductionIdleSnapshot = {
   readonly frontend_main_sha: string;
   readonly backend_main_sha: string;
@@ -1377,6 +1382,9 @@ export class ReleaseBusV2Reconciler {
     const requiresBetaIdleHandshake =
       getReleaseBusV2Mode() === 'OFF' &&
       ['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status);
+    const workflowFenceStartedAt = requiresBetaIdleHandshake
+      ? Date.now()
+      : null;
     const beforeLock = requiresBetaIdleHandshake
       ? await this.captureStagingIdleSnapshot()
       : null;
@@ -1433,6 +1441,7 @@ export class ReleaseBusV2Reconciler {
             ...afterLock,
             beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
             staging_lock: 'owned',
+            workflow_fence_started_at: workflowFenceStartedAt,
             verified_at: Date.now()
           }
         },
@@ -1527,6 +1536,90 @@ export class ReleaseBusV2Reconciler {
         return;
       }
       if (e2e.status !== 'SUCCEEDED') return;
+      if (getReleaseBusV2Mode() === 'OFF') {
+        const handshake = await this.findStagingIdleHandshake(train.id);
+        if (!handshake) {
+          if (train.manifest_id)
+            await this.repository.updateManifestStatus(
+              train.manifest_id,
+              'FAILED',
+              e2e.external_id,
+              {}
+            );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'BETA_STAGING_FINAL_FENCE_MISSING',
+              actor: 'release-bus-v2-beta',
+              payload: { e2e_run_id: e2e.external_id }
+            },
+            {}
+          );
+          await this.failTrain(
+            train,
+            'CONTROL_PLANE',
+            'Beta staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence',
+            lease
+          );
+          return;
+        }
+        const operationRunIds = (
+          await this.repository.listOperations(train.id, {})
+        )
+          .map(({ external_id }) => external_id)
+          .filter((runId): runId is string => runId !== null);
+        const currentSnapshot = await this.captureStagingIdleSnapshot({
+          since: handshake.workflow_fence_started_at,
+          ignoredRunIds: operationRunIds
+        });
+        const stable =
+          currentSnapshot !== null &&
+          currentSnapshot.frontend_staging_sha ===
+            handshake.frontend_staging_sha &&
+          currentSnapshot.backend_staging_sha === handshake.backend_staging_sha;
+        if (!stable) {
+          if (train.manifest_id)
+            await this.repository.updateManifestStatus(
+              train.manifest_id,
+              'FAILED',
+              e2e.external_id,
+              {}
+            );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'BETA_STAGING_FINAL_FENCE_VIOLATED',
+              actor: 'release-bus-v2-beta',
+              payload: {
+                handshake,
+                current_snapshot: currentSnapshot,
+                ignored_train_run_ids: operationRunIds
+              }
+            },
+            {}
+          );
+          await this.failTrain(
+            train,
+            'CONTROL_PLANE',
+            'Shared staging refs or deploy/E2E workflows changed after the beta idle handshake; successful E2E cannot validate a mixed environment',
+            lease
+          );
+          return;
+        }
+        await this.repository.appendEvent(
+          {
+            trainId: train.id,
+            eventType: 'BETA_STAGING_FINAL_FENCE_VERIFIED',
+            actor: 'release-bus-v2-beta',
+            payload: {
+              ...currentSnapshot,
+              handshake_verified_at: handshake.verified_at,
+              verified_at: Date.now()
+            }
+          },
+          {}
+        );
+      }
       if (train.manifest_id)
         await this.repository.updateManifestStatus(
           train.manifest_id,
@@ -1549,11 +1642,26 @@ export class ReleaseBusV2Reconciler {
     }
   }
 
-  private async captureStagingIdleSnapshot(): Promise<StagingIdleSnapshot | null> {
+  private async captureStagingIdleSnapshot(fence?: {
+    readonly since: number;
+    readonly ignoredRunIds: readonly string[];
+  }): Promise<StagingIdleSnapshot | null> {
     const [frontendActive, backendActive, frontendSha, backendSha] =
       await Promise.all([
-        releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun('frontend'),
-        releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun('backend'),
+        fence
+          ? releaseBusGitHubApp.hasStagingMutationOrE2ERunSince(
+              'frontend',
+              fence.since,
+              fence.ignoredRunIds
+            )
+          : releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun('frontend'),
+        fence
+          ? releaseBusGitHubApp.hasStagingMutationOrE2ERunSince(
+              'backend',
+              fence.since,
+              fence.ignoredRunIds
+            )
+          : releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun('backend'),
         releaseBusGitHubApp.resolveRefIfExists('frontend', '1a-staging'),
         releaseBusGitHubApp.resolveRefIfExists('backend', '1a-staging')
       ]);
@@ -1562,6 +1670,48 @@ export class ReleaseBusV2Reconciler {
       frontend_staging_sha: frontendSha,
       backend_staging_sha: backendSha
     };
+  }
+
+  private async findStagingIdleHandshake(
+    trainId: string
+  ): Promise<StagingIdleHandshakeSnapshot | null> {
+    const event = (await this.repository.listEvents(trainId, 200, {})).find(
+      ({ event_type }) => event_type === 'BETA_STAGING_IDLE_HANDSHAKE'
+    );
+    if (!event) return null;
+    let payload: Partial<StagingIdleHandshakeSnapshot> | null;
+    try {
+      payload = parseStoredJson<Partial<StagingIdleHandshakeSnapshot>>(
+        event.payload_json
+      );
+    } catch {
+      return null;
+    }
+    if (
+      !payload ||
+      !Number.isInteger(payload.workflow_fence_started_at) ||
+      Number(payload.workflow_fence_started_at) < 1 ||
+      !Number.isInteger(payload.verified_at) ||
+      Number(payload.verified_at) < 1 ||
+      Number(payload.workflow_fence_started_at) > Number(payload.verified_at) ||
+      !this.isOptionalSha(payload.frontend_staging_sha) ||
+      !this.isOptionalSha(payload.backend_staging_sha)
+    )
+      return null;
+    return {
+      workflow_fence_started_at: Number(payload.workflow_fence_started_at),
+      verified_at: Number(payload.verified_at),
+      frontend_staging_sha: payload.frontend_staging_sha ?? null,
+      backend_staging_sha: payload.backend_staging_sha ?? null
+    };
+  }
+
+  private isOptionalSha(value: unknown): value is string | null | undefined {
+    return (
+      value === null ||
+      value === undefined ||
+      (typeof value === 'string' && /^[a-f0-9]{40}$/.test(value))
+    );
   }
 
   private async advanceProduction(context: TrainContext): Promise<void> {
