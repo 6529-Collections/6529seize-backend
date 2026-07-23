@@ -1,4 +1,9 @@
 import { Logger } from '../logging';
+import {
+  membershipRefreshProducer,
+  MembershipCriteriaDimension,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 import * as sentryContext from '../sentry.context';
 import { doInDbContext } from '../secrets';
 import { RequestContext } from '../request.context';
@@ -128,7 +133,12 @@ export const handler = sentryContext.wrapLambdaHandler(
         };
         logger.info(`Loop phase ${work.phase} started`);
         if (work.phase === XTDH_LOOP_PHASE.STATS) {
+          await membershipRefreshProducer.markGroupsByDimensionDirty(
+            MembershipCriteriaDimension.TDH_LEVEL,
+            MembershipRefreshReason.TDH_XTDH_CHANGED
+          );
           await recalculateXTdhUseCase.handleStatsPhase(ctx);
+          await membershipRefreshProducer.enqueueDirtyRefreshBestEffort();
         } else {
           await recalculateXTdhUseCase.handleUniversePhase(ctx, {
             messageGroupId: work.messageGroupId,

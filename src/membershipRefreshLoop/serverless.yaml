@@ -1,0 +1,212 @@
+service: membershipRefreshLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 2048
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  membershipRefreshLoop:
+    handler: index.handler
+    reservedConcurrency: 1
+    name: membershipRefreshLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - MembershipRefreshStartQueue
+              - Arn
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - MembershipDirtyRefreshQueue
+              - Arn
+      - schedule:
+          rate: rate(1 minute)
+          input:
+            mode: 'DIRTY'
+      - schedule:
+          rate: cron(0 2 * * ? *)
+          input:
+            mode: 'FULL'
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'membershipRefreshLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    MembershipRefreshLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/membershipRefreshLoop
+        RetentionInDays: 60
+
+    MembershipRefreshStartQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: membership-refresh-start.fifo
+        FifoQueue: true
+        VisibilityTimeout: 1000
+        ContentBasedDeduplication: true
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [MembershipDirtyRefreshDLQ, Arn]
+          maxReceiveCount: 5
+
+    MembershipDirtyRefreshQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: membership-refresh-dirty.fifo
+        FifoQueue: true
+        VisibilityTimeout: 1000
+        ContentBasedDeduplication: true
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [MembershipDirtyRefreshDLQ, Arn]
+          maxReceiveCount: 5
+
+    MembershipDirtyRefreshDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: membership-refresh-dirty-dlq.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+
+    MembershipDirtyRefreshQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: MembershipDirtyRefreshQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:GetQueueUrl
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+                - sqs:ChangeMessageVisibility
+              Resource:
+                - !GetAtt MembershipDirtyRefreshQueue.Arn
+
+    MembershipDirtyRefreshDLQPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: MembershipDirtyRefreshDLQ
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt MembershipDirtyRefreshDLQ.Arn
+
+    MembershipRefreshLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - MembershipRefreshLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: MembershipRefreshLoopLogGroup
+        FilterPattern: Runtime.OutOfMemory
+        MetricTransformations:
+          - MetricNamespace: Lambda/OOM
+            MetricName: membershipRefreshLoop_OOMErrorCount
+            MetricValue: '1'
+            DefaultValue: 0
+
+    MembershipRefreshLoopPoisonFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - MembershipRefreshLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: MembershipRefreshLoopLogGroup
+        FilterPattern: MEMBERSHIP_REFRESH_POISON
+        MetricTransformations:
+          - MetricNamespace: Lambda/Eligibility
+            MetricName: membershipRefreshLoop_PoisonTargetCount
+            MetricValue: '1'
+            DefaultValue: 0
+
+    MembershipRefreshLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MembershipRefreshLoopOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-membershipRefreshLoop-OOM'
+        AlarmDescription: !Sub 'Lambda membershipRefreshLoop OutOfMemory in ${AWS::Region}'
+        Namespace: Lambda/OOM
+        MetricName: membershipRefreshLoop_OOMErrorCount
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MembershipDirtyRefreshDLQAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-membershipRefreshLoop-DLQ'
+        AlarmDescription: Membership refresh requests reached the DLQ
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt: [MembershipDirtyRefreshDLQ, QueueName]
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MembershipRefreshLoopPoisonAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MembershipRefreshLoopPoisonFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-membershipRefreshLoop-PoisonTarget'
+        AlarmDescription: Membership refresh target exhausted its retry budget
+        Namespace: Lambda/Eligibility
+        MetricName: membershipRefreshLoop_PoisonTargetCount
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

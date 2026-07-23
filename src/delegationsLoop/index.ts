@@ -46,6 +46,11 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { Logger } from '../logging';
+import {
+  membershipRefreshProducer,
+  MembershipCriteriaDimension,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { doInDbContext } from '../secrets';
@@ -187,6 +192,10 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     const lastTDHCalc = Time.latestUtcMidnight().toDate();
     const walletsArray = Array.from(affectedWallets);
 
+    await membershipRefreshProducer.markGroupsByDimensionDirty(
+      MembershipCriteriaDimension.ALL,
+      MembershipRefreshReason.CONSOLIDATION_CHANGED
+    );
     const { block, blockTimestamp } = await updateTDH(
       lastTDHCalc,
       walletsArray
@@ -196,6 +205,7 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     await consolidateOwnerBalances(affectedWallets);
     await consolidateActivity(affectedWallets);
     await consolidateSubscriptions(affectedWallets);
+    await membershipRefreshProducer.enqueueDirtyRefreshBestEffort();
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }

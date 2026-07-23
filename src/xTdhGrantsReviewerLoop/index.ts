@@ -4,6 +4,7 @@ import { doInDbContext } from '../secrets';
 import { Timer } from '../time';
 import { RequestContext } from '../request.context';
 import { reviewXTdhGrantUseCase } from '../xtdh/review-xtdh-grants-in-queue.use-case';
+import { membershipRefreshProducer } from '../membership/membership-refresh.producer';
 
 const logger = Logger.get('TDH_GRANTS_REVIEWER_LOOP');
 
@@ -14,6 +15,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         timer: new Timer('TDH_GRANTS_REVIEWER_LOOP')
       };
       await reviewXTdhGrantUseCase.handle(ctx);
+      await membershipRefreshProducer.enqueueDirtyRefreshBestEffort();
       logger.info(ctx.timer!.getReport());
     },
     {

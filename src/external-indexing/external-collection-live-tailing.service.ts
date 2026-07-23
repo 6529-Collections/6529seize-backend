@@ -15,6 +15,11 @@ import {
   externalCollectionSaleDetector,
   ExternalCollectionSaleDetector
 } from './external-collection-sale-detector';
+import {
+  membershipRefreshProducer,
+  MembershipCriteriaDimension,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 
 const PUNKS_ABI_EVENTS = [
   'event PunkTransfer(address indexed from, address indexed to, uint256 punkIndex)',
@@ -179,6 +184,13 @@ export class ExternalCollectionLiveTailService {
 
     const events = await this.normalizeTransferLogs(contract, rawLogs);
     const now = Time.currentMillis();
+    if (events.length > 0) {
+      await membershipRefreshProducer.markGroupsByDimensionDirty(
+        MembershipCriteriaDimension.GRANT,
+        MembershipRefreshReason.GRANT_CHANGED,
+        ctx
+      );
+    }
 
     // ✅ Per-tx memo so we call the detector at most once per transaction
     const saleByTx = new Map<string, Promise<boolean>>();
@@ -270,7 +282,7 @@ export class ExternalCollectionLiveTailService {
     return { events: events.length, lastBlockProcessed: toBlock };
   }
 
-  public async liveTailCycle() {
+  public async liveTailCycle(): Promise<number> {
     const timer = new Timer(`${this.constructor.name}`);
     const ctx: RequestContext = { timer };
     this.log.info('Starting live tail cycle...');
@@ -282,13 +294,14 @@ export class ExternalCollectionLiveTailService {
       );
       if (collections.length === 0) {
         this.log.info('No collections in LIVE_TAILING state');
-        return;
+        return 0;
       }
 
       const best = await this.getBestBlock();
       const reorgDepth = env.getIntOrThrow('NFT_INDEXER_REORG_DEPTH_BLOCKS');
       const safeTarget = best - reorgDepth;
       const range = env.getIntOrNull('NFT_INDEXER_LIVE_TAIL_RANGE') ?? 2000;
+      let processedEvents = 0;
 
       for (const c of collections) {
         const {
@@ -324,12 +337,13 @@ export class ExternalCollectionLiveTailService {
         }
 
         try {
-          const { lastBlockProcessed } = await this.processLiveRange(
+          const { events, lastBlockProcessed } = await this.processLiveRange(
             { partition, chain, contract },
             fromBlock,
             toBlock,
             ctx
           );
+          processedEvents += events;
 
           const safeTs =
             safeTarget > 0
@@ -359,6 +373,7 @@ export class ExternalCollectionLiveTailService {
       this.log.info(
         `Live tail cycle complete: processed ${collections.length} collections`
       );
+      return processedEvents;
     } finally {
       this.log.info(`[liveTailCycle timing report ${ctx.timer?.getReport()}]`);
     }

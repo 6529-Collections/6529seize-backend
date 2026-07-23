@@ -82,6 +82,11 @@ import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 import { Logger } from '@/logging';
+import { membershipMaterializedReader } from '@/membership/membership-materialized.reader';
+import {
+  membershipRefreshProducer,
+  MembershipRefreshReason
+} from '@/membership/membership-refresh.producer';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -258,6 +263,13 @@ export class UserGroupsService {
             },
             connection
           );
+          if (isVisible) {
+            await membershipRefreshProducer.markGroupsDirty(
+              [id],
+              MembershipRefreshReason.GROUP_CHANGED,
+              ctxWithConnection
+            );
+          }
           await this.metricsRecorder.recordActiveIdentity(
             { identityId: createdBy },
             ctxWithConnection
@@ -265,6 +277,7 @@ export class UserGroupsService {
           return await this.getByIdOrThrow(id, ctxWithConnection);
         }
       );
+    await membershipRefreshProducer.enqueueDirtyRefreshBestEffort();
     await giveReadReplicaTimeToCatchUp();
     if (this.isNewGroupEligibilityScopedToItsMembers(group)) {
       // Inclusion-list-only group: every listed (and excluded) member already
@@ -943,7 +956,7 @@ export class UserGroupsService {
         );
       }
 
-      const promise = this.getGroupsUserIsEligibleForWithCache(
+      const promise = this.getGroupsUserIsEligibleForByReadMode(
         profileId,
         timer
       );
@@ -956,6 +969,33 @@ export class UserGroupsService {
         }
       }
     });
+  }
+
+  private async getGroupsUserIsEligibleForByReadMode(
+    profileId: string,
+    timer?: Timer
+  ): Promise<string[]> {
+    const readMode = membershipMaterializedReader.getReadMode();
+    const materialized =
+      await membershipMaterializedReader.getEligibleGroupIdsIfReady(profileId, {
+        timer
+      });
+    if (readMode === 'materialized' && materialized !== null) {
+      this.logEligibilityRead({
+        profileId,
+        level: 'materialized',
+        resultCount: materialized.length
+      });
+      return materialized;
+    }
+    const legacy = await this.getGroupsUserIsEligibleForWithCache(
+      profileId,
+      timer
+    );
+    if (readMode === 'shadow' && materialized !== null) {
+      this.logMaterializedShadowComparison(profileId, legacy, materialized);
+    }
+    return legacy;
   }
 
   private async getGroupsUserIsEligibleForWithCache(
@@ -1035,7 +1075,10 @@ export class UserGroupsService {
     }
 
     const computeStartMillis = Time.currentMillis();
-    const results = await this.computeGroupsUserIsEligibleFor(profileId, timer);
+    const results = await this.computeGroupsUserIsEligibleForUncached(
+      profileId,
+      timer
+    );
     const computedAtMillis = Time.currentMillis();
     const latestProfileGroupChangeMillisAfterCompute = await this.timeAsync(
       timer,
@@ -1082,7 +1125,7 @@ export class UserGroupsService {
 
   private logEligibilityRead(param: {
     readonly profileId: string;
-    readonly level: 'redis' | 'lock_wait' | 'computed';
+    readonly level: 'materialized' | 'redis' | 'lock_wait' | 'computed';
     readonly computeMs?: number;
     readonly resultCount: number;
     readonly cached?: boolean;
@@ -1090,6 +1133,25 @@ export class UserGroupsService {
     // Memory-cache hits are deliberately not logged: they are the dominant
     // path and would flood the logs without adding attribution value.
     logger.info(`[ELIGIBILITY_READ] ${JSON.stringify(param)}`);
+  }
+
+  private logMaterializedShadowComparison(
+    profileId: string,
+    legacy: string[],
+    materialized: string[]
+  ): void {
+    const legacySet = new Set(legacy);
+    const materializedSet = new Set(materialized);
+    const missing = legacy.filter((groupId) => !materializedSet.has(groupId));
+    const extra = materialized.filter((groupId) => !legacySet.has(groupId));
+    logger.info(
+      `[ELIGIBILITY_MATERIALIZED_SHADOW] ${JSON.stringify({
+        profileId,
+        matches: missing.length === 0 && extra.length === 0,
+        missing,
+        extra
+      })}`
+    );
   }
 
   private hasProfileGroupChangeAdvanced(
@@ -1105,7 +1167,7 @@ export class UserGroupsService {
     return afterMillis > beforeMillis;
   }
 
-  private async computeGroupsUserIsEligibleFor(
+  public async computeGroupsUserIsEligibleForUncached(
     profileId: string,
     timer?: Timer | undefined
   ): Promise<string[]> {
@@ -1383,6 +1445,11 @@ export class UserGroupsService {
             },
             connection
           );
+          await membershipRefreshProducer.markGroupsDirty(
+            [group_id, ...(old_version_id ? [old_version_id] : [])],
+            MembershipRefreshReason.GROUP_CHANGED,
+            ctxWithConnection
+          );
           await this.metricsRecorder.recordActiveIdentity(
             { identityId: profile_id },
             ctxWithConnection
@@ -1396,6 +1463,7 @@ export class UserGroupsService {
           };
         }
       );
+    await membershipRefreshProducer.enqueueDirtyRefreshBestEffort();
     await giveReadReplicaTimeToCatchUp();
     await this.invalidateEligibilityCachesAfterVisibilityChange(
       updatedGroup,
@@ -1497,6 +1565,11 @@ export class UserGroupsService {
       await evictWaveGroupsEntityCache();
       return;
     }
+    await membershipRefreshProducer.requestGroupsDirtyBestEffort(
+      distinctGroupIds,
+      MembershipRefreshReason.WAVE_GROUP_CHANGED,
+      ctx
+    );
     const groupEntities = await this.userGroupsDb.getByIds(
       distinctGroupIds,
       ctx

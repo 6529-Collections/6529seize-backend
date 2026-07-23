@@ -9,16 +9,25 @@ import {
   ADDRESS_CONSOLIDATION_KEY,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
   IDENTITIES_TABLE,
+  MEMBERSHIP_REFRESH_REQUESTS_TABLE,
   NFT_OWNERS_TABLE,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE,
-  XTDH_STATS_META_TABLE
+  XTDH_STATS_META_TABLE,
+  USER_GROUP_MEMBERS_TABLE
 } from '@/constants';
 import { withUserGroups } from '@/tests/fixtures/user-group.fixture';
 import { withWaves } from '@/tests/fixtures/wave.fixture';
 import { loadMaterializedVectors, MaterializedVector } from './vector-loader';
+import { membershipMaterializationService } from '@/membership/membership-materialization.service';
+import { membershipMaterializedReader } from '@/membership/membership-materialized.reader';
+import {
+  MembershipCriteriaDimension,
+  membershipRefreshProducer,
+  MembershipRefreshReason
+} from '@/membership/membership-refresh.producer';
 
 /**
  * Set-based SQL conformance harness (docs/eligibility-spec.md,
@@ -188,6 +197,117 @@ describeWithSeed(
         }
       }
       expect(failures).toEqual([]);
+    });
+
+    it('materializes the generated member sets without changing their meaning', async () => {
+      const groupIds = Array.from(
+        new Set(
+          vectors.flatMap((vector) =>
+            vector.groupEntities.map((group) => group.id)
+          )
+        )
+      );
+      for (const groupId of groupIds) {
+        await membershipMaterializationService.refreshGroup(groupId);
+      }
+
+      const failures: string[] = [];
+      for (const vector of vectors) {
+        const rows = await sqlExecutor.execute<{ group_id: string }>(
+          `
+          select group_id
+          from ${USER_GROUP_MEMBERS_TABLE}
+          where profile_id = :profileId
+            and group_id in (:groupIds)
+          order by group_id asc
+          `,
+          {
+            profileId: vector.subjectProfileId,
+            groupIds: vector.groupEntities.map((group) => group.id)
+          }
+        );
+        const actual = rows.map((row) => row.group_id);
+        const expected = [...vector.expectedEligibleGroupIds].sort((a, b) =>
+          a.localeCompare(b)
+        );
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+          failures.push(
+            `[${vector.name}] materialized rows: got [${actual.join(', ')}], spec expects [${expected.join(', ')}]`
+          );
+        }
+      }
+      expect(failures).toEqual([]);
+    });
+
+    it('completes a full backfill and fails closed after a profile is dirtied', async () => {
+      const result =
+        await membershipMaterializationService.refreshAllMemberships({
+          batchSize: 100,
+          maxBatches: 10
+        });
+      expect(result.finalized).toBe(true);
+      expect(result.hasMore).toBe(false);
+
+      const previousReadMode = process.env.ELIGIBILITY_READ_MODE;
+      process.env.ELIGIBILITY_READ_MODE = 'materialized';
+      try {
+        for (const vector of vectors) {
+          const vectorGroupIds = new Set(
+            vector.groupEntities.map((group) => group.id)
+          );
+          const materialized =
+            await membershipMaterializedReader.getEligibleGroupIdsIfReady(
+              vector.subjectProfileId
+            );
+          const actual = (materialized ?? [])
+            .filter((groupId) => vectorGroupIds.has(groupId))
+            .sort((a, b) => a.localeCompare(b));
+          const expected = [...vector.expectedEligibleGroupIds].sort((a, b) =>
+            a.localeCompare(b)
+          );
+          expect(actual).toEqual(expected);
+        }
+
+        const dirtyProfileId = vectors[0].subjectProfileId;
+        await membershipRefreshProducer.markProfilesDirty(
+          [dirtyProfileId],
+          MembershipRefreshReason.RATING_CHANGED
+        );
+        await expect(
+          membershipMaterializedReader.getEligibleGroupIdsIfReady(
+            dirtyProfileId
+          )
+        ).resolves.toBeNull();
+
+        await sqlExecutor.execute(
+          `delete from ${MEMBERSHIP_REFRESH_REQUESTS_TABLE}`
+        );
+        await membershipRefreshProducer.markGroupsByDimensionDirty(
+          MembershipCriteriaDimension.TDH_LEVEL,
+          MembershipRefreshReason.TDH_XTDH_CHANGED
+        );
+        const groupDirtyRows = await sqlExecutor.execute<{
+          readonly target_id: string;
+        }>(
+          `
+          select target_id
+          from ${MEMBERSHIP_REFRESH_REQUESTS_TABLE}
+          where scope = 'GROUP'
+          `
+        );
+        expect(groupDirtyRows.length).toBeGreaterThan(0);
+        await expect(
+          membershipMaterializedReader.getEligibleGroupIdsIfReady(
+            vectors[1].subjectProfileId
+          )
+        ).resolves.toBeNull();
+      } finally {
+        if (previousReadMode === undefined) {
+          delete process.env.ELIGIBILITY_READ_MODE;
+        } else {
+          process.env.ELIGIBILITY_READ_MODE = previousReadMode;
+        }
+      }
     });
   }
 );
