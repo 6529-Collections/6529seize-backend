@@ -563,6 +563,108 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.service.claimLane).not.toHaveBeenCalled();
   });
 
+  it('pauses only production for an invalid STAGING-mode beta allowlist', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = 'not-json';
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-invalid-production-beta')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.setPaused).toHaveBeenCalledWith(
+      'PRODUCTION',
+      true,
+      expect.stringContaining('staging remains enabled'),
+      'release-bus-v2-beta'
+    );
+    expect(state.service.claimLane).toHaveBeenCalledTimes(1);
+    expect(state.service.claimLane).toHaveBeenCalledWith(
+      'STAGING',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-invalid-production-beta:staging'
+    );
+  });
+
+  it('claims ordinary staging and allowlisted production independently in STAGING mode', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-1',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-production-subset-one',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-staging-production-beta')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.claimLane).toHaveBeenNthCalledWith(
+      1,
+      'STAGING',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-staging-production-beta:staging'
+    );
+    expect(state.service.claimLane).toHaveBeenNthCalledWith(
+      2,
+      'PRODUCTION',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-staging-production-beta:production'
+    );
+  });
+
+  it('does not advance an unallowlisted production train in STAGING mode', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-1',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-production-subset-one',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { lane: 'PRODUCTION', status: 'PREPARED' })
+    );
+    state.service.isBetaTrainAllowed.mockResolvedValue(false);
+
+    await expect(
+      state.reconciler.runOnce('acceptance-unlisted-production-train')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.repository.trains.get('train-1')?.status).toBe('PREPARED');
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+  });
+
   it('enters the OFF beta lane but does not advance an unallowlisted active train', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'OFF';

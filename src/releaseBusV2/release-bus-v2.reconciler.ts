@@ -10,6 +10,7 @@ import {
   releaseBusV2BetaAllowsCandidate,
   releaseBusV2BetaInfrastructureFailureInjection,
   releaseBusV2BetaAllowsLane,
+  releaseBusV2BetaAllowsLaneInMode,
   type ReleaseBusV2BetaEntry
 } from '@/releaseBusV2/release-bus-v2.config';
 import {
@@ -484,22 +485,27 @@ export class ReleaseBusV2Reconciler {
     const claimed: string[] = [];
     await this.releaseTerminalEnvironmentLocks();
     let betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [];
-    if (mode === 'OFF') {
+    if (mode === 'OFF' || mode === 'STAGING') {
       try {
         betaAllowlist = getReleaseBusV2BetaAllowlist();
       } catch {
+        const scope = mode === 'OFF' ? 'ALL' : 'PRODUCTION';
         const controls = await this.repository.listControls({});
-        const allControl = controls.find(({ scope }) => scope === 'ALL');
-        if (!allControl?.paused)
+        const control = controls.find((item) => item.scope === scope);
+        if (!control?.paused)
           await this.service.setPaused(
-            'ALL',
+            scope,
             true,
-            'Release Bus v2 OFF beta allowlist is invalid; automation remains disabled',
+            mode === 'OFF'
+              ? 'Release Bus v2 OFF beta allowlist is invalid; automation remains disabled'
+              : 'Release Bus v2 production beta allowlist is invalid; staging remains enabled',
             'release-bus-v2-beta'
           );
-        return { mode, claimed, advanced: [] };
+        if (mode === 'OFF') return { mode, claimed, advanced: [] };
+        betaAllowlist = [];
       }
-      if (betaAllowlist.length === 0) return { mode, claimed, advanced: [] };
+      if (mode === 'OFF' && betaAllowlist.length === 0)
+        return { mode, claimed, advanced: [] };
     }
     const controls = await this.repository.listControls({});
     const isPaused = (scope: 'ALL' | 'STAGING' | 'PRODUCTION') =>
@@ -513,11 +519,10 @@ export class ReleaseBusV2Reconciler {
     const productionEnabled =
       !isPaused('PRODUCTION') &&
       (mode === 'PRODUCTION' ||
-        (mode === 'OFF' &&
-          releaseBusV2BetaAllowsLane(betaAllowlist, 'PRODUCTION')));
+        releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION'));
     if (stagingEnabled || productionEnabled) {
       try {
-        await this.reconcileQueuedCandidateHeads(betaAllowlist);
+        await this.reconcileQueuedCandidateHeads(betaAllowlist, mode);
         const [frontendMain, backendMain] = await Promise.all([
           releaseBusGitHubApp.resolveRef('frontend', 'main'),
           releaseBusGitHubApp.resolveRef('backend', 'main')
@@ -563,8 +568,10 @@ export class ReleaseBusV2Reconciler {
       });
     const active: ReleaseBusV2TrainRecord[] = [];
     for (const train of activeByLane) {
+      const requiresBetaEligibility =
+        mode === 'OFF' || (mode === 'STAGING' && train.lane !== 'STAGING');
       if (
-        mode !== 'OFF' ||
+        !requiresBetaEligibility ||
         (await this.service.isBetaTrainAllowed(train, betaAllowlist, {}))
       )
         active.push(train);
@@ -612,7 +619,8 @@ export class ReleaseBusV2Reconciler {
   }
 
   private async reconcileQueuedCandidateHeads(
-    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = []
+    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [],
+    mode = getReleaseBusV2Mode()
   ): Promise<void> {
     const candidates = (
       await this.repository.listCandidates(
@@ -621,9 +629,16 @@ export class ReleaseBusV2Reconciler {
         {}
       )
     ).filter((candidate) => {
-      if (betaAllowlist.length === 0) return true;
       const lane =
         candidate.status === 'READY_FOR_PRODUCTION' ? 'PRODUCTION' : 'STAGING';
+      if (mode === 'STAGING') {
+        if (lane === 'STAGING') return true;
+        return (
+          betaAllowlist.length > 0 &&
+          releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
+        );
+      }
+      if (betaAllowlist.length === 0) return true;
       return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
     });
     const branchHeads = await Promise.all(
@@ -1937,8 +1952,18 @@ export class ReleaseBusV2Reconciler {
       return;
     }
 
+    const mode = getReleaseBusV2Mode();
+    const betaAllowlist =
+      mode === 'OFF' || mode === 'STAGING'
+        ? getReleaseBusV2BetaAllowlist()
+        : [];
+    const stagingModeProductionBeta =
+      mode === 'STAGING' &&
+      releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION') &&
+      (await this.service.isBetaTrainAllowed(train, betaAllowlist, {}));
     const requiresBetaIdleHandshake =
-      getReleaseBusV2Mode() === 'OFF' && train.status === 'MERGING_PRODUCTION';
+      train.status === 'MERGING_PRODUCTION' &&
+      (mode === 'OFF' || stagingModeProductionBeta);
     const beforeLock = requiresBetaIdleHandshake
       ? await this.captureProductionIdleSnapshot()
       : null;
@@ -1971,7 +1996,7 @@ export class ReleaseBusV2Reconciler {
           actor: 'release-bus-v2-beta',
           payload: {
             ...afterLock,
-            beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
+            beta_test_id: betaAllowlist[0]?.test_id,
             production_lock: 'owned',
             verified_at: Date.now()
           }
