@@ -116,6 +116,7 @@ const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
 const MAX_WORKFLOW_JOBS = 100;
 const MAX_WORKFLOW_STEPS = 100;
 const MAX_WORKFLOW_LABEL_LENGTH = 500;
+const MAX_STAGING_FENCE_PAGES = 10;
 
 export class ReleaseBusGitHubInfrastructureError extends Error {
   public constructor(message: string) {
@@ -759,16 +760,23 @@ export class ReleaseBusGitHubApp {
       `${environment} deployment`,
       (run) => {
         if (repository === 'backend') {
-          return (
-            run.name === 'Deploy a service' &&
-            run.display_title.includes(` to ${environment}`)
-          );
+          return this.isBackendDeploymentRun(run, environment);
         }
-        const names =
+        const paths =
+          environment === 'prod'
+            ? [
+                '.github/workflows/build-upload-deploy-prod.yml',
+                '.github/workflows/release-bus-deploy-production.yml'
+              ]
+            : [
+                '.github/workflows/deploy-staging.yml',
+                '.github/workflows/release-bus-deploy-staging.yml'
+              ];
+        const legacyNames =
           environment === 'prod'
             ? ['Web Deploy - PROD', 'Release Bus - Deploy Frontend Production']
             : ['Web Deploy - STAGING', 'Release Bus - Deploy Frontend Staging'];
-        return names.includes(run.name);
+        return paths.includes(run.path ?? '') || legacyNames.includes(run.name);
       }
     );
   }
@@ -779,21 +787,71 @@ export class ReleaseBusGitHubApp {
     return this.hasActiveWorkflowRun(
       repository,
       'staging mutation or E2E',
-      (run) => {
-        if (repository === 'backend') {
-          return (
-            run.name === 'Deploy a service' &&
-            run.display_title.includes(' to staging')
-          );
-        }
-        return [
-          'Web Deploy - STAGING',
-          'Release Bus - Deploy Frontend Staging',
-          'Release Bus - Sync Main To Staging',
-          'Staging E2E'
-        ].includes(run.name);
-      }
+      (run) => this.isStagingMutationOrE2ERun(repository, run)
     );
+  }
+
+  public async hasStagingMutationOrE2ERunSince(
+    repository: ReleaseRepository,
+    since: number,
+    ignoredRunIds: readonly string[] = []
+  ): Promise<boolean> {
+    if (!Number.isInteger(since) || since < 1)
+      throw new Error('Invalid staging workflow fence timestamp');
+    if (ignoredRunIds.some((runId) => !/^\d+$/.test(runId)))
+      throw new Error('Invalid staging workflow fence run id');
+    const ignored = new Set(ignoredRunIds.map(Number));
+    const created = encodeURIComponent(`>=${new Date(since).toISOString()}`);
+    for (let page = 1; page <= MAX_STAGING_FENCE_PAGES; page += 1) {
+      const response = await this.request(
+        repository,
+        `/actions/runs?created=${created}&per_page=100&page=${page}`
+      );
+      await this.assertOk(
+        response,
+        `list ${repository} staging workflow runs since the beta handshake`
+      );
+      const runs =
+        ((await response.json()) as { workflow_runs?: GitHubRun[] })
+          .workflow_runs ?? [];
+      if (
+        runs.some(
+          (run) =>
+            !ignored.has(run.id) &&
+            typeof run.created_at === 'string' &&
+            Date.parse(run.created_at) >= since &&
+            this.isStagingMutationOrE2ERun(repository, run)
+        )
+      )
+        return true;
+      if (runs.length < 100) return false;
+    }
+    // A bounded beta cannot safely prove the environment idle when more than
+    // 1,000 workflow runs fit inside its fence window. Fail closed rather than
+    // silently ignoring an older mutation.
+    return true;
+  }
+
+  private isStagingMutationOrE2ERun(
+    repository: ReleaseRepository,
+    run: GitHubRun
+  ): boolean {
+    if (repository === 'backend') {
+      return this.isBackendDeploymentRun(run, 'staging');
+    }
+    const paths = [
+      '.github/workflows/deploy-staging.yml',
+      '.github/workflows/release-bus-deploy-staging.yml',
+      '.github/workflows/release-bus-sync-staging.yml',
+      '.github/workflows/staging-e2e.yml'
+    ];
+    const legacyNames = [
+      'Web Deploy - STAGING',
+      'Release Bus - Deploy Frontend Staging',
+      'Release Bus - Sync Main To Staging',
+      'Staging E2E'
+    ];
+    return paths.includes(run.path ?? '') || legacyNames.includes(run.name);
   }
 
   public async hasActiveProductionMutationOrE2ERun(
@@ -804,17 +862,31 @@ export class ReleaseBusGitHubApp {
       'production mutation or E2E',
       (run) => {
         if (repository === 'backend') {
-          return (
-            run.name === 'Deploy a service' &&
-            run.display_title.includes(' to prod')
-          );
+          return this.isBackendDeploymentRun(run, 'prod');
         }
-        return [
+        const paths = [
+          '.github/workflows/build-upload-deploy-prod.yml',
+          '.github/workflows/release-bus-deploy-production.yml',
+          '.github/workflows/production-e2e.yml'
+        ];
+        const legacyNames = [
           'Web Deploy - PROD',
           'Release Bus - Deploy Frontend Production',
           'Production E2E'
-        ].includes(run.name);
+        ];
+        return paths.includes(run.path ?? '') || legacyNames.includes(run.name);
       }
+    );
+  }
+
+  private isBackendDeploymentRun(
+    run: GitHubRun,
+    environment: 'staging' | 'prod'
+  ): boolean {
+    return (
+      (run.path === '.github/workflows/deploy.yml' ||
+        run.name === 'Deploy a service') &&
+      new RegExp(` to ${environment}(?:\\s|$)`).test(run.display_title)
     );
   }
 
