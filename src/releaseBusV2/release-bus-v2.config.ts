@@ -205,6 +205,24 @@ export function releaseBusV2BetaAllowsLane(
   return allowlist.some((entry) => entry.lanes.includes(requiredLane));
 }
 
+/**
+ * OFF permits exact operator beta entries in either lane. Once staging is
+ * generally enabled, only the production lane may remain operator-only beta;
+ * the allowlist must never narrow or enroll ordinary staging candidates.
+ */
+export function releaseBusV2BetaAllowsLaneInMode(
+  mode: ReleaseBusV2Mode,
+  allowlist: readonly ReleaseBusV2BetaEntry[],
+  lane: ReleaseBusV2Lane | ReleaseBusV2BetaLane
+): boolean {
+  if (mode === 'OFF') return releaseBusV2BetaAllowsLane(allowlist, lane);
+  return (
+    mode === 'STAGING' &&
+    lane === 'PRODUCTION' &&
+    releaseBusV2BetaAllowsLane(allowlist, lane)
+  );
+}
+
 export function releaseBusV2BetaAllowsRegistration(
   allowlist: readonly ReleaseBusV2BetaEntry[],
   input: ReleaseBusV2RegisterInput,
