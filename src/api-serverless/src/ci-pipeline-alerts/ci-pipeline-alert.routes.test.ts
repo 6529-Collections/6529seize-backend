@@ -383,6 +383,108 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
+  const structuredGroup = {
+    release_group_id: 'pr-1801',
+    release_group_services: ['api'],
+    pull_request_number: 1801,
+    publish_release_note: true
+  };
+
+  it('requires a service for structured release-note groups', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          service: undefined,
+          release_note_groups: [structuredGroup]
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow('service is required with release_note_groups');
+  });
+
+  it('rejects an unknown structured release-note service', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          service: 'notADeployService',
+          release_note_groups: [
+            {
+              ...structuredGroup,
+              release_group_services: ['notADeployService']
+            }
+          ]
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow('service must be an allowlisted backend deploy service');
+  });
+
+  it('requires every structured group to contain the deployed service', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          service: 'api',
+          release_note_groups: [
+            {
+              ...structuredGroup,
+              release_group_services: ['releaseBus']
+            }
+          ]
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'every release_note_groups entry must contain the deployed service'
+    );
+  });
+
+  it('rejects unknown services inside a structured release-note group', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          service: 'api',
+          release_note_groups: [
+            {
+              ...structuredGroup,
+              release_group_services: ['api', 'notADeployService']
+            }
+          ]
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'release_group_services must contain only allowlisted backend deploy services'
+    );
+  });
+
+  it('rejects duplicate structured release-note group ids', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          service: 'api',
+          release_note_groups: [
+            structuredGroup,
+            {
+              ...structuredGroup,
+              pull_request_number: 1802
+            }
+          ]
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow('contains a duplicate value');
+  });
+
   it('acknowledges in-flight duplicate alerts without returning an error', async () => {
     const redis = {
       get: jest.fn().mockResolvedValue(null),

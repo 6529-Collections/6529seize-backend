@@ -249,10 +249,22 @@ describe('release bus infrastructure contract', () => {
       'CI_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}'
     );
     expect(deployWorkflow).toContain(
+      'CI_RELEASE_NOTE_GROUPS: ${{ github.event.inputs.release_note_groups }}'
+    );
+    expect(deployWorkflow).toContain(
+      'CI_RELEASE_NOTE_OPT_OUT: ${{ github.event.inputs.release_note_opt_out }}'
+    );
+    expect(deployWorkflow).toContain(
       'release_group_services must contain the full canonical production service set'
     );
     expect(deployWorkflow).toContain(
       'release_group_services must include the deployed service'
+    );
+    expect(deployWorkflow).toContain(
+      'release_note_opt_out cannot include release-note metadata or a publish request'
+    );
+    expect(deployWorkflow).toContain(
+      'release_note_groups is reserved for Release Bus v2 operations'
     );
     expect(ciWaveNotifier).toContain("targetEnvironment === 'prod'");
     expect(deployWorkflow).toContain(

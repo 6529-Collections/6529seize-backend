@@ -252,7 +252,13 @@ export async function isReleaseGroupComplete(
     const completedKey = `${groupKey}:completed`;
     await redis.sAdd(completedKey, service);
     await redis.expire(completedKey, RELEASE_GROUP_TTL_SECONDS);
-    if (request.publish_release_note !== true) return false;
+    const publishRequestedKey = `${groupKey}:publish-requested`;
+    if (request.publish_release_note === true) {
+      await redis.set(publishRequestedKey, '1', {
+        EX: RELEASE_GROUP_TTL_SECONDS
+      });
+    }
+    if (!(await redis.get(publishRequestedKey))) return false;
     const completedServices = new Set(await redis.sMembers(completedKey));
     const complete =
       completedServices.size === expectedServices.length &&

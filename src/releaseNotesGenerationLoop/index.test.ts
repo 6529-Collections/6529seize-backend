@@ -171,7 +171,7 @@ describe('processRequest', () => {
     expect(generateAndPost).not.toHaveBeenCalled();
   });
 
-  it('publishes once only after every concurrently signalled PR service succeeds', async () => {
+  it('persists an early publish request until every PR service succeeds', async () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
 
@@ -190,7 +190,7 @@ describe('processRequest', () => {
         sha: 'later-sha',
         service: 'worker',
         release_group_services: ['api', 'worker'],
-        publish_release_note: true
+        publish_release_note: false
       },
       {
         redis: redis as any,
@@ -206,7 +206,7 @@ describe('processRequest', () => {
         run_url: 'https://github.com/example/actions/runs/456',
         sha: 'later-sha',
         service: 'worker',
-        publish_release_note: true,
+        publish_release_note: false,
         release_group_services: ['api', 'worker'],
         release_group_runs: [
           {
@@ -237,6 +237,11 @@ describe('processRequest', () => {
       { EX: 7776000 }
     );
     expect(redis.set).toHaveBeenCalledWith(
+      'release-note-group:6529seize-backend:pr-1749:publish-requested',
+      '1',
+      { EX: 7776000 }
+    );
+    expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing',
       '1',
       { NX: true, EX: 1200 }
@@ -248,6 +253,34 @@ describe('processRequest', () => {
     );
     expect(redis.del).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing'
+    );
+  });
+
+  it('uses the processing lock as the sole winner for concurrent completion', async () => {
+    const redis = buildRedis();
+    const generateAndPost = jest.fn().mockResolvedValue(undefined);
+    const completedRequest = {
+      ...request,
+      release_group_services: ['api'],
+      publish_release_note: true
+    };
+
+    await Promise.all([
+      processRequest(completedRequest, {
+        redis: redis as any,
+        generateAndPost
+      }),
+      processRequest(completedRequest, {
+        redis: redis as any,
+        generateAndPost
+      })
+    ]);
+
+    expect(generateAndPost).toHaveBeenCalledTimes(1);
+    expect(redis.set).toHaveBeenCalledWith(
+      'release-note:6529seize-backend:pr-1749:processing',
+      '1',
+      { NX: true, EX: 1200 }
     );
   });
 

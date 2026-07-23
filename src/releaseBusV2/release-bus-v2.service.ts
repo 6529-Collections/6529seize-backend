@@ -77,7 +77,9 @@ export function normalizeDeployPlan(
       `${leftFrom}\u0000${leftTo}`.localeCompare(`${rightFrom}\u0000${rightTo}`)
     );
   topologicalOrder(units, edges);
-  return { units, edges };
+  return plan.publish_release_notes === false
+    ? { units, edges, publish_release_notes: false }
+    : { units, edges };
 }
 
 export function topologicalOrder(

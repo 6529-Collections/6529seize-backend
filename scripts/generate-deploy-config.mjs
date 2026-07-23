@@ -107,6 +107,15 @@ ${indent(yamlList(serviceNames))}
         type: string
         description: 'Comma-separated services in this Release Bus release group'
         required: false
+      release_note_groups:
+        type: string
+        description: 'Release Bus v2 JSON array of per-PR release-note groups'
+        required: false
+      release_note_opt_out:
+        type: boolean
+        description: 'Explicitly skip autonomous release notes for an internal operation'
+        required: false
+        default: false
       release_train_id:
         type: string
         description: 'Release Bus train id; blank for manual deploys'
@@ -269,9 +278,27 @@ jobs:
         env:
           RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
           RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
+          RELEASE_NOTE_GROUPS: \${{ github.event.inputs.release_note_groups }}
+          RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
+          RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
           RELEASE_SERVICE: \${{ github.event.inputs.service }}
         run: |
           set -euo pipefail
+          if [ "$RELEASE_NOTE_OPT_OUT" = true ]; then
+            if [ -n "$RELEASE_PULL_REQUEST" ] || [ -n "$RELEASE_GROUP_SERVICES" ] || [ -n "$RELEASE_NOTE_GROUPS" ] || [ "$RELEASE_NOTE_PUBLISH" = true ]; then
+              echo "release_note_opt_out cannot include release-note metadata or a publish request" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          if [ "$RELEASE_NOTE_OPT_OUT" != false ] && [ -n "$RELEASE_NOTE_OPT_OUT" ]; then
+            echo "release_note_opt_out must be true or false" >&2
+            exit 1
+          fi
+          if [ -n "$RELEASE_NOTE_GROUPS" ]; then
+            echo "release_note_groups is reserved for Release Bus v2 operations" >&2
+            exit 1
+          fi
           if ! [[ "$RELEASE_PULL_REQUEST" =~ ^[1-9][0-9]*$ ]]; then
             echo "release_pull_request must be a positive PR number" >&2
             exit 1
@@ -835,6 +862,8 @@ jobs:
           CI_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
           CI_RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
           CI_RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
+          CI_RELEASE_NOTE_GROUPS: \${{ github.event.inputs.release_note_groups }}
+          CI_RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
         run: node scripts/notify-ci-wave.mjs
 `;
 }

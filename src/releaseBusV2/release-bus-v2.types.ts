@@ -99,6 +99,12 @@ export type ReleaseBusV2ManifestStatus =
 export type ReleaseBusV2DeployPlan = {
   readonly units: readonly string[];
   readonly edges: ReadonlyArray<readonly [string, string]>;
+  /**
+   * Defaults to true. Internal control-plane candidates may explicitly opt out
+   * while ordinary product candidates continue to feed the autonomous
+   * release-note pipeline.
+   */
+  readonly publish_release_notes?: boolean;
 };
 
 export type ReleaseBusV2PrEvidence = {
