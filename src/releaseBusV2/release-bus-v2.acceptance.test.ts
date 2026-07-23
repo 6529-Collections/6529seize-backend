@@ -1616,6 +1616,22 @@ describe('Release Bus v2 offline acceptance harness', () => {
       backend_sha: BACKEND_SHA
     });
 
+    const validatedManifest = state.repository.manifests.get(manifestId);
+    if (!validatedManifest) throw new Error('Missing validated manifest');
+    state.repository.manifests.set(manifestId, {
+      ...validatedManifest,
+      status: 'STAGING_DEPLOYED'
+    });
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.manifests.delete(manifestId);
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.manifests.set(manifestId, validatedManifest);
+    const sourceTrain = state.repository.trains.get('train-1');
+    if (!sourceTrain) throw new Error('Missing source train');
+    state.repository.trains.delete('train-1');
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.trains.set('train-1', sourceTrain);
+
     state.repository.memberships.push({
       id: 'unselected-source-membership',
       train_id: 'train-1',
@@ -1658,7 +1674,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       ...(state.repository.manifests.get(
         manifestId
       ) as ReleaseBusV2ManifestRecord),
-      frontend_sha: production.frontend_base_sha
+      frontend_sha: production.frontend_base_sha,
+      frontend_artifact_digest: null
     });
     await expect(findExact(backendOnly)).resolves.toMatchObject({
       id: manifestId
@@ -1725,11 +1742,27 @@ describe('Release Bus v2 offline acceptance harness', () => {
       backend_composed_sha: BACKEND_SHA,
       manifest_id: manifestId
     });
+    expect(
+      Array.from(state.repository.candidates.values()).map(
+        ({ status }) => status
+      )
+    ).toEqual([
+      'PRODUCTION_BUILDING_OR_QUALIFYING',
+      'PRODUCTION_BUILDING_OR_QUALIFYING'
+    ]);
     expect(mockReconcileWorkflow).not.toHaveBeenCalled();
     expect(state.repository.events).toContainEqual(
       expect.objectContaining({
         trainId: production.id,
         eventType: 'EXACT_STAGING_MANIFEST_REUSED'
+      })
+    );
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'EXACT_STAGING_MANIFEST_REUSED',
+        payload: expect.objectContaining({
+          manifest_identity_sha256: 'e'.repeat(64)
+        })
       })
     );
   });

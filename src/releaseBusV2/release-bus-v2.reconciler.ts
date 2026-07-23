@@ -764,6 +764,7 @@ export class ReleaseBusV2Reconciler {
             manifest_id: exactProductionManifest.id,
             source_train_id: exactProductionManifest.train_id,
             candidate_ids: relevantCandidates(context).map(({ id }) => id),
+            manifest_identity_sha256: exactProductionManifest.identity_sha256,
             frontend_sha: exactProductionManifest.frontend_sha,
             backend_sha: exactProductionManifest.backend_sha
           }
@@ -890,9 +891,13 @@ export class ReleaseBusV2Reconciler {
     const productionCandidateIds = candidates
       .map(({ id }) => id)
       .sort(compareInvariant);
+    // Production readiness transitions the same durable candidate rows that
+    // staging validated; the model does not create lane-scoped candidates.
     if (
-      JSON.stringify(sourceCandidateIds) !==
-      JSON.stringify(productionCandidateIds)
+      sourceCandidateIds.length !== productionCandidateIds.length ||
+      sourceCandidateIds.some(
+        (candidateId, index) => candidateId !== productionCandidateIds[index]
+      )
     )
       return null;
     const hasFrontend = candidates.some(
@@ -901,6 +906,8 @@ export class ReleaseBusV2Reconciler {
     const hasBackend = candidates.some(
       ({ repository }) => repository === 'backend'
     );
+    // A repository absent from the subset is not deployed. It therefore needs
+    // no artifact digest, but its manifest SHA must still be the current base.
     if (
       !manifest.frontend_sha ||
       !manifest.backend_sha ||
