@@ -115,6 +115,20 @@ resources:
             - Effect: Allow
               Action: states:DescribeExecution
               Resource: '*'
+    ReleaseBusV2ReconcilerInvokePolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: !Sub '${AWS::StackName}-invoke-v2-reconciler'
+        Roles:
+          - lambda-vpc-role
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource:
+                - !GetAtt V2ReconcilerLambdaFunction.Arn
+                - !Join [':', [!GetAtt V2ReconcilerLambdaFunction.Arn, '*']]
     ReleaseBusWorkerVersionReadPolicy:
       Type: AWS::IAM::Policy
       Properties:
