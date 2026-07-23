@@ -9,6 +9,7 @@ import {
   RELEASE_BUS_V2_MAX_CANDIDATES,
   releaseBusV2BetaAllowsCandidate,
   releaseBusV2BetaAllowsLane,
+  releaseBusV2BetaAllowsLaneInMode,
   releaseBusV2BetaAllowsRegistration,
   type ReleaseBusV2BetaEntry,
   releaseBusV2AllowsLane
@@ -389,7 +390,8 @@ export class ReleaseBusV2Service {
                   head_sha: candidate.head_sha,
                   operator_beta: isBetaRegistration,
                   beta_test_id: isBetaRegistration
-                    ? betaAllowlist[0]?.test_id
+                    ? // Config validation requires one shared test_id.
+                      betaAllowlist[0]?.test_id
                     : null
                 }
               },
@@ -429,9 +431,12 @@ export class ReleaseBusV2Service {
     const mode = getReleaseBusV2Mode();
     const snapshot = await this.repository.findCandidateById(candidateId, {});
     if (!snapshot) throw new Error('Candidate not found');
-    const betaAllowlist = mode === 'OFF' ? getReleaseBusV2BetaAllowlist() : [];
+    const betaAllowlist =
+      mode === 'OFF' || mode === 'STAGING'
+        ? getReleaseBusV2BetaAllowlist()
+        : [];
     const isBetaPromotion =
-      mode === 'OFF' &&
+      releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION') &&
       releaseBusV2BetaAllowsCandidate(betaAllowlist, snapshot, 'PRODUCTION') &&
       snapshot.requested_by.toLowerCase() === actor.toLowerCase();
     if (!releaseBusV2AllowsLane(mode, 'PRODUCTION') && !isBetaPromotion)
@@ -675,9 +680,15 @@ export class ReleaseBusV2Service {
   ): Promise<ReleaseBusV2TrainRecord | null> {
     const mode = getReleaseBusV2Mode();
     const scope = laneScope(lane);
-    const betaAllowlist = mode === 'OFF' ? getReleaseBusV2BetaAllowlist() : [];
-    const betaLaneEnabled =
-      mode === 'OFF' && releaseBusV2BetaAllowsLane(betaAllowlist, lane);
+    const betaAllowlist =
+      mode === 'OFF' || (mode === 'STAGING' && lane === 'PRODUCTION')
+        ? getReleaseBusV2BetaAllowlist()
+        : [];
+    const betaLaneEnabled = releaseBusV2BetaAllowsLaneInMode(
+      mode,
+      betaAllowlist,
+      lane
+    );
     if (!releaseBusV2AllowsLane(mode, scope) && !betaLaneEnabled) return null;
     await this.assertScopeRunning(scope);
     return this.repository.executeNativeQueriesInTransaction(
@@ -777,6 +788,7 @@ export class ReleaseBusV2Service {
                 lane,
                 candidate_ids: order,
                 operator_beta: betaLaneEnabled,
+                // Config validation requires one shared test_id.
                 beta_test_id: betaLaneEnabled ? betaAllowlist[0]?.test_id : null
               }
             },
