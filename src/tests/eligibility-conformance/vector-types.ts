@@ -133,17 +133,17 @@ export interface EligibilityConformanceVector {
   /** Rule dimension bucket (tdh, level, rep, cic, nft, grants, lists, composite). */
   readonly dimension: string;
   readonly description: string;
-  readonly identities: VectorIdentityState[];
+  readonly identities: readonly VectorIdentityState[];
   /** Symbolic id of the profile under test. */
   readonly subject: string;
-  readonly profile_groups?: VectorProfileGroup[];
-  readonly ratings?: VectorRating[];
-  readonly nft_ownings?: VectorNftOwning[];
-  readonly grants?: VectorGrant[];
-  readonly external_ownership?: VectorExternalOwnership[];
-  readonly groups: VectorGroup[];
+  readonly profile_groups?: readonly VectorProfileGroup[];
+  readonly ratings?: readonly VectorRating[];
+  readonly nft_ownings?: readonly VectorNftOwning[];
+  readonly grants?: readonly VectorGrant[];
+  readonly external_ownership?: readonly VectorExternalOwnership[];
+  readonly groups: readonly VectorGroup[];
   /** Spec-normative outcome (symbolic group ids), order-insensitive. */
   readonly expected: {
-    readonly eligible_group_ids: string[];
+    readonly eligible_group_ids: readonly string[];
   };
 }

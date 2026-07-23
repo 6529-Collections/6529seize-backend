@@ -42,6 +42,15 @@
     "expected": { "eligible_group_ids": [] }
   },
   {
+    "name": "level-max-one-hundred",
+    "dimension": "level",
+    "description": "Level 100 is the highest possible level, so level_max 100 is an intentionally unbounded upper limit.",
+    "identities": [{ "id": "subject", "level_raw": 30000000 }],
+    "subject": "subject",
+    "groups": [{ "id": "g-max-100", "level_max": 100 }],
+    "expected": { "eligible_group_ids": ["g-max-100"] }
+  },
+  {
     "name": "level-min-zero-noop",
     "dimension": "level",
     "description": "level_min 0 is vacuous because every profile is at least level 0.",

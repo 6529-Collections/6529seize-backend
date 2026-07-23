@@ -1677,6 +1677,7 @@ export class UserGroupsService {
     group.rep.user_identity = group.rep.user_identity
       ? usersToUserIds[group.rep.user_identity]
       : null;
+    const hadLevelMaxCriterion = group.level.max !== null;
     group.level.min =
       group.level.min !== null
         ? getLevelComponentsBorderByLevel(group.level.min)
@@ -1715,7 +1716,8 @@ export class UserGroupsService {
     const inclusionExclusionPart = this.getInclusionExclusionPart(
       group,
       group_id,
-      params
+      params,
+      hadLevelMaxCriterion
     );
     const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${
       nftsPart ?? ''
@@ -1730,10 +1732,11 @@ export class UserGroupsService {
   private getInclusionExclusionPart(
     group: GClean,
     groupId: string | null,
-    params: Record<string, any>
+    params: Record<string, any>,
+    hadLevelMaxCriterion: boolean
   ): string {
     const anyOtherDescriptionButInclusion = !!(
-      group.level.max !== null ||
+      hadLevelMaxCriterion ||
       group.level.min !== null ||
       group.tdh.max !== null ||
       group.tdh.min !== null ||
