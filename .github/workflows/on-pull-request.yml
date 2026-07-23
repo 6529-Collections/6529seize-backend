@@ -80,7 +80,7 @@ jobs:
         run: pushd src/api-serverless && npm run build && popd
       - name: Package exact PR merge-tree API artifact
         env:
-          EXPECTED_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          EXPECTED_MERGE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_MERGE_SHA" =~ ^[a-f0-9]{40}$ ]]
@@ -92,7 +92,7 @@ jobs:
       - name: Upload exact PR merge-tree API artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-bus-v2-pr-${{ github.event.pull_request.merge_commit_sha }}
+          name: release-bus-v2-pr-${{ github.sha }}
           path: release-bus-v2-pr-artifact
           if-no-files-found: error
           retention-days: 30
