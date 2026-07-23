@@ -1,9 +1,29 @@
 import {
+  releaseBusPullRequestMergeStateEligible,
   safeGitHubWorkflowLabel,
   sanitizeGitHubWorkflowJobs,
   workflowRunMatchesOperation,
   type GitHubWorkflowJob
 } from '@/releaseBus/release-bus.github-app';
+
+describe('GitHub pull request release eligibility', () => {
+  it('accepts a ruleset-blocked but explicitly mergeable exact tree', () => {
+    expect(releaseBusPullRequestMergeStateEligible(true, 'blocked')).toBe(true);
+  });
+
+  it.each(['dirty', 'draft', 'unknown', undefined])(
+    'rejects an unresolved %s merge state',
+    (state) => {
+      expect(releaseBusPullRequestMergeStateEligible(true, state)).toBe(false);
+    }
+  );
+
+  it('rejects a known merge conflict regardless of state label', () => {
+    expect(releaseBusPullRequestMergeStateEligible(false, 'blocked')).toBe(
+      false
+    );
+  });
+});
 
 describe('GitHub workflow operation identity', () => {
   it('matches only the exact bracketed operation key', () => {

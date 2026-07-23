@@ -178,6 +178,17 @@ describe('release bus infrastructure contract', () => {
     );
   });
 
+  it('allows the shared API role to nudge only the v2 reconciler Lambda', () => {
+    const policy = releaseBusServerless.slice(
+      releaseBusServerless.indexOf('ReleaseBusV2ReconcilerInvokePolicy:'),
+      releaseBusServerless.indexOf('ReleaseBusWorkerVersionReadPolicy:')
+    );
+    expect(policy).toContain('Roles:\n          - lambda-vpc-role');
+    expect(policy).toContain('Action: lambda:InvokeFunction');
+    expect(policy).toContain('!GetAtt V2ReconcilerLambdaFunction.Arn');
+    expect(policy).not.toContain("Resource: '*'");
+  });
+
   it('ships fail-closed base evidence controls to the worker', () => {
     expect(releaseBusServerless).toContain(
       "RELEASE_BUS_BASE_EVIDENCE_REUSE: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE, 'false'}"
