@@ -1020,6 +1020,19 @@ describe('Release Bus v2 offline acceptance harness', () => {
       sequence.indexOf('finish:api')
     );
     expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'STAGING_IDLE_HANDSHAKE',
+        trainId: 'train-1'
+      })
+    );
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'STAGING_FINAL_FENCE_VERIFIED',
+        trainId: 'train-1'
+      })
+    );
+    expect(mockHasStagingRunSince).toHaveBeenCalledTimes(2);
 
     const externalCalls = mockReconcileWorkflow.mock.calls.length;
     await state.reconciler.runOnce('acceptance-duplicate');

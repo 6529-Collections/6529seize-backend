@@ -73,6 +73,14 @@ register backend first and declare it as the frontend prerequisite.
 
 `STAGING_DEPLOYED` and `STAGING_VALIDATED` are separate milestones.
 
+Every staging and production-qualification train records a
+`STAGING_IDLE_HANDSHAKE` under `staging-environment`. After E2E succeeds, the
+reconciler rechecks both exact staging refs and all staging deploy/E2E workflow
+history created since the pre-lock snapshot, ignoring only the train's exact
+run IDs. Missing or changed evidence fails the mixed manifest and pauses v2;
+it can never become `STAGING_VALIDATED`. Operator beta emits the existing
+`BETA_STAGING_*` audit events additively.
+
 ## Production lifecycle
 
 Staging validation never creates production readiness. A developer explicitly
