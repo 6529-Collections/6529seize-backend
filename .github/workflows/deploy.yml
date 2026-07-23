@@ -247,20 +247,28 @@ jobs:
           exit 1
       - name: Check production release-note preconditions
         shell: bash
-        if: github.event.inputs.environment == 'prod' && github.event.inputs.release_pull_request == '' && !startsWith(github.event.inputs.operation_key, 'rb2:')
-        run: |
-          echo "A merged release_pull_request is required for production deploys" >&2
-          exit 1
-      - name: Validate production release PR
-        shell: bash
         if: github.event.inputs.environment == 'prod' && !startsWith(github.event.inputs.operation_key, 'rb2:')
         env:
           RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
+          RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}
+          RELEASE_SERVICE: ${{ github.event.inputs.service }}
         run: |
+          set -euo pipefail
           if ! [[ "$RELEASE_PULL_REQUEST" =~ ^[1-9][0-9]*$ ]]; then
             echo "release_pull_request must be a positive PR number" >&2
             exit 1
           fi
+          if [ -z "$RELEASE_GROUP_SERVICES" ]; then
+            echo "release_group_services must contain the full canonical production service set" >&2
+            exit 1
+          fi
+          case ",${RELEASE_GROUP_SERVICES}," in
+            *,"${RELEASE_SERVICE}",*) ;;
+            *)
+              echo "release_group_services must include the deployed service ${RELEASE_SERVICE}" >&2
+              exit 1
+              ;;
+          esac
       - name: Authorize operator break glass
         if: github.event.inputs.operation_key == '' && vars.RELEASE_BUS_ENFORCEMENT == 'true'
         shell: bash
