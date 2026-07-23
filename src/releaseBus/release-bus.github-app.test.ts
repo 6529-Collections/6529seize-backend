@@ -250,6 +250,84 @@ describe('GitHub staging idle handshake', () => {
       fetchMock.mockReset();
     }
   });
+
+  it('detects a completed staging deploy after the handshake and ignores exact train runs', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 100,
+              name: 'Deploy api to staging train exact [rb2:exact]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging train exact [rb2:exact]',
+              created_at: '2026-07-23T13:22:10Z'
+            },
+            {
+              id: 101,
+              name: 'Deploy api to staging [manual]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging [manual]',
+              created_at: '2026-07-23T13:23:22Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('backend', since, ['100'])
+      ).resolves.toBe(true);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        'created=%3E%3D2026-07-23T13%3A22%3A00.000Z'
+      );
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('does not treat ignored exact train workflows as external mutation', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 100,
+              name: 'Release Bus - Staging E2E exact train',
+              path: '.github/workflows/staging-e2e.yml',
+              display_title: 'Exact train E2E',
+              created_at: '2026-07-23T13:22:20Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('frontend', since, ['100'])
+      ).resolves.toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
 });
 
 function job(index: number): GitHubWorkflowJob {

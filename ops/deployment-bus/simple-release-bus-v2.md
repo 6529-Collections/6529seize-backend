@@ -180,7 +180,13 @@ For each single bounded staging test:
    releases the lock without mutation.
 4. Run exactly one case to a terminal state. Record ready-to-deployed timing;
    report E2E separately. Verify transparent checks, exact artifacts/manifests,
-   one build per artifact, and no duplicate workflow dispatch.
+   one build per artifact, and no duplicate workflow dispatch. Before a green
+   E2E result may become `STAGING_VALIDATED`, re-check both staging refs and
+   every staging deploy/E2E workflow created since the recorded idle
+   handshake, ignoring only the train's exact workflow run IDs. Any unrelated
+   active or completed mutation fails closed as a control-plane error, marks
+   the mixed manifest failed, requeues rather than isolates candidates, pauses
+   v2 automation, and releases staging ownership.
 5. Clear the allowlist, deploy API then `releaseBus` with the empty value, and
    prove helpers still report `OFF`, the train is terminal, all related
    workflows are terminal, and the staging lock is free before the next case.

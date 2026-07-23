@@ -4,6 +4,7 @@ const mockResolveRef = jest.fn();
 const mockResolveRefIfExists = jest.fn();
 const mockUpdateRef = jest.fn();
 const mockHasActiveStagingRun = jest.fn();
+const mockHasStagingRunSince = jest.fn();
 const mockHasActiveProductionRun = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
@@ -20,6 +21,8 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     updateRef: (...args: unknown[]) => mockUpdateRef(...args),
     hasActiveStagingMutationOrE2ERun: (...args: unknown[]) =>
       mockHasActiveStagingRun(...args),
+    hasStagingMutationOrE2ERunSince: (...args: unknown[]) =>
+      mockHasStagingRunSince(...args),
     hasActiveProductionMutationOrE2ERun: (...args: unknown[]) =>
       mockHasActiveProductionRun(...args)
   }
@@ -145,7 +148,14 @@ class InMemoryAcceptanceRepository {
   public readonly dependencies: ReleaseBusV2DependencyRecord[] = [];
   public readonly operations: ReleaseBusV2OperationRecord[] = [];
   public readonly manifests = new Map<string, ReleaseBusV2ManifestRecord>();
-  public readonly events: unknown[] = [];
+  public readonly events: Array<{
+    readonly trainId?: string | null;
+    readonly candidateId?: string | null;
+    readonly eventType: string;
+    readonly actor?: string | null;
+    readonly payload?: unknown;
+    readonly createdAt: number;
+  }> = [];
   public lock: ReleaseBusV2LockRecord = {
     name: 'staging-environment',
     owner_train_id: null,
@@ -287,8 +297,35 @@ class InMemoryAcceptanceRepository {
     return true;
   }
 
-  public async appendEvent(input: unknown): Promise<void> {
-    this.events.push(input);
+  public async appendEvent(
+    input: Omit<(typeof this.events)[number], 'createdAt'>
+  ): Promise<void> {
+    this.events.push({ ...input, createdAt: Date.now() });
+  }
+
+  public async listEvents(trainId: string): Promise<
+    Array<{
+      readonly id: string;
+      readonly train_id: string | null;
+      readonly candidate_id: string | null;
+      readonly event_type: string;
+      readonly github_actor: string | null;
+      readonly payload_json: unknown;
+      readonly created_at: number;
+    }>
+  > {
+    return this.events
+      .filter((event) => event.trainId === trainId)
+      .map((event, index) => ({
+        id: `event-${index}`,
+        train_id: event.trainId ?? null,
+        candidate_id: event.candidateId ?? null,
+        event_type: event.eventType,
+        github_actor: event.actor ?? null,
+        payload_json: event.payload ?? null,
+        created_at: event.createdAt
+      }))
+      .reverse();
   }
 
   public async acquireLock(
@@ -441,6 +478,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     process.env.RELEASE_BUS_V2_MODE = 'STAGING';
     delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
     mockHasActiveStagingRun.mockResolvedValue(false);
+    mockHasStagingRunSince.mockResolvedValue(false);
     mockHasActiveProductionRun.mockResolvedValue(false);
     mockResolveRefIfExists.mockImplementation(
       async (repository: 'frontend' | 'backend') =>
@@ -732,6 +770,76 @@ describe('Release Bus v2 offline acceptance harness', () => {
     const externalCalls = mockReconcileWorkflow.mock.calls.length;
     await state.reconciler.runOnce('acceptance-duplicate');
     expect(mockReconcileWorkflow).toHaveBeenCalledTimes(externalCalls);
+  });
+
+  it('fails closed when an unrelated staging workflow ran after the beta handshake', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'frontend-only-fence',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'frontend',
+        branch_name: 'agent/rb2-beta-frontend-fence',
+        operator: 'beta-operator',
+        lanes: ['STAGING']
+      }
+    ]);
+    mockHasStagingRunSince.mockResolvedValue(true);
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as { operationType: string; service: string | null };
+      const completed = operation(
+        'train-1',
+        typed.operationType,
+        typed.operationType.includes('FRONTEND') ||
+          typed.operationType === 'E2E_STAGING'
+          ? 'frontend'
+          : 'backend',
+        `run-${typed.service ?? typed.operationType}`,
+        typed.service
+      );
+      state.repository.operations.push(completed);
+      return completed;
+    });
+
+    await state.reconciler.runOnce('acceptance-beta-final-fence');
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        failure_message: expect.stringContaining('Shared staging')
+      })
+    );
+    expect(
+      Array.from(state.repository.candidates.values()).every(
+        (item) => item.status === 'READY_FOR_STAGING'
+      )
+    ).toBe(true);
+    expect(Array.from(state.repository.manifests.values())[0]?.status).toBe(
+      'FAILED'
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.service.setPaused).toHaveBeenCalledWith(
+      'ALL',
+      true,
+      expect.stringContaining('control-plane failure'),
+      'release-bus-v2'
+    );
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'BETA_STAGING_FINAL_FENCE_VIOLATED',
+        trainId: 'train-1'
+      })
+    );
+    expect(mockHasStagingRunSince).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      expect.arrayContaining([
+        expect.stringContaining('run-DEPLOY'),
+        expect.stringContaining('run-E2E')
+      ])
+    );
   });
 
   it('keeps staging locked and prevents a second mutation while exact E2E is running', async () => {
