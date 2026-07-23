@@ -2250,8 +2250,21 @@ export class ReleaseBusV2Reconciler {
         );
       throw new MainMovedError(message);
     }
-    for (const item of current)
-      await this.advanceMainRef(train, item.repository, item.sha);
+    const advanced: ReleaseBusV2Repository[] = [];
+    for (const item of current) {
+      try {
+        await this.advanceMainRef(train, item.repository, item.sha);
+        advanced.push(item.repository);
+      } catch (error) {
+        if (advanced.length > 0)
+          throw new Error(
+            `Partial production main advance: ${advanced.join(', ')} reached the exact composed SHA before ${item.repository} failed; automation must remain paused for exact reconciliation. ${
+              error instanceof Error ? error.message : 'Unknown ref failure'
+            }`
+          );
+        throw error;
+      }
+    }
   }
 
   private async advanceMainRef(
@@ -2279,7 +2292,7 @@ export class ReleaseBusV2Reconciler {
               ? train.frontend_base_sha
               : train.backend_base_sha
         },
-        maxAttempts: 1
+        maxAttempts: 3
       },
       {}
     );
@@ -2308,24 +2321,45 @@ export class ReleaseBusV2Reconciler {
           'main'
         );
         if (afterFailure !== composed) {
-          if (afterFailure !== base)
-            throw new MainMovedError(
-              `${repository} main moved from ${base} to ${afterFailure}`
-            );
-          if (!isGitHubInfrastructureError(error)) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : `Failed to advance ${repository} main`;
+          const message =
+            error instanceof Error
+              ? error.message
+              : `Failed to advance ${repository} main`;
+          if (afterFailure !== base) {
             if (
               !(await this.repository.updateOperation(
                 operation.id,
                 operation.row_version,
                 {
-                  status: 'FAILED',
-                  failureClass: 'CONTROL_PLANE',
-                  failureMessage: message,
+                  status: 'CANCELLED',
+                  failureClass: 'INTERACTION',
+                  failureMessage: `${repository} main moved to ${afterFailure} during exact advancement`,
                   completedAt: Date.now()
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw new MainMovedError(
+              `${repository} main moved from ${base} to ${afterFailure}`
+            );
+          }
+          if (isGitHubInfrastructureError(error)) {
+            const exhausted = operation.attempt >= operation.max_attempts;
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: exhausted ? 'FAILED' : 'PENDING',
+                  failureClass: 'INFRASTRUCTURE',
+                  failureMessage: `Exact ${repository} main advancement transport failure ${operation.attempt}/${operation.max_attempts}: ${message}`,
+                  attempt: exhausted
+                    ? operation.attempt
+                    : operation.attempt + 1,
+                  completedAt: exhausted ? Date.now() : null
                 },
                 {}
               ))
@@ -2335,6 +2369,22 @@ export class ReleaseBusV2Reconciler {
               );
             throw error;
           }
+          if (
+            !(await this.repository.updateOperation(
+              operation.id,
+              operation.row_version,
+              {
+                status: 'FAILED',
+                failureClass: 'CONTROL_PLANE',
+                failureMessage: message,
+                completedAt: Date.now()
+              },
+              {}
+            ))
+          )
+            throw new Error(
+              `${repository} main operation changed concurrently`
+            );
           throw error;
         }
       }

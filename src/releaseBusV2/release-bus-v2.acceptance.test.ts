@@ -456,6 +456,7 @@ class InMemoryAcceptanceRepository {
       readonly result: unknown;
       readonly failureClass: ReleaseBusV2OperationRecord['failure_class'];
       readonly failureMessage: string | null;
+      readonly attempt: number;
       readonly completedAt: number | null;
     }>
   ): Promise<boolean> {
@@ -479,6 +480,7 @@ class InMemoryAcceptanceRepository {
         fields.failureMessage === undefined
           ? current.failure_message
           : fields.failureMessage,
+      attempt: fields.attempt ?? current.attempt,
       completed_at:
         fields.completedAt === undefined
           ? current.completed_at
@@ -1678,6 +1680,171 @@ describe('Release Bus v2 offline acceptance harness', () => {
         })
       })
     );
+  });
+
+  it('accepts an exact main update that succeeded before its transport error', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('accepted-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    mockUpdateRef.mockRejectedValue(new Error('response connection reset'));
+    mockResolveRef.mockResolvedValue(production.backend_composed_sha);
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).resolves.toBeUndefined();
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'SUCCEEDED',
+        external_id: production.backend_composed_sha,
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('bounds exact main infrastructure retries in the durable operation', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('retry-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    const infrastructureError = new Error('GitHub returned 503');
+    infrastructureError.name = 'ReleaseBusGitHubInfrastructureError';
+    mockUpdateRef.mockRejectedValue(infrastructureError);
+    mockResolveRef.mockResolvedValue(production.backend_base_sha);
+    const advance = () =>
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(
+        production,
+        'backend',
+        production.backend_base_sha ?? ''
+      );
+
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+
+    expect(mockUpdateRef).toHaveBeenCalledTimes(3);
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        attempt: 3,
+        max_attempts: 3,
+        failure_class: 'INFRASTRUCTURE',
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('cancels a main operation when its post-failure ref is an unexpected third SHA', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('moved-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    mockUpdateRef.mockRejectedValue(new Error('update rejected'));
+    mockResolveRef.mockResolvedValue('9'.repeat(40));
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).rejects.toThrow('main moved');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        failure_class: 'INTERACTION',
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('pauses for exact reconciliation after a partial multi-repository main advance', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('partial-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'backend'
+        ? production.backend_base_sha
+        : production.frontend_base_sha
+    );
+    mockUpdateRef.mockImplementation(async (repository: string) => {
+      if (repository === 'frontend')
+        throw new Error('frontend update rejected');
+    });
+    let frontendReads = 0;
+    mockResolveRef.mockImplementation(async (repository: string) => {
+      if (repository === 'backend') return production.backend_base_sha;
+      frontendReads += 1;
+      return frontendReads > 1 ? '9'.repeat(40) : production.frontend_base_sha;
+    });
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceProductionRefs(input: typeof context): Promise<void>;
+        }
+      ).advanceProductionRefs(context)
+    ).rejects.toThrow('Partial production main advance: backend');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )?.status
+    ).toBe('SUCCEEDED');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_FRONTEND'
+      )?.status
+    ).toBe('CANCELLED');
   });
 
   it('pauses only automation and requeues candidates on a control-plane defect', async () => {

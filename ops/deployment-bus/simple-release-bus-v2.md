@@ -108,7 +108,9 @@ default-branch ruleset in both repositories. V2 uses that narrowly scoped App
 to perform a non-force fast-forward to the exact staging-validated commit; a
 pull-request-only bypass would require GitHub to manufacture a different merge
 commit and therefore fails closed. Human and team bypass actors remain
-pull-request-only.
+pull-request-only. The compensating controls are enforced in code: the App can
+write only the explicit shared/release-bus ref allowlist, and every shared-ref
+update is a non-force compare-and-swap from the recorded old SHA.
 
 V2 never authors or posts release notes itself. Production operations must feed
 the existing autonomous release-note bot complete, canonical grouping metadata
