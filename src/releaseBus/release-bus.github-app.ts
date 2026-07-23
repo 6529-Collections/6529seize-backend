@@ -411,7 +411,7 @@ export class ReleaseBusGitHubApp {
 
     const checksResponse = await this.request(
       repository,
-      `/commits/${mergeSha}/check-runs?per_page=100`
+      `/commits/${headSha}/check-runs?per_page=100`
     );
     await this.assertOk(
       checksResponse,
@@ -421,7 +421,7 @@ export class ReleaseBusGitHubApp {
       ((await checksResponse.json()) as { check_runs?: GitHubCheckRun[] })
         .check_runs ?? [];
     if (checks.length === 0)
-      throw new Error('Pull request merge tree has no check evidence');
+      throw new Error('Pull request head has no check evidence');
     const incomplete = checks.filter((check) => check.status !== 'completed');
     if (incomplete.length > 0)
       throw new Error(
