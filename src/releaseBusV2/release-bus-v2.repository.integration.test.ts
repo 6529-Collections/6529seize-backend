@@ -1,0 +1,330 @@
+import 'reflect-metadata';
+import {
+  RELEASE_BUS_V2_CONTROLS_TABLE,
+  RELEASE_BUS_V2_LOCKS_TABLE
+} from '@/constants';
+import { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
+import { ReleaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
+import { describeWithSeed } from '@/tests/_setup/seed';
+
+jest.mock('@/releaseBus/release-bus.github-app', () => ({
+  releaseBusGitHubApp: {
+    ensureCommitStatus: jest.fn(),
+    resolveRef: jest.fn()
+  }
+}));
+
+const SHA_A = 'a'.repeat(40);
+const SHA_B = 'b'.repeat(40);
+const DIGEST_A = 'c'.repeat(64);
+
+describeWithSeed(
+  'Release Bus v2 repository integration',
+  [
+    {
+      table: RELEASE_BUS_V2_LOCKS_TABLE,
+      rows: [
+        { name: 'scheduler', updated_at: 1, row_version: 1 },
+        { name: 'staging-environment', updated_at: 1, row_version: 1 },
+        { name: 'production-environment', updated_at: 1, row_version: 1 }
+      ]
+    },
+    {
+      table: RELEASE_BUS_V2_CONTROLS_TABLE,
+      rows: [
+        {
+          scope: 'ALL',
+          paused: false,
+          reason: 'integration test',
+          updated_at: 1,
+          row_version: 1
+        },
+        {
+          scope: 'STAGING',
+          paused: false,
+          reason: 'integration test',
+          updated_at: 1,
+          row_version: 1
+        },
+        {
+          scope: 'PRODUCTION',
+          paused: false,
+          reason: 'integration test',
+          updated_at: 1,
+          row_version: 1
+        }
+      ]
+    }
+  ],
+  () => {
+    const previousMode = process.env.RELEASE_BUS_V2_MODE;
+    let repository: ReleaseBusV2Repository;
+
+    beforeEach(() => {
+      process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+      repository = new ReleaseBusV2Repository();
+    });
+
+    afterAll(() => {
+      if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+      else process.env.RELEASE_BUS_V2_MODE = previousMode;
+    });
+
+    it('allows concurrent claimers to create exactly one staging train', async () => {
+      const candidate = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 10,
+          branchName: 'feature/exact-claim',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      const service = new ReleaseBusV2Service(repository);
+
+      await Promise.all([
+        service.claimLane('STAGING', SHA_B, SHA_B, 'claim-a'),
+        service.claimLane('STAGING', SHA_B, SHA_B, 'claim-b')
+      ]);
+
+      const trains = await repository.listTrains(10, {});
+      expect(trains).toHaveLength(1);
+      expect(await repository.listTrainCandidates(trains[0].id, {})).toEqual([
+        expect.objectContaining({ candidate_id: candidate.id, sequence: 1 })
+      ]);
+      expect(
+        (await repository.findCandidateById(candidate.id, {}))?.status
+      ).toBe('STAGING_IN_TRAIN');
+    });
+
+    it('supersedes an older immutable PR head before the newer head can queue', async () => {
+      const older = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 11,
+          branchName: 'feature/moving-head',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      const superseded = await repository.supersedeOtherPrHeads(
+        'frontend',
+        11,
+        SHA_B,
+        {}
+      );
+      expect(superseded).toEqual([
+        expect.objectContaining({ id: older.id, head_sha: SHA_A })
+      ]);
+      expect((await repository.findCandidateById(older.id, {}))?.status).toBe(
+        'SUPERSEDED'
+      );
+    });
+
+    it('invalidates exact readiness when a registered branch head moves', async () => {
+      const registered = await repository.createCandidate(
+        {
+          repository: 'backend',
+          prNumber: 111,
+          branchName: 'feature/moved-after-registration',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: { units: ['api'], edges: [] },
+          prEvidence: null
+        },
+        {}
+      );
+      await expect(
+        repository.supersedeMovedBranchHeads(
+          'backend',
+          registered.branch_name,
+          SHA_B,
+          {}
+        )
+      ).resolves.toEqual([expect.objectContaining({ id: registered.id })]);
+      expect(
+        (await repository.findCandidateById(registered.id, {}))?.status
+      ).toBe('SUPERSEDED');
+    });
+
+    it('claims only explicitly production-ready candidates', async () => {
+      process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+      const explicit = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 12,
+          branchName: 'feature/explicit-production',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      const stagingOnly = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 13,
+          branchName: 'feature/staging-only',
+          headSha: SHA_B,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      await repository.updateCandidate(
+        explicit.id,
+        explicit.row_version,
+        {
+          status: 'READY_FOR_PRODUCTION',
+          productionRequestedAt: 1,
+          productionRequestedBy: 'owner'
+        },
+        {}
+      );
+      const train = await new ReleaseBusV2Service(repository).claimLane(
+        'PRODUCTION',
+        SHA_A,
+        SHA_B,
+        'production-claim'
+      );
+      expect(train?.lane).toBe('PRODUCTION');
+      expect(await repository.listTrainCandidates(train?.id ?? '', {})).toEqual(
+        [expect.objectContaining({ candidate_id: explicit.id })]
+      );
+      expect(
+        (await repository.findCandidateById(stagingOnly.id, {}))?.status
+      ).toBe('READY_FOR_STAGING');
+    });
+
+    it('creates one immutable qualification train across duplicate invocations', async () => {
+      const input = {
+        parentTrainId: 'parent-train',
+        frontendBaseSha: SHA_A,
+        backendBaseSha: SHA_B,
+        frontendComposedSha: SHA_B,
+        backendComposedSha: SHA_A,
+        frontendArtifactDigest: DIGEST_A,
+        backendArtifactDigest: null,
+        candidateIds: ['candidate-a', 'candidate-b']
+      } as const;
+
+      const [first, second] = await Promise.all([
+        repository.createQualificationTrain(input, {}),
+        repository.createQualificationTrain(input, {})
+      ]);
+      expect(first.id).toBe(second.id);
+      expect(await repository.listTrainCandidates(first.id, {})).toHaveLength(
+        2
+      );
+      await expect(
+        repository.createQualificationTrain(
+          { ...input, frontendArtifactDigest: 'd'.repeat(64) },
+          {}
+        )
+      ).rejects.toThrow('different immutable content');
+    });
+
+    it('rejects reuse of an operation idempotency key with changed identity', async () => {
+      const input = {
+        idempotencyKey: 'rb2:train:prepare:frontend:a1',
+        trainId: 'train',
+        operationType: 'PREPARE_ARTIFACT_FRONTEND',
+        repository: 'frontend' as const,
+        service: null,
+        environment: 'orchestration',
+        expectedSha: SHA_A,
+        artifactDigest: null,
+        request: {
+          workflow: 'release-bus-v2-preflight.yml',
+          expected_sha: SHA_A
+        },
+        maxAttempts: 3
+      };
+      const first = await repository.getOrCreateOperation(input, {});
+      const duplicate = await repository.getOrCreateOperation(input, {});
+      expect(duplicate.id).toBe(first.id);
+      await expect(
+        repository.getOrCreateOperation({ ...input, expectedSha: SHA_B }, {})
+      ).rejects.toThrow('different immutable operation identity');
+    });
+
+    it('serializes staging ownership and releases only the exact lease token', async () => {
+      const first = await repository.acquireLock(
+        'staging-environment',
+        'train-a',
+        'train:train-a',
+        60_000,
+        {}
+      );
+      expect(first?.lease_token).toBeTruthy();
+      await expect(
+        repository.acquireLock(
+          'staging-environment',
+          'train-b',
+          'train:train-b',
+          60_000,
+          {}
+        )
+      ).resolves.toBeNull();
+      await expect(
+        repository.releaseLock('staging-environment', 'wrong-token', {})
+      ).resolves.toBe(false);
+      await expect(
+        repository.releaseLock(
+          'staging-environment',
+          first?.lease_token ?? '',
+          {}
+        )
+      ).resolves.toBe(true);
+    });
+
+    it('finds staging validation only for exact SHAs and artifact digests', async () => {
+      const manifest = await repository.createManifest(
+        {
+          train_id: 'staging-train',
+          lane: 'STAGING',
+          identity_sha256: 'e'.repeat(64),
+          status: 'STAGING_VALIDATED',
+          frontend_sha: SHA_A,
+          backend_sha: null,
+          frontend_artifact_digest: DIGEST_A,
+          backend_artifact_digest: null,
+          e2e_run_id: '123',
+          manifest_json: { schema_version: 2, train_id: 'staging-train' },
+          deployed_at: 1,
+          validated_at: 2
+        },
+        {}
+      );
+      await expect(
+        repository.findValidatedManifestByRelease(
+          SHA_A,
+          null,
+          DIGEST_A,
+          null,
+          {}
+        )
+      ).resolves.toEqual(expect.objectContaining({ id: manifest.id }));
+      await expect(
+        repository.findValidatedManifestByRelease(
+          SHA_A,
+          null,
+          'f'.repeat(64),
+          null,
+          {}
+        )
+      ).resolves.toBeNull();
+      await expect(
+        repository.findValidatedManifestByShas(SHA_A, null, {})
+      ).resolves.toEqual(expect.objectContaining({ id: manifest.id }));
+    });
+  }
+);

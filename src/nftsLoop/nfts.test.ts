@@ -2,6 +2,8 @@ import { getAnimationPaths } from '@/nftsLoop/nft-animation-paths';
 import {
   calculateNftHodlRate,
   getMemeTokenIdsForEditionSizeFloorRefresh,
+  normalizeMetadataNameForNft,
+  normalizeMetadataStructuredFieldsForNft,
   resolveNftEditionSizeFloor
 } from '@/nftsLoop/nfts';
 
@@ -53,6 +55,38 @@ describe('getAnimationPaths', () => {
       )
     ).toEqual({
       animation: 'https://example.com/interactive/index.html'
+    });
+  });
+});
+
+describe('normalizeMetadataNameForNft', () => {
+  it('trims NFT metadata names without changing internal whitespace', () => {
+    expect(normalizeMetadataNameForNft(' The  Loom ')).toBe('The  Loom');
+  });
+});
+
+describe('normalizeMetadataStructuredFieldsForNft', () => {
+  it('trims structured NFT metadata fields without changing internal whitespace', () => {
+    const normalized = normalizeMetadataStructuredFieldsForNft({
+      name: ' The  Loom ',
+      description: '\nLine one\nLine  two\n ',
+      attributes: [
+        { trait_type: ' Artist ', value: ' 6529er ' },
+        { trait_type: '\nMeme Name\t', value: '\tThe  Loom\n' },
+        { trait_type: 'Type - Meme', value: 519 },
+        { trait_type: 'Dynamic', value: false }
+      ]
+    });
+
+    expect(normalized).toEqual({
+      name: 'The  Loom',
+      description: 'Line one\nLine  two',
+      attributes: [
+        { trait_type: 'Artist', value: '6529er' },
+        { trait_type: 'Meme Name', value: 'The  Loom' },
+        { trait_type: 'Type - Meme', value: 519 },
+        { trait_type: 'Dynamic', value: false }
+      ]
     });
   });
 });

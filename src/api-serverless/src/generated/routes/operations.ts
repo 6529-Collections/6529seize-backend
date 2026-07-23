@@ -2,6 +2,18 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
+import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
+import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
+import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
+import { ApiCompetitionEntry } from '@/api/generated/models/ApiCompetitionEntry';
+import { ApiCompetitionEntryPage } from '@/api/generated/models/ApiCompetitionEntryPage';
+import { ApiCompetitionEntryVotePage } from '@/api/generated/models/ApiCompetitionEntryVotePage';
+import { ApiCompetitionLeaderboardPage } from '@/api/generated/models/ApiCompetitionLeaderboardPage';
+import { ApiCompetitionOutcomePage } from '@/api/generated/models/ApiCompetitionOutcomePage';
+import { ApiCompetitionPage } from '@/api/generated/models/ApiCompetitionPage';
+import { ApiCompetitionPausePage } from '@/api/generated/models/ApiCompetitionPausePage';
+import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVoterPage';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
@@ -28,6 +40,7 @@ import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlob
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
+import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/ApiProfileCmsAgentPatchValidationResult';
@@ -45,9 +58,11 @@ import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/A
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentionSearchResult';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
 
 export type GetDmDropsUnreadPathParams = Record<string, never>;
 
@@ -74,6 +89,22 @@ export type ResolveDecentralizedMediaRequest = Request<
   ApiResponse<ResolveDecentralizedMediaResponse>,
   ApiMediaResolveRequest,
   ResolveDecentralizedMediaQuery,
+  Record<string, never>
+>;
+
+export interface GetMemeCardDropMappingPathParams {
+  "meme_card_id": number;
+}
+
+export type GetMemeCardDropMappingQuery = Record<string, never>;
+
+export type GetMemeCardDropMappingResponse = ApiMemeCardDropMapping;
+
+export type GetMemeCardDropMappingRequest = Request<
+  GetMemeCardDropMappingPathParams,
+  ApiResponse<GetMemeCardDropMappingResponse>,
+  never,
+  GetMemeCardDropMappingQuery,
   Record<string, never>
 >;
 
@@ -822,6 +853,27 @@ export type GetWavesV2Request = Request<
   Record<string, never>
 >;
 
+export interface GetWaveCompetitionDropsV2PathParams {
+  "id": string;
+}
+
+export interface GetWaveCompetitionDropsV2Query {
+  "author_id": string;
+  "drop_type": "PARTICIPATORY" | "WINNER";
+  "page"?: number;
+  "page_size"?: number;
+}
+
+export type GetWaveCompetitionDropsV2Response = ApiDropV2PageWithoutCount;
+
+export type GetWaveCompetitionDropsV2Request = Request<
+  GetWaveCompetitionDropsV2PathParams,
+  ApiResponse<GetWaveCompetitionDropsV2Response>,
+  never,
+  GetWaveCompetitionDropsV2Query,
+  Record<string, never>
+>;
+
 export interface ListWaveCurationDropsV2PathParams {
   "id": string;
   "curation_id": string;
@@ -983,6 +1035,25 @@ export type GetWavePollsV2Request = Request<
   Record<string, never>
 >;
 
+export interface SearchWaveMentionsPathParams {
+  "waveId": string;
+}
+
+export interface SearchWaveMentionsQuery {
+  "handle": string;
+  "limit"?: number;
+}
+
+export type SearchWaveMentionsResponse = ApiWaveMentionSearchResult[];
+
+export type SearchWaveMentionsRequest = Request<
+  SearchWaveMentionsPathParams,
+  ApiResponse<SearchWaveMentionsResponse>,
+  never,
+  SearchWaveMentionsQuery,
+  Record<string, never>
+>;
+
 export interface SearchDropsInWaveV2PathParams {
   "waveId": string;
 }
@@ -1000,6 +1071,315 @@ export type SearchDropsInWaveV2Request = Request<
   ApiResponse<SearchDropsInWaveV2Response>,
   never,
   SearchDropsInWaveV2Query,
+  Record<string, never>
+>;
+
+export type SearchDraftWaveMentionsPathParams = Record<string, never>;
+
+export interface SearchDraftWaveMentionsQuery {
+  "handle": string;
+  "visibility_group_id"?: string;
+  "limit"?: number;
+}
+
+export type SearchDraftWaveMentionsResponse = ApiWaveMentionSearchResult[];
+
+export type SearchDraftWaveMentionsRequest = Request<
+  SearchDraftWaveMentionsPathParams,
+  ApiResponse<SearchDraftWaveMentionsResponse>,
+  never,
+  SearchDraftWaveMentionsQuery,
+  Record<string, never>
+>;
+
+export interface GetWaveHubV3PathParams {
+  "wave_id": string;
+}
+
+export type GetWaveHubV3Query = Record<string, never>;
+
+export type GetWaveHubV3Response = ApiWaveV3;
+
+export type GetWaveHubV3Request = Request<
+  GetWaveHubV3PathParams,
+  ApiResponse<GetWaveHubV3Response>,
+  never,
+  GetWaveHubV3Query,
+  Record<string, never>
+>;
+
+export interface ListWaveCompetitionsV3PathParams {
+  "wave_id": string;
+}
+
+export interface ListWaveCompetitionsV3Query {
+  "lifecycle"?: string[];
+  "phase"?: string[];
+  "sort"?: "created_at" | "starts_at" | "updated_at";
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListWaveCompetitionsV3Response = ApiCompetitionPage;
+
+export type ListWaveCompetitionsV3Request = Request<
+  ListWaveCompetitionsV3PathParams,
+  ApiResponse<ListWaveCompetitionsV3Response>,
+  never,
+  ListWaveCompetitionsV3Query,
+  Record<string, never>
+>;
+
+export interface GetWaveCompetitionV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export type GetWaveCompetitionV3Query = Record<string, never>;
+
+export type GetWaveCompetitionV3Response = ApiCompetition;
+
+export type GetWaveCompetitionV3Request = Request<
+  GetWaveCompetitionV3PathParams,
+  ApiResponse<GetWaveCompetitionV3Response>,
+  never,
+  GetWaveCompetitionV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionDecisionsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionDecisionsV3Query {
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionDecisionsV3Response = ApiCompetitionDecisionPage;
+
+export type ListCompetitionDecisionsV3Request = Request<
+  ListCompetitionDecisionsV3PathParams,
+  ApiResponse<ListCompetitionDecisionsV3Response>,
+  never,
+  ListCompetitionDecisionsV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionEntriesV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionEntriesV3Query {
+  "status"?: string[];
+  "submitter"?: string;
+  "sort"?: "submitted_at" | "rating" | "rank";
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionEntriesV3Response = ApiCompetitionEntryPage;
+
+export type ListCompetitionEntriesV3Request = Request<
+  ListCompetitionEntriesV3PathParams,
+  ApiResponse<ListCompetitionEntriesV3Response>,
+  never,
+  ListCompetitionEntriesV3Query,
+  Record<string, never>
+>;
+
+export interface GetCompetitionEntryV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "entry_id": string;
+}
+
+export type GetCompetitionEntryV3Query = Record<string, never>;
+
+export type GetCompetitionEntryV3Response = ApiCompetitionEntry;
+
+export type GetCompetitionEntryV3Request = Request<
+  GetCompetitionEntryV3PathParams,
+  ApiResponse<GetCompetitionEntryV3Response>,
+  never,
+  GetCompetitionEntryV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionEntryVotesV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "entry_id": string;
+}
+
+export interface ListCompetitionEntryVotesV3Query {
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionEntryVotesV3Response = ApiCompetitionEntryVotePage;
+
+export type ListCompetitionEntryVotesV3Request = Request<
+  ListCompetitionEntryVotesV3PathParams,
+  ApiResponse<ListCompetitionEntryVotesV3Response>,
+  never,
+  ListCompetitionEntryVotesV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionLeaderboardV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionLeaderboardV3Query {
+  "sort"?: "rating";
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionLeaderboardV3Response = ApiCompetitionLeaderboardPage;
+
+export type ListCompetitionLeaderboardV3Request = Request<
+  ListCompetitionLeaderboardV3PathParams,
+  ApiResponse<ListCompetitionLeaderboardV3Response>,
+  never,
+  ListCompetitionLeaderboardV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionOutcomesV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionOutcomesV3Query {
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionOutcomesV3Response = ApiCompetitionOutcomePage;
+
+export type ListCompetitionOutcomesV3Request = Request<
+  ListCompetitionOutcomesV3PathParams,
+  ApiResponse<ListCompetitionOutcomesV3Response>,
+  never,
+  ListCompetitionOutcomesV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionOutcomeDistributionV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "outcome_id": string;
+}
+
+export interface ListCompetitionOutcomeDistributionV3Query {
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionOutcomeDistributionV3Response = ApiCompetitionDistributionItemPage;
+
+export type ListCompetitionOutcomeDistributionV3Request = Request<
+  ListCompetitionOutcomeDistributionV3PathParams,
+  ApiResponse<ListCompetitionOutcomeDistributionV3Response>,
+  never,
+  ListCompetitionOutcomeDistributionV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionPausesV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionPausesV3Query {
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionPausesV3Response = ApiCompetitionPausePage;
+
+export type ListCompetitionPausesV3Request = Request<
+  ListCompetitionPausesV3PathParams,
+  ApiResponse<ListCompetitionPausesV3Response>,
+  never,
+  ListCompetitionPausesV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionVersionsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionVersionsV3Query {
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionVersionsV3Response = ApiCompetitionConfigVersionPage;
+
+export type ListCompetitionVersionsV3Request = Request<
+  ListCompetitionVersionsV3PathParams,
+  ApiResponse<ListCompetitionVersionsV3Response>,
+  never,
+  ListCompetitionVersionsV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionVotersV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionVotersV3Query {
+  "entry_id"?: string;
+  "sort"?: "votes";
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionVotersV3Response = ApiCompetitionVoterPage;
+
+export type ListCompetitionVotersV3Request = Request<
+  ListCompetitionVotersV3PathParams,
+  ApiResponse<ListCompetitionVotersV3Response>,
+  never,
+  ListCompetitionVotersV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionWinnersV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionWinnersV3Query {
+  "direction"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionWinnersV3Response = ApiCompetitionEntryPage;
+
+export type ListCompetitionWinnersV3Request = Request<
+  ListCompetitionWinnersV3PathParams,
+  ApiResponse<ListCompetitionWinnersV3Response>,
+  never,
+  ListCompetitionWinnersV3Query,
   Record<string, never>
 >;
 

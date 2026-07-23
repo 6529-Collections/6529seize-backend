@@ -68,4 +68,80 @@ describe('GitHubDeployService.listRefs', () => {
       { name: 'v1.0.0', type: 'tag' }
     ]);
   });
+
+  it('keeps the owner separator literal while encoding a PR head branch', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse([
+        { number: 42, html_url: 'https://github.com/example/pull/42' }
+      ]) as never
+    );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.findOpenPullRequest('token', 'backend', 'feature/release bus')
+    ).resolves.toMatchObject({ number: 42 });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toContain(
+      'head=6529-Collections:feature%2Frelease%20bus'
+    );
+  });
+
+  it('detects an existing Release Bus commit status before cancellation', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse([
+        { context: 'continuous-integration', state: 'success' },
+        { context: 'Release Bus', state: 'pending' }
+      ]) as never
+    );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.getReleaseBusCommitStatusState(
+        'token',
+        'frontend',
+        'a'.repeat(40)
+      )
+    ).resolves.toBe('pending');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toContain(
+      `/commits/${'a'.repeat(40)}/statuses?per_page=100&page=1`
+    );
+  });
+
+  it('does not invent a Release Bus status for a shadow-only candidate', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse([
+        { context: 'continuous-integration', state: 'success' }
+      ]) as never
+    );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.getReleaseBusCommitStatusState(
+        'token',
+        'frontend',
+        'b'.repeat(40)
+      )
+    ).resolves.toBeNull();
+  });
+
+  it('paginates commit statuses until the Release Bus context is found', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        createResponse(
+          Array.from({ length: 100 }, () => ({ context: 'other' }))
+        ) as never
+      )
+      .mockResolvedValueOnce(
+        createResponse([{ context: 'Release Bus', state: 'pending' }]) as never
+      );
+
+    const service = new GitHubDeployService();
+    await expect(
+      service.getReleaseBusCommitStatusState('token', 'backend', 'c'.repeat(40))
+    ).resolves.toBe('pending');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain('page=2');
+  });
 });

@@ -91,6 +91,16 @@ export interface DropReplyPreview {
   readonly author_pfp: string | null;
 }
 
+export interface AuthorWaveParticipation {
+  readonly is_participant: boolean;
+  readonly is_winner: boolean;
+}
+
+export type AuthorWaveParticipationByWave = Record<
+  string,
+  Record<string, AuthorWaveParticipation>
+>;
+
 export class DropsDb extends LazyDbAccessCompatibleService {
   private getDropEntitySelectFields(alias: string): string {
     return [
@@ -126,6 +136,121 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async findAuthorWaveParticipationByDropContexts(
+    dropContexts: Pick<DropEntity, 'wave_id' | 'author_id'>[],
+    ctx: RequestContext
+  ): Promise<AuthorWaveParticipationByWave> {
+    if (!dropContexts.length) {
+      return {};
+    }
+
+    ctx.timer?.start(
+      `${this.constructor.name}->findAuthorWaveParticipationByDropContexts`
+    );
+    try {
+      const authorIdsByWave = new Map<string, Set<string>>();
+      for (const dropContext of dropContexts) {
+        const authorIds = authorIdsByWave.get(dropContext.wave_id) ?? new Set();
+        authorIds.add(dropContext.author_id);
+        authorIdsByWave.set(dropContext.wave_id, authorIds);
+      }
+
+      const result: AuthorWaveParticipationByWave = {};
+      const authorIds = new Set<string>();
+      for (const [waveId, waveAuthorIds] of Array.from(
+        authorIdsByWave.entries()
+      )) {
+        result[waveId] = {};
+        for (const authorId of Array.from(waveAuthorIds)) {
+          authorIds.add(authorId);
+          result[waveId][authorId] = {
+            is_participant: false,
+            is_winner: false
+          };
+        }
+      }
+
+      const rows = await this.db.execute<{
+        wave_id: string;
+        author_id: string;
+        is_participant: number;
+        is_winner: number;
+      }>(
+        `
+          select wave_id,
+                 author_id,
+                 max(case when drop_type = :participant_type then 1 else 0 end) as is_participant,
+                 max(case when drop_type = :winner_type then 1 else 0 end) as is_winner
+          from ${DROPS_TABLE}
+          where wave_id in (:wave_ids)
+            and author_id in (:author_ids)
+            and drop_type in (:participant_type, :winner_type)
+          group by wave_id, author_id
+        `,
+        {
+          wave_ids: Array.from(authorIdsByWave.keys()),
+          author_ids: Array.from(authorIds),
+          participant_type: DropType.PARTICIPATORY,
+          winner_type: DropType.WINNER
+        },
+        { wrappedConnection: ctx.connection }
+      );
+
+      for (const row of rows) {
+        const requestedParticipation = result[row.wave_id]?.[row.author_id];
+        if (!requestedParticipation) {
+          continue;
+        }
+        result[row.wave_id][row.author_id] = {
+          is_participant: Boolean(row.is_participant),
+          is_winner: Boolean(row.is_winner)
+        };
+      }
+      return result;
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findAuthorWaveParticipationByDropContexts`
+      );
+    }
+  }
+
+  async findWaveCompetitionDropsByAuthor(
+    {
+      wave_id,
+      author_id,
+      drop_type,
+      limit,
+      offset
+    }: {
+      readonly wave_id: string;
+      readonly author_id: string;
+      readonly drop_type: DropType.PARTICIPATORY | DropType.WINNER;
+      readonly limit: number;
+      readonly offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    const timerLabel = `${this.constructor.name}->findWaveCompetitionDropsByAuthor`;
+    ctx.timer?.start(timerLabel);
+    try {
+      return await this.db.execute<DropEntity>(
+        `
+          select *
+          from ${DROPS_TABLE}
+          where wave_id = :wave_id
+            and author_id = :author_id
+            and drop_type = :drop_type
+          order by created_at asc, serial_no asc, id asc
+          limit :limit offset :offset
+        `,
+        { wave_id, author_id, drop_type, limit, offset },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
   }
 
   async getDropPartOnes(
@@ -311,6 +436,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const waveId = newDropEntity.wave_id;
     const replyToDropId = newDropEntity.reply_to_drop_id;
     const newDropSerialNo = newDropEntity.serial_no;
+    const hideLinkPreview = newDropEntity.hide_link_preview ?? false;
     const now = Time.currentMillis();
     await Promise.all([
       this.db.execute(
@@ -370,6 +496,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                      parts_count,
                                      signature,
                                      is_additional_action_promised,
+                                     hide_link_preview,
                                      reply_to_drop_id,
                                      reply_to_part_id${
                                        newDropSerialNo !== null
@@ -386,11 +513,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  :parts_count,
                  :signature,
                  :is_additional_action_promised,
+                 :hide_link_preview,
                  :reply_to_drop_id,
                  :reply_to_part_id
               ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
 
-        { ...newDropEntity },
+        { ...newDropEntity, hide_link_preview: hideLinkPreview },
         { wrappedConnection: connection }
       )
     ]);
@@ -1290,6 +1418,27 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(timerKey);
     }
+  }
+
+  async findDropIdByMetadata(
+    {
+      waveId,
+      dataKey,
+      dataValue
+    }: { waveId: string; dataKey: string; dataValue: string },
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const result = await this.db.execute<{ drop_id: string }>(
+      `select drop_id
+       from ${DROP_METADATA_TABLE}
+       where wave_id = :waveId
+         and data_key = :dataKey
+         and data_value = :dataValue
+       limit 1`,
+      { waveId, dataKey, dataValue },
+      { wrappedConnection: ctx.connection }
+    );
+    return result[0]?.drop_id ?? null;
   }
 
   async findDropIdsWithMetadata(

@@ -22,6 +22,21 @@ export { CicScoreAggregation } from './ICicScoreAggregation';
 export { CicStatement } from './ICICStatement';
 export { CmsPublishedPackageEntity, CmsSiteEntity } from './ICmsSite';
 export { CookiesConsent } from './ICookieConsent';
+export {
+  CompetitionCapabilityEntity,
+  CompetitionConfigVersionEntity,
+  CompetitionDecisionEntity,
+  CompetitionDecisionWinnerEntity,
+  CompetitionEntity,
+  CompetitionEntryEntity,
+  CompetitionLeaderboardEntryEntity,
+  CompetitionLifecycleEventEntity,
+  CompetitionOutcomeDistributionItemEntity,
+  CompetitionOutcomeEntity,
+  CompetitionParityObservationEntity,
+  CompetitionPauseEntity,
+  CompetitionVoteEntity
+} from './ICompetition';
 export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
@@ -29,6 +44,7 @@ export { DistributionPhoto } from './IDistributionPhoto';
 export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export { MintingClaimActionEntity } from './IMintingClaimAction';
+export { MemeCardDropMappingEntity } from './IMemeCardDropMapping';
 export {
   DropGroupMentionEntity,
   DropBoostEntity,
@@ -205,6 +221,27 @@ export { WaveCurationEntity } from './IWaveCuration';
 export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificationSubscription';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
+export { WSNotificationSubscriptionEntity } from './IWSNotificationSubscription';
+export { ReleaseReadyDeploymentEntity } from './IReleaseReadyDeployment';
+export { ReleaseCandidateDependencyEntity } from './IReleaseCandidateDependency';
+export { ReleaseTrainEntity } from './IReleaseTrain';
+export { ReleaseTrainItemEntity } from './IReleaseTrainItem';
+export { ReleaseTrainOperationEntity } from './IReleaseTrainOperation';
+export { ReleaseTrainEvidenceEntity } from './IReleaseTrainEvidence';
+export { ReleaseDeploymentLaneEntity } from './IReleaseDeploymentLane';
+export { ReleaseBusControlEntity } from './IReleaseBusControl';
+export { ReleaseTrainEventEntity } from './IReleaseTrainEvent';
+export {
+  ReleaseBusV2CandidateDependencyEntity,
+  ReleaseBusV2CandidateEntity,
+  ReleaseBusV2ControlEntity,
+  ReleaseBusV2EventEntity,
+  ReleaseBusV2LockEntity,
+  ReleaseBusV2ManifestEntity,
+  ReleaseBusV2OperationEntity,
+  ReleaseBusV2TrainCandidateEntity,
+  ReleaseBusV2TrainEntity
+} from './IReleaseBusV2';
 export { XTdhGrantEntity } from './IXTdhGrant';
 export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
 export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';

@@ -5,6 +5,10 @@ import { NotificationsApiService } from '@/api/notifications/notifications.api.s
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 
+jest.mock('@/api/waves/wave-unread-cache', () => ({
+  invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
+}));
+
 describe('NotificationsApiService V2 notifications', () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -476,6 +480,79 @@ describe('NotificationsApiService V2 notifications', () => {
       ],
       unread_count: 2
     });
+  });
+});
+
+describe('NotificationsApiService realtime invalidation', () => {
+  it('notifies the affected profile after read-state mutations succeed', async () => {
+    const identityNotificationsDb = {
+      updateNotificationReadAt: jest.fn().mockResolvedValue(undefined),
+      markAllNotificationsAsRead: jest.fn().mockResolvedValue(undefined),
+      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+    };
+    const wavesApiDb = {
+      updateWaveReaderMetricLatestReadTimestamp: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const wsListenersNotifier = {
+      notifyAboutIdentityNotificationsChanged: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const service = new NotificationsApiService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      identityNotificationsDb as any,
+      {} as any,
+      wavesApiDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      wsListenersNotifier as any
+    );
+
+    await service.markNotificationAsRead({
+      id: 1,
+      identity_id: 'profile-1'
+    });
+    await service.markNotificationAsUnread({
+      id: 2,
+      identity_id: 'profile-1'
+    });
+    await service.markAllNotificationsAsRead('profile-1', {});
+    await service.markWaveNotificationsAsRead('wave-1', 'profile-1', {});
+
+    expect(
+      identityNotificationsDb.updateNotificationReadAt
+    ).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: 1, identity_id: 'profile-1' })
+    );
+    expect(
+      identityNotificationsDb.updateNotificationReadAt
+    ).toHaveBeenNthCalledWith(2, {
+      id: 2,
+      identity_id: 'profile-1',
+      readAt: null
+    });
+    expect(
+      identityNotificationsDb.markWaveNotificationsAsRead
+    ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenNthCalledWith(1, ['profile-1']);
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenNthCalledWith(2, ['profile-1']);
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenNthCalledWith(3, ['profile-1']);
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenNthCalledWith(4, ['profile-1']);
   });
 });
 

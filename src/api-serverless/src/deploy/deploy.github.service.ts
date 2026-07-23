@@ -37,6 +37,16 @@ type GitHubMatchingRef = {
   ref: string;
 };
 
+type GitHubRef = { object?: { sha?: string } };
+type GitHubRepository = { permissions?: { push?: boolean; admin?: boolean } };
+type GitHubPullRequest = { number: number; html_url: string };
+type GitHubCommitStatusState = 'error' | 'failure' | 'pending' | 'success';
+type GitHubCommitStatus = {
+  context?: string;
+  state?: GitHubCommitStatusState;
+};
+type GitHubOrgMembership = { role?: string; state?: string };
+
 type GitHubWorkflowRun = {
   id: number;
   html_url: string;
@@ -387,18 +397,23 @@ export class GitHubDeployService {
     ref: string;
     service?: string;
     environment: DeployEnvironment;
+    breakGlassReason?: string;
   }): Promise<void> {
     const target = params.target ?? 'backend';
     const body =
       target === 'frontend'
         ? {
-            ref: params.ref
+            ref: params.ref,
+            inputs: {
+              break_glass_reason: params.breakGlassReason ?? ''
+            }
           }
         : {
             ref: params.ref,
             inputs: {
               environment: params.environment,
-              service: params.service
+              service: params.service,
+              break_glass_reason: params.breakGlassReason ?? ''
             }
           };
     const response = await this.api(
@@ -547,6 +562,192 @@ export class GitHubDeployService {
     }
 
     return (await response.json()) as GitHubViewer;
+  }
+
+  public async resolveBranchHead(
+    token: string,
+    target: DeployTarget,
+    branch: string
+  ): Promise<string> {
+    const response = await this.api(
+      token,
+      target,
+      `/git/ref/heads/${encodeURIComponent(branch)}`,
+      { method: 'GET' }
+    );
+    if (!response.ok) {
+      const message = await this.getErrorMessage(response);
+      throw new CustomApiCompliantException(
+        response.status === 404 ? 404 : 502,
+        `Failed to resolve branch ${branch}: ${message}`
+      );
+    }
+    const payload = (await response.json()) as GitHubRef;
+    const sha = payload.object?.sha;
+    if (!sha || !/^[a-f0-9]{40}$/i.test(sha)) {
+      throw new CustomApiCompliantException(
+        502,
+        `GitHub returned an invalid SHA for ${branch}`
+      );
+    }
+    return sha.toLowerCase();
+  }
+
+  public async assertRepositoryWriteAccess(
+    token: string,
+    target: DeployTarget
+  ): Promise<void> {
+    const response = await this.api(token, target, '', { method: 'GET' });
+    if (!response.ok) {
+      const message = await this.getErrorMessage(response);
+      throw new CustomApiCompliantException(
+        response.status,
+        `Cannot inspect repository permission: ${message}`
+      );
+    }
+    const repository = (await response.json()) as GitHubRepository;
+    if (!repository.permissions?.push && !repository.permissions?.admin) {
+      throw new CustomApiCompliantException(
+        403,
+        'Repository write permission is required'
+      );
+    }
+  }
+
+  public async findOpenPullRequest(
+    token: string,
+    target: DeployTarget,
+    branch: string
+  ): Promise<GitHubPullRequest | null> {
+    const owner =
+      target === 'frontend' ? FRONTEND_DEPLOY_REPO_OWNER : DEPLOY_REPO_OWNER;
+    const head = `${encodeURIComponent(owner)}:${encodeURIComponent(branch)}`;
+    const response = await this.api(
+      token,
+      target,
+      `/pulls?state=open&head=${head}&per_page=1`,
+      { method: 'GET' }
+    );
+    if (!response.ok) {
+      const message = await this.getErrorMessage(response);
+      throw new CustomApiCompliantException(
+        502,
+        `Failed to resolve source pull request: ${message}`
+      );
+    }
+    return ((await response.json()) as GitHubPullRequest[])[0] ?? null;
+  }
+
+  public async createCommitStatus(
+    token: string,
+    target: DeployTarget,
+    sha: string,
+    state: 'error' | 'failure' | 'pending' | 'success',
+    description: string,
+    targetUrl?: string
+  ): Promise<void> {
+    const response = await this.api(token, target, `/statuses/${sha}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        state,
+        context: 'Release Bus',
+        description: description.slice(0, 140),
+        target_url: targetUrl
+      })
+    });
+    if (!response.ok) {
+      const message = await this.getErrorMessage(response);
+      throw new CustomApiCompliantException(
+        502,
+        `Failed to update Release Bus status: ${message}`
+      );
+    }
+  }
+
+  public async getReleaseBusCommitStatusState(
+    token: string,
+    target: DeployTarget,
+    sha: string
+  ): Promise<GitHubCommitStatusState | null> {
+    for (let page = 1; ; page += 1) {
+      const response = await this.api(
+        token,
+        target,
+        `/commits/${encodeURIComponent(sha)}/statuses?per_page=100&page=${page}`,
+        { method: 'GET' }
+      );
+      if (!response.ok) {
+        const message = await this.getErrorMessage(response);
+        throw new CustomApiCompliantException(
+          502,
+          `Failed to inspect Release Bus status: ${message}`
+        );
+      }
+      const statuses = (await response.json()) as GitHubCommitStatus[];
+      const releaseBusStatus = statuses.find(
+        (status) => status.context === 'Release Bus'
+      );
+      if (releaseBusStatus) return releaseBusStatus.state ?? null;
+      if (statuses.length < 100) return null;
+    }
+  }
+
+  public async commentOnPullRequest(
+    token: string,
+    target: DeployTarget,
+    pullNumber: number,
+    body: string
+  ): Promise<void> {
+    const response = await this.api(
+      token,
+      target,
+      `/issues/${pullNumber}/comments`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ body })
+      }
+    );
+    if (!response.ok) {
+      const message = await this.getErrorMessage(response);
+      throw new CustomApiCompliantException(
+        502,
+        `Failed to comment on pull request: ${message}`
+      );
+    }
+  }
+
+  public async isOrganizationOperator(
+    token: string,
+    login: string,
+    organization: string,
+    teamSlug: string
+  ): Promise<boolean> {
+    const headers = this.buildGitHubHeaders(token, {
+      'Content-Type': 'application/json'
+    });
+    const membership = await this.fetchWithTimeout(
+      `https://api.github.com/orgs/${encodeURIComponent(organization)}/memberships/${encodeURIComponent(login)}`,
+      { method: 'GET', headers }
+    );
+    if (membership.ok) {
+      const payload = (await membership.json()) as GitHubOrgMembership;
+      if (payload.state === 'active' && payload.role === 'admin') return true;
+    }
+    const teamMembership = await this.fetchWithTimeout(
+      `https://api.github.com/orgs/${encodeURIComponent(organization)}/teams/${encodeURIComponent(teamSlug)}/memberships/${encodeURIComponent(login)}`,
+      { method: 'GET', headers }
+    );
+    if (teamMembership.status === 404) return false;
+    if (!teamMembership.ok) {
+      const message = await this.getErrorMessage(teamMembership);
+      throw new CustomApiCompliantException(
+        502,
+        `Failed to verify release-bus operator membership: ${message}`
+      );
+    }
+    return (
+      ((await teamMembership.json()) as GitHubOrgMembership).state === 'active'
+    );
   }
 
   public async listRefs(

@@ -103,6 +103,7 @@ function createService() {
       .mockResolvedValue([
         makeDrop({ id: 'reply-1', reply_to_drop_id: 'root-drop' })
       ]),
+    findWaveCompetitionDropsByAuthor: jest.fn().mockResolvedValue([]),
     findDropsByCurationPriorityOrder: jest.fn().mockResolvedValue([]),
     searchDropsContainingPhraseInWave: jest
       .fn()
@@ -519,6 +520,53 @@ describe('ApiWaveV2Service', () => {
     );
     expect(result).toEqual({
       data: [{ id: 'curated-drop-1' }, { id: 'curated-drop-2' }],
+      page: 2,
+      next: true
+    });
+  });
+
+  it('pages one author competition drops after checking wave visibility', async () => {
+    const { service, deps } = createService();
+    const competitionDrops = [
+      makeDrop({ id: 'entry-1', drop_type: DropType.PARTICIPATORY }),
+      makeDrop({ id: 'entry-2', drop_type: DropType.PARTICIPATORY }),
+      makeDrop({ id: 'entry-3', drop_type: DropType.PARTICIPATORY })
+    ];
+    deps.dropsDb.findWaveCompetitionDropsByAuthor.mockResolvedValue(
+      competitionDrops
+    );
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaveCompetitionDrops(
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        drop_type: DropType.PARTICIPATORY,
+        page: 2,
+        page_size: 2
+      },
+      ctx
+    );
+
+    expect(deps.dropsDb.findWaveCompetitionDropsByAuthor).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        drop_type: DropType.PARTICIPATORY,
+        limit: 3,
+        offset: 2
+      },
+      ctx
+    );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      competitionDrops.slice(0, 2),
+      ctx,
+      { groupIdsUserIsEligibleFor: ['group-1'] }
+    );
+    expect(result).toEqual({
+      data: [{ id: 'entry-1' }, { id: 'entry-2' }],
       page: 2,
       next: true
     });

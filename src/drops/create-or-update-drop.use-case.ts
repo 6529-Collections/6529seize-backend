@@ -98,6 +98,7 @@ import {
 } from '@/waves/wave-chat-slow-mode.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
+import { Logger } from '@/logging';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -189,7 +190,28 @@ type ResolvedMentionedUsers = Readonly<{
   mentionedUserIds: string[];
 }>;
 
+export function sanitizeDropStructuredFields(
+  model: CreateOrUpdateDropModel
+): CreateOrUpdateDropModel {
+  const title = model.title?.trim() ?? null;
+  return {
+    ...model,
+    title: title === '' ? null : title,
+    metadata: model.metadata
+      .map((metadata) => ({
+        ...metadata,
+        data_key: metadata.data_key.trim(),
+        data_value: metadata.data_value.trim()
+      }))
+      .filter(
+        (metadata) => metadata.data_key !== '' && metadata.data_value !== ''
+      )
+  };
+}
+
 export class CreateOrUpdateDropUseCase {
+  private readonly logger = Logger.get(CreateOrUpdateDropUseCase.name);
+
   public constructor(
     private readonly dropsDb: DropsDb,
     private readonly dropVotingDb: DropVotingDb,
@@ -256,11 +278,11 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions?: boolean;
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+    let resolvedModel = sanitizeDropStructuredFields(model);
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
-    const authorId = model.author_id;
-    const proxyIdNecessary = !!model.proxy_identity && !model.proxy_id;
+    let authorId = resolvedModel.author_id;
     if (!authorId) {
-      const authorIdentity = model.author_identity;
+      const authorIdentity = resolvedModel.author_identity;
       const resolvedAuthorId =
         await identityFetcher.getProfileIdByIdentityKeyOrThrow(
           {
@@ -268,19 +290,11 @@ export class CreateOrUpdateDropUseCase {
           },
           {}
         );
-      return this.execute(
-        { ...model, author_id: resolvedAuthorId },
-        isDescriptionDrop,
-        {
-          timer,
-          connection,
-          preResolvedIdentityNomination,
-          bypassChatLinkRestrictions,
-          bypassChatSlowModeRestrictions
-        }
-      );
-    } else if (proxyIdNecessary) {
-      const proxyIdentity = model.proxy_identity;
+      resolvedModel = { ...resolvedModel, author_id: resolvedAuthorId };
+      authorId = resolvedAuthorId;
+    }
+    if (!!resolvedModel.proxy_identity && !resolvedModel.proxy_id) {
+      const proxyIdentity = resolvedModel.proxy_identity;
       const resolvedProxyId =
         await identityFetcher.getProfileIdByIdentityKeyOrThrow(
           {
@@ -296,22 +310,12 @@ export class CreateOrUpdateDropUseCase {
         });
       if (!hasRequiredProxyAction) {
         throw new BadRequestException(
-          `Identity ${model.author_identity} hasn't allowed identity ${model.proxy_identity} to create drops on it's behalf`
+          `Identity ${resolvedModel.author_identity} hasn't allowed identity ${resolvedModel.proxy_identity} to create drops on it's behalf`
         );
       }
-      return this.execute(
-        { ...model, proxy_id: resolvedProxyId },
-        isDescriptionDrop,
-        {
-          timer,
-          connection,
-          preResolvedIdentityNomination,
-          bypassChatLinkRestrictions,
-          bypassChatSlowModeRestrictions
-        }
-      );
+      resolvedModel = { ...resolvedModel, proxy_id: resolvedProxyId };
     }
-    return await this.createOrUpdateDrop(model, isDescriptionDrop, {
+    return await this.createOrUpdateDrop(resolvedModel, isDescriptionDrop, {
       timer,
       connection,
       preResolvedIdentityNomination,
@@ -324,15 +328,16 @@ export class CreateOrUpdateDropUseCase {
     model: CreateOrUpdateDropModel,
     { timer }: { timer?: Timer }
   ): Promise<PreResolvedEnsIdentityNomination | null> {
+    const sanitizedModel = sanitizeDropStructuredFields(model);
     timer?.start(
       `${CreateOrUpdateDropUseCase.name}->preResolveIdentityNomination`
     );
     try {
-      if (model.drop_type !== DropType.PARTICIPATORY) {
+      if (sanitizedModel.drop_type !== DropType.PARTICIPATORY) {
         return null;
       }
 
-      const identityMetadatas = model.metadata.filter(
+      const identityMetadatas = sanitizedModel.metadata.filter(
         (it) => it.data_key === 'identity'
       );
       if (identityMetadatas.length !== 1) {
@@ -1536,6 +1541,7 @@ export class CreateOrUpdateDropUseCase {
           serial_no: serialNo,
           drop_type: model.drop_type,
           signature: model.signature,
+          hide_link_preview: model.hide_link_preview,
           is_additional_action_promised: model.is_additional_action_promised
         },
         connection
@@ -1968,15 +1974,21 @@ export class CreateOrUpdateDropUseCase {
       ),
       this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
     ]);
+    const eligibleDirectMentionedIdentityIds =
+      await this.filterIdentityIdsEligibleToReadWave(
+        wave,
+        directlyMentionedIdentityIds,
+        { timer, connection }
+      );
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
-        directlyMentionedIdentityIds,
+        eligibleDirectMentionedIdentityIds,
         connection
       )
     );
     const directMentionIdentityIds = collections.distinct(
-      directlyMentionedIdentityIds.filter(
+      eligibleDirectMentionedIdentityIds.filter(
         (identityId) =>
           identityId !== authorId &&
           !mutedDirectMentionedIdentityIds.has(identityId)
@@ -2014,6 +2026,49 @@ export class CreateOrUpdateDropUseCase {
       );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     return pendingPushNotificationIds;
+  }
+
+  private async filterIdentityIdsEligibleToReadWave(
+    wave: WaveEntity,
+    identityIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string => groupId !== null
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        this.logger.warn(
+          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering direct mention recipients for wave ${wave.id}`
+        );
+        return [];
+      }
+      if (parentWave.visibility_group_id) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    const distinctIdentityIds = collections.distinct(identityIds);
+    if (!visibilityGroupIds.length || !distinctIdentityIds.length) {
+      return distinctIdentityIds;
+    }
+
+    const eligibleIdentitySets = await Promise.all(
+      collections.distinct(visibilityGroupIds).map(async (groupId) => {
+        const eligibleIdentityIds =
+          await this.userGroupsService.findIdentitiesInGroups([groupId], {
+            timer,
+            connection
+          });
+        return new Set(eligibleIdentityIds);
+      })
+    );
+    return distinctIdentityIds.filter((identityId) =>
+      eligibleIdentitySets.every((eligibleIds) => eligibleIds.has(identityId))
+    );
   }
 }
 

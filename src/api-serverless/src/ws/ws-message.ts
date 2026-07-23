@@ -13,6 +13,9 @@ export enum WsMessageType {
   AUTHENTICATE = 'AUTHENTICATE',
   AUTHENTICATED = 'AUTHENTICATED',
   AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',
+  SYNC_NOTIFICATION_IDENTITIES = 'SYNC_NOTIFICATION_IDENTITIES',
+  NOTIFICATION_IDENTITIES_SYNCED = 'NOTIFICATION_IDENTITIES_SYNCED',
+  IDENTITY_NOTIFICATIONS_CHANGED = 'IDENTITY_NOTIFICATIONS_CHANGED',
   MEDIA_LINK_UPDATED = 'MEDIA_LINK_UPDATED',
   ATTACHMENT_STATUS_UPDATE = 'ATTACHMENT_STATUS_UPDATE'
 }
@@ -87,6 +90,24 @@ export function attachmentStatusUpdateMessage(
   return {
     type: WsMessageType.ATTACHMENT_STATUS_UPDATE,
     data
+  };
+}
+
+export function notificationIdentitiesSyncedMessage(
+  profileIds: string[]
+): WsMessage<{ profile_ids: string[] }> {
+  return {
+    type: WsMessageType.NOTIFICATION_IDENTITIES_SYNCED,
+    data: { profile_ids: profileIds }
+  };
+}
+
+export function identityNotificationsChangedMessage(
+  profileId: string
+): WsMessage<{ profile_id: string }> {
+  return {
+    type: WsMessageType.IDENTITY_NOTIFICATIONS_CHANGED,
+    data: { profile_id: profileId }
   };
 }
 

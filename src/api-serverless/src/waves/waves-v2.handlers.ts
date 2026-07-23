@@ -27,6 +27,7 @@ import {
   ListWaveSubwavesRequest,
   ListWaveCurationDropsV2Request,
   GetDropRepliesV2Request,
+  GetWaveCompetitionDropsV2Request,
   SearchDropsInWaveV2Request
 } from '@/api/generated/routes/operations';
 import { dropsService } from '@/api/drops/drops.api.service';
@@ -43,6 +44,7 @@ import {
 } from '@/api/waves/wave-decisions-api.service';
 import { waveMetadataApiService } from '@/api/waves/wave-metadata.api.service';
 import { LeaderboardParams, LeaderboardSort } from '@/drops/drops.db';
+import { DropType } from '@/entities/IDrop';
 import { Timer } from '@/time';
 import * as Joi from 'joi';
 
@@ -55,6 +57,17 @@ type GetWaveDropsV2PathParams = {
 
 type GetDropRepliesV2PathParams = {
   id: string;
+};
+
+type GetWaveCompetitionDropsV2PathParams = {
+  id: string;
+};
+
+type GetWaveCompetitionDropsV2Query = {
+  author_id: string;
+  drop_type: ApiDropType.Participatory | ApiDropType.Winner;
+  page: number;
+  page_size: number;
 };
 
 type DropsFeedV2Query = {
@@ -81,6 +94,21 @@ const GetWaveDropsV2PathParamsSchema: Joi.ObjectSchema<GetWaveDropsV2PathParams>
 const GetDropRepliesV2PathParamsSchema: Joi.ObjectSchema<GetDropRepliesV2PathParams> =
   Joi.object({
     id: Joi.string().required()
+  });
+
+const GetWaveCompetitionDropsV2PathParamsSchema: Joi.ObjectSchema<GetWaveCompetitionDropsV2PathParams> =
+  Joi.object({
+    id: Joi.string().required()
+  });
+
+const GetWaveCompetitionDropsV2QuerySchema: Joi.ObjectSchema<GetWaveCompetitionDropsV2Query> =
+  Joi.object({
+    author_id: Joi.string().trim().min(1).max(100).required(),
+    drop_type: Joi.string()
+      .valid(ApiDropType.Participatory, ApiDropType.Winner)
+      .required(),
+    page: Joi.number().integer().min(1).default(1),
+    page_size: Joi.number().integer().min(1).max(100).default(50)
   });
 
 const DropsFeedV2QuerySchema: Joi.ObjectSchema<DropsFeedV2Query> =
@@ -342,6 +370,35 @@ export async function handleGetWaveDropsV2(
       search_strategy,
       drop_type,
       curation_id: null
+    },
+    { authenticationContext, timer }
+  );
+}
+
+export async function handleGetWaveCompetitionDropsV2(
+  req: GetWaveCompetitionDropsV2Request
+): Promise<ApiDropV2PageWithoutCount> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    GetWaveCompetitionDropsV2PathParamsSchema
+  );
+  const { author_id, drop_type, page, page_size } = getValidatedByJoiOrThrow(
+    req.query,
+    GetWaveCompetitionDropsV2QuerySchema
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+
+  return apiWaveV2Service.findWaveCompetitionDrops(
+    {
+      wave_id: id,
+      author_id,
+      drop_type:
+        drop_type === ApiDropType.Participatory
+          ? DropType.PARTICIPATORY
+          : DropType.WINNER,
+      page,
+      page_size
     },
     { authenticationContext, timer }
   );

@@ -78,11 +78,7 @@ describe('subscription wave notifier message formatting', () => {
       [
         '📋 Published provisional list of Subscriptions for [The Memes #312](https://6529.io/the-memes/312)',
         '',
-        'View on 6529.io:',
-        'https://6529.io/open-data/meme-subscriptions',
-        '',
-        'View on Arweave:',
-        'https://arweave.net/subscriptions'
+        'View on [6529.io](https://6529.io/open-data/meme-subscriptions) | [Arweave](https://arweave.net/subscriptions)'
       ].join('\n')
     );
   });
@@ -104,7 +100,7 @@ describe('subscription wave notifier message formatting', () => {
         hash: '0xabc',
         adminHandles: ['admin1', 'admin2']
       })
-    ).toBe('Top up 0xabc already processed\n\n@[admin1] @[admin2]');
+    ).toBe('⚠️ Top up 0xabc already processed\n\n@[admin1] @[admin2]');
   });
 
   it('builds normal top-up posts with an optional profile mention', () => {
@@ -120,15 +116,11 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        '🔝 Subscription Top Up of 0.06529 ETH from 0x1234.',
+        '💰 Subscription Top Up of 0.06529 ETH from 0x1234.',
         '',
         'Profile: @[6529er]',
         '',
-        'View on 6529.io:',
-        'https://6529.io/0x1234/subscriptions',
-        '',
-        'View on Etherscan:',
-        'https://etherscan.io/tx/0xabc'
+        'View on [6529.io](https://6529.io/0x1234/subscriptions) | [Etherscan](https://etherscan.io/tx/0xabc)'
       ].join('\n')
     );
   });
@@ -145,12 +137,11 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        'No subscription found for airdrop address:',
+        '🚨 No subscription found for airdrop address:',
         '',
         '0xairdrop',
         '',
-        'Transaction:',
-        transactionLink,
+        `Transaction: [Etherscan](${transactionLink})`,
         '',
         '@[admin1] @[admin2]'
       ].join('\n')
@@ -163,12 +154,11 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        'No balance found for consolidation key:',
+        '🚨 No balance found for consolidation key:',
         '',
         '0xkey',
         '',
-        'Transaction:',
-        transactionLink,
+        `Transaction: [Etherscan](${transactionLink})`,
         '',
         '@[admin1] @[admin2]'
       ].join('\n')
@@ -181,12 +171,11 @@ describe('subscription wave notifier message formatting', () => {
       })
     ).toBe(
       [
-        'Insufficient balance for consolidation key:',
+        '🚨 Insufficient balance for consolidation key:',
         '',
         '0xkey',
         '',
-        'Transaction:',
-        transactionLink,
+        `Transaction: [Etherscan](${transactionLink})`,
         '',
         '@[admin1] @[admin2]'
       ].join('\n')

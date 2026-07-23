@@ -10,8 +10,13 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 1. Determine the requested completion mode:
    - `review-ready`: create or update the PR and stop once available review bots and the agent are satisfied.
    - `merge`: do everything in `review-ready`, then hand off to `ops/skills/deploy-6529/SKILL.md` for merge execution when required checks and approvals allow it.
-   - `staging`: prepare release notes and hand off to `ops/skills/deploy-6529/SKILL.md` for merge, staging deployment, and smoke validation.
-   - `prod`: prepare release notes and hand off to `ops/skills/deploy-6529/SKILL.md` for staging verification, production deployment, and production smoke validation.
+   - `staging`: hand off to `ops/skills/deploy-6529/SKILL.md` for merge,
+     staging deployment, and smoke validation. Never prepare, publish, or
+     trigger a release note for staging.
+   - `prod`: hand off to `ops/skills/deploy-6529/SKILL.md` for production
+     deployment and smoke validation. Never author or post a release note;
+     follow the deploy skill’s metadata/finalization contract so the existing
+     autonomous bot publishes exactly once after the production group succeeds.
    If the user did not explicitly request merge or deployment, stop at `review-ready`.
 
 2. Inspect the change before writing:

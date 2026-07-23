@@ -46,7 +46,8 @@ function makeIdentity(id: string) {
   };
 }
 
-function createMapper() {
+function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
+  let configuredMainStageWaveId = mainStageWaveId;
   const identityFetcher = {
     getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({
       'author-1': makeIdentity('author-1')
@@ -56,6 +57,7 @@ function createMapper() {
     findProfileHandlesByIds: jest.fn().mockResolvedValue({})
   };
   const dropsDb = {
+    findAuthorWaveParticipationByDropContexts: jest.fn().mockResolvedValue({}),
     getDropPartOnes: jest.fn().mockResolvedValue({}),
     getDropPartOneMedia: jest.fn().mockResolvedValue({}),
     findReferencedNftsByDropIds: jest.fn().mockResolvedValue([]),
@@ -111,6 +113,9 @@ function createMapper() {
   const nftLinkResolvingService = {
     refreshStaleTrackingForUrls: jest.fn().mockResolvedValue(undefined)
   };
+  const memeCardDropMappingsDb = {
+    findMemeCardIdsByDropIds: jest.fn().mockResolvedValue({})
+  };
 
   return {
     mapper: new ApiDropMapper(
@@ -129,8 +134,13 @@ function createMapper() {
       dropPollsDb as any,
       dropNftLinksDb as any,
       nftLinksDb as any,
-      nftLinkResolvingService as any
+      nftLinkResolvingService as any,
+      memeCardDropMappingsDb as any,
+      () => configuredMainStageWaveId
     ),
+    setMainStageWaveId: (waveId: string | null) => {
+      configuredMainStageWaveId = waveId;
+    },
     deps: {
       identityFetcher,
       identitiesDb,
@@ -147,12 +157,47 @@ function createMapper() {
       dropPollsDb,
       dropNftLinksDb,
       nftLinksDb,
-      nftLinkResolvingService
+      nftLinkResolvingService,
+      memeCardDropMappingsDb
     }
   };
 }
 
 describe('ApiDropMapper', () => {
+  it('attaches participation for the author in the drop wave', async () => {
+    const { mapper, deps } = createMapper();
+    const drop = makeDrop();
+    deps.dropsDb.findAuthorWaveParticipationByDropContexts.mockResolvedValue({
+      'wave-1': {
+        'author-1': {
+          is_participant: true,
+          is_winner: true
+        }
+      }
+    });
+
+    const result = await mapper.mapDrops([drop], {});
+
+    expect(result['drop-1']?.author.wave_participation).toEqual({
+      is_participant: true,
+      is_winner: true
+    });
+    expect(
+      deps.dropsDb.findAuthorWaveParticipationByDropContexts
+    ).toHaveBeenCalledWith([drop], {});
+  });
+
+  it('omits wave participation metadata and its query context in Main Stage', async () => {
+    const { mapper, deps } = createMapper('wave-1');
+
+    const result = await mapper.mapDrops([makeDrop()], {});
+
+    expect(result['drop-1']?.author.wave_participation).toBeUndefined();
+    expect(
+      deps.dropsDb.findAuthorWaveParticipationByDropContexts
+    ).toHaveBeenCalledWith([], {});
+  });
+
   it('maps part one content and omits missing optional fields', async () => {
     const { mapper, deps } = createMapper();
     const drop = makeDrop({ hide_link_preview: true });
@@ -596,6 +641,92 @@ describe('ApiDropMapper', () => {
     expect(result['drop-null'].submission_context).not.toHaveProperty(
       'is_additional_action_promised'
     );
+  });
+
+  it('resolves Main Stage configuration after mapper construction', async () => {
+    const { mapper, deps, setMainStageWaveId } = createMapper(null);
+    setMainStageWaveId('main-stage-wave');
+    const mainStageWinner = makeDrop({
+      id: 'main-stage-winner',
+      wave_id: 'main-stage-wave',
+      drop_type: DropType.WINNER
+    });
+    const otherWinner = makeDrop({
+      id: 'other-winner',
+      wave_id: 'other-wave',
+      drop_type: DropType.WINNER
+    });
+    deps.dropVotingDb.getDropV2SubmissionVotingSummaries.mockResolvedValue({
+      'main-stage-winner': {
+        drop_id: 'main-stage-winner',
+        status: DropType.WINNER,
+        is_open: false,
+        total_votes_given: 10,
+        current_calculated_vote: 10,
+        predicted_final_vote: 10,
+        voters_count: 2,
+        place: 1,
+        over_threshold_since_ms: null,
+        won_at: 1_000,
+        forbid_negative_votes: false
+      },
+      'other-winner': {
+        drop_id: 'other-winner',
+        status: DropType.WINNER,
+        is_open: false,
+        total_votes_given: 5,
+        current_calculated_vote: 5,
+        predicted_final_vote: 5,
+        voters_count: 1,
+        place: 1,
+        over_threshold_since_ms: null,
+        won_at: 2_000,
+        forbid_negative_votes: false
+      }
+    });
+    deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds.mockResolvedValue({
+      'main-stage-winner': 521
+    });
+
+    const result = await mapper.mapDrops([mainStageWinner, otherWinner], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(
+      deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds
+    ).toHaveBeenCalledWith(
+      ['main-stage-winner'],
+      'main-stage-wave',
+      expect.any(Object)
+    );
+    expect(result['main-stage-winner'].submission_context).toMatchObject({
+      status: ApiSubmissionDropStatus.Winner,
+      meme_card_id: 521
+    });
+    expect(result['other-winner'].submission_context).not.toHaveProperty(
+      'meme_card_id'
+    );
+  });
+
+  it('does not query or expose Meme card mappings without Main Stage configuration', async () => {
+    const { mapper, deps } = createMapper(null);
+    const winner = makeDrop({
+      id: 'winner',
+      wave_id: 'main-stage-wave',
+      drop_type: DropType.WINNER
+    });
+    deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds.mockResolvedValue({
+      winner: 521
+    });
+
+    const result = await mapper.mapDrops([winner], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(
+      deps.memeCardDropMappingsDb.findMemeCardIdsByDropIds
+    ).not.toHaveBeenCalled();
+    expect(result.winner.submission_context?.meme_card_id).toBeUndefined();
   });
 
   it('maps priority metadata whenever additional media metadata exists', async () => {

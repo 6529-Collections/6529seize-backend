@@ -79,6 +79,7 @@ import {
   withWaveOverviewCandidateCache
 } from './wave-overview-candidate-cache';
 import { compareCacheStrings } from './wave-cache-key';
+import { competitionRepository } from '@/competitions/competition.repository';
 
 const logger = Logger.get('WAVES_API_DB');
 
@@ -124,6 +125,7 @@ type FollowedSubwaveActivityRow = {
 
 type HiddenFollowedSubwaveUnreadRow = {
   parent_wave_id: string;
+  subwave_unread_drops: number | string;
   hidden_followed_subwave_unread_drops: number | string;
   first_hidden_followed_subwave_unread_drop_serial_no: number | string | null;
 };
@@ -152,6 +154,7 @@ type UnreadDmDropsCountRow = {
 export interface FollowedSubwaveOverviewContext {
   readonly followed_subwaves_count: number;
   readonly latest_followed_subwave_activity_timestamp: number | null;
+  readonly subwave_unread_drops: number;
   readonly hidden_followed_subwave_unread_drops: number;
   readonly first_hidden_followed_subwave_unread_drop_serial_no: number | null;
 }
@@ -1296,6 +1299,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       },
       ctx
     );
+    await competitionRepository.ensureLegacyMappingForWave(wave, ctx);
     ctx.timer?.stop('waveApiDb->insertWave');
   }
 
@@ -1712,14 +1716,35 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         parentWaveIds,
         eligibleGroups,
         getValue: async () => {
-          // Keep hidden unread live so wave-reader-metric invalidations are
-          // visible immediately; only coalesce identical concurrent reads.
+          // Unread is not persistently cached. Equivalent concurrent reads are
+          // coalesced only until this query settles, so read and mute changes
+          // are visible on the next request.
           return this.db.execute<HiddenFollowedSubwaveUnreadRow>(
             `
               select
                 child.parent_wave_id,
-                count(d.id) as hidden_followed_subwave_unread_drops,
-                min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
+                count(
+                  case
+                    when d.author_id != :identityId and muted_author.id is null
+                      then d.id
+                  end
+                ) as subwave_unread_drops,
+                count(
+                  case
+                    when child_follow.id is not null
+                      and d.author_id != :identityId
+                      and muted_author.id is null
+                      then d.id
+                  end
+                ) as hidden_followed_subwave_unread_drops,
+                min(
+                  case
+                    when child_follow.id is not null
+                      and d.author_id != :identityId
+                      and muted_author.id is null
+                      then d.serial_no
+                  end
+                ) as first_hidden_followed_subwave_unread_drop_serial_no
               from ${WAVES_TABLE} child
               join ${WAVES_TABLE} parent
                 on parent.id = child.parent_wave_id
@@ -1727,7 +1752,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               left join ${WAVE_READER_METRICS_TABLE} parent_reader
                 on parent_reader.wave_id = parent.id
                and parent_reader.reader_id = :identityId
-              join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+              left join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
                 on child_follow.subscriber_id = :identityId
                and child_follow.target_id = child.id
                and child_follow.target_type = :waveTargetType
@@ -1740,6 +1765,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               join ${DROPS_TABLE} d
                 on d.wave_id = child.id
                and d.created_at > child_reader.latest_read_timestamp
+              left join ${IDENTITY_MUTES_TABLE} muted_author
+                on muted_author.muter_id = :identityId
+               and muted_author.muted_identity_id = d.author_id
               where child.parent_wave_id in (:parentWaveIds)
                 and coalesce(parent_reader.muted, false) = false
                 and ${this.getWaveVisibilityFilter(
@@ -1772,6 +1800,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         (acc, [parentWaveId, activity]) => {
           acc[parentWaveId] = {
             ...activity,
+            subwave_unread_drops: 0,
             hidden_followed_subwave_unread_drops: 0,
             first_hidden_followed_subwave_unread_drop_serial_no: null
           };
@@ -1781,12 +1810,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
 
       for (const row of unreadRows) {
-        const existing = result[row.parent_wave_id];
-        if (!existing) {
-          continue;
-        }
+        const existing = result[row.parent_wave_id] ?? {
+          followed_subwaves_count: 0,
+          latest_followed_subwave_activity_timestamp: null,
+          subwave_unread_drops: 0,
+          hidden_followed_subwave_unread_drops: 0,
+          first_hidden_followed_subwave_unread_drop_serial_no: null
+        };
         result[row.parent_wave_id] = {
           ...existing,
+          subwave_unread_drops: Number(row.subwave_unread_drops),
           hidden_followed_subwave_unread_drops: Number(
             row.hidden_followed_subwave_unread_drops
           ),
