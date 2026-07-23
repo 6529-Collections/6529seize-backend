@@ -664,8 +664,12 @@ describe('Release Bus v2 offline acceptance harness', () => {
       )!
     );
     mockResolveRefIfExists.mockImplementation(
-      async (repository: 'frontend' | 'backend') =>
-        repository === 'frontend' ? 'f'.repeat(40) : backendStagingSha
+      async (repository: 'frontend' | 'backend', ref: string) => {
+        expect(ref).toBe('1a-staging');
+        return repository === 'frontend'
+          ? 'f'.repeat(40)
+          : backendStagingSha;
+      }
     );
 
     const context = {
@@ -689,6 +693,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
         backend_composed_sha: backendStagingSha
       })
     );
+    expect(state.repository.lock.owner_train_id).toBe('train-1');
     expect(state.repository.events).toContainEqual(
       expect.objectContaining({
         eventType: 'STAGING_ENVIRONMENT_IDENTITY_BOUND',
