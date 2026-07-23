@@ -260,6 +260,12 @@ describe('release bus infrastructure contract', () => {
     expect(deployWorkflow).toContain(
       'release_group_services must include the deployed service'
     );
+    expect(deployWorkflow).toContain(
+      'release_note_opt_out cannot include release-note metadata or a publish request'
+    );
+    expect(deployWorkflow).toContain(
+      'release_note_groups is reserved for Release Bus v2 operations'
+    );
     expect(ciWaveNotifier).toContain("targetEnvironment === 'prod'");
     expect(deployWorkflow).toContain(
       'del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
