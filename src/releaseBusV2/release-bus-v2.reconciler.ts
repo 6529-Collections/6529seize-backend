@@ -1891,9 +1891,7 @@ export class ReleaseBusV2Reconciler {
       );
       return false;
     }
-    const operationRunIds = (await this.repository.listOperations(train.id, {}))
-      .map(({ external_id }) => external_id)
-      .filter((runId): runId is string => runId !== null);
+    const operationRunIds = await this.stagingFenceRunIds(train.id);
     const currentSnapshot = await this.captureStagingIdleSnapshot({
       since: handshake.workflow_fence_started_at,
       ignoredRunIds: operationRunIds
@@ -1948,6 +1946,53 @@ export class ReleaseBusV2Reconciler {
       {}
     );
     return true;
+  }
+
+  /**
+   * Operation rows retain the current attempt so reconciliation stays exactly
+   * idempotent, but an infrastructure retry replaces external_id with the new
+   * run. Recover every earlier exact attempt from its immutable operation key
+   * before evaluating the final shared-state fence. If GitHub can no longer
+   * prove an earlier attempt, the ordinary workflow scan still sees it and the
+   * fence fails closed.
+   */
+  private async stagingFenceRunIds(trainId: string): Promise<string[]> {
+    const operations = await this.repository.listOperations(trainId, {});
+    const runIds = new Set(
+      operations
+        .map(({ external_id }) => external_id)
+        .filter((runId): runId is string => runId !== null)
+    );
+    const previousAttempts = operations.flatMap((operation) => {
+      if (operation.attempt <= 1 || operation.repository === null) return [];
+      const request = parseStoredJson<{ workflow?: unknown }>(
+        operation.request_json
+      );
+      if (typeof request?.workflow !== 'string' || !request.workflow)
+        throw new Error(
+          `Retried operation ${operation.id} has no immutable workflow identity`
+        );
+      return Array.from({ length: operation.attempt - 1 }, (_, index) => ({
+        operation,
+        attempt: index + 1,
+        workflow: request.workflow as string
+      }));
+    });
+    const discovered = await Promise.all(
+      previousAttempts.map(({ operation, attempt, workflow }) =>
+        releaseBusGitHubApp.findWorkflowRun(
+          operation.repository!,
+          workflow,
+          `${operation.idempotency_key}:a${attempt}`
+        )
+      )
+    );
+    for (const run of discovered) {
+      if (run) runIds.add(String(run.id));
+    }
+    return Array.from(runIds).sort((left, right) =>
+      left.localeCompare(right, 'en')
+    );
   }
 
   private async findStagingIdleHandshake(
