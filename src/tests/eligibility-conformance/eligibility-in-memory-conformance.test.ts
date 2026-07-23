@@ -12,7 +12,7 @@ jest.mock('@/redis', () => ({
 }));
 
 /**
- * In-memory conformance harness (docs/eligibility-spec.md, spec_version 1).
+ * In-memory conformance harness (docs/eligibility-spec.md, spec_version 2).
  *
  * Runs every golden vector against the real in-memory eligibility engine
  * (`UserGroupsService.getGroupsUserIsEligibleFor` →
@@ -20,8 +20,7 @@ jest.mock('@/redis', () => ({
  * replaced by a per-vector double that serves the vector's profile state
  * (see `in-memory-mock-db.ts`) and Redis disabled. The in-memory engine is
  * the spec-normative one, so every vector's `expected.eligible_group_ids`
- * must match here — including the vectors whose `known_divergence.sql`
- * entries pin the SQL engine to a different outcome.
+ * must match here.
  */
 describe('eligibility conformance: in-memory engine vs golden vectors', () => {
   beforeEach(() => {

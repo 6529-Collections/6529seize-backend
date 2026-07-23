@@ -6,7 +6,13 @@
     "identities": [{ "id": "subject", "rep": 10 }, { "id": "alice" }],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 10 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 10
+      }
     ],
     "groups": [
       { "id": "g-min-10", "rep_min": 10 },
@@ -17,54 +23,49 @@
     "expected": { "eligible_group_ids": ["g-min-10", "g-max-10"] }
   },
   {
-    "name": "rep-total-max-only-no-ratings-divergence",
+    "name": "rep-total-max-only-no-ratings",
     "dimension": "rep",
-    "description": "Max-only rep window with no rep ratings at all: spec evaluates 0 <= 100 (eligible); SQL requires at least one rating row and rejects.",
+    "description": "A missing total rep aggregate evaluates as zero and passes a max-only window.",
     "identities": [{ "id": "subject", "rep": 0 }],
     "subject": "subject",
     "groups": [{ "id": "g-max-100", "rep_max": 100 }],
-    "expected": { "eligible_group_ids": ["g-max-100"] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-max-100",
-          "sql_eligible": false,
-          "divergence": "D-4",
-          "note": "SQL admits only profiles with >=1 non-zero rep rating row; spec compares aggregate 0 <= 100 (eligibility-spec.md §5.1, §12 D-4)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": ["g-max-100"] }
   },
   {
-    "name": "rep-min-zero-divergence",
+    "name": "rep-min-zero",
     "dimension": "rep",
-    "description": "rep_min 0 is a real bound per spec (rejects negative rep) but the SQL builder drops zero bounds via truthiness.",
+    "description": "rep_min 0 is a real bound and rejects negative rep.",
     "identities": [{ "id": "subject", "rep": -5 }, { "id": "bob" }],
     "subject": "subject",
     "ratings": [
-      { "rater": "bob", "target": "subject", "matter": "REP", "category": "artist", "rating": -5 }
+      {
+        "rater": "bob",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": -5
+      }
     ],
     "groups": [{ "id": "g-min-0", "rep_min": 0 }],
-    "expected": { "eligible_group_ids": [] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-min-0",
-          "sql_eligible": true,
-          "divergence": "D-3",
-          "note": "SQL builder drops the falsy rep_min 0 bound; spec enforces -5 < 0 (eligibility-spec.md §5.1, §12 D-3)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": [] }
   },
   {
     "name": "rep-total-sent-direction",
     "dimension": "rep",
     "description": "Total rep with direction SENT sums the rep the profile has given; honored by both engines (spec §5.1).",
-    "identities": [{ "id": "subject", "rep": 0 }, { "id": "alice", "rep": 7 }],
+    "identities": [
+      { "id": "subject", "rep": 0 },
+      { "id": "alice", "rep": 7 }
+    ],
     "subject": "subject",
     "ratings": [
-      { "rater": "subject", "target": "alice", "matter": "REP", "category": "artist", "rating": 7 }
+      {
+        "rater": "subject",
+        "target": "alice",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 7
+      }
     ],
     "groups": [
       { "id": "g-sent-min-7", "rep_min": 7, "rep_direction": "SENT" },
@@ -76,11 +77,27 @@
     "name": "rep-by-user-received",
     "dimension": "rep",
     "description": "By-user rep counts only the configured counterparty's ratings (spec §5.2).",
-    "identities": [{ "id": "subject", "rep": 105 }, { "id": "alice" }, { "id": "bob" }],
+    "identities": [
+      { "id": "subject", "rep": 105 },
+      { "id": "alice" },
+      { "id": "bob" }
+    ],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 5 },
-      { "rater": "bob", "target": "subject", "matter": "REP", "category": "artist", "rating": 100 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      },
+      {
+        "rater": "bob",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 100
+      }
     ],
     "groups": [
       { "id": "g-alice-min-5", "rep_user": "alice", "rep_min": 5 },
@@ -92,14 +109,33 @@
     "name": "rep-by-user-sent",
     "dimension": "rep",
     "description": "By-user rep with direction SENT counts ratings the profile gave to the counterparty (spec §5.2).",
-    "identities": [{ "id": "subject", "rep": 0 }, { "id": "alice", "rep": 4 }],
+    "identities": [
+      { "id": "subject", "rep": 0 },
+      { "id": "alice", "rep": 4 }
+    ],
     "subject": "subject",
     "ratings": [
-      { "rater": "subject", "target": "alice", "matter": "REP", "category": "artist", "rating": 4 }
+      {
+        "rater": "subject",
+        "target": "alice",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 4
+      }
     ],
     "groups": [
-      { "id": "g-sent-min-4", "rep_user": "alice", "rep_direction": "SENT", "rep_min": 4 },
-      { "id": "g-sent-min-5", "rep_user": "alice", "rep_direction": "SENT", "rep_min": 5 }
+      {
+        "id": "g-sent-min-4",
+        "rep_user": "alice",
+        "rep_direction": "SENT",
+        "rep_min": 4
+      },
+      {
+        "id": "g-sent-min-5",
+        "rep_user": "alice",
+        "rep_direction": "SENT",
+        "rep_min": 5
+      }
     ],
     "expected": { "eligible_group_ids": ["g-sent-min-4"] }
   },
@@ -107,10 +143,20 @@
     "name": "rep-by-user-nonzero-required",
     "dimension": "rep",
     "description": "By-user rep with both bounds null requires a non-zero total from that user (spec §1.2, §5.2); engines agree in the single-category case.",
-    "identities": [{ "id": "subject", "rep": 5 }, { "id": "alice" }, { "id": "bob" }],
+    "identities": [
+      { "id": "subject", "rep": 5 },
+      { "id": "alice" },
+      { "id": "bob" }
+    ],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 5 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      }
     ],
     "groups": [
       { "id": "g-alice-nobounds", "rep_user": "alice" },
@@ -119,61 +165,87 @@
     "expected": { "eligible_group_ids": ["g-alice-nobounds"] }
   },
   {
-    "name": "rep-by-user-cross-category-net-zero-divergence",
+    "name": "rep-by-user-cross-category-net-zero",
     "dimension": "rep",
-    "description": "By-user rep netting to zero across categories: spec sums across categories (0 => fails the non-zero requirement); SQL keeps per-category rows and admits the profile.",
+    "description": "By-user rep nets across categories; a zero total fails the non-zero requirement.",
     "identities": [{ "id": "subject", "rep": 0 }, { "id": "alice" }],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 5 },
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "dev", "rating": -5 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      },
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "dev",
+        "rating": -5
+      }
     ],
     "groups": [{ "id": "g-alice-nobounds", "rep_user": "alice" }],
-    "expected": { "eligible_group_ids": [] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-alice-nobounds",
-          "sql_eligible": true,
-          "divergence": "D-5",
-          "note": "SQL groups by-user rep per category and any surviving row admits the profile; spec sums across categories to 0 (eligibility-spec.md §5.2, §12 D-5)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": [] }
   },
   {
-    "name": "rep-by-user-cross-category-min-divergence",
+    "name": "rep-by-user-cross-category-min",
     "dimension": "rep",
-    "description": "By-user rep with rep_min 3 over +5/-5 in two categories: spec total 0 < 3 (not eligible); SQL matches the +5 category row (member).",
+    "description": "By-user rep with rep_min 3 compares the cross-category total (+5 and -5 => 0).",
     "identities": [{ "id": "subject", "rep": 0 }, { "id": "alice" }],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 5 },
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "dev", "rating": -5 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      },
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "dev",
+        "rating": -5
+      }
     ],
     "groups": [{ "id": "g-alice-min-3", "rep_user": "alice", "rep_min": 3 }],
-    "expected": { "eligible_group_ids": [] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-alice-min-3",
-          "sql_eligible": true,
-          "divergence": "D-5",
-          "note": "SQL admits via the single-category +5 row; spec compares the cross-category sum 0 (eligibility-spec.md §5.2, §12 D-5)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": [] }
   },
   {
     "name": "rep-by-category-received",
     "dimension": "rep",
     "description": "By-category rep sums the exact category across all counterparties (spec §5.2).",
-    "identities": [{ "id": "subject", "rep": 108 }, { "id": "alice" }, { "id": "bob" }],
+    "identities": [
+      { "id": "subject", "rep": 108 },
+      { "id": "alice" },
+      { "id": "bob" }
+    ],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 5 },
-      { "rater": "bob", "target": "subject", "matter": "REP", "category": "artist", "rating": 3 },
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "dev", "rating": 100 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      },
+      {
+        "rater": "bob",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 3
+      },
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "dev",
+        "rating": 100
+      }
     ],
     "groups": [
       { "id": "g-artist-min-8", "rep_category": "artist", "rep_min": 8 },
@@ -188,7 +260,13 @@
     "identities": [{ "id": "subject", "rep": 5 }, { "id": "alice" }],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "Artist", "rating": 5 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "Artist",
+        "rating": 5
+      }
     ],
     "groups": [
       { "id": "g-lowercase-category", "rep_category": "artist", "rep_min": 1 },
@@ -200,12 +278,34 @@
     "name": "rep-by-user-and-category",
     "dimension": "rep",
     "description": "By-user+category rep isolates the single rating between the profile and the user in that category (spec §5.2).",
-    "identities": [{ "id": "subject", "rep": 21 }, { "id": "alice" }, { "id": "bob" }],
+    "identities": [
+      { "id": "subject", "rep": 21 },
+      { "id": "alice" },
+      { "id": "bob" }
+    ],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 5 },
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "dev", "rating": 7 },
-      { "rater": "bob", "target": "subject", "matter": "REP", "category": "artist", "rating": 9 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      },
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "dev",
+        "rating": 7
+      },
+      {
+        "rater": "bob",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 9
+      }
     ],
     "groups": [
       {
@@ -228,11 +328,26 @@
     "name": "rep-by-user-and-category-sent",
     "dimension": "rep",
     "description": "By-user+category rep with direction SENT (spec §5.2).",
-    "identities": [{ "id": "subject", "rep": 0 }, { "id": "alice", "rep": 56 }],
+    "identities": [
+      { "id": "subject", "rep": 0 },
+      { "id": "alice", "rep": 56 }
+    ],
     "subject": "subject",
     "ratings": [
-      { "rater": "subject", "target": "alice", "matter": "REP", "category": "artist", "rating": 6 },
-      { "rater": "subject", "target": "alice", "matter": "REP", "category": "dev", "rating": 50 }
+      {
+        "rater": "subject",
+        "target": "alice",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 6
+      },
+      {
+        "rater": "subject",
+        "target": "alice",
+        "matter": "REP",
+        "category": "dev",
+        "rating": 50
+      }
     ],
     "groups": [
       {
@@ -260,8 +375,20 @@
     "identities": [{ "id": "subject", "rep": 5 }, { "id": "alice" }],
     "subject": "subject",
     "ratings": [
-      { "rater": "alice", "target": "subject", "matter": "WAVE_REP", "category": "artist", "rating": 100 },
-      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 5 }
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "WAVE_REP",
+        "category": "artist",
+        "rating": 100
+      },
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 5
+      }
     ],
     "groups": [
       { "id": "g-alice-min-50", "rep_user": "alice", "rep_min": 50 },

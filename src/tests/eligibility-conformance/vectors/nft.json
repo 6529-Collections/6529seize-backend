@@ -175,7 +175,11 @@
       }
     ],
     "expected": {
-      "eligible_group_ids": ["g-null-list", "g-empty-list-all", "g-empty-list-any"]
+      "eligible_group_ids": [
+        "g-null-list",
+        "g-empty-list-all",
+        "g-empty-list-any"
+      ]
     }
   },
   {
@@ -234,9 +238,9 @@
     "expected": { "eligible_group_ids": ["g-meme-and-gradient"] }
   },
   {
-    "name": "nft-all-tokens-duplicate-list-divergence",
+    "name": "nft-all-tokens-duplicate-list",
     "dimension": "nft",
-    "description": "Degenerate ALL_TOKENS list with a duplicated token id: spec uses set semantics (owning the token suffices); SQL counts JSON rows including duplicates and can never be satisfied.",
+    "description": "ALL_TOKENS uses set semantics when the configured list repeats a token id.",
     "identities": [{ "id": "subject" }],
     "subject": "subject",
     "nft_ownings": [
@@ -250,17 +254,7 @@
         "owns_meme_tokens_match_mode": "ALL_TOKENS"
       }
     ],
-    "expected": { "eligible_group_ids": ["g-duplicate-list"] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-duplicate-list",
-          "sql_eligible": false,
-          "divergence": "D-8",
-          "note": "SQL HAVING compares 1 distinct owned token against 2 JSON list rows; spec treats the list as a set (eligibility-spec.md §7.2, §12 D-8)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": ["g-duplicate-list"] }
   },
   {
     "name": "nft-consolidated-second-wallet",

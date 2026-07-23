@@ -10,10 +10,7 @@
  * entities.
  *
  * The normative behavior is defined by `docs/eligibility-spec.md`
- * (spec_version 1). Where the set-based SQL engine is known to disagree with
- * the spec, the vector carries a `known_divergence.sql` entry referencing the
- * spec's "Open divergences" section, and the SQL-side harness asserts the
- * divergent outcome so that any drift is surfaced.
+ * (spec_version 2). Both production engines must match every vector.
  */
 
 export type VectorCollection = 'memes' | 'gradient' | 'lab' | 'nextgen';
@@ -130,16 +127,6 @@ export interface VectorGroup {
   readonly is_beneficiary_of_grant_match_mode?: VectorMatchMode;
 }
 
-export interface KnownSqlDivergence {
-  /** Symbolic group id the SQL engine disagrees on. */
-  readonly group_id: string;
-  /** What the set-based SQL engine says (the spec says the opposite). */
-  readonly sql_eligible: boolean;
-  /** Divergence id in docs/eligibility-spec.md §12, e.g. "D-1". */
-  readonly divergence: string;
-  readonly note: string;
-}
-
 export interface EligibilityConformanceVector {
   /** Globally unique kebab-case vector name. */
   readonly name: string;
@@ -158,8 +145,5 @@ export interface EligibilityConformanceVector {
   /** Spec-normative outcome (symbolic group ids), order-insensitive. */
   readonly expected: {
     readonly eligible_group_ids: string[];
-  };
-  readonly known_divergence?: {
-    readonly sql?: KnownSqlDivergence[];
   };
 }

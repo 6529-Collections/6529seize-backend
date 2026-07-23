@@ -55,54 +55,62 @@
     "identities": [{ "id": "subject", "tdh": 0, "xtdh": 100.5 }],
     "subject": "subject",
     "groups": [
-      { "id": "g-xtdh-min-100", "tdh_min": 100, "tdh_inclusion_strategy": "XTDH" },
-      { "id": "g-xtdh-min-101", "tdh_min": 101, "tdh_inclusion_strategy": "XTDH" }
+      {
+        "id": "g-xtdh-min-100",
+        "tdh_min": 100,
+        "tdh_inclusion_strategy": "XTDH"
+      },
+      {
+        "id": "g-xtdh-min-101",
+        "tdh_min": 101,
+        "tdh_inclusion_strategy": "XTDH"
+      }
     ],
     "expected": { "eligible_group_ids": ["g-xtdh-min-100"] }
   },
   {
-    "name": "xtdh-fractional-max-divergence",
+    "name": "xtdh-fractional-max",
     "dimension": "tdh",
-    "description": "XTDH strategy with fractional xtdh at tdh_max: spec compares floor(100.5)=100 <= 100 (eligible); SQL compares the raw double 100.5 > 100 (not a member).",
+    "description": "XTDH strategy floors fractional xtdh before comparing it with tdh_max.",
     "identities": [{ "id": "subject", "tdh": 0, "xtdh": 100.5 }],
     "subject": "subject",
     "groups": [
-      { "id": "g-xtdh-max-100", "tdh_max": 100, "tdh_inclusion_strategy": "XTDH" },
-      { "id": "g-xtdh-max-101", "tdh_max": 101, "tdh_inclusion_strategy": "XTDH" }
+      {
+        "id": "g-xtdh-max-100",
+        "tdh_max": 100,
+        "tdh_inclusion_strategy": "XTDH"
+      },
+      {
+        "id": "g-xtdh-max-101",
+        "tdh_max": 101,
+        "tdh_inclusion_strategy": "XTDH"
+      }
     ],
-    "expected": { "eligible_group_ids": ["g-xtdh-max-100", "g-xtdh-max-101"] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-xtdh-max-100",
-          "sql_eligible": false,
-          "divergence": "D-2",
-          "note": "SQL compares raw double xtdh 100.5 > tdh_max 100; spec floors to 100 (eligibility-spec.md §3, §12 D-2)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": ["g-xtdh-max-100", "g-xtdh-max-101"] }
   },
   {
-    "name": "both-strategy-sum-and-fractional-max-divergence",
+    "name": "both-strategy-sum-and-fractional-max",
     "dimension": "tdh",
     "description": "BOTH strategy sums tdh + xtdh and floors; the fractional sum diverges on tdh_max exactly like XTDH; TDH strategy ignores xtdh entirely.",
     "identities": [{ "id": "subject", "tdh": 60, "xtdh": 40.5 }],
     "subject": "subject",
     "groups": [
-      { "id": "g-both-min-100", "tdh_min": 100, "tdh_inclusion_strategy": "BOTH" },
-      { "id": "g-both-max-100", "tdh_max": 100, "tdh_inclusion_strategy": "BOTH" },
-      { "id": "g-tdh-only-min-100", "tdh_min": 100, "tdh_inclusion_strategy": "TDH" }
+      {
+        "id": "g-both-min-100",
+        "tdh_min": 100,
+        "tdh_inclusion_strategy": "BOTH"
+      },
+      {
+        "id": "g-both-max-100",
+        "tdh_max": 100,
+        "tdh_inclusion_strategy": "BOTH"
+      },
+      {
+        "id": "g-tdh-only-min-100",
+        "tdh_min": 100,
+        "tdh_inclusion_strategy": "TDH"
+      }
     ],
-    "expected": { "eligible_group_ids": ["g-both-min-100", "g-both-max-100"] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-both-max-100",
-          "sql_eligible": false,
-          "divergence": "D-2",
-          "note": "SQL compares raw sum 100.5 > tdh_max 100; spec floors to 100 (eligibility-spec.md §3, §12 D-2)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": ["g-both-min-100", "g-both-max-100"] }
   }
 ]

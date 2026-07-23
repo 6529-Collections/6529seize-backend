@@ -71,8 +71,14 @@
       { "id": "pg-with-subject", "members": ["subject"] }
     ],
     "groups": [
-      { "id": "g-everyone-but-alice", "excluded_profile_group_id": "pg-with-alice" },
-      { "id": "g-everyone-but-subject", "excluded_profile_group_id": "pg-with-subject" }
+      {
+        "id": "g-everyone-but-alice",
+        "excluded_profile_group_id": "pg-with-alice"
+      },
+      {
+        "id": "g-everyone-but-subject",
+        "excluded_profile_group_id": "pg-with-subject"
+      }
     ],
     "expected": { "eligible_group_ids": ["g-everyone-but-alice"] }
   },
@@ -98,41 +104,21 @@
     "expected": { "eligible_group_ids": ["g-criteria-pass"] }
   },
   {
-    "name": "empty-group-divergence",
+    "name": "empty-group",
     "dimension": "lists",
-    "description": "Degenerate group with no criteria and no lists: spec says nobody is eligible; the generated SQL view contains every identity.",
+    "description": "A degenerate group with no criteria and no lists has no eligible profiles.",
     "identities": [{ "id": "subject" }],
     "subject": "subject",
     "groups": [{ "id": "g-empty" }],
-    "expected": { "eligible_group_ids": [] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-empty",
-          "sql_eligible": true,
-          "divergence": "D-7",
-          "note": "SQL degenerates to select * from identities; spec admits nobody through an empty rule (eligibility-spec.md §9.4, §12 D-7)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": [] }
   },
   {
-    "name": "invisible-group-divergence",
+    "name": "invisible-group",
     "dimension": "lists",
-    "description": "visible=0 disqualifies the group for everyone per spec; the member-set SQL builder does not check visibility and produces the would-be member set.",
+    "description": "visible=0 disqualifies the group for everyone in both engines.",
     "identities": [{ "id": "subject", "tdh": 10 }],
     "subject": "subject",
     "groups": [{ "id": "g-invisible", "tdh_min": 1, "visible": false }],
-    "expected": { "eligible_group_ids": [] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-invisible",
-          "sql_eligible": true,
-          "divergence": "D-9",
-          "note": "UserGroupsDb.getById enforces only the privacy gate, so member-set SQL is built for invisible groups (eligibility-spec.md §10, §12 D-9)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": [] }
   }
 ]

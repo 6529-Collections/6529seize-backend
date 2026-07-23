@@ -22,19 +22,15 @@ import { loadMaterializedVectors, MaterializedVector } from './vector-loader';
 
 /**
  * Set-based SQL conformance harness (docs/eligibility-spec.md,
- * spec_version 1).
+ * spec_version 2).
  *
  * Seeds the union of every golden vector's state into one database, then per
  * vector generates each group's member-set SQL with the real
  * `UserGroupsService.getSqlAndParamsByGroupId` and asserts whether the
  * subject profile is in the produced member set.
  *
- * Expectation per group: the spec-normative outcome
- * (`expected.eligible_group_ids`), EXCEPT for groups pinned by
- * `known_divergence.sql`, where the harness asserts the DIVERGENT outcome so
- * the divergence stays visible. If a pinned divergence stops reproducing
- * (the engines start to agree), the corresponding check fails: update the
- * vector and the "Open divergences" section of docs/eligibility-spec.md.
+ * Every generated member set must match the spec-normative outcome
+ * (`expected.eligible_group_ids`). Any disagreement is a conformance failure.
  *
  * A final cross-check runs the in-memory engine against the same seeded
  * database, pinning the mocked in-memory suite
@@ -145,35 +141,14 @@ describeWithSeed(
       const failures: string[] = [];
       for (const group of vector.groupEntities) {
         const specEligible = vector.expectedEligibleGroupIds.includes(group.id);
-        const divergence = vector.sqlDivergences.find(
-          (it) => it.groupId === group.id
-        );
-        if (divergence && divergence.sqlEligible === specEligible) {
-          failures.push(
-            `[${vector.name}] group ${group.id}: known_divergence.sql must state the opposite of the spec expectation`
-          );
-          continue;
-        }
-        const expectedSqlMembership = divergence
-          ? divergence.sqlEligible
-          : specEligible;
         const actual = await isSubjectInGroupMemberSet(
           group.id,
           vector.subjectProfileId
         );
-        if (actual !== expectedSqlMembership) {
-          if (divergence) {
-            failures.push(
-              `[${vector.name}] group ${group.id}: pinned divergence ${divergence.divergence} no longer reproduces ` +
-                `(SQL now says member=${actual}); if the engines were deliberately aligned, update the vector and ` +
-                `docs/eligibility-spec.md §12 (${divergence.note})`
-            );
-          } else {
-            failures.push(
-              `[${vector.name}] group ${group.id}: SQL member set says member=${actual}, spec expects ${expectedSqlMembership} ` +
-                `(NEW DIVERGENCE between the engines - record it in docs/eligibility-spec.md §12 before changing anything)`
-            );
-          }
+        if (actual !== specEligible) {
+          failures.push(
+            `[${vector.name}] group ${group.id}: SQL member set says member=${actual}, spec expects ${specEligible}`
+          );
         }
       }
       return failures;
@@ -182,7 +157,7 @@ describeWithSeed(
     for (const [dimension, dimensionVectors] of groupVectorsByDimension(
       vectors
     )) {
-      it(`member-set SQL matches the spec (or its pinned divergences) for dimension: ${dimension}`, async () => {
+      it(`member-set SQL matches the spec for dimension: ${dimension}`, async () => {
         const failures: string[] = [];
         for (const vector of dimensionVectors) {
           failures.push(...(await collectVectorFailures(vector)));

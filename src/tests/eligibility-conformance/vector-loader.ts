@@ -94,13 +94,6 @@ export interface XtdhGrantTokenRow {
   readonly target_partition: string;
 }
 
-export interface SqlDivergenceExpectation {
-  readonly groupId: string;
-  readonly sqlEligible: boolean;
-  readonly divergence: string;
-  readonly note: string;
-}
-
 export interface MaterializedVector {
   readonly raw: EligibilityConformanceVector;
   readonly name: string;
@@ -121,7 +114,6 @@ export interface MaterializedVector {
   readonly externalOwnershipRows: ExternalOwnershipRow[];
   readonly waveRows: WaveEntity[];
   readonly expectedEligibleGroupIds: string[];
-  readonly sqlDivergences: SqlDivergenceExpectation[];
 }
 
 function aRandomWallet(): string {
@@ -499,20 +491,6 @@ function materializeVector(
   const expectedEligibleGroupIds = vector.expected.eligible_group_ids.map(
     (sym) => resolveOrThrow(groupIdBySym, sym, 'group', vector.name)!
   );
-  const sqlDivergences: SqlDivergenceExpectation[] = (
-    vector.known_divergence?.sql ?? []
-  ).map((divergence) => ({
-    groupId: resolveOrThrow(
-      groupIdBySym,
-      divergence.group_id,
-      'group',
-      vector.name
-    )!,
-    sqlEligible: divergence.sql_eligible,
-    divergence: divergence.divergence,
-    note: divergence.note
-  }));
-
   return {
     raw: vector,
     name: vector.name,
@@ -532,8 +510,7 @@ function materializeVector(
     grantsById,
     externalOwnershipRows,
     waveRows,
-    expectedEligibleGroupIds,
-    sqlDivergences
+    expectedEligibleGroupIds
   };
 }
 

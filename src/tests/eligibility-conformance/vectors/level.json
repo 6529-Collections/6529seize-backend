@@ -21,50 +21,30 @@
     "expected": { "eligible_group_ids": ["g-max-3"] }
   },
   {
-    "name": "level-max-inside-level-divergence",
+    "name": "level-max-inside-level",
     "dimension": "level",
-    "description": "level_raw 150 is level 3 (band [100, 250)) but above level 3's border: spec (level 3 <= level_max 3) says eligible; SQL (150 > border 100) says not a member.",
+    "description": "level_raw 150 is inside level 3's band and passes level_max 3.",
     "identities": [{ "id": "subject", "level_raw": 150 }],
     "subject": "subject",
     "groups": [
       { "id": "g-max-3", "level_max": 3 },
       { "id": "g-max-2", "level_max": 2 }
     ],
-    "expected": { "eligible_group_ids": ["g-max-3"] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-max-3",
-          "sql_eligible": false,
-          "divergence": "D-1",
-          "note": "SQL compares level_raw 150 to border(level_max 3)=100; spec compares level numbers 3 <= 3 (eligibility-spec.md §4, §12 D-1)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": ["g-max-3"] }
   },
   {
-    "name": "level-max-zero-divergence",
+    "name": "level-max-zero",
     "dimension": "level",
-    "description": "level_max 0 is a real bound per spec (only level-0 profiles pass) but the SQL builder drops zero bounds via truthiness, admitting everyone.",
+    "description": "level_max 0 is a real bound and admits only level-0 profiles.",
     "identities": [{ "id": "subject", "level_raw": 25 }],
     "subject": "subject",
     "groups": [{ "id": "g-max-0", "level_max": 0 }],
-    "expected": { "eligible_group_ids": [] },
-    "known_divergence": {
-      "sql": [
-        {
-          "group_id": "g-max-0",
-          "sql_eligible": true,
-          "divergence": "D-3",
-          "note": "SQL builder drops the falsy level_max 0 bound entirely; spec enforces level 1 > 0 (eligibility-spec.md §4, §12 D-3)"
-        }
-      ]
-    }
+    "expected": { "eligible_group_ids": [] }
   },
   {
     "name": "level-min-zero-noop",
     "dimension": "level",
-    "description": "level_min 0 is vacuous on both engines (every profile is at least level 0; SQL also drops the falsy bound) - engines agree.",
+    "description": "level_min 0 is vacuous because every profile is at least level 0.",
     "identities": [{ "id": "subject", "level_raw": 0 }],
     "subject": "subject",
     "groups": [
