@@ -1227,17 +1227,17 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     expect(mockV2Cancel).not.toHaveBeenCalled();
   });
 
-  it('forwards workflow authorization only through the v2 exact operation path', async () => {
+  it('accepts the exact artifact-free compose and preflight authorization payload', async () => {
     const body = {
       train_id: TRAIN_ID,
-      operation_key: `rb2:${TRAIN_ID}:deploy:staging:frontend:a1`,
+      operation_key: `rb2:${TRAIN_ID}:prepare:frontend:a1`,
       workflow_run_id: '12345',
-      artifact_run_id: '54321',
+      artifact_run_id: null,
       repository: 'frontend',
-      environment: 'staging',
+      environment: 'orchestration',
       service: null,
       expected_sha: SHA,
-      artifact_digest: DIGEST
+      artifact_digest: null
     };
     const response = await post('/deploy/release-bus-v2/authorize', body);
 
@@ -1294,6 +1294,11 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     const response = await post('/deploy/release-bus-v2/reconcile', {});
 
     expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      accepted: false,
+      mode: 'PRODUCTION',
+      execution: 'dispatch_failed'
+    });
     expect(response.body.error).toContain('was not queued');
     expect(mockV2AppendEvent).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -108,7 +108,9 @@ function requireWorkflowCredential(req: Request): void {
 const deployRoutes = asyncRouter();
 const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION });
 
-function workflowRequest(value: unknown): { workflow?: unknown } | null {
+function parseReleaseBusV2WorkflowRequest(
+  value: unknown
+): { workflow?: unknown } | null {
   try {
     return typeof value === 'string'
       ? (JSON.parse(value) as { workflow?: unknown })
@@ -764,7 +766,7 @@ deployRoutes.get('/release-bus-v2/trains/:id', async (req, res) => {
         !/^\d+$/.test(operation.external_id)
       )
         return operation;
-      const request = workflowRequest(operation.request_json);
+      const request = parseReleaseBusV2WorkflowRequest(operation.request_json);
       if (typeof request?.workflow !== 'string') return operation;
       try {
         const workflow = await releaseBusGitHubApp.findWorkflowRun(
@@ -892,10 +894,14 @@ deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
         },
         {}
       );
-      throw new CustomApiCompliantException(
-        503,
-        `Release Bus v2 reconciliation was not queued: ${message}`
-      );
+      setNoStoreHeaders(res);
+      return res.status(503).json({
+        accepted: false,
+        mode,
+        requested_by: actor,
+        execution: 'dispatch_failed',
+        error: `Release Bus v2 reconciliation was not queued: ${message}`
+      });
     }
   }
   setNoStoreHeaders(res);
@@ -909,7 +915,9 @@ deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
 
 deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
   requireWorkflowCredential(req);
-  const body = getValidatedByJoiOrThrow<{
+  // This endpoint deliberately uses the versioned schema; v1 authorization
+  // does not accept or route rb2 operation keys.
+  const authorization = getValidatedByJoiOrThrow<{
     train_id: string;
     operation_key: string;
     workflow_run_id: string;
@@ -921,12 +929,12 @@ deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
     artifact_digest: string | null;
   }>(req.body, ReleaseBusV2AuthorizationBodySchema);
   try {
-    const result = await releaseBusV2Operations.authorize(body);
+    const result = await releaseBusV2Operations.authorize(authorization);
     setNoStoreHeaders(res);
     return res.json({
       ...result,
-      train_id: body.train_id,
-      operation_key: body.operation_key
+      train_id: authorization.train_id,
+      operation_key: authorization.operation_key
     });
   } catch (error) {
     throw new CustomApiCompliantException(
