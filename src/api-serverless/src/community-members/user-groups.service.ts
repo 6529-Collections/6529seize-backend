@@ -2475,7 +2475,7 @@ export class UserGroupsService {
     params: Record<string, never>;
   } {
     return {
-      sql: `with ${UserGroupsService.GENERATED_VIEW} as (select * from ${IDENTITIES_TABLE} where false)`,
+      sql: `with ${UserGroupsService.GENERATED_VIEW} as (select profile_id from ${IDENTITIES_TABLE} where false)`,
       params: {}
     };
   }
