@@ -96,6 +96,13 @@ type StagingIdleHandshakeSnapshot = StagingIdleSnapshot & {
   readonly verified_at: number;
 };
 
+type StagingEnvironmentBinding = {
+  readonly frontendSha: string;
+  readonly backendSha: string;
+  readonly frontendFromExistingStaging: boolean;
+  readonly backendFromExistingStaging: boolean;
+};
+
 type ProductionIdleSnapshot = {
   readonly frontend_main_sha: string;
   readonly backend_main_sha: string;
@@ -1379,21 +1386,23 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext
   ): Promise<void> {
     const train = context.train;
+    const requiresIdleHandshake = [
+      'PREPARED',
+      'WAITING_FOR_ENVIRONMENT'
+    ].includes(train.status);
     const requiresBetaIdleHandshake =
-      getReleaseBusV2Mode() === 'OFF' &&
-      ['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status);
-    const workflowFenceStartedAt = requiresBetaIdleHandshake
-      ? Date.now()
-      : null;
-    const beforeLock = requiresBetaIdleHandshake
+      getReleaseBusV2Mode() === 'OFF' && requiresIdleHandshake;
+    const workflowFenceStartedAt = requiresIdleHandshake ? Date.now() : null;
+    const beforeLock = requiresIdleHandshake
       ? await this.captureStagingIdleSnapshot()
       : null;
-    if (requiresBetaIdleHandshake && !beforeLock) {
+    if (requiresIdleHandshake && !beforeLock) {
       if (train.status === 'PREPARED')
         await this.transitionTrain(train, {
           status: 'WAITING_FOR_ENVIRONMENT',
-          recoveryMessage:
-            'Operator beta is waiting for an idle shared staging deployment, E2E, and ref handshake'
+          recoveryMessage: requiresBetaIdleHandshake
+            ? 'Operator beta is waiting for an idle shared staging deployment, E2E, and ref handshake'
+            : 'Waiting for an idle shared staging deployment, E2E, and ref handshake'
         });
       return;
     }
@@ -1410,7 +1419,8 @@ export class ReleaseBusV2Reconciler {
         });
       return;
     }
-    if (requiresBetaIdleHandshake && beforeLock) {
+    let environmentBinding: StagingEnvironmentBinding | null = null;
+    if (requiresIdleHandshake && beforeLock) {
       let afterLock: StagingIdleSnapshot | null;
       try {
         afterLock = await this.captureStagingIdleSnapshot();
@@ -1418,28 +1428,91 @@ export class ReleaseBusV2Reconciler {
         await this.releaseEnvironmentLease('staging-environment', lease);
         throw error;
       }
-      const stable =
-        afterLock !== null &&
-        afterLock.frontend_staging_sha === beforeLock.frontend_staging_sha &&
-        afterLock.backend_staging_sha === beforeLock.backend_staging_sha;
-      if (!stable) {
+      if (
+        !afterLock ||
+        afterLock.frontend_staging_sha !== beforeLock.frontend_staging_sha ||
+        afterLock.backend_staging_sha !== beforeLock.backend_staging_sha
+      ) {
         await this.releaseEnvironmentLease('staging-environment', lease);
-        if (train.status === 'PREPARED')
+        if (train.status === 'PREPARED') {
           await this.transitionTrain(train, {
             status: 'WAITING_FOR_ENVIRONMENT',
             recoveryMessage:
               'Shared staging changed during the beta idle handshake; lock released without mutation'
           });
+        }
+        // WAITING_FOR_ENVIRONMENT re-entry must never fall through without a
+        // stable snapshot and an owned lease.
+        return;
+      }
+      if (!afterLock.frontend_staging_sha || !afterLock.backend_staging_sha) {
+        await this.releaseEnvironmentLease('staging-environment', lease);
+        await this.failTrain(
+          train,
+          'CONTROL_PLANE',
+          'Shared staging has no exact frontend or backend ref identity'
+        );
+        return;
+      }
+      environmentBinding = this.bindStagingEnvironmentIdentity(
+        context,
+        afterLock
+      );
+      if (!environmentBinding) {
+        await this.releaseEnvironmentLease('staging-environment', lease);
+        if (train.status === 'PREPARED') {
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'PRODUCTION_QUALIFICATION_ENVIRONMENT_HOLD',
+              actor: 'release-bus-v2',
+              payload: {
+                target_frontend_sha: train.frontend_composed_sha,
+                target_backend_sha: train.backend_composed_sha,
+                staging_frontend_sha: afterLock.frontend_staging_sha,
+                staging_backend_sha: afterLock.backend_staging_sha
+              }
+            },
+            {}
+          );
+          await this.transitionTrain(train, {
+            status: 'WAITING_FOR_ENVIRONMENT',
+            recoveryMessage:
+              'Exact production qualification is waiting for unchanged repositories in staging to match the production target manifest'
+          });
+        }
+        // A held qualification remains waiting and retries from a fresh
+        // snapshot; it must never advance without an environment binding.
         return;
       }
       await this.repository.appendEvent(
         {
           trainId: train.id,
-          eventType: 'BETA_STAGING_IDLE_HANDSHAKE',
-          actor: 'release-bus-v2-beta',
+          eventType: 'STAGING_ENVIRONMENT_IDENTITY_BOUND',
+          actor: 'release-bus-v2',
+          payload: {
+            lane: train.lane,
+            target_frontend_sha: train.frontend_composed_sha,
+            target_backend_sha: train.backend_composed_sha,
+            staging_frontend_sha: afterLock.frontend_staging_sha,
+            staging_backend_sha: afterLock.backend_staging_sha,
+            frontend_sha: environmentBinding.frontendSha,
+            backend_sha: environmentBinding.backendSha,
+            frontend_from_existing_staging:
+              environmentBinding.frontendFromExistingStaging,
+            backend_from_existing_staging:
+              environmentBinding.backendFromExistingStaging
+          }
+        },
+        {}
+      );
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'STAGING_IDLE_HANDSHAKE',
+          actor: 'release-bus-v2',
           payload: {
             ...afterLock,
-            beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
             staging_lock: 'owned',
             workflow_fence_started_at: workflowFenceStartedAt,
             verified_at: Date.now()
@@ -1447,6 +1520,23 @@ export class ReleaseBusV2Reconciler {
         },
         {}
       );
+      if (requiresBetaIdleHandshake) {
+        await this.repository.appendEvent(
+          {
+            trainId: train.id,
+            eventType: 'BETA_STAGING_IDLE_HANDSHAKE',
+            actor: 'release-bus-v2-beta',
+            payload: {
+              ...afterLock,
+              beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
+              staging_lock: 'owned',
+              workflow_fence_started_at: workflowFenceStartedAt,
+              verified_at: Date.now()
+            }
+          },
+          {}
+        );
+      }
     }
     const sourceTrainId = train.parent_train_id ?? train.id;
     if (['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status)) {
@@ -1458,6 +1548,8 @@ export class ReleaseBusV2Reconciler {
         );
       await this.transitionTrain(train, {
         status: 'DEPLOYING',
+        frontendComposedSha: environmentBinding?.frontendSha,
+        backendComposedSha: environmentBinding?.backendSha,
         recoveryMessage:
           'Staging ownership acquired; exact immutable artifacts are deploying'
       });
@@ -1536,90 +1628,7 @@ export class ReleaseBusV2Reconciler {
         return;
       }
       if (e2e.status !== 'SUCCEEDED') return;
-      if (getReleaseBusV2Mode() === 'OFF') {
-        const handshake = await this.findStagingIdleHandshake(train.id);
-        if (!handshake) {
-          if (train.manifest_id)
-            await this.repository.updateManifestStatus(
-              train.manifest_id,
-              'FAILED',
-              e2e.external_id,
-              {}
-            );
-          await this.repository.appendEvent(
-            {
-              trainId: train.id,
-              eventType: 'BETA_STAGING_FINAL_FENCE_MISSING',
-              actor: 'release-bus-v2-beta',
-              payload: { e2e_run_id: e2e.external_id }
-            },
-            {}
-          );
-          await this.failTrain(
-            train,
-            'CONTROL_PLANE',
-            'Beta staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence',
-            lease
-          );
-          return;
-        }
-        const operationRunIds = (
-          await this.repository.listOperations(train.id, {})
-        )
-          .map(({ external_id }) => external_id)
-          .filter((runId): runId is string => runId !== null);
-        const currentSnapshot = await this.captureStagingIdleSnapshot({
-          since: handshake.workflow_fence_started_at,
-          ignoredRunIds: operationRunIds
-        });
-        const stable =
-          currentSnapshot !== null &&
-          currentSnapshot.frontend_staging_sha ===
-            handshake.frontend_staging_sha &&
-          currentSnapshot.backend_staging_sha === handshake.backend_staging_sha;
-        if (!stable) {
-          if (train.manifest_id)
-            await this.repository.updateManifestStatus(
-              train.manifest_id,
-              'FAILED',
-              e2e.external_id,
-              {}
-            );
-          await this.repository.appendEvent(
-            {
-              trainId: train.id,
-              eventType: 'BETA_STAGING_FINAL_FENCE_VIOLATED',
-              actor: 'release-bus-v2-beta',
-              payload: {
-                handshake,
-                current_snapshot: currentSnapshot,
-                ignored_train_run_ids: operationRunIds
-              }
-            },
-            {}
-          );
-          await this.failTrain(
-            train,
-            'CONTROL_PLANE',
-            'Shared staging refs or deploy/E2E workflows changed after the beta idle handshake; successful E2E cannot validate a mixed environment',
-            lease
-          );
-          return;
-        }
-        await this.repository.appendEvent(
-          {
-            trainId: train.id,
-            eventType: 'BETA_STAGING_FINAL_FENCE_VERIFIED',
-            actor: 'release-bus-v2-beta',
-            payload: {
-              ...currentSnapshot,
-              handshake_verified_at: handshake.verified_at,
-              verified_at: Date.now()
-            }
-          },
-          {}
-        );
-      }
+      if (!(await this.verifyStagingFinalFence(train, e2e, lease))) return;
       if (train.manifest_id)
         await this.repository.updateManifestStatus(
           train.manifest_id,
@@ -1640,6 +1649,45 @@ export class ReleaseBusV2Reconciler {
       });
       await this.releaseEnvironmentLease('staging-environment', lease);
     }
+  }
+
+  private bindStagingEnvironmentIdentity(
+    context: TrainContext,
+    snapshot: StagingIdleSnapshot
+  ): StagingEnvironmentBinding | null {
+    const train = context.train;
+    const frontendTarget = train.frontend_composed_sha;
+    const backendTarget = train.backend_composed_sha;
+    const frontendStaging = snapshot.frontend_staging_sha;
+    const backendStaging = snapshot.backend_staging_sha;
+    if (
+      !frontendTarget ||
+      !backendTarget ||
+      !frontendStaging ||
+      !backendStaging
+    )
+      throw new Error('Staging environment identity is incomplete');
+    const hasFrontend = relevantCandidates(context, 'frontend').length > 0;
+    const hasBackend = relevantCandidates(context, 'backend').length > 0;
+    if (train.lane === 'PRODUCTION_QUALIFICATION') {
+      // Candidate-bearing repositories are about to be deployed to their
+      // composed targets. Only unchanged counterparts must already match the
+      // exact production target before qualification can own staging.
+      if (!hasFrontend && frontendStaging !== frontendTarget) return null;
+      if (!hasBackend && backendStaging !== backendTarget) return null;
+    }
+    return {
+      frontendSha:
+        train.lane === 'STAGING' && !hasFrontend
+          ? frontendStaging
+          : frontendTarget,
+      backendSha:
+        train.lane === 'STAGING' && !hasBackend
+          ? backendStaging
+          : backendTarget,
+      frontendFromExistingStaging: train.lane === 'STAGING' && !hasFrontend,
+      backendFromExistingStaging: train.lane === 'STAGING' && !hasBackend
+    };
   }
 
   private async captureStagingIdleSnapshot(fence?: {
@@ -1672,11 +1720,108 @@ export class ReleaseBusV2Reconciler {
     };
   }
 
+  private async verifyStagingFinalFence(
+    train: ReleaseBusV2TrainRecord,
+    e2e: ReleaseBusV2OperationRecord,
+    lease: ReleaseBusV2LockRecord
+  ): Promise<boolean> {
+    const betaFinalFence = getReleaseBusV2Mode() === 'OFF';
+    const actor = betaFinalFence ? 'release-bus-v2-beta' : 'release-bus-v2';
+    const handshake = await this.findStagingIdleHandshake(train.id);
+    if (!handshake) {
+      if (train.manifest_id)
+        await this.repository.updateManifestStatus(
+          train.manifest_id,
+          'FAILED',
+          e2e.external_id,
+          {}
+        );
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: betaFinalFence
+            ? 'BETA_STAGING_FINAL_FENCE_MISSING'
+            : 'STAGING_FINAL_FENCE_MISSING',
+          actor,
+          payload: { e2e_run_id: e2e.external_id }
+        },
+        {}
+      );
+      await this.failTrain(
+        train,
+        'CONTROL_PLANE',
+        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence',
+        lease
+      );
+      return false;
+    }
+    const operationRunIds = (await this.repository.listOperations(train.id, {}))
+      .map(({ external_id }) => external_id)
+      .filter((runId): runId is string => runId !== null);
+    const currentSnapshot = await this.captureStagingIdleSnapshot({
+      since: handshake.workflow_fence_started_at,
+      ignoredRunIds: operationRunIds
+    });
+    const stable =
+      currentSnapshot !== null &&
+      currentSnapshot.frontend_staging_sha === handshake.frontend_staging_sha &&
+      currentSnapshot.backend_staging_sha === handshake.backend_staging_sha;
+    if (!stable) {
+      if (train.manifest_id)
+        await this.repository.updateManifestStatus(
+          train.manifest_id,
+          'FAILED',
+          e2e.external_id,
+          {}
+        );
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: betaFinalFence
+            ? 'BETA_STAGING_FINAL_FENCE_VIOLATED'
+            : 'STAGING_FINAL_FENCE_VIOLATED',
+          actor,
+          payload: {
+            handshake,
+            current_snapshot: currentSnapshot,
+            ignored_train_run_ids: operationRunIds
+          }
+        },
+        {}
+      );
+      await this.failTrain(
+        train,
+        'CONTROL_PLANE',
+        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment',
+        lease
+      );
+      return false;
+    }
+    await this.repository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: betaFinalFence
+          ? 'BETA_STAGING_FINAL_FENCE_VERIFIED'
+          : 'STAGING_FINAL_FENCE_VERIFIED',
+        actor,
+        payload: {
+          ...currentSnapshot,
+          handshake_verified_at: handshake.verified_at,
+          verified_at: Date.now()
+        }
+      },
+      {}
+    );
+    return true;
+  }
+
   private async findStagingIdleHandshake(
     trainId: string
   ): Promise<StagingIdleHandshakeSnapshot | null> {
     const event = (await this.repository.listEvents(trainId, 200, {})).find(
-      ({ event_type }) => event_type === 'BETA_STAGING_IDLE_HANDSHAKE'
+      ({ event_type }) =>
+        event_type === 'STAGING_IDLE_HANDSHAKE' ||
+        event_type === 'BETA_STAGING_IDLE_HANDSHAKE'
     );
     if (!event) return null;
     let payload: Partial<StagingIdleHandshakeSnapshot> | null;
