@@ -319,6 +319,38 @@ describe('Release Bus v2 exact operation callbacks', () => {
     });
   });
 
+  it('retries an unwrapped transient dispatch error with the same attempt key', async () => {
+    const state = repositoryFor(
+      operation({ external_id: null, status: 'PENDING' })
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockRejectedValueOnce(
+      Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await service.reconcileWorkflow({
+      idempotencyKey: 'rb2:train-id:prepare:frontend',
+      trainId: 'train-id',
+      operationType: 'PREPARE_ARTIFACT_FRONTEND',
+      repository: 'frontend',
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: null,
+      inputs: {}
+    });
+
+    expect(state.current()).toMatchObject({
+      status: 'RETRY_WAIT',
+      attempt: 1,
+      failure_class: 'INFRASTRUCTURE',
+      result_json: { retry_same_attempt: true, transport_failures: 1 }
+    });
+  });
+
   it('recovers a stale dispatch reservation without changing its attempt key', async () => {
     const state = repositoryFor(
       operation({

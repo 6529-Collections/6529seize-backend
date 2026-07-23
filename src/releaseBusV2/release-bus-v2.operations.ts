@@ -86,12 +86,34 @@ const DISPATCH_DISCOVERY_GRACE_MS = 30_000;
 
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
+  const candidate = error as {
+    readonly code?: unknown;
+    readonly name?: unknown;
+    readonly status?: unknown;
+    readonly statusCode?: unknown;
+  };
+  const code = typeof candidate?.code === 'string' ? candidate.code : '';
+  const status = Number(candidate?.status ?? candidate?.statusCode ?? 0);
   return (
     error instanceof Error &&
     ((typeof infrastructureType === 'function' &&
       error instanceof infrastructureType) ||
       error.name === 'ReleaseBusGitHubInfrastructureError' ||
-      error.constructor.name === 'ReleaseBusGitHubInfrastructureError')
+      error.constructor.name === 'ReleaseBusGitHubInfrastructureError' ||
+      ['AbortError', 'FetchError', 'TimeoutError'].includes(error.name) ||
+      [
+        'ECONNABORTED',
+        'ECONNREFUSED',
+        'ECONNRESET',
+        'EAI_AGAIN',
+        'ENETDOWN',
+        'ENETUNREACH',
+        'ENOTFOUND',
+        'ETIMEDOUT'
+      ].includes(code) ||
+      status === 408 ||
+      status === 429 ||
+      status >= 500)
   );
 }
 
