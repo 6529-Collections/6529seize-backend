@@ -23,6 +23,7 @@ const releaseBusGitHubApp = readFileSync(
   'src/releaseBus/release-bus.github-app.ts',
   'utf8'
 );
+const ciWaveNotifier = readFileSync('scripts/notify-ci-wave.mjs', 'utf8');
 const forceFreshMigration = readFileSync(
   'migrations/20260721114000-add-release-bus-force-fresh-base-canary.js',
   'utf8'
@@ -247,6 +248,13 @@ describe('release bus infrastructure contract', () => {
     expect(deployWorkflow).toContain(
       'CI_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}'
     );
+    expect(deployWorkflow).toContain(
+      'release_group_services must contain the full canonical production service set'
+    );
+    expect(deployWorkflow).toContain(
+      'release_group_services must include the deployed service'
+    );
+    expect(ciWaveNotifier).toContain("targetEnvironment === 'prod'");
     expect(deployWorkflow).toContain(
       'del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
     );
