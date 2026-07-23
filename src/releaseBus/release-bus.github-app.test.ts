@@ -2,6 +2,7 @@ import fetch, { Response } from 'node-fetch';
 import {
   isValidGitHubWorkflowActor,
   ReleaseBusGitHubApp,
+  ReleaseBusGitHubInfrastructureError,
   releaseBusPullRequestMergeStateEligible,
   safeGitHubWorkflowLabel,
   sanitizeGitHubWorkflowJobs,
@@ -185,6 +186,35 @@ describe('GitHub workflow operation identity', () => {
         operationKey
       )
     ).toBe(false);
+  });
+});
+
+describe('GitHub workflow dispatch failure classification', () => {
+  it('treats a secondary-rate-limit 403 as retryable infrastructure', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: 'secondary rate limit' }), {
+        status: 403,
+        headers: { 'Retry-After': '30' }
+      })
+    );
+
+    try {
+      await expect(
+        app.dispatchWorkflow('backend', 'deploy.yml', 'main', {})
+      ).rejects.toMatchObject({
+        name: ReleaseBusGitHubInfrastructureError.name,
+        message: expect.stringContaining('secondary rate limit')
+      });
+    } finally {
+      fetchMock.mockReset();
+    }
   });
 });
 

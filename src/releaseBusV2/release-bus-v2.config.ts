@@ -20,12 +20,25 @@ const BETA_ENTRY_KEYS = [
   'repository',
   'test_id'
 ] as const;
+const BETA_ENTRY_KEYS_WITH_INFRASTRUCTURE_INJECTION = [
+  'branch_name',
+  'candidate_id',
+  'inject_infrastructure_failure_operation',
+  'lanes',
+  'operator',
+  'repository',
+  'test_id'
+] as const;
 
 function compareInvariant(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export type ReleaseBusV2BetaLane = 'STAGING' | 'PRODUCTION';
+
+export type ReleaseBusV2BetaInfrastructureFailureOperation =
+  | 'PREPARE_ARTIFACT_BACKEND'
+  | 'PREPARE_ARTIFACT_FRONTEND';
 
 export type ReleaseBusV2BetaEntry = {
   readonly test_id: string;
@@ -34,6 +47,7 @@ export type ReleaseBusV2BetaEntry = {
   readonly branch_name: string;
   readonly operator: string;
   readonly lanes: readonly ReleaseBusV2BetaLane[];
+  readonly inject_infrastructure_failure_operation?: ReleaseBusV2BetaInfrastructureFailureOperation;
 };
 
 export class ReleaseBusV2BetaConfigurationError extends Error {
@@ -50,8 +64,12 @@ function parseBetaEntry(value: unknown): ReleaseBusV2BetaEntry {
   }
   const entry = value as Record<string, unknown>;
   const keys = Object.keys(entry).sort(compareInvariant);
+  const hasInfrastructureInjection =
+    JSON.stringify(keys) ===
+    JSON.stringify(BETA_ENTRY_KEYS_WITH_INFRASTRUCTURE_INJECTION);
   if (
-    JSON.stringify(keys) !== JSON.stringify(BETA_ENTRY_KEYS) ||
+    (JSON.stringify(keys) !== JSON.stringify(BETA_ENTRY_KEYS) &&
+      !hasInfrastructureInjection) ||
     typeof entry.test_id !== 'string' ||
     !/^[A-Za-z0-9._-]{1,100}$/.test(entry.test_id) ||
     typeof entry.candidate_id !== 'string' ||
@@ -77,13 +95,31 @@ function parseBetaEntry(value: unknown): ReleaseBusV2BetaEntry {
   if (lanes.length !== entry.lanes.length) {
     throw new ReleaseBusV2BetaConfigurationError();
   }
+  const expectedInfrastructureOperation =
+    entry.repository === 'backend'
+      ? 'PREPARE_ARTIFACT_BACKEND'
+      : 'PREPARE_ARTIFACT_FRONTEND';
+  if (
+    hasInfrastructureInjection &&
+    (entry.inject_infrastructure_failure_operation !==
+      expectedInfrastructureOperation ||
+      !lanes.includes('STAGING'))
+  ) {
+    throw new ReleaseBusV2BetaConfigurationError();
+  }
   return {
     test_id: entry.test_id,
     candidate_id: entry.candidate_id.toLowerCase(),
     repository: entry.repository as ReleaseBusV2Repository,
     branch_name: entry.branch_name,
     operator: entry.operator.toLowerCase(),
-    lanes
+    lanes,
+    ...(hasInfrastructureInjection
+      ? {
+          inject_infrastructure_failure_operation:
+            entry.inject_infrastructure_failure_operation as ReleaseBusV2BetaInfrastructureFailureOperation
+        }
+      : {})
   };
 }
 
@@ -126,7 +162,39 @@ export function getReleaseBusV2BetaAllowlist(): readonly ReleaseBusV2BetaEntry[]
   ) {
     throw new ReleaseBusV2BetaConfigurationError();
   }
+  if (
+    entries.filter(
+      ({ inject_infrastructure_failure_operation }) =>
+        inject_infrastructure_failure_operation !== undefined
+    ).length > 1
+  ) {
+    throw new ReleaseBusV2BetaConfigurationError();
+  }
   return entries;
+}
+
+export function releaseBusV2BetaInfrastructureFailureInjection(
+  allowlist: readonly ReleaseBusV2BetaEntry[],
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  lane: ReleaseBusV2Lane,
+  operationType: string
+): { readonly candidateId: string; readonly testId: string } | null {
+  const entry = allowlist.find(
+    ({ inject_infrastructure_failure_operation }) =>
+      inject_infrastructure_failure_operation === operationType
+  );
+  if (
+    lane !== 'STAGING' ||
+    !entry ||
+    !candidates.some(({ id }) => id.toLowerCase() === entry.candidate_id) ||
+    candidates.some(
+      (candidate) =>
+        !releaseBusV2BetaAllowsCandidate(allowlist, candidate, lane)
+    )
+  ) {
+    return null;
+  }
+  return { candidateId: entry.candidate_id, testId: entry.test_id };
 }
 
 export function releaseBusV2BetaAllowsLane(

@@ -465,6 +465,35 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.trains.get('train-1')?.status).toBe('PREPARED');
   });
 
+  it('releases a terminal train lock in OFF mode only after all operations are terminal', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', {
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: 4
+      })
+    );
+    await state.repository.acquireLock(
+      'staging-environment',
+      'train-1',
+      'train:train-1'
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-terminal-lock')
+    ).resolves.toEqual({ mode: 'OFF', claimed: [], advanced: [] });
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+        trainId: 'train-1'
+      })
+    );
+  });
+
   it('pauses only beta automation when the OFF allowlist is malformed', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'OFF';
