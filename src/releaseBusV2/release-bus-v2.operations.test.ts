@@ -106,6 +106,7 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
   );
   return {
     repository: {
+      appendEvent: jest.fn(async () => undefined),
       findOperation: jest.fn(async () => current),
       getOrCreateOperation: jest.fn(async () => current),
       updateOperation
@@ -119,6 +120,74 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
 
 describe('Release Bus v2 exact operation callbacks', () => {
   beforeEach(() => jest.clearAllMocks());
+
+  it('injects one transparent beta infrastructure retry before dispatch', async () => {
+    const state = repositoryFor(
+      operation({
+        external_id: null,
+        status: 'PENDING',
+        idempotency_key: 'rb2:train-id:prepare:backend',
+        operation_type: 'PREPARE_ARTIFACT_BACKEND',
+        repository: 'backend'
+      })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    const spec = {
+      idempotencyKey: 'rb2:train-id:prepare:backend',
+      trainId: 'train-id',
+      operationType: 'PREPARE_ARTIFACT_BACKEND',
+      repository: 'backend' as const,
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: null,
+      inputs: {},
+      betaInfrastructureFailureInjection: {
+        candidateId: '11111111-1111-4111-8111-111111111111',
+        testId: 'infrastructure-retry-1'
+      }
+    };
+
+    await service.reconcileWorkflow(spec);
+    expect(state.current()).toMatchObject({
+      status: 'RETRY_WAIT',
+      attempt: 1,
+      external_id: null,
+      failure_class: 'INFRASTRUCTURE',
+      failure_message:
+        'Injected operator beta infrastructure failure before dispatch'
+    });
+    expect(state.repository.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: '11111111-1111-4111-8111-111111111111',
+        eventType: 'BETA_INFRASTRUCTURE_FAILURE_INJECTED',
+        trainId: 'train-id'
+      }),
+      {}
+    );
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
+
+    state.expireRetry();
+    mockFindWorkflowRun.mockResolvedValue(null);
+    await service.reconcileWorkflow(spec);
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'backend',
+      'release-bus-v2-preflight.yml',
+      'main',
+      expect.objectContaining({
+        operation_key: 'rb2:train-id:prepare:backend:a2'
+      })
+    );
+    expect(state.current()).toMatchObject({
+      status: 'DISPATCHED',
+      attempt: 2,
+      external_id: null,
+      failure_class: null
+    });
+    expect(state.repository.appendEvent).toHaveBeenCalledTimes(1);
+  });
 
   it('binds the immutable artifact digest from the structured terminal report', async () => {
     const state = repositoryFor(operation());

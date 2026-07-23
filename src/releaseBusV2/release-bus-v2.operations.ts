@@ -26,6 +26,10 @@ export type ReleaseBusV2WorkflowSpec = {
   readonly artifactDigest: string | null;
   readonly inputs: Readonly<Record<string, string>>;
   readonly maxAttempts?: number;
+  readonly betaInfrastructureFailureInjection?: {
+    readonly candidateId: string;
+    readonly testId: string;
+  };
 };
 
 export type ReleaseBusV2Authorization = {
@@ -171,7 +175,9 @@ export class ReleaseBusV2Operations {
         request: {
           workflow: spec.workflow,
           ref: spec.ref,
-          inputs: spec.inputs
+          inputs: spec.inputs,
+          beta_infrastructure_failure_injection:
+            spec.betaInfrastructureFailureInjection ?? null
         },
         maxAttempts: spec.maxAttempts
       },
@@ -212,6 +218,42 @@ export class ReleaseBusV2Operations {
       operation =
         (await this.repository.findOperation(spec.idempotencyKey, {})) ??
         operation;
+    }
+
+    if (
+      operation.status === 'PENDING' &&
+      operation.attempt === 1 &&
+      operation.external_id === null &&
+      spec.betaInfrastructureFailureInjection
+    ) {
+      const nextRetryAt = Date.now() + retryDelayMs(operation.attempt);
+      await this.update(operation, {
+        status: 'RETRY_WAIT',
+        nextRetryAt,
+        failureClass: 'INFRASTRUCTURE',
+        failureMessage:
+          'Injected operator beta infrastructure failure before dispatch'
+      });
+      await this.repository.appendEvent(
+        {
+          trainId: operation.train_id,
+          candidateId: spec.betaInfrastructureFailureInjection.candidateId,
+          eventType: 'BETA_INFRASTRUCTURE_FAILURE_INJECTED',
+          actor: 'release-bus-v2-beta',
+          payload: {
+            attempt: operation.attempt,
+            next_retry_at: nextRetryAt,
+            operation_id: operation.id,
+            operation_type: operation.operation_type,
+            test_id: spec.betaInfrastructureFailureInjection.testId
+          }
+        },
+        {}
+      );
+      return (
+        (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+        operation
+      );
     }
 
     const attemptKey = attemptOperationKey(

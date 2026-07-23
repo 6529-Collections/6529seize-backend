@@ -8,6 +8,7 @@ import {
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
   releaseBusV2BetaAllowsCandidate,
+  releaseBusV2BetaInfrastructureFailureInjection,
   releaseBusV2BetaAllowsLane,
   type ReleaseBusV2BetaEntry
 } from '@/releaseBusV2/release-bus-v2.config';
@@ -866,10 +867,20 @@ export class ReleaseBusV2Reconciler {
     const evidence = fastCandidate
       ? reusablePrArtifact(fastCandidate, repository, graph?.units ?? [])
       : null;
+    const operationType = `PREPARE_ARTIFACT_${repository.toUpperCase()}`;
+    const betaInfrastructureFailureInjection =
+      getReleaseBusV2Mode() === 'OFF' && train.lane === 'STAGING'
+        ? releaseBusV2BetaInfrastructureFailureInjection(
+            getReleaseBusV2BetaAllowlist(),
+            candidates,
+            train.lane,
+            operationType
+          )
+        : null;
     const artifact = await releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(train.id, `prepare:${repository}`),
       trainId: train.id,
-      operationType: `PREPARE_ARTIFACT_${repository.toUpperCase()}`,
+      operationType,
       repository,
       workflow: 'release-bus-v2-preflight.yml',
       ref: 'main',
@@ -896,7 +907,10 @@ export class ReleaseBusV2Reconciler {
             }
           : {})
       },
-      maxAttempts: 3
+      maxAttempts: 3,
+      ...(betaInfrastructureFailureInjection
+        ? { betaInfrastructureFailureInjection }
+        : {})
     });
     return {
       repository,

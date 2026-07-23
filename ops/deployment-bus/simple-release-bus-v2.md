@@ -140,6 +140,20 @@ lanes. An empty variable disables all beta automation. Invalid nonempty
 configuration pauses `ALL` while mode remains `OFF`; OFF-mode manual fallback
 continues to ignore v2 controls.
 
+The infrastructure-retry case may add exactly one optional field to exactly
+one entry:
+
+```json
+"inject_infrastructure_failure_operation": "PREPARE_ARTIFACT_BACKEND"
+```
+
+The value must match the entry's repository (`PREPARE_ARTIFACT_BACKEND` or
+`PREPARE_ARTIFACT_FRONTEND`) and requires the `STAGING` lane. The reconciler
+records `BETA_INFRASTRUCTURE_FAILURE_INJECTED`, places only that exact first
+preflight attempt into `RETRY_WAIT` before dispatch, and dispatches attempt 2
+after the normal bounded delay. It never applies in production or outside the
+globally-OFF exact operator beta.
+
 Before any allowlist is installed, exhaust local integration tests and
 read-only shadow checks. Shadow checks may resolve exact refs, PR qualification,
 current locks, and active workflow state, but must not update a shared ref,
