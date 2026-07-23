@@ -1436,12 +1436,15 @@ export class ReleaseBusV2Reconciler {
         afterLock.backend_staging_sha !== beforeLock.backend_staging_sha
       ) {
         await this.releaseEnvironmentLease('staging-environment', lease);
-        if (train.status === 'PREPARED')
+        if (train.status === 'PREPARED') {
           await this.transitionTrain(train, {
             status: 'WAITING_FOR_ENVIRONMENT',
             recoveryMessage:
               'Shared staging changed during the beta idle handshake; lock released without mutation'
           });
+        }
+        // WAITING_FOR_ENVIRONMENT re-entry must never fall through without a
+        // stable snapshot and an owned lease.
         return;
       }
       if (!afterLock.frontend_staging_sha || !afterLock.backend_staging_sha) {
@@ -1480,6 +1483,8 @@ export class ReleaseBusV2Reconciler {
               'Exact production qualification is waiting for unchanged repositories in staging to match the production target manifest'
           });
         }
+        // A held qualification remains waiting and retries from a fresh
+        // snapshot; it must never advance without an environment binding.
         return;
       }
       await this.repository.appendEvent(
@@ -1489,6 +1494,10 @@ export class ReleaseBusV2Reconciler {
           actor: 'release-bus-v2',
           payload: {
             lane: train.lane,
+            target_frontend_sha: train.frontend_composed_sha,
+            target_backend_sha: train.backend_composed_sha,
+            staging_frontend_sha: afterLock.frontend_staging_sha,
+            staging_backend_sha: afterLock.backend_staging_sha,
             frontend_sha: environmentBinding.frontendSha,
             backend_sha: environmentBinding.backendSha,
             frontend_from_existing_staging:
@@ -1732,6 +1741,9 @@ export class ReleaseBusV2Reconciler {
     const hasFrontend = relevantCandidates(context, 'frontend').length > 0;
     const hasBackend = relevantCandidates(context, 'backend').length > 0;
     if (train.lane === 'PRODUCTION_QUALIFICATION') {
+      // Candidate-bearing repositories are about to be deployed to their
+      // composed targets. Only unchanged counterparts must already match the
+      // exact production target before qualification can own staging.
       if (!hasFrontend && frontendStaging !== frontendTarget) return null;
       if (!hasBackend && backendStaging !== backendTarget) return null;
     }

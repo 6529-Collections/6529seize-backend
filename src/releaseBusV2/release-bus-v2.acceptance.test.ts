@@ -683,6 +683,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.trains.get('train-1')).toEqual(
       expect.objectContaining({
         status: 'DEPLOYING',
+        frontend_base_sha: '1'.repeat(40),
+        backend_base_sha: '2'.repeat(40),
         frontend_composed_sha: FRONTEND_SHA,
         backend_composed_sha: backendStagingSha
       })
@@ -752,6 +754,89 @@ describe('Release Bus v2 offline acceptance harness', () => {
         trainId: 'train-1'
       })
     );
+  });
+
+  it('keeps a waiting qualification held when the unchanged staging repository still differs', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', {
+        lane: 'PRODUCTION_QUALIFICATION',
+        status: 'WAITING_FOR_ENVIRONMENT'
+      })
+    );
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      state.repository.memberships.find(
+        ({ candidate_id }) => candidate_id === 'frontend-candidate'
+      )!
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend') =>
+        repository === 'frontend' ? FRONTEND_SHA : 'e'.repeat(40)
+    );
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_ENVIRONMENT',
+        frontend_composed_sha: FRONTEND_SHA,
+        backend_composed_sha: BACKEND_SHA
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(mockReconcileWorkflow).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationType: expect.stringMatching(/^DEPLOY_/)
+      })
+    );
+  });
+
+  it('allows a coupled qualification to replace both unrelated staging repositories', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { lane: 'PRODUCTION_QUALIFICATION' })
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend') =>
+        repository === 'frontend' ? 'e'.repeat(40) : 'f'.repeat(40)
+    );
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'DEPLOYING',
+        frontend_base_sha: '1'.repeat(40),
+        backend_base_sha: '2'.repeat(40),
+        frontend_composed_sha: FRONTEND_SHA,
+        backend_composed_sha: BACKEND_SHA
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBe('train-1');
   });
 
   it('starts exact production qualification after unchanged staging matches the target', async () => {
