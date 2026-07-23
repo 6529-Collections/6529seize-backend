@@ -3,6 +3,7 @@ import {
   getReleaseBusV2Mode,
   releaseBusV2BetaAllowsCandidate,
   releaseBusV2BetaAllowsRegistration,
+  releaseBusV2BetaInfrastructureFailureInjection,
   ReleaseBusV2BetaConfigurationError
 } from '@/releaseBusV2/release-bus-v2.config';
 import type {
@@ -114,6 +115,40 @@ describe('Release Bus v2 operator-only OFF beta configuration', () => {
     ).toBe(false);
   });
 
+  it('binds one staging-only infrastructure injection to an exact candidate', () => {
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      configuredEntry({
+        inject_infrastructure_failure_operation: 'PREPARE_ARTIFACT_BACKEND'
+      })
+    ]);
+    const allowlist = getReleaseBusV2BetaAllowlist();
+
+    expect(
+      releaseBusV2BetaInfrastructureFailureInjection(
+        allowlist,
+        [candidate()],
+        'STAGING',
+        'PREPARE_ARTIFACT_BACKEND'
+      )
+    ).toEqual({ candidateId: CANDIDATE_ID, testId: 'backend-only-1' });
+    expect(
+      releaseBusV2BetaInfrastructureFailureInjection(
+        allowlist,
+        [candidate()],
+        'PRODUCTION',
+        'PREPARE_ARTIFACT_BACKEND'
+      )
+    ).toBeNull();
+    expect(
+      releaseBusV2BetaInfrastructureFailureInjection(
+        allowlist,
+        [{ ...candidate(), id: '22222222-2222-4222-8222-222222222222' }],
+        'STAGING',
+        'PREPARE_ARTIFACT_BACKEND'
+      )
+    ).toBeNull();
+  });
+
   it.each([
     'not-json',
     '[]',
@@ -121,6 +156,17 @@ describe('Release Bus v2 operator-only OFF beta configuration', () => {
     JSON.stringify([configuredEntry({ lanes: [] })]),
     JSON.stringify([configuredEntry(), configuredEntry()]),
     JSON.stringify([configuredEntry({ unexpected: true })]),
+    JSON.stringify([
+      configuredEntry({
+        inject_infrastructure_failure_operation: 'PREPARE_ARTIFACT_FRONTEND'
+      })
+    ]),
+    JSON.stringify([
+      configuredEntry({
+        inject_infrastructure_failure_operation: 'PREPARE_ARTIFACT_BACKEND',
+        lanes: ['PRODUCTION']
+      })
+    ]),
     JSON.stringify([
       configuredEntry(),
       configuredEntry({
@@ -133,6 +179,16 @@ describe('Release Bus v2 operator-only OFF beta configuration', () => {
       configuredEntry(),
       configuredEntry({
         candidate_id: '22222222-2222-4222-8222-222222222222'
+      })
+    ]),
+    JSON.stringify([
+      configuredEntry({
+        inject_infrastructure_failure_operation: 'PREPARE_ARTIFACT_BACKEND'
+      }),
+      configuredEntry({
+        candidate_id: '22222222-2222-4222-8222-222222222222',
+        branch_name: 'agent/rb2-beta-backend-two',
+        inject_infrastructure_failure_operation: 'PREPARE_ARTIFACT_BACKEND'
       })
     ])
   ])('fails closed for malformed allowlist %s', (value) => {

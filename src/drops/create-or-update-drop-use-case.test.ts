@@ -166,6 +166,20 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
   }
 
+  function createNotificationDropModel(
+    overrides: Record<string, unknown> = {}
+  ) {
+    return {
+      drop_id: 'drop-1',
+      wave_id: 'wave-1',
+      author_id: 'author-1',
+      reply_to: null,
+      parts: [],
+      mentioned_groups: [],
+      ...overrides
+    };
+  }
+
   it('sanitizes structured drop fields without touching part content', () => {
     const model = {
       ...createChatDropModel(),
@@ -1116,11 +1130,9 @@ describe('CreateOrUpdateDropUseCase', () => {
     await expect(
       (useCase as any).notifyWaveDropRecipients(
         {
-          model: {
-            drop_id: 'drop-1',
-            author_id: 'author-1',
+          model: createNotificationDropModel({
             mentioned_groups: [DropGroupMention.ALL]
-          },
+          }),
           wave: {
             id: 'wave-1',
             visibility_group_id: null
@@ -1141,6 +1153,8 @@ describe('CreateOrUpdateDropUseCase', () => {
         waveId: 'wave-1',
         dropId: 'drop-1',
         relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
         mentionedIdentityIds: ['direct-1', 'group-mention-1', 'both-1'],
         allDropsSubscriberIds: []
       },
@@ -1172,11 +1186,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     await expect(
       (useCase as any).notifyWaveDropRecipients(
         {
-          model: {
-            drop_id: 'drop-1',
-            author_id: 'author-1',
-            mentioned_groups: []
-          },
+          model: createNotificationDropModel(),
           wave: {
             id: 'wave-1',
             visibility_group_id: 'private-group',
@@ -1205,6 +1215,8 @@ describe('CreateOrUpdateDropUseCase', () => {
         waveId: 'wave-1',
         dropId: 'drop-1',
         relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
         mentionedIdentityIds: ['eligible-mention'],
         allDropsSubscriberIds: []
       },
@@ -1235,11 +1247,7 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     await (useCase as any).notifyWaveDropRecipients(
       {
-        model: {
-          drop_id: 'drop-1',
-          author_id: 'author-1',
-          mentioned_groups: []
-        },
+        model: createNotificationDropModel(),
         wave: {
           id: 'public-wave',
           visibility_group_id: null,
@@ -1256,7 +1264,102 @@ describe('CreateOrUpdateDropUseCase', () => {
         waveId: 'public-wave',
         dropId: 'drop-1',
         relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
         mentionedIdentityIds: ['public-mention'],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('resolves reply and quote notification context in one drop lookup', async () => {
+    const dropsDb = {
+      getDropsByIds: jest.fn().mockResolvedValue([
+        { id: 'replied-drop', author_id: 'relationship-recipient' },
+        { id: 'quoted-drop', author_id: 'relationship-recipient' }
+      ])
+    };
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([]),
+      countWaveSubscribers: jest.fn().mockResolvedValue(0),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([104])
+    };
+    const useCase = createUseCaseWithMocks({
+      dropsDb,
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: createNotificationDropModel({
+          reply_to: {
+            drop_id: 'replied-drop',
+            drop_part_id: 1
+          },
+          parts: [
+            {
+              content: 'reply',
+              quoted_drop: null,
+              media: []
+            },
+            {
+              content: 'quote',
+              quoted_drop: {
+                drop_id: 'quoted-drop',
+                drop_part_id: 2
+              },
+              media: []
+            }
+          ]
+        }),
+        wave: {
+          id: 'wave-1',
+          visibility_group_id: null,
+          parent_wave_id: null
+        },
+        directlyMentionedIdentityIds: ['relationship-recipient'],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(dropsDb.getDropsByIds).toHaveBeenCalledWith(
+      ['replied-drop', 'quoted-drop'],
+      {}
+    );
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        replyNotification: {
+          reply_drop_id: 'drop-1',
+          reply_drop_author_id: 'author-1',
+          replied_drop_id: 'replied-drop',
+          replied_drop_part: 1,
+          replied_drop_author_id: 'relationship-recipient',
+          wave_id: 'wave-1'
+        },
+        quoteNotifications: [
+          {
+            quote_drop_id: 'drop-1',
+            quote_drop_part: 2,
+            quote_drop_author_id: 'author-1',
+            quoted_drop_id: 'quoted-drop',
+            quoted_drop_part: 2,
+            quoted_drop_author_id: 'relationship-recipient',
+            wave_id: 'wave-1'
+          }
+        ],
+        mentionedIdentityIds: ['relationship-recipient'],
         allDropsSubscriberIds: []
       },
       null,
@@ -1296,11 +1399,7 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     await (useCase as any).notifyWaveDropRecipients(
       {
-        model: {
-          drop_id: 'drop-1',
-          author_id: 'author-1',
-          mentioned_groups: []
-        },
+        model: createNotificationDropModel(),
         wave: {
           id: 'child-wave',
           visibility_group_id: 'child-group',
@@ -1327,6 +1426,8 @@ describe('CreateOrUpdateDropUseCase', () => {
         waveId: 'child-wave',
         dropId: 'drop-1',
         relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
         mentionedIdentityIds: ['child-and-parent'],
         allDropsSubscriberIds: []
       },
@@ -1371,11 +1472,9 @@ describe('CreateOrUpdateDropUseCase', () => {
     await expect(
       (useCase as any).notifyWaveDropRecipients(
         {
-          model: {
-            drop_id: 'drop-1',
-            author_id: 'author-1',
+          model: createNotificationDropModel({
             mentioned_groups: [DropGroupMention.ALL]
-          },
+          }),
           wave: {
             id: 'wave-1',
             visibility_group_id: null
@@ -1392,6 +1491,8 @@ describe('CreateOrUpdateDropUseCase', () => {
         waveId: 'wave-1',
         dropId: 'drop-1',
         relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
         mentionedIdentityIds: ['direct-1', 'group-mention-1', 'both-1'],
         allDropsSubscriberIds: ['all-drops-1']
       },
@@ -1423,11 +1524,9 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     await (useCase as any).notifyWaveDropRecipients(
       {
-        model: {
-          drop_id: 'drop-1',
-          author_id: 'author-1',
+        model: createNotificationDropModel({
           mentioned_groups: [DropGroupMention.ALL, DropGroupMention.ADMINS]
-        },
+        }),
         wave: { id: 'wave-1', visibility_group_id: null },
         directlyMentionedIdentityIds: [],
         groupMentionNotificationsEnabled: false
@@ -1601,11 +1700,9 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     await (useCase as any).notifyWaveDropRecipients(
       {
-        model: {
-          drop_id: 'drop-1',
-          author_id: 'author-1',
+        model: createNotificationDropModel({
           mentioned_groups: [DropGroupMention.CONTRIBUTORS]
-        },
+        }),
         wave: {
           id: 'wave-1',
           created_by: 'author-1',
@@ -1624,6 +1721,8 @@ describe('CreateOrUpdateDropUseCase', () => {
         waveId: 'wave-1',
         dropId: 'drop-1',
         relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
         mentionedIdentityIds: ['follower-1'],
         allDropsSubscriberIds: []
       },
