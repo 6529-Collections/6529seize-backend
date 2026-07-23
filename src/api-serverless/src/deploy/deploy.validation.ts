@@ -620,11 +620,10 @@ const ARTIFACT_FREE_RELEASE_OPERATIONS = [
 const RELEASE_OPERATION_KEY_PATTERN =
   /^rb:[A-Za-z0-9._-]+:r[1-9]\d*:([A-Za-z0-9._-]{1,48}):[a-f0-9]{32}:a[1-9]\d*$/;
 
-export const ReleaseBusAuthorizationBodySchema = Joi.object({
+const releaseBusAuthorizationFields = () => ({
   train_id: Joi.string()
     .guid({ version: ['uuidv4'] })
     .required(),
-  operation_key: Joi.string().max(180).required(),
   workflow_run_id: Joi.string().pattern(/^\d+$/).required(),
   artifact_run_id: Joi.when('environment', {
     is: 'orchestration',
@@ -638,7 +637,12 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
     .valid('orchestration', 'staging', 'prod')
     .required(),
   service: Joi.string().max(100).allow(null).required(),
-  expected_sha: ReleaseShaSchema.required(),
+  expected_sha: ReleaseShaSchema.required()
+});
+
+export const ReleaseBusAuthorizationBodySchema = Joi.object({
+  ...releaseBusAuthorizationFields(),
+  operation_key: Joi.string().max(180).required(),
   artifact_digest: Joi.when('artifact_run_id', {
     is: null,
     then: Joi.valid(null).required(),
@@ -675,19 +679,45 @@ export const ReleaseBusAuthorizationBodySchema = Joi.object({
 const RELEASE_BUS_V2_OPERATION_KEY_PATTERN =
   /^rb2:[a-f0-9-]{36}:[A-Za-z0-9._:-]+:a[1-9]\d{0,8}$/;
 
-export const ReleaseBusV2AuthorizationBodySchema =
-  ReleaseBusAuthorizationBodySchema.keys({
-    operation_key: Joi.string()
-      .pattern(RELEASE_BUS_V2_OPERATION_KEY_PATTERN)
-      .max(180)
-      .required()
+export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
+  ...releaseBusAuthorizationFields(),
+  operation_key: Joi.string()
+    .pattern(RELEASE_BUS_V2_OPERATION_KEY_PATTERN)
+    .max(180)
+    .required(),
+  artifact_digest: Joi.alternatives()
+    .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
+    .required()
+})
+  .custom((value, helpers) => {
+    if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
+      return helpers.error('any.invalid');
+    if (value.environment === 'orchestration') {
+      return value.artifact_run_id === null && value.artifact_digest === null
+        ? value
+        : helpers.error('any.invalid');
+    }
+    const keySegments = value.operation_key.split(':');
+    const isExactManifestE2E =
+      keySegments.length === 5 &&
+      keySegments[0] === 'rb2' &&
+      keySegments[1] === value.train_id &&
+      keySegments[2] === 'e2e' &&
+      keySegments[3] === value.environment &&
+      /^a[1-9]\d{0,8}$/.test(keySegments[4]);
+    if (isExactManifestE2E) {
+      return value.repository === 'frontend' &&
+        value.service === null &&
+        value.artifact_run_id === null &&
+        value.artifact_digest !== null
+        ? value
+        : helpers.error('any.invalid');
+    }
+    return value.artifact_run_id !== null && value.artifact_digest !== null
+      ? value
+      : helpers.error('any.invalid');
   })
-    .custom((value, helpers) => {
-      if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
-        return helpers.error('any.invalid');
-      return value;
-    })
-    .required();
+  .required();
 
 export const ReleaseBusBreakGlassAuthorizationBodySchema = Joi.object({
   workflow_run_id: Joi.string().pattern(/^\d+$/).required(),

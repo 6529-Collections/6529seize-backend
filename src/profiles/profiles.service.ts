@@ -57,6 +57,7 @@ import { identitiesService } from '../api-serverless/src/identities/identities.s
 import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
 import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
 import { waveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group-notification-subscriptions.db';
+import { mentionAliasesDb } from '@/mention-aliases/mention-aliases.db';
 import {
   dropPollsDb,
   DropPollsDb
@@ -543,6 +544,11 @@ export class ProfilesService {
       connectionHolder
     );
     await waveGroupNotificationSubscriptionsDb.updateIdentityIdsInWaveGroupNotificationSubscriptions(
+      sourceIdentity,
+      target,
+      connectionHolder
+    );
+    await mentionAliasesDb.mergeProfileIds(
       sourceIdentity,
       target,
       connectionHolder

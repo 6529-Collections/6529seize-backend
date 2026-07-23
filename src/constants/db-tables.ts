@@ -194,6 +194,8 @@ export const IDENTITY_MUTES_TABLE = 'identity_mutes';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';
+export const MENTION_ALIASES_TABLE = 'mention_aliases';
+export const MENTION_ALIAS_MEMBERS_TABLE = 'mention_alias_members';
 export const COMPETITIONS_TABLE = 'competitions';
 export const COMPETITION_CONFIG_VERSIONS_TABLE = 'competition_config_versions';
 export const COMPETITION_ENTRIES_TABLE = 'competition_entries';

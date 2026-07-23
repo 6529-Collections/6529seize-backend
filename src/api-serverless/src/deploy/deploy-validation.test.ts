@@ -507,6 +507,60 @@ describe('Release Bus v2 validation', () => {
     ).toBeDefined();
   });
 
+  it('binds v2 E2E authorization to the exact manifest identity', () => {
+    const trainId = '8af60034-9741-4b9d-bb1c-80b483f75455';
+    const authorization = {
+      train_id: trainId,
+      operation_key: `rb2:${trainId}:e2e:staging:a1`,
+      workflow_run_id: '29984983314',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'staging',
+      service: null,
+      expected_sha: 'a'.repeat(40),
+      artifact_digest: 'b'.repeat(64)
+    };
+
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate(authorization).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        artifact_digest: null
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: `rb2:${trainId}:deploy:staging:frontend:a1`
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: `rb2:${trainId}:deploy:e2e:staging:a1`
+      }).error
+    ).toBeDefined();
+
+    const deployAuthorization = {
+      ...authorization,
+      operation_key: `rb2:${trainId}:deploy:staging:backend:api:a1`,
+      artifact_run_id: '29984625887',
+      repository: 'backend',
+      service: 'api'
+    };
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate(deployAuthorization).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...deployAuthorization,
+        artifact_run_id: null
+      }).error
+    ).toBeDefined();
+  });
+
   it('accepts an exact backend PR candidate with an acyclic deploy plan', () => {
     const result = ReleaseBusV2CandidateBodySchema.validate({
       repository: 'backend',
