@@ -189,10 +189,14 @@ const ReleaseBusV2DeployPlanSchema = Joi.object({
         .length(2)
     )
     .max(500)
-    .default([])
+    .default([]),
+  publish_release_notes: Joi.boolean().strict().default(true)
 });
 
 export const ReleaseBusV2CandidateBodySchema = Joi.object({
+  candidate_id: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .optional(),
   repository: Joi.string()
     .valid(...RELEASE_BUS_V2_REPOSITORIES)
     .required(),

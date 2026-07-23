@@ -506,9 +506,64 @@ describe('CiPipelineAlertService', () => {
     expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({
         release_group_id: 'pr-1749',
-        release_group_services: ['dbMigrationsLoop', 'claimsBuilder', 'api'],
+        release_group_services: ['api', 'claimsBuilder', 'dbMigrationsLoop'],
         pull_request_number: 1749,
         publish_release_note: true
+      })
+    );
+  });
+
+  it('fans one v2 deploy success out to every PR-scoped release-note group', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529seize-backend',
+        workflow: 'Deploy a service',
+        service: 'api',
+        status: 'success',
+        release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
+        release_note_groups: [
+          {
+            release_group_id: 'pr-1801',
+            release_group_services: ['worker', 'api'],
+            pull_request_number: 1801,
+            publish_release_note: true
+          },
+          {
+            release_group_id: 'pr-1802',
+            release_group_services: ['api'],
+            pull_request_number: 1802,
+            publish_release_note: false
+          }
+        ],
+        deployed_at: '2026-07-23T11:00:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledTimes(2);
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        release_group_id: 'pr-1801',
+        release_group_services: ['api', 'worker'],
+        pull_request_number: 1801,
+        publish_release_note: true
+      })
+    );
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        release_group_id: 'pr-1802',
+        release_group_services: ['api'],
+        pull_request_number: 1802,
+        publish_release_note: false
       })
     );
   });

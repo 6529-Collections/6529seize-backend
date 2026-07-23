@@ -61,7 +61,11 @@ import type {
   ReleaseControlScope,
   ReleaseRepository
 } from '@/releaseBus/release-bus.types';
-import { getReleaseBusV2Mode } from '@/releaseBusV2/release-bus-v2.config';
+import {
+  getReleaseBusV2BetaAllowlist,
+  getReleaseBusV2Mode,
+  releaseBusV2BetaAllowsCandidate
+} from '@/releaseBusV2/release-bus-v2.config';
 import {
   releaseBusV2Operations,
   type ReleaseBusV2Progress
@@ -126,8 +130,13 @@ function targetForRepository(repository: ReleaseRepository) {
 
 async function requireOperator(token: string): Promise<string> {
   const viewer = await gitHubDeployService.getViewer(token);
+  await requireOperatorLogin(viewer.login);
+  return viewer.login;
+}
+
+async function requireOperatorLogin(login: string): Promise<void> {
   const allowed = await releaseBusGitHubApp.isOrganizationOperator(
-    viewer.login,
+    login,
     RELEASE_BUS_OPERATOR_TEAM
   );
   if (!allowed)
@@ -135,7 +144,6 @@ async function requireOperator(token: string): Promise<string> {
       403,
       'Release-bus operator permission is required'
     );
-  return viewer.login;
 }
 
 async function requireAuthenticatedViewer(req: Request): Promise<string> {
@@ -158,6 +166,28 @@ async function requireV2CandidateWriteAccess(
       404,
       'Release Bus v2 candidate not found'
     );
+  if (getReleaseBusV2Mode() === 'OFF') {
+    await requireOperatorLogin(viewer.login);
+    let allowed = false;
+    try {
+      const betaAllowlist = getReleaseBusV2BetaAllowlist();
+      allowed =
+        candidate.requested_by.toLowerCase() === viewer.login.toLowerCase() &&
+        (releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, 'STAGING') ||
+          releaseBusV2BetaAllowsCandidate(
+            betaAllowlist,
+            candidate,
+            'PRODUCTION'
+          ));
+    } catch {
+      allowed = false;
+    }
+    if (!allowed)
+      throw new CustomApiCompliantException(
+        403,
+        'This candidate is not enabled for the operator-only OFF beta'
+      );
+  }
   await gitHubDeployService.assertRepositoryWriteAccess(
     token,
     targetForRepository(candidate.repository)
@@ -601,7 +631,10 @@ deployRoutes.post(
 
 deployRoutes.post('/release-bus-v2/candidates', async (req, res) => {
   const token = getGitHubTokenOrThrow(req);
-  const actor = (await gitHubDeployService.getViewer(token)).login;
+  const actor =
+    getReleaseBusV2Mode() === 'OFF'
+      ? await requireOperator(token)
+      : (await gitHubDeployService.getViewer(token)).login;
   const body = getValidatedByJoiOrThrow<ReleaseBusV2RegisterInput>(
     req.body,
     ReleaseBusV2CandidateBodySchema
@@ -870,7 +903,20 @@ deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
     {}
   );
   const mode = getReleaseBusV2Mode();
-  if (mode !== 'OFF') {
+  let betaEnabledForActor = false;
+  if (mode === 'OFF') {
+    try {
+      betaEnabledForActor = getReleaseBusV2BetaAllowlist().some(
+        (entry) => entry.operator === actor.toLowerCase()
+      );
+    } catch {
+      throw new CustomApiCompliantException(
+        409,
+        'Release Bus v2 beta allowlist is invalid; automation remains OFF'
+      );
+    }
+  }
+  if (mode !== 'OFF' || betaEnabledForActor) {
     try {
       await lambdaClient.send(
         new InvokeCommand({
@@ -905,13 +951,35 @@ deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
     }
   }
   setNoStoreHeaders(res);
+  let execution = 'queued_on_reserved_worker';
+  if (mode === 'OFF') {
+    execution = betaEnabledForActor ? 'queued_operator_beta' : 'disabled';
+  }
   return res.status(202).json({
-    accepted: mode !== 'OFF',
+    accepted: mode !== 'OFF' || betaEnabledForActor,
     mode,
     requested_by: actor,
-    execution: mode === 'OFF' ? 'disabled' : 'queued_on_reserved_worker'
+    execution
   });
 });
+
+async function requireV2TrainAutomationAllowed(trainId: string) {
+  if (getReleaseBusV2Mode() !== 'OFF') return;
+  let allowed = false;
+  try {
+    const train = await releaseBusV2Repository.findTrain(trainId, {});
+    allowed = Boolean(
+      train && (await releaseBusV2Service.isBetaTrainAllowed(train))
+    );
+  } catch {
+    allowed = false;
+  }
+  if (!allowed)
+    throw new CustomApiCompliantException(
+      403,
+      'Release Bus v2 workflow is not allowlisted for the OFF beta'
+    );
+}
 
 deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
   requireWorkflowCredential(req);
@@ -928,6 +996,7 @@ deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
     expected_sha: string;
     artifact_digest: string | null;
   }>(req.body, ReleaseBusV2AuthorizationBodySchema);
+  await requireV2TrainAutomationAllowed(authorization.train_id);
   try {
     const result = await releaseBusV2Operations.authorize(authorization);
     setNoStoreHeaders(res);
@@ -952,6 +1021,7 @@ deployRoutes.post('/release-bus-v2/report-progress', async (req, res) => {
     req.body,
     ReleaseBusV2ProgressBodySchema
   );
+  await requireV2TrainAutomationAllowed(body.train_id);
   try {
     const result = await releaseBusV2Operations.reportProgress(body);
     setNoStoreHeaders(res);

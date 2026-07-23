@@ -188,6 +188,40 @@ describe('GitHub workflow operation identity', () => {
   });
 });
 
+describe('GitHub staging idle handshake', () => {
+  it('treats an active staging E2E run as shared staging ownership', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 12345,
+              name: 'Staging E2E',
+              display_title: 'Guarded staging E2E',
+              status: 'in_progress'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasActiveStagingMutationOrE2ERun('frontend')
+      ).resolves.toBe(true);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+});
+
 function job(index: number): GitHubWorkflowJob {
   return {
     id: index,
