@@ -1,4 +1,5 @@
 import { Request } from 'express';
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { CustomApiCompliantException } from '@/exceptions';
@@ -28,7 +29,13 @@ import {
   ReleaseBusAuthorizationBodySchema,
   ReleaseBusProgressReportBodySchema,
   ReleaseCandidateListQuerySchema,
-  ReleaseCandidateReadyBodySchema
+  ReleaseCandidateReadyBodySchema,
+  ReleaseBusV2CandidateActionBodySchema,
+  ReleaseBusV2CandidateBodySchema,
+  ReleaseBusV2CandidateCancelBodySchema,
+  ReleaseBusV2CandidateListQuerySchema,
+  ReleaseBusV2ControlBodySchema,
+  ReleaseBusV2ProgressBodySchema
 } from '@/api/deploy/deploy.validation';
 import { setNoStoreHeaders } from '@/api/response-headers';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -53,6 +60,19 @@ import type {
   ReleaseControlScope,
   ReleaseRepository
 } from '@/releaseBus/release-bus.types';
+import { getReleaseBusV2Mode } from '@/releaseBusV2/release-bus-v2.config';
+import {
+  releaseBusV2Operations,
+  type ReleaseBusV2Progress
+} from '@/releaseBusV2/release-bus-v2.operations';
+import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
+import { releaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
+import {
+  RELEASE_BUS_V2_CANDIDATE_STATUSES,
+  type ReleaseBusV2CandidateStatus,
+  type ReleaseBusV2ControlScope,
+  type ReleaseBusV2RegisterInput
+} from '@/releaseBusV2/release-bus-v2.types';
 
 function getGitHubTokenOrThrow(req: Request): string {
   const authorizationHeader = req.get('authorization');
@@ -85,6 +105,7 @@ function requireWorkflowCredential(req: Request): void {
 }
 
 const deployRoutes = asyncRouter();
+const lambdaClient = new LambdaClient({});
 
 function targetForRepository(repository: ReleaseRepository) {
   return repository === 'frontend' ? 'frontend' : 'backend';
@@ -107,6 +128,28 @@ async function requireOperator(token: string): Promise<string> {
 async function requireAuthenticatedViewer(req: Request): Promise<string> {
   const token = getGitHubTokenOrThrow(req);
   return (await gitHubDeployService.getViewer(token)).login;
+}
+
+async function requireV2CandidateWriteAccess(
+  req: Request,
+  candidateId: string
+): Promise<string> {
+  const token = getGitHubTokenOrThrow(req);
+  const viewer = await gitHubDeployService.getViewer(token);
+  const candidate = await releaseBusV2Repository.findCandidateById(
+    candidateId,
+    {}
+  );
+  if (!candidate)
+    throw new CustomApiCompliantException(
+      404,
+      'Release Bus v2 candidate not found'
+    );
+  await gitHubDeployService.assertRepositoryWriteAccess(
+    token,
+    targetForRepository(candidate.repository)
+  );
+  return viewer.login;
 }
 
 deployRoutes.get('/ui', async (req, res) => {
@@ -543,6 +586,350 @@ deployRoutes.post(
   }
 );
 
+deployRoutes.post('/release-bus-v2/candidates', async (req, res) => {
+  const token = getGitHubTokenOrThrow(req);
+  const actor = (await gitHubDeployService.getViewer(token)).login;
+  const body = getValidatedByJoiOrThrow<ReleaseBusV2RegisterInput>(
+    req.body,
+    ReleaseBusV2CandidateBodySchema
+  );
+  await gitHubDeployService.assertRepositoryWriteAccess(
+    token,
+    targetForRepository(body.repository)
+  );
+  try {
+    const candidate = await releaseBusV2Service.register(body, actor);
+    setNoStoreHeaders(res);
+    return res.status(202).json({ candidate, mode: getReleaseBusV2Mode() });
+  } catch (error) {
+    throw new CustomApiCompliantException(
+      409,
+      error instanceof Error
+        ? error.message
+        : 'Release Bus v2 registration failed'
+    );
+  }
+});
+
+deployRoutes.get('/release-bus-v2/candidates', async (req, res) => {
+  await requireAuthenticatedViewer(req);
+  const query = getValidatedByJoiOrThrow<{
+    status?: ReleaseBusV2CandidateStatus;
+    limit: number;
+  }>(req.query, ReleaseBusV2CandidateListQuerySchema);
+  const candidates = await releaseBusV2Repository.listCandidates(
+    query.status ? [query.status] : RELEASE_BUS_V2_CANDIDATE_STATUSES,
+    query.limit,
+    {}
+  );
+  const dependencies = await releaseBusV2Repository.listDependencies(
+    candidates.map(({ id }) => id),
+    {}
+  );
+  setNoStoreHeaders(res);
+  return res.json({
+    candidates: candidates.map((candidate) => ({
+      ...candidate,
+      dependencies: dependencies.filter(
+        (dependency) => dependency.candidate_id === candidate.id
+      )
+    })),
+    mode: getReleaseBusV2Mode()
+  });
+});
+
+deployRoutes.post(
+  '/release-bus-v2/candidates/:id/mark-ready-for-production',
+  async (req, res) => {
+    const actor = await requireV2CandidateWriteAccess(req, req.params.id);
+    const body = getValidatedByJoiOrThrow<{
+      expected_head_sha: string;
+      expected_row_version: number;
+    }>(req.body, ReleaseBusV2CandidateActionBodySchema);
+    try {
+      const candidate = await releaseBusV2Service.markReadyForProduction(
+        req.params.id,
+        body.expected_head_sha,
+        body.expected_row_version,
+        actor
+      );
+      setNoStoreHeaders(res);
+      return res.json({ candidate, mode: getReleaseBusV2Mode() });
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error
+          ? error.message
+          : 'Release Bus v2 production readiness failed'
+      );
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/candidates/:id/revoke-production-readiness',
+  async (req, res) => {
+    const actor = await requireV2CandidateWriteAccess(req, req.params.id);
+    const body = getValidatedByJoiOrThrow<{ expected_row_version: number }>(
+      req.body,
+      ReleaseBusV2CandidateCancelBodySchema
+    );
+    try {
+      const candidate = await releaseBusV2Service.revokeProductionReadiness(
+        req.params.id,
+        body.expected_row_version,
+        actor
+      );
+      setNoStoreHeaders(res);
+      return res.json({ candidate });
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error
+          ? error.message
+          : 'Release Bus v2 readiness revocation failed'
+      );
+    }
+  }
+);
+
+deployRoutes.post('/release-bus-v2/candidates/:id/cancel', async (req, res) => {
+  const actor = await requireV2CandidateWriteAccess(req, req.params.id);
+  const body = getValidatedByJoiOrThrow<{ expected_row_version: number }>(
+    req.body,
+    ReleaseBusV2CandidateCancelBodySchema
+  );
+  try {
+    const candidate = await releaseBusV2Service.cancel(
+      req.params.id,
+      body.expected_row_version,
+      actor
+    );
+    setNoStoreHeaders(res);
+    return res.json({ candidate });
+  } catch (error) {
+    throw new CustomApiCompliantException(
+      409,
+      error instanceof Error
+        ? error.message
+        : 'Release Bus v2 cancellation failed'
+    );
+  }
+});
+
+deployRoutes.get('/release-bus-v2/trains', async (req, res) => {
+  await requireAuthenticatedViewer(req);
+  setNoStoreHeaders(res);
+  return res.json({
+    trains: await releaseBusV2Repository.listTrains(100, {}),
+    mode: getReleaseBusV2Mode()
+  });
+});
+
+deployRoutes.get('/release-bus-v2/trains/:id', async (req, res) => {
+  await requireAuthenticatedViewer(req);
+  const train = await releaseBusV2Repository.findTrain(req.params.id, {});
+  if (!train)
+    throw new CustomApiCompliantException(
+      404,
+      'Release Bus v2 train not found'
+    );
+  const memberships = await releaseBusV2Repository.listTrainCandidates(
+    train.id,
+    {}
+  );
+  const candidates = await Promise.all(
+    memberships.map((membership) =>
+      releaseBusV2Repository.findCandidateById(membership.candidate_id, {})
+    )
+  );
+  const operations = await releaseBusV2Repository.listOperations(train.id, {});
+  const operationViews = await Promise.all(
+    operations.map(async (operation) => {
+      if (
+        operation.status !== 'RUNNING' ||
+        !operation.repository ||
+        !operation.external_id ||
+        !/^\d+$/.test(operation.external_id)
+      )
+        return operation;
+      const request =
+        typeof operation.request_json === 'string'
+          ? (JSON.parse(operation.request_json) as { workflow?: unknown })
+          : (operation.request_json as { workflow?: unknown } | null);
+      if (typeof request?.workflow !== 'string') return operation;
+      try {
+        const workflow = await releaseBusGitHubApp.findWorkflowRun(
+          operation.repository,
+          request.workflow,
+          `${operation.idempotency_key}:a${operation.attempt}`,
+          operation.external_id
+        );
+        return workflow
+          ? {
+              ...operation,
+              workflow_run: {
+                id: workflow.id,
+                status: workflow.status,
+                conclusion: workflow.conclusion,
+                html_url: workflow.html_url,
+                jobs: workflow.jobs ?? []
+              }
+            }
+          : operation;
+      } catch (error) {
+        return {
+          ...operation,
+          workflow_observation_error:
+            error instanceof Error
+              ? error.message
+              : 'Live workflow state is temporarily unavailable'
+        };
+      }
+    })
+  );
+  setNoStoreHeaders(res);
+  return res.json({
+    train,
+    memberships,
+    candidates: candidates.filter(Boolean),
+    dependencies: await releaseBusV2Repository.listDependencies(
+      candidates
+        .filter((candidate): candidate is NonNullable<typeof candidate> =>
+          Boolean(candidate)
+        )
+        .map(({ id }) => id),
+      {}
+    ),
+    operations: operationViews,
+    events: await releaseBusV2Repository.listEvents(train.id, 200, {})
+  });
+});
+
+deployRoutes.get('/release-bus-v2/manifests', async (req, res) => {
+  await requireAuthenticatedViewer(req);
+  setNoStoreHeaders(res);
+  return res.json({
+    manifests: await releaseBusV2Repository.listManifests(100, {})
+  });
+});
+
+deployRoutes.get('/release-bus-v2/controls', async (req, res) => {
+  await requireAuthenticatedViewer(req);
+  setNoStoreHeaders(res);
+  return res.json({
+    controls: await releaseBusV2Repository.listControls({}),
+    locks: await releaseBusV2Repository.listLocks({}),
+    mode: getReleaseBusV2Mode()
+  });
+});
+
+async function updateBusV2Control(req: Request, paused: boolean) {
+  const token = getGitHubTokenOrThrow(req);
+  const actor = await requireOperator(token);
+  const body = getValidatedByJoiOrThrow<{
+    scope: ReleaseBusV2ControlScope;
+    reason: string;
+  }>(req.body, ReleaseBusV2ControlBodySchema);
+  await releaseBusV2Service.setPaused(body.scope, paused, body.reason, actor);
+  return {
+    controls: await releaseBusV2Repository.listControls({}),
+    mode: getReleaseBusV2Mode()
+  };
+}
+
+deployRoutes.post('/release-bus-v2/pause', async (req, res) => {
+  setNoStoreHeaders(res);
+  return res.json(await updateBusV2Control(req, true));
+});
+
+deployRoutes.post('/release-bus-v2/resume', async (req, res) => {
+  setNoStoreHeaders(res);
+  return res.json(await updateBusV2Control(req, false));
+});
+
+deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
+  const token = getGitHubTokenOrThrow(req);
+  const actor = await requireOperator(token);
+  await releaseBusV2Repository.appendEvent(
+    {
+      eventType: 'MANUAL_RECONCILE_REQUESTED',
+      actor,
+      payload: { requested_at: Date.now() }
+    },
+    {}
+  );
+  const mode = getReleaseBusV2Mode();
+  if (mode !== 'OFF')
+    await lambdaClient.send(
+      new InvokeCommand({
+        FunctionName: 'releaseBusV2Reconciler',
+        InvocationType: 'Event',
+        Payload: Buffer.from(
+          JSON.stringify({ requested_by: actor, requested_at: Date.now() })
+        )
+      })
+    );
+  setNoStoreHeaders(res);
+  return res.status(202).json({
+    accepted: mode !== 'OFF',
+    mode,
+    requested_by: actor,
+    execution: mode === 'OFF' ? 'disabled' : 'queued_on_reserved_worker'
+  });
+});
+
+deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
+  requireWorkflowCredential(req);
+  const body = getValidatedByJoiOrThrow<{
+    train_id: string;
+    operation_key: string;
+    workflow_run_id: string;
+    artifact_run_id: string | null;
+    repository: ReleaseRepository;
+    environment: 'orchestration' | 'staging' | 'prod';
+    service: string | null;
+    expected_sha: string;
+    artifact_digest: string | null;
+  }>(req.body, ReleaseBusAuthorizationBodySchema);
+  try {
+    const result = await releaseBusV2Operations.authorize(body);
+    setNoStoreHeaders(res);
+    return res.json({
+      ...result,
+      train_id: body.train_id,
+      operation_key: body.operation_key
+    });
+  } catch (error) {
+    throw new CustomApiCompliantException(
+      409,
+      error instanceof Error
+        ? error.message
+        : 'Release Bus v2 authorization failed'
+    );
+  }
+});
+
+deployRoutes.post('/release-bus-v2/report-progress', async (req, res) => {
+  requireWorkflowCredential(req);
+  const body = getValidatedByJoiOrThrow<ReleaseBusV2Progress>(
+    req.body,
+    ReleaseBusV2ProgressBodySchema
+  );
+  try {
+    const result = await releaseBusV2Operations.reportProgress(body);
+    setNoStoreHeaders(res);
+    return res.json(result);
+  } catch (error) {
+    throw new CustomApiCompliantException(
+      409,
+      error instanceof Error
+        ? error.message
+        : 'Release Bus v2 progress report failed'
+    );
+  }
+});
+
 deployRoutes.post('/release-bus/authorize', async (req, res) => {
   requireWorkflowCredential(req);
   const body = getValidatedByJoiOrThrow<{
@@ -556,6 +943,24 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
     expected_sha: string;
     artifact_digest: string | null;
   }>(req.body, ReleaseBusAuthorizationBodySchema);
+  if (body.operation_key.startsWith('rb2:')) {
+    try {
+      const result = await releaseBusV2Operations.authorize(body);
+      setNoStoreHeaders(res);
+      return res.json({
+        ...result,
+        train_id: body.train_id,
+        operation_key: body.operation_key
+      });
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error
+          ? error.message
+          : 'Release Bus v2 authorization failed'
+      );
+    }
+  }
   const operation = await releaseBusRepository.findOperation(
     body.operation_key,
     {}
@@ -638,6 +1043,27 @@ deployRoutes.post('/release-bus/authorize', async (req, res) => {
 
 deployRoutes.post('/release-bus/report-progress', async (req, res) => {
   requireWorkflowCredential(req);
+  if (
+    typeof req.body?.operation_key === 'string' &&
+    req.body.operation_key.startsWith('rb2:')
+  ) {
+    const v2Body = getValidatedByJoiOrThrow<ReleaseBusV2Progress>(
+      req.body,
+      ReleaseBusV2ProgressBodySchema
+    );
+    try {
+      const v2Result = await releaseBusV2Operations.reportProgress(v2Body);
+      setNoStoreHeaders(res);
+      return res.json(v2Result);
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error
+          ? error.message
+          : 'Release Bus v2 progress report failed'
+      );
+    }
+  }
   const body = getValidatedByJoiOrThrow<{
     train_id: string;
     operation_key: string;
@@ -1120,6 +1546,12 @@ deployRoutes.post('/github/webhook', async (req, res) => {
           : null;
     if (repository) {
       await releaseBusService.invalidateBranch(
+        repository,
+        payload.ref.slice('refs/heads/'.length),
+        payload.after.toLowerCase(),
+        payload.sender?.login ?? 'github-webhook'
+      );
+      await releaseBusV2Service.invalidateBranch(
         repository,
         payload.ref.slice('refs/heads/'.length),
         payload.after.toLowerCase(),

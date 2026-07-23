@@ -22,6 +22,11 @@ import {
 import { advanceReleaseTrain } from '@/releaseBus/worker';
 import { publishReleaseBusMetrics } from '@/releaseBus/release-bus.metrics';
 import * as releaseEntities from '@/entities/entities';
+import {
+  releaseBusV2Branch,
+  releaseBusV2Reconciler
+} from '@/releaseBusV2/release-bus-v2.reconciler';
+import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
 
 const logger = Logger.get('RELEASE_BUS');
 const lambdaClient = new LambdaClient({});
@@ -34,6 +39,12 @@ const TERMINAL_TRAIN_STATUSES = new Set([
   'COMPLETED',
   'FAILED',
   'ROLLED_BACK',
+  'CANCELLED'
+]);
+const TERMINAL_V2_TRAIN_STATUSES = new Set([
+  'STAGING_VALIDATED',
+  'PRODUCTION_DEPLOYED',
+  'FAILED',
   'CANCELLED'
 ]);
 
@@ -375,6 +386,7 @@ const cleaner: Handler = async () =>
         throw new Error('Invalid release-bus history retention');
       const historyRetentionMs = historyRetentionDays * 24 * 60 * 60 * 1000;
       const trains = await releaseBusRepository.listTrains(500, {});
+      const v2Trains = await releaseBusV2Repository.listTrains(500, {});
       const protectedRefs = new Set(
         trains
           .filter((train) => !TERMINAL_TRAIN_STATUSES.has(train.status))
@@ -397,6 +409,23 @@ const cleaner: Handler = async () =>
           await releaseBusGitHubApp.deleteReleaseBusRef(repository, ref.ref);
           deleted.push(`${repository}:${ref.ref}`);
         }
+        const protectedV2Refs = new Set(
+          v2Trains
+            .filter((train) => !TERMINAL_V2_TRAIN_STATUSES.has(train.status))
+            .map((train) => releaseBusV2Branch(train, repository))
+        );
+        const v2Refs =
+          await releaseBusGitHubApp.listReleaseBusV2Refs(repository);
+        for (const ref of v2Refs) {
+          if (protectedV2Refs.has(ref.ref)) continue;
+          const committedAt = await releaseBusGitHubApp.commitTimestamp(
+            repository,
+            ref.sha
+          );
+          if (Date.now() - committedAt < retentionMs) continue;
+          await releaseBusGitHubApp.deleteReleaseBusV2Ref(repository, ref.ref);
+          deleted.push(`${repository}:${ref.ref}`);
+        }
       }
       const history = await releaseBusService.pruneTerminalHistory(
         Date.now() - historyRetentionMs
@@ -406,6 +435,15 @@ const cleaner: Handler = async () =>
     { logger, entities, skipRedis: true }
   );
 
+const v2Reconciler: Handler = async (_event, context) =>
+  doInDbContext(() => releaseBusV2Reconciler.runOnce(context.awsRequestId), {
+    logger,
+    entities,
+    skipRedis: true
+  });
+
 export const starterHandler = sentryContext.wrapLambdaHandler(starter);
 export const workerHandler = sentryContext.wrapLambdaHandler(worker);
 export const cleanerHandler = sentryContext.wrapLambdaHandler(cleaner);
+export const v2ReconcilerHandler =
+  sentryContext.wrapLambdaHandler(v2Reconciler);

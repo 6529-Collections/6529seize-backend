@@ -550,7 +550,8 @@
       "verification_targets": [
         "releaseBusStarter",
         "releaseBusWorker",
-        "releaseBusCleaner"
+        "releaseBusCleaner",
+        "releaseBusV2Reconciler"
       ],
       "validation_profile": "lambda-version",
       "staging_policy": "production-only",
