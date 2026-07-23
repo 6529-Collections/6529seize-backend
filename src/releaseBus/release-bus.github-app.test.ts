@@ -328,6 +328,123 @@ describe('GitHub staging idle handshake', () => {
       fetchMock.mockReset();
     }
   });
+
+  it('excludes a date-filter result created before the fence window', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 99,
+              name: 'Deploy api to staging [manual]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging [manual]',
+              created_at: '2026-07-23T13:21:59Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('backend', since)
+      ).resolves.toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('paginates the beta fence history before accepting an idle result', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: Array.from({ length: 100 }, (_, index) => ({
+              id: index + 1,
+              name: 'Unrelated CI',
+              path: '.github/workflows/ci.yml',
+              display_title: 'Unrelated CI',
+              created_at: '2026-07-23T13:23:00Z'
+            }))
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 101,
+                name: 'Web Deploy - STAGING',
+                path: '.github/workflows/deploy-staging.yml',
+                display_title: 'Web Deploy - STAGING',
+                created_at: '2026-07-23T13:22:30Z'
+              }
+            ]
+          })
+        )
+      );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('frontend', since)
+      ).resolves.toBe(true);
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain('page=2');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('does not confuse a staging-canary title with shared staging', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const since = Date.parse('2026-07-23T13:22:00Z');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 101,
+              name: 'Deploy api to staging-canary [manual]',
+              path: '.github/workflows/deploy.yml',
+              display_title: 'Deploy api to staging-canary [manual]',
+              created_at: '2026-07-23T13:22:30Z'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasStagingMutationOrE2ERunSince('backend', since)
+      ).resolves.toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
 });
 
 function job(index: number): GitHubWorkflowJob {

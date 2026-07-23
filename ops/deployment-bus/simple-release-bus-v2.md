@@ -182,8 +182,9 @@ For each single bounded staging test:
    report E2E separately. Verify transparent checks, exact artifacts/manifests,
    one build per artifact, and no duplicate workflow dispatch. Before a green
    E2E result may become `STAGING_VALIDATED`, re-check both staging refs and
-   every staging deploy/E2E workflow created since the recorded idle
-   handshake, ignoring only the train's exact workflow run IDs. Any unrelated
+   every staging deploy/E2E workflow created since the first pre-lock idle
+   snapshot, ignoring only the train's exact workflow run IDs. Paginate the
+   history and fail closed if its bounded scan cap is exhausted. Any unrelated
    active or completed mutation fails closed as a control-plane error, marks
    the mixed manifest failed, requeues rather than isolates candidates, pauses
    v2 automation, and releases staging ownership.

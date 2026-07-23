@@ -156,6 +156,7 @@ class InMemoryAcceptanceRepository {
     readonly payload?: unknown;
     readonly createdAt: number;
   }> = [];
+  private eventClock = Date.now();
   public lock: ReleaseBusV2LockRecord = {
     name: 'staging-environment',
     owner_train_id: null,
@@ -300,7 +301,8 @@ class InMemoryAcceptanceRepository {
   public async appendEvent(
     input: Omit<(typeof this.events)[number], 'createdAt'>
   ): Promise<void> {
-    this.events.push({ ...input, createdAt: Date.now() });
+    this.eventClock += 1;
+    this.events.push({ ...input, createdAt: this.eventClock });
   }
 
   public async listEvents(trainId: string): Promise<
@@ -634,7 +636,11 @@ describe('Release Bus v2 offline acceptance harness', () => {
       expect.objectContaining({
         eventType: 'BETA_STAGING_IDLE_HANDSHAKE',
         trainId: 'train-1',
-        payload: expect.objectContaining({ staging_lock: 'owned' })
+        payload: expect.objectContaining({
+          staging_lock: 'owned',
+          workflow_fence_started_at: expect.any(Number),
+          verified_at: expect.any(Number)
+        })
       })
     );
   });
@@ -832,14 +838,16 @@ describe('Release Bus v2 offline acceptance harness', () => {
         trainId: 'train-1'
       })
     );
-    expect(mockHasStagingRunSince).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      expect.arrayContaining([
-        expect.stringContaining('run-DEPLOY'),
-        expect.stringContaining('run-E2E')
-      ])
-    );
+    const expectedRunIds = state.repository.operations
+      .map(({ external_id }) => external_id)
+      .filter((runId): runId is string => runId !== null);
+    expect(mockHasStagingRunSince).toHaveBeenCalledTimes(2);
+    for (const [, , ignoredRunIds] of mockHasStagingRunSince.mock.calls) {
+      expect(ignoredRunIds).toHaveLength(expectedRunIds.length);
+      expect(new Set(ignoredRunIds as string[])).toEqual(
+        new Set(expectedRunIds)
+      );
+    }
   });
 
   it('keeps staging locked and prevents a second mutation while exact E2E is running', async () => {

@@ -116,6 +116,7 @@ const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
 const MAX_WORKFLOW_JOBS = 100;
 const MAX_WORKFLOW_STEPS = 100;
 const MAX_WORKFLOW_LABEL_LENGTH = 500;
+const MAX_STAGING_FENCE_PAGES = 10;
 
 export class ReleaseBusGitHubInfrastructureError extends Error {
   public constructor(message: string) {
@@ -801,24 +802,34 @@ export class ReleaseBusGitHubApp {
       ignoredRunIds.filter((runId) => /^\d+$/.test(runId)).map(Number)
     );
     const created = encodeURIComponent(`>=${new Date(since).toISOString()}`);
-    const response = await this.request(
-      repository,
-      `/actions/runs?created=${created}&per_page=100`
-    );
-    await this.assertOk(
-      response,
-      `list ${repository} staging workflow runs since the beta handshake`
-    );
-    const runs =
-      ((await response.json()) as { workflow_runs?: GitHubRun[] })
-        .workflow_runs ?? [];
-    return runs.some(
-      (run) =>
-        !ignored.has(run.id) &&
-        typeof run.created_at === 'string' &&
-        Date.parse(run.created_at) >= since &&
-        this.isStagingMutationOrE2ERun(repository, run)
-    );
+    for (let page = 1; page <= MAX_STAGING_FENCE_PAGES; page += 1) {
+      const response = await this.request(
+        repository,
+        `/actions/runs?created=${created}&per_page=100&page=${page}`
+      );
+      await this.assertOk(
+        response,
+        `list ${repository} staging workflow runs since the beta handshake`
+      );
+      const runs =
+        ((await response.json()) as { workflow_runs?: GitHubRun[] })
+          .workflow_runs ?? [];
+      if (
+        runs.some(
+          (run) =>
+            !ignored.has(run.id) &&
+            typeof run.created_at === 'string' &&
+            Date.parse(run.created_at) >= since &&
+            this.isStagingMutationOrE2ERun(repository, run)
+        )
+      )
+        return true;
+      if (runs.length < 100) return false;
+    }
+    // A bounded beta cannot safely prove the environment idle when more than
+    // 1,000 workflow runs fit inside its fence window. Fail closed rather than
+    // silently ignoring an older mutation.
+    return true;
   }
 
   private isStagingMutationOrE2ERun(
@@ -875,7 +886,7 @@ export class ReleaseBusGitHubApp {
     return (
       (run.path === '.github/workflows/deploy.yml' ||
         run.name === 'Deploy a service') &&
-      run.display_title.includes(` to ${environment}`)
+      new RegExp(` to ${environment}(?:\\s|$)`).test(run.display_title)
     );
   }
 
