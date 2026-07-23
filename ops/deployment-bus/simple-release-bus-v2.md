@@ -40,6 +40,15 @@ An exact available PR artifact is accepted only from the same green workflow run
 and digest. A new head supersedes the older immutable candidate and explains the
 old GitHub status.
 
+While global mode is `OFF`, the public contract above remains disabled. The
+operator beta is a fail-closed exception available only when the deployed API
+and reconciler share a valid `RELEASE_BUS_V2_BETA_ALLOWLIST`. Each registration
+must supply the exact preassigned UUIDv4 `candidate_id`; repository, branch,
+requesting GitHub operator, and lane must all match the configuration. Entries
+for one bounded test share one `test_id` and one operator. Ordinary developers,
+unlisted candidates, and malformed configuration remain on the `OFF` manual
+route.
+
 Backend candidates cannot require frontend-first deployment. For coupled work,
 register backend first and declare it as the frontend prerequisite.
 
@@ -102,14 +111,84 @@ operation identities and never repeat completed mutations.
 ## Operator rollout and rollback
 
 Deploy additive changes in this order: database migrations, API/UI, then the v2
-reconciler. Keep `RELEASE_BUS_V2_MODE=OFF` and controls paused during offline
-and synthetic validation. For staging beta, set mode `STAGING`, resume
-`STAGING` and `ALL`, and keep `PRODUCTION` paused. Enable `PRODUCTION`
-only after the staging acceptance cases pass; production remains explicit.
+reconciler. Keep `RELEASE_BUS_V2_MODE=OFF` throughout offline, shadow, staging
+beta, and production beta validation. The status helpers must continue to
+report `OFF`; manual fallback remains authoritative for everyone except the
+exact operator beta entries below.
+
+### Operator-only OFF beta
+
+`RELEASE_BUS_V2_BETA_ALLOWLIST` is a GitHub Actions variable containing a JSON
+array. It is not a mode and never changes the helper result:
+
+```json
+[
+  {
+    "test_id": "backend-only-1",
+    "candidate_id": "11111111-1111-4111-8111-111111111111",
+    "repository": "backend",
+    "branch_name": "agent/rb2-beta-backend-one",
+    "operator": "exact-github-login",
+    "lanes": ["STAGING"]
+  }
+]
+```
+
+The parser rejects unknown fields, duplicate candidate IDs, duplicate
+repository/branch pairs, mixed operators/test IDs, invalid UUIDs, and unknown
+lanes. An empty variable disables all beta automation. Invalid nonempty
+configuration pauses `ALL` while mode remains `OFF`; OFF-mode manual fallback
+continues to ignore v2 controls.
+
+Before any allowlist is installed, exhaust local integration tests and
+read-only shadow checks. Shadow checks may resolve exact refs, PR qualification,
+current locks, and active workflow state, but must not update a shared ref,
+dispatch a deploy/E2E workflow, or create/claim a live candidate. With the
+allowlist absent, a worker invocation must claim and advance nothing.
+
+For each single bounded staging test:
+
+1. Prove both helpers report `OFF`, controls are understood, no lock is owned,
+   and no frontend/backend staging deploy, staging E2E, or shared-ref mutation
+   is active. Never cancel or supersede unrelated work.
+2. Install only that test's exact allowlist. Deploy the production API first
+   and `releaseBus` second, both with v1/v2 modes still `OFF`; use explicit
+   release-note opt-out for these internal operations.
+3. Register only the preassigned synthetic IDs and exact branches. The
+   reconciler snapshots both `1a-staging` refs and active workflows, acquires
+   `staging-environment`, repeats the snapshot, and records
+   `BETA_STAGING_IDLE_HANDSHAKE` before mutation. A busy workflow or changed ref
+   releases the lock without mutation.
+4. Run exactly one case to a terminal state. Record ready-to-deployed timing;
+   report E2E separately. Verify transparent checks, exact artifacts/manifests,
+   one build per artifact, and no duplicate workflow dispatch.
+5. Clear the allowlist, deploy API then `releaseBus` with the empty value, and
+   prove helpers still report `OFF`, the train is terminal, all related
+   workflows are terminal, and the staging lock is free before the next case.
+
+The required staging cases are backend-only, frontend-only, coupled backend
+DAG/frontend, unrelated manual-work concurrency, and one injected
+infrastructure failure with an idempotent retry. Backend ready-to-deployed must
+be 3–5 minutes and frontend 10–15 minutes. Any reliability or timing miss keeps
+the allowlist empty and automation globally `OFF` until repaired.
+
+Production beta is a separate allowlist installation after all staging cases
+pass. Use only exact `STAGING_VALIDATED` candidate IDs, list only the explicit
+production subset, and require the operator's separate mark-ready action. The
+first production beta must reuse exact qualification; if a qualification train
+appears, stop with mode `OFF` and do not mutate staging. Before production
+mutation the reconciler performs the analogous double active-workflow/main-ref
+snapshot under `production-environment` and records
+`BETA_PRODUCTION_IDLE_HANDSHAKE`. Prove 3–5 minute backend or 10–15 minute
+frontend promotion, then clear/deploy the empty allowlist and return to idle.
+
+General `STAGING` or `PRODUCTION` mode enablement is forbidden until every case
+above passes and the owner explicitly authorizes cutover.
 
 Rollback:
 
-1. pause v2 `ALL` and set mode `OFF`;
+1. clear the beta allowlist, pause v2 `ALL` if state is uncertain, and keep mode
+   `OFF`;
 2. allow any already-dispatched exact operation to reach a safe terminal state;
 3. verify no v2 train owns staging or production;
 4. use the serialized manual fallback, dispatching backend `Deploy a service`

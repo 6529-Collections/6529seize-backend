@@ -75,6 +75,7 @@ functions:
       - schedule: rate(1 minute)
     environment:
       RELEASE_BUS_V2_MODE: ${env:RELEASE_BUS_V2_MODE, 'OFF'}
+      RELEASE_BUS_V2_BETA_ALLOWLIST: ${env:RELEASE_BUS_V2_BETA_ALLOWLIST, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
 
 resources:

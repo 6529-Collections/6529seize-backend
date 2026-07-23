@@ -4,8 +4,13 @@ import { getDeployServiceConfigs } from '@/api/deploy/deploy.config';
 import { releaseBusGitHubApp } from '@/releaseBus/release-bus.github-app';
 import {
   getReleaseBusV2Mode,
+  getReleaseBusV2BetaAllowlist,
   RELEASE_BUS_V2_LOCK_TTL_MS,
   RELEASE_BUS_V2_MAX_CANDIDATES,
+  releaseBusV2BetaAllowsCandidate,
+  releaseBusV2BetaAllowsLane,
+  releaseBusV2BetaAllowsRegistration,
+  type ReleaseBusV2BetaEntry,
   releaseBusV2AllowsLane
 } from '@/releaseBusV2/release-bus-v2.config';
 import {
@@ -205,8 +210,24 @@ export class ReleaseBusV2Service {
     actor: string
   ): Promise<ReleaseBusV2CandidateRecord> {
     const mode = getReleaseBusV2Mode();
-    if (!releaseBusV2AllowsLane(mode, 'STAGING'))
+    const betaAllowlist = mode === 'OFF' ? getReleaseBusV2BetaAllowlist() : [];
+    const isBetaRegistration =
+      mode === 'OFF' &&
+      releaseBusV2BetaAllowsRegistration(betaAllowlist, input, actor);
+    if (!releaseBusV2AllowsLane(mode, 'STAGING') && !isBetaRegistration)
       throw new Error('Release Bus v2 staging readiness is disabled');
+    if (mode !== 'OFF' && input.candidate_id)
+      throw new Error('Explicit candidate ids are reserved for the OFF beta');
+    if (
+      isBetaRegistration &&
+      input.dependencies.some(
+        ({ candidate_id }) =>
+          !betaAllowlist.some(
+            (entry) => entry.candidate_id === candidate_id.toLowerCase()
+          )
+      )
+    )
+      throw new Error('Beta dependencies must be explicitly allowlisted');
     await this.assertScopeRunning('STAGING');
     if (!/^[A-Za-z0-9._/-]{1,255}$/.test(input.branch_name))
       throw new Error('Invalid branch name');
@@ -242,22 +263,43 @@ export class ReleaseBusV2Service {
       await this.repository.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctx: RequestContext = { connection };
-          const superseded = await this.repository.supersedeOtherPrHeads(
-            input.repository,
-            input.pr_number,
-            expectedHeadSha,
-            ctx
-          );
-          let candidate = await this.repository.findCandidateByIdentity(
-            input.repository,
-            input.pr_number,
-            expectedHeadSha,
-            ctx
-          );
+          const superseded = isBetaRegistration
+            ? []
+            : await this.repository.supersedeOtherPrHeads(
+                input.repository,
+                input.pr_number,
+                expectedHeadSha,
+                ctx
+              );
+          const betaCandidateId = isBetaRegistration
+            ? input.candidate_id?.toLowerCase()
+            : undefined;
+          const existingBetaCandidate = betaCandidateId
+            ? await this.repository.findCandidateById(betaCandidateId, ctx)
+            : null;
+          if (
+            existingBetaCandidate &&
+            (existingBetaCandidate.repository !== input.repository ||
+              existingBetaCandidate.pr_number !== input.pr_number ||
+              existingBetaCandidate.branch_name !== input.branch_name ||
+              existingBetaCandidate.head_sha !== expectedHeadSha)
+          )
+            throw new Error(
+              'The beta candidate id is immutable and cannot be reused for a different identity or head SHA'
+            );
+          let candidate =
+            existingBetaCandidate ??
+            (await this.repository.findCandidateByIdentity(
+              input.repository,
+              input.pr_number,
+              expectedHeadSha,
+              ctx
+            ));
           let created = false;
           if (!candidate) {
             candidate = await this.repository.createCandidate(
               {
+                candidateId: betaCandidateId,
                 repository: input.repository,
                 prNumber: input.pr_number,
                 branchName: input.branch_name,
@@ -270,6 +312,13 @@ export class ReleaseBusV2Service {
             );
             created = true;
           } else {
+            if (
+              isBetaRegistration &&
+              candidate.id !== input.candidate_id?.toLowerCase()
+            )
+              throw new Error(
+                'The exact beta identity already has a different candidate id'
+              );
             const existingDependencies = await this.repository.listDependencies(
               [candidate.id],
               ctx
@@ -337,7 +386,11 @@ export class ReleaseBusV2Service {
                 payload: {
                   repository: candidate.repository,
                   pr_number: candidate.pr_number,
-                  head_sha: candidate.head_sha
+                  head_sha: candidate.head_sha,
+                  operator_beta: isBetaRegistration,
+                  beta_test_id: isBetaRegistration
+                    ? betaAllowlist[0]?.test_id
+                    : null
                 }
               },
               ctx
@@ -374,11 +427,16 @@ export class ReleaseBusV2Service {
     actor: string
   ): Promise<ReleaseBusV2CandidateRecord> {
     const mode = getReleaseBusV2Mode();
-    if (!releaseBusV2AllowsLane(mode, 'PRODUCTION'))
-      throw new Error('Release Bus v2 production readiness is disabled');
-    await this.assertScopeRunning('PRODUCTION');
     const snapshot = await this.repository.findCandidateById(candidateId, {});
     if (!snapshot) throw new Error('Candidate not found');
+    const betaAllowlist = mode === 'OFF' ? getReleaseBusV2BetaAllowlist() : [];
+    const isBetaPromotion =
+      mode === 'OFF' &&
+      releaseBusV2BetaAllowsCandidate(betaAllowlist, snapshot, 'PRODUCTION') &&
+      snapshot.requested_by.toLowerCase() === actor.toLowerCase();
+    if (!releaseBusV2AllowsLane(mode, 'PRODUCTION') && !isBetaPromotion)
+      throw new Error('Release Bus v2 production readiness is disabled');
+    await this.assertScopeRunning('PRODUCTION');
     if (snapshot.row_version !== expectedRowVersion)
       throw new Error(
         'Candidate changed; refresh before marking production ready'
@@ -617,7 +675,10 @@ export class ReleaseBusV2Service {
   ): Promise<ReleaseBusV2TrainRecord | null> {
     const mode = getReleaseBusV2Mode();
     const scope = laneScope(lane);
-    if (!releaseBusV2AllowsLane(mode, scope)) return null;
+    const betaAllowlist = mode === 'OFF' ? getReleaseBusV2BetaAllowlist() : [];
+    const betaLaneEnabled =
+      mode === 'OFF' && releaseBusV2BetaAllowsLane(betaAllowlist, lane);
+    if (!releaseBusV2AllowsLane(mode, scope) && !betaLaneEnabled) return null;
     await this.assertScopeRunning(scope);
     return this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -631,16 +692,27 @@ export class ReleaseBusV2Service {
         );
         if (!scheduler?.lease_token) return null;
         try {
-          await this.refreshDependencyHolds(lane, ctx);
+          await this.refreshDependencyHolds(lane, ctx, betaAllowlist);
           const active = (await this.repository.listTrains(100, ctx)).find(
             (train) =>
               train.lane === lane && !TERMINAL_TRAIN_STATUSES.has(train.status)
           );
-          if (active) return active;
-          const candidates = await this.repository.listCandidates(
-            [readyStatus(lane)],
-            RELEASE_BUS_V2_MAX_CANDIDATES,
-            ctx
+          if (active) {
+            if (!betaLaneEnabled) return active;
+            return (await this.isBetaTrainAllowed(active, betaAllowlist, ctx))
+              ? active
+              : null;
+          }
+          const candidates = (
+            await this.repository.listCandidates(
+              [readyStatus(lane)],
+              RELEASE_BUS_V2_MAX_CANDIDATES,
+              ctx
+            )
+          ).filter(
+            (candidate) =>
+              !betaLaneEnabled ||
+              releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
           );
           if (candidates.length === 0) return null;
           const dependencies = await this.repository.listDependencies(
@@ -651,7 +723,8 @@ export class ReleaseBusV2Service {
             candidates,
             dependencies,
             lane,
-            ctx
+            ctx,
+            betaAllowlist
           );
           if (eligible.length === 0) return null;
           const order = topologicalOrder(
@@ -700,7 +773,12 @@ export class ReleaseBusV2Service {
             {
               trainId: train.id,
               eventType: 'TRAIN_CLAIMED',
-              payload: { lane, candidate_ids: order }
+              payload: {
+                lane,
+                candidate_ids: order,
+                operator_beta: betaLaneEnabled,
+                beta_test_id: betaLaneEnabled ? betaAllowlist[0]?.test_id : null
+              }
             },
             ctx
           );
@@ -730,6 +808,28 @@ export class ReleaseBusV2Service {
         payload: { scope, reason }
       },
       {}
+    );
+  }
+
+  public async isBetaTrainAllowed(
+    train: ReleaseBusV2TrainRecord,
+    allowlist: readonly ReleaseBusV2BetaEntry[] = getReleaseBusV2BetaAllowlist(),
+    ctx: RequestContext = {}
+  ): Promise<boolean> {
+    const memberships = await this.repository.listTrainCandidates(
+      train.id,
+      ctx
+    );
+    if (memberships.length === 0) return false;
+    const candidates = await Promise.all(
+      memberships.map(({ candidate_id }) =>
+        this.repository.findCandidateById(candidate_id, ctx)
+      )
+    );
+    return candidates.every(
+      (candidate) =>
+        candidate !== null &&
+        releaseBusV2BetaAllowsCandidate(allowlist, candidate, train.lane)
     );
   }
 
@@ -788,7 +888,8 @@ export class ReleaseBusV2Service {
     candidates: readonly ReleaseBusV2CandidateRecord[],
     dependencies: readonly ReleaseBusV2DependencyRecord[],
     lane: ReleaseBusV2Lane,
-    ctx: RequestContext
+    ctx: RequestContext,
+    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = []
   ): Promise<ReleaseBusV2CandidateRecord[]> {
     const byId = new Map(
       candidates.map((candidate) => [candidate.id, candidate])
@@ -803,6 +904,18 @@ export class ReleaseBusV2Service {
           continue;
         if (lane === 'PRODUCTION' && dependency.environment === 'STAGING')
           continue;
+        if (
+          betaAllowlist.length > 0 &&
+          !betaAllowlist.some(
+            (entry) =>
+              entry.candidate_id === dependency.prerequisite_candidate_id &&
+              releaseBusV2BetaAllowsLane([entry], lane)
+          )
+        ) {
+          eligible.delete(dependency.candidate_id);
+          changed = true;
+          continue;
+        }
         const prerequisiteInBatch = eligible.has(
           dependency.prerequisite_candidate_id
         );
@@ -846,18 +959,25 @@ export class ReleaseBusV2Service {
 
   private async refreshDependencyHolds(
     lane: ReleaseBusV2Lane,
-    ctx: RequestContext
+    ctx: RequestContext,
+    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = []
   ): Promise<void> {
     const waiting = await this.repository.listCandidates(
       ['WAITING_FOR_DEPENDENCY'],
       RELEASE_BUS_V2_MAX_CANDIDATES,
       ctx
     );
-    const laneWaiting = waiting.filter((candidate) =>
-      lane === 'PRODUCTION'
-        ? candidate.production_requested_at !== null
-        : candidate.production_requested_at === null
-    );
+    const laneWaiting = waiting
+      .filter(
+        (candidate) =>
+          betaAllowlist.length === 0 ||
+          releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
+      )
+      .filter((candidate) =>
+        lane === 'PRODUCTION'
+          ? candidate.production_requested_at !== null
+          : candidate.production_requested_at === null
+      );
     if (laneWaiting.length === 0) return;
     const dependencies = await this.repository.listDependencies(
       laneWaiting.map((candidate) => candidate.id),
@@ -871,6 +991,17 @@ export class ReleaseBusV2Service {
       });
       let satisfied = true;
       for (const dependency of required) {
+        if (
+          betaAllowlist.length > 0 &&
+          !betaAllowlist.some(
+            (entry) =>
+              entry.candidate_id === dependency.prerequisite_candidate_id &&
+              releaseBusV2BetaAllowsLane([entry], lane)
+          )
+        ) {
+          satisfied = false;
+          break;
+        }
         const prerequisite = await this.repository.findCandidateById(
           dependency.prerequisite_candidate_id,
           ctx

@@ -190,6 +190,11 @@ export type ReleaseBusV2OperationRecord = {
 };
 
 export type ReleaseBusV2RegisterInput = {
+  /**
+   * Required only for the globally-OFF operator beta. It must exactly match
+   * the configured synthetic candidate allowlist.
+   */
+  readonly candidate_id?: string;
   readonly repository: ReleaseBusV2Repository;
   readonly pr_number: number;
   readonly branch_name: string;

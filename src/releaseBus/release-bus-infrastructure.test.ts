@@ -175,7 +175,13 @@ describe('release bus infrastructure contract', () => {
       "RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}\n          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}"
     );
     expect(deployWorkflow).toContain(
-      'del(.RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
+      'del(.RELEASE_BUS_V2_BETA_ALLOWLIST, .RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)'
+    );
+    expect(releaseBusServerless).toContain(
+      "RELEASE_BUS_V2_BETA_ALLOWLIST: ${env:RELEASE_BUS_V2_BETA_ALLOWLIST, ''}"
+    );
+    expect(deployWorkflow).toContain(
+      "RELEASE_BUS_V2_BETA_ALLOWLIST: ${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}"
     );
   });
 
