@@ -42,7 +42,10 @@ import {
   ActivityEventTargetType
 } from '@/entities/IActivityEvent';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
-import { DropQuoteNotificationData } from '@/notifications/user-notification.types';
+import {
+  DropQuoteNotificationData,
+  DropReplyNotificationData
+} from '@/notifications/user-notification.types';
 import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
 import {
   activityRecorder,
@@ -104,6 +107,12 @@ const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
 const ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
 const MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS = 5 * 60 * 1000;
+
+interface DropRelationshipNotifications {
+  readonly replyNotification: DropReplyNotificationData | null;
+  readonly quoteNotifications: DropQuoteNotificationData[];
+}
+
 const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
   [DropGroupMention.CONTRIBUTORS]: 'contributors',
@@ -1574,7 +1583,6 @@ export class CreateOrUpdateDropUseCase {
         },
         connection
       ),
-      this.createDropReplyNotifications({ model, wave }, { timer, connection }),
       this.identitySubscriptionsDb.addIdentitySubscription(
         {
           subscriber_id: authorId,
@@ -1742,7 +1750,6 @@ export class CreateOrUpdateDropUseCase {
         connection
       }
     );
-    await this.recordQuoteNotifications({ model, wave }, { timer, connection });
     const pendingPushNotificationIds = await this.notifyWaveDropRecipients(
       {
         model,
@@ -2035,75 +2042,71 @@ export class CreateOrUpdateDropUseCase {
     return memberIds;
   }
 
-  private async recordQuoteNotifications(
-    { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
+  private async resolveDropRelationshipNotifications(
+    { model }: { model: CreateOrUpdateDropModel },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
-    timer?.start(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
+  ): Promise<DropRelationshipNotifications> {
+    timer?.start(
+      `${CreateOrUpdateDropUseCase.name}->resolveDropRelationshipNotifications`
+    );
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
-    let idx = 1;
-    const quoteNotificationDatas: DropQuoteNotificationData[] = [];
-    for (const createDropPart of model.parts) {
-      const quotedDrop = createDropPart.quoted_drop;
-      if (quotedDrop) {
-        const quotedEntity = await this.dropsDb
-          .getDropsByIds([quotedDrop.drop_id], connection)
-          .then((it) => it[0]);
-        quoteNotificationDatas.push({
-          quote_drop_id: dropId,
-          quote_drop_part: idx,
-          quote_drop_author_id: authorId,
-          quoted_drop_id: quotedDrop.drop_id,
-          quoted_drop_part: quotedDrop.drop_part_id,
-          quoted_drop_author_id: quotedEntity.author_id,
-          wave_id: model.wave_id
-        });
-      }
-      idx++;
+    const relatedDropIds = collections.distinct([
+      ...(model.reply_to ? [model.reply_to.drop_id] : []),
+      ...model.parts.flatMap((part) =>
+        part.quoted_drop ? [part.quoted_drop.drop_id] : []
+      )
+    ]);
+    if (!relatedDropIds.length) {
+      timer?.stop(
+        `${CreateOrUpdateDropUseCase.name}->resolveDropRelationshipNotifications`
+      );
+      return { replyNotification: null, quoteNotifications: [] };
     }
-    await Promise.all(
-      quoteNotificationDatas.map((it) =>
-        this.userNotifier.notifyOfDropQuote(
-          it,
-          wave.visibility_group_id,
-          connection,
-          timer
-        )
+    const relatedDropAuthors = new Map(
+      (await this.dropsDb.getDropsByIds(relatedDropIds, connection)).map(
+        (drop) => [drop.id, drop.author_id]
       )
     );
-    timer?.stop(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
-  }
-
-  private async createDropReplyNotifications(
-    { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
-    const replyTo = model.reply_to;
-    if (replyTo) {
-      const dropId = this.getRequiredDropId(model);
-      const authorId = this.getRequiredAuthorId(model);
-      timer?.start(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
-      const replyToEntity = await this.dropsDb
-        .getDropsByIds([replyTo.drop_id], connection)
-        .then((r) => r[0]);
-      timer?.stop(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
-      timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
-      await this.userNotifier.notifyOfDropReply(
-        {
+    const getRelatedDropAuthor = (relatedDropId: string): string => {
+      const relatedDropAuthor = relatedDropAuthors.get(relatedDropId);
+      if (!relatedDropAuthor) {
+        throw new NotFoundException(`Drop ${relatedDropId} not found`);
+      }
+      return relatedDropAuthor;
+    };
+    const replyNotification = model.reply_to
+      ? {
           reply_drop_id: dropId,
           reply_drop_author_id: authorId,
-          replied_drop_id: replyTo.drop_id,
-          replied_drop_part: replyTo.drop_part_id,
-          replied_drop_author_id: replyToEntity.author_id,
-          wave_id: wave.id
-        },
-        wave.visibility_group_id,
-        connection,
-        timer
-      );
-      timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
-    }
+          replied_drop_id: model.reply_to.drop_id,
+          replied_drop_part: model.reply_to.drop_part_id,
+          replied_drop_author_id: getRelatedDropAuthor(model.reply_to.drop_id),
+          wave_id: model.wave_id
+        }
+      : null;
+    const quoteNotifications = model.parts.flatMap<DropQuoteNotificationData>(
+      (part, index) => {
+        const quotedDrop = part.quoted_drop;
+        return quotedDrop
+          ? [
+              {
+                quote_drop_id: dropId,
+                quote_drop_part: index + 1,
+                quote_drop_author_id: authorId,
+                quoted_drop_id: quotedDrop.drop_id,
+                quoted_drop_part: quotedDrop.drop_part_id,
+                quoted_drop_author_id: getRelatedDropAuthor(quotedDrop.drop_id),
+                wave_id: model.wave_id
+              }
+            ]
+          : [];
+      }
+    );
+    timer?.stop(
+      `${CreateOrUpdateDropUseCase.name}->resolveDropRelationshipNotifications`
+    );
+    return { replyNotification, quoteNotifications };
   }
 
   private async resolveMentionedUsers(
@@ -2186,7 +2189,11 @@ export class CreateOrUpdateDropUseCase {
     const notificationMentionedGroups = groupMentionNotificationsEnabled
       ? model.mentioned_groups
       : [];
-    const [followerRecipients, waveSubscribersCount] = await Promise.all([
+    const [
+      followerRecipients,
+      waveSubscribersCount,
+      relationshipNotifications
+    ] = await Promise.all([
       this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
@@ -2195,7 +2202,11 @@ export class CreateOrUpdateDropUseCase {
         },
         connection
       ),
-      this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
+      this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection),
+      this.resolveDropRelationshipNotifications(
+        { model },
+        { timer, connection }
+      )
     ]);
     const permissionGroupMentionIdentityIds =
       await this.resolvePermissionGroupMentionRecipients(
@@ -2255,6 +2266,8 @@ export class CreateOrUpdateDropUseCase {
           waveId: wave.id,
           dropId,
           relatedIdentityId: authorId,
+          replyNotification: relationshipNotifications.replyNotification,
+          quoteNotifications: relationshipNotifications.quoteNotifications,
           mentionedIdentityIds,
           allDropsSubscriberIds
         },

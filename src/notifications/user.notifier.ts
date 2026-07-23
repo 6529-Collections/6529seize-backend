@@ -6,6 +6,7 @@ import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from './identity-notifications.db';
+import type { NewIdentityNotification } from './identity-notifications.db';
 import {
   DropBoostNotificationData,
   DropPollVoteNotificationData,
@@ -252,75 +253,6 @@ export class UserNotifier {
     }
   }
 
-  public async notifyOfDropReply(
-    {
-      reply_drop_id,
-      reply_drop_author_id,
-      replied_drop_id,
-      replied_drop_part,
-      replied_drop_author_id,
-      wave_id
-    }: DropReplyNotificationData,
-    visibility_group_id: string | null,
-    connection: ConnectionWrapper<any>,
-    timer?: Timer
-  ) {
-    timer?.start('userNotifier->notifyOfDropReply');
-    if (reply_drop_author_id !== replied_drop_author_id) {
-      await this.identityNotificationsDb.insertNotification(
-        {
-          identity_id: replied_drop_author_id,
-          additional_identity_id: reply_drop_author_id,
-          related_drop_id: reply_drop_id,
-          related_drop_part_no: null,
-          related_drop_2_id: replied_drop_id,
-          related_drop_2_part_no: replied_drop_part,
-          cause: IdentityNotificationCause.DROP_REPLIED,
-          additional_data: {},
-          wave_id,
-          visibility_group_id
-        },
-        connection
-      );
-    }
-    timer?.stop('userNotifier->notifyOfDropReply');
-  }
-
-  public async notifyOfDropQuote(
-    {
-      quote_drop_id,
-      quote_drop_part,
-      quote_drop_author_id,
-      quoted_drop_id,
-      quoted_drop_part,
-      quoted_drop_author_id,
-      wave_id
-    }: DropQuoteNotificationData,
-    visibility_group_id: string | null,
-    connection: ConnectionWrapper<any>,
-    timer?: Timer
-  ) {
-    timer?.start('userNotifier->notifyOfDropQuote');
-    if (quote_drop_author_id !== quoted_drop_author_id) {
-      await this.identityNotificationsDb.insertNotification(
-        {
-          identity_id: quoted_drop_author_id,
-          additional_identity_id: quote_drop_author_id,
-          related_drop_id: quote_drop_id,
-          related_drop_part_no: quote_drop_part,
-          related_drop_2_id: quoted_drop_id,
-          related_drop_2_part_no: quoted_drop_part,
-          cause: IdentityNotificationCause.DROP_QUOTED,
-          additional_data: {},
-          wave_id,
-          visibility_group_id
-        },
-        connection
-      );
-    }
-    timer?.stop('userNotifier->notifyOfDropQuote');
-  }
-
   public async notifyOfWaveCreated(
     waveId: string,
     createdBy: string,
@@ -357,12 +289,16 @@ export class UserNotifier {
       waveId,
       dropId,
       relatedIdentityId,
+      replyNotification,
+      quoteNotifications,
       mentionedIdentityIds,
       allDropsSubscriberIds
     }: {
       waveId: string;
       dropId: string;
       relatedIdentityId: string;
+      replyNotification: DropReplyNotificationData | null;
+      quoteNotifications: readonly DropQuoteNotificationData[];
       mentionedIdentityIds: string[];
       allDropsSubscriberIds: string[];
     },
@@ -371,49 +307,127 @@ export class UserNotifier {
   ): Promise<number[]> {
     timer?.start('userNotifier->notifyWaveDropCreatedRecipients');
     const alreadyNotifiedIdentityIds = new Set(
-      await this.identityNotificationsDb.findIdentitiesNotification(
+      await this.identityNotificationsDb.findIdentitiesNotifiedForDropCreation(
         waveId,
         dropId,
         connection
       )
     );
+    const notifications = this.buildDropCreationNotifications({
+      waveId,
+      dropId,
+      relatedIdentityId,
+      visibilityGroupId: visibility_group_id,
+      replyNotification,
+      quoteNotifications,
+      mentionedIdentityIds,
+      allDropsSubscriberIds,
+      alreadyNotifiedIdentityIds
+    });
     const pendingPushNotificationIds =
       await this.identityNotificationsDb.insertManyNotifications(
-        [
-          ...mentionedIdentityIds
-            .filter((id) => id !== relatedIdentityId)
-            .map((id) => ({
-              identity_id: id,
-              additional_identity_id: relatedIdentityId,
-              related_drop_id: dropId,
-              related_drop_part_no: null,
-              related_drop_2_id: null,
-              related_drop_2_part_no: null,
-              wave_id: waveId,
-              cause: IdentityNotificationCause.IDENTITY_MENTIONED,
-              additional_data: {},
-              visibility_group_id
-            })),
-          ...allDropsSubscriberIds
-            .filter((id) => id !== relatedIdentityId)
-            .filter((id) => !alreadyNotifiedIdentityIds.has(id))
-            .map((id) => ({
-              identity_id: id,
-              additional_identity_id: relatedIdentityId,
-              related_drop_id: dropId,
-              related_drop_part_no: null,
-              related_drop_2_id: null,
-              related_drop_2_part_no: null,
-              wave_id: waveId,
-              cause: IdentityNotificationCause.ALL_DROPS,
-              additional_data: {},
-              visibility_group_id
-            }))
-        ],
+        notifications,
         connection
       );
     timer?.stop('userNotifier->notifyWaveDropCreatedRecipients');
     return pendingPushNotificationIds;
+  }
+
+  private buildDropCreationNotifications({
+    waveId,
+    dropId,
+    relatedIdentityId,
+    visibilityGroupId,
+    replyNotification,
+    quoteNotifications,
+    mentionedIdentityIds,
+    allDropsSubscriberIds,
+    alreadyNotifiedIdentityIds
+  }: {
+    waveId: string;
+    dropId: string;
+    relatedIdentityId: string;
+    visibilityGroupId: string | null;
+    replyNotification: DropReplyNotificationData | null;
+    quoteNotifications: readonly DropQuoteNotificationData[];
+    mentionedIdentityIds: readonly string[];
+    allDropsSubscriberIds: readonly string[];
+    alreadyNotifiedIdentityIds: ReadonlySet<string>;
+  }): NewIdentityNotification[] {
+    const notificationsByRecipient = new Map<string, NewIdentityNotification>();
+    const addNotification = (
+      recipientId: string,
+      notification: NewIdentityNotification
+    ) => {
+      if (
+        recipientId === relatedIdentityId ||
+        alreadyNotifiedIdentityIds.has(recipientId) ||
+        notificationsByRecipient.has(recipientId)
+      ) {
+        return;
+      }
+      notificationsByRecipient.set(recipientId, notification);
+    };
+
+    // Insertion order defines the product precedence for a new drop:
+    // reply > quote > mention > all-drops subscription.
+    if (replyNotification) {
+      addNotification(replyNotification.replied_drop_author_id, {
+        identity_id: replyNotification.replied_drop_author_id,
+        additional_identity_id: replyNotification.reply_drop_author_id,
+        related_drop_id: replyNotification.reply_drop_id,
+        related_drop_part_no: null,
+        related_drop_2_id: replyNotification.replied_drop_id,
+        related_drop_2_part_no: replyNotification.replied_drop_part,
+        cause: IdentityNotificationCause.DROP_REPLIED,
+        additional_data: {},
+        wave_id: replyNotification.wave_id,
+        visibility_group_id: visibilityGroupId
+      });
+    }
+    for (const quoteNotification of quoteNotifications) {
+      addNotification(quoteNotification.quoted_drop_author_id, {
+        identity_id: quoteNotification.quoted_drop_author_id,
+        additional_identity_id: quoteNotification.quote_drop_author_id,
+        related_drop_id: quoteNotification.quote_drop_id,
+        related_drop_part_no: quoteNotification.quote_drop_part,
+        related_drop_2_id: quoteNotification.quoted_drop_id,
+        related_drop_2_part_no: quoteNotification.quoted_drop_part,
+        cause: IdentityNotificationCause.DROP_QUOTED,
+        additional_data: {},
+        wave_id: quoteNotification.wave_id,
+        visibility_group_id: visibilityGroupId
+      });
+    }
+    for (const mentionedIdentityId of mentionedIdentityIds) {
+      addNotification(mentionedIdentityId, {
+        identity_id: mentionedIdentityId,
+        additional_identity_id: relatedIdentityId,
+        related_drop_id: dropId,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        wave_id: waveId,
+        cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+        additional_data: {},
+        visibility_group_id: visibilityGroupId
+      });
+    }
+    for (const subscriberId of allDropsSubscriberIds) {
+      addNotification(subscriberId, {
+        identity_id: subscriberId,
+        additional_identity_id: relatedIdentityId,
+        related_drop_id: dropId,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        wave_id: waveId,
+        cause: IdentityNotificationCause.ALL_DROPS,
+        additional_data: {},
+        visibility_group_id: visibilityGroupId
+      });
+    }
+    return Array.from(notificationsByRecipient.values());
   }
 }
 

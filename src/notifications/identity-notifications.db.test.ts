@@ -50,7 +50,7 @@ function createRepo({
   };
 }
 
-describe('IdentityNotificationsDb mute filtering', () => {
+describe('IdentityNotificationsDb', () => {
   const originalNotifierActivated = process.env.USER_NOTIFIER_ACTIVATED;
 
   beforeEach(() => {
@@ -193,5 +193,37 @@ describe('IdentityNotificationsDb mute filtering', () => {
       }),
       undefined
     );
+  });
+
+  it('finds only recipients already notified about a drop creation', async () => {
+    const db = {
+      execute: jest
+        .fn()
+        .mockResolvedValue([
+          { identity_id: 'recipient-1' },
+          { identity_id: 'recipient-2' }
+        ])
+    };
+    const repo = new IdentityNotificationsDb(() => db as any);
+
+    await expect(
+      repo.findIdentitiesNotifiedForDropCreation('wave-1', 'drop-1', {} as any)
+    ).resolves.toEqual(['recipient-1', 'recipient-2']);
+
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('related_drop_id = :dropId'),
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        causes: [
+          IdentityNotificationCause.DROP_REPLIED,
+          IdentityNotificationCause.DROP_QUOTED,
+          IdentityNotificationCause.IDENTITY_MENTIONED,
+          IdentityNotificationCause.ALL_DROPS
+        ]
+      },
+      { wrappedConnection: {} }
+    );
+    expect(db.execute.mock.calls[0][0]).not.toContain('related_drop_2_id');
   });
 });
