@@ -200,13 +200,22 @@ the allowlist empty and automation globally `OFF` until repaired.
 
 Production beta is a separate allowlist installation after all staging cases
 pass. Use only exact `STAGING_VALIDATED` candidate IDs, list only the explicit
-production subset, and require the operator's separate mark-ready action. The
-first production beta must reuse exact qualification; if a qualification train
-appears, stop with mode `OFF` and do not mutate staging. Before production
-mutation the reconciler performs the analogous double active-workflow/main-ref
-snapshot under `production-environment` and records
+production subset, and require the operator's separate mark-ready action.
+With exact validated candidates A/B/C and a reusable exact manifest, prove the
+production train is claimable and prepares while an unrelated D/E staging
+train is active, acquires only `production-environment`, and completes without
+waiting for, cancelling, or interfering with D/E. Record overlapping train and
+operation run IDs, distinct environment-lock ownership, and timings; the
+scheduler lock must be claim-only and brief rather than serializing either
+lane's workflows. Separately prove that an exact A/B/C set without a reusable
+validated manifest enters `PRODUCTION_QUALIFICATION` and waits for
+`staging-environment` behind D/E instead of contaminating D/E E2E, then may
+proceed after qualification. Any dependency on D/E must hold A/B/C throughout.
+Before production mutation the reconciler performs the analogous double
+active-workflow/main-ref snapshot under `production-environment` and records
 `BETA_PRODUCTION_IDLE_HANDSHAKE`. Prove 3–5 minute backend or 10–15 minute
-frontend promotion, then clear/deploy the empty allowlist and return to idle.
+frontend promotion, exactly-once deployment and release-note finalization,
+then clear/deploy the empty allowlist and return to idle.
 
 General `STAGING` or `PRODUCTION` mode enablement is forbidden until every case
 above passes and the owner explicitly authorizes cutover.

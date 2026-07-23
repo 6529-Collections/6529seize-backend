@@ -798,9 +798,9 @@ export class ReleaseBusGitHubApp {
   ): Promise<boolean> {
     if (!Number.isInteger(since) || since < 1)
       throw new Error('Invalid staging workflow fence timestamp');
-    const ignored = new Set(
-      ignoredRunIds.filter((runId) => /^\d+$/.test(runId)).map(Number)
-    );
+    if (ignoredRunIds.some((runId) => !/^\d+$/.test(runId)))
+      throw new Error('Invalid staging workflow fence run id');
+    const ignored = new Set(ignoredRunIds.map(Number));
     const created = encodeURIComponent(`>=${new Date(since).toISOString()}`);
     for (let page = 1; page <= MAX_STAGING_FENCE_PAGES; page += 1) {
       const response = await this.request(

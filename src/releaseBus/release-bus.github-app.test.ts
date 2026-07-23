@@ -445,6 +445,18 @@ describe('GitHub staging idle handshake', () => {
       fetchMock.mockReset();
     }
   });
+
+  it('fails closed on a malformed exact train workflow id', async () => {
+    const app = new ReleaseBusGitHubApp();
+
+    await expect(
+      app.hasStagingMutationOrE2ERunSince(
+        'backend',
+        Date.parse('2026-07-23T13:22:00Z'),
+        ['reserved:operation']
+      )
+    ).rejects.toThrow('Invalid staging workflow fence run id');
+  });
 });
 
 function job(index: number): GitHubWorkflowJob {
