@@ -88,12 +88,33 @@ function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
   const candidate = error as {
     readonly code?: unknown;
+    readonly headers?: unknown;
     readonly name?: unknown;
+    readonly retryAfter?: unknown;
     readonly status?: unknown;
     readonly statusCode?: unknown;
   };
   const code = typeof candidate?.code === 'string' ? candidate.code : '';
   const status = Number(candidate?.status ?? candidate?.statusCode ?? 0);
+  const headers = candidate?.headers as
+    | { readonly get?: (name: string) => string | null }
+    | Readonly<Record<string, unknown>>
+    | undefined;
+  const headerValue = (name: string): unknown => {
+    if (typeof headers?.get === 'function') return headers.get(name);
+    if (!headers || typeof headers !== 'object') return undefined;
+    const record = headers as Readonly<Record<string, unknown>>;
+    return (
+      record[name] ??
+      Object.entries(record).find(
+        ([key]) => key.toLowerCase() === name.toLowerCase()
+      )?.[1]
+    );
+  };
+  const retrySignaled =
+    candidate?.retryAfter !== undefined ||
+    headerValue('retry-after') !== undefined ||
+    headerValue('x-ratelimit-remaining') === '0';
   return (
     error instanceof Error &&
     ((typeof infrastructureType === 'function' &&
@@ -113,6 +134,7 @@ function isGitHubInfrastructureError(error: unknown): error is Error {
       ].includes(code) ||
       status === 408 ||
       status === 429 ||
+      (status === 403 && retrySignaled) ||
       status >= 500)
   );
 }

@@ -128,6 +128,14 @@ function isInfrastructureStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
 
+function isSecondaryRateLimit(response: Response): boolean {
+  return (
+    response.status === 403 &&
+    (response.headers.has('retry-after') ||
+      response.headers.get('x-ratelimit-remaining') === '0')
+  );
+}
+
 export function safeGitHubWorkflowLabel(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const sanitized = Array.from(value)
@@ -299,7 +307,10 @@ export class ReleaseBusGitHubApp {
       /* redacted status is enough */
     }
     const errorMessage = `Failed to ${operation}: ${message}`;
-    if (isInfrastructureStatus(response.status))
+    if (
+      isInfrastructureStatus(response.status) ||
+      isSecondaryRateLimit(response)
+    )
       throw new ReleaseBusGitHubInfrastructureError(errorMessage);
     throw new Error(errorMessage);
   }

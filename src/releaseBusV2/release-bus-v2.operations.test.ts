@@ -286,6 +286,35 @@ describe('Release Bus v2 exact operation callbacks', () => {
     });
   });
 
+  it('exits before dispatch when another reconciler wins the reservation', async () => {
+    const state = repositoryFor(
+      operation({ external_id: null, status: 'PENDING' })
+    );
+    state.repository.updateOperation.mockImplementationOnce(async () => {
+      state.raceTo({ status: 'DISPATCHED' });
+      return false;
+    });
+    mockFindWorkflowRun.mockResolvedValue(null);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reconcileWorkflow({
+        idempotencyKey: 'rb2:train-id:prepare:frontend',
+        trainId: 'train-id',
+        operationType: 'PREPARE_ARTIFACT_FRONTEND',
+        repository: 'frontend',
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        environment: 'orchestration',
+        service: null,
+        expectedSha: 'a'.repeat(40),
+        artifactDigest: null,
+        inputs: {}
+      })
+    ).resolves.toMatchObject({ status: 'DISPATCHED' });
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
+  });
+
   it('preserves a hard dispatch rejection as a control-plane failure', async () => {
     const state = repositoryFor(
       operation({ external_id: null, status: 'PENDING' })
@@ -326,6 +355,41 @@ describe('Release Bus v2 exact operation callbacks', () => {
     mockFindWorkflowRun.mockResolvedValue(null);
     mockDispatchWorkflow.mockRejectedValueOnce(
       Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await service.reconcileWorkflow({
+      idempotencyKey: 'rb2:train-id:prepare:frontend',
+      trainId: 'train-id',
+      operationType: 'PREPARE_ARTIFACT_FRONTEND',
+      repository: 'frontend',
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: null,
+      inputs: {}
+    });
+
+    expect(state.current()).toMatchObject({
+      status: 'RETRY_WAIT',
+      attempt: 1,
+      failure_class: 'INFRASTRUCTURE',
+      result_json: { retry_same_attempt: true, transport_failures: 1 }
+    });
+  });
+
+  it('retries a raw secondary-rate-limit 403 with the same attempt key', async () => {
+    const state = repositoryFor(
+      operation({ external_id: null, status: 'PENDING' })
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    mockDispatchWorkflow.mockRejectedValueOnce(
+      Object.assign(new Error('secondary rate limit'), {
+        status: 403,
+        retryAfter: '30'
+      })
     );
     const service = new ReleaseBusV2Operations(state.repository as never);
 
