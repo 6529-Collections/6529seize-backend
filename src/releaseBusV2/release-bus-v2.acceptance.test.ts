@@ -1556,6 +1556,184 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(source).not.toContain('BASE_CANARY');
   });
 
+  it('reuses only the exact common staging manifest before production composition', async () => {
+    const state = harness('SUCCEEDED');
+    const manifestId = 'validated-common-manifest';
+    for (const [id, current] of Array.from(
+      state.repository.candidates.entries()
+    )) {
+      state.repository.candidates.set(id, {
+        ...current,
+        staging_validated_manifest_id: manifestId,
+        staging_validated_train_id: 'train-1'
+      });
+    }
+    state.repository.manifests.set(manifestId, {
+      id: manifestId,
+      train_id: 'train-1',
+      lane: 'STAGING',
+      identity_sha256: 'f'.repeat(64),
+      status: 'STAGING_VALIDATED',
+      frontend_sha: FRONTEND_SHA,
+      backend_sha: BACKEND_SHA,
+      frontend_artifact_digest: FRONTEND_DIGEST,
+      backend_artifact_digest: BACKEND_DIGEST,
+      e2e_run_id: 'validated-e2e',
+      manifest_json: {},
+      deployed_at: 2,
+      validated_at: 3,
+      created_at: 2,
+      updated_at: 3
+    });
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    const findExact = (
+      state.reconciler as unknown as {
+        findExactValidatedProductionManifest(
+          input: typeof context
+        ): Promise<ReleaseBusV2ManifestRecord | null>;
+      }
+    ).findExactValidatedProductionManifest.bind(state.reconciler);
+
+    await expect(findExact(context)).resolves.toMatchObject({
+      id: manifestId,
+      frontend_sha: FRONTEND_SHA,
+      backend_sha: BACKEND_SHA
+    });
+
+    state.repository.memberships.push({
+      id: 'unselected-source-membership',
+      train_id: 'train-1',
+      candidate_id: 'not-in-production-subset',
+      sequence: 3,
+      disposition: 'INCLUDED',
+      created_at: 1
+    });
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.memberships.pop();
+    await expect(
+      findExact({
+        ...context,
+        train: { ...production, backend_base_sha: '9'.repeat(40) }
+      })
+    ).resolves.toMatchObject({ id: manifestId });
+
+    const frontendSourceMembershipIndex =
+      state.repository.memberships.findIndex(
+        ({ candidate_id }) => candidate_id === 'frontend-candidate'
+      );
+    if (frontendSourceMembershipIndex < 0)
+      throw new Error('Missing frontend source membership');
+    state.repository.memberships[frontendSourceMembershipIndex] = {
+      ...state.repository.memberships[frontendSourceMembershipIndex],
+      disposition: 'EXCLUDED'
+    };
+    const backendOnly = {
+      ...context,
+      memberships: context.memberships.filter(
+        ({ candidate_id }) => candidate_id === 'backend-candidate'
+      ),
+      candidates: context.candidates.filter(
+        ({ repository }) => repository === 'backend'
+      ),
+      dependencies: []
+    };
+    await expect(findExact(backendOnly)).resolves.toBeNull();
+    state.repository.manifests.set(manifestId, {
+      ...(state.repository.manifests.get(
+        manifestId
+      ) as ReleaseBusV2ManifestRecord),
+      frontend_sha: production.frontend_base_sha
+    });
+    await expect(findExact(backendOnly)).resolves.toMatchObject({
+      id: manifestId
+    });
+  });
+
+  it('prepares production from the exact staging manifest without workflows', async () => {
+    const state = harness('SUCCEEDED');
+    const manifestId = 'validated-production-manifest';
+    for (const [id, current] of Array.from(
+      state.repository.candidates.entries()
+    )) {
+      state.repository.candidates.set(id, {
+        ...current,
+        staging_validated_manifest_id: manifestId,
+        staging_validated_train_id: 'train-1'
+      });
+    }
+    state.repository.manifests.set(manifestId, {
+      id: manifestId,
+      train_id: 'train-1',
+      lane: 'STAGING',
+      identity_sha256: 'e'.repeat(64),
+      status: 'STAGING_VALIDATED',
+      frontend_sha: FRONTEND_SHA,
+      backend_sha: BACKEND_SHA,
+      frontend_artifact_digest: FRONTEND_DIGEST,
+      backend_artifact_digest: BACKEND_DIGEST,
+      e2e_run_id: 'validated-e2e',
+      manifest_json: {},
+      deployed_at: 2,
+      validated_at: 3,
+      created_at: 2,
+      updated_at: 3
+    });
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    state.repository.trains.set(production.id, production);
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advancePreparation(input: typeof context): Promise<void>;
+      }
+    ).advancePreparation(context);
+
+    expect(state.repository.trains.get(production.id)).toMatchObject({
+      status: 'PREPARED',
+      frontend_composed_sha: FRONTEND_SHA,
+      backend_composed_sha: BACKEND_SHA,
+      manifest_id: manifestId
+    });
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        trainId: production.id,
+        eventType: 'EXACT_STAGING_MANIFEST_REUSED'
+      })
+    );
+  });
+
   it('proves exact four-way Jest inventory in the combined preflight', () => {
     const workflow = readFileSync(
       path.join(
