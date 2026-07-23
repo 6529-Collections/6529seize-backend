@@ -232,7 +232,11 @@ It best-effort pauses only v2, disables the reconciler schedule, clears the
 operator beta and sets both repository variables to `OFF`, updates production
 API then reconciler with Lambda revision guards while preserving unrelated
 environment values, and verifies empty `OFF`. Manual workflows and
-`RELEASE_BUS_ENFORCEMENT` are untouched.
+`RELEASE_BUS_ENFORCEMENT` are untouched. Every mutation is idempotent; if a
+concurrent deploy or transient failure interrupts the command, run the same
+command again until its final verification succeeds. The GitHub OFF source and
+disabled schedule are intentionally retained after partial failure because
+they are the safe direction, not compensated back to enabled automation.
 
 1. clear the beta allowlist, pause v2 `ALL` if state is uncertain, and keep mode
    `OFF`;

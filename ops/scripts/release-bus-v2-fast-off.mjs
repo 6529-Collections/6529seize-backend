@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process';
 
 const EXPECTED_ACCOUNT = '987989283142';
+const EXPECTED_REGION = 'us-east-1';
 const REPOSITORIES = [
   '6529-Collections/6529seize-backend',
   '6529-Collections/6529seize-frontend'
@@ -14,7 +15,11 @@ const API_URL =
 
 class RollbackError extends Error {}
 
-function run(executable, args, { allowFailure = false } = {}) {
+function run(
+  executable,
+  args,
+  { allowFailure = false, timeoutMs = 60_000 } = {}
+) {
   const result = spawnSync(
     executable, // NOSONAR -- fixed executable names; no bus input controls PATH.
     args,
@@ -22,7 +27,7 @@ function run(executable, args, { allowFailure = false } = {}) {
       encoding: 'utf8',
       maxBuffer: 5 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 60_000
+      timeout: timeoutMs
     }
   );
   if (result.error?.code === 'ENOENT')
@@ -31,7 +36,15 @@ function run(executable, args, { allowFailure = false } = {}) {
     throw new RollbackError(
       `${executable} failed during fast v2 rollback (${result.status ?? 'unknown'}).`
     );
-  return { ok: result.status === 0, stdout: result.stdout?.trim() ?? '' };
+  return {
+    ok: result.status === 0,
+    stdout: result.stdout?.trim() ?? '',
+    stderr: result.stderr?.trim() ?? ''
+  };
+}
+
+function runAws(args, options) {
+  return run('aws', [...args, '--region', EXPECTED_REGION], options);
 }
 
 function parseJson(value, description) {
@@ -51,7 +64,7 @@ function requireExecuteFlag() {
 
 function verifyIdentity() {
   const identity = parseJson(
-    run('aws', ['sts', 'get-caller-identity', '--output', 'json']).stdout,
+    runAws(['sts', 'get-caller-identity', '--output', 'json']).stdout,
     'AWS identity lookup'
   );
   if (identity.Account !== EXPECTED_ACCOUNT)
@@ -60,6 +73,7 @@ function verifyIdentity() {
     );
   const auth = run('gh', ['auth', 'status']);
   if (!auth.ok) throw new RollbackError('GitHub CLI is not authenticated.');
+  return identity;
 }
 
 function getGitHubToken() {
@@ -100,7 +114,7 @@ async function pauseAutomationBestEffort(token) {
 
 function findScheduleRule() {
   const rules = parseJson(
-    run('aws', [
+    runAws([
       'events',
       'list-rules',
       '--name-prefix',
@@ -120,7 +134,19 @@ function findScheduleRule() {
 }
 
 function disableSchedule(ruleName) {
-  run('aws', ['events', 'disable-rule', '--name', ruleName]);
+  runAws(['events', 'disable-rule', '--name', ruleName]);
+  const state = runAws([
+    'events',
+    'describe-rule',
+    '--name',
+    ruleName,
+    '--query',
+    'State',
+    '--output',
+    'text'
+  ]).stdout;
+  if (state !== 'DISABLED')
+    throw new RollbackError('V2 reconciler schedule did not verify disabled.');
 }
 
 function setGitHubModesOff() {
@@ -149,53 +175,80 @@ function setGitHubModesOff() {
 }
 
 function updateFunctionOff(functionName) {
-  const configuration = parseJson(
-    run('aws', [
-      'lambda',
-      'get-function-configuration',
-      '--function-name',
-      functionName,
-      '--output',
-      'json'
-    ]).stdout,
-    `${functionName} configuration lookup`
-  );
-  const variables = configuration.Environment?.Variables;
-  if (
-    typeof configuration.RevisionId !== 'string' ||
-    variables === null ||
-    typeof variables !== 'object' ||
-    Array.isArray(variables)
-  )
-    throw new RollbackError(`${functionName} configuration is incomplete.`);
-  const nextVariables = {
-    ...variables,
-    RELEASE_BUS_V2_MODE: 'OFF',
-    RELEASE_BUS_V2_BETA_ALLOWLIST: ''
-  };
-  run('aws', [
-    'lambda',
-    'update-function-configuration',
-    '--function-name',
-    functionName,
-    '--revision-id',
-    configuration.RevisionId,
-    '--environment',
-    JSON.stringify({ Variables: nextVariables }),
-    '--no-cli-pager'
-  ]);
-  run('aws', [
-    'lambda',
-    'wait',
-    'function-updated-v2',
-    '--function-name',
-    functionName
-  ]);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const configuration = parseJson(
+      runAws([
+        'lambda',
+        'get-function-configuration',
+        '--function-name',
+        functionName,
+        '--output',
+        'json'
+      ]).stdout,
+      `${functionName} configuration lookup`
+    );
+    const variables = configuration.Environment?.Variables;
+    if (
+      typeof configuration.RevisionId !== 'string' ||
+      variables === null ||
+      typeof variables !== 'object' ||
+      Array.isArray(variables)
+    )
+      throw new RollbackError(`${functionName} configuration is incomplete.`);
+    const nextVariables = {
+      ...variables,
+      RELEASE_BUS_V2_MODE: 'OFF',
+      RELEASE_BUS_V2_BETA_ALLOWLIST: ''
+    };
+    const update = runAws(
+      [
+        'lambda',
+        'update-function-configuration',
+        '--function-name',
+        functionName,
+        '--revision-id',
+        configuration.RevisionId,
+        '--environment',
+        JSON.stringify({ Variables: nextVariables }),
+        '--no-cli-pager'
+      ],
+      { allowFailure: true }
+    );
+    if (!update.ok) {
+      if (attempt < 3) continue;
+      throw new RollbackError(
+        `${functionName} OFF update failed after 3 revision-safe attempts.`
+      );
+    }
+    const wait = runAws(
+      [
+        'lambda',
+        'wait',
+        'function-updated-v2',
+        '--function-name',
+        functionName
+      ],
+      { allowFailure: true, timeoutMs: 180_000 }
+    );
+    if (!wait.ok) {
+      if (attempt < 3) continue;
+      throw new RollbackError(
+        `${functionName} OFF update did not settle after 3 attempts.`
+      );
+    }
+    try {
+      verifyFunctionOff(functionName);
+      process.stderr.write(`Verified ${functionName} empty OFF.\n`);
+      return;
+    } catch (error) {
+      if (attempt === 3) throw error;
+    }
+  }
 }
 
 function verifyFunctionOff(functionName) {
   const configuration = parseJson(
-    run('aws', [
+    runAws([
       'lambda',
       'get-function-configuration',
       '--function-name',
@@ -241,15 +294,21 @@ async function verifyApiOff(token) {
 }
 
 try {
+  const startedAt = new Date().toISOString();
   requireExecuteFlag();
-  verifyIdentity();
+  const identity = verifyIdentity();
   const token = getGitHubToken();
   const pauseAccepted = await pauseAutomationBestEffort(token);
+  process.stderr.write(
+    pauseAccepted
+      ? 'V2 ALL pause accepted before rollback.\n'
+      : 'Warning: V2 ALL pause was not accepted; continuing with the OFF fail-safe.\n'
+  );
   const scheduleRule = findScheduleRule();
   disableSchedule(scheduleRule);
+  process.stderr.write(`Disabled reconciler schedule ${scheduleRule}.\n`);
   setGitHubModesOff();
   for (const functionName of FUNCTIONS) updateFunctionOff(functionName);
-  for (const functionName of FUNCTIONS) verifyFunctionOff(functionName);
   await verifyApiOff(token);
   process.stdout.write(
     `${JSON.stringify({
@@ -257,7 +316,12 @@ try {
       beta_allowlist: 'empty',
       schedule: 'DISABLED',
       controls_pause_requested: pauseAccepted,
-      functions: FUNCTIONS
+      functions: FUNCTIONS,
+      aws_account: EXPECTED_ACCOUNT,
+      aws_region: EXPECTED_REGION,
+      actor_arn: identity.Arn ?? null,
+      started_at: startedAt,
+      completed_at: new Date().toISOString()
     })}\n`
   );
 } catch (error) {

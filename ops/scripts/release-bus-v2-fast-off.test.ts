@@ -44,26 +44,37 @@ beforeAll(async () => {
     [
       '#!/bin/sh',
       'if [ "$1" = "sts" ]; then',
-      '  printf \'{"Account":"%s"}\\n\' "$MOCK_AWS_ACCOUNT"',
+      '  printf \'{"Account":"%s","Arn":"arn:aws:iam::%s:user/test-operator"}\\n\' "$MOCK_AWS_ACCOUNT" "$MOCK_AWS_ACCOUNT"',
       '  exit 0',
       'fi',
       'if [ "$1" = "events" ] && [ "$2" = "list-rules" ]; then',
+      '  if [ "${MOCK_RULE_COUNT:-1}" = "0" ]; then printf \'[]\\n\'; exit 0; fi',
       '  printf \'["releaseBus-prod-V2ReconcilerEventsRuleSchedule1-test"]\\n\'',
       '  exit 0',
       'fi',
       'if [ "$1" = "events" ] && [ "$2" = "disable-rule" ]; then exit 0; fi',
+      'if [ "$1" = "events" ] && [ "$2" = "describe-rule" ]; then printf \'DISABLED\\n\'; exit 0; fi',
       'if [ "$1" = "lambda" ] && [ "$2" = "get-function-configuration" ]; then',
       '  printf \'{"RevisionId":"revision-1","LastUpdateStatus":"Successful","Environment":{"Variables":{"KEEP":"value","RELEASE_BUS_V2_MODE":"OFF","RELEASE_BUS_V2_BETA_ALLOWLIST":""}}}\\n\'',
       '  exit 0',
       'fi',
       'if [ "$1" = "lambda" ] && [ "$2" = "update-function-configuration" ]; then',
-      '  found=0',
+      '  keep=0',
+      '  mode=0',
+      '  worker=0',
       '  for argument in "$@"; do',
       '    case "$argument" in',
-      '      *\'"KEEP":"value"\'*\'"RELEASE_BUS_V2_MODE":"OFF"\'*) found=1 ;;',
+      '      *\'"KEEP":"value"\'*) keep=1 ;;',
+      '    esac',
+      '    case "$argument" in',
+      '      *\'"RELEASE_BUS_V2_MODE":"OFF"\'*) mode=1 ;;',
+      '    esac',
+      '    case "$argument" in',
+      '      releaseBusV2Reconciler) worker=1 ;;',
       '    esac',
       '  done',
-      '  if [ "$found" = "1" ]; then exit 0; fi',
+      '  if [ "$worker" = "1" ] && [ "${MOCK_FAIL_WORKER_UPDATE:-0}" = "1" ]; then exit 4; fi',
+      '  if [ "$keep" = "1" ] && [ "$mode" = "1" ]; then exit 0; fi',
       '  exit 3',
       'fi',
       'if [ "$1" = "lambda" ] && [ "$2" = "wait" ]; then exit 0; fi',
@@ -82,7 +93,8 @@ afterAll(async () => {
 function runScript(
   apiUrl: string,
   args = ['--execute'],
-  account = '987989283142'
+  account = '987989283142',
+  overrides: NodeJS.ProcessEnv = {}
 ): Promise<Result> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -94,7 +106,8 @@ function runScript(
           PATH: mockBin,
           MOCK_GH_TOKEN: TOKEN,
           MOCK_AWS_ACCOUNT: account,
-          RELEASE_BUS_API_URL: apiUrl
+          RELEASE_BUS_API_URL: apiUrl,
+          ...overrides
         },
         maxBuffer: 1024 * 1024,
         timeout: 10_000
@@ -158,14 +171,24 @@ describe('release-bus-v2 fast OFF rollback', () => {
     const url = await listen(server);
     try {
       const result = await runScript(url);
-      expect(result).toMatchObject({ code: 0, stderr: '' });
-      expect(JSON.parse(result.stdout)).toEqual({
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('V2 ALL pause accepted');
+      expect(result.stderr).toContain('Verified seizeAPI empty OFF');
+      expect(result.stderr).toContain(
+        'Verified releaseBusV2Reconciler empty OFF'
+      );
+      expect(JSON.parse(result.stdout)).toMatchObject({
         mode: 'OFF',
         beta_allowlist: 'empty',
         schedule: 'DISABLED',
         controls_pause_requested: true,
-        functions: ['seizeAPI', 'releaseBusV2Reconciler']
+        functions: ['seizeAPI', 'releaseBusV2Reconciler'],
+        aws_account: '987989283142',
+        aws_region: 'us-east-1',
+        actor_arn: 'arn:aws:iam::987989283142:user/test-operator'
       });
+      expect(JSON.parse(result.stdout).started_at).toMatch(/Z$/);
+      expect(JSON.parse(result.stdout).completed_at).toMatch(/Z$/);
       expect(requests).toEqual([
         { method: 'POST', url: '/deploy/release-bus-v2/pause' },
         { method: 'GET', url: '/deploy/release-bus-v2/controls' }
@@ -189,5 +212,32 @@ describe('release-bus-v2 fast OFF rollback', () => {
     const result = await runScript('http://127.0.0.1:1', []);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Usage:');
+  });
+
+  it('fails closed when the reconciler schedule cannot be identified', async () => {
+    const result = await runScript(
+      'http://127.0.0.1:1',
+      ['--execute'],
+      '987989283142',
+      { MOCK_RULE_COUNT: '0' }
+    );
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain(
+      'Expected exactly one v2 reconciler schedule; found 0'
+    );
+  });
+
+  it('reports a bounded partial failure for safe command rerun', async () => {
+    const result = await runScript(
+      'http://127.0.0.1:1',
+      ['--execute'],
+      '987989283142',
+      { MOCK_FAIL_WORKER_UPDATE: '1' }
+    );
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Verified seizeAPI empty OFF');
+    expect(result.stderr).toContain(
+      'releaseBusV2Reconciler OFF update failed after 3 revision-safe attempts'
+    );
   });
 });
