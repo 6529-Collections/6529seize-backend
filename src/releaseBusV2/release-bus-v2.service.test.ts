@@ -206,6 +206,7 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
         callback({})
       ),
       supersedeOtherPrHeads: jest.fn(async () => []),
+      findCandidateById: jest.fn(async () => null),
       findCandidateByIdentity: jest.fn(async () => null),
       listDependencies: jest.fn(async () => []),
       addDependency: jest.fn(async () => undefined),
@@ -240,6 +241,45 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
       'staging readiness is disabled'
     );
     expect(mockResolveRef).not.toHaveBeenCalled();
+    expect(repository.createCandidate).not.toHaveBeenCalled();
+  });
+
+  it('rejects reusing the one-shot beta id after the branch head moves', async () => {
+    const repository = betaRepository();
+    repository.findCandidateById.mockResolvedValue({
+      ...candidate('READY_FOR_STAGING'),
+      id: betaId,
+      repository: 'backend',
+      pr_number: 1801,
+      branch_name: 'agent/rb2-beta-backend-one',
+      head_sha: 'a'.repeat(40),
+      requested_by: 'BETA-OPERATOR'
+    } as never);
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(service.register(input(), 'BETA-OPERATOR')).rejects.toThrow(
+      'beta candidate id is immutable'
+    );
+    expect(repository.findCandidateByIdentity).not.toHaveBeenCalled();
+    expect(repository.createCandidate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a beta id when the exact identity already belongs to another candidate', async () => {
+    const repository = betaRepository();
+    repository.findCandidateByIdentity.mockResolvedValue({
+      ...candidate('READY_FOR_STAGING'),
+      id: '22222222-2222-4222-8222-222222222222',
+      repository: 'backend',
+      pr_number: 1801,
+      branch_name: 'agent/rb2-beta-backend-one',
+      head_sha: headSha,
+      requested_by: 'ordinary-registration'
+    } as never);
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(service.register(input(), 'BETA-OPERATOR')).rejects.toThrow(
+      'exact beta identity already has a different candidate id'
+    );
     expect(repository.createCandidate).not.toHaveBeenCalled();
   });
 });

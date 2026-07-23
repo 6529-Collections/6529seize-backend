@@ -271,19 +271,35 @@ export class ReleaseBusV2Service {
                 expectedHeadSha,
                 ctx
               );
-          let candidate = await this.repository.findCandidateByIdentity(
-            input.repository,
-            input.pr_number,
-            expectedHeadSha,
-            ctx
-          );
+          const betaCandidateId = isBetaRegistration
+            ? input.candidate_id?.toLowerCase()
+            : undefined;
+          const existingBetaCandidate = betaCandidateId
+            ? await this.repository.findCandidateById(betaCandidateId, ctx)
+            : null;
+          if (
+            existingBetaCandidate &&
+            (existingBetaCandidate.repository !== input.repository ||
+              existingBetaCandidate.pr_number !== input.pr_number ||
+              existingBetaCandidate.branch_name !== input.branch_name ||
+              existingBetaCandidate.head_sha !== expectedHeadSha)
+          )
+            throw new Error(
+              'The beta candidate id is immutable and cannot be reused for a different identity or head SHA'
+            );
+          let candidate =
+            existingBetaCandidate ??
+            (await this.repository.findCandidateByIdentity(
+              input.repository,
+              input.pr_number,
+              expectedHeadSha,
+              ctx
+            ));
           let created = false;
           if (!candidate) {
             candidate = await this.repository.createCandidate(
               {
-                candidateId: isBetaRegistration
-                  ? input.candidate_id?.toLowerCase()
-                  : undefined,
+                candidateId: betaCandidateId,
                 repository: input.repository,
                 prNumber: input.pr_number,
                 branchName: input.branch_name,
