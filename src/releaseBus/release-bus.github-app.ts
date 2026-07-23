@@ -28,10 +28,10 @@ export function workflowRunMatchesOperation(
 
 export function isValidGitHubWorkflowActor(actor: string): boolean {
   // GitHub App workflow actors use the app slug followed by the literal
-  // `[bot]` suffix. Human logins retain GitHub's 39-character limit.
+  // `[bot]` suffix. Only the Release Bus App may drive automated operations;
+  // human logins retain GitHub's 39-character limit for manual attribution.
   return (
-    /^[A-Za-z0-9-]{1,39}$/.test(actor) ||
-    /^[A-Za-z0-9-]{1,100}\[bot\]$/.test(actor)
+    /^[A-Za-z0-9-]{1,39}$/.test(actor) || actor === '6529-release-bus[bot]'
   );
 }
 export type GitHubWorkflowJob = {

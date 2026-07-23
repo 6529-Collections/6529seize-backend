@@ -121,8 +121,47 @@ describe('GitHub workflow operation identity', () => {
   it('accepts human and GitHub App workflow actors', () => {
     expect(isValidGitHubWorkflowActor('GelatoGenesis')).toBe(true);
     expect(isValidGitHubWorkflowActor('6529-release-bus[bot]')).toBe(true);
+    expect(isValidGitHubWorkflowActor('github-actions[bot]')).toBe(false);
     expect(isValidGitHubWorkflowActor('release-bus[admin]')).toBe(false);
     expect(isValidGitHubWorkflowActor(`${'a'.repeat(40)}`)).toBe(false);
+  });
+
+  it('reads the exact Release Bus App actor from a workflow run', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 12345,
+          name: 'Release Bus v2 - Compose Backend',
+          path: '.github/workflows/release-bus-v2-compose.yml',
+          display_title: 'Compose backend v2 train beta [rb2:beta:a1]',
+          status: 'in_progress',
+          conclusion: null,
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/12345',
+          event: 'workflow_dispatch',
+          actor: { login: '6529-release-bus[bot]' }
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getWorkflowRunIdentity('backend', '12345')
+      ).resolves.toMatchObject({
+        actor: '6529-release-bus[bot]',
+        event: 'workflow_dispatch',
+        headSha: 'a'.repeat(40)
+      });
+    } finally {
+      fetchMock.mockReset();
+    }
   });
 
   it('matches only the exact bracketed operation key', () => {
