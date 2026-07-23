@@ -114,6 +114,13 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
     current: () => current,
     expireRetry: () => {
       current = { ...current, next_retry_at: 0 };
+    },
+    raceTo: (fields: Partial<ReleaseBusV2OperationRecord>) => {
+      current = {
+        ...current,
+        ...fields,
+        row_version: current.row_version + 1
+      };
     }
   };
 }
@@ -187,6 +194,42 @@ describe('Release Bus v2 exact operation callbacks', () => {
       failure_class: null
     });
     expect(state.repository.appendEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('observes the winning workflow callback when reconciles overlap', async () => {
+    const state = repositoryFor(
+      operation({ external_id: null, status: 'PENDING' })
+    );
+    state.repository.updateOperation.mockImplementationOnce(async () => {
+      state.raceTo({ external_id: '12345', status: 'RUNNING' });
+      return false;
+    });
+    mockFindWorkflowRun.mockResolvedValue({
+      id: 12345,
+      status: 'in_progress',
+      conclusion: null
+    });
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reconcileWorkflow({
+        idempotencyKey: 'rb2:train-id:prepare:frontend',
+        trainId: 'train-id',
+        operationType: 'PREPARE_ARTIFACT_FRONTEND',
+        repository: 'frontend',
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        environment: 'orchestration',
+        service: null,
+        expectedSha: 'a'.repeat(40),
+        artifactDigest: null,
+        inputs: {}
+      })
+    ).resolves.toMatchObject({
+      external_id: '12345',
+      status: 'RUNNING'
+    });
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
   });
 
   it('binds the immutable artifact digest from the structured terminal report', async () => {

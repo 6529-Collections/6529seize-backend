@@ -48,6 +48,11 @@ const TERMINAL_TRAINS = new Set<ReleaseBusV2TrainStatus>([
   'FAILED',
   'CANCELLED'
 ]);
+const TERMINAL_OPERATIONS = new Set<ReleaseBusV2OperationRecord['status']>([
+  'SUCCEEDED',
+  'FAILED',
+  'CANCELLED'
+]);
 // The lock is renewed every minute, but its expiry must also outlive the
 // longest deployment/E2E workflow during a temporary control-plane outage.
 // Workflow timeouts are at most 90 minutes, so two hours prevents overlapping
@@ -120,6 +125,21 @@ function isGitHubInfrastructureError(error: unknown): error is Error {
       error instanceof infrastructureType) ||
       error.name === 'ReleaseBusGitHubInfrastructureError' ||
       error.constructor.name === 'ReleaseBusGitHubInfrastructureError')
+  );
+}
+
+function isOptimisticConcurrencyConflict(error: unknown): error is Error {
+  return (
+    error instanceof Error &&
+    (error.message === 'Release Bus v2 operation changed concurrently' ||
+      error.message === 'Release Bus v2 train changed concurrently' ||
+      error.message === 'Candidate changed concurrently' ||
+      /^(frontend|backend) main operation changed concurrently$/.test(
+        error.message
+      ) ||
+      /^Candidate .* changed during deterministic isolation$/.test(
+        error.message
+      ))
   );
 }
 
@@ -450,6 +470,7 @@ export class ReleaseBusV2Reconciler {
   }> {
     const mode = getReleaseBusV2Mode();
     const claimed: string[] = [];
+    await this.releaseTerminalEnvironmentLocks();
     let betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [];
     if (mode === 'OFF') {
       try {
@@ -555,6 +576,11 @@ export class ReleaseBusV2Reconciler {
         await this.advanceUntilExternalWait(train);
         advanced.push(train.id);
       } catch (error) {
+        // Lambda invocations and workflow callbacks may overlap. Optimistic
+        // locking identifies the winner; the loser must observe on the next
+        // pass instead of turning a valid idempotent advance into a bus-wide
+        // control-plane failure.
+        if (isOptimisticConcurrencyConflict(error)) continue;
         if (error instanceof MainMovedError) {
           await this.cancelForMovedMain(train, error.message);
           continue;
@@ -2295,6 +2321,41 @@ export class ReleaseBusV2Reconciler {
       ENVIRONMENT_LOCK_TTL_MS,
       {}
     );
+  }
+
+  private async releaseTerminalEnvironmentLocks(): Promise<void> {
+    const locks = await this.repository.listLocks({});
+    for (const lock of locks) {
+      if (
+        !lock.owner_train_id ||
+        !lock.lease_token ||
+        !['staging-environment', 'production-environment'].includes(lock.name)
+      )
+        continue;
+      const train = await this.repository.findTrain(lock.owner_train_id, {});
+      if (!train || !TERMINAL_TRAINS.has(train.status)) continue;
+      const operations = await this.repository.listOperations(train.id, {});
+      if (
+        operations.some(
+          (operation) => !TERMINAL_OPERATIONS.has(operation.status)
+        )
+      )
+        continue;
+      if (await this.repository.releaseLock(lock.name, lock.lease_token, {}))
+        await this.repository.appendEvent(
+          {
+            trainId: train.id,
+            eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+            actor: 'release-bus-v2',
+            payload: {
+              lock: lock.name,
+              train_status: train.status,
+              operation_count: operations.length
+            }
+          },
+          {}
+        );
+    }
   }
 
   private async releaseEnvironmentLease(

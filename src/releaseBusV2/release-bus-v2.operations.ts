@@ -162,6 +162,26 @@ export class ReleaseBusV2Operations {
   public async reconcileWorkflow(
     spec: ReleaseBusV2WorkflowSpec
   ): Promise<ReleaseBusV2OperationRecord> {
+    try {
+      return await this.reconcileWorkflowOnce(spec);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'Release Bus v2 operation changed concurrently'
+      ) {
+        const current = await this.repository.findOperation(
+          spec.idempotencyKey,
+          {}
+        );
+        if (current) return current;
+      }
+      throw error;
+    }
+  }
+
+  private async reconcileWorkflowOnce(
+    spec: ReleaseBusV2WorkflowSpec
+  ): Promise<ReleaseBusV2OperationRecord> {
     let operation = await this.repository.getOrCreateOperation(
       {
         idempotencyKey: spec.idempotencyKey,
