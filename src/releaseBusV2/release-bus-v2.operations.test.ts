@@ -232,6 +232,76 @@ describe('Release Bus v2 exact operation callbacks', () => {
     expect(mockDispatchWorkflow).not.toHaveBeenCalled();
   });
 
+  it('allows only one dispatch while an exact attempt is not yet discoverable', async () => {
+    const state = repositoryFor(
+      operation({ external_id: null, status: 'PENDING' })
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    const spec = {
+      idempotencyKey: 'rb2:train-id:prepare:frontend',
+      trainId: 'train-id',
+      operationType: 'PREPARE_ARTIFACT_FRONTEND',
+      repository: 'frontend' as const,
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: null,
+      inputs: {}
+    };
+
+    await expect(
+      Promise.all([
+        service.reconcileWorkflow(spec),
+        service.reconcileWorkflow(spec)
+      ])
+    ).resolves.toEqual([
+      expect.objectContaining({ status: 'DISPATCHED' }),
+      expect.objectContaining({ status: 'DISPATCHED' })
+    ]);
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
+    expect(state.current()).toMatchObject({
+      external_id: null,
+      status: 'DISPATCHED',
+      attempt: 1
+    });
+  });
+
+  it('recovers a stale dispatch reservation without changing its attempt key', async () => {
+    const state = repositoryFor(
+      operation({
+        external_id: null,
+        status: 'DISPATCHED',
+        updated_at: Date.now() - 31_000
+      })
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await service.reconcileWorkflow({
+      idempotencyKey: 'rb2:train-id:prepare:frontend',
+      trainId: 'train-id',
+      operationType: 'PREPARE_ARTIFACT_FRONTEND',
+      repository: 'frontend',
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: null,
+      inputs: {}
+    });
+
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
+    expect(state.current()).toMatchObject({
+      status: 'RETRY_WAIT',
+      attempt: 1,
+      result_json: { retry_same_attempt: true, transport_failures: 1 }
+    });
+  });
+
   it('binds the immutable artifact digest from the structured terminal report', async () => {
     const state = repositoryFor(operation());
     const service = new ReleaseBusV2Operations(state.repository as never);

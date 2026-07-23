@@ -82,6 +82,8 @@ function retryDelayMs(attempt: number): number {
   return Math.min(30_000 * 2 ** Math.max(0, attempt - 1), 5 * 60_000);
 }
 
+const DISPATCH_DISCOVERY_GRACE_MS = 30_000;
+
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
   return (
@@ -304,24 +306,36 @@ export class ReleaseBusV2Operations {
         );
       }
       if (!run && operation.status === 'PENDING') {
+        // Reserve the exact attempt before calling GitHub. Concurrent
+        // reconcilers race on this optimistic update, so only one winner can
+        // dispatch while the workflow is not yet discoverable.
+        await this.update(operation, { status: 'DISPATCHED', result: null });
+        operation =
+          (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+          operation;
         await releaseBusGitHubApp.dispatchWorkflow(
           spec.repository,
           spec.workflow,
           spec.ref,
           dispatchInputs
         );
+        return operation;
       }
     } catch (error) {
       if (isGitHubInfrastructureError(error))
         return this.deferTransportRetry(operation, error.message);
       throw error;
     }
-    if (!run && operation.status === 'PENDING') {
-      await this.update(operation, { status: 'DISPATCHED', result: null });
-      return (
-        (await this.repository.findOperation(spec.idempotencyKey, {})) ??
-        operation
-      );
+    if (!run && operation.status === 'DISPATCHED') {
+      if (
+        Date.now() - Number(operation.updated_at) >=
+        DISPATCH_DISCOVERY_GRACE_MS
+      )
+        return this.deferTransportRetry(
+          operation,
+          'Reserved dispatch was not discoverable after the indexing grace period'
+        );
+      return operation;
     }
     if (!run) return operation;
     if (
