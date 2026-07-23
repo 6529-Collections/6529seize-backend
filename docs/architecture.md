@@ -161,6 +161,7 @@ flowchart TD
 | `nextgenMediaUploader`               | Upload NextGen media.                                                |
 | `nextgenMediaImageResolutions`       | Generate NextGen image resolutions.                                  |
 | `releaseBusStarter`                  | Reconcile queued immutable candidates and start one release train.   |
+| `releaseBusV2Reconciler`             | Claim and reconcile exact Simple Release Bus v2 trains.              |
 | `releaseBusCleaner`                  | Remove expired temporary release branches that no active train owns. |
 
 ### Triggered Lambdas
@@ -467,60 +468,45 @@ Important details:
 
 ## Deployment Model
 
-The autonomous Release Bus coordinates frontend and backend staging and
-production. The existing application MySQL database stores immutable
-candidates, cross-repository dependencies, frozen trains, idempotent external
-operations, evidence, global leases, pause controls, and audit events.
-The orchestrator stack runs only in the production AWS region and owns both
-deployment lanes; there is no second staging-region scheduler.
-`releaseBusStarter` runs every minute, reconciles queued branch heads through a
-GitHub App, freezes one dependency-safe batch, and starts a Standard Step
-Functions execution pinned to the published worker Lambda version recorded on
-the train. Trains contain at most 20 candidates by default, bounding isolation
-fan-out while leaving later work queued. `releaseBusWorker` performs one short
-state transition per invocation; Step Functions waits between GitHub workflow polls. GitHub Actions
-builds immutable artifacts and deploys backend services in registry DAG order
-before dependent frontend code. The API's `/deploy/ui/bus` page is the
-readiness queue and pause/resume control plane. Modes `OFF`, `SHADOW`,
-`STAGING`, and `PRODUCTION` permit a backward-compatible rollout.
-Shadow evaluation writes evidence and audit state only, never GitHub statuses or
-other GitHub mutations. When dependency candidates are evaluated in separate
-shadow trains, successful shadow evidence satisfies their dependants for later
-shadow scheduling without satisfying the live staging or production gates.
-The generated backend deployment workflow resolves the installed GitHub App's
-installation ID and injects only the non-secret App identity into all three
-Release Bus Lambdas. The App private key, webhook verification secret, and
-workflow authorization token are merged into the existing regional
-`prod/lambdas` AWS Secrets Manager document and loaded through the standard
-Lambda secret bootstrap before a handler enters its database context. The
-deployment workflow requires that shared secret to exist and serializes all
-production deployments so its read/merge/write updates cannot overlap.
-This single production lane is intentional: unrelated production services do
-not deploy in parallel, and an operator must cancel a stuck run before an
-urgent later production deploy can begin. Staging deployments retain
-per-service concurrency.
-Production API deployment keeps only the non-secret
-mode in Lambda configuration, while the staging API is explicitly forced to
-`OFF` and receives none of the production-only secret values. One global
-`RELEASE_BUS_MODE` intentionally controls the production-region API, starter,
-and worker; the orchestrator is not deployed separately in staging. The
-cleaner shares the App identity because it lists and deletes expired temporary
-branches in both repositories. It also prunes terminal Release Bus trains and
-unreferenced terminal candidates in transactionally bounded batches after
-`RELEASE_BUS_HISTORY_RETENTION_DAYS` (30 days by default, constrained to
-1–365 days). Retained train membership always keeps its candidate rows.
-The operator-only `POST /deploy/release-bus/reset-experimental-history`
-endpoint is reserved for the controlled pre-go-live clean slate: every control
-must already be paused, and the transaction locks and rejects any active train,
-operation, or lane lease before deleting only Release Bus journal rows in
-dependency-safe order. Schema, controls, lane rows, secrets, and application
-data remain intact. A required UUID reset id makes lost-response retries
-idempotent, and controls remain deterministically paused until a fresh operator
-handshake resumes them.
-Backend units whose registry policy is `production-only` are built and tested
-in preflight but cannot be runtime-deployed to staging; their staging gate is
-the combined application E2E suite plus the immutable artifact evidence. The
-bus never pretends that a staging Lambda deployment occurred for those units.
+Simple Release Bus v2 is an additive MySQL-backed control plane shared by the
+production API and the production-region `releaseBusV2Reconciler` Lambda. Nine
+versioned tables store immutable candidates, dependency edges, staging and
+production trains, memberships, exact operations, environment/scheduler locks,
+manifests, controls, and events. The reconciler has reserved concurrency one
+and an EventBridge one-minute fallback, but it advances several internal row
+transitions per invocation and exits at an actual external wait.
+
+The v2 API exposes authenticated candidate, train, manifest, and control routes
+under `/deploy/release-bus-v2`; `/deploy/ui/bus` is the operator/developer UI.
+`RELEASE_BUS_V2_MODE` supports `OFF`, `STAGING`, and `PRODUCTION`, with separate
+staging and production queues. Staging validation never schedules production:
+an unchanged exact candidate SHA must be explicitly marked ready.
+
+GitHub Actions performs exact composition, combined preflight, immutable
+packaging, backend DAG deployment, frontend deployment, and manifest-bound E2E.
+Frontend artifacts contain independently checksummed staging and production
+profiles inside one immutable aggregate. Frontend/backend preparation and
+independent backend DAG frontiers run concurrently; only shared environment
+mutation plus E2E ownership is serialized. Operation keys, workflow titles,
+workflow authorization, SHA/artifact checks, row versions, and callback
+identity make retries and duplicate reconciliation idempotent.
+
+The staging manifest distinguishes deployed from validated state and binds E2E
+to exact frontend/backend tree SHAs, artifact digests, service operations, and
+workflow runs. Production reuses an exact validated manifest when both composed
+trees match; a different explicit subset receives a staging qualification train
+before guarded `main` mutation. A moved `main` is never overwritten.
+
+Infrastructure and retryable deployment failures retry only the same operation.
+Control-plane defects pause automated claiming without blaming candidates, and
+the serialized manual workflow remains available after v2 is deliberately set
+`OFF`. Release Bus v1 starter/worker/Step Functions components and their tables
+remain deployed but disabled as rollback reference; v2 does not read or claim
+v1 candidates. The cleaner also removes expired unowned v2 release refs.
+
+The GitHub App private key and workflow authorization token use the existing
+`prod/lambdas` secret bootstrap. Production API and releaseBus deployments copy
+only the non-secret v1/v2 mode and App identity into Lambda configuration.
 
 The independent `releaseNotesGenerationLoop` remains downstream of successful
 production deployment signals; the Release Bus does not call a personal skill

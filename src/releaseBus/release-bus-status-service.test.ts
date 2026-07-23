@@ -1,6 +1,10 @@
-import { buildReleaseTrainOverview } from '@/releaseBus/release-bus-status.service';
+import {
+  buildReleaseTrainOverview,
+  projectReleaseCandidate
+} from '@/releaseBus/release-bus-status.service';
 import type {
   ReleaseOperationRecord,
+  ReleaseTrainEventRecord,
   ReleaseTrainItemRecord
 } from '@/releaseBus/release-bus.repository';
 import type {
@@ -117,14 +121,15 @@ function overview(
   operationStatus: ReleaseOperationRecord['status'],
   trainOverride: Partial<ReleaseTrainRecord> = {},
   candidateOverride: Partial<ReleaseCandidateRecord> = {},
-  controlOverride: { paused?: boolean; reason?: string | null } = {}
+  controlOverride: { paused?: boolean; reason?: string | null } = {},
+  events: ReleaseTrainEventRecord[] = []
 ) {
   return buildReleaseTrainOverview({
     train: { ...train, ...trainOverride },
     items: [item],
     candidates: [{ ...candidate, ...candidateOverride }],
     operations: [operation(operationStatus)],
-    events: [],
+    events,
     lanes: [
       {
         name: 'global-orchestration',
@@ -211,5 +216,71 @@ describe('release train status view', () => {
     expect(result.phase).toBe('COMPLETED');
     expect(result.phase_state).toBe('COMPLETED');
     expect(result.incident).toBeNull();
+  });
+
+  it('distinguishes a carried-forward skip and its source proof from a fresh canary', () => {
+    const result = overview(
+      'SUCCEEDED',
+      { status: 'COMPLETED', completed_at: NOW },
+      { status: 'STAGING_VALIDATED' },
+      {},
+      [
+        {
+          id: 'event-reuse',
+          train_id: train.id,
+          candidate_id: null,
+          event_type: 'BASE_CANARY_EVIDENCE_REUSED',
+          github_actor: null,
+          payload_json: {
+            source_train_id: 'train-source',
+            source_run_id: '12345',
+            source_evidence_id: 'evidence-source',
+            source_evidence_type: 'BASE_EVIDENCE_PROMOTED',
+            evidence_uri:
+              'https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345',
+            source_artifact_digest: 'f'.repeat(64)
+          },
+          created_at: NOW - 500
+        }
+      ]
+    );
+
+    expect(result.base_evidence).toMatchObject({
+      decision: 'CARRIED_FORWARD_REUSED',
+      canary_skipped: true,
+      source_train_id: 'train-source',
+      source_run_id: '12345',
+      source_evidence_type: 'BASE_EVIDENCE_PROMOTED',
+      source_artifact_digest: 'f'.repeat(64)
+    });
+    expect(result.base_evidence.summary).toContain('Base canary skipped');
+  });
+});
+
+describe('release candidate exact-SHA projection', () => {
+  it('makes an old validated SHA and a newer unregistered branch head unmistakable', () => {
+    const oldSha = '28c9f12373c65886b609accaf1a41c38d190b990';
+    const newSha = '820f0e98183a1ab62ce88e942cda27375f46781f';
+
+    expect(
+      projectReleaseCandidate({
+        ...candidate,
+        id: 'a61dad7f-3085-4d8c-953c-2f2e1dc807cd',
+        repository: 'backend',
+        branch_name: 'agent/fix-attachment-realtime-race-be',
+        head_sha: oldSha,
+        status: 'SUPERSEDED',
+        current_train_id: null,
+        hold_reason: `Branch moved to ${newSha}`
+      })
+    ).toMatchObject({
+      status: 'SUPERSEDED',
+      immutable_head_sha: oldSha,
+      immutable_validation_scope: 'EXACT_SHA',
+      head_relation: 'SUPERSEDED_BY_UNREGISTERED_HEAD',
+      unregistered_branch_head_sha: newSha,
+      requires_new_readiness: true,
+      status_summary: expect.stringContaining(newSha)
+    });
   });
 });

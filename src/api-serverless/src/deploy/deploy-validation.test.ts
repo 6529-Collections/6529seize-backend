@@ -4,7 +4,11 @@ import {
   ReleaseBusBreakGlassAuthorizationBodySchema,
   ReleaseBusExperimentalResetBodySchema,
   ReleaseBusProgressReportBodySchema,
-  ReleaseCandidateReadyBodySchema
+  ReleaseCandidateReadyBodySchema,
+  ReleaseBusV2CandidateActionBodySchema,
+  ReleaseBusV2CandidateBodySchema,
+  ReleaseBusV2AuthorizationBodySchema,
+  ReleaseBusV2ProgressBodySchema
 } from '@/api/deploy/deploy.validation';
 
 describe('deploy.validation', () => {
@@ -269,6 +273,34 @@ describe('deploy.validation', () => {
     expect(error).toBeUndefined();
   });
 
+  it('accepts only infrastructure-retryable release-branch publication failures', () => {
+    const report = {
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:compose:frontend:a1',
+      workflow_run_id: '29926766725',
+      phase: 'complete',
+      status: 'FAILED',
+      failure_class: 'INFRASTRUCTURE_TRANSIENT',
+      failure_phase: 'release_branch_publication',
+      retryable: true,
+      stages: [],
+      jest: null,
+      summary: null,
+      build_profile_digest: null,
+      backend_evidence: null
+    };
+
+    expect(
+      ReleaseBusProgressReportBodySchema.validate(report).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...report,
+        failure_class: 'SOURCE'
+      }).error
+    ).toBeDefined();
+  });
+
   it('rejects unsafe aggregate paths and unbounded unknown fields', () => {
     const invalid = {
       train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
@@ -299,6 +331,107 @@ describe('deploy.validation', () => {
 
     expect(
       ReleaseBusProgressReportBodySchema.validate(invalid).error
+    ).toBeDefined();
+  });
+
+  it('accepts only complete exact-tree backend evidence with one package build per unit', () => {
+    const sourceSha = 'a'.repeat(40);
+    const sourceTree = 'b'.repeat(40);
+    const gateFingerprint = 'c'.repeat(64);
+    const behaviorDigest = 'd'.repeat(64);
+    const backendEvidence = {
+      schema_version: 1,
+      kind: 'release_bus_backend_preflight_evidence',
+      source_sha: sourceSha,
+      source_tree: sourceTree,
+      workflow_sha: 'e'.repeat(40),
+      workflow_digest: 'f'.repeat(64),
+      behavior_digest: behaviorDigest,
+      gate_fingerprint: gateFingerprint,
+      component_digests: {
+        'package.json': '9'.repeat(64),
+        '.github/workflows/release-bus-preflight.yml': '8'.repeat(64)
+      },
+      node_version: '22',
+      package_manager: 'npm@11.5.1',
+      execution: 'executed_exact_composed_tree',
+      reuse_reason: 'no_exact_composed_tree_evidence_selected',
+      lint: 'success',
+      typecheck: 'success',
+      tests: {
+        schema_version: 1,
+        kind: 'release_bus_backend_test_evidence',
+        source_sha: sourceSha,
+        source_tree: sourceTree,
+        gate_fingerprint: gateFingerprint,
+        behavior_digest: behaviorDigest,
+        execution: 'executed',
+        jest_max_workers: 2,
+        expected_files: 10,
+        executed_files: 10,
+        missing_files: [],
+        unexpected_files: [],
+        duplicate_inventory_files: [],
+        duplicate_files: [],
+        duplicate_test_identities: [],
+        malformed_test_results: 0,
+        executed_test_results: 100,
+        failed_tests: 0,
+        failed_test_suites: 0,
+        skipped_tests: 0,
+        skipped_test_suites: 0,
+        total_tests: 100,
+        total_test_suites: 10,
+        status: 'SUCCEEDED'
+      },
+      selected_units: ['api'],
+      package_build_count: 1,
+      package_digests: { api: '1'.repeat(64) },
+      status: 'SUCCEEDED',
+      artifact_digest: '2'.repeat(64)
+    };
+    const report = {
+      train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      operation_key: 'train:key',
+      workflow_run_id: '12345',
+      phase: 'complete',
+      status: 'SUCCEEDED',
+      summary: null,
+      backend_evidence: backendEvidence
+    };
+
+    expect(
+      ReleaseBusProgressReportBodySchema.validate(report).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...report,
+        backend_evidence: {
+          ...backendEvidence,
+          tests: {
+            ...backendEvidence.tests,
+            duplicate_inventory_files: ['src/duplicate.test.ts']
+          }
+        }
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...report,
+        backend_evidence: {
+          ...backendEvidence,
+          tests: {
+            ...backendEvidence.tests,
+            executed_test_results: 99
+          }
+        }
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusProgressReportBodySchema.validate({
+        ...report,
+        backend_evidence: { ...backendEvidence, package_build_count: 2 }
+      }).error
     ).toBeDefined();
   });
 
@@ -339,5 +472,144 @@ describe('deploy.validation', () => {
         retryable: true
       }).error
     ).toBeDefined();
+  });
+});
+
+describe('Release Bus v2 validation', () => {
+  it('binds workflow authorization to the exact v2 train key', () => {
+    const trainId = '8af60034-9741-4b9d-bb1c-80b483f75455';
+    const authorization = {
+      train_id: trainId,
+      operation_key: `rb2:${trainId}:prepare:frontend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: 'a'.repeat(40),
+      artifact_digest: null
+    };
+
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate(authorization).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: `rb2:123e4567-e89b-42d3-a456-426614174000:prepare:frontend:a1`
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: 'rb:legacy-operation'
+      }).error
+    ).toBeDefined();
+  });
+
+  it('binds v2 E2E authorization to the exact manifest identity', () => {
+    const trainId = '8af60034-9741-4b9d-bb1c-80b483f75455';
+    const authorization = {
+      train_id: trainId,
+      operation_key: `rb2:${trainId}:e2e:staging:a1`,
+      workflow_run_id: '29984983314',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'staging',
+      service: null,
+      expected_sha: 'a'.repeat(40),
+      artifact_digest: 'b'.repeat(64)
+    };
+
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate(authorization).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        artifact_digest: null
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: `rb2:${trainId}:deploy:staging:frontend:a1`
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: `rb2:${trainId}:deploy:e2e:staging:a1`
+      }).error
+    ).toBeDefined();
+
+    const deployAuthorization = {
+      ...authorization,
+      operation_key: `rb2:${trainId}:deploy:staging:backend:api:a1`,
+      artifact_run_id: '29984625887',
+      repository: 'backend',
+      service: 'api'
+    };
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate(deployAuthorization).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...deployAuthorization,
+        artifact_run_id: null
+      }).error
+    ).toBeDefined();
+  });
+
+  it('accepts an exact backend PR candidate with an acyclic deploy plan', () => {
+    const result = ReleaseBusV2CandidateBodySchema.validate({
+      repository: 'backend',
+      pr_number: 1788,
+      branch_name: 'agent/release-bus-v2',
+      expected_head_sha: 'a'.repeat(40),
+      deploy_plan: {
+        units: ['dbMigrationsLoop', 'api'],
+        edges: [['dbMigrationsLoop', 'api']]
+      },
+      dependencies: [
+        {
+          candidate_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+          environment: 'BOTH'
+        }
+      ]
+    });
+    expect(result.error).toBeUndefined();
+  });
+
+  it('requires exact SHA and optimistic row version for production opt-in', () => {
+    expect(
+      ReleaseBusV2CandidateActionBodySchema.validate({
+        expected_head_sha: 'b'.repeat(40),
+        expected_row_version: 4
+      }).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2CandidateActionBodySchema.validate({
+        expected_head_sha: 'main',
+        expected_row_version: 0
+      }).error
+    ).toBeDefined();
+  });
+
+  it('accepts bounded structured infrastructure retry reports', () => {
+    expect(
+      ReleaseBusV2ProgressBodySchema.validate({
+        train_id: '8af60034-9741-4b9d-bb1c-80b483f75455',
+        operation_key:
+          'rb2:8af60034-9741-4b9d-bb1c-80b483f75455:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        phase: 'download',
+        status: 'FAILED',
+        failure_class: 'INFRASTRUCTURE',
+        failure_phase: 'artifact_download',
+        retryable: true,
+        summary: null
+      }).error
+    ).toBeUndefined();
   });
 });

@@ -522,14 +522,14 @@ describeWithSeed(
           ]
         );
       });
-      it('identities of minTdh10AndTdh11Identity1ExcludedGroup ', async () => {
+      it('excludes an identity that is also explicitly included', async () => {
         await expectGroupToContainExactIdentities(
           onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded,
           []
         );
       });
 
-      it('identities of minTdh10AndTdh11Identity1ExcludedGroup ', async () => {
+      it('keeps the minimum TDH group when one identity is included and excluded', async () => {
         await expectGroupToContainExactIdentities(
           minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded,
           [

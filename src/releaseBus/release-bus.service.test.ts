@@ -1,4 +1,7 @@
-import { ReleaseBusService } from '@/releaseBus/release-bus.service';
+import {
+  RECONCILABLE_CANDIDATE_STATUSES,
+  ReleaseBusService
+} from '@/releaseBus/release-bus.service';
 import type { ReleaseCandidateRecord } from '@/releaseBus/release-bus.types';
 import type { ReleaseBusRepository } from '@/releaseBus/release-bus.repository';
 
@@ -229,6 +232,58 @@ describe('ReleaseBusService readiness', () => {
 
     expect(requiredState).toBe('PRODUCTION_VALIDATED');
     expect(result.status).toBe('READY_FOR_PRODUCTION');
+  });
+});
+
+describe('ReleaseBusService branch-head reconciliation', () => {
+  it('supersedes an immutable staging validation when its branch moves', async () => {
+    const oldSha = '28c9f12373c65886b609accaf1a41c38d190b990';
+    const newSha = '820f0e98183a1ab62ce88e942cda27375f46781f';
+    const validated = {
+      ...candidate('STAGING_VALIDATED'),
+      id: 'a61dad7f-3085-4d8c-953c-2f2e1dc807cd',
+      repository: 'backend' as const,
+      branch_name: 'agent/fix-attachment-realtime-race-be',
+      head_sha: oldSha
+    };
+    const updateCandidateLifecycle = jest.fn().mockResolvedValue(undefined);
+    const appendEvent = jest.fn().mockResolvedValue(undefined);
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (value: unknown) => unknown
+      ) => callback({ transaction: true }),
+      listBranchCandidates: async () => [validated],
+      updateCandidateLifecycle,
+      appendEvent
+    } as unknown as ReleaseBusRepository;
+
+    await expect(
+      new ReleaseBusService(repository).invalidateBranch(
+        'backend',
+        validated.branch_name,
+        newSha,
+        'release-bus-reconciler'
+      )
+    ).resolves.toEqual([validated]);
+
+    expect(RECONCILABLE_CANDIDATE_STATUSES).toContain('STAGING_VALIDATED');
+    expect(updateCandidateLifecycle).toHaveBeenCalledWith(
+      validated.id,
+      validated.row_version,
+      expect.objectContaining({
+        status: 'SUPERSEDED',
+        holdReason: `Branch moved to ${newSha}`
+      }),
+      { connection: { transaction: true } }
+    );
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: validated.id,
+        eventType: 'CANDIDATE_SUPERSEDED',
+        payload: { new_head_sha: newSha }
+      }),
+      { connection: { transaction: true } }
+    );
   });
 });
 

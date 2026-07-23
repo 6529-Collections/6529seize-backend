@@ -78,3 +78,21 @@ jobs:
         run: npm run build
       - name: Build API
         run: pushd src/api-serverless && npm run build && popd
+      - name: Package exact PR merge-tree API artifact
+        env:
+          EXPECTED_MERGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_MERGE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_MERGE_SHA"
+          mkdir -p release-bus-v2-pr-artifact/packages/api
+          cp src/api-serverless/dist/index.zip release-bus-v2-pr-artifact/packages/api/index.zip
+          jq -n --arg source_sha "$EXPECTED_MERGE_SHA" '{schema_version:2,repository:"backend",source_sha:$source_sha,environment:"portable",units:["api"]}' > release-bus-v2-pr-artifact/manifest.json
+          (cd release-bus-v2-pr-artifact && find . -type f ! -path ./SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - name: Upload exact PR merge-tree API artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-bus-v2-pr-${{ github.sha }}
+          path: release-bus-v2-pr-artifact
+          if-no-files-found: error
+          retention-days: 30

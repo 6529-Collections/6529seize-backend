@@ -16,6 +16,11 @@ const mockListReleaseBusRefs = jest.fn(async () => {
   expect(process.env.RELEASE_BUS_GITHUB_PRIVATE_KEY).toBe('private-key');
   return [];
 });
+const mockListReleaseBusV2Refs = jest.fn(async () => {
+  callOrder.push('github-v2');
+  expect(process.env.RELEASE_BUS_GITHUB_PRIVATE_KEY).toBe('private-key');
+  return [];
+});
 const mockPruneTerminalHistory = jest.fn(async (cutoffAt: number) => {
   callOrder.push('history');
   expect(cutoffAt).toBeGreaterThan(0);
@@ -44,8 +49,18 @@ jest.mock('@/releaseBus/release-bus.repository', () => ({
 }));
 jest.mock('@/releaseBus/release-bus.github-app', () => ({
   releaseBusGitHubApp: {
-    listReleaseBusRefs: mockListReleaseBusRefs
+    listReleaseBusRefs: mockListReleaseBusRefs,
+    listReleaseBusV2Refs: mockListReleaseBusV2Refs
   }
+}));
+jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
+  releaseBusV2Repository: {
+    listTrains: mockListTrains
+  }
+}));
+jest.mock('@/releaseBusV2/release-bus-v2.reconciler', () => ({
+  releaseBusV2Branch: jest.fn(),
+  releaseBusV2Reconciler: { runOnce: jest.fn() }
 }));
 jest.mock('@/releaseBus/release-bus.service', () => ({
   releaseBusService: {
@@ -80,8 +95,11 @@ describe('Release Bus handler secret ordering', () => {
       'secrets',
       'database',
       'repository',
+      'repository',
       'github',
+      'github-v2',
       'github',
+      'github-v2',
       'history'
     ]);
   });

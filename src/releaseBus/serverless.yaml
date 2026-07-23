@@ -44,6 +44,7 @@ functions:
     environment:
       RELEASE_BUS_MODE: ${env:RELEASE_BUS_MODE, 'OFF'}
       RELEASE_BUS_MAX_TRAIN_CANDIDATES: ${env:RELEASE_BUS_MAX_TRAIN_CANDIDATES, '20'}
+      RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY: ${env:RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY, '20'}
       RELEASE_BUS_BASE_EVIDENCE_REUSE: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE, 'false'}
       RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW, 'false'}
       RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: ${env:RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS, '24'}
@@ -60,6 +61,20 @@ functions:
       - schedule: rate(1 day)
     environment:
       RELEASE_BUS_BRANCH_RETENTION_DAYS: ${env:RELEASE_BUS_BRANCH_RETENTION_DAYS, '7'}
+      SENTRY_DSN: ${env:SENTRY_DSN}
+  v2Reconciler:
+    handler: index.v2ReconcilerHandler
+    name: releaseBusV2Reconciler
+    reservedConcurrency: 1
+    timeout: 60
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    events:
+      - schedule: rate(1 minute)
+    environment:
+      RELEASE_BUS_V2_MODE: ${env:RELEASE_BUS_V2_MODE, 'OFF'}
       SENTRY_DSN: ${env:SENTRY_DSN}
 
 resources:
@@ -83,6 +98,8 @@ resources:
                   Resource:
                     - !GetAtt WorkerLambdaFunction.Arn
                     - !Join [':', [!GetAtt WorkerLambdaFunction.Arn, '*']]
+                    - !GetAtt V2ReconcilerLambdaFunction.Arn
+                    - !Join [':', [!GetAtt V2ReconcilerLambdaFunction.Arn, '*']]
     ReleaseBusStarterExecutionPolicy:
       Type: AWS::IAM::Policy
       Properties:
@@ -98,6 +115,20 @@ resources:
             - Effect: Allow
               Action: states:DescribeExecution
               Resource: '*'
+    ReleaseBusV2ReconcilerInvokePolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: !Sub '${AWS::StackName}-invoke-v2-reconciler'
+        Roles:
+          - lambda-vpc-role
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource:
+                - !GetAtt V2ReconcilerLambdaFunction.Arn
+                - !Join [':', [!GetAtt V2ReconcilerLambdaFunction.Arn, '*']]
     ReleaseBusWorkerVersionReadPolicy:
       Type: AWS::IAM::Policy
       Properties:
