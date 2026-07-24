@@ -291,6 +291,14 @@ export class ReleaseBusV2Service {
       input.pr_number,
       expectedHeadSha
     );
+    const verifiedHead = await releaseBusGitHubApp.resolveRef(
+      input.repository,
+      input.branch_name
+    );
+    if (verifiedHead !== expectedHeadSha)
+      throw new Error(
+        `Branch moved from ${expectedHeadSha} to ${verifiedHead}`
+      );
     const evidence = {
       base_sha: qualification.baseSha,
       merge_sha: qualification.mergeSha,
@@ -298,7 +306,8 @@ export class ReleaseBusV2Service {
       checks_completed_at: qualification.checksCompletedAt,
       artifact_run_id: qualification.artifactRunId,
       artifact_name: qualification.artifactName,
-      artifact_digest: qualification.artifactDigest
+      artifact_digest: qualification.artifactDigest,
+      contributor_github_logins: qualification.contributorGithubLogins
     };
     const registration =
       await this.repository.executeNativeQueriesInTransaction(
