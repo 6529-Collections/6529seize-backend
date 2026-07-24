@@ -463,6 +463,19 @@ export function candidateUnavailableForTrainUpdate(
   );
 }
 
+export function deletedMergedProductionCandidateCanRetainReadiness(
+  candidate: ReleaseBusV2CandidateRecord,
+  exactHeadIsOnMain: boolean
+): boolean {
+  return (
+    exactHeadIsOnMain &&
+    candidate.current_train_id === null &&
+    candidate.production_requested_at !== null &&
+    candidate.staging_validated_manifest_id !== null &&
+    ['READY_FOR_PRODUCTION', 'SUPERSEDED'].includes(candidate.status)
+  );
+}
+
 type E2EWorkflowInputFields = {
   readonly release_train_id: string;
   readonly release_train_revision: string;
@@ -682,23 +695,39 @@ export class ReleaseBusV2Reconciler {
   ): Promise<void> {
     const candidates = (
       await this.repository.listCandidates(
-        ['READY_FOR_STAGING', 'WAITING_FOR_DEPENDENCY', 'READY_FOR_PRODUCTION'],
+        [
+          'READY_FOR_STAGING',
+          'WAITING_FOR_DEPENDENCY',
+          'READY_FOR_PRODUCTION',
+          'SUPERSEDED'
+        ],
         500,
         {}
       )
-    ).filter((candidate) => {
-      const lane =
-        candidate.status === 'READY_FOR_PRODUCTION' ? 'PRODUCTION' : 'STAGING';
-      if (mode === 'STAGING') {
-        if (lane === 'STAGING') return true;
-        return (
-          betaAllowlist.length > 0 &&
-          releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
-        );
-      }
-      if (betaAllowlist.length === 0) return true;
-      return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
-    });
+    )
+      .filter(
+        (candidate) =>
+          candidate.status !== 'SUPERSEDED' ||
+          (candidate.current_train_id === null &&
+            candidate.production_requested_at !== null &&
+            candidate.staging_validated_manifest_id !== null)
+      )
+      .filter((candidate) => {
+        const lane =
+          candidate.status === 'READY_FOR_PRODUCTION' ||
+          candidate.status === 'SUPERSEDED'
+            ? 'PRODUCTION'
+            : 'STAGING';
+        if (mode === 'STAGING') {
+          if (lane === 'STAGING') return true;
+          return (
+            betaAllowlist.length > 0 &&
+            releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
+          );
+        }
+        if (betaAllowlist.length === 0) return true;
+        return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
+      });
     const branchHeads = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
@@ -710,6 +739,23 @@ export class ReleaseBusV2Reconciler {
     );
     for (const { candidate, currentHead } of branchHeads) {
       if (currentHead === candidate.head_sha) continue;
+      if (
+        currentHead === null &&
+        deletedMergedProductionCandidateCanRetainReadiness(candidate, true) &&
+        (await releaseBusGitHubApp.refContainsCommit(
+          candidate.repository,
+          'main',
+          candidate.head_sha
+        ))
+      ) {
+        if (candidate.status === 'SUPERSEDED')
+          await this.service.restoreProductionReadinessAfterBranchCleanup(
+            candidate.id,
+            'release-bus-v2-reconciler'
+          );
+        continue;
+      }
+      if (candidate.status === 'SUPERSEDED') continue;
       await this.service.invalidateBranch(
         candidate.repository,
         candidate.branch_name,

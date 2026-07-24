@@ -2,6 +2,7 @@ const mockReconcileWorkflow = jest.fn();
 const mockEnsureCommitStatus = jest.fn();
 const mockResolveRef = jest.fn();
 const mockResolveRefIfExists = jest.fn();
+const mockRefContainsCommit = jest.fn();
 const mockUpdateRef = jest.fn();
 const mockHasActiveStagingRun = jest.fn();
 const mockHasStagingRunSince = jest.fn();
@@ -19,6 +20,7 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args),
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     resolveRefIfExists: (...args: unknown[]) => mockResolveRefIfExists(...args),
+    refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args),
     updateRef: (...args: unknown[]) => mockUpdateRef(...args),
     hasActiveStagingMutationOrE2ERun: (...args: unknown[]) =>
       mockHasActiveStagingRun(...args),
@@ -594,6 +596,9 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
       }
     ),
     invalidateBranch: jest.fn(async () => undefined),
+    restoreProductionReadinessAfterBranchCleanup: jest.fn(
+      async () => undefined
+    ),
     isBetaTrainAllowed: jest.fn(async () => true)
   };
   return {
@@ -626,6 +631,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRef.mockImplementation(async (repository: string) =>
       repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
     );
+    mockRefContainsCommit.mockResolvedValue(false);
   });
 
   it('does not claim or advance any durable work while mode is OFF', async () => {
@@ -917,6 +923,104 @@ describe('Release Bus v2 offline acceptance harness', () => {
       FRONTEND_SHA,
       BACKEND_SHA,
       'acceptance-staging-production-beta:production'
+    );
+  });
+
+  it('repairs an allowlisted production candidate after its exact merged branch is deleted', async () => {
+    const state = harness('SUCCEEDED');
+    const candidateId = '11111111-1111-4111-8111-111111111111';
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-branch-cleanup',
+        candidate_id: candidateId,
+        repository: 'frontend',
+        branch_name: 'agent/rb2-production-branch-cleanup',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+    const merged = {
+      ...candidate(candidateId, 'frontend', null),
+      branch_name: 'agent/rb2-production-branch-cleanup',
+      requested_by: 'beta-operator',
+      status: 'SUPERSEDED' as const,
+      current_train_id: null,
+      staging_validated_manifest_id: 'manifest-1',
+      production_requested_at: 2,
+      production_requested_by: 'beta-operator',
+      superseded_at: 3
+    };
+    state.repository.candidates.set(candidateId, merged);
+    mockResolveRefIfExists.mockImplementation(async (_repository, branch) =>
+      branch === merged.branch_name ? null : FRONTEND_SHA
+    );
+    mockRefContainsCommit.mockResolvedValue(true);
+
+    await state.reconciler.runOnce('acceptance-branch-cleanup');
+
+    expect(mockRefContainsCommit).toHaveBeenCalledWith(
+      'frontend',
+      'main',
+      merged.head_sha
+    );
+    expect(
+      state.service.restoreProductionReadinessAfterBranchCleanup
+    ).toHaveBeenCalledWith(candidateId, 'release-bus-v2-reconciler');
+    expect(state.service.invalidateBranch).not.toHaveBeenCalledWith(
+      'frontend',
+      merged.branch_name,
+      'deleted',
+      expect.any(String)
+    );
+  });
+
+  it('still supersedes an explicit production candidate when its branch moves', async () => {
+    const state = harness('SUCCEEDED');
+    const candidateId = '11111111-1111-4111-8111-111111111111';
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-branch-move',
+        candidate_id: candidateId,
+        repository: 'frontend',
+        branch_name: 'agent/rb2-production-branch-move',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+    const ready = {
+      ...candidate(candidateId, 'frontend', null),
+      branch_name: 'agent/rb2-production-branch-move',
+      requested_by: 'beta-operator',
+      status: 'READY_FOR_PRODUCTION' as const,
+      current_train_id: null,
+      staging_validated_manifest_id: 'manifest-1',
+      production_requested_at: 2,
+      production_requested_by: 'beta-operator'
+    };
+    state.repository.candidates.set(candidateId, ready);
+    const movedHead = '9'.repeat(40);
+    mockResolveRefIfExists.mockImplementation(async (_repository, branch) =>
+      branch === ready.branch_name ? movedHead : FRONTEND_SHA
+    );
+
+    await state.reconciler.runOnce('acceptance-branch-move');
+
+    expect(mockRefContainsCommit).not.toHaveBeenCalled();
+    expect(state.service.invalidateBranch).toHaveBeenCalledWith(
+      'frontend',
+      ready.branch_name,
+      movedHead,
+      'release-bus-v2-reconciler'
     );
   });
 

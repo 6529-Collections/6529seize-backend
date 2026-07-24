@@ -672,6 +672,84 @@ export class ReleaseBusV2Service {
     );
   }
 
+  public async restoreProductionReadinessAfterBranchCleanup(
+    candidateId: string,
+    actor: string
+  ): Promise<ReleaseBusV2CandidateRecord | null> {
+    const restored = await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx: RequestContext = { connection };
+        const candidate = await this.repository.findCandidateById(
+          candidateId,
+          ctx,
+          true
+        );
+        const supersededEvent = candidate
+          ? (await this.repository.listCandidateEvents(candidate.id, 1, ctx))[0]
+          : null;
+        let supersededPayload: Record<string, unknown> | null = null;
+        if (supersededEvent) {
+          try {
+            const value =
+              typeof supersededEvent.payload_json === 'string'
+                ? JSON.parse(supersededEvent.payload_json)
+                : supersededEvent.payload_json;
+            if (value && typeof value === 'object' && !Array.isArray(value))
+              supersededPayload = value as Record<string, unknown>;
+          } catch {
+            supersededPayload = null;
+          }
+        }
+        if (
+          !candidate ||
+          candidate.status !== 'SUPERSEDED' ||
+          candidate.current_train_id !== null ||
+          candidate.production_requested_at === null ||
+          candidate.staging_validated_manifest_id === null ||
+          supersededEvent?.event_type !==
+            'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE' ||
+          supersededPayload?.current_head_sha !== 'deleted'
+        )
+          return null;
+        if (
+          !(await this.repository.updateCandidate(
+            candidate.id,
+            candidate.row_version,
+            {
+              status: 'READY_FOR_PRODUCTION',
+              supersededAt: null
+            },
+            ctx
+          ))
+        )
+          throw new Error('Candidate changed during branch cleanup repair');
+        await this.repository.appendEvent(
+          {
+            candidateId: candidate.id,
+            eventType:
+              'CANDIDATE_PRODUCTION_READINESS_RESTORED_AFTER_BRANCH_CLEANUP',
+            actor,
+            payload: {
+              head_sha: candidate.head_sha,
+              staging_manifest_id: candidate.staging_validated_manifest_id
+            }
+          },
+          ctx
+        );
+        return this.repository.findCandidateById(candidate.id, ctx);
+      }
+    );
+    if (restored)
+      await releaseBusGitHubApp.ensureCommitStatus(
+        restored.repository,
+        restored.head_sha,
+        'pending',
+        'Exact production readiness retained after merged branch cleanup',
+        'Release Bus v2'
+      );
+    return restored;
+  }
+
   public async claimLane(
     lane: ReleaseBusV2Lane,
     frontendBaseSha: string,

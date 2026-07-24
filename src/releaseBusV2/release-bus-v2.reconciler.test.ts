@@ -4,6 +4,7 @@ import {
   backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
   candidateUnavailableForTrainUpdate,
+  deletedMergedProductionCandidateCanRetainReadiness,
   candidateExclusionClosure,
   dagLayers,
   e2eWorkflowInputs,
@@ -95,6 +96,34 @@ describe('Release Bus v2 deterministic orchestration', () => {
         claimed
       )
     ).toBe(true);
+  });
+
+  it('retains explicit production readiness only for a deleted exact head already on main', () => {
+    const ready = {
+      ...candidate('production-ready', 'a'.repeat(40)),
+      status: 'READY_FOR_PRODUCTION' as const,
+      staging_validated_manifest_id: 'manifest-1',
+      production_requested_at: 2,
+      production_requested_by: 'owner'
+    };
+    expect(
+      deletedMergedProductionCandidateCanRetainReadiness(ready, true)
+    ).toBe(true);
+    expect(
+      deletedMergedProductionCandidateCanRetainReadiness(ready, false)
+    ).toBe(false);
+    expect(
+      deletedMergedProductionCandidateCanRetainReadiness(
+        { ...ready, current_train_id: 'active-train' },
+        true
+      )
+    ).toBe(false);
+    expect(
+      deletedMergedProductionCandidateCanRetainReadiness(
+        { ...ready, staging_validated_manifest_id: null },
+        true
+      )
+    ).toBe(false);
   });
 
   it('orders backend DAG frontiers while preserving independent concurrency', () => {

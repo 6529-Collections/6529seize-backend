@@ -250,6 +250,55 @@ describeWithSeed(
       );
     });
 
+    it('restores exact production readiness after a merged source branch is cleaned up', async () => {
+      const registered = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 114,
+          branchName: 'feature/merged-production-cleanup',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      await repository.updateCandidate(
+        registered.id,
+        registered.row_version,
+        {
+          status: 'READY_FOR_PRODUCTION',
+          stagingValidatedTrainId: 'staging-train',
+          stagingValidatedManifestId: 'staging-manifest',
+          productionRequestedAt: 2,
+          productionRequestedBy: 'owner'
+        },
+        {}
+      );
+      const service = new ReleaseBusV2Service(repository);
+      await service.invalidateBranch(
+        registered.repository,
+        registered.branch_name,
+        'deleted',
+        'reconciler'
+      );
+
+      await expect(
+        service.restoreProductionReadinessAfterBranchCleanup(
+          registered.id,
+          'reconciler'
+        )
+      ).resolves.toEqual(
+        expect.objectContaining({
+          status: 'READY_FOR_PRODUCTION',
+          current_train_id: null,
+          superseded_at: null,
+          staging_validated_manifest_id: 'staging-manifest',
+          production_requested_at: 2
+        })
+      );
+    });
+
     it('claims only explicitly production-ready candidates', async () => {
       process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
       const explicit = await repository.createCandidate(
