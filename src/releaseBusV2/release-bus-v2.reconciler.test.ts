@@ -6,6 +6,7 @@ import {
   candidateUnavailableForTrainUpdate,
   candidateExclusionClosure,
   dagLayers,
+  e2eWorkflowInputs,
   releaseBusV2Branch
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -46,6 +47,31 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
+  it('sends only workflow-supported inputs to each E2E environment', () => {
+    const fields = {
+      release_train_id: 'train-1',
+      release_train_revision: '1',
+      operation_key: 'replaced-by-reconciler',
+      staging_source_ref: 'release-bus-v2/train-1/frontend',
+      expected_sha: 'a'.repeat(40),
+      release_manifest_id: 'manifest-1',
+      release_manifest_identity_sha256: 'b'.repeat(64),
+      frontend_sha: 'a'.repeat(40),
+      backend_sha: 'c'.repeat(40),
+      frontend_artifact_digest: 'd'.repeat(64),
+      backend_artifact_digest: 'e'.repeat(64)
+    };
+
+    expect(e2eWorkflowInputs('staging', fields)).toMatchObject({
+      pack: 'all',
+      source_ref: 'release-bus-v2/train-1/frontend'
+    });
+    expect(e2eWorkflowInputs('prod', fields)).toEqual(
+      expect.objectContaining({ source_ref: 'main' })
+    );
+    expect(e2eWorkflowInputs('prod', fields)).not.toHaveProperty('pack');
+  });
+
   it('keeps an immutable active membership authoritative over stale superseded bookkeeping', () => {
     const claimed = {
       ...candidate('claimed', 'a'.repeat(40)),

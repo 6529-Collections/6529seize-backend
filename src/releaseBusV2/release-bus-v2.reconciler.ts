@@ -463,6 +463,32 @@ export function candidateUnavailableForTrainUpdate(
   );
 }
 
+type E2EWorkflowInputFields = {
+  readonly release_train_id: string;
+  readonly release_train_revision: string;
+  readonly operation_key: string;
+  readonly staging_source_ref: string;
+  readonly expected_sha: string;
+  readonly release_manifest_id: string;
+  readonly release_manifest_identity_sha256: string;
+  readonly frontend_sha: string;
+  readonly backend_sha: string;
+  readonly frontend_artifact_digest: string;
+  readonly backend_artifact_digest: string;
+};
+
+export function e2eWorkflowInputs(
+  environment: 'staging' | 'prod',
+  fields: E2EWorkflowInputFields
+): Record<string, string> {
+  const { staging_source_ref: stagingSourceRef, ...shared } = fields;
+  return {
+    ...(environment === 'staging' ? { pack: 'all' } : {}),
+    ...shared,
+    source_ref: environment === 'staging' ? stagingSourceRef : 'main'
+  };
+}
+
 function frontendDependsOnBackend(context: TrainContext): boolean {
   const included = new Set(relevantCandidates(context).map(({ id }) => id));
   const backend = new Set(
@@ -2672,12 +2698,11 @@ export class ReleaseBusV2Reconciler {
       service: null,
       expectedSha,
       artifactDigest: manifest.identity_sha256,
-      inputs: {
-        pack: 'all',
+      inputs: e2eWorkflowInputs(environment, {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        source_ref: relevantCandidates(context, 'frontend').length
+        staging_source_ref: relevantCandidates(context, 'frontend').length
           ? releaseBusV2Branch(train, 'frontend')
           : 'main',
         expected_sha: expectedSha,
@@ -2687,7 +2712,7 @@ export class ReleaseBusV2Reconciler {
         backend_sha: manifest.backend_sha ?? '',
         frontend_artifact_digest: manifest.frontend_artifact_digest ?? '',
         backend_artifact_digest: manifest.backend_artifact_digest ?? ''
-      },
+      }),
       maxAttempts: 2
     };
     return releaseBusV2Operations.reconcileWorkflow(spec);
