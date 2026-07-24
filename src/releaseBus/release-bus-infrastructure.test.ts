@@ -185,6 +185,25 @@ describe('release bus infrastructure contract', () => {
     );
   });
 
+  it('propagates immutable Release Train contributor metadata to alerts', () => {
+    expect(deployWorkflow).toContain('release_contributors:');
+    expect(deployWorkflow).toContain(
+      'INPUT_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}'
+    );
+    expect(deployWorkflow).toContain(
+      'CI_RELEASE_TRAIN_ID: ${{ github.event.inputs.release_train_id }}'
+    );
+    expect(deployWorkflow).toContain(
+      'CI_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}'
+    );
+    expect(deployWorkflow).toContain(
+      'CI_PIPELINES_SHA: ${{ github.event.inputs.expected_sha || github.sha }}'
+    );
+    expect(ciWaveNotifier).toContain(
+      'contributor_github_logins: releaseContributors'
+    );
+  });
+
   it('allows the shared API role to nudge only the v2 reconciler Lambda', () => {
     const policy = releaseBusServerless.slice(
       releaseBusServerless.indexOf('ReleaseBusV2ReconcilerInvokePolicy:'),

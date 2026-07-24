@@ -1,5 +1,6 @@
 import { createSign } from 'node:crypto';
 import fetch, { type RequestInit, type Response } from 'node-fetch';
+import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBus/release-bus.constants';
 import type { ReleaseRepository } from '@/releaseBus/release-bus.types';
 
@@ -90,9 +91,13 @@ type GitHubPullRequestDetails = {
   readonly state?: string;
   readonly mergeable?: boolean | null;
   readonly mergeable_state?: string;
+  readonly user?: { readonly login?: string } | null;
   readonly head?: { readonly sha?: string; readonly ref?: string };
   readonly base?: { readonly sha?: string; readonly ref?: string };
   readonly merge_commit_sha?: string | null;
+};
+type GitHubPullRequestCommit = {
+  readonly author?: { readonly login?: string } | null;
 };
 type GitHubCheckRun = {
   readonly id?: number;
@@ -118,6 +123,8 @@ const MAX_WORKFLOW_JOBS = 100;
 const MAX_WORKFLOW_STEPS = 100;
 const MAX_WORKFLOW_LABEL_LENGTH = 500;
 const MAX_STAGING_FENCE_PAGES = 10;
+const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
+const GITHUB_PAGE_SIZE = 100;
 
 export class ReleaseBusGitHubInfrastructureError extends Error {
   public constructor(message: string) {
@@ -211,6 +218,7 @@ function assertAllowedWritableRef(ref: string): void {
 }
 
 export class ReleaseBusGitHubApp {
+  private readonly logger = Logger.get(this.constructor.name);
   private cachedToken: {
     readonly value: string;
     readonly expiresAt: number;
@@ -404,6 +412,7 @@ export class ReleaseBusGitHubApp {
     readonly artifactRunId: string | null;
     readonly artifactName: string | null;
     readonly artifactDigest: string | null;
+    readonly contributorGithubLogins: readonly string[];
   }> {
     if (!Number.isSafeInteger(pullNumber) || pullNumber < 1)
       throw new Error('Invalid pull request number');
@@ -503,6 +512,12 @@ export class ReleaseBusGitHubApp {
           /^sha256:[a-f0-9]{64}$/.test(item.digest ?? '')
       )
       .sort((left, right) => Number(right.id ?? 0) - Number(left.id ?? 0))[0];
+    const contributorGithubLogins =
+      await this.getPullRequestContributorGithubLogins(
+        repository,
+        pullNumber,
+        pull
+      );
     return {
       baseSha,
       mergeSha,
@@ -514,8 +529,61 @@ export class ReleaseBusGitHubApp {
         ? String(artifact.workflow_run.id)
         : null,
       artifactName: artifact?.name ?? null,
-      artifactDigest: artifact?.digest?.replace(/^sha256:/, '') ?? null
+      artifactDigest: artifact?.digest?.replace(/^sha256:/, '') ?? null,
+      contributorGithubLogins
     };
+  }
+
+  private async getPullRequestContributorGithubLogins(
+    repository: ReleaseRepository,
+    pullNumber: number,
+    pull: GitHubPullRequestDetails
+  ): Promise<readonly string[]> {
+    const logins: string[] = [];
+    const addLogin = (value: string | undefined) => {
+      const login = value?.trim();
+      if (!login || isReleaseBusGitHubAppActor(login)) return;
+      if (
+        logins.some(
+          (candidate) => candidate.toLowerCase() === login.toLowerCase()
+        )
+      )
+        return;
+      logins.push(login);
+    };
+    addLogin(pull.user?.login);
+    try {
+      for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page += 1) {
+        const response = await this.request(
+          repository,
+          `/pulls/${pullNumber}/commits?per_page=${GITHUB_PAGE_SIZE}&page=${page}`
+        );
+        await this.assertOk(
+          response,
+          `read ${repository} pull request ${pullNumber} commits`
+        );
+        const commits = (await response.json()) as GitHubPullRequestCommit[];
+        if (!Array.isArray(commits))
+          throw new Error(
+            `Invalid ${repository} pull request ${pullNumber} commits response`
+          );
+        for (const commit of commits) {
+          addLogin(commit.author?.login);
+        }
+        if (commits.length < GITHUB_PAGE_SIZE) break;
+        if (page === MAX_PULL_REQUEST_COMMIT_PAGES) {
+          this.logger.warn(
+            `Contributor scan for ${repository} pull request ${pullNumber} reached ${MAX_PULL_REQUEST_COMMIT_PAGES * GITHUB_PAGE_SIZE} commits; using the contributors collected so far`
+          );
+        }
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      this.logger.warn(
+        `Contributor scan for ${repository} pull request ${pullNumber} failed; using the contributors collected so far: ${reason}`
+      );
+    }
+    return logins;
   }
 
   public async resolveRefIfExists(
