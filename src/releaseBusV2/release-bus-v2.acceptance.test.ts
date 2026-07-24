@@ -2063,6 +2063,54 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.lock.owner_train_id).toBeNull();
   });
 
+  it('replans a backend-only production train when its immutable frontend identity moved', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    const production = train('train-1', {
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    state.repository.trains.set(production.id, production);
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      state.repository.memberships.find(
+        ({ candidate_id }) => candidate_id === 'backend-candidate'
+      )!
+    );
+    state.repository.candidates.set('backend-candidate', {
+      ...state.repository.candidates.get('backend-candidate')!,
+      status: 'PRODUCTION_BUILDING_OR_QUALIFYING',
+      current_train_id: production.id
+    });
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'frontend' ? '9'.repeat(40) : production.backend_base_sha
+    );
+
+    await state.reconciler.runOnce(
+      'acceptance-backend-only-unchanged-main-moved'
+    );
+
+    expect(state.repository.trains.get(production.id)).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        failure_class: 'INTERACTION',
+        failure_message: expect.stringContaining('frontend main moved')
+      })
+    );
+    expect(state.repository.candidates.get('backend-candidate')).toEqual(
+      expect.objectContaining({
+        status: 'READY_FOR_PRODUCTION',
+        current_train_id: null
+      })
+    );
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+  });
+
   it('fails closed when a production main ref does not resolve to a valid SHA', async () => {
     const state = harness('SUCCEEDED');
     const production = train('production-invalid-main', {
