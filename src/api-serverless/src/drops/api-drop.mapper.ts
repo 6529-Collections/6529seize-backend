@@ -1,3 +1,4 @@
+import { getDropEditableUntil } from '@/drops/drop-editability';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -456,6 +457,13 @@ export class ApiDropMapper {
     const updatedAt = numbers.parseIntOrNull(drop.updated_at);
     if (updatedAt !== null) {
       apiDrop.updated_at = updatedAt;
+    }
+    const editableUntil = getDropEditableUntil({
+      createdAt: drop.created_at,
+      updatedAt
+    });
+    if (editableUntil !== null) {
+      apiDrop.editable_until = editableUntil;
     }
     if (drop.title !== null) {
       apiDrop.title = drop.title;
