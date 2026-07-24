@@ -340,6 +340,44 @@ describe('CiPipelineAlertService', () => {
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { environment: 'staging', waveId: 'staging-wave' },
+    { environment: 'prod', waveId: 'prod-wave' }
+  ] as const)(
+    'attributes $environment deployments to the Release Train',
+    async ({ environment, waveId }) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as any,
+        identitiesRepository as any
+      );
+
+      await service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          environment,
+          triggered_by_github_login: '6529-release-bus[bot]'
+        },
+        {}
+      );
+
+      expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+      expect(
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+      ).toEqual(
+        expect.objectContaining({
+          wave_id: waveId,
+          mentioned_users: [],
+          parts: [
+            expect.objectContaining({
+              content: expect.stringContaining('Initiated by: Release Train')
+            })
+          ]
+        })
+      );
+    }
+  );
+
   it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
