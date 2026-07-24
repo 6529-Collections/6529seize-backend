@@ -793,15 +793,16 @@ export class ReleaseBusV2Service {
         if (!scheduler?.lease_token) return null;
         try {
           await this.refreshDependencyHolds(lane, ctx, betaAllowlist);
-          const active = (await this.repository.listTrains(100, ctx)).find(
+          const active = (await this.repository.listTrains(100, ctx)).filter(
             (train) =>
               train.lane === lane && !TERMINAL_TRAIN_STATUSES.has(train.status)
           );
-          if (active) {
-            if (!betaLaneEnabled) return active;
-            return (await this.isBetaTrainAllowed(active, betaAllowlist, ctx))
-              ? active
-              : null;
+          if (!betaLaneEnabled && active.length > 0) return active[0] ?? null;
+          if (betaLaneEnabled) {
+            for (const train of active) {
+              if (await this.isBetaTrainAllowed(train, betaAllowlist, ctx))
+                return train;
+            }
           }
           const candidates = (
             await this.repository.listCandidates(
