@@ -480,7 +480,15 @@ The v2 API exposes authenticated candidate, train, manifest, and control routes
 under `/deploy/release-bus-v2`; `/deploy/ui/bus` is the operator/developer UI.
 `RELEASE_BUS_V2_MODE` supports `OFF`, `STAGING`, and `PRODUCTION`, with separate
 staging and production queues. Staging validation never schedules production:
-an unchanged exact candidate SHA must be explicitly marked ready.
+an unchanged exact candidate SHA must be explicitly marked ready. An
+operator-only maintenance route can transactionally yield legacy stalled
+production qualifications while v2 is `OFF` with `ALL` paused, or in `STAGING`
+mode with `PRODUCTION` paused. Every v2 lock must be free and a double staging
+workflow/ref handshake must be stable. Recovery then owns the scheduler fence,
+re-verifies every lock inside the yield transaction, and processes at most one
+qualification per request so committed progress is always reported. Every
+committed yield requires a follow-up drain check; only an empty recovery
+response proves there are no further live qualifications to yield.
 
 GitHub Actions performs exact composition, combined preflight, immutable
 packaging, backend DAG deployment, frontend deployment, and manifest-bound E2E.
@@ -495,7 +503,13 @@ The staging manifest distinguishes deployed from validated state and binds E2E
 to exact frontend/backend tree SHAs, artifact digests, service operations, and
 workflow runs. Production reuses an exact validated manifest when both composed
 trees match; a different explicit subset receives a staging qualification train
-before guarded `main` mutation. A moved `main` is never overwritten.
+before guarded `main` mutation. If an unchanged staging repository cannot match
+that immutable target, the child and parent terminalize atomically and preserve
+the explicit candidates in `WAITING_FOR_PRODUCTION_REPLAN`. The scheduler
+reclaims them only when current ready candidates cover the mismatched
+repositories or unchanged staging exactly matches the current base, so an
+impossible subset cannot monopolize production. A moved `main` is never
+overwritten.
 
 Infrastructure and retryable deployment failures retry only the same operation.
 Control-plane defects pause automated claiming without blaming candidates, and

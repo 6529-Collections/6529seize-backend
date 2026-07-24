@@ -50,6 +50,7 @@ const mockV2Register = jest.fn();
 const mockV2IsBetaTrainAllowed = jest.fn();
 const mockV2Authorize = jest.fn();
 const mockV2ReportProgress = jest.fn();
+const mockRecoverUnsatisfiableProductionQualifications = jest.fn();
 
 jest.mock('@/releaseBus/release-bus.repository', () => ({
   releaseBusRepository: {
@@ -144,6 +145,13 @@ jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   releaseBusV2Operations: {
     authorize: (...args: unknown[]) => mockV2Authorize(...args),
     reportProgress: (...args: unknown[]) => mockV2ReportProgress(...args)
+  }
+}));
+
+jest.mock('@/releaseBusV2/release-bus-v2.reconciler', () => ({
+  releaseBusV2Reconciler: {
+    recoverUnsatisfiableProductionQualifications: (...args: unknown[]) =>
+      mockRecoverUnsatisfiableProductionQualifications(...args)
   }
 }));
 
@@ -1195,6 +1203,20 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     mockV2ListOperations.mockResolvedValue([]);
     mockV2ListEvents.mockResolvedValue([]);
     mockV2IsBetaTrainAllowed.mockResolvedValue(true);
+    mockRecoverUnsatisfiableProductionQualifications.mockResolvedValue({
+      recovered: [
+        {
+          parent_train_id: TRAIN_ID,
+          qualification_train_id: RESET_ID,
+          candidate_ids: [candidateId]
+        }
+      ],
+      staging_identity: {
+        frontend_sha: SHA,
+        backend_sha: 'b'.repeat(40)
+      },
+      has_more: false
+    });
   });
 
   afterAll(() => {
@@ -1293,6 +1315,47 @@ describe('Release Bus v2 route authorization and exact actions', () => {
         })
       })
     );
+  });
+
+  it('allows an operator to recover stalled qualifications through the audited maintenance action', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/recover-stalled-qualifications',
+      {}
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      mockRecoverUnsatisfiableProductionQualifications
+    ).toHaveBeenCalledWith('developer');
+    expect(response.body).toMatchObject({
+      mode: 'STAGING',
+      recovered_by: 'developer',
+      recovered: [
+        {
+          parent_train_id: TRAIN_ID,
+          qualification_train_id: RESET_ID,
+          candidate_ids: [candidateId]
+        }
+      ]
+    });
+  });
+
+  it('returns conflict when the audited maintenance recovery safety fence rejects', async () => {
+    mockRecoverUnsatisfiableProductionQualifications.mockRejectedValue(
+      new Error('PRODUCTION must remain paused')
+    );
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/recover-stalled-qualifications',
+      {}
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      error: 'PRODUCTION must remain paused'
+    });
   });
 
   it('keeps ordinary candidate registration disabled while global mode is OFF', async () => {

@@ -25,6 +25,7 @@ import type {
   ReleaseBusV2ControlScope,
   ReleaseBusV2DeployPlan,
   ReleaseBusV2Lane,
+  ReleaseBusV2OperationRecord,
   ReleaseBusV2RegisterInput,
   ReleaseBusV2Repository,
   ReleaseBusV2TrainRecord
@@ -36,6 +37,26 @@ const TERMINAL_TRAIN_STATUSES = new Set([
   'FAILED',
   'CANCELLED'
 ]);
+const TERMINAL_OPERATION_STATUSES = new Set<
+  ReleaseBusV2OperationRecord['status']
+>(['SUCCEEDED', 'FAILED', 'CANCELLED']);
+const REQUIRED_MAINTENANCE_LOCKS = new Set([
+  'scheduler',
+  'staging-environment',
+  'production-environment'
+]);
+
+export type ReleaseBusV2StagingIdentity = {
+  readonly frontendSha: string | null;
+  readonly backendSha: string | null;
+};
+
+export type ReleaseBusV2QualificationYieldResult = {
+  readonly yielded: boolean;
+  readonly parentTrainId: string;
+  readonly qualificationTrainId: string;
+  readonly candidateIds: readonly string[];
+};
 
 export function normalizeDeployPlan(
   repository: ReleaseBusV2Repository,
@@ -141,6 +162,25 @@ function readyStatus(lane: ReleaseBusV2Lane): ReleaseBusV2CandidateStatus {
 
 function claimedStatus(lane: ReleaseBusV2Lane): ReleaseBusV2CandidateStatus {
   return lane === 'PRODUCTION' ? 'PRODUCTION_IN_TRAIN' : 'STAGING_IN_TRAIN';
+}
+
+function productionReplanCanBind(
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  frontendBaseSha: string,
+  backendBaseSha: string,
+  stagingIdentity: ReleaseBusV2StagingIdentity | undefined
+): boolean {
+  if (
+    !candidates.some(({ status }) => status === 'WAITING_FOR_PRODUCTION_REPLAN')
+  )
+    return false;
+  const repositories = new Set(candidates.map(({ repository }) => repository));
+  return (
+    (repositories.has('frontend') ||
+      stagingIdentity?.frontendSha === frontendBaseSha) &&
+    (repositories.has('backend') ||
+      stagingIdentity?.backendSha === backendBaseSha)
+  );
 }
 
 function sameQualificationIdentity(
@@ -535,7 +575,11 @@ export class ReleaseBusV2Service {
           throw new Error(
             'Candidate changed; refresh before revoking readiness'
           );
-        if (candidate.status !== 'READY_FOR_PRODUCTION')
+        if (
+          !['READY_FOR_PRODUCTION', 'WAITING_FOR_PRODUCTION_REPLAN'].includes(
+            candidate.status
+          )
+        )
           throw new Error(
             'Production readiness can be revoked only before claim'
           );
@@ -588,6 +632,7 @@ export class ReleaseBusV2Service {
             'READY_FOR_STAGING',
             'WAITING_FOR_DEPENDENCY',
             'READY_FOR_PRODUCTION',
+            'WAITING_FOR_PRODUCTION_REPLAN',
             'NEEDS_REBASE'
           ].includes(candidate.status)
         )
@@ -765,7 +810,8 @@ export class ReleaseBusV2Service {
     lane: ReleaseBusV2Lane,
     frontendBaseSha: string,
     backendBaseSha: string,
-    owner: string
+    owner: string,
+    stagingIdentity?: ReleaseBusV2StagingIdentity
   ): Promise<ReleaseBusV2TrainRecord | null> {
     const mode = getReleaseBusV2Mode();
     const scope = laneScope(lane);
@@ -804,7 +850,7 @@ export class ReleaseBusV2Service {
                 return train;
             }
           }
-          const candidates = (
+          const readyCandidates = (
             await this.repository.listCandidates(
               [readyStatus(lane)],
               RELEASE_BUS_V2_MAX_CANDIDATES,
@@ -815,6 +861,51 @@ export class ReleaseBusV2Service {
               !betaLaneEnabled ||
               releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
           );
+          const heldCandidates =
+            lane === 'PRODUCTION'
+              ? (
+                  await this.repository.listCandidates(
+                    ['WAITING_FOR_PRODUCTION_REPLAN'],
+                    RELEASE_BUS_V2_MAX_CANDIDATES,
+                    ctx
+                  )
+                ).filter(
+                  (candidate) =>
+                    !betaLaneEnabled ||
+                    releaseBusV2BetaAllowsCandidate(
+                      betaAllowlist,
+                      candidate,
+                      lane
+                    )
+                )
+              : [];
+          if (readyCandidates.length === 0 && heldCandidates.length === 0)
+            return null;
+          const replanCandidates = [...heldCandidates, ...readyCandidates];
+          const replanDependencies = await this.repository.listDependencies(
+            replanCandidates.map((candidate) => candidate.id),
+            ctx
+          );
+          const eligibleReplan =
+            heldCandidates.length === 0
+              ? []
+              : await this.selectDependencyClosedCandidates(
+                  replanCandidates,
+                  replanDependencies,
+                  lane,
+                  ctx,
+                  betaAllowlist,
+                  false
+                );
+          // This snapshot only admits composition. Qualification reacquires
+          // staging and rebinds the exact identity before any deploy or E2E.
+          const replanCanBind = productionReplanCanBind(
+            eligibleReplan,
+            frontendBaseSha,
+            backendBaseSha,
+            stagingIdentity
+          );
+          const candidates = replanCanBind ? eligibleReplan : readyCandidates;
           if (candidates.length === 0) return null;
           const dependencies = await this.repository.listDependencies(
             candidates.map((candidate) => candidate.id),
@@ -864,7 +955,11 @@ export class ReleaseBusV2Service {
               !(await this.repository.updateCandidate(
                 candidate.id,
                 candidate.row_version,
-                { status: claimedStatus(lane), currentTrainId: train.id },
+                {
+                  status: claimedStatus(lane),
+                  currentTrainId: train.id,
+                  holdReason: null
+                },
                 ctx
               ))
             )
@@ -877,6 +972,11 @@ export class ReleaseBusV2Service {
               payload: {
                 lane,
                 candidate_ids: order,
+                production_replan_candidate_ids: eligible
+                  .filter(
+                    ({ status }) => status === 'WAITING_FOR_PRODUCTION_REPLAN'
+                  )
+                  .map(({ id }) => id),
                 operator_beta: betaLaneEnabled,
                 // Config validation requires one shared test_id.
                 beta_test_id: betaLaneEnabled ? betaAllowlist[0]?.test_id : null
@@ -910,6 +1010,262 @@ export class ReleaseBusV2Service {
         payload: { scope, reason }
       },
       {}
+    );
+  }
+
+  public async yieldUnsatisfiableProductionQualification(input: {
+    readonly qualificationTrainId: string;
+    readonly stagingIdentity: ReleaseBusV2StagingIdentity;
+    readonly actor: string;
+    readonly maintenanceSchedulerLeaseToken?: string;
+  }): Promise<ReleaseBusV2QualificationYieldResult> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx: RequestContext = { connection };
+        if (input.maintenanceSchedulerLeaseToken) {
+          const locks = await this.repository.listLocks(ctx, true);
+          const scheduler = locks.find(({ name }) => name === 'scheduler');
+          if (
+            Array.from(REQUIRED_MAINTENANCE_LOCKS).some(
+              (name) => !locks.some((lock) => lock.name === name)
+            ) ||
+            scheduler?.lease_token !== input.maintenanceSchedulerLeaseToken ||
+            locks.some(
+              ({ name, owner_train_id, lease_token }) =>
+                name !== 'scheduler' &&
+                (owner_train_id !== null || lease_token !== null)
+            )
+          )
+            throw new Error(
+              'Maintenance recovery lost its exclusive all-lock safety fence'
+            );
+        }
+        const qualification = await this.repository.findTrain(
+          input.qualificationTrainId,
+          ctx,
+          true
+        );
+        if (!qualification?.parent_train_id)
+          throw new Error(
+            'Production qualification has no exact parent train identity'
+          );
+        const parent = await this.repository.findTrain(
+          qualification.parent_train_id,
+          ctx,
+          true
+        );
+        if (!parent)
+          throw new Error('Production qualification parent does not exist');
+        const memberships = await this.repository.listTrainCandidates(
+          parent.id,
+          ctx
+        );
+        const candidateIds = memberships
+          .filter(({ disposition }) => disposition === 'INCLUDED')
+          .sort((left, right) => left.sequence - right.sequence)
+          .map(({ candidate_id }) => candidate_id);
+        if (
+          qualification.status === 'CANCELLED' &&
+          parent.status === 'CANCELLED'
+        )
+          return {
+            yielded: false,
+            parentTrainId: parent.id,
+            qualificationTrainId: qualification.id,
+            candidateIds
+          };
+        if (
+          qualification.lane !== 'PRODUCTION_QUALIFICATION' ||
+          !['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(
+            qualification.status
+          ) ||
+          parent.lane !== 'PRODUCTION' ||
+          parent.status !== 'WAITING_FOR_ENVIRONMENT' ||
+          parent.qualification_train_id !== qualification.id
+        )
+          throw new Error(
+            'Production qualification is not in the exact yieldable state'
+          );
+        const operations = [
+          ...(await this.repository.listOperations(qualification.id, ctx)),
+          ...(await this.repository.listOperations(parent.id, ctx))
+        ];
+        if (
+          operations.some(
+            ({ status }) => !TERMINAL_OPERATION_STATUSES.has(status)
+          )
+        )
+          throw new Error(
+            'Production qualification cannot yield while an operation is active'
+          );
+        const candidates = await Promise.all(
+          candidateIds.map((candidateId) =>
+            this.repository.findCandidateById(candidateId, ctx, true)
+          )
+        );
+        if (candidates.some((candidate) => candidate === null))
+          throw new Error(
+            'Production qualification candidate identity is incomplete'
+          );
+        if (
+          !qualification.frontend_composed_sha ||
+          !qualification.backend_composed_sha ||
+          !input.stagingIdentity.frontendSha ||
+          !input.stagingIdentity.backendSha
+        )
+          throw new Error(
+            'Production qualification unsatisfiability identity is incomplete'
+          );
+        const candidateRepositories = new Set(
+          candidates.map((candidate) => candidate!.repository)
+        );
+        const mismatchedRepositories = [
+          !candidateRepositories.has('frontend') &&
+          input.stagingIdentity.frontendSha !==
+            qualification.frontend_composed_sha
+            ? 'frontend'
+            : null,
+          !candidateRepositories.has('backend') &&
+          input.stagingIdentity.backendSha !==
+            qualification.backend_composed_sha
+            ? 'backend'
+            : null
+        ].filter((repository): repository is ReleaseBusV2Repository =>
+          Boolean(repository)
+        );
+        if (mismatchedRepositories.length === 0)
+          throw new Error(
+            'Production qualification is not unsatisfiable against unchanged staging repositories'
+          );
+        const holdReason =
+          'Exact production qualification could not bind unchanged staging identity; explicit readiness is preserved until a safe combined replan is claimable';
+        for (const candidate of candidates) {
+          if (!candidate) continue;
+          if (
+            ['SUPERSEDED', 'CANCELLED', 'PRODUCTION_DEPLOYED'].includes(
+              candidate.status
+            )
+          )
+            continue;
+          if (
+            candidate.current_train_id !== parent.id ||
+            candidate.production_requested_at === null ||
+            ![
+              'PRODUCTION_IN_TRAIN',
+              'PRODUCTION_BUILDING_OR_QUALIFYING'
+            ].includes(candidate.status)
+          )
+            throw new Error(
+              `Candidate ${candidate.id} is not safely bound to the stalled production train`
+            );
+          if (
+            !(await this.repository.updateCandidate(
+              candidate.id,
+              candidate.row_version,
+              {
+                status: 'WAITING_FOR_PRODUCTION_REPLAN',
+                currentTrainId: null,
+                holdReason
+              },
+              ctx
+            ))
+          )
+            throw new Error(
+              `Candidate ${candidate.id} changed during production qualification yield`
+            );
+          await this.repository.appendEvent(
+            {
+              trainId: parent.id,
+              candidateId: candidate.id,
+              eventType: 'CANDIDATE_WAITING_FOR_PRODUCTION_REPLAN',
+              actor: input.actor,
+              payload: {
+                qualification_train_id: qualification.id,
+                target_frontend_sha: qualification.frontend_composed_sha,
+                target_backend_sha: qualification.backend_composed_sha,
+                staging_frontend_sha: input.stagingIdentity.frontendSha,
+                staging_backend_sha: input.stagingIdentity.backendSha,
+                mismatched_repositories: mismatchedRepositories
+              }
+            },
+            ctx
+          );
+        }
+        const now = Date.now();
+        if (
+          !(await this.repository.updateTrain(
+            qualification.id,
+            qualification.row_version,
+            {
+              status: 'CANCELLED',
+              failureClass: 'INTERACTION',
+              failureMessage:
+                'Unchanged staging identity cannot satisfy this immutable production qualification target',
+              recoveryMessage:
+                'Qualification yielded without environment mutation; explicit candidates are waiting for a safe current-base replan',
+              completedAt: now
+            },
+            ctx
+          ))
+        )
+          throw new Error(
+            'Production qualification changed during transactional yield'
+          );
+        if (
+          !(await this.repository.updateTrain(
+            parent.id,
+            parent.row_version,
+            {
+              status: 'CANCELLED',
+              failureClass: 'INTERACTION',
+              failureMessage:
+                'Exact production qualification became unsatisfiable against unchanged staging identity',
+              recoveryMessage:
+                'The impossible train yielded the production lane; explicit candidates will rejoin a safe combined replan automatically',
+              completedAt: now
+            },
+            ctx
+          ))
+        )
+          throw new Error(
+            'Production parent changed during transactional qualification yield'
+          );
+        await this.repository.appendEvent(
+          {
+            trainId: qualification.id,
+            eventType: 'PRODUCTION_QUALIFICATION_YIELDED',
+            actor: input.actor,
+            payload: {
+              parent_train_id: parent.id,
+              candidate_ids: candidateIds,
+              target_frontend_sha: qualification.frontend_composed_sha,
+              target_backend_sha: qualification.backend_composed_sha,
+              staging_frontend_sha: input.stagingIdentity.frontendSha,
+              staging_backend_sha: input.stagingIdentity.backendSha,
+              mismatched_repositories: mismatchedRepositories
+            }
+          },
+          ctx
+        );
+        await this.repository.appendEvent(
+          {
+            trainId: parent.id,
+            eventType: 'PRODUCTION_TRAIN_YIELDED_FOR_SAFE_REPLAN',
+            actor: input.actor,
+            payload: {
+              qualification_train_id: qualification.id,
+              candidate_ids: candidateIds
+            }
+          },
+          ctx
+        );
+        return {
+          yielded: true,
+          parentTrainId: parent.id,
+          qualificationTrainId: qualification.id,
+          candidateIds
+        };
+      }
     );
   }
 
@@ -964,6 +1320,7 @@ export class ReleaseBusV2Service {
         'STAGING_VALIDATING',
         'STAGING_VALIDATED',
         'READY_FOR_PRODUCTION',
+        'WAITING_FOR_PRODUCTION_REPLAN',
         'PRODUCTION_IN_TRAIN',
         'PRODUCTION_BUILDING_OR_QUALIFYING',
         'PRODUCTION_DEPLOYING',
@@ -991,7 +1348,8 @@ export class ReleaseBusV2Service {
     dependencies: readonly ReleaseBusV2DependencyRecord[],
     lane: ReleaseBusV2Lane,
     ctx: RequestContext,
-    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = []
+    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [],
+    updateDependencyHolds = true
   ): Promise<ReleaseBusV2CandidateRecord[]> {
     const byId = new Map(
       candidates.map((candidate) => [candidate.id, candidate])
@@ -1040,18 +1398,19 @@ export class ReleaseBusV2Service {
         }
       }
     }
-    for (const candidate of candidates) {
-      if (eligible.has(candidate.id)) continue;
-      await this.repository.updateCandidate(
-        candidate.id,
-        candidate.row_version,
-        {
-          status: 'WAITING_FOR_DEPENDENCY',
-          holdReason: `Waiting for ${lane.toLowerCase()} dependency`
-        },
-        ctx
-      );
-    }
+    if (updateDependencyHolds)
+      for (const candidate of candidates) {
+        if (eligible.has(candidate.id)) continue;
+        await this.repository.updateCandidate(
+          candidate.id,
+          candidate.row_version,
+          {
+            status: 'WAITING_FOR_DEPENDENCY',
+            holdReason: `Waiting for ${lane.toLowerCase()} dependency`
+          },
+          ctx
+        );
+      }
     return Array.from(eligible)
       .map((id) => byId.get(id))
       .filter((candidate): candidate is ReleaseBusV2CandidateRecord =>

@@ -7999,6 +7999,29 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+  /deploy/release-bus-v2/maintenance/recover-stalled-qualifications:
+    post:
+      tags:
+        - Release Bus v2
+      summary: >-
+        Safely yield unsatisfiable production qualifications while production
+        automation is disabled
+      operationId: recoverStalledReleaseBusV2ProductionQualifications
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: >-
+            Unsatisfiable parent and qualification trains were terminalized
+            transactionally and their explicit candidates retained for replan.
+            Recovery commits at most one yield per request; has_more means the
+            caller must invoke the endpoint again, and only a response with no
+            recovered item and has_more=false proves the drain pass is complete
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
   /subscriptions/consolidation/details/{consolidation_key}:
     get:
       tags:
@@ -23757,6 +23780,7 @@ components:
         - STAGING_VALIDATING
         - STAGING_VALIDATED
         - READY_FOR_PRODUCTION
+        - WAITING_FOR_PRODUCTION_REPLAN
         - PRODUCTION_IN_TRAIN
         - PRODUCTION_BUILDING_OR_QUALIFYING
         - PRODUCTION_DEPLOYING
@@ -23986,7 +24010,9 @@ components:
         candidate_id:
           type: string
           format: uuid
-          description: Exact synthetic candidate id required only for the operator-only beta while global mode is OFF.
+          description: >-
+            Exact synthetic candidate id required only for the operator-only
+            beta while global mode is OFF.
         repository:
           type: string
           enum:

@@ -9,6 +9,7 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { isReleaseBusGitHubAppActor } from '@/releaseBus/release-bus.constants';
 import {
   releaseNoteGenerationQueue,
   ReleaseNoteGenerationQueue
@@ -243,6 +244,18 @@ function formatServiceLabel(request: CiPipelineAlertRequest): string {
   return service ? `${repoLabel} - ${service}` : repoLabel;
 }
 
+function formatInitiator(
+  request: CiPipelineAlertRequest,
+  mentions: AlertMentions
+): string {
+  if (isReleaseBusGitHubAppActor(request.triggered_by_github_login)) {
+    return 'Release Train';
+  }
+  return mentions.triggeredBy
+    ? '@[' + mentions.triggeredBy.handle + ']'
+    : 'unknown';
+}
+
 function getGithubRepoUrl(request: CiPipelineAlertRequest): string | null {
   try {
     const runUrl = new URL(request.run_url);
@@ -407,14 +420,16 @@ export class CiPipelineAlertService {
     const triggeredByGithubLogin = normalizeOptionalValue(
       request.triggered_by_github_login
     );
-    const triggeredByHandle = triggeredByGithubLogin
-      ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
-      : null;
+    const isReleaseTrain = isReleaseBusGitHubAppActor(triggeredByGithubLogin);
+    const triggeredByHandle =
+      triggeredByGithubLogin && !isReleaseTrain
+        ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
+        : null;
     if (!triggeredByGithubLogin) {
       this.logger.warn(
         'Unable to resolve CI workflow initiator: GitHub login is missing'
       );
-    } else if (!triggeredByHandle) {
+    } else if (!isReleaseTrain && !triggeredByHandle) {
       this.logger.warn(
         `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile mapping is missing`
       );
@@ -545,9 +560,7 @@ export class CiPipelineAlertService {
     const formattedDescription = description
       ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
       : null;
-    const triggeredBy = mentions.triggeredBy
-      ? '@[' + mentions.triggeredBy.handle + ']'
-      : 'unknown';
+    const triggeredBy = formatInitiator(request, mentions);
     const lines = [
       formatAlertHeading(request),
       '',

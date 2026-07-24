@@ -71,6 +71,7 @@ import {
   type ReleaseBusV2Progress
 } from '@/releaseBusV2/release-bus-v2.operations';
 import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
+import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import { releaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
 import {
   RELEASE_BUS_V2_CANDIDATE_STATUSES,
@@ -962,6 +963,33 @@ deployRoutes.post('/release-bus-v2/reconcile', async (req, res) => {
     execution
   });
 });
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/recover-stalled-qualifications',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    try {
+      const result =
+        await releaseBusV2Reconciler.recoverUnsatisfiableProductionQualifications(
+          actor
+        );
+      setNoStoreHeaders(res);
+      return res.json({
+        ...result,
+        mode: getReleaseBusV2Mode(),
+        recovered_by: actor
+      });
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error
+          ? error.message
+          : 'Stalled production qualification recovery failed'
+      );
+    }
+  }
+);
 
 async function requireV2TrainAutomationAllowed(trainId: string) {
   if (getReleaseBusV2Mode() !== 'OFF') return;

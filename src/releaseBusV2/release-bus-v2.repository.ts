@@ -824,10 +824,11 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   }
 
   public async listLocks(
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2LockRecord[]> {
     return this.db.execute<ReleaseBusV2LockRecord>(
-      `select * from ${RELEASE_BUS_V2_LOCKS_TABLE} order by name asc`,
+      `select * from ${RELEASE_BUS_V2_LOCKS_TABLE} order by name asc${forUpdate ? ' for update' : ''}`,
       {},
       dbOptions(ctx)
     );
