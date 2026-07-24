@@ -1,7 +1,8 @@
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '../sql-executor';
 import {
   GroupBeneficiaryGrantMatchMode,
@@ -30,6 +31,10 @@ import { IdentityEntity } from '../entities/IIdentity';
 import { collections } from '../collections';
 import { Time } from '../time';
 import { DbPoolName } from '../db-query.options';
+import {
+  MembershipRefreshProducer,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 
 const mysql = require('mysql');
 
@@ -52,6 +57,18 @@ export interface IdentityGroupMembershipPage {
 const IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE = 500;
 
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
+  private readonly membershipRefreshProducer: MembershipRefreshProducer;
+
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    membershipRefreshProducer?: MembershipRefreshProducer
+  ) {
+    super(sqlExecutorGetter);
+    this.membershipRefreshProducer =
+      membershipRefreshProducer ??
+      new MembershipRefreshProducer(sqlExecutorGetter);
+  }
+
   async save(
     entity: Omit<UserGroupEntity, 'is_pure_profile_group'>,
     connection: ConnectionWrapper<any>
@@ -185,7 +202,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           (it) => !alreadyInsertedProfileIds.includes(it)
         );
         if (missingProfileIds.length) {
-          await this.insertGroupChanges(missingProfileIds);
+          await this.insertGroupChanges(missingProfileIds, connection);
           let sql = `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
                  values `;
           for (const profileId of missingProfileIds) {
@@ -707,7 +724,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return;
     }
-    await this.insertGroupChanges(profileIds);
+    await this.insertGroupChanges(profileIds, connectionHolder);
     await this.db.execute(
       `delete from ${PROFILE_GROUPS_TABLE} where profile_id in (:profileIds)`,
       { profileIds },
@@ -729,7 +746,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           `(${mysql.escape(profileGroupId)}, ${mysql.escape(targetIdentity)}) `
       )
       .join(',')}`;
-    await this.insertGroupChanges([targetIdentity]);
+    await this.insertGroupChanges([targetIdentity], connection);
     await this.db.execute(sql, undefined, {
       wrappedConnection: connection
     });
@@ -1015,15 +1032,25 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       });
   }
 
-  async insertGroupChanges(profileIds: string[]) {
+  async insertGroupChanges(
+    profileIds: string[],
+    connection?: ConnectionWrapper<any>
+  ) {
     if (!profileIds.length) return null;
     const currentMillis = Time.currentMillis();
     const chunkSize = 1000;
     for (let i = 0; i < profileIds.length; i += chunkSize) {
       const chunk = profileIds.slice(i, i + chunkSize);
       const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${chunk.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
-      await this.db.execute(sql);
+      await this.db.execute(sql, undefined, {
+        wrappedConnection: connection
+      });
     }
+    await this.membershipRefreshProducer.markProfilesDirty(
+      profileIds,
+      MembershipRefreshReason.PROFILE_GROUP_CHANGED,
+      { connection }
+    );
   }
 
   async findBeneficiaryGrantGroupIdsForProfile(

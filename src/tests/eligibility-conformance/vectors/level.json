@@ -1,0 +1,65 @@
+[
+  {
+    "name": "level-min-at-border",
+    "dimension": "level",
+    "description": "level_min stores a level number; level_raw 100 is exactly level 3's lower border, so level_min 3 passes and level_min 4 fails on both engines (spec §4).",
+    "identities": [{ "id": "subject", "level_raw": 100 }],
+    "subject": "subject",
+    "groups": [
+      { "id": "g-min-3", "level_min": 3 },
+      { "id": "g-min-4", "level_min": 4 }
+    ],
+    "expected": { "eligible_group_ids": ["g-min-3"] }
+  },
+  {
+    "name": "level-max-exact-border-agree",
+    "dimension": "level",
+    "description": "At the exact lower border of the level (level_raw 100 = border of level 3) both level_max encodings agree (spec §4).",
+    "identities": [{ "id": "subject", "level_raw": 100 }],
+    "subject": "subject",
+    "groups": [{ "id": "g-max-3", "level_max": 3 }],
+    "expected": { "eligible_group_ids": ["g-max-3"] }
+  },
+  {
+    "name": "level-max-inside-level",
+    "dimension": "level",
+    "description": "level_raw 150 is inside level 3's band and passes level_max 3.",
+    "identities": [{ "id": "subject", "level_raw": 150 }],
+    "subject": "subject",
+    "groups": [
+      { "id": "g-max-3", "level_max": 3 },
+      { "id": "g-max-2", "level_max": 2 }
+    ],
+    "expected": { "eligible_group_ids": ["g-max-3"] }
+  },
+  {
+    "name": "level-max-zero",
+    "dimension": "level",
+    "description": "level_max 0 is a real bound and admits only level-0 profiles.",
+    "identities": [{ "id": "subject", "level_raw": 25 }],
+    "subject": "subject",
+    "groups": [{ "id": "g-max-0", "level_max": 0 }],
+    "expected": { "eligible_group_ids": [] }
+  },
+  {
+    "name": "level-max-one-hundred",
+    "dimension": "level",
+    "description": "Level 100 is the highest possible level, so level_max 100 is an intentionally unbounded upper limit.",
+    "identities": [{ "id": "subject", "level_raw": 30000000 }],
+    "subject": "subject",
+    "groups": [{ "id": "g-max-100", "level_max": 100 }],
+    "expected": { "eligible_group_ids": ["g-max-100"] }
+  },
+  {
+    "name": "level-min-zero-noop",
+    "dimension": "level",
+    "description": "level_min 0 is vacuous because every profile is at least level 0.",
+    "identities": [{ "id": "subject", "level_raw": 0 }],
+    "subject": "subject",
+    "groups": [
+      { "id": "g-min-0", "level_min": 0 },
+      { "id": "g-min-1", "level_min": 1 }
+    ],
+    "expected": { "eligible_group_ids": ["g-min-0"] }
+  }
+]

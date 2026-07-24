@@ -43,6 +43,10 @@ import {
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
 import { ids } from '../ids';
 import { Logger } from '../logging';
+import {
+  membershipRefreshProducer,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { userNotifier } from '../notifications/user.notifier';
 import {
@@ -380,10 +384,26 @@ export class RatingsService {
         timer?.stop(`${this.constructor.name}->updateRatingUnsafe->insertLogs`);
       }
 
+      await this.markProfilesDirtyForRating(request, connection);
+
       return { identityUpdate };
     } finally {
       timer?.stop(`${this.constructor.name}->updateRatingUnsafe`);
     }
+  }
+
+  private async markProfilesDirtyForRating(
+    request: UpdateRatingRequest,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    if (!getMattersWhereTargetIsProfile().includes(request.matter)) {
+      return;
+    }
+    await membershipRefreshProducer.markProfilesDirty(
+      [request.rater_profile_id, request.matter_target_id],
+      MembershipRefreshReason.RATING_CHANGED,
+      { connection }
+    );
   }
 
   private async insertLogs(

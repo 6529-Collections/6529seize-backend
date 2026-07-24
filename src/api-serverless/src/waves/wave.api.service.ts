@@ -111,6 +111,10 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
+import {
+  membershipRefreshProducer,
+  MembershipRefreshReason
+} from '@/membership/membership-refresh.producer';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -374,6 +378,19 @@ export class WaveApiService {
       await this.wavesApiDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          await membershipRefreshProducer.markGroupsDirty(
+            [
+              createWaveRequest.visibility.scope.group_id,
+              createWaveRequest.participation.scope.group_id,
+              createWaveRequest.chat.scope.group_id,
+              createWaveRequest.voting.scope.group_id,
+              createWaveRequest.wave.admin_group?.group_id
+            ].filter(
+              (groupId): groupId is string => typeof groupId === 'string'
+            ),
+            MembershipRefreshReason.WAVE_GROUP_CHANGED,
+            ctxWithConnection
+          );
           await this.validateSubwaveCreationParent({
             request: createWaveRequest,
             actingAsId,
@@ -1839,6 +1856,17 @@ export class WaveApiService {
     return await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
+        await membershipRefreshProducer.markGroupsDirty(
+          [
+            request.visibility.scope.group_id,
+            request.participation.scope.group_id,
+            request.chat.scope.group_id,
+            request.voting.scope.group_id,
+            request.wave.admin_group?.group_id
+          ].filter((groupId): groupId is string => typeof groupId === 'string'),
+          MembershipRefreshReason.WAVE_GROUP_CHANGED,
+          ctxWithConnection
+        );
         const waveBeforeUpdate = await this.wavesApiDb.findWaveById(
           waveId,
           connection

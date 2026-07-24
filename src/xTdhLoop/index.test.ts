@@ -3,6 +3,8 @@ const mockLoggerInfo = jest.fn();
 const mockLoggerWarn = jest.fn();
 const mockHandleUniversePhase = jest.fn();
 const mockHandleStatsPhase = jest.fn();
+const mockMarkGroupsByDimensionDirty = jest.fn();
+const mockEnqueueDirtyRefreshBestEffort = jest.fn();
 
 jest.mock('../secrets', () => ({
   doInDbContext: mockDoInDbContext
@@ -28,6 +30,19 @@ jest.mock('../xtdh/recalculate-xtdh.use-case', () => ({
   }
 }));
 
+jest.mock('../membership/membership-refresh.producer', () => ({
+  membershipRefreshProducer: {
+    markGroupsByDimensionDirty: mockMarkGroupsByDimensionDirty,
+    enqueueDirtyRefreshBestEffort: mockEnqueueDirtyRefreshBestEffort
+  },
+  MembershipCriteriaDimension: {
+    TDH_LEVEL: 'TDH_LEVEL'
+  },
+  MembershipRefreshReason: {
+    TDH_XTDH_CHANGED: 'TDH_XTDH_CHANGED'
+  }
+}));
+
 import { handler, resolveXTdhLoopPhase, resolveXTdhLoopWork } from './index';
 import { XTDH_LOOP_PHASE } from '../xtdh/xtdh-loop-phase';
 
@@ -37,6 +52,8 @@ describe('xTdhLoop handler', () => {
     mockDoInDbContext.mockImplementation(async (fn) => fn());
     mockHandleUniversePhase.mockResolvedValue(undefined);
     mockHandleStatsPhase.mockResolvedValue(undefined);
+    mockMarkGroupsByDimensionDirty.mockResolvedValue(undefined);
+    mockEnqueueDirtyRefreshBestEffort.mockResolvedValue(undefined);
   });
 
   it('treats empty and legacy messages as universe phase', () => {
@@ -135,5 +152,10 @@ describe('xTdhLoop handler', () => {
 
     expect(mockHandleStatsPhase).toHaveBeenCalledTimes(1);
     expect(mockHandleUniversePhase).not.toHaveBeenCalled();
+    expect(mockMarkGroupsByDimensionDirty).toHaveBeenCalledWith(
+      'TDH_LEVEL',
+      'TDH_XTDH_CHANGED'
+    );
+    expect(mockEnqueueDirtyRefreshBestEffort).toHaveBeenCalledTimes(1);
   });
 });

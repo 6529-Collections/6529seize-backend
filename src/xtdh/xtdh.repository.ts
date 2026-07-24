@@ -33,6 +33,11 @@ import { NotFoundException } from '../exceptions';
 import { XTdhGrantTokenEntity } from '../entities/IXTdhGrantToken';
 import { numbers } from '../numbers';
 import { PageSortDirection } from '../api-serverless/src/page-request';
+import {
+  membershipRefreshProducer,
+  MembershipCriteriaDimension,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 
 export type GrantWithCap = XTdhGrantEntity & { grantor_x_tdh_rate: number };
 
@@ -2287,6 +2292,13 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
           wrappedConnection: ctx.connection
         }
       );
+      if (param.status !== XTdhGrantStatus.PENDING) {
+        await membershipRefreshProducer.markGroupsByDimensionDirty(
+          MembershipCriteriaDimension.GRANT,
+          MembershipRefreshReason.GRANT_CHANGED,
+          ctx
+        );
+      }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateStatus`);
     }

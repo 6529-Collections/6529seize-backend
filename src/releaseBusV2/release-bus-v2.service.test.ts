@@ -136,6 +136,77 @@ describe('Release Bus v2 explicit production opt-in', () => {
   });
 });
 
+describe('Release Bus v2 STAGING-mode production beta opt-in', () => {
+  const previousMode = process.env.RELEASE_BUS_V2_MODE;
+  const previousAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+  const betaId = '11111111-1111-4111-8111-111111111111';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-1',
+        candidate_id: betaId,
+        repository: 'frontend',
+        branch_name: 'feature/exact',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+    else process.env.RELEASE_BUS_V2_MODE = previousMode;
+    if (previousAllowlist === undefined)
+      delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+    else process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = previousAllowlist;
+  });
+
+  it('allows only the exact validated allowlisted operator candidate', async () => {
+    const exact = {
+      ...candidate('STAGING_VALIDATED'),
+      id: betaId,
+      requested_by: 'beta-operator'
+    };
+    const state = repositoryFor(exact);
+    mockResolveRef.mockResolvedValue(exact.head_sha);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction(
+        betaId,
+        exact.head_sha,
+        exact.row_version,
+        'beta-operator'
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'READY_FOR_PRODUCTION' })
+    );
+  });
+
+  it('does not broaden production readiness to another actor', async () => {
+    const exact = {
+      ...candidate('STAGING_VALIDATED'),
+      id: betaId,
+      requested_by: 'beta-operator'
+    };
+    const state = repositoryFor(exact);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction(
+        betaId,
+        exact.head_sha,
+        exact.row_version,
+        'another-actor'
+      )
+    ).rejects.toThrow('production readiness is disabled');
+    expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+});
+
 describe('Release Bus v2 globally-OFF operator beta registration', () => {
   const previousMode = process.env.RELEASE_BUS_V2_MODE;
   const previousAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;

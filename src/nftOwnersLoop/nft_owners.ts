@@ -24,6 +24,11 @@ import {
   fetchMaxTransactionsBlockNumber,
   fetchTransactionsAfterBlock
 } from '../db';
+import {
+  membershipRefreshProducer,
+  MembershipCriteriaDimension,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 
 function normalizeAddress(addr: string): string {
   return addr.toLowerCase();
@@ -238,9 +243,21 @@ export const updateNftOwners = async (reset?: boolean) => {
   }
 
   if (addresses.size > 0) {
+    if (reset) {
+      await membershipRefreshProducer.markGroupsByDimensionDirty(
+        MembershipCriteriaDimension.NFT_OWNERSHIP,
+        MembershipRefreshReason.NFT_OWNERSHIP_CHANGED
+      );
+    } else {
+      await membershipRefreshProducer.markProfilesForWalletsDirty(
+        Array.from(addresses),
+        MembershipRefreshReason.NFT_OWNERSHIP_CHANGED
+      );
+    }
     await persistNftOwners(addresses, ownersDelta, reset);
     await consolidateNftOwners(addresses, reset);
     await setNftOwnersSyncBlock(blockReference);
+    await membershipRefreshProducer.enqueueDirtyRefreshBestEffort();
   }
 };
 

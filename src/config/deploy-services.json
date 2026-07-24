@@ -150,7 +150,7 @@
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["dbMigrationsLoop"],
+      "verification_targets": ["dbMigrationsLoop", "membershipRefreshLoop"],
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
       "default_dependencies": [],

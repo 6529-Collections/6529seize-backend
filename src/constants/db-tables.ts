@@ -34,6 +34,11 @@ export const ABUSIVENESS_DETECTION_RESULTS_TABLE =
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const RATINGS_SNAPSHOTS_TABLE = 'ratings_snapshots';
 export const USER_GROUPS_TABLE = 'community_groups';
+export const USER_GROUP_MEMBERS_TABLE = 'user_group_members';
+export const MEMBERSHIP_REFRESH_REQUESTS_TABLE = 'membership_refresh_requests';
+export const MEMBERSHIP_MATERIALIZATION_STATES_TABLE =
+  'membership_materialization_states';
+export const MEMBERSHIP_WATERMARKS_TABLE = 'membership_watermarks';
 export const PROFILE_GROUPS_TABLE = 'profile_groups';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
