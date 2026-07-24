@@ -153,6 +153,160 @@ describeWithSeed(
       ).toBe('SUPERSEDED');
     });
 
+    it('does not supersede an immutable candidate after a train claims it', async () => {
+      const claimed = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 112,
+          branchName: 'feature/deleted-after-merge',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      const service = new ReleaseBusV2Service(repository);
+      const train = await service.claimLane(
+        'STAGING',
+        SHA_B,
+        SHA_B,
+        'claim-before-branch-deletion'
+      );
+
+      expect(train).not.toBeNull();
+      await expect(
+        repository.supersedeMovedBranchHeads(
+          'frontend',
+          claimed.branch_name,
+          'deleted',
+          {}
+        )
+      ).resolves.toEqual([]);
+      await expect(
+        repository.supersedeOtherPrHeads(
+          'frontend',
+          claimed.pr_number,
+          SHA_B,
+          {}
+        )
+      ).resolves.toEqual([]);
+      expect(await repository.findCandidateById(claimed.id, {})).toEqual(
+        expect.objectContaining({
+          status: 'STAGING_IN_TRAIN',
+          current_train_id: train?.id,
+          superseded_at: null
+        })
+      );
+    });
+
+    it('clears stale supersession bookkeeping when an active train repairs its candidate', async () => {
+      const claimed = await repository.createCandidate(
+        {
+          repository: 'backend',
+          prNumber: 113,
+          branchName: 'feature/repair-active-candidate',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: { units: ['api'], edges: [] },
+          prEvidence: null
+        },
+        {}
+      );
+      const service = new ReleaseBusV2Service(repository);
+      const train = await service.claimLane(
+        'STAGING',
+        SHA_B,
+        SHA_B,
+        'claim-before-repair'
+      );
+      const active = await repository.findCandidateById(claimed.id, {});
+      expect(active).not.toBeNull();
+      await repository.updateCandidate(
+        claimed.id,
+        active!.row_version,
+        { status: 'SUPERSEDED', supersededAt: 2 },
+        {}
+      );
+      const stale = await repository.findCandidateById(claimed.id, {});
+      expect(stale).not.toBeNull();
+      await repository.updateCandidate(
+        claimed.id,
+        stale!.row_version,
+        {
+          status: 'STAGING_IN_TRAIN',
+          currentTrainId: train!.id,
+          supersededAt: null
+        },
+        {}
+      );
+
+      expect(await repository.findCandidateById(claimed.id, {})).toEqual(
+        expect.objectContaining({
+          status: 'STAGING_IN_TRAIN',
+          current_train_id: train?.id,
+          superseded_at: null
+        })
+      );
+    });
+
+    it('restores exact production readiness after a merged source branch is cleaned up', async () => {
+      const registered = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 114,
+          branchName: 'feature/merged-production-cleanup',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      await repository.updateCandidate(
+        registered.id,
+        registered.row_version,
+        {
+          status: 'READY_FOR_PRODUCTION',
+          stagingValidatedTrainId: 'staging-train',
+          stagingValidatedManifestId: 'staging-manifest',
+          productionRequestedAt: 2,
+          productionRequestedBy: 'owner'
+        },
+        {}
+      );
+      const service = new ReleaseBusV2Service(repository);
+      await service.invalidateBranch(
+        registered.repository,
+        registered.branch_name,
+        'deleted',
+        'reconciler'
+      );
+      await repository.appendEvent(
+        {
+          candidateId: registered.id,
+          eventType: 'CANDIDATE_STATUS_OBSERVED_AFTER_SUPERSESSION',
+          actor: 'integration'
+        },
+        {}
+      );
+
+      await expect(
+        service.restoreProductionReadinessAfterBranchCleanup(
+          registered.id,
+          'reconciler'
+        )
+      ).resolves.toEqual(
+        expect.objectContaining({
+          status: 'READY_FOR_PRODUCTION',
+          current_train_id: null,
+          superseded_at: null,
+          staging_validated_manifest_id: 'staging-manifest',
+          production_requested_at: 2
+        })
+      );
+    });
+
     it('claims only explicitly production-ready candidates', async () => {
       process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
       const explicit = await repository.createCandidate(

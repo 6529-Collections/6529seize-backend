@@ -15,11 +15,11 @@ node ops/scripts/release-bus-status.mjs
 The helper prefers `/deploy/release-bus-v2/controls` and temporarily falls back
 to the v1 endpoint only before the additive v2 API exists.
 
-| Mode | Staging | Production |
-| --- | --- | --- |
-| `OFF` | Serialized legacy manual route | Serialized manual route with explicit owner authority; no staging evidence gate |
-| `STAGING` | V2 readiness | Production remains manual/disabled |
-| `PRODUCTION` | V2 readiness | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate |
+| Mode         | Staging                        | Production                                                                         |
+| ------------ | ------------------------------ | ---------------------------------------------------------------------------------- |
+| `OFF`        | Serialized legacy manual route | Serialized manual route with explicit owner authority; no staging evidence gate    |
+| `STAGING`    | V2 readiness                   | Manual/disabled by default; exact operator-only production beta may be allowlisted |
+| `PRODUCTION` | V2 readiness                   | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate             |
 
 For an active mode, `ALL` and the target lane must be running. In `OFF`, v2
 controls are non-authoritative and the manual fallback remains available when
@@ -103,6 +103,15 @@ from current `main`:
   verify exact versions, run production-safe read-only E2E, and mark
   `PRODUCTION_DEPLOYED`.
 
+The dedicated Release Bus GitHub App must be an `always` bypass actor on the
+default-branch ruleset in both repositories. V2 uses that narrowly scoped App
+to perform a non-force fast-forward to the exact staging-validated commit; a
+pull-request-only bypass would require GitHub to manufacture a different merge
+commit and therefore fails closed. Human and team bypass actors remain
+pull-request-only. The compensating controls are enforced in code: the App can
+write only the explicit shared/release-bus ref allowlist, and every shared-ref
+update is a non-force compare-and-swap from the recorded old SHA.
+
 V2 never authors or posts release notes itself. Production operations must feed
 the existing autonomous release-note bot complete, canonical grouping metadata
 and an idempotent finalize signal. Internal operational candidates may opt out
@@ -110,13 +119,13 @@ explicitly.
 
 ## Failure behavior
 
-| Class | Behavior |
-| --- | --- |
-| Candidate merge/test | Mark the direct candidate `NEEDS_REBASE` or failed; hold only transitive dependants |
-| Infrastructure | Bounded idempotent retry; no candidate isolation |
-| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence |
-| Control plane | Fail the train, requeue candidates, pause automated claiming, retain manual fallback |
-| E2E | Keep the manifest unvalidated; do not globally pause unless state is unverifiable |
+| Class                | Behavior                                                                                                                                           |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Candidate merge/test | Mark the direct candidate `NEEDS_REBASE` or failed; hold only transitive dependants                                                                |
+| Infrastructure       | Bounded idempotent retry; no candidate isolation                                                                                                   |
+| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence                                                                              |
+| Control plane        | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback |
+| E2E                  | Keep the manifest unvalidated; do not globally pause unless state is unverifiable                                                                  |
 
 Every pending GitHub status must map to a visible candidate/train/operation state
 and recovery message. Duplicate callbacks and worker invocations reuse immutable
@@ -173,11 +182,14 @@ read-only shadow checks. Shadow checks may resolve exact refs, PR qualification,
 current locks, and active workflow state, but must not update a shared ref,
 dispatch a deploy/E2E workflow, or create/claim a live candidate. With the
 allowlist absent, a worker invocation must claim and advance nothing.
-The only permitted OFF/empty maintenance mutation is releasing an environment
-lock already owned by a terminal train after every one of that train's
-operations is terminal. That cleanup emits
-`TERMINAL_ENVIRONMENT_LOCK_RELEASED`; it cannot claim a candidate, advance a
-train, update a shared ref, or dispatch a workflow.
+The only permitted OFF/empty maintenance mutations are reconciling a stranded
+internal `ADVANCE_MAIN_*` operation from a read-only exact `main` ref check and
+releasing an environment lock already owned by a terminal train after every one
+of that train's operations is terminal. The cleanup emits
+`TERMINAL_INTERNAL_REF_OPERATION_RECONCILED` and
+`TERMINAL_ENVIRONMENT_LOCK_RELEASED`; an unknown ref identity retains the lock.
+Cleanup cannot claim a candidate, advance a train, update a shared ref, or
+dispatch a workflow.
 
 For each single bounded staging test:
 
@@ -215,6 +227,11 @@ the allowlist empty and automation globally `OFF` until repaired.
 Production beta is a separate allowlist installation after all staging cases
 pass. Use only exact `STAGING_VALIDATED` candidate IDs, list only the explicit
 production subset, and require the operator's separate mark-ready action.
+After general staging activation, global mode remains `STAGING`: a valid
+production-only allowlist enables only those exact production candidates and
+never filters, enrolls, or blocks ordinary staging candidates. Invalid beta
+configuration pauses only `PRODUCTION`; staging automation and the manual
+fallback remain available.
 With exact validated candidates A/B/C and a reusable exact manifest, prove the
 production train is claimable and prepares while an unrelated D/E staging
 train is active, acquires only `production-environment`, and completes without

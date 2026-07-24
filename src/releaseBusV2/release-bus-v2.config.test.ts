@@ -2,6 +2,7 @@ import {
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
   releaseBusV2BetaAllowsCandidate,
+  releaseBusV2BetaAllowsLaneInMode,
   releaseBusV2BetaAllowsRegistration,
   releaseBusV2BetaInfrastructureFailureInjection,
   ReleaseBusV2BetaConfigurationError
@@ -112,6 +113,23 @@ describe('Release Bus v2 operator-only OFF beta configuration', () => {
         { ...candidate(), requested_by: 'another-operator' },
         'STAGING'
       )
+    ).toBe(false);
+  });
+
+  it('keeps a STAGING-mode beta confined to the production lane', () => {
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      configuredEntry({ lanes: ['PRODUCTION'] })
+    ]);
+    const allowlist = getReleaseBusV2BetaAllowlist();
+
+    expect(
+      releaseBusV2BetaAllowsLaneInMode('STAGING', allowlist, 'PRODUCTION')
+    ).toBe(true);
+    expect(
+      releaseBusV2BetaAllowsLaneInMode('STAGING', allowlist, 'STAGING')
+    ).toBe(false);
+    expect(
+      releaseBusV2BetaAllowsLaneInMode('PRODUCTION', allowlist, 'PRODUCTION')
     ).toBe(false);
   });
 
