@@ -7,6 +7,6 @@ and `api`, with `dbMigrationsLoop` required before `api`; the unrelated
 `attachmentsProcessor` unit remains eligible for the first concurrent DAG
 frontier.
 
-- Test ID: `coupled-dag-1`
-- Candidate ID: `70024a48-7130-43ed-b2c9-9fb0347479c5`
+- Test ID: `mixed-retention-prod-overlap-2`
+- Candidate ID: `022b5a1d-6449-495a-962a-4f16b0b046a8`
 - Global Release Bus v2 mode: `OFF`
