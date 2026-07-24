@@ -451,6 +451,55 @@ function relevantCandidates(
   );
 }
 
+export function candidateUnavailableForTrainUpdate(
+  current: ReleaseBusV2CandidateRecord,
+  claimed: ReleaseBusV2CandidateRecord
+): boolean {
+  if (current.status === 'CANCELLED') return true;
+  return (
+    current.status === 'SUPERSEDED' &&
+    (!claimed.current_train_id ||
+      current.current_train_id !== claimed.current_train_id)
+  );
+}
+
+export function deletedProductionCandidateCanRetainReadiness(
+  candidate: ReleaseBusV2CandidateRecord
+): boolean {
+  return (
+    candidate.current_train_id === null &&
+    candidate.production_requested_at !== null &&
+    candidate.staging_validated_manifest_id !== null &&
+    ['READY_FOR_PRODUCTION', 'SUPERSEDED'].includes(candidate.status)
+  );
+}
+
+type E2EWorkflowInputFields = {
+  readonly release_train_id: string;
+  readonly release_train_revision: string;
+  readonly operation_key: string;
+  readonly staging_source_ref: string;
+  readonly expected_sha: string;
+  readonly release_manifest_id: string;
+  readonly release_manifest_identity_sha256: string;
+  readonly frontend_sha: string;
+  readonly backend_sha: string;
+  readonly frontend_artifact_digest: string;
+  readonly backend_artifact_digest: string;
+};
+
+export function e2eWorkflowInputs(
+  environment: 'staging' | 'prod',
+  fields: E2EWorkflowInputFields
+): Record<string, string> {
+  const { staging_source_ref: stagingSourceRef, ...shared } = fields;
+  return {
+    ...(environment === 'staging' ? { pack: 'all' } : {}),
+    ...shared,
+    source_ref: environment === 'staging' ? stagingSourceRef : 'main'
+  };
+}
+
 function frontendDependsOnBackend(context: TrainContext): boolean {
   const included = new Set(relevantCandidates(context).map(({ id }) => id));
   const backend = new Set(
@@ -644,23 +693,39 @@ export class ReleaseBusV2Reconciler {
   ): Promise<void> {
     const candidates = (
       await this.repository.listCandidates(
-        ['READY_FOR_STAGING', 'WAITING_FOR_DEPENDENCY', 'READY_FOR_PRODUCTION'],
+        [
+          'READY_FOR_STAGING',
+          'WAITING_FOR_DEPENDENCY',
+          'READY_FOR_PRODUCTION',
+          'SUPERSEDED'
+        ],
         500,
         {}
       )
-    ).filter((candidate) => {
-      const lane =
-        candidate.status === 'READY_FOR_PRODUCTION' ? 'PRODUCTION' : 'STAGING';
-      if (mode === 'STAGING') {
-        if (lane === 'STAGING') return true;
-        return (
-          betaAllowlist.length > 0 &&
-          releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
-        );
-      }
-      if (betaAllowlist.length === 0) return true;
-      return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
-    });
+    )
+      .filter(
+        (candidate) =>
+          candidate.status !== 'SUPERSEDED' ||
+          (candidate.current_train_id === null &&
+            candidate.production_requested_at !== null &&
+            candidate.staging_validated_manifest_id !== null)
+      )
+      .filter((candidate) => {
+        const lane =
+          candidate.status === 'READY_FOR_PRODUCTION' ||
+          candidate.status === 'SUPERSEDED'
+            ? 'PRODUCTION'
+            : 'STAGING';
+        if (mode === 'STAGING') {
+          if (lane === 'STAGING') return true;
+          return (
+            betaAllowlist.length > 0 &&
+            releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
+          );
+        }
+        if (betaAllowlist.length === 0) return true;
+        return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
+      });
     const branchHeads = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
@@ -672,6 +737,23 @@ export class ReleaseBusV2Reconciler {
     );
     for (const { candidate, currentHead } of branchHeads) {
       if (currentHead === candidate.head_sha) continue;
+      if (
+        currentHead === null &&
+        deletedProductionCandidateCanRetainReadiness(candidate) &&
+        (await releaseBusGitHubApp.refContainsCommit(
+          candidate.repository,
+          'main',
+          candidate.head_sha
+        ))
+      ) {
+        if (candidate.status === 'SUPERSEDED')
+          await this.service.restoreProductionReadinessAfterBranchCleanup(
+            candidate.id,
+            'release-bus-v2-reconciler'
+          );
+        continue;
+      }
+      if (candidate.status === 'SUPERSEDED') continue;
       await this.service.invalidateBranch(
         candidate.repository,
         candidate.branch_name,
@@ -2185,6 +2267,15 @@ export class ReleaseBusV2Reconciler {
       return;
     }
     if (train.status === 'PRODUCTION_DEPLOYING') {
+      // A merge can delete the source branch and race the push webhook. Keep
+      // the immutable, already-claimed membership authoritative and repair any
+      // stale superseded bookkeeping before reconciling its deployments.
+      await this.updateCandidateStatuses(
+        relevantCandidates(context),
+        'PRODUCTION_DEPLOYING',
+        train.id,
+        false
+      );
       const sourceTrainId = await this.artifactSourceTrainId(train);
       const deployed = await this.reconcileDeployments(
         context,
@@ -2651,12 +2742,11 @@ export class ReleaseBusV2Reconciler {
       service: null,
       expectedSha,
       artifactDigest: manifest.identity_sha256,
-      inputs: {
-        pack: 'all',
+      inputs: e2eWorkflowInputs(environment, {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        source_ref: relevantCandidates(context, 'frontend').length
+        staging_source_ref: relevantCandidates(context, 'frontend').length
           ? releaseBusV2Branch(train, 'frontend')
           : 'main',
         expected_sha: expectedSha,
@@ -2666,7 +2756,7 @@ export class ReleaseBusV2Reconciler {
         backend_sha: manifest.backend_sha ?? '',
         frontend_artifact_digest: manifest.frontend_artifact_digest ?? '',
         backend_artifact_digest: manifest.backend_artifact_digest ?? ''
-      },
+      }),
       maxAttempts: 2
     };
     return releaseBusV2Operations.reconcileWorkflow(spec);
@@ -2779,7 +2869,7 @@ export class ReleaseBusV2Reconciler {
     if (!manifestId) throw new Error('Staging validation has no manifest');
     for (const candidate of relevantCandidates(context)) {
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (!current || candidateUnavailableForTrainUpdate(current, candidate))
         continue;
       await this.repository.updateCandidate(
         current.id,
@@ -2789,7 +2879,8 @@ export class ReleaseBusV2Reconciler {
           currentTrainId: null,
           stagingValidatedTrainId: context.train.id,
           stagingValidatedManifestId: manifestId,
-          holdReason: null
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
         },
         {}
       );
@@ -2811,7 +2902,7 @@ export class ReleaseBusV2Reconciler {
       const current = await this.repository.findCandidateById(candidate.id, {});
       if (
         !current ||
-        ['SUPERSEDED', 'CANCELLED'].includes(current.status) ||
+        candidateUnavailableForTrainUpdate(current, candidate) ||
         (current.status === status &&
           current.current_train_id === currentTrainId &&
           current.hold_reason === null)
@@ -2820,7 +2911,12 @@ export class ReleaseBusV2Reconciler {
       await this.repository.updateCandidate(
         current.id,
         current.row_version,
-        { status, currentTrainId, holdReason: null },
+        {
+          status,
+          currentTrainId,
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
+        },
         {}
       );
     }
