@@ -2,10 +2,12 @@ const mockReconcileWorkflow = jest.fn();
 const mockEnsureCommitStatus = jest.fn();
 const mockResolveRef = jest.fn();
 const mockResolveRefIfExists = jest.fn();
+const mockRefContainsCommit = jest.fn();
 const mockUpdateRef = jest.fn();
 const mockHasActiveStagingRun = jest.fn();
 const mockHasStagingRunSince = jest.fn();
 const mockHasActiveProductionRun = jest.fn();
+const mockFindWorkflowRun = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   releaseBusV2Operations: {
@@ -18,13 +20,15 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args),
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     resolveRefIfExists: (...args: unknown[]) => mockResolveRefIfExists(...args),
+    refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args),
     updateRef: (...args: unknown[]) => mockUpdateRef(...args),
     hasActiveStagingMutationOrE2ERun: (...args: unknown[]) =>
       mockHasActiveStagingRun(...args),
     hasStagingMutationOrE2ERunSince: (...args: unknown[]) =>
       mockHasStagingRunSince(...args),
     hasActiveProductionMutationOrE2ERun: (...args: unknown[]) =>
-      mockHasActiveProductionRun(...args)
+      mockHasActiveProductionRun(...args),
+    findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args)
   }
 }));
 
@@ -32,6 +36,7 @@ import { ReleaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
+  ReleaseBusV2ControlRecord,
   ReleaseBusV2DependencyRecord,
   ReleaseBusV2LockRecord,
   ReleaseBusV2ManifestRecord,
@@ -156,6 +161,22 @@ class InMemoryAcceptanceRepository {
     readonly payload?: unknown;
     readonly createdAt: number;
   }> = [];
+  public readonly controls = new Map<
+    ReleaseBusV2ControlRecord['scope'],
+    ReleaseBusV2ControlRecord
+  >(
+    (['ALL', 'STAGING', 'PRODUCTION'] as const).map((scope) => [
+      scope,
+      {
+        scope,
+        paused: false,
+        reason: null,
+        github_actor: null,
+        updated_at: 1,
+        row_version: 1
+      }
+    ])
+  );
   private eventClock = Date.now();
   public lock: ReleaseBusV2LockRecord = {
     name: 'staging-environment',
@@ -168,14 +189,8 @@ class InMemoryAcceptanceRepository {
     row_version: 1
   };
 
-  public async listControls(): Promise<
-    Array<{ readonly scope: string; readonly paused: boolean }>
-  > {
-    return [
-      { scope: 'ALL', paused: false },
-      { scope: 'STAGING', paused: false },
-      { scope: 'PRODUCTION', paused: false }
-    ];
+  public async listControls(): Promise<ReleaseBusV2ControlRecord[]> {
+    return Array.from(this.controls.values());
   }
 
   public async listTrains(): Promise<ReleaseBusV2TrainRecord[]> {
@@ -383,6 +398,103 @@ class InMemoryAcceptanceRepository {
     return this.operations.filter((item) => item.train_id === trainId);
   }
 
+  public async findOperation(
+    idempotencyKey: string
+  ): Promise<ReleaseBusV2OperationRecord | null> {
+    return (
+      this.operations.find((item) => item.idempotency_key === idempotencyKey) ??
+      null
+    );
+  }
+
+  public async getOrCreateOperation(input: {
+    readonly idempotencyKey: string;
+    readonly trainId: string;
+    readonly operationType: string;
+    readonly repository: 'frontend' | 'backend';
+    readonly service: string | null;
+    readonly environment: string;
+    readonly expectedSha: string | null;
+    readonly artifactDigest: string | null;
+    readonly request: unknown;
+    readonly maxAttempts: number;
+  }): Promise<ReleaseBusV2OperationRecord> {
+    const existing = await this.findOperation(input.idempotencyKey);
+    if (existing) return existing;
+    const now = Date.now();
+    const created: ReleaseBusV2OperationRecord = {
+      id: `operation-${this.operations.length + 1}`,
+      idempotency_key: input.idempotencyKey,
+      train_id: input.trainId,
+      operation_type: input.operationType,
+      repository: input.repository,
+      service: input.service,
+      environment: input.environment,
+      expected_sha: input.expectedSha,
+      artifact_digest: input.artifactDigest,
+      external_id: null,
+      status: 'PENDING',
+      attempt: 1,
+      max_attempts: input.maxAttempts,
+      next_retry_at: null,
+      failure_class: null,
+      failure_message: null,
+      request_json: input.request,
+      result_json: null,
+      started_at: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      row_version: 1
+    };
+    this.operations.push(created);
+    return created;
+  }
+
+  public async updateOperation(
+    id: string,
+    rowVersion: number,
+    fields: Partial<{
+      readonly status: ReleaseBusV2OperationRecord['status'];
+      readonly externalId: string | null;
+      readonly result: unknown;
+      readonly failureClass: ReleaseBusV2OperationRecord['failure_class'];
+      readonly failureMessage: string | null;
+      readonly attempt: number;
+      readonly completedAt: number | null;
+    }>
+  ): Promise<boolean> {
+    const index = this.operations.findIndex((item) => item.id === id);
+    const current = this.operations[index];
+    if (!current || current.row_version !== rowVersion) return false;
+    this.operations[index] = {
+      ...current,
+      status: fields.status ?? current.status,
+      external_id:
+        fields.externalId === undefined
+          ? current.external_id
+          : fields.externalId,
+      result_json:
+        fields.result === undefined ? current.result_json : fields.result,
+      failure_class:
+        fields.failureClass === undefined
+          ? current.failure_class
+          : fields.failureClass,
+      failure_message:
+        fields.failureMessage === undefined
+          ? current.failure_message
+          : fields.failureMessage,
+      attempt: fields.attempt ?? current.attempt,
+      completed_at:
+        fields.completedAt === undefined
+          ? current.completed_at
+          : fields.completedAt,
+      updated_at: Date.now(),
+      row_version: current.row_version + 1
+    };
+    return true;
+  }
+
   public async createManifest(
     input: Omit<ReleaseBusV2ManifestRecord, 'id' | 'created_at' | 'updated_at'>
   ): Promise<ReleaseBusV2ManifestRecord> {
@@ -464,8 +576,29 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
   );
   const service = {
     claimLane: jest.fn(async () => null),
-    setPaused: jest.fn(async () => undefined),
+    setPaused: jest.fn(
+      async (
+        scope: ReleaseBusV2ControlRecord['scope'],
+        paused: boolean,
+        reason: string,
+        actor: string
+      ) => {
+        const prior = repository.controls.get(scope);
+        if (!prior) throw new Error(`Missing ${scope} control`);
+        repository.controls.set(scope, {
+          ...prior,
+          paused,
+          reason,
+          github_actor: actor,
+          updated_at: prior.updated_at + 1,
+          row_version: prior.row_version + 1
+        });
+      }
+    ),
     invalidateBranch: jest.fn(async () => undefined),
+    restoreProductionReadinessAfterBranchCleanup: jest.fn(
+      async () => undefined
+    ),
     isBetaTrainAllowed: jest.fn(async () => true)
   };
   return {
@@ -490,6 +623,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockHasActiveStagingRun.mockResolvedValue(false);
     mockHasStagingRunSince.mockResolvedValue(false);
     mockHasActiveProductionRun.mockResolvedValue(false);
+    mockFindWorkflowRun.mockResolvedValue(null);
     mockResolveRefIfExists.mockImplementation(
       async (repository: 'frontend' | 'backend') =>
         repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
@@ -497,6 +631,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRef.mockImplementation(async (repository: string) =>
       repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
     );
+    mockRefContainsCommit.mockResolvedValue(false);
   });
 
   it('does not claim or advance any durable work while mode is OFF', async () => {
@@ -542,6 +677,117 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
+  it('reconciles a stranded terminal main operation before releasing its lock', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const failed = train('terminal-production', {
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: 4
+    });
+    state.repository.trains.set(failed.id, failed);
+    state.repository.operations.push({
+      ...operation(failed.id, 'ADVANCE_MAIN_BACKEND', 'backend', 'unused'),
+      id: 'stranded-main-operation',
+      idempotency_key: `rb2:${failed.id}:advance-main:backend`,
+      expected_sha: failed.backend_composed_sha,
+      external_id: null,
+      status: 'PENDING',
+      failure_class: null,
+      failure_message: null,
+      completed_at: null
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      failed.id,
+      `train:${failed.id}`
+    );
+    mockResolveRef.mockResolvedValue(failed.backend_base_sha);
+
+    await state.reconciler.runOnce('acceptance-terminal-ref-reconciliation');
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.id === 'stranded-main-operation'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: expect.any(Number)
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'TERMINAL_INTERNAL_REF_OPERATION_RECONCILED',
+          trainId: failed.id,
+          payload: expect.objectContaining({
+            repository: 'backend',
+            operation_status: 'FAILED',
+            observed_sha: failed.backend_base_sha
+          })
+        }),
+        expect.objectContaining({
+          eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+          trainId: failed.id
+        })
+      ])
+    );
+  });
+
+  it('retains a terminal lock when a stranded main operation is still ambiguous', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const failed = train('ambiguous-production', {
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: 4
+    });
+    state.repository.trains.set(failed.id, failed);
+    state.repository.operations.push({
+      ...operation(failed.id, 'ADVANCE_MAIN_BACKEND', 'backend', 'unused'),
+      id: 'ambiguous-main-operation',
+      idempotency_key: `rb2:${failed.id}:advance-main:backend`,
+      expected_sha: failed.backend_composed_sha,
+      external_id: null,
+      status: 'PENDING',
+      completed_at: null
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      failed.id,
+      `train:${failed.id}`
+    );
+    mockResolveRef.mockResolvedValue('9'.repeat(40));
+
+    await state.reconciler.runOnce('acceptance-ambiguous-terminal-ref');
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.id === 'ambiguous-main-operation'
+      )?.status
+    ).toBe('PENDING');
+    expect(state.repository.lock.owner_train_id).toBe(failed.id);
+    expect(state.repository.events).not.toContainEqual(
+      expect.objectContaining({
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+        trainId: failed.id
+      })
+    );
+  });
+
   it('pauses only beta automation when the OFF allowlist is malformed', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'OFF';
@@ -561,6 +807,251 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'release-bus-v2-beta'
     );
     expect(state.service.claimLane).not.toHaveBeenCalled();
+  });
+
+  it('pauses only production for an invalid STAGING-mode beta allowlist', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = 'not-json';
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-invalid-production-beta')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.setPaused).toHaveBeenCalledWith(
+      'PRODUCTION',
+      true,
+      expect.stringContaining('staging remains enabled'),
+      'release-bus-v2-beta'
+    );
+    expect(state.service.claimLane).toHaveBeenCalledTimes(1);
+    expect(state.service.claimLane).toHaveBeenCalledWith(
+      'STAGING',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-invalid-production-beta:staging'
+    );
+  });
+
+  it('resumes only a beta-owned production pause after allowlist repair', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-repaired',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-production-subset-repaired',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.controls.set('PRODUCTION', {
+      scope: 'PRODUCTION',
+      paused: true,
+      reason: 'invalid beta config',
+      github_actor: 'release-bus-v2-beta',
+      updated_at: 2,
+      row_version: 2
+    });
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-repaired-production-beta')
+    ).resolves.toEqual({ mode: 'STAGING', claimed: [], advanced: [] });
+    expect(state.service.setPaused).toHaveBeenCalledWith(
+      'PRODUCTION',
+      false,
+      expect.stringContaining('recovered'),
+      'release-bus-v2-beta'
+    );
+    expect(state.service.claimLane).toHaveBeenCalledTimes(2);
+    expect(state.service.claimLane).toHaveBeenNthCalledWith(
+      2,
+      'PRODUCTION',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-repaired-production-beta:production'
+    );
+  });
+
+  it('claims ordinary staging and allowlisted production independently in STAGING mode', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-1',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-production-subset-one',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-staging-production-beta')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.claimLane).toHaveBeenNthCalledWith(
+      1,
+      'STAGING',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-staging-production-beta:staging'
+    );
+    expect(state.service.claimLane).toHaveBeenNthCalledWith(
+      2,
+      'PRODUCTION',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-staging-production-beta:production'
+    );
+  });
+
+  it('repairs an allowlisted production candidate after its exact merged branch is deleted', async () => {
+    const state = harness('SUCCEEDED');
+    const candidateId = '11111111-1111-4111-8111-111111111111';
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-branch-cleanup',
+        candidate_id: candidateId,
+        repository: 'frontend',
+        branch_name: 'agent/rb2-production-branch-cleanup',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+    const merged = {
+      ...candidate(candidateId, 'frontend', null),
+      branch_name: 'agent/rb2-production-branch-cleanup',
+      requested_by: 'beta-operator',
+      status: 'SUPERSEDED' as const,
+      current_train_id: null,
+      staging_validated_manifest_id: 'manifest-1',
+      production_requested_at: 2,
+      production_requested_by: 'beta-operator',
+      superseded_at: 3
+    };
+    state.repository.candidates.set(candidateId, merged);
+    mockResolveRefIfExists.mockImplementation(async (_repository, branch) =>
+      branch === merged.branch_name ? null : FRONTEND_SHA
+    );
+    mockRefContainsCommit.mockResolvedValue(true);
+
+    await state.reconciler.runOnce('acceptance-branch-cleanup');
+
+    expect(mockRefContainsCommit).toHaveBeenCalledWith(
+      'frontend',
+      'main',
+      merged.head_sha
+    );
+    expect(
+      state.service.restoreProductionReadinessAfterBranchCleanup
+    ).toHaveBeenCalledWith(candidateId, 'release-bus-v2-reconciler');
+    expect(state.service.invalidateBranch).not.toHaveBeenCalledWith(
+      'frontend',
+      merged.branch_name,
+      'deleted',
+      expect.any(String)
+    );
+  });
+
+  it('still supersedes an explicit production candidate when its branch moves', async () => {
+    const state = harness('SUCCEEDED');
+    const candidateId = '11111111-1111-4111-8111-111111111111';
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-branch-move',
+        candidate_id: candidateId,
+        repository: 'frontend',
+        branch_name: 'agent/rb2-production-branch-move',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+    const ready = {
+      ...candidate(candidateId, 'frontend', null),
+      branch_name: 'agent/rb2-production-branch-move',
+      requested_by: 'beta-operator',
+      status: 'READY_FOR_PRODUCTION' as const,
+      current_train_id: null,
+      staging_validated_manifest_id: 'manifest-1',
+      production_requested_at: 2,
+      production_requested_by: 'beta-operator'
+    };
+    state.repository.candidates.set(candidateId, ready);
+    const movedHead = '9'.repeat(40);
+    mockResolveRefIfExists.mockImplementation(async (_repository, branch) =>
+      branch === ready.branch_name ? movedHead : FRONTEND_SHA
+    );
+
+    await state.reconciler.runOnce('acceptance-branch-move');
+
+    expect(mockRefContainsCommit).not.toHaveBeenCalled();
+    expect(state.service.invalidateBranch).toHaveBeenCalledWith(
+      'frontend',
+      ready.branch_name,
+      movedHead,
+      'release-bus-v2-reconciler'
+    );
+  });
+
+  it('does not advance an unallowlisted production train in STAGING mode', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-1',
+        candidate_id: '11111111-1111-4111-8111-111111111111',
+        repository: 'backend',
+        branch_name: 'agent/rb2-production-subset-one',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { lane: 'PRODUCTION', status: 'PREPARED' })
+    );
+    state.service.isBetaTrainAllowed.mockResolvedValue(false);
+
+    await expect(
+      state.reconciler.runOnce('acceptance-unlisted-production-train')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.repository.trains.get('train-1')?.status).toBe('PREPARED');
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
   });
 
   it('enters the OFF beta lane but does not advance an unallowlisted active train', async () => {
@@ -1039,6 +1530,58 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(mockReconcileWorkflow).toHaveBeenCalledTimes(externalCalls);
   });
 
+  it('ignores every exact retried workflow attempt in the final staging fence', async () => {
+    const state = harness('SUCCEEDED');
+    mockFindWorkflowRun.mockResolvedValue({ id: 101 });
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as {
+        operationType: string;
+        service: string | null;
+      };
+      const repository =
+        typed.operationType.includes('FRONTEND') ||
+        typed.operationType === 'E2E_STAGING'
+          ? 'frontend'
+          : 'backend';
+      const completed = operation(
+        'train-1',
+        typed.operationType,
+        repository,
+        typed.operationType === 'E2E_STAGING'
+          ? '202'
+          : `run-${typed.service ?? typed.operationType}`,
+        typed.service
+      );
+      const retried =
+        typed.operationType === 'E2E_STAGING'
+          ? {
+              ...completed,
+              idempotency_key: 'rb2:train-1:e2e:staging',
+              attempt: 2,
+              max_attempts: 2,
+              request_json: { workflow: 'staging-e2e.yml' }
+            }
+          : completed;
+      state.repository.operations.push(retried);
+      return retried;
+    });
+
+    await state.reconciler.runOnce('acceptance-retried-final-fence');
+
+    expect(state.repository.trains.get('train-1')?.status).toBe(
+      'STAGING_VALIDATED'
+    );
+    expect(mockFindWorkflowRun).toHaveBeenCalledWith(
+      'frontend',
+      'staging-e2e.yml',
+      'rb2:train-1:e2e:staging:a1'
+    );
+    expect(mockHasStagingRunSince).toHaveBeenCalledTimes(2);
+    for (const [, , ignoredRunIds] of mockHasStagingRunSince.mock.calls) {
+      expect(ignoredRunIds).toEqual(expect.arrayContaining(['101', '202']));
+    }
+  });
+
   it('fails closed when an unrelated staging workflow ran after the beta handshake', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'OFF';
@@ -1099,15 +1642,15 @@ describe('Release Bus v2 offline acceptance harness', () => {
         trainId: 'train-1'
       })
     );
-    const expectedRunIds = state.repository.operations
-      .map(({ external_id }) => external_id)
-      .filter((runId): runId is string => runId !== null);
+    const expectedRunIds = new Set(
+      state.repository.operations
+        .map(({ external_id }) => external_id)
+        .filter((runId): runId is string => runId !== null)
+    );
     expect(mockHasStagingRunSince).toHaveBeenCalledTimes(2);
     for (const [, , ignoredRunIds] of mockHasStagingRunSince.mock.calls) {
-      expect(ignoredRunIds).toHaveLength(expectedRunIds.length);
-      expect(new Set(ignoredRunIds as string[])).toEqual(
-        new Set(expectedRunIds)
-      );
+      expect(ignoredRunIds).toHaveLength(expectedRunIds.size);
+      expect(new Set(ignoredRunIds as string[])).toEqual(expectedRunIds);
     }
   });
 
@@ -1223,6 +1766,244 @@ describe('Release Bus v2 offline acceptance harness', () => {
       ).advanceProductionRefs(context)
     ).rejects.toThrow('main moved');
     expect(mockUpdateRef).not.toHaveBeenCalled();
+  });
+
+  it('terminalizes a rejected exact main update and safely releases its production lock', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    state.repository.memberships.forEach((membership, index) => {
+      state.repository.memberships[index] = {
+        ...membership,
+        train_id: production.id
+      };
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    await state.repository.acquireLock(
+      'production-environment',
+      production.id,
+      `train:${production.id}`
+    );
+    mockResolveRef.mockResolvedValue(production.backend_base_sha);
+    mockUpdateRef.mockRejectedValue(
+      new Error('Repository rule violations found')
+    );
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).rejects.toThrow('Repository rule violations found');
+
+    const mainOperation = state.repository.operations.find(
+      (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+    );
+    expect(mainOperation).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: expect.any(Number)
+      })
+    );
+
+    await (
+      state.reconciler as unknown as {
+        failTrain(
+          input: ReleaseBusV2TrainRecord,
+          failureClass: 'CONTROL_PLANE',
+          message: string
+        ): Promise<void>;
+      }
+    ).failTrain(production, 'CONTROL_PLANE', 'ruleset rejected update');
+
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED',
+        trainId: production.id,
+        payload: expect.objectContaining({
+          lock: 'production-environment',
+          train_status: 'FAILED'
+        })
+      })
+    );
+  });
+
+  it('accepts an exact main update that succeeded before its transport error', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('accepted-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    mockUpdateRef.mockRejectedValue(new Error('response connection reset'));
+    mockResolveRef.mockResolvedValue(production.backend_composed_sha);
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).resolves.toBeUndefined();
+
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'SUCCEEDED',
+        external_id: production.backend_composed_sha,
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('bounds exact main infrastructure retries in the durable operation', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('retry-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    const infrastructureError = new Error('GitHub returned 503');
+    infrastructureError.name = 'ReleaseBusGitHubInfrastructureError';
+    mockUpdateRef.mockRejectedValue(infrastructureError);
+    mockResolveRef.mockResolvedValue(production.backend_base_sha);
+    const advance = () =>
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(
+        production,
+        'backend',
+        production.backend_base_sha ?? ''
+      );
+
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+
+    expect(mockUpdateRef).toHaveBeenCalledTimes(3);
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        attempt: 3,
+        max_attempts: 3,
+        failure_class: 'INFRASTRUCTURE',
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('cancels a main operation when its post-failure ref is an unexpected third SHA', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('moved-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    state.repository.trains.set(production.id, production);
+    mockUpdateRef.mockRejectedValue(new Error('update rejected'));
+    mockResolveRef.mockResolvedValue('9'.repeat(40));
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceMainRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string
+          ): Promise<void>;
+        }
+      ).advanceMainRef(production, 'backend', production.backend_base_sha ?? '')
+    ).rejects.toThrow('main moved');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        failure_class: 'INTERACTION',
+        completed_at: expect.any(Number)
+      })
+    );
+  });
+
+  it('pauses for exact reconciliation after a partial multi-repository main advance', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('partial-production', {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION'
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'backend'
+        ? production.backend_base_sha
+        : production.frontend_base_sha
+    );
+    mockUpdateRef.mockImplementation(async (repository: string) => {
+      if (repository === 'frontend')
+        throw new Error('frontend update rejected');
+    });
+    let frontendReads = 0;
+    mockResolveRef.mockImplementation(async (repository: string) => {
+      if (repository === 'backend') return production.backend_base_sha;
+      frontendReads += 1;
+      return frontendReads > 1 ? '9'.repeat(40) : production.frontend_base_sha;
+    });
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceProductionRefs(input: typeof context): Promise<void>;
+        }
+      ).advanceProductionRefs(context)
+    ).rejects.toThrow('Partial production main advance: backend');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_BACKEND'
+      )?.status
+    ).toBe('SUCCEEDED');
+    expect(
+      state.repository.operations.find(
+        (item) => item.operation_type === 'ADVANCE_MAIN_FRONTEND'
+      )?.status
+    ).toBe('CANCELLED');
   });
 
   it('pauses only automation and requeues candidates on a control-plane defect', async () => {
@@ -1378,6 +2159,217 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'utf8'
     );
     expect(source).not.toContain('BASE_CANARY');
+  });
+
+  it('reuses only the exact common staging manifest before production composition', async () => {
+    const state = harness('SUCCEEDED');
+    const manifestId = 'validated-common-manifest';
+    for (const [id, current] of Array.from(
+      state.repository.candidates.entries()
+    )) {
+      state.repository.candidates.set(id, {
+        ...current,
+        staging_validated_manifest_id: manifestId,
+        staging_validated_train_id: 'train-1'
+      });
+    }
+    state.repository.manifests.set(manifestId, {
+      id: manifestId,
+      train_id: 'train-1',
+      lane: 'STAGING',
+      identity_sha256: 'f'.repeat(64),
+      status: 'STAGING_VALIDATED',
+      frontend_sha: FRONTEND_SHA,
+      backend_sha: BACKEND_SHA,
+      frontend_artifact_digest: FRONTEND_DIGEST,
+      backend_artifact_digest: BACKEND_DIGEST,
+      e2e_run_id: 'validated-e2e',
+      manifest_json: {},
+      deployed_at: 2,
+      validated_at: 3,
+      created_at: 2,
+      updated_at: 3
+    });
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    const findExact = (
+      state.reconciler as unknown as {
+        findExactValidatedProductionManifest(
+          input: typeof context
+        ): Promise<ReleaseBusV2ManifestRecord | null>;
+      }
+    ).findExactValidatedProductionManifest.bind(state.reconciler);
+
+    await expect(findExact(context)).resolves.toMatchObject({
+      id: manifestId,
+      frontend_sha: FRONTEND_SHA,
+      backend_sha: BACKEND_SHA
+    });
+
+    const validatedManifest = state.repository.manifests.get(manifestId);
+    if (!validatedManifest) throw new Error('Missing validated manifest');
+    state.repository.manifests.set(manifestId, {
+      ...validatedManifest,
+      status: 'STAGING_DEPLOYED'
+    });
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.manifests.delete(manifestId);
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.manifests.set(manifestId, validatedManifest);
+    const sourceTrain = state.repository.trains.get('train-1');
+    if (!sourceTrain) throw new Error('Missing source train');
+    state.repository.trains.delete('train-1');
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.trains.set('train-1', sourceTrain);
+
+    state.repository.memberships.push({
+      id: 'unselected-source-membership',
+      train_id: 'train-1',
+      candidate_id: 'not-in-production-subset',
+      sequence: 3,
+      disposition: 'INCLUDED',
+      created_at: 1
+    });
+    await expect(findExact(context)).resolves.toBeNull();
+    state.repository.memberships.pop();
+    await expect(
+      findExact({
+        ...context,
+        train: { ...production, backend_base_sha: '9'.repeat(40) }
+      })
+    ).resolves.toBeNull();
+
+    const frontendSourceMembershipIndex =
+      state.repository.memberships.findIndex(
+        ({ candidate_id }) => candidate_id === 'frontend-candidate'
+      );
+    if (frontendSourceMembershipIndex < 0)
+      throw new Error('Missing frontend source membership');
+    state.repository.memberships[frontendSourceMembershipIndex] = {
+      ...state.repository.memberships[frontendSourceMembershipIndex],
+      disposition: 'EXCLUDED'
+    };
+    const backendOnly = {
+      ...context,
+      memberships: context.memberships.filter(
+        ({ candidate_id }) => candidate_id === 'backend-candidate'
+      ),
+      candidates: context.candidates.filter(
+        ({ repository }) => repository === 'backend'
+      ),
+      dependencies: []
+    };
+    await expect(findExact(backendOnly)).resolves.toBeNull();
+    state.repository.manifests.set(manifestId, {
+      ...(state.repository.manifests.get(
+        manifestId
+      ) as ReleaseBusV2ManifestRecord),
+      frontend_sha: production.frontend_base_sha,
+      frontend_artifact_digest: null
+    });
+    await expect(findExact(backendOnly)).resolves.toMatchObject({
+      id: manifestId
+    });
+  });
+
+  it('prepares production from the exact staging manifest without workflows', async () => {
+    const state = harness('SUCCEEDED');
+    const manifestId = 'validated-production-manifest';
+    for (const [id, current] of Array.from(
+      state.repository.candidates.entries()
+    )) {
+      state.repository.candidates.set(id, {
+        ...current,
+        staging_validated_manifest_id: manifestId,
+        staging_validated_train_id: 'train-1'
+      });
+    }
+    state.repository.manifests.set(manifestId, {
+      id: manifestId,
+      train_id: 'train-1',
+      lane: 'STAGING',
+      identity_sha256: 'e'.repeat(64),
+      status: 'STAGING_VALIDATED',
+      frontend_sha: FRONTEND_SHA,
+      backend_sha: BACKEND_SHA,
+      frontend_artifact_digest: FRONTEND_DIGEST,
+      backend_artifact_digest: BACKEND_DIGEST,
+      e2e_run_id: 'validated-e2e',
+      manifest_json: {},
+      deployed_at: 2,
+      validated_at: 3,
+      created_at: 2,
+      updated_at: 3
+    });
+    const production = train('production-train', {
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    state.repository.trains.set(production.id, production);
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((item) => ({
+        ...item,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advancePreparation(input: typeof context): Promise<void>;
+      }
+    ).advancePreparation(context);
+
+    expect(state.repository.trains.get(production.id)).toMatchObject({
+      status: 'PREPARED',
+      frontend_composed_sha: FRONTEND_SHA,
+      backend_composed_sha: BACKEND_SHA,
+      manifest_id: manifestId
+    });
+    expect(
+      Array.from(state.repository.candidates.values()).map(
+        ({ status }) => status
+      )
+    ).toEqual([
+      'PRODUCTION_BUILDING_OR_QUALIFYING',
+      'PRODUCTION_BUILDING_OR_QUALIFYING'
+    ]);
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        trainId: production.id,
+        eventType: 'EXACT_STAGING_MANIFEST_REUSED'
+      })
+    );
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        eventType: 'EXACT_STAGING_MANIFEST_REUSED',
+        payload: expect.objectContaining({
+          manifest_identity_sha256: 'e'.repeat(64)
+        })
+      })
+    );
   });
 
   it('proves exact four-way Jest inventory in the combined preflight', () => {

@@ -169,7 +169,10 @@ export function releaseBusPullRequestMergeStateEligible(
   if (mergeable === false) return false;
   if (['clean', 'unstable', 'behind'].includes(mergeableState ?? ''))
     return true;
-  // The Release Bus GitHub App is a pull-request-mode ruleset bypass actor.
+  // The Release Bus GitHub App is a ruleset bypass actor. Production v2 also
+  // needs `always` bypass mode so it can non-force fast-forward the exact
+  // staging-validated commit instead of manufacturing a different PR merge
+  // commit. Human/team bypass actors remain pull-request-only.
   // GitHub still reports `blocked` for maintainer-review requirements, so only
   // accept that state when the merge tree itself is explicitly mergeable. The
   // exact merge-tree checks are independently required below.

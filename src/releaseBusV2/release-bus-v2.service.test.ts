@@ -136,6 +136,77 @@ describe('Release Bus v2 explicit production opt-in', () => {
   });
 });
 
+describe('Release Bus v2 STAGING-mode production beta opt-in', () => {
+  const previousMode = process.env.RELEASE_BUS_V2_MODE;
+  const previousAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+  const betaId = '11111111-1111-4111-8111-111111111111';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'production-subset-1',
+        candidate_id: betaId,
+        repository: 'frontend',
+        branch_name: 'feature/exact',
+        operator: 'beta-operator',
+        lanes: ['PRODUCTION']
+      }
+    ]);
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+    else process.env.RELEASE_BUS_V2_MODE = previousMode;
+    if (previousAllowlist === undefined)
+      delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+    else process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = previousAllowlist;
+  });
+
+  it('allows only the exact validated allowlisted operator candidate', async () => {
+    const exact = {
+      ...candidate('STAGING_VALIDATED'),
+      id: betaId,
+      requested_by: 'beta-operator'
+    };
+    const state = repositoryFor(exact);
+    mockResolveRef.mockResolvedValue(exact.head_sha);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction(
+        betaId,
+        exact.head_sha,
+        exact.row_version,
+        'beta-operator'
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'READY_FOR_PRODUCTION' })
+    );
+  });
+
+  it('does not broaden production readiness to another actor', async () => {
+    const exact = {
+      ...candidate('STAGING_VALIDATED'),
+      id: betaId,
+      requested_by: 'beta-operator'
+    };
+    const state = repositoryFor(exact);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction(
+        betaId,
+        exact.head_sha,
+        exact.row_version,
+        'another-actor'
+      )
+    ).rejects.toThrow('production readiness is disabled');
+    expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+});
+
 describe('Release Bus v2 globally-OFF operator beta registration', () => {
   const previousMode = process.env.RELEASE_BUS_V2_MODE;
   const previousAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
@@ -281,5 +352,124 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
       'exact beta identity already has a different candidate id'
     );
     expect(repository.createCandidate).not.toHaveBeenCalled();
+  });
+});
+
+describe('Release Bus v2 globally-OFF beta claim isolation', () => {
+  const previousMode = process.env.RELEASE_BUS_V2_MODE;
+  const previousAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+  const betaId = '11111111-1111-4111-8111-111111111111';
+  const unrelatedId = '22222222-2222-4222-8222-222222222222';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = JSON.stringify([
+      {
+        test_id: 'isolated-active-train-1',
+        candidate_id: betaId,
+        repository: 'backend',
+        branch_name: 'agent/rb2-beta-backend-one',
+        operator: 'beta-operator',
+        lanes: ['STAGING']
+      }
+    ]);
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+    else process.env.RELEASE_BUS_V2_MODE = previousMode;
+    if (previousAllowlist === undefined)
+      delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
+    else process.env.RELEASE_BUS_V2_BETA_ALLOWLIST = previousAllowlist;
+  });
+
+  function claimRepository(options: { betaTrainActive: boolean }) {
+    const betaCandidate = {
+      ...candidate(
+        options.betaTrainActive ? 'STAGING_BUILDING' : 'READY_FOR_STAGING'
+      ),
+      id: betaId,
+      repository: 'backend' as const,
+      branch_name: 'agent/rb2-beta-backend-one',
+      requested_by: 'beta-operator',
+      current_train_id: options.betaTrainActive ? 'beta-train' : null
+    };
+    const unrelatedCandidate = {
+      ...candidate('STAGING_BUILDING'),
+      id: unrelatedId,
+      repository: 'frontend' as const,
+      branch_name: 'developer/ordinary-work',
+      requested_by: 'ordinary-developer',
+      current_train_id: 'unrelated-train'
+    };
+    const unrelatedTrain = {
+      id: 'unrelated-train',
+      lane: 'STAGING',
+      status: 'PREFLIGHTING'
+    };
+    const betaTrain = {
+      id: 'beta-train',
+      lane: 'STAGING',
+      status: 'PREFLIGHTING'
+    };
+    const createdTrain = {
+      id: 'new-beta-train',
+      lane: 'STAGING',
+      status: 'COMPOSING'
+    };
+    const trains = options.betaTrainActive
+      ? [unrelatedTrain, betaTrain]
+      : [unrelatedTrain];
+    const createTrain = jest.fn(async () => createdTrain);
+    const repository = {
+      listControls: jest.fn(async () => []),
+      executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+        callback({})
+      ),
+      acquireLock: jest.fn(async () => ({ lease_token: 'scheduler-token' })),
+      releaseLock: jest.fn(async () => true),
+      listTrains: jest.fn(async () => trains),
+      listCandidates: jest.fn(async (statuses: readonly string[]) =>
+        [betaCandidate].filter((item) => statuses.includes(item.status))
+      ),
+      listTrainCandidates: jest.fn(async (trainId: string) => [
+        {
+          candidate_id:
+            trainId === 'beta-train' ? betaId : unrelatedCandidate.id
+        }
+      ]),
+      findCandidateById: jest.fn(async (id: string) =>
+        id === betaId ? betaCandidate : unrelatedCandidate
+      ),
+      listDependencies: jest.fn(async () => []),
+      createTrain,
+      updateCandidate: jest.fn(async () => true),
+      appendEvent: jest.fn(async () => undefined)
+    };
+    return { repository, createTrain, createdTrain, betaTrain };
+  }
+
+  it('ignores a non-allowlisted active train when claiming an isolated beta', async () => {
+    const state = claimRepository({ betaTrainActive: false });
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane('STAGING', 'a'.repeat(40), 'b'.repeat(40), 'beta-claim')
+    ).resolves.toEqual(state.createdTrain);
+    expect(state.createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({ candidateIds: [betaId] }),
+      expect.anything()
+    );
+  });
+
+  it('reuses an existing allowlisted beta train instead of creating another', async () => {
+    const state = claimRepository({ betaTrainActive: true });
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane('STAGING', 'a'.repeat(40), 'b'.repeat(40), 'beta-claim')
+    ).resolves.toEqual(state.betaTrain);
+    expect(state.createTrain).not.toHaveBeenCalled();
   });
 });

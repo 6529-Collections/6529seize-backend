@@ -10,6 +10,7 @@ import {
   releaseBusV2BetaAllowsCandidate,
   releaseBusV2BetaInfrastructureFailureInjection,
   releaseBusV2BetaAllowsLane,
+  releaseBusV2BetaAllowsLaneInMode,
   type ReleaseBusV2BetaEntry
 } from '@/releaseBusV2/release-bus-v2.config';
 import {
@@ -450,6 +451,55 @@ function relevantCandidates(
   );
 }
 
+export function candidateUnavailableForTrainUpdate(
+  current: ReleaseBusV2CandidateRecord,
+  claimed: ReleaseBusV2CandidateRecord
+): boolean {
+  if (current.status === 'CANCELLED') return true;
+  return (
+    current.status === 'SUPERSEDED' &&
+    (!claimed.current_train_id ||
+      current.current_train_id !== claimed.current_train_id)
+  );
+}
+
+export function deletedProductionCandidateCanRetainReadiness(
+  candidate: ReleaseBusV2CandidateRecord
+): boolean {
+  return (
+    candidate.current_train_id === null &&
+    candidate.production_requested_at !== null &&
+    candidate.staging_validated_manifest_id !== null &&
+    ['READY_FOR_PRODUCTION', 'SUPERSEDED'].includes(candidate.status)
+  );
+}
+
+type E2EWorkflowInputFields = {
+  readonly release_train_id: string;
+  readonly release_train_revision: string;
+  readonly operation_key: string;
+  readonly staging_source_ref: string;
+  readonly expected_sha: string;
+  readonly release_manifest_id: string;
+  readonly release_manifest_identity_sha256: string;
+  readonly frontend_sha: string;
+  readonly backend_sha: string;
+  readonly frontend_artifact_digest: string;
+  readonly backend_artifact_digest: string;
+};
+
+export function e2eWorkflowInputs(
+  environment: 'staging' | 'prod',
+  fields: E2EWorkflowInputFields
+): Record<string, string> {
+  const { staging_source_ref: stagingSourceRef, ...shared } = fields;
+  return {
+    ...(environment === 'staging' ? { pack: 'all' } : {}),
+    ...shared,
+    source_ref: environment === 'staging' ? stagingSourceRef : 'main'
+  };
+}
+
 function frontendDependsOnBackend(context: TrainContext): boolean {
   const included = new Set(relevantCandidates(context).map(({ id }) => id));
   const backend = new Set(
@@ -484,22 +534,47 @@ export class ReleaseBusV2Reconciler {
     const claimed: string[] = [];
     await this.releaseTerminalEnvironmentLocks();
     let betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [];
-    if (mode === 'OFF') {
+    if (mode === 'OFF' || mode === 'STAGING') {
+      let betaAllowlistValid = false;
       try {
         betaAllowlist = getReleaseBusV2BetaAllowlist();
+        betaAllowlistValid = true;
       } catch {
+        const scope = mode === 'OFF' ? 'ALL' : 'PRODUCTION';
         const controls = await this.repository.listControls({});
-        const allControl = controls.find(({ scope }) => scope === 'ALL');
-        if (!allControl?.paused)
+        const control = controls.find((item) => item.scope === scope);
+        if (!control?.paused)
           await this.service.setPaused(
-            'ALL',
+            scope,
             true,
-            'Release Bus v2 OFF beta allowlist is invalid; automation remains disabled',
+            mode === 'OFF'
+              ? 'Release Bus v2 OFF beta allowlist is invalid; automation remains disabled'
+              : 'Release Bus v2 production beta allowlist is invalid; staging remains enabled',
             'release-bus-v2-beta'
           );
-        return { mode, claimed, advanced: [] };
+        if (mode === 'OFF') return { mode, claimed, advanced: [] };
+        betaAllowlist = [];
       }
-      if (betaAllowlist.length === 0) return { mode, claimed, advanced: [] };
+      if (betaAllowlistValid) {
+        const betaScope = mode === 'OFF' ? 'ALL' : 'PRODUCTION';
+        const betaControl = (await this.repository.listControls({})).find(
+          (item) => item.scope === betaScope
+        );
+        if (
+          betaControl?.paused &&
+          betaControl.github_actor === 'release-bus-v2-beta'
+        )
+          await this.service.setPaused(
+            betaScope,
+            false,
+            mode === 'OFF'
+              ? 'Release Bus v2 beta allowlist configuration recovered; OFF manual fallback remains authoritative'
+              : 'Release Bus v2 production beta allowlist configuration recovered',
+            'release-bus-v2-beta'
+          );
+      }
+      if (mode === 'OFF' && betaAllowlist.length === 0)
+        return { mode, claimed, advanced: [] };
     }
     const controls = await this.repository.listControls({});
     const isPaused = (scope: 'ALL' | 'STAGING' | 'PRODUCTION') =>
@@ -513,11 +588,10 @@ export class ReleaseBusV2Reconciler {
     const productionEnabled =
       !isPaused('PRODUCTION') &&
       (mode === 'PRODUCTION' ||
-        (mode === 'OFF' &&
-          releaseBusV2BetaAllowsLane(betaAllowlist, 'PRODUCTION')));
+        releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION'));
     if (stagingEnabled || productionEnabled) {
       try {
-        await this.reconcileQueuedCandidateHeads(betaAllowlist);
+        await this.reconcileQueuedCandidateHeads(betaAllowlist, mode);
         const [frontendMain, backendMain] = await Promise.all([
           releaseBusGitHubApp.resolveRef('frontend', 'main'),
           releaseBusGitHubApp.resolveRef('backend', 'main')
@@ -563,8 +637,10 @@ export class ReleaseBusV2Reconciler {
       });
     const active: ReleaseBusV2TrainRecord[] = [];
     for (const train of activeByLane) {
+      const requiresBetaEligibility =
+        mode === 'OFF' || (mode === 'STAGING' && train.lane !== 'STAGING');
       if (
-        mode !== 'OFF' ||
+        !requiresBetaEligibility ||
         (await this.service.isBetaTrainAllowed(train, betaAllowlist, {}))
       )
         active.push(train);
@@ -612,20 +688,44 @@ export class ReleaseBusV2Reconciler {
   }
 
   private async reconcileQueuedCandidateHeads(
-    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = []
+    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [],
+    mode = getReleaseBusV2Mode()
   ): Promise<void> {
     const candidates = (
       await this.repository.listCandidates(
-        ['READY_FOR_STAGING', 'WAITING_FOR_DEPENDENCY', 'READY_FOR_PRODUCTION'],
+        [
+          'READY_FOR_STAGING',
+          'WAITING_FOR_DEPENDENCY',
+          'READY_FOR_PRODUCTION',
+          'SUPERSEDED'
+        ],
         500,
         {}
       )
-    ).filter((candidate) => {
-      if (betaAllowlist.length === 0) return true;
-      const lane =
-        candidate.status === 'READY_FOR_PRODUCTION' ? 'PRODUCTION' : 'STAGING';
-      return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
-    });
+    )
+      .filter(
+        (candidate) =>
+          candidate.status !== 'SUPERSEDED' ||
+          (candidate.current_train_id === null &&
+            candidate.production_requested_at !== null &&
+            candidate.staging_validated_manifest_id !== null)
+      )
+      .filter((candidate) => {
+        const lane =
+          candidate.status === 'READY_FOR_PRODUCTION' ||
+          candidate.status === 'SUPERSEDED'
+            ? 'PRODUCTION'
+            : 'STAGING';
+        if (mode === 'STAGING') {
+          if (lane === 'STAGING') return true;
+          return (
+            betaAllowlist.length > 0 &&
+            releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
+          );
+        }
+        if (betaAllowlist.length === 0) return true;
+        return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
+      });
     const branchHeads = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
@@ -637,6 +737,23 @@ export class ReleaseBusV2Reconciler {
     );
     for (const { candidate, currentHead } of branchHeads) {
       if (currentHead === candidate.head_sha) continue;
+      if (
+        currentHead === null &&
+        deletedProductionCandidateCanRetainReadiness(candidate) &&
+        (await releaseBusGitHubApp.refContainsCommit(
+          candidate.repository,
+          'main',
+          candidate.head_sha
+        ))
+      ) {
+        if (candidate.status === 'SUPERSEDED')
+          await this.service.restoreProductionReadinessAfterBranchCleanup(
+            candidate.id,
+            'release-bus-v2-reconciler'
+          );
+        continue;
+      }
+      if (candidate.status === 'SUPERSEDED') continue;
       await this.service.invalidateBranch(
         candidate.repository,
         candidate.branch_name,
@@ -717,6 +834,38 @@ export class ReleaseBusV2Reconciler {
       candidateStatusForBuild(train.lane),
       train.id
     );
+    const exactProductionManifest =
+      await this.findExactValidatedProductionManifest(context);
+    if (exactProductionManifest) {
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'EXACT_STAGING_MANIFEST_REUSED',
+          actor: 'release-bus-v2',
+          payload: {
+            manifest_id: exactProductionManifest.id,
+            source_train_id: exactProductionManifest.train_id,
+            candidate_ids: relevantCandidates(context).map(({ id }) => id),
+            manifest_identity_sha256: exactProductionManifest.identity_sha256,
+            frontend_sha: exactProductionManifest.frontend_sha,
+            backend_sha: exactProductionManifest.backend_sha
+          }
+        },
+        {}
+      );
+      await this.transitionTrain(train, {
+        status: 'PREPARED',
+        frontendComposedSha: exactProductionManifest.frontend_sha,
+        backendComposedSha: exactProductionManifest.backend_sha,
+        frontendArtifactDigest:
+          exactProductionManifest.frontend_artifact_digest,
+        backendArtifactDigest: exactProductionManifest.backend_artifact_digest,
+        manifestId: exactProductionManifest.id,
+        recoveryMessage:
+          'The exact candidate set, staging-validated manifest, immutable artifacts, and original base SHAs were reused without composition or preflight'
+      });
+      return;
+    }
     const compositionOnly =
       train.lane === 'PRODUCTION' &&
       ['CLAIMED', 'COMPOSING'].includes(train.status);
@@ -785,6 +934,79 @@ export class ReleaseBusV2Reconciler {
         ? 'Exact artifacts prepared; waiting only for environment ownership'
         : 'Frontend and backend preparation are reconciling concurrently'
     });
+  }
+
+  private async findExactValidatedProductionManifest(
+    context: TrainContext
+  ): Promise<ReleaseBusV2ManifestRecord | null> {
+    if (context.train.lane !== 'PRODUCTION') return null;
+    const candidates = relevantCandidates(context);
+    const manifestIds = Array.from(
+      new Set(
+        candidates
+          .map(({ staging_validated_manifest_id }) =>
+            staging_validated_manifest_id?.trim()
+          )
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+    if (manifestIds.length !== 1) return null;
+    if (
+      candidates.some(
+        ({ staging_validated_manifest_id }) =>
+          staging_validated_manifest_id !== manifestIds[0]
+      )
+    )
+      return null;
+    const manifest = await this.repository.findManifest(manifestIds[0], {});
+    if (manifest?.status !== 'STAGING_VALIDATED') return null;
+    const sourceTrain = await this.repository.findTrain(manifest.train_id, {});
+    if (!sourceTrain) return null;
+    const sourceMemberships = await this.repository.listTrainCandidates(
+      sourceTrain.id,
+      {}
+    );
+    const sourceCandidateIds = sourceMemberships
+      .filter(({ disposition }) => disposition === 'INCLUDED')
+      .map(({ candidate_id }) => candidate_id)
+      .sort(compareInvariant);
+    const productionCandidateIds = candidates
+      .map(({ id }) => id)
+      .sort(compareInvariant);
+    // Production readiness transitions the same durable candidate rows that
+    // staging validated; the model does not create lane-scoped candidates.
+    if (
+      sourceCandidateIds.length !== productionCandidateIds.length ||
+      sourceCandidateIds.some(
+        (candidateId, index) => candidateId !== productionCandidateIds[index]
+      )
+    )
+      return null;
+    const hasFrontend = candidates.some(
+      ({ repository }) => repository === 'frontend'
+    );
+    const hasBackend = candidates.some(
+      ({ repository }) => repository === 'backend'
+    );
+    // A candidate-bearing composition is base-dependent: if main advanced,
+    // the exact set must be requalified rather than rewinding the shared ref.
+    // A repository absent from the subset is not deployed; it needs no digest,
+    // but its manifest SHA must still be the current base.
+    if (
+      !manifest.frontend_sha ||
+      !manifest.backend_sha ||
+      (hasFrontend && !manifest.frontend_artifact_digest) ||
+      (hasBackend && !manifest.backend_artifact_digest) ||
+      (hasFrontend &&
+        sourceTrain.frontend_base_sha !== context.train.frontend_base_sha) ||
+      (hasBackend &&
+        sourceTrain.backend_base_sha !== context.train.backend_base_sha) ||
+      (!hasFrontend &&
+        manifest.frontend_sha !== context.train.frontend_base_sha) ||
+      (!hasBackend && manifest.backend_sha !== context.train.backend_base_sha)
+    )
+      return null;
+    return manifest;
   }
 
   private async prepareRepository(
@@ -1566,8 +1788,7 @@ export class ReleaseBusV2Reconciler {
           train,
           deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
           deployed.failedOperation.failure_message ??
-            'Staging deployment failed',
-          lease
+            'Staging deployment failed'
         );
         return;
       }
@@ -1598,8 +1819,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
+          e2e.failure_message ?? 'Staging E2E failed'
         );
         return;
       }
@@ -1622,8 +1842,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
+          e2e.failure_message ?? 'Staging E2E failed'
         );
         return;
       }
@@ -1750,14 +1969,11 @@ export class ReleaseBusV2Reconciler {
       await this.failTrain(
         train,
         'CONTROL_PLANE',
-        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence',
-        lease
+        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence'
       );
       return false;
     }
-    const operationRunIds = (await this.repository.listOperations(train.id, {}))
-      .map(({ external_id }) => external_id)
-      .filter((runId): runId is string => runId !== null);
+    const operationRunIds = await this.stagingFenceRunIds(train.id);
     const currentSnapshot = await this.captureStagingIdleSnapshot({
       since: handshake.workflow_fence_started_at,
       ignoredRunIds: operationRunIds
@@ -1792,8 +2008,7 @@ export class ReleaseBusV2Reconciler {
       await this.failTrain(
         train,
         'CONTROL_PLANE',
-        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment',
-        lease
+        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment'
       );
       return false;
     }
@@ -1813,6 +2028,53 @@ export class ReleaseBusV2Reconciler {
       {}
     );
     return true;
+  }
+
+  /**
+   * Operation rows retain the current attempt so reconciliation stays exactly
+   * idempotent, but an infrastructure retry replaces external_id with the new
+   * run. Recover every earlier exact attempt from its immutable operation key
+   * before evaluating the final shared-state fence. If GitHub can no longer
+   * prove an earlier attempt, the ordinary workflow scan still sees it and the
+   * fence fails closed.
+   */
+  private async stagingFenceRunIds(trainId: string): Promise<string[]> {
+    const operations = await this.repository.listOperations(trainId, {});
+    const runIds = new Set(
+      operations
+        .map(({ external_id }) => external_id)
+        .filter((runId): runId is string => runId !== null)
+    );
+    const previousAttempts = operations.flatMap((operation) => {
+      if (operation.attempt <= 1 || operation.repository === null) return [];
+      const request = parseStoredJson<{ workflow?: unknown }>(
+        operation.request_json
+      );
+      if (typeof request?.workflow !== 'string' || !request.workflow)
+        throw new Error(
+          `Retried operation ${operation.id} has no immutable workflow identity`
+        );
+      return Array.from({ length: operation.attempt - 1 }, (_, index) => ({
+        operation,
+        attempt: index + 1,
+        workflow: request.workflow as string
+      }));
+    });
+    const discovered = await Promise.all(
+      previousAttempts.map(({ operation, attempt, workflow }) =>
+        releaseBusGitHubApp.findWorkflowRun(
+          operation.repository!,
+          workflow,
+          `${operation.idempotency_key}:a${attempt}`
+        )
+      )
+    );
+    for (const run of discovered) {
+      if (run) runIds.add(String(run.id));
+    }
+    return Array.from(runIds).sort((left, right) =>
+      left.localeCompare(right, 'en')
+    );
   }
 
   private async findStagingIdleHandshake(
@@ -1937,8 +2199,18 @@ export class ReleaseBusV2Reconciler {
       return;
     }
 
+    const mode = getReleaseBusV2Mode();
+    const betaAllowlist =
+      mode === 'OFF' || mode === 'STAGING'
+        ? getReleaseBusV2BetaAllowlist()
+        : [];
+    const stagingModeProductionBeta =
+      mode === 'STAGING' &&
+      releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION') &&
+      (await this.service.isBetaTrainAllowed(train, betaAllowlist, {}));
     const requiresBetaIdleHandshake =
-      getReleaseBusV2Mode() === 'OFF' && train.status === 'MERGING_PRODUCTION';
+      train.status === 'MERGING_PRODUCTION' &&
+      (mode === 'OFF' || stagingModeProductionBeta);
     const beforeLock = requiresBetaIdleHandshake
       ? await this.captureProductionIdleSnapshot()
       : null;
@@ -1971,7 +2243,8 @@ export class ReleaseBusV2Reconciler {
           actor: 'release-bus-v2-beta',
           payload: {
             ...afterLock,
-            beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
+            // Config validation requires one shared test_id across all entries.
+            beta_test_id: betaAllowlist[0]?.test_id,
             production_lock: 'owned',
             verified_at: Date.now()
           }
@@ -1994,6 +2267,15 @@ export class ReleaseBusV2Reconciler {
       return;
     }
     if (train.status === 'PRODUCTION_DEPLOYING') {
+      // A merge can delete the source branch and race the push webhook. Keep
+      // the immutable, already-claimed membership authoritative and repair any
+      // stale superseded bookkeeping before reconciling its deployments.
+      await this.updateCandidateStatuses(
+        relevantCandidates(context),
+        'PRODUCTION_DEPLOYING',
+        train.id,
+        false
+      );
       const sourceTrainId = await this.artifactSourceTrainId(train);
       const deployed = await this.reconcileDeployments(
         context,
@@ -2005,8 +2287,7 @@ export class ReleaseBusV2Reconciler {
           train,
           deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
           deployed.failedOperation.failure_message ??
-            'Production deployment failed',
-          lease
+            'Production deployment failed'
         );
         return;
       }
@@ -2016,8 +2297,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Production E2E failed',
-          lease
+          e2e.failure_message ?? 'Production E2E failed'
         );
         return;
       }
@@ -2106,8 +2386,21 @@ export class ReleaseBusV2Reconciler {
         );
       throw new MainMovedError(message);
     }
-    for (const item of current)
-      await this.advanceMainRef(train, item.repository, item.sha);
+    const advanced: ReleaseBusV2Repository[] = [];
+    for (const item of current) {
+      try {
+        await this.advanceMainRef(train, item.repository, item.sha);
+        advanced.push(item.repository);
+      } catch (error) {
+        if (advanced.length > 0)
+          throw new Error(
+            `Partial production main advance: ${advanced.join(', ')} reached the exact composed SHA before ${item.repository} failed; automation must remain paused for exact reconciliation. ${
+              error instanceof Error ? error.message : 'Unknown ref failure'
+            }`
+          );
+        throw error;
+      }
+    }
   }
 
   private async advanceMainRef(
@@ -2135,7 +2428,7 @@ export class ReleaseBusV2Reconciler {
               ? train.frontend_base_sha
               : train.backend_base_sha
         },
-        maxAttempts: 1
+        maxAttempts: 3
       },
       {}
     );
@@ -2150,9 +2443,88 @@ export class ReleaseBusV2Reconciler {
         : train.backend_composed_sha;
     if (!base || !composed)
       throw new Error(`Missing ${repository} release SHA`);
-    if (observedSha === base)
-      await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
-    else if (observedSha !== composed)
+    if (observedSha === base) {
+      try {
+        await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
+      } catch (error) {
+        // A ref update can fail after GitHub accepted it. Re-read the ref before
+        // deciding whether the durable operation is complete, retryable, or a
+        // terminal control-plane failure. This keeps exact main advancement
+        // idempotent and prevents a known-rejected update from leaving a
+        // permanently PENDING operation behind a terminal train lock.
+        const afterFailure = await releaseBusGitHubApp.resolveRef(
+          repository,
+          'main'
+        );
+        if (afterFailure !== composed) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : `Failed to advance ${repository} main`;
+          if (afterFailure !== base) {
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: 'CANCELLED',
+                  failureClass: 'INTERACTION',
+                  failureMessage: `${repository} main moved to ${afterFailure} during exact advancement`,
+                  completedAt: Date.now()
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw new MainMovedError(
+              `${repository} main moved from ${base} to ${afterFailure}`
+            );
+          }
+          if (isGitHubInfrastructureError(error)) {
+            const exhausted = operation.attempt >= operation.max_attempts;
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: exhausted ? 'FAILED' : 'PENDING',
+                  failureClass: 'INFRASTRUCTURE',
+                  failureMessage: `Exact ${repository} main advancement transport failure ${operation.attempt}/${operation.max_attempts}: ${message}`,
+                  attempt: exhausted
+                    ? operation.attempt
+                    : operation.attempt + 1,
+                  completedAt: exhausted ? Date.now() : null
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw error;
+          }
+          if (
+            !(await this.repository.updateOperation(
+              operation.id,
+              operation.row_version,
+              {
+                status: 'FAILED',
+                failureClass: 'CONTROL_PLANE',
+                failureMessage: message,
+                completedAt: Date.now()
+              },
+              {}
+            ))
+          )
+            throw new Error(
+              `${repository} main operation changed concurrently`
+            );
+          throw error;
+        }
+      }
+    } else if (observedSha !== composed)
       throw new MainMovedError(
         `${repository} main moved from ${base} to ${observedSha}`
       );
@@ -2370,12 +2742,11 @@ export class ReleaseBusV2Reconciler {
       service: null,
       expectedSha,
       artifactDigest: manifest.identity_sha256,
-      inputs: {
-        pack: 'all',
+      inputs: e2eWorkflowInputs(environment, {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        source_ref: relevantCandidates(context, 'frontend').length
+        staging_source_ref: relevantCandidates(context, 'frontend').length
           ? releaseBusV2Branch(train, 'frontend')
           : 'main',
         expected_sha: expectedSha,
@@ -2385,7 +2756,7 @@ export class ReleaseBusV2Reconciler {
         backend_sha: manifest.backend_sha ?? '',
         frontend_artifact_digest: manifest.frontend_artifact_digest ?? '',
         backend_artifact_digest: manifest.backend_artifact_digest ?? ''
-      },
+      }),
       maxAttempts: 2
     };
     return releaseBusV2Operations.reconcileWorkflow(spec);
@@ -2498,7 +2869,7 @@ export class ReleaseBusV2Reconciler {
     if (!manifestId) throw new Error('Staging validation has no manifest');
     for (const candidate of relevantCandidates(context)) {
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (!current || candidateUnavailableForTrainUpdate(current, candidate))
         continue;
       await this.repository.updateCandidate(
         current.id,
@@ -2508,7 +2879,8 @@ export class ReleaseBusV2Reconciler {
           currentTrainId: null,
           stagingValidatedTrainId: context.train.id,
           stagingValidatedManifestId: manifestId,
-          holdReason: null
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
         },
         {}
       );
@@ -2530,7 +2902,7 @@ export class ReleaseBusV2Reconciler {
       const current = await this.repository.findCandidateById(candidate.id, {});
       if (
         !current ||
-        ['SUPERSEDED', 'CANCELLED'].includes(current.status) ||
+        candidateUnavailableForTrainUpdate(current, candidate) ||
         (current.status === status &&
           current.current_train_id === currentTrainId &&
           current.hold_reason === null)
@@ -2539,7 +2911,12 @@ export class ReleaseBusV2Reconciler {
       await this.repository.updateCandidate(
         current.id,
         current.row_version,
-        { status, currentTrainId, holdReason: null },
+        {
+          status,
+          currentTrainId,
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
+        },
         {}
       );
     }
@@ -2629,7 +3006,86 @@ export class ReleaseBusV2Reconciler {
         continue;
       const train = await this.repository.findTrain(lock.owner_train_id, {});
       if (!train || !TERMINAL_TRAINS.has(train.status)) continue;
-      const operations = await this.repository.listOperations(train.id, {});
+      let operations = await this.repository.listOperations(train.id, {});
+      for (const operation of operations) {
+        if (
+          operation.status !== 'PENDING' ||
+          !['ADVANCE_MAIN_BACKEND', 'ADVANCE_MAIN_FRONTEND'].includes(
+            operation.operation_type
+          ) ||
+          !operation.repository ||
+          !operation.expected_sha
+        )
+          continue;
+        const base =
+          operation.repository === 'frontend'
+            ? train.frontend_base_sha
+            : train.backend_base_sha;
+        if (!base) continue;
+        let observedSha: string;
+        try {
+          observedSha = await releaseBusGitHubApp.resolveRef(
+            operation.repository,
+            'main'
+          );
+        } catch {
+          // A terminal cleanup may never guess at an ambiguous ref outcome.
+          // Retain the lock and retry the read on a later invocation.
+          continue;
+        }
+        const status =
+          observedSha === operation.expected_sha
+            ? ('SUCCEEDED' as const)
+            : observedSha === base
+              ? ('FAILED' as const)
+              : null;
+        if (!status) continue;
+        if (
+          await this.repository.updateOperation(
+            operation.id,
+            operation.row_version,
+            {
+              status,
+              externalId:
+                status === 'SUCCEEDED' ? operation.expected_sha : undefined,
+              result: {
+                base_sha: base,
+                deployed_sha:
+                  status === 'SUCCEEDED' ? operation.expected_sha : null,
+                observed_sha: observedSha,
+                reconciled_after_terminal_train: true
+              },
+              failureClass:
+                status === 'FAILED'
+                  ? (train.failure_class ?? 'CONTROL_PLANE')
+                  : null,
+              failureMessage:
+                status === 'FAILED'
+                  ? 'Terminal train retained main at its exact recorded base'
+                  : null,
+              completedAt: Date.now()
+            },
+            {}
+          )
+        )
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TERMINAL_INTERNAL_REF_OPERATION_RECONCILED',
+              actor: 'release-bus-v2',
+              payload: {
+                operation_id: operation.id,
+                repository: operation.repository,
+                operation_status: status,
+                observed_sha: observedSha,
+                expected_base_sha: base,
+                expected_target_sha: operation.expected_sha
+              }
+            },
+            {}
+          );
+      }
+      operations = await this.repository.listOperations(train.id, {});
       if (
         operations.some(
           (operation) => !TERMINAL_OPERATIONS.has(operation.status)
@@ -2664,8 +3120,7 @@ export class ReleaseBusV2Reconciler {
   private async failTrain(
     train: ReleaseBusV2TrainRecord,
     failureClass: ReleaseBusV2FailureClass,
-    message: string,
-    lease?: ReleaseBusV2LockRecord
+    message: string
   ): Promise<void> {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
@@ -2712,14 +3167,10 @@ export class ReleaseBusV2Reconciler {
           : 'Exact state is retained for idempotent diagnosis or retry',
       completedAt: Date.now()
     });
-    if (lease) {
-      await this.releaseEnvironmentLease(
-        current.lane === 'PRODUCTION'
-          ? 'production-environment'
-          : 'staging-environment',
-        lease
-      );
-    }
+    // Release ownership only after the train and every operation are terminal.
+    // If a mutation outcome is still ambiguous, the nonterminal operation
+    // deliberately retains the lease until reconciliation can prove its state.
+    await this.releaseTerminalEnvironmentLocks();
   }
 
   private async deferTrainForInfrastructure(
