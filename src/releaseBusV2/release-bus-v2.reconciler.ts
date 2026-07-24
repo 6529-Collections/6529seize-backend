@@ -31,6 +31,7 @@ import {
   topologicalOrder,
   type ReleaseBusV2Service
 } from '@/releaseBusV2/release-bus-v2.service';
+import { isGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type {
   ReleaseBusV2CandidateRecord,
   ReleaseBusV2CandidateStatus,
@@ -249,7 +250,7 @@ export function releaseTrainContributorGithubLogins(
       []) {
       const login = value.trim();
       if (
-        !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/.test(login) ||
+        !isGithubContributorLogin(login) ||
         logins.some(
           (existing) => existing.toLowerCase() === login.toLowerCase()
         )

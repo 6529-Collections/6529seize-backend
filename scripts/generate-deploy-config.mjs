@@ -226,7 +226,8 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
-          jq -e 'type == "array" and length <= 100 and all(.[]; type == "string" and test("^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\\\\[bot\\\\])?$"))' <<< "$INPUT_RELEASE_CONTRIBUTORS" > /dev/null
+          # Semantic GitHub-login validation is centralized in notify-ci-wave.mjs.
+          jq -e 'type == "array" and length <= 100 and all(.[]; type == "string" and length >= 1 and length <= 44)' <<< "$INPUT_RELEASE_CONTRIBUTORS" > /dev/null
           if [ -n "$INPUT_OPERATION_KEY" ]; then
             [[ "$INPUT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             [[ "$INPUT_TRAIN_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]

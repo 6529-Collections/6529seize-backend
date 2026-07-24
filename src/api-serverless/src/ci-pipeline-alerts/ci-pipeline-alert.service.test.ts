@@ -196,6 +196,8 @@ describe('CiPipelineAlertService', () => {
         'gelatogenesis',
         'ragnep',
         'dependabot[bot]',
+        'trailing-',
+        'double--hyphen',
         'invalid login'
       ])
     ).toEqual(['GelatoGenesis', 'ragnep', 'dependabot[bot]']);

@@ -14,7 +14,10 @@ import {
   releaseNoteGenerationQueue,
   ReleaseNoteGenerationQueue
 } from '@/release-notes/release-note-generation-queue';
-import { GITHUB_TO_6529_HANDLES } from '@/release-notes/release-note-contributors.config';
+import {
+  GITHUB_TO_6529_HANDLES,
+  isGithubContributorLogin
+} from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
@@ -192,7 +195,7 @@ export function normalizeContributorGithubLogins(
   for (const value of values ?? []) {
     const login = value.trim();
     if (
-      !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/.test(login) ||
+      !isGithubContributorLogin(login) ||
       logins.some((existing) => existing.toLowerCase() === login.toLowerCase())
     )
       continue;

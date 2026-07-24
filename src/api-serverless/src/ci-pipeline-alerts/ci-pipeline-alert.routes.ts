@@ -10,6 +10,7 @@ import { ApiResponse } from '@/api/api-response';
 import { isDeployService } from '@/api/deploy/deploy.config';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
+import { GITHUB_CONTRIBUTOR_LOGIN_PATTERN } from '@/release-notes/release-note-contributors.config';
 import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
@@ -56,11 +57,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .allow(null, '')
       .optional(),
     contributor_github_logins: Joi.array()
-      .items(
-        Joi.string()
-          .trim()
-          .pattern(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/)
-      )
+      .items(Joi.string().trim().pattern(GITHUB_CONTRIBUTOR_LOGIN_PATTERN))
       .max(100)
       .optional(),
     release_notes_prompt_path: Joi.string()

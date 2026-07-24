@@ -100,7 +100,7 @@ describe('notify-ci-wave release-note metadata', () => {
     expect(result.payload).toBeNull();
   });
 
-  it('omits new fields until a dispatcher supplies contributors', async () => {
+  it('keeps new fields atomic until the updated dispatcher supplies contributors', async () => {
     const result = await runNotifier({
       CI_RELEASE_TRAIN_ID: 'train-123',
       CI_RELEASE_CONTRIBUTORS: '[]'
@@ -123,6 +123,21 @@ describe('notify-ci-wave release-note metadata', () => {
     );
     expect(result.payload).toBeNull();
   });
+
+  it.each(['trailing-', 'double--hyphen'])(
+    'rejects impossible GitHub login %s',
+    async (login) => {
+      const result = await runNotifier({
+        CI_RELEASE_TRAIN_ID: 'train-123',
+        CI_RELEASE_CONTRIBUTORS: JSON.stringify([login])
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(
+        'CI_RELEASE_CONTRIBUTORS contains an invalid GitHub login'
+      );
+    }
+  );
 
   it('sends canonical per-PR v2 release-note groups', async () => {
     const result = await runNotifier({
