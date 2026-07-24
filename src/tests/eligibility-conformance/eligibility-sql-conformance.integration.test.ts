@@ -9,7 +9,9 @@ import {
   ADDRESS_CONSOLIDATION_KEY,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
   IDENTITIES_TABLE,
+  MEMBERSHIP_MATERIALIZATION_STATES_TABLE,
   MEMBERSHIP_REFRESH_REQUESTS_TABLE,
+  MEMBERSHIP_WATERMARKS_TABLE,
   NFT_OWNERS_TABLE,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
@@ -23,6 +25,10 @@ import { withWaves } from '@/tests/fixtures/wave.fixture';
 import { loadMaterializedVectors, MaterializedVector } from './vector-loader';
 import { membershipMaterializationService } from '@/membership/membership-materialization.service';
 import { membershipMaterializedReader } from '@/membership/membership-materialized.reader';
+import {
+  ELIGIBILITY_SPEC_VERSION,
+  MEMBERSHIP_MISSING_PROFILE_SWEEP_WATERMARK
+} from '@/membership/membership.constants';
 import {
   MembershipCriteriaDimension,
   membershipRefreshProducer,
@@ -308,6 +314,102 @@ describeWithSeed(
           process.env.ELIGIBILITY_READ_MODE = previousReadMode;
         }
       }
+    });
+
+    it('finds missing profile state with a bounded cursor sweep', async () => {
+      await membershipMaterializationService.refreshAllMemberships({
+        batchSize: 100,
+        maxBatches: 10
+      });
+      await sqlExecutor.execute(
+        `delete from ${MEMBERSHIP_REFRESH_REQUESTS_TABLE}`
+      );
+      const [lastIdentity] = await sqlExecutor.execute<{
+        readonly consolidation_key: string;
+        readonly profile_id: string;
+      }>(
+        `
+        select consolidation_key, profile_id
+        from ${IDENTITIES_TABLE}
+        where profile_id is not null
+        order by consolidation_key desc
+        limit 1
+        `
+      );
+      expect(lastIdentity).toBeDefined();
+      await sqlExecutor.execute(
+        `
+        delete from ${MEMBERSHIP_MATERIALIZATION_STATES_TABLE}
+        where scope = 'PROFILE'
+          and target_id = :profileId
+          and spec_version = :specVersion
+        `,
+        {
+          profileId: lastIdentity.profile_id,
+          specVersion: ELIGIBILITY_SPEC_VERSION
+        }
+      );
+      await sqlExecutor.execute(
+        `
+        insert into ${MEMBERSHIP_WATERMARKS_TABLE}
+          (dimension, watermark_millis, detail, updated_at_millis)
+        values (:dimension, 0, :cursor, 0)
+        as new
+        on duplicate key update detail = new.detail
+        `,
+        {
+          dimension: MEMBERSHIP_MISSING_PROFILE_SWEEP_WATERMARK,
+          cursor: lastIdentity.consolidation_key
+        }
+      );
+
+      const wrappedSweep =
+        await membershipMaterializationService.refreshDirtyMemberships({
+          batchSize: 100,
+          maxBatches: 1
+        });
+      expect(wrappedSweep.targets).toBe(0);
+
+      const missingState = await sqlExecutor.execute<{
+        readonly target_id: string;
+      }>(
+        `
+        select target_id
+        from ${MEMBERSHIP_MATERIALIZATION_STATES_TABLE}
+        where scope = 'PROFILE'
+          and target_id = :profileId
+          and spec_version = :specVersion
+        `,
+        {
+          profileId: lastIdentity.profile_id,
+          specVersion: ELIGIBILITY_SPEC_VERSION
+        }
+      );
+      expect(missingState).toEqual([]);
+
+      const restartedSweep =
+        await membershipMaterializationService.refreshDirtyMemberships({
+          batchSize: 100,
+          maxBatches: 1
+        });
+      expect(restartedSweep.targets).toBe(1);
+
+      const restoredState = await sqlExecutor.execute<{
+        readonly target_id: string;
+      }>(
+        `
+        select target_id
+        from ${MEMBERSHIP_MATERIALIZATION_STATES_TABLE}
+        where scope = 'PROFILE'
+          and target_id = :profileId
+          and spec_version = :specVersion
+        `,
+        {
+          profileId: lastIdentity.profile_id,
+          specVersion: ELIGIBILITY_SPEC_VERSION
+        }
+      );
+      expect(restoredState).toEqual([{ target_id: lastIdentity.profile_id }]);
     });
   }
 );

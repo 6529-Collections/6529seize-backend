@@ -191,6 +191,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     const superseded = await this.db.execute<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, prNumber, headSha },
       dbOptions(ctx)
@@ -200,6 +201,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
        set status = 'SUPERSEDED', superseded_at = :now, updated_at = :now,
            row_version = row_version + 1
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, prNumber, headSha, now },
       dbOptions(ctx)
@@ -217,6 +219,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, branchName, currentHeadSha },
       dbOptions(ctx)
@@ -229,6 +232,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            row_version = row_version + 1
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, branchName, currentHeadSha, now },
       dbOptions(ctx)
@@ -302,6 +306,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly productionRequestedAt?: number | null;
       readonly productionRequestedBy?: string | null;
       readonly holdReason?: string | null;
+      readonly supersededAt?: number | null;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -314,6 +319,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            production_requested_at = case when :setProductionRequestedAt = 1 then :productionRequestedAt else production_requested_at end,
            production_requested_by = case when :setProductionRequestedBy = 1 then :productionRequestedBy else production_requested_by end,
            hold_reason = case when :setHoldReason = 1 then :holdReason else hold_reason end,
+           superseded_at = case when :setSupersededAt = 1 then :supersededAt else superseded_at end,
            updated_at = :now, row_version = row_version + 1
        where id = :id and row_version = :rowVersion`,
       {
@@ -336,6 +342,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         productionRequestedBy: fields.productionRequestedBy ?? null,
         setHoldReason: fields.holdReason === undefined ? 0 : 1,
         holdReason: fields.holdReason ?? null,
+        setSupersededAt: fields.supersededAt === undefined ? 0 : 1,
+        supersededAt: fields.supersededAt ?? null,
         now: Date.now()
       },
       dbOptions(ctx)
@@ -1049,6 +1057,22 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
        where train_id = :trainId order by created_at desc limit ${boundedLimit}`,
       { trainId },
+      dbOptions(ctx)
+    );
+  }
+
+  public async listCandidateEvents(
+    candidateId: string,
+    eventType: string,
+    limit: number,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2EventRecord[]> {
+    const boundedLimit = Math.max(1, Math.min(limit, 500));
+    return this.db.execute<ReleaseBusV2EventRecord>(
+      `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
+       where candidate_id = :candidateId and event_type = :eventType
+       order by created_at desc, id desc limit ${boundedLimit}`,
+      { candidateId, eventType },
       dbOptions(ctx)
     );
   }
