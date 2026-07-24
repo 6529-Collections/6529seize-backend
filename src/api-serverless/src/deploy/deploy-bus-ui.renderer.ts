@@ -32,7 +32,8 @@ var key='deploy-ui-token';var state={token:localStorage.getItem(key)||'',mode:'O
 var terminal=['STAGING_VALIDATED','PRODUCTION_DEPLOYED','FAILED','CANCELLED'];
 var byId=function(id){return document.getElementById(id)};
 var authenticatedContentIds=['runtime','staging-candidates','production-candidates','active-trains','trains','train-detail','manifests','register-status','control-status'];
-function clearAuthenticatedContent(){authenticatedContentIds.forEach(function(id){var node=byId(id);node.innerHTML='';node.textContent=''})}
+var authenticatedInputIds=['pr-number','branch','sha','units','edges','dependencies','control-reason'];
+function clearAuthenticatedContent(){authenticatedContentIds.forEach(function(id){var node=byId(id);node.innerHTML='';node.textContent=''});authenticatedInputIds.forEach(function(id){byId(id).value=''});byId('repository').value='frontend';byId('backend-plan').classList.toggle('hidden',true)}
 function setAuthenticatedLayout(isAuthenticated){byId('authentication').classList.toggle('hidden',isAuthenticated);byId('authenticated').classList.toggle('hidden',!isAuthenticated);byId('forget').classList.toggle('hidden',!isAuthenticated)}
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function status(node,message,error){node.textContent=message||'';node.className='status '+(error?'error':'success')}

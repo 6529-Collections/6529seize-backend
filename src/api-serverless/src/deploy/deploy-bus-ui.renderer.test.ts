@@ -198,6 +198,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(harness.localStorage.getItem('deploy-ui-token')).toBe('valid-token');
 
     harness.elements.manifests.innerHTML = 'stale manifest';
+    harness.elements.branch.value = 'stale-branch';
+    harness.elements['control-reason'].value = 'stale reason';
     await harness.elements.forget.onclick?.();
 
     expect(harness.elements.authentication.classList.contains('hidden')).toBe(
@@ -210,6 +212,12 @@ describe('deploy-bus-ui.renderer', () => {
     expect(harness.document.activeElement).toBe(harness.elements.token);
     expect(harness.localStorage.getItem('deploy-ui-token')).toBeNull();
     expect(harness.elements.manifests.innerHTML).toBe('');
+    expect(harness.elements.branch.value).toBe('');
+    expect(harness.elements['control-reason'].value).toBe('');
+    expect(harness.elements.repository.value).toBe('frontend');
+    expect(harness.elements['backend-plan'].classList.contains('hidden')).toBe(
+      true
+    );
   });
 
   it('clears a rejected stored token and explains how to recover', async () => {
