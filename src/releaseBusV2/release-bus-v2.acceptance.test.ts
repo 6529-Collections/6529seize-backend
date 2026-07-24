@@ -1440,6 +1440,13 @@ describe('Release Bus v2 offline acceptance harness', () => {
       ...state.repository.controls.get('PRODUCTION')!,
       paused: true
     });
+    jest
+      .spyOn(state.repository, 'listLocks')
+      .mockResolvedValue(
+        ['scheduler', 'staging-environment', 'production-environment'].map(
+          (name) => ({ ...state.repository.lock, name })
+        )
+      );
     state.repository.trains.set(
       'production-parent',
       train('production-parent', {
@@ -1482,6 +1489,22 @@ describe('Release Bus v2 offline acceptance harness', () => {
       async (repository: 'frontend' | 'backend') =>
         repository === 'frontend' ? FRONTEND_SHA : 'e'.repeat(40)
     );
+    state.repository.trains.set(
+      'second-production-parent',
+      train('second-production-parent', {
+        lane: 'PRODUCTION',
+        status: 'WAITING_FOR_ENVIRONMENT',
+        qualification_train_id: 'second-qualification'
+      })
+    );
+    state.repository.trains.set(
+      'second-qualification',
+      train('second-qualification', {
+        lane: 'PRODUCTION_QUALIFICATION',
+        status: 'WAITING_FOR_ENVIRONMENT',
+        parent_train_id: 'second-production-parent'
+      })
+    );
 
     const result =
       await state.reconciler.recoverUnsatisfiableProductionQualifications(
@@ -1499,12 +1522,17 @@ describe('Release Bus v2 offline acceptance harness', () => {
       staging_identity: {
         frontend_sha: FRONTEND_SHA,
         backend_sha: 'e'.repeat(40)
-      }
+      },
+      has_more: true
     });
     expect(state.repository.trains.get('train-1')?.status).toBe('CANCELLED');
     expect(state.repository.trains.get('production-parent')?.status).toBe(
       'CANCELLED'
     );
+    expect(state.repository.trains.get('second-qualification')?.status).toBe(
+      'WAITING_FOR_ENVIRONMENT'
+    );
+    expect(state.repository.lock.lease_token).toBeNull();
   });
 
   it('rejects STAGING-mode maintenance recovery while PRODUCTION is running', async () => {

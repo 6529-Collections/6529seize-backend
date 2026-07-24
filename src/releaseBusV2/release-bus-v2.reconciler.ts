@@ -7,6 +7,7 @@ import {
 import {
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
+  RELEASE_BUS_V2_LOCK_TTL_MS,
   releaseBusV2BetaAllowsCandidate,
   releaseBusV2BetaInfrastructureFailureInjection,
   releaseBusV2BetaAllowsLane,
@@ -59,6 +60,11 @@ const TERMINAL_OPERATIONS = new Set<ReleaseBusV2OperationRecord['status']>([
 // Workflow timeouts are at most 90 minutes, so two hours prevents overlapping
 // mutation while still allowing deterministic recovery from an abandoned lock.
 const ENVIRONMENT_LOCK_TTL_MS = 2 * 60 * 60 * 1000;
+const REQUIRED_MAINTENANCE_LOCKS = [
+  'scheduler',
+  'staging-environment',
+  'production-environment'
+] as const;
 
 type TrainContext = {
   readonly train: ReleaseBusV2TrainRecord;
@@ -1952,6 +1958,7 @@ export class ReleaseBusV2Reconciler {
       readonly frontend_sha: string;
       readonly backend_sha: string;
     };
+    readonly has_more: boolean;
   }> {
     const mode = getReleaseBusV2Mode();
     if (!['OFF', 'STAGING'].includes(mode))
@@ -1971,74 +1978,121 @@ export class ReleaseBusV2Reconciler {
           : 'Stalled qualification maintenance recovery requires PRODUCTION to be paused while STAGING remains enabled'
       );
     const locks = await this.repository.listLocks({});
-    if (locks.some(({ owner_train_id }) => owner_train_id !== null))
+    if (
+      REQUIRED_MAINTENANCE_LOCKS.some(
+        (name) => !locks.some((lock) => lock.name === name)
+      ) ||
+      locks.some(
+        ({ owner_train_id, lease_token }) =>
+          owner_train_id !== null || lease_token !== null
+      )
+    )
       throw new Error(
         'Stalled qualification maintenance recovery requires every v2 lock to be free'
       );
-    const before = await this.captureStagingIdleSnapshot();
-    const after = await this.captureStagingIdleSnapshot();
-    if (
-      !before ||
-      !after ||
-      !after.frontend_staging_sha ||
-      !after.backend_staging_sha ||
-      before.frontend_staging_sha !== after.frontend_staging_sha ||
-      before.backend_staging_sha !== after.backend_staging_sha
-    )
-      throw new Error(
-        'Stalled qualification maintenance recovery requires a stable idle staging identity'
-      );
-    const recovered: Array<{
-      readonly parent_train_id: string;
-      readonly qualification_train_id: string;
-      readonly candidate_ids: readonly string[];
-    }> = [];
-    const qualifications = (await this.repository.listTrains(200, {}))
-      .filter(({ lane }) => lane === 'PRODUCTION_QUALIFICATION')
-      .filter(({ status }) =>
-        ['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(status)
-      )
-      .sort(
-        (left, right) => Number(left.created_at) - Number(right.created_at)
-      );
-    for (const qualification of qualifications) {
-      const context = await this.loadContext(qualification);
-      if (this.bindStagingEnvironmentIdentity(context, after)) continue;
-      const result =
-        await this.service.yieldUnsatisfiableProductionQualification({
-          qualificationTrainId: qualification.id,
-          stagingIdentity: {
-            frontendSha: after.frontend_staging_sha,
-            backendSha: after.backend_staging_sha
-          },
-          actor
-        });
-      if (!result.yielded) continue;
-      recovered.push({
-        parent_train_id: result.parentTrainId,
-        qualification_train_id: result.qualificationTrainId,
-        candidate_ids: result.candidateIds
-      });
-    }
-    await this.repository.appendEvent(
-      {
-        eventType: 'STALLED_PRODUCTION_QUALIFICATION_RECOVERY_COMPLETED',
-        actor,
-        payload: {
-          recovered,
-          staging_frontend_sha: after.frontend_staging_sha,
-          staging_backend_sha: after.backend_staging_sha
-        }
-      },
+    const scheduler = await this.repository.acquireLock(
+      'scheduler',
+      null,
+      `release-bus-v2-maintenance:${actor}:${randomUUID()}`,
+      RELEASE_BUS_V2_LOCK_TTL_MS,
       {}
     );
-    return {
-      recovered,
-      staging_identity: {
-        frontend_sha: after.frontend_staging_sha,
-        backend_sha: after.backend_staging_sha
+    if (!scheduler?.lease_token)
+      throw new Error(
+        'Stalled qualification maintenance recovery could not acquire its exclusive scheduler fence'
+      );
+    try {
+      const before = await this.captureStagingIdleSnapshot();
+      const after = await this.captureStagingIdleSnapshot();
+      if (
+        !before ||
+        !after ||
+        !after.frontend_staging_sha ||
+        !after.backend_staging_sha ||
+        before.frontend_staging_sha !== after.frontend_staging_sha ||
+        before.backend_staging_sha !== after.backend_staging_sha
+      )
+        throw new Error(
+          'Stalled qualification maintenance recovery requires a stable idle staging identity'
+        );
+      const recovered: Array<{
+        readonly parent_train_id: string;
+        readonly qualification_train_id: string;
+        readonly candidate_ids: readonly string[];
+      }> = [];
+      const qualifications = (await this.repository.listTrains(200, {}))
+        .filter(({ lane }) => lane === 'PRODUCTION_QUALIFICATION')
+        .filter(({ status }) =>
+          ['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(status)
+        )
+        .sort(
+          (left, right) => Number(left.created_at) - Number(right.created_at)
+        );
+      for (const qualification of qualifications) {
+        const current = await this.repository.findTrain(qualification.id, {});
+        if (
+          !current ||
+          current.lane !== 'PRODUCTION_QUALIFICATION' ||
+          !['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(current.status)
+        )
+          continue;
+        const context = await this.loadContext(current);
+        if (this.bindStagingEnvironmentIdentity(context, after)) continue;
+        const result =
+          await this.service.yieldUnsatisfiableProductionQualification({
+            qualificationTrainId: current.id,
+            stagingIdentity: {
+              frontendSha: after.frontend_staging_sha,
+              backendSha: after.backend_staging_sha
+            },
+            actor,
+            maintenanceSchedulerLeaseToken: scheduler.lease_token
+          });
+        if (!result.yielded) continue;
+        recovered.push({
+          parent_train_id: result.parentTrainId,
+          qualification_train_id: result.qualificationTrainId,
+          candidate_ids: result.candidateIds
+        });
+        break;
       }
-    };
+      const hasMore =
+        recovered.length > 0 &&
+        qualifications.some(
+          ({ id }) => id !== recovered[0]?.qualification_train_id
+        );
+      if (recovered.length > 0)
+        await this.repository.appendEvent(
+          {
+            eventType: 'STALLED_PRODUCTION_QUALIFICATION_RECOVERY_COMPLETED',
+            actor,
+            payload: {
+              recovered,
+              has_more: hasMore,
+              staging_frontend_sha: after.frontend_staging_sha,
+              staging_backend_sha: after.backend_staging_sha
+            }
+          },
+          {}
+        );
+      return {
+        recovered,
+        staging_identity: {
+          frontend_sha: after.frontend_staging_sha,
+          backend_sha: after.backend_staging_sha
+        },
+        has_more: hasMore
+      };
+    } finally {
+      await this.releaseMaintenanceSchedulerFence(scheduler.lease_token);
+    }
+  }
+
+  private async releaseMaintenanceSchedulerFence(token: string): Promise<void> {
+    if (await this.repository.releaseLock('scheduler', token, {})) return;
+    throw new Error(
+      'Stalled qualification maintenance recovery could not release its exclusive scheduler fence'
+    );
   }
 
   private async verifyStagingFinalFence(

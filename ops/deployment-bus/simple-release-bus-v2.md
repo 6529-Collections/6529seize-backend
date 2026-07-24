@@ -195,8 +195,11 @@ of that train's operations is terminal, and the operator-authenticated
 `/deploy/release-bus-v2/maintenance/recover-stalled-qualifications` recovery.
 Recovery is available in `OFF` with `ALL` paused or in `STAGING` with
 `PRODUCTION` paused. It requires every v2 lock free, a double stable/idle
-staging-ref handshake, and terminal parent/qualification operations before
-using the same transactional yield as the active reconciler. The cleanup emits
+staging-ref handshake, and terminal parent/qualification operations. It then
+owns the scheduler fence and transactionally locks/re-verifies all lock rows
+before asserting that an unchanged repository actually mismatches the
+qualification target. Each request yields at most one qualification and
+reports whether another bounded invocation may be needed. The cleanup emits
 `TERMINAL_INTERNAL_REF_OPERATION_RECONCILED` and
 `TERMINAL_ENVIRONMENT_LOCK_RELEASED`; recovery emits
 `PRODUCTION_QUALIFICATION_YIELDED` and

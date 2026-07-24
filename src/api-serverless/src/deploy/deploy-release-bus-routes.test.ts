@@ -1214,7 +1214,8 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       staging_identity: {
         frontend_sha: SHA,
         backend_sha: 'b'.repeat(40)
-      }
+      },
+      has_more: false
     });
   });
 
@@ -1338,6 +1339,22 @@ describe('Release Bus v2 route authorization and exact actions', () => {
           candidate_ids: [candidateId]
         }
       ]
+    });
+  });
+
+  it('returns conflict when the audited maintenance recovery safety fence rejects', async () => {
+    mockRecoverUnsatisfiableProductionQualifications.mockRejectedValue(
+      new Error('PRODUCTION must remain paused')
+    );
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/recover-stalled-qualifications',
+      {}
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      error: 'PRODUCTION must remain paused'
     });
   });
 

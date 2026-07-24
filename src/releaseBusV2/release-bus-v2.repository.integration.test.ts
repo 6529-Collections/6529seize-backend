@@ -442,14 +442,56 @@ describeWithSeed(
         {}
       );
 
+      const maintenanceScheduler = await repository.acquireLock(
+        'scheduler',
+        null,
+        'integration-maintenance',
+        60_000,
+        {}
+      );
+      expect(maintenanceScheduler?.lease_token).toBeTruthy();
+      await expect(
+        service.yieldUnsatisfiableProductionQualification({
+          qualificationTrainId: qualification.id,
+          stagingIdentity: {
+            frontendSha: SHA_C,
+            backendSha: SHA_A
+          },
+          actor: 'integration-recovery',
+          maintenanceSchedulerLeaseToken: 'wrong-token'
+        })
+      ).rejects.toThrow('lost its exclusive all-lock safety fence');
+      expect(await repository.findTrain(parent!.id, {})).toEqual(
+        expect.objectContaining({ status: 'WAITING_FOR_ENVIRONMENT' })
+      );
+      await expect(
+        service.yieldUnsatisfiableProductionQualification({
+          qualificationTrainId: qualification.id,
+          stagingIdentity: {
+            frontendSha: SHA_C,
+            backendSha: SHA_B
+          },
+          actor: 'integration-recovery',
+          maintenanceSchedulerLeaseToken: maintenanceScheduler!.lease_token!
+        })
+      ).rejects.toThrow('is not unsatisfiable');
+      expect(await repository.findTrain(parent!.id, {})).toEqual(
+        expect.objectContaining({ status: 'WAITING_FOR_ENVIRONMENT' })
+      );
       const yielded = await service.yieldUnsatisfiableProductionQualification({
         qualificationTrainId: qualification.id,
         stagingIdentity: {
           frontendSha: SHA_C,
           backendSha: SHA_A
         },
-        actor: 'integration-recovery'
+        actor: 'integration-recovery',
+        maintenanceSchedulerLeaseToken: maintenanceScheduler!.lease_token!
       });
+      await repository.releaseLock(
+        'scheduler',
+        maintenanceScheduler!.lease_token!,
+        {}
+      );
       expect(yielded).toEqual({
         yielded: true,
         parentTrainId: parent!.id,
