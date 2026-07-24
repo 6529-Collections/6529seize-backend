@@ -6734,7 +6734,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+            pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
         - name: direction
           in: query
           required: false
@@ -6782,7 +6782,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
+            pattern: ^[\p{L}\p{N}?!,.\x27() ][\p{L}\p{N}?!,.\x27() -]{0,99}$
           description: URL-encoded REP category name.
       responses:
         "200":
@@ -6811,7 +6811,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
+            pattern: ^[\p{L}\p{N}?!,.\x27() ][\p{L}\p{N}?!,.\x27() -]{0,99}$
           description: URL-encoded REP category name.
         - name: page
           in: query
@@ -6877,7 +6877,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
+            pattern: ^[\p{L}\p{N}?!,.\x27() ][\p{L}\p{N}?!,.\x27() -]{0,99}$
           description: URL-encoded REP category name.
         - name: page
           in: query
@@ -6942,7 +6942,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
+            pattern: ^[\p{L}\p{N}?!,.\x27() ][\p{L}\p{N}?!,.\x27() -]{0,99}$
           description: URL-encoded REP category name.
         - name: page
           in: query
@@ -7007,7 +7007,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
+            pattern: ^[\p{L}\p{N}?!,.\x27() ][\p{L}\p{N}?!,.\x27() -]{0,99}$
           description: URL-encoded REP category name.
       responses:
         "200":
@@ -7036,7 +7036,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
+            pattern: ^[\p{L}\p{N}?!,.\x27() ][\p{L}\p{N}?!,.\x27() -]{0,99}$
           description: URL-encoded REP category name.
         - name: page
           in: query
@@ -7095,7 +7095,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
+            pattern: ^[\p{L}\p{N}?!,.\x27() ][\p{L}\p{N}?!,.\x27() -]{0,99}$
           description: URL-encoded REP category name.
         - name: page
           in: query
@@ -9158,7 +9158,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+            pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
         - name: page
           in: query
           required: false
@@ -12388,7 +12388,7 @@ components:
           type: string
           maxLength: 100
           nullable: true
-          pattern: ^[a-zA-Z0-9?!,."() ]$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
           description: >-
             Category of the rating must be set when matter is REP and null if
             matter is CIC
@@ -12446,7 +12446,7 @@ components:
         category:
           type: string
           maxLength: 100
-          pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
         amount:
           type: integer
           format: int64
@@ -12484,7 +12484,7 @@ components:
           type: string
           maxLength: 100
           minLength: 1
-          pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
     ApiChangeWaveRepRating:
       type: object
       required:
@@ -12498,7 +12498,7 @@ components:
           type: string
           maxLength: 100
           minLength: 1
-          pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+          pattern: ^[a-zA-Z0-9?!,."() ][a-zA-Z0-9?!,."() -]{0,99}$
     ApiCicContributor:
       type: object
       required:

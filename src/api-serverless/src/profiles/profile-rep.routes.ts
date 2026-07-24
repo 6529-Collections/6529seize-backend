@@ -14,7 +14,10 @@ import {
   ratingsService
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
-import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
+import {
+  REP_CATEGORY_INVALID_MESSAGE,
+  REP_CATEGORY_PATTERN
+} from '../../../entities/IAbusivenessDetectionResult';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { RatingStats } from '../../../rates/ratings.db';
@@ -369,7 +372,7 @@ const ChangeProfileRepRatingSchema: Joi.ObjectSchema<ApiChangeProfileRepRating> 
   Joi.object({
     amount: Joi.number().integer().required(),
     category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).messages({
-      'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+      'string.pattern.base': REP_CATEGORY_INVALID_MESSAGE
     })
   });
 
