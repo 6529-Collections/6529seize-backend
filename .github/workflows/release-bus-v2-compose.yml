@@ -88,8 +88,13 @@ jobs:
           excluded='[]'
           while IFS= read -r sha; do
             git fetch --no-tags origin "$sha"
-            if git merge-base --is-ancestor "$sha" HEAD; then
+            ancestor_status=0
+            git merge-base --is-ancestor "$sha" HEAD || ancestor_status=$?
+            if [ "$ancestor_status" -eq 0 ]; then
               continue
+            fi
+            if [ "$ancestor_status" -ne 1 ]; then
+              exit "$ancestor_status"
             fi
             if git merge --no-ff --no-commit "$sha"; then
               git -c core.hooksPath=/dev/null commit -s \
