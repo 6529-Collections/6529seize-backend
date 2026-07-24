@@ -15,6 +15,85 @@ jest.mock('node-fetch', () => {
   return { ...actual, __esModule: true, default: jest.fn() };
 });
 
+function appWithCachedToken(): ReleaseBusGitHubApp {
+  const app = new ReleaseBusGitHubApp();
+  (
+    app as unknown as {
+      cachedToken: { value: string; expiresAt: number };
+    }
+  ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+  return app;
+}
+
+describe('GitHub immutable release refs', () => {
+  const ref = 'release-bus-v2/staging-train-train-id-frontend';
+  const exactSha = 'a'.repeat(40);
+
+  afterEach(() => {
+    (fetch as jest.MockedFunction<typeof fetch>).mockReset();
+  });
+
+  it('creates an absent immutable release ref without force', async () => {
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ref: `refs/heads/${ref}` }), {
+        status: 201
+      })
+    );
+
+    await appWithCachedToken().createRef('frontend', ref, exactSha);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/git/refs');
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          ref: `refs/heads/${ref}`,
+          sha: exactSha
+        })
+      })
+    );
+  });
+
+  it('is idempotent only when a racing ref resolves to the exact SHA', async () => {
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Reference already exists' }), {
+          status: 422
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ object: { sha: exactSha } }))
+      );
+
+    await expect(
+      appWithCachedToken().createRef('frontend', ref, exactSha)
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when a racing ref resolves to another SHA', async () => {
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Reference already exists' }), {
+          status: 422
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ object: { sha: 'b'.repeat(40) } }))
+      );
+
+    await expect(
+      appWithCachedToken().createRef('frontend', ref, exactSha)
+    ).rejects.toThrow(
+      'Failed to create frontend ref release-bus-v2/staging-train-train-id-frontend: Reference already exists'
+    );
+  });
+});
+
 describe('GitHub pull request qualification evidence', () => {
   it('reads checks from the PR head and binds the artifact to its merge tree', async () => {
     const headSha = 'a'.repeat(40);
