@@ -36,4 +36,27 @@ describe('Release Bus v1 retirement', () => {
       /RELEASE_READY_DEPLOYMENTS_TABLE|RELEASE_TRAINS_TABLE|RELEASE_BUS_CONTROLS_TABLE/
     );
   });
+
+  it('retires legacy tables atomically and reversibly before deletion', () => {
+    const migration = read(
+      'migrations/20260724202500-retire-release-bus-v1-tables.js'
+    );
+
+    expect(migration).toContain('RENAME TABLE');
+    expect(migration).toContain('exports.down');
+    expect(migration).not.toMatch(/\bDROP\s+TABLE\b/i);
+    for (const table of [
+      'release_ready_deployments',
+      'release_candidate_dependencies',
+      'release_trains',
+      'release_train_items',
+      'release_train_operations',
+      'release_train_evidence',
+      'release_deployment_lanes',
+      'release_bus_controls',
+      'release_train_events'
+    ]) {
+      expect(migration).toContain(`'${table}'`);
+    }
+  });
 });
