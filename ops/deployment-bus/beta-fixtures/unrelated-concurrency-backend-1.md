@@ -6,6 +6,6 @@ merge-tree while its deploy plan selects only `attachmentsOrchestrator`.
 The matching frontend candidate has no dependency on this candidate, allowing
 the bus to prove independent preparation and deployment without supersession.
 
-- Test ID: `unrelated-concurrency-1`
-- Candidate ID: `71726b04-49ca-45ec-b13c-20b16fee714b`
+- Test ID: `mixed-retention-prod-overlap-2`
+- Candidate ID: `708657c1-3d9c-4e68-b0a9-6053017ddf52`
 - Global Release Bus v2 mode: `OFF`
