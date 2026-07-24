@@ -2,6 +2,139 @@ import {
   renderDeployBusUI,
   renderDeployBusUiApp
 } from '@/api/deploy/deploy-bus-ui.renderer';
+import { runInNewContext } from 'node:vm';
+
+interface FakeClassList {
+  contains(name: string): boolean;
+  toggle(name: string, force?: boolean): boolean;
+}
+
+interface FakeElement {
+  classList: FakeClassList;
+  className: string;
+  dataset: Record<string, string>;
+  disabled: boolean;
+  focus(): void;
+  innerHTML: string;
+  onchange?: () => unknown;
+  onclick?: () => unknown;
+  onsubmit?: (event: { preventDefault(): void }) => unknown;
+  textContent: string;
+  value: string;
+}
+
+interface AppHarness {
+  document: {
+    activeElement: FakeElement | null;
+  };
+  elements: Record<string, FakeElement>;
+  localStorage: {
+    getItem(key: string): string | null;
+  };
+}
+
+function createClassList(initial: string[] = []): FakeClassList {
+  const names = new Set(initial);
+  return {
+    contains: (name) => names.has(name),
+    toggle: (name, force) => {
+      const shouldAdd = force ?? !names.has(name);
+      if (shouldAdd) {
+        names.add(name);
+      } else {
+        names.delete(name);
+      }
+      return shouldAdd;
+    }
+  };
+}
+
+function createAppHarness({
+  storedToken,
+  sessionError
+}: {
+  storedToken?: string;
+  sessionError?: string;
+} = {}): AppHarness {
+  const elements: Record<string, FakeElement> = {};
+  const document = {
+    activeElement: null as FakeElement | null,
+    getElementById: (id: string) => {
+      if (!elements[id]) {
+        const classList = createClassList(
+          ['authenticated', 'forget', 'backend-plan'].includes(id)
+            ? ['hidden']
+            : []
+        );
+        const element: FakeElement = {
+          classList,
+          className: '',
+          dataset: {},
+          disabled: false,
+          focus: () => {
+            document.activeElement = element;
+          },
+          innerHTML: '',
+          textContent: '',
+          value: ''
+        };
+        elements[id] = element;
+      }
+      return elements[id];
+    },
+    querySelectorAll: () => []
+  };
+
+  document.getElementById('authentication');
+  document.getElementById('authenticated');
+  document.getElementById('token');
+  document.getElementById('repository').value = 'frontend';
+
+  const storage = new Map<string, string>();
+  if (storedToken) {
+    storage.set('deploy-ui-token', storedToken);
+  }
+  const localStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    removeItem: (key: string) => storage.delete(key),
+    setItem: (key: string, value: string) => storage.set(key, value)
+  };
+
+  const fetch = async (url: string) => {
+    if (url === '/deploy/ui/session' && sessionError) {
+      throw new Error(sessionError);
+    }
+    const responses: Record<string, object> = {
+      '/deploy/ui/session': { login: 'GelatoGenesis' },
+      '/deploy/release-bus-v2/trains': { trains: [] },
+      '/deploy/release-bus-v2/manifests': { manifests: [] },
+      '/deploy/release-bus-v2/controls': {
+        mode: 'PRODUCTION',
+        controls: [],
+        locks: []
+      }
+    };
+    const payload = url.startsWith('/deploy/release-bus-v2/candidates')
+      ? { candidates: [] }
+      : responses[url];
+    if (!payload) {
+      throw new Error(`Unexpected request: ${url}`);
+    }
+    return {
+      json: async () => payload,
+      ok: true,
+      status: 200
+    };
+  };
+
+  runInNewContext(renderDeployBusUiApp(), {
+    document,
+    fetch,
+    localStorage
+  });
+
+  return { document, elements, localStorage };
+}
 
 describe('deploy-bus-ui.renderer', () => {
   it('renders separate staging and explicit production queues', () => {
@@ -31,24 +164,61 @@ describe('deploy-bus-ui.renderer', () => {
     );
   });
 
-  it('switches between logged-out authentication and logged-in controls', () => {
-    const app = renderDeployBusUiApp();
+  it('switches between logged-out authentication and logged-in controls', async () => {
+    const harness = createAppHarness();
 
-    expect(app).toContain(
-      "byId('authentication').classList.toggle('hidden',isAuthenticated)"
+    expect(harness.elements.authentication.classList.contains('hidden')).toBe(
+      false
     );
-    expect(app).toContain(
-      "byId('authenticated').classList.toggle('hidden',!isAuthenticated)"
+    expect(harness.elements.authenticated.classList.contains('hidden')).toBe(
+      true
     );
-    expect(app).toContain(
-      "byId('forget').classList.toggle('hidden',!isAuthenticated)"
+    expect(harness.elements.forget.classList.contains('hidden')).toBe(true);
+
+    harness.elements.token.value = 'valid-token';
+    harness.document.activeElement = harness.elements.connect;
+    await harness.elements.connect.onclick?.();
+
+    expect(harness.elements.authentication.classList.contains('hidden')).toBe(
+      true
     );
-    expect(app).toContain('setAuthenticatedLayout(true)');
-    expect(app).toContain('setAuthenticatedLayout(false)');
-    expect(app).toContain("byId('forget').focus()");
-    expect(app).toContain("byId('token').focus()");
-    expect(app).toContain(
-      "catch(error){status(byId('register-status'),error.message,true)}"
+    expect(harness.elements.authenticated.classList.contains('hidden')).toBe(
+      false
+    );
+    expect(harness.elements.forget.classList.contains('hidden')).toBe(false);
+    expect(harness.document.activeElement).toBe(harness.elements.forget);
+    expect(harness.localStorage.getItem('deploy-ui-token')).toBe('valid-token');
+
+    await harness.elements.forget.onclick?.();
+
+    expect(harness.elements.authentication.classList.contains('hidden')).toBe(
+      false
+    );
+    expect(harness.elements.authenticated.classList.contains('hidden')).toBe(
+      true
+    );
+    expect(harness.elements.forget.classList.contains('hidden')).toBe(true);
+    expect(harness.document.activeElement).toBe(harness.elements.token);
+    expect(harness.localStorage.getItem('deploy-ui-token')).toBeNull();
+  });
+
+  it('clears a rejected stored token and explains how to recover', async () => {
+    const harness = createAppHarness({
+      storedToken: 'stale-token',
+      sessionError: 'Bad credentials'
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(harness.localStorage.getItem('deploy-ui-token')).toBeNull();
+    expect(harness.elements.authentication.classList.contains('hidden')).toBe(
+      false
+    );
+    expect(harness.elements.authenticated.classList.contains('hidden')).toBe(
+      true
+    );
+    expect(harness.elements['auth-status'].textContent).toBe(
+      'Stored token was rejected. Paste a new GitHub token.'
     );
   });
 
