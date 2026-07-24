@@ -7912,7 +7912,10 @@ paths:
         "200":
           description: >-
             Unsatisfiable parent and qualification trains were terminalized
-            transactionally and their explicit candidates retained for replan
+            transactionally and their explicit candidates retained for replan.
+            Recovery commits at most one yield per request; has_more means the
+            caller must invoke the endpoint again, and only a response with no
+            recovered item and has_more=false proves the drain pass is complete
           content:
             application/json:
               schema:

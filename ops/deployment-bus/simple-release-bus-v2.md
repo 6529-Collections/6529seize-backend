@@ -199,7 +199,10 @@ staging-ref handshake, and terminal parent/qualification operations. It then
 owns the scheduler fence and transactionally locks/re-verifies all lock rows
 before asserting that an unchanged repository actually mismatches the
 qualification target. Each request yields at most one qualification and
-reports whether another bounded invocation may be needed. The cleanup emits
+returns `has_more=true` after every committed yield because that yield can
+change another qualification's live yieldability. Invoke recovery again until
+an empty response returns `has_more=false`; only that response proves the drain
+pass is complete. The cleanup emits
 `TERMINAL_INTERNAL_REF_OPERATION_RECONCILED` and
 `TERMINAL_ENVIRONMENT_LOCK_RELEASED`; recovery emits
 `PRODUCTION_QUALIFICATION_YIELDED` and

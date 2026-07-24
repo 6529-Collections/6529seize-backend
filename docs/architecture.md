@@ -486,7 +486,9 @@ production qualifications while v2 is `OFF` with `ALL` paused, or in `STAGING`
 mode with `PRODUCTION` paused. Every v2 lock must be free and a double staging
 workflow/ref handshake must be stable. Recovery then owns the scheduler fence,
 re-verifies every lock inside the yield transaction, and processes at most one
-qualification per request so committed progress is always reported.
+qualification per request so committed progress is always reported. Every
+committed yield requires a follow-up drain check; only an empty recovery
+response proves there are no further live qualifications to yield.
 
 GitHub Actions performs exact composition, combined preflight, immutable
 packaging, backend DAG deployment, frontend deployment, and manifest-bound E2E.

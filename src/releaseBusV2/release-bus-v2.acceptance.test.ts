@@ -1533,6 +1533,34 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'WAITING_FOR_ENVIRONMENT'
     );
     expect(state.repository.lock.lease_token).toBeNull();
+
+    const second =
+      await state.reconciler.recoverUnsatisfiableProductionQualifications(
+        'operator'
+      );
+    expect(second).toEqual(
+      expect.objectContaining({
+        recovered: [
+          expect.objectContaining({
+            parent_train_id: 'second-production-parent',
+            qualification_train_id: 'second-qualification'
+          })
+        ],
+        has_more: true
+      })
+    );
+
+    const drained =
+      await state.reconciler.recoverUnsatisfiableProductionQualifications(
+        'operator'
+      );
+    expect(drained).toEqual(
+      expect.objectContaining({
+        recovered: [],
+        has_more: false
+      })
+    );
+    expect(state.repository.lock.lease_token).toBeNull();
   });
 
   it('rejects STAGING-mode maintenance recovery while PRODUCTION is running', async () => {

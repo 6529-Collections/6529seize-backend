@@ -2056,11 +2056,13 @@ export class ReleaseBusV2Reconciler {
         });
         break;
       }
-      const hasMore =
-        recovered.length > 0 &&
-        qualifications.some(
-          ({ id }) => id !== recovered[0]?.qualification_train_id
-        );
+      // Recovery intentionally commits at most one yield per request. A
+      // successful yield can change the live yieldability of other
+      // qualifications, so the pre-yield snapshot cannot answer whether the
+      // backlog is drained. Require one follow-up check after every committed
+      // yield; only an invocation that recovers nothing proves this drain pass
+      // is complete.
+      const hasMore = recovered.length > 0;
       if (recovered.length > 0)
         await this.repository.appendEvent(
           {
