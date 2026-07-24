@@ -88,6 +88,9 @@ jobs:
           excluded='[]'
           while IFS= read -r sha; do
             git fetch --no-tags origin "$sha"
+            if git merge-base --is-ancestor "$sha" HEAD; then
+              continue
+            fi
             if git merge --no-ff --no-commit "$sha"; then
               git -c core.hooksPath=/dev/null commit -s \
                 -m "Release Bus v2 train $TRAIN_ID: merge backend candidate" \
