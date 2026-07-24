@@ -280,6 +280,27 @@ describe('Release Bus v2 deterministic orchestration', () => {
     ).toEqual([['dbMigrationsLoop'], ['api']]);
   });
 
+  it('filters production-only backend units from staging without changing production', () => {
+    const planned = {
+      ...candidate('environment-scoped', 'd'.repeat(40)),
+      deploy_plan_json: {
+        units: ['api', 'releaseBus'],
+        edges: [['api', 'releaseBus']] as Array<readonly [string, string]>
+      }
+    };
+
+    expect(backendGraph([planned], 'staging')).toEqual({
+      units: ['api'],
+      edges: [],
+      layers: [['api']]
+    });
+    expect(backendGraph([planned], 'prod')).toEqual({
+      units: ['api', 'releaseBus'],
+      edges: [['api', 'releaseBus']],
+      layers: [['api'], ['releaseBus']]
+    });
+  });
+
   it('fails closed on dependency cycles', () => {
     expect(() =>
       dagLayers(

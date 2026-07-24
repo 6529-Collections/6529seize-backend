@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { getDeployServiceConfigs } from '@/api/deploy/deploy.config';
+import {
+  getDeployServiceConfigs,
+  type DeployEnvironment
+} from '@/api/deploy/deploy.config';
 import {
   releaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError
@@ -134,7 +137,13 @@ type IsolationDiagnosis = {
   } | null;
 };
 
-class MainMovedError extends Error {}
+class MainMovedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'MainMovedError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
 
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
@@ -302,27 +311,45 @@ function candidateStatusForDeploy(
 }
 
 export function backendGraph(
-  candidates: readonly ReleaseBusV2CandidateRecord[]
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  environment?: DeployEnvironment
 ): {
   readonly units: readonly string[];
   readonly edges: ReadonlyArray<readonly [string, string]>;
   readonly layers: readonly string[][];
 } {
+  const serviceConfigs = getDeployServiceConfigs();
+  const allowedUnits = environment
+    ? new Set(
+        serviceConfigs
+          .filter(({ allowed_environments }) =>
+            allowed_environments.includes(environment)
+          )
+          .map(({ name }) => name)
+      )
+    : null;
   const units = new Set<string>();
   const edgeKeys = new Set<string>();
   const edges: Array<readonly [string, string]> = [];
   for (const candidate of candidates) {
     if (candidate.repository !== 'backend') continue;
     const plan = storedDeployPlan(candidate);
-    for (const unit of plan?.units ?? []) units.add(unit);
+    for (const unit of plan?.units ?? []) {
+      if (!allowedUnits || allowedUnits.has(unit)) units.add(unit);
+    }
+  }
+  for (const candidate of candidates) {
+    if (candidate.repository !== 'backend') continue;
+    const plan = storedDeployPlan(candidate);
     for (const [from, to] of plan?.edges ?? []) {
+      if (!units.has(from) || !units.has(to)) continue;
       const key = `${from}\u0000${to}`;
       if (edgeKeys.has(key)) continue;
       edgeKeys.add(key);
       edges.push([from, to]);
     }
   }
-  for (const service of getDeployServiceConfigs()) {
+  for (const service of serviceConfigs) {
     if (!units.has(service.name)) continue;
     for (const dependency of service.default_dependencies) {
       if (!units.has(dependency)) continue;
@@ -835,8 +862,98 @@ export class ReleaseBusV2Reconciler {
     };
   }
 
+  private async deferMovedProductionPlan(
+    context: TrainContext
+  ): Promise<boolean> {
+    const train = context.train;
+    if (train.lane !== 'PRODUCTION') return false;
+    const repositories = ['backend', 'frontend'] as const;
+    const current = await Promise.all(
+      repositories.map(async (repository) => ({
+        repository,
+        sha: await releaseBusGitHubApp.resolveRef(repository, 'main')
+      }))
+    );
+    const moved = current.find(({ repository, sha }) => {
+      const base =
+        repository === 'frontend'
+          ? train.frontend_base_sha
+          : train.backend_base_sha;
+      const composed =
+        repository === 'frontend'
+          ? train.frontend_composed_sha
+          : train.backend_composed_sha;
+      return sha !== base && sha !== composed;
+    });
+    if (!moved) return false;
+    const base =
+      moved.repository === 'frontend'
+        ? train.frontend_base_sha
+        : train.backend_base_sha;
+    const message = `${moved.repository} main moved from ${base} to ${moved.sha}; production composition must be rebuilt and requalified`;
+    const operations = await this.repository.listOperations(train.id, {});
+    const active = operations.filter(
+      ({ external_id, status }) =>
+        ['DISPATCHED', 'RUNNING'].includes(status) ||
+        (status === 'PENDING' && external_id !== null)
+    );
+    if (active.length === 0) throw new MainMovedError(message);
+    await Promise.all(
+      active.map(async (operation) => {
+        const request = parseStoredJson<{
+          readonly workflow?: unknown;
+          readonly ref?: unknown;
+          readonly inputs?: unknown;
+        }>(operation.request_json);
+        if (
+          !operation.repository ||
+          !operation.environment ||
+          !operation.expected_sha ||
+          typeof request?.workflow !== 'string' ||
+          typeof request.ref !== 'string' ||
+          !request.inputs ||
+          typeof request.inputs !== 'object'
+        )
+          throw new Error(
+            `Dispatched operation ${operation.id} has no immutable workflow identity`
+          );
+        await releaseBusV2Operations.reconcileWorkflow({
+          idempotencyKey: operation.idempotency_key,
+          trainId: operation.train_id,
+          operationType: operation.operation_type,
+          repository: operation.repository,
+          workflow: request.workflow,
+          ref: request.ref,
+          environment: operation.environment,
+          service: operation.service,
+          expectedSha: operation.expected_sha,
+          artifactDigest: operation.artifact_digest,
+          inputs: request.inputs as Readonly<Record<string, string>>,
+          maxAttempts: operation.max_attempts
+        });
+      })
+    );
+    const refreshed = await this.repository.listOperations(train.id, {});
+    if (
+      !refreshed.some(
+        ({ external_id, status }) =>
+          ['DISPATCHED', 'RUNNING'].includes(status) ||
+          (status === 'PENDING' && external_id !== null)
+      )
+    )
+      throw new MainMovedError(message);
+    const recoveryMessage = `${message}; waiting for already-dispatched orchestration to report terminal before the safe replan`;
+    if (train.recovery_message !== recoveryMessage)
+      await this.transitionTrain(train, {
+        status: train.status,
+        recoveryMessage
+      });
+    return true;
+  }
+
   private async advancePreparation(context: TrainContext): Promise<void> {
     const train = context.train;
+    if (await this.deferMovedProductionPlan(context)) return;
     if (relevantCandidates(context).length === 0) {
       await this.transitionTrain(train, {
         status: 'CANCELLED',
@@ -2282,6 +2399,7 @@ export class ReleaseBusV2Reconciler {
   private async advanceProduction(context: TrainContext): Promise<void> {
     const train = context.train;
     if (train.status === 'PREPARED') {
+      if (await this.deferMovedProductionPlan(context)) return;
       const exact = await this.repository.findValidatedManifestByRelease(
         train.frontend_composed_sha,
         train.backend_composed_sha,
@@ -2711,7 +2829,7 @@ export class ReleaseBusV2Reconciler {
     const train = context.train;
     const source = await this.artifactSource(artifactSourceTrainId);
     const backendCandidates = relevantCandidates(context, 'backend');
-    const graph = backendGraph(backendCandidates);
+    const graph = backendGraph(backendCandidates, environment);
     const operations: ReleaseBusV2OperationRecord[] = [];
     let backendComplete = graph.units.length === 0;
     for (const layer of graph.layers) {
@@ -2888,6 +3006,22 @@ export class ReleaseBusV2Reconciler {
           : null)
     )
       throw new Error('E2E manifest does not match the exact train release');
+    const releaseBranch = releaseBusV2Branch(train, 'frontend');
+    let exactSourceRef = 'main';
+    if (environment === 'staging') {
+      const sourceRefs = [releaseBranch, '1a-staging', 'main'];
+      const sourceShas = await Promise.all(
+        sourceRefs.map((ref) =>
+          releaseBusGitHubApp.resolveRefIfExists('frontend', ref)
+        )
+      );
+      const exactIndex = sourceShas.findIndex((sha) => sha === expectedSha);
+      if (exactIndex < 0)
+        throw new Error(
+          `No immutable frontend workflow ref resolves to exact staging SHA ${expectedSha}`
+        );
+      exactSourceRef = sourceRefs[exactIndex];
+    }
     const spec: ReleaseBusV2WorkflowSpec = {
       idempotencyKey: operationKey(train.id, `e2e:${environment}`),
       trainId: train.id,
@@ -2895,7 +3029,7 @@ export class ReleaseBusV2Reconciler {
       repository: 'frontend',
       workflow:
         environment === 'staging' ? 'staging-e2e.yml' : 'production-e2e.yml',
-      ref: 'main',
+      ref: exactSourceRef,
       environment,
       service: null,
       expectedSha,
@@ -2904,9 +3038,7 @@ export class ReleaseBusV2Reconciler {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        staging_source_ref: relevantCandidates(context, 'frontend').length
-          ? releaseBusV2Branch(train, 'frontend')
-          : 'main',
+        staging_source_ref: exactSourceRef,
         expected_sha: expectedSha,
         release_manifest_id: manifest.id,
         release_manifest_identity_sha256: manifest.identity_sha256,
@@ -2986,7 +3118,10 @@ export class ReleaseBusV2Reconciler {
       artifact_source_train_id: artifactSourceTrainId,
       train_id: train.id,
       lane: train.lane,
-      backend_graph: backendGraph(relevantCandidates(context, 'backend')),
+      backend_graph: backendGraph(
+        relevantCandidates(context, 'backend'),
+        status === 'PRODUCTION_DEPLOYED' ? 'prod' : 'staging'
+      ),
       operations: operations.map((operation) => ({
         type: operation.operation_type,
         service: operation.service,
@@ -3369,6 +3504,32 @@ export class ReleaseBusV2Reconciler {
   ): Promise<void> {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
+    const operations = await this.repository.listOperations(current.id, {});
+    if (
+      operations.some(
+        ({ external_id, status }) =>
+          ['DISPATCHED', 'RUNNING'].includes(status) ||
+          (status === 'PENDING' && external_id !== null)
+      )
+    )
+      return;
+    for (const operation of operations) {
+      if (TERMINAL_OPERATIONS.has(operation.status)) continue;
+      if (
+        !(await this.repository.updateOperation(
+          operation.id,
+          operation.row_version,
+          {
+            status: 'CANCELLED',
+            failureClass: 'INTERACTION',
+            failureMessage: message,
+            completedAt: Date.now()
+          },
+          {}
+        ))
+      )
+        throw new Error('Release Bus v2 operation changed concurrently');
+    }
     const context = await this.loadContext(current);
     await this.updateCandidateStatuses(
       relevantCandidates(context),
