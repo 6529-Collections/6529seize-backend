@@ -9,6 +9,7 @@ const mockHasActiveStagingRun = jest.fn();
 const mockHasStagingRunSince = jest.fn();
 const mockHasActiveProductionRun = jest.fn();
 const mockFindWorkflowRun = jest.fn();
+const mockImmutableRefs = new Map<string, string>();
 
 jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   releaseBusV2Operations: {
@@ -686,6 +687,16 @@ describe('Release Bus v2 offline acceptance harness', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockImmutableRefs.clear();
+    mockCreateRef.mockImplementation(
+      async (repository: string, ref: string, sha: string) => {
+        const key = `${repository}:${ref}`;
+        const existing = mockImmutableRefs.get(key);
+        if (existing && existing !== sha)
+          throw new Error('immutable release ref already points elsewhere');
+        mockImmutableRefs.set(key, sha);
+      }
+    );
     process.env.RELEASE_BUS_V2_MODE = 'STAGING';
     delete process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
     mockHasActiveStagingRun.mockResolvedValue(false);
@@ -1696,6 +1707,62 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.lock.owner_train_id).toBeNull();
     expect(state.repository.lock.lease_token).toBeNull();
     expect(mockResolveRefIfExists).not.toHaveBeenCalled();
+  });
+
+  it('rebinds the same immutable qualification ref safely after an idle-handshake retry', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { lane: 'PRODUCTION_QUALIFICATION' })
+    );
+    mockHasActiveStagingRun
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get('train-1')?.status).toBe(
+      'WAITING_FOR_ENVIRONMENT'
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+
+    const retriedContext = {
+      ...context,
+      train: state.repository.trains.get('train-1')!
+    };
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(
+          input: typeof retriedContext
+        ): Promise<void>;
+      }
+    ).advanceStagingOrQualification(retriedContext);
+
+    expect(mockCreateRef).toHaveBeenCalledTimes(2);
+    expect(mockCreateRef).toHaveBeenNthCalledWith(
+      1,
+      'frontend',
+      'release-bus-v2/qualification-train-train-1-frontend',
+      FRONTEND_SHA
+    );
+    expect(mockCreateRef).toHaveBeenNthCalledWith(
+      2,
+      'frontend',
+      'release-bus-v2/qualification-train-train-1-frontend',
+      FRONTEND_SHA
+    );
+    expect(state.repository.trains.get('train-1')?.status).toBe('DEPLOYING');
+    expect(state.repository.lock.owner_train_id).toBe('train-1');
   });
 
   it('releases the production beta lock when the post-lock idle snapshot fails', async () => {

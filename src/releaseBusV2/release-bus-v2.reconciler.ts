@@ -1872,6 +1872,8 @@ export class ReleaseBusV2Reconciler {
         throw new Error(
           'Frontend qualification has no exact composed SHA for its immutable workflow ref'
         );
+      // createRef is retry-safe: an existing ref is accepted only when it
+      // already resolves to this exact SHA; a conflicting target fails closed.
       await releaseBusGitHubApp.createRef(
         'frontend',
         releaseBusV2Branch(train, 'frontend'),
