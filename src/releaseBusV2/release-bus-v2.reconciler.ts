@@ -1864,6 +1864,22 @@ export class ReleaseBusV2Reconciler {
     ].includes(train.status);
     const requiresBetaIdleHandshake =
       getReleaseBusV2Mode() === 'OFF' && requiresIdleHandshake;
+    if (
+      requiresIdleHandshake &&
+      relevantCandidates(context, 'frontend').length > 0
+    ) {
+      if (!train.frontend_composed_sha)
+        throw new Error(
+          'Frontend qualification has no exact composed SHA for its immutable workflow ref'
+        );
+      // createRef is retry-safe: an existing ref is accepted only when it
+      // already resolves to this exact SHA; a conflicting target fails closed.
+      await releaseBusGitHubApp.createRef(
+        'frontend',
+        releaseBusV2Branch(train, 'frontend'),
+        train.frontend_composed_sha
+      );
+    }
     const workflowFenceStartedAt = requiresIdleHandshake ? Date.now() : null;
     const beforeLock = requiresIdleHandshake
       ? await this.captureStagingIdleSnapshot()
