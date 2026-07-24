@@ -39,12 +39,12 @@ function parsePositiveInteger(
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number.parseInt(value, 10)
-        : Number.NaN;
+  let parsed = Number.NaN;
+  if (typeof value === 'number') {
+    parsed = value;
+  } else if (typeof value === 'string') {
+    parsed = Number.parseInt(value, 10);
+  }
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`[${name}] must be a positive integer`);
   }
