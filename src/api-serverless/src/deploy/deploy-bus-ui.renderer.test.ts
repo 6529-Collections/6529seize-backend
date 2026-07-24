@@ -20,6 +20,36 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('id="active-trains"');
     expect(html).toContain('Exact manifests');
     expect(html).toContain('Runtime and environment ownership');
+    expect(html).toContain(
+      '<button id="forget" type="button" class="hidden">Forget token</button>'
+    );
+    expect(html).toContain(
+      '<section id="authentication" class="panel" aria-labelledby="authentication-heading">'
+    );
+    expect(html).toContain(
+      '<div class="actions"><button id="connect" class="primary" type="button">Connect</button></div>'
+    );
+  });
+
+  it('switches between logged-out authentication and logged-in controls', () => {
+    const app = renderDeployBusUiApp();
+
+    expect(app).toContain(
+      "byId('authentication').classList.toggle('hidden',isAuthenticated)"
+    );
+    expect(app).toContain(
+      "byId('authenticated').classList.toggle('hidden',!isAuthenticated)"
+    );
+    expect(app).toContain(
+      "byId('forget').classList.toggle('hidden',!isAuthenticated)"
+    );
+    expect(app).toContain('setAuthenticatedLayout(true)');
+    expect(app).toContain('setAuthenticatedLayout(false)');
+    expect(app).toContain("byId('forget').focus()");
+    expect(app).toContain("byId('token').focus()");
+    expect(app).toContain(
+      "catch(error){status(byId('register-status'),error.message,true)}"
+    );
   });
 
   it('resolves a branch head before submitting and escapes server values', () => {
