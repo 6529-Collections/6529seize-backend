@@ -6,6 +6,7 @@ const mockUpdateRef = jest.fn();
 const mockHasActiveStagingRun = jest.fn();
 const mockHasStagingRunSince = jest.fn();
 const mockHasActiveProductionRun = jest.fn();
+const mockFindWorkflowRun = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   releaseBusV2Operations: {
@@ -24,7 +25,8 @@ jest.mock('@/releaseBus/release-bus.github-app', () => ({
     hasStagingMutationOrE2ERunSince: (...args: unknown[]) =>
       mockHasStagingRunSince(...args),
     hasActiveProductionMutationOrE2ERun: (...args: unknown[]) =>
-      mockHasActiveProductionRun(...args)
+      mockHasActiveProductionRun(...args),
+    findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args)
   }
 }));
 
@@ -616,6 +618,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockHasActiveStagingRun.mockResolvedValue(false);
     mockHasStagingRunSince.mockResolvedValue(false);
     mockHasActiveProductionRun.mockResolvedValue(false);
+    mockFindWorkflowRun.mockResolvedValue(null);
     mockResolveRefIfExists.mockImplementation(
       async (repository: 'frontend' | 'backend') =>
         repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
@@ -1423,6 +1426,58 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(mockReconcileWorkflow).toHaveBeenCalledTimes(externalCalls);
   });
 
+  it('ignores every exact retried workflow attempt in the final staging fence', async () => {
+    const state = harness('SUCCEEDED');
+    mockFindWorkflowRun.mockResolvedValue({ id: 101 });
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as {
+        operationType: string;
+        service: string | null;
+      };
+      const repository =
+        typed.operationType.includes('FRONTEND') ||
+        typed.operationType === 'E2E_STAGING'
+          ? 'frontend'
+          : 'backend';
+      const completed = operation(
+        'train-1',
+        typed.operationType,
+        repository,
+        typed.operationType === 'E2E_STAGING'
+          ? '202'
+          : `run-${typed.service ?? typed.operationType}`,
+        typed.service
+      );
+      const retried =
+        typed.operationType === 'E2E_STAGING'
+          ? {
+              ...completed,
+              idempotency_key: 'rb2:train-1:e2e:staging',
+              attempt: 2,
+              max_attempts: 2,
+              request_json: { workflow: 'staging-e2e.yml' }
+            }
+          : completed;
+      state.repository.operations.push(retried);
+      return retried;
+    });
+
+    await state.reconciler.runOnce('acceptance-retried-final-fence');
+
+    expect(state.repository.trains.get('train-1')?.status).toBe(
+      'STAGING_VALIDATED'
+    );
+    expect(mockFindWorkflowRun).toHaveBeenCalledWith(
+      'frontend',
+      'staging-e2e.yml',
+      'rb2:train-1:e2e:staging:a1'
+    );
+    expect(mockHasStagingRunSince).toHaveBeenCalledTimes(2);
+    for (const [, , ignoredRunIds] of mockHasStagingRunSince.mock.calls) {
+      expect(ignoredRunIds).toEqual(expect.arrayContaining(['101', '202']));
+    }
+  });
+
   it('fails closed when an unrelated staging workflow ran after the beta handshake', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'OFF';
@@ -1483,15 +1538,15 @@ describe('Release Bus v2 offline acceptance harness', () => {
         trainId: 'train-1'
       })
     );
-    const expectedRunIds = state.repository.operations
-      .map(({ external_id }) => external_id)
-      .filter((runId): runId is string => runId !== null);
+    const expectedRunIds = new Set(
+      state.repository.operations
+        .map(({ external_id }) => external_id)
+        .filter((runId): runId is string => runId !== null)
+    );
     expect(mockHasStagingRunSince).toHaveBeenCalledTimes(2);
     for (const [, , ignoredRunIds] of mockHasStagingRunSince.mock.calls) {
-      expect(ignoredRunIds).toHaveLength(expectedRunIds.length);
-      expect(new Set(ignoredRunIds as string[])).toEqual(
-        new Set(expectedRunIds)
-      );
+      expect(ignoredRunIds).toHaveLength(expectedRunIds.size);
+      expect(new Set(ignoredRunIds as string[])).toEqual(expectedRunIds);
     }
   });
 
