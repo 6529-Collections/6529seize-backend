@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 function read(relativePath: string): string {
-  return fs.readFileSync(path.resolve(__dirname, '../..', relativePath), 'utf8');
+  return fs.readFileSync(
+    path.resolve(__dirname, '../..', relativePath),
+    'utf8'
+  );
 }
 
 describe('Release Bus v1 retirement', () => {

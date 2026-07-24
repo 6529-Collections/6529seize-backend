@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 describe('Release Bus v2 infrastructure ownership', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'serverless.yaml'), 'utf8');
+  const source = fs.readFileSync(
+    path.join(__dirname, 'serverless.yaml'),
+    'utf8'
+  );
 
   it('preserves the live v2 reconciler and emergency invoke identity', () => {
     expect(source).toContain('v2Reconciler:');
