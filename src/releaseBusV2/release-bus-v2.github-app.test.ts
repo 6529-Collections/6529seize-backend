@@ -8,7 +8,7 @@ import {
   sanitizeGitHubWorkflowJobs,
   workflowRunMatchesOperation,
   type GitHubWorkflowJob
-} from '@/releaseBus/release-bus.github-app';
+} from '@/releaseBusV2/release-bus-v2.github-app';
 
 jest.mock('node-fetch', () => {
   const actual = jest.requireActual('node-fetch');

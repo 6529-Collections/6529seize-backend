@@ -15,7 +15,7 @@ jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   }
 }));
 
-jest.mock('@/releaseBus/release-bus.github-app', () => ({
+jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
     ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args),
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),

@@ -6,6 +6,9 @@ import type {
   ReleaseBusV2Repository
 } from '@/releaseBusV2/release-bus-v2.types';
 
+export const RELEASE_BUS_OPERATOR_TEAM =
+  process.env.RELEASE_BUS_OPERATOR_TEAM ?? 'release-bus-operators';
+
 const MODES = new Set<ReleaseBusV2Mode>(['OFF', 'STAGING', 'PRODUCTION']);
 const BETA_LANES = new Set<ReleaseBusV2BetaLane>(['STAGING', 'PRODUCTION']);
 const BETA_UUID_PATTERN =

@@ -149,17 +149,12 @@ ${indent(yamlList(serviceNames))}
         type: string
         description: 'Release Bus immutable aggregate artifact digest'
         required: false
-      break_glass_reason:
-        type: string
-        description: 'Operator-only reason for a manual deploy after bus enforcement'
-        required: false
-
 permissions:
   actions: read
   contents: read
 
-# The workflow-level control mutex keeps manual and break-glass production
-# deployments globally serial. Release Bus operations use their exact operation
+# The workflow-level control mutex keeps manual production deployments globally
+# serial. Release Bus v2 operations use their exact operation
 # key here, then share the job-level environment/service mutex with every mode.
 concurrency:
   group: deploy-control-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || (github.event.inputs.environment == 'prod' && 'manual-production' || github.event.inputs.service) }}
@@ -168,13 +163,8 @@ concurrency:
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: \${{ secrets.SENTRY_AUTH_TOKEN }}
-  RELEASE_BUS_MODE: \${{ vars.RELEASE_BUS_MODE || 'OFF' }}
   RELEASE_BUS_V2_MODE: \${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
   RELEASE_BUS_V2_BETA_ALLOWLIST: \${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
-  RELEASE_BUS_BASE_EVIDENCE_REUSE: \${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}
-  RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: \${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW || 'false' }}
-  RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: \${{ vars.RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS || '24' }}
-  RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY: \${{ vars.RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY || '20' }}
   RELEASE_BUS_GITHUB_ORG: \${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
   RELEASE_BUS_UI_URL: \${{ vars.RELEASE_BUS_UI_URL || 'https://api.6529.io/deploy/ui/bus' }}
   ATTACHMENTS_INGEST_S3_BUCKET_PROD: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_PROD }}
@@ -247,14 +237,10 @@ jobs:
           RELEASE_BUS_GITHUB_PRIVATE_KEY: \${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
           [[ "$RELEASE_BUS_V2_MODE" =~ ^(OFF|STAGING|PRODUCTION)$ ]]
           if [ -n "$RELEASE_BUS_V2_BETA_ALLOWLIST" ]; then
             jq -e 'type == "array" and length > 0' <<< "$RELEASE_BUS_V2_BETA_ALLOWLIST" > /dev/null
           fi
-          [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE" =~ ^(false|true)$ ]]
-          [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW" =~ ^(false|true)$ ]]
-          [[ "$RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS" =~ ^([1-9]|[1-9][0-9]|1[0-5][0-9]|16[0-8])$ ]]
           [[ "$RELEASE_BUS_GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]]
           test -n "$RELEASE_BUS_GITHUB_PRIVATE_KEY"
       - name: Validate Release Bus API configuration
@@ -267,7 +253,6 @@ jobs:
           RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
           [[ "$RELEASE_BUS_V2_MODE" =~ ^(OFF|STAGING|PRODUCTION)$ ]]
           if [ -n "$RELEASE_BUS_V2_BETA_ALLOWLIST" ]; then
             jq -e 'type == "array" and length > 0' <<< "$RELEASE_BUS_V2_BETA_ALLOWLIST" > /dev/null
@@ -330,37 +315,6 @@ jobs:
               exit 1
               ;;
           esac
-      - name: Authorize operator break glass
-        if: github.event.inputs.operation_key == '' && vars.RELEASE_BUS_ENFORCEMENT == 'true'
-        shell: bash
-        env:
-          RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
-          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
-          INPUT_BREAK_GLASS_REASON: \${{ github.event.inputs.break_glass_reason }}
-          INPUT_ENVIRONMENT: \${{ github.event.inputs.environment }}
-        run: |
-          set -euo pipefail
-          test -n "$RELEASE_BUS_API_URL"
-          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
-          test -n "$INPUT_BREAK_GLASS_REASON" || {
-            echo 'A break-glass reason is required while Release Bus enforcement is enabled.' >&2
-            exit 1
-          }
-          expected_sha="\${INPUT_EXPECTED_SHA:-$GITHUB_SHA}"
-          [[ "$expected_sha" =~ ^[a-f0-9]{40}$ ]]
-          payload="$(jq -n \
-            --arg workflow_run_id "$GITHUB_RUN_ID" \
-            --arg repository backend \
-            --arg environment "$INPUT_ENVIRONMENT" \
-            --arg service "$INPUT_SERVICE" \
-            --arg expected_sha "$expected_sha" \
-            --arg reason "$INPUT_BREAK_GLASS_REASON" \
-            '{workflow_run_id:$workflow_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,reason:$reason}')"
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data "$payload" \
-            "$RELEASE_BUS_API_URL/deploy/release-bus/authorize-break-glass"
       - name: Authorize immutable Release Bus operation
         if: github.event.inputs.operation_key != ''
         shell: bash
@@ -637,7 +591,6 @@ jobs:
         env:
           RELEASE_BUS_GITHUB_APP_ID: \${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
           RELEASE_BUS_GITHUB_INSTALLATION_ID: \${{ steps.release_bus_app.outputs.installation-id }}
-          RELEASE_BUS_MODE: \${{ vars.RELEASE_BUS_MODE || 'OFF' }}
           RELEASE_BUS_V2_MODE: \${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
           RELEASE_BUS_V2_BETA_ALLOWLIST: \${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
         run: |
@@ -651,7 +604,6 @@ jobs:
         env:
           RELEASE_BUS_GITHUB_APP_ID: \${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
           RELEASE_BUS_GITHUB_INSTALLATION_ID: \${{ steps.release_bus_app.outputs.installation-id }}
-          RELEASE_BUS_MODE: \${{ vars.RELEASE_BUS_MODE || 'OFF' }}
           RELEASE_BUS_V2_MODE: \${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
           RELEASE_BUS_V2_BETA_ALLOWLIST: \${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
         run: |
@@ -672,9 +624,9 @@ jobs:
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
           jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
           if [ "\${{ github.event.inputs.environment }}" = prod ]; then
-            jq --arg mode "$RELEASE_BUS_MODE" --arg v2Mode "$RELEASE_BUS_V2_MODE" --arg v2BetaAllowlist "$RELEASE_BUS_V2_BETA_ALLOWLIST" --arg appId "$RELEASE_BUS_GITHUB_APP_ID" --arg installationId "$RELEASE_BUS_GITHUB_INSTALLATION_ID" '. + {RELEASE_BUS_MODE: $mode, RELEASE_BUS_V2_MODE: $v2Mode, RELEASE_BUS_V2_BETA_ALLOWLIST: $v2BetaAllowlist, RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+            jq --arg v2Mode "$RELEASE_BUS_V2_MODE" --arg v2BetaAllowlist "$RELEASE_BUS_V2_BETA_ALLOWLIST" --arg appId "$RELEASE_BUS_GITHUB_APP_ID" --arg installationId "$RELEASE_BUS_GITHUB_INSTALLATION_ID" '. + {RELEASE_BUS_V2_MODE: $v2Mode, RELEASE_BUS_V2_BETA_ALLOWLIST: $v2BetaAllowlist, RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId} | del(.RELEASE_BUS_MODE, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           else
-            jq '. + {RELEASE_BUS_MODE: "OFF", RELEASE_BUS_V2_MODE: "OFF"} | del(.RELEASE_BUS_V2_BETA_ALLOWLIST, .RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+            jq '. + {RELEASE_BUS_V2_MODE: "OFF"} | del(.RELEASE_BUS_MODE, .RELEASE_BUS_V2_BETA_ALLOWLIST, .RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           fi
           jq '{Variables: .}' /tmp/runtime_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1

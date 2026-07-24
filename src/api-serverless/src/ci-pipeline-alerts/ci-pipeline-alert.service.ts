@@ -9,7 +9,7 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
-import { isReleaseBusGitHubAppActor } from '@/releaseBus/release-bus.constants';
+import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import {
   releaseNoteGenerationQueue,
   ReleaseNoteGenerationQueue

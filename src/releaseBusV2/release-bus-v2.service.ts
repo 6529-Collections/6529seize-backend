@@ -1,7 +1,7 @@
 import type { RequestContext } from '@/request.context';
 import { isDeepStrictEqual } from 'node:util';
 import { getDeployServiceConfigs } from '@/api/deploy/deploy.config';
-import { releaseBusGitHubApp } from '@/releaseBus/release-bus.github-app';
+import { releaseBusGitHubApp } from '@/releaseBusV2/release-bus-v2.github-app';
 import {
   getReleaseBusV2Mode,
   getReleaseBusV2BetaAllowlist,

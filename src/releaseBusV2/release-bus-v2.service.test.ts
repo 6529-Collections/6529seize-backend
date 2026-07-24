@@ -1,7 +1,7 @@
 const mockResolveRef = jest.fn();
 const mockQualification = jest.fn();
 
-jest.mock('@/releaseBus/release-bus.github-app', () => ({
+jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     getPullRequestQualification: (...args: unknown[]) =>

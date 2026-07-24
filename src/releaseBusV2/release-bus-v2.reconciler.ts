@@ -6,7 +6,7 @@ import {
 import {
   releaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError
-} from '@/releaseBus/release-bus.github-app';
+} from '@/releaseBusV2/release-bus-v2.github-app';
 import {
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
