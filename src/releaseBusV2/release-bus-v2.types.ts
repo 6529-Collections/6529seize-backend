@@ -116,6 +116,7 @@ export type ReleaseBusV2PrEvidence = {
   readonly artifact_run_id: string | null;
   readonly artifact_name: string | null;
   readonly artifact_digest: string | null;
+  readonly contributor_github_logins?: readonly string[];
 };
 
 export type ReleaseBusV2CandidateRecord = {

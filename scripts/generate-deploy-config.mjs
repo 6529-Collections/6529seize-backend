@@ -120,6 +120,11 @@ ${indent(yamlList(serviceNames))}
         type: string
         description: 'Release Bus train id; blank for manual deploys'
         required: false
+      release_contributors:
+        type: string
+        description: 'Release Bus JSON array of contributing GitHub logins'
+        required: false
+        default: '[]'
       release_train_revision:
         type: string
         description: 'Release Bus train revision; blank for manual deploys'
@@ -196,6 +201,7 @@ jobs:
       INPUT_ENVIRONMENT: \${{ github.event.inputs.environment }}
       INPUT_SERVICE: \${{ github.event.inputs.service }}
       INPUT_TRAIN_ID: \${{ github.event.inputs.release_train_id }}
+      INPUT_RELEASE_CONTRIBUTORS: \${{ github.event.inputs.release_contributors }}
       INPUT_TRAIN_REVISION: \${{ github.event.inputs.release_train_revision }}
       INPUT_OPERATION_KEY: \${{ github.event.inputs.operation_key }}
       INPUT_EXPECTED_SHA: \${{ github.event.inputs.expected_sha }}
@@ -209,6 +215,7 @@ jobs:
           INPUT_ENVIRONMENT: \${{ github.event.inputs.environment }}
           INPUT_SERVICE: \${{ github.event.inputs.service }}
           INPUT_TRAIN_ID: \${{ github.event.inputs.release_train_id }}
+          INPUT_RELEASE_CONTRIBUTORS: \${{ github.event.inputs.release_contributors }}
           INPUT_TRAIN_REVISION: \${{ github.event.inputs.release_train_revision }}
           INPUT_OPERATION_KEY: \${{ github.event.inputs.operation_key }}
           INPUT_EXPECTED_SHA: \${{ github.event.inputs.expected_sha }}
@@ -219,6 +226,8 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          # Semantic GitHub-login validation is centralized in notify-ci-wave.mjs.
+          jq -e 'type == "array" and length <= 100 and all(.[]; type == "string" and length >= 1 and length <= 39)' <<< "$INPUT_RELEASE_CONTRIBUTORS" > /dev/null
           if [ -n "$INPUT_OPERATION_KEY" ]; then
             [[ "$INPUT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             [[ "$INPUT_TRAIN_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]
@@ -844,6 +853,9 @@ jobs:
           CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
           CI_PIPELINES_ENVIRONMENT: \${{ github.event.inputs.environment }}
           CI_PIPELINES_SERVICE: \${{ github.event.inputs.service }}
+          CI_PIPELINES_SHA: \${{ github.event.inputs.expected_sha || github.sha }}
+          CI_RELEASE_TRAIN_ID: \${{ github.event.inputs.release_train_id }}
+          CI_RELEASE_CONTRIBUTORS: \${{ github.event.inputs.release_contributors }}
         run: node scripts/notify-ci-wave.mjs
 
       - name: Notify about success
@@ -867,6 +879,9 @@ jobs:
           CI_PIPELINES_TITLE: Seize-Lambda \${{ github.event.inputs.environment }} \${{ github.event.inputs.service }} DEPLOY CI pipeline complete
           CI_PIPELINES_ENVIRONMENT: \${{ github.event.inputs.environment }}
           CI_PIPELINES_SERVICE: \${{ github.event.inputs.service }}
+          CI_PIPELINES_SHA: \${{ github.event.inputs.expected_sha || github.sha }}
+          CI_RELEASE_TRAIN_ID: \${{ github.event.inputs.release_train_id }}
+          CI_RELEASE_CONTRIBUTORS: \${{ github.event.inputs.release_contributors }}
           CI_RELEASE_NOTES_PROMPT_PATH: ops/release-notes/release-notes.prompt.md
           CI_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
           CI_RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
