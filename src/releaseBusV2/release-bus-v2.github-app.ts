@@ -537,6 +537,24 @@ export class ReleaseBusGitHubApp {
     return sha.toLowerCase();
   }
 
+  public async createRef(
+    repository: ReleaseBusV2Repository,
+    ref: string,
+    sha: string
+  ): Promise<void> {
+    assertAllowedWritableRef(ref);
+    const response = await this.request(repository, '/git/refs', {
+      method: 'POST',
+      body: JSON.stringify({ ref: `refs/heads/${ref}`, sha })
+    });
+    if (
+      response.status === 422 &&
+      (await this.resolveRef(repository, ref)) === sha
+    )
+      return;
+    await this.assertOk(response, `create ${repository} ref ${ref}`);
+  }
+
   public async updateRef(
     repository: ReleaseBusV2Repository,
     ref: string,

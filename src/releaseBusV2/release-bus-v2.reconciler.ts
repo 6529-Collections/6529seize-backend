@@ -1338,6 +1338,18 @@ export class ReleaseBusV2Reconciler {
         };
     }
     if (!composedSha) throw new Error(`Missing ${repository} composed SHA`);
+    if (fastCandidate) {
+      // The compose workflow creates the immutable release ref for multi-PR
+      // trains. The single-PR fast path skips that workflow, so bind the same
+      // lane-scoped ref here before any artifact preparation or deployment.
+      // createRef is idempotent only when an existing ref already resolves to
+      // this exact SHA; a moved or conflicting ref fails closed.
+      await releaseBusGitHubApp.createRef(
+        repository,
+        releaseBusV2Branch(train, repository),
+        composedSha
+      );
+    }
     if (compositionOnly)
       return {
         repository,

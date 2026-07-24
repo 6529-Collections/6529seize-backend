@@ -2,6 +2,7 @@ const mockReconcileWorkflow = jest.fn();
 const mockEnsureCommitStatus = jest.fn();
 const mockResolveRef = jest.fn();
 const mockResolveRefIfExists = jest.fn();
+const mockCreateRef = jest.fn();
 const mockRefContainsCommit = jest.fn();
 const mockUpdateRef = jest.fn();
 const mockHasActiveStagingRun = jest.fn();
@@ -20,6 +21,7 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
     ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args),
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     resolveRefIfExists: (...args: unknown[]) => mockResolveRefIfExists(...args),
+    createRef: (...args: unknown[]) => mockCreateRef(...args),
     refContainsCommit: (...args: unknown[]) => mockRefContainsCommit(...args),
     updateRef: (...args: unknown[]) => mockUpdateRef(...args),
     hasActiveStagingMutationOrE2ERun: (...args: unknown[]) =>
@@ -2955,6 +2957,130 @@ describe('Release Bus v2 offline acceptance harness', () => {
         })
       })
     );
+  });
+
+  it('binds a single-candidate fast path to its immutable release ref before preflight', async () => {
+    const state = harness('SUCCEEDED');
+    const exactTrain = train('single-fast-path', {
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    const frontendCandidate = {
+      ...state.repository.candidates.get('frontend-candidate')!,
+      current_train_id: exactTrain.id,
+      pr_evidence_json: {
+        base_sha: exactTrain.frontend_base_sha!,
+        merge_sha: FRONTEND_SHA,
+        checks_run_id: '100',
+        checks_completed_at: 1,
+        artifact_run_id: '100',
+        artifact_name: `release-bus-v2-pr-${FRONTEND_SHA}`,
+        artifact_digest: FRONTEND_DIGEST
+      }
+    };
+    const context = {
+      train: exactTrain,
+      memberships: [
+        {
+          ...state.repository.memberships.find(
+            ({ candidate_id }) => candidate_id === 'frontend-candidate'
+          )!,
+          train_id: exactTrain.id
+        }
+      ],
+      candidates: [frontendCandidate],
+      dependencies: []
+    };
+    mockReconcileWorkflow.mockResolvedValueOnce(
+      operation(
+        exactTrain.id,
+        'PREPARE_ARTIFACT_FRONTEND',
+        'frontend',
+        'fast-preflight'
+      )
+    );
+
+    await (
+      state.reconciler as unknown as {
+        prepareRepository(
+          input: typeof context,
+          repository: 'frontend'
+        ): Promise<unknown>;
+      }
+    ).prepareRepository(context, 'frontend');
+
+    expect(mockCreateRef).toHaveBeenCalledWith(
+      'frontend',
+      `release-bus-v2/staging-train-${exactTrain.id}-frontend`,
+      FRONTEND_SHA
+    );
+    expect(mockCreateRef.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReconcileWorkflow.mock.invocationCallOrder[0]!
+    );
+    expect(mockReconcileWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationType: 'PREPARE_ARTIFACT_FRONTEND',
+        expectedSha: FRONTEND_SHA,
+        inputs: expect.objectContaining({
+          source_ref: frontendCandidate.branch_name,
+          expected_sha: FRONTEND_SHA
+        })
+      })
+    );
+  });
+
+  it('fails closed before preflight when a fast-path immutable ref conflicts', async () => {
+    const state = harness('SUCCEEDED');
+    const exactTrain = train('single-fast-path-conflict', {
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    const frontendCandidate = {
+      ...state.repository.candidates.get('frontend-candidate')!,
+      current_train_id: exactTrain.id,
+      pr_evidence_json: {
+        base_sha: exactTrain.frontend_base_sha!,
+        merge_sha: FRONTEND_SHA,
+        checks_run_id: '100',
+        checks_completed_at: 1,
+        artifact_run_id: '100',
+        artifact_name: `release-bus-v2-pr-${FRONTEND_SHA}`,
+        artifact_digest: FRONTEND_DIGEST
+      }
+    };
+    const context = {
+      train: exactTrain,
+      memberships: [
+        {
+          ...state.repository.memberships.find(
+            ({ candidate_id }) => candidate_id === 'frontend-candidate'
+          )!,
+          train_id: exactTrain.id
+        }
+      ],
+      candidates: [frontendCandidate],
+      dependencies: []
+    };
+    mockCreateRef.mockRejectedValueOnce(
+      new Error('immutable release ref already points elsewhere')
+    );
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          prepareRepository(
+            input: typeof context,
+            repository: 'frontend'
+          ): Promise<unknown>;
+        }
+      ).prepareRepository(context, 'frontend')
+    ).rejects.toThrow('immutable release ref already points elsewhere');
+
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
   });
 
   it('runs backend-only staging E2E from the exact shared staging ref when main moved', async () => {
