@@ -599,6 +599,72 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
     restoreProductionReadinessAfterBranchCleanup: jest.fn(
       async () => undefined
     ),
+    yieldUnsatisfiableProductionQualification: jest.fn(
+      async ({
+        qualificationTrainId
+      }: {
+        readonly qualificationTrainId: string;
+      }) => {
+        const qualification = repository.trains.get(qualificationTrainId);
+        const parent = qualification?.parent_train_id
+          ? repository.trains.get(qualification.parent_train_id)
+          : null;
+        if (!qualification || !parent)
+          throw new Error('qualification parent missing');
+        if (
+          qualification.status === 'CANCELLED' &&
+          parent.status === 'CANCELLED'
+        )
+          return {
+            yielded: false,
+            parentTrainId: parent.id,
+            qualificationTrainId: qualification.id,
+            candidateIds: []
+          };
+        const candidateIds = repository.memberships
+          .filter(
+            (membership) =>
+              membership.train_id === parent.id &&
+              membership.disposition === 'INCLUDED'
+          )
+          .map(({ candidate_id }) => candidate_id);
+        repository.trains.set(qualification.id, {
+          ...qualification,
+          status: 'CANCELLED',
+          completed_at: Date.now(),
+          row_version: qualification.row_version + 1
+        });
+        repository.trains.set(parent.id, {
+          ...parent,
+          status: 'CANCELLED',
+          completed_at: Date.now(),
+          row_version: parent.row_version + 1
+        });
+        repository.events.push({
+          trainId: qualification.id,
+          eventType: 'PRODUCTION_QUALIFICATION_YIELDED',
+          actor: 'release-bus-v2',
+          createdAt: Date.now()
+        });
+        for (const candidateId of candidateIds) {
+          const current = repository.candidates.get(candidateId);
+          if (!current) continue;
+          repository.candidates.set(candidateId, {
+            ...current,
+            status: 'WAITING_FOR_PRODUCTION_REPLAN',
+            current_train_id: null,
+            hold_reason: 'Waiting for a safe combined production replan',
+            row_version: current.row_version + 1
+          });
+        }
+        return {
+          yielded: true,
+          parentTrainId: parent.id,
+          qualificationTrainId: qualification.id,
+          candidateIds
+        };
+      }
+    ),
     isBetaTrainAllowed: jest.fn(async () => true)
   };
   return {
@@ -881,7 +947,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'PRODUCTION',
       FRONTEND_SHA,
       BACKEND_SHA,
-      'acceptance-repaired-production-beta:production'
+      'acceptance-repaired-production-beta:production',
+      { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
     );
   });
 
@@ -922,7 +989,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'PRODUCTION',
       FRONTEND_SHA,
       BACKEND_SHA,
-      'acceptance-staging-production-beta:production'
+      'acceptance-staging-production-beta:production',
+      { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
     );
   });
 
@@ -1197,75 +1265,137 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
-  it('holds exact production qualification when an unchanged repository differs in staging', async () => {
+  it('transactionally yields exact production qualification when an unchanged repository differs in staging', async () => {
     const state = harness('SUCCEEDED');
     state.repository.trains.set(
-      'train-1',
-      train('train-1', { lane: 'PRODUCTION_QUALIFICATION' })
-    );
-    state.repository.memberships.splice(
-      0,
-      state.repository.memberships.length,
-      state.repository.memberships.find(
-        ({ candidate_id }) => candidate_id === 'frontend-candidate'
-      )!
-    );
-    mockResolveRefIfExists.mockImplementation(
-      async (repository: 'frontend' | 'backend') =>
-        repository === 'frontend' ? FRONTEND_SHA : 'e'.repeat(40)
-    );
-
-    const context = {
-      train: state.repository.trains.get('train-1')!,
-      memberships: [...state.repository.memberships],
-      candidates: Array.from(state.repository.candidates.values()),
-      dependencies: state.repository.dependencies
-    };
-    await (
-      state.reconciler as unknown as {
-        advanceStagingOrQualification(input: typeof context): Promise<void>;
-      }
-    ).advanceStagingOrQualification(context);
-
-    expect(state.repository.trains.get('train-1')).toEqual(
-      expect.objectContaining({
+      'production-parent',
+      train('production-parent', {
+        lane: 'PRODUCTION',
         status: 'WAITING_FOR_ENVIRONMENT',
-        backend_composed_sha: BACKEND_SHA,
-        recovery_message: expect.stringContaining(
-          'unchanged repositories in staging'
-        )
+        qualification_train_id: 'train-1'
       })
     );
-    expect(state.repository.lock.owner_train_id).toBeNull();
-    expect(mockReconcileWorkflow).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        operationType: expect.stringMatching(/^DEPLOY_/)
-      })
-    );
-    expect(state.repository.events).toContainEqual(
-      expect.objectContaining({
-        eventType: 'PRODUCTION_QUALIFICATION_ENVIRONMENT_HOLD',
-        trainId: 'train-1'
-      })
-    );
-  });
-
-  it('keeps a waiting qualification held when the unchanged staging repository still differs', async () => {
-    const state = harness('SUCCEEDED');
     state.repository.trains.set(
       'train-1',
       train('train-1', {
         lane: 'PRODUCTION_QUALIFICATION',
-        status: 'WAITING_FOR_ENVIRONMENT'
+        parent_train_id: 'production-parent'
       })
     );
     state.repository.memberships.splice(
       0,
       state.repository.memberships.length,
-      state.repository.memberships.find(
-        ({ candidate_id }) => candidate_id === 'frontend-candidate'
-      )!
+      {
+        ...state.repository.memberships.find(
+          ({ candidate_id }) => candidate_id === 'frontend-candidate'
+        )!,
+        train_id: 'production-parent'
+      },
+      {
+        ...state.repository.memberships.find(
+          ({ candidate_id }) => candidate_id === 'frontend-candidate'
+        )!,
+        id: 'qualification-frontend-membership',
+        train_id: 'train-1'
+      }
     );
+    state.repository.candidates.set('frontend-candidate', {
+      ...state.repository.candidates.get('frontend-candidate')!,
+      status: 'PRODUCTION_BUILDING_OR_QUALIFYING',
+      current_train_id: 'production-parent'
+    });
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend') =>
+        repository === 'frontend' ? FRONTEND_SHA : 'e'.repeat(40)
+    );
+
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        backend_composed_sha: BACKEND_SHA
+      })
+    );
+    expect(state.repository.trains.get('production-parent')?.status).toBe(
+      'CANCELLED'
+    );
+    expect(state.repository.candidates.get('frontend-candidate')).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_PRODUCTION_REPLAN',
+        current_train_id: null
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(mockReconcileWorkflow).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationType: expect.stringMatching(/^DEPLOY_/)
+      })
+    );
+    expect(
+      state.service.yieldUnsatisfiableProductionQualification
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        qualificationTrainId: 'train-1',
+        stagingIdentity: {
+          frontendSha: FRONTEND_SHA,
+          backendSha: 'e'.repeat(40)
+        }
+      })
+    );
+  });
+
+  it('does not repeat a yielded qualification on overlapping reconciles', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    state.repository.trains.set(
+      'production-parent',
+      train('production-parent', {
+        lane: 'PRODUCTION',
+        status: 'WAITING_FOR_ENVIRONMENT',
+        qualification_train_id: 'train-1'
+      })
+    );
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', {
+        lane: 'PRODUCTION_QUALIFICATION',
+        status: 'WAITING_FOR_ENVIRONMENT',
+        parent_train_id: 'production-parent'
+      })
+    );
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      {
+        ...state.repository.memberships.find(
+          ({ candidate_id }) => candidate_id === 'frontend-candidate'
+        )!,
+        train_id: 'production-parent'
+      },
+      {
+        ...state.repository.memberships.find(
+          ({ candidate_id }) => candidate_id === 'frontend-candidate'
+        )!,
+        id: 'qualification-frontend-membership',
+        train_id: 'train-1'
+      }
+    );
+    state.repository.candidates.set('frontend-candidate', {
+      ...state.repository.candidates.get('frontend-candidate')!,
+      status: 'PRODUCTION_BUILDING_OR_QUALIFYING',
+      current_train_id: 'production-parent'
+    });
     mockResolveRefIfExists.mockImplementation(
       async (repository: 'frontend' | 'backend') =>
         repository === 'frontend' ? FRONTEND_SHA : 'e'.repeat(40)
@@ -1277,25 +1407,117 @@ describe('Release Bus v2 offline acceptance harness', () => {
       dependencies: state.repository.dependencies
     };
 
-    await (
-      state.reconciler as unknown as {
-        advanceStagingOrQualification(input: typeof context): Promise<void>;
-      }
-    ).advanceStagingOrQualification(context);
+    await Promise.all([
+      (
+        state.reconciler as unknown as {
+          advanceStagingOrQualification(input: typeof context): Promise<void>;
+        }
+      ).advanceStagingOrQualification(context),
+      (
+        state.reconciler as unknown as {
+          advanceStagingOrQualification(input: typeof context): Promise<void>;
+        }
+      ).advanceStagingOrQualification(context)
+    ]);
 
-    expect(state.repository.trains.get('train-1')).toEqual(
-      expect.objectContaining({
-        status: 'WAITING_FOR_ENVIRONMENT',
-        frontend_composed_sha: FRONTEND_SHA,
-        backend_composed_sha: BACKEND_SHA
-      })
-    );
+    expect(state.repository.trains.get('train-1')?.status).toBe('CANCELLED');
     expect(state.repository.lock.owner_train_id).toBeNull();
     expect(mockReconcileWorkflow).not.toHaveBeenCalledWith(
       expect.objectContaining({
         operationType: expect.stringMatching(/^DEPLOY_/)
       })
     );
+    expect(
+      state.repository.events.filter(
+        ({ eventType }) => eventType === 'PRODUCTION_QUALIFICATION_YIELDED'
+      )
+    ).toHaveLength(1);
+  });
+
+  it('recovers a stalled qualification in STAGING mode only while PRODUCTION is paused and staging is idle', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.controls.set('PRODUCTION', {
+      ...state.repository.controls.get('PRODUCTION')!,
+      paused: true
+    });
+    state.repository.trains.set(
+      'production-parent',
+      train('production-parent', {
+        lane: 'PRODUCTION',
+        status: 'WAITING_FOR_ENVIRONMENT',
+        qualification_train_id: 'train-1'
+      })
+    );
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', {
+        lane: 'PRODUCTION_QUALIFICATION',
+        status: 'WAITING_FOR_ENVIRONMENT',
+        parent_train_id: 'production-parent'
+      })
+    );
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      {
+        ...state.repository.memberships.find(
+          ({ candidate_id }) => candidate_id === 'frontend-candidate'
+        )!,
+        train_id: 'production-parent'
+      },
+      {
+        ...state.repository.memberships.find(
+          ({ candidate_id }) => candidate_id === 'frontend-candidate'
+        )!,
+        id: 'qualification-frontend-membership',
+        train_id: 'train-1'
+      }
+    );
+    state.repository.candidates.set('frontend-candidate', {
+      ...state.repository.candidates.get('frontend-candidate')!,
+      status: 'PRODUCTION_BUILDING_OR_QUALIFYING',
+      current_train_id: 'production-parent'
+    });
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend') =>
+        repository === 'frontend' ? FRONTEND_SHA : 'e'.repeat(40)
+    );
+
+    const result =
+      await state.reconciler.recoverUnsatisfiableProductionQualifications(
+        'operator'
+      );
+
+    expect(result).toEqual({
+      recovered: [
+        {
+          parent_train_id: 'production-parent',
+          qualification_train_id: 'train-1',
+          candidate_ids: ['frontend-candidate']
+        }
+      ],
+      staging_identity: {
+        frontend_sha: FRONTEND_SHA,
+        backend_sha: 'e'.repeat(40)
+      }
+    });
+    expect(state.repository.trains.get('train-1')?.status).toBe('CANCELLED');
+    expect(state.repository.trains.get('production-parent')?.status).toBe(
+      'CANCELLED'
+    );
+  });
+
+  it('rejects STAGING-mode maintenance recovery while PRODUCTION is running', async () => {
+    const state = harness('SUCCEEDED');
+
+    await expect(
+      state.reconciler.recoverUnsatisfiableProductionQualifications('operator')
+    ).rejects.toThrow(
+      'requires PRODUCTION to be paused while STAGING remains enabled'
+    );
+    expect(
+      state.service.yieldUnsatisfiableProductionQualification
+    ).not.toHaveBeenCalled();
   });
 
   it('allows a coupled qualification to replace both unrelated staging repositories', async () => {

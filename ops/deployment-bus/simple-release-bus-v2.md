@@ -94,9 +94,15 @@ from current `main`:
   validation and immutable artifacts;
 - otherwise enqueue an exact `PRODUCTION_QUALIFICATION` staging train, run
   manifest-bound E2E, then continue automatically;
-- qualification waits without retaining the staging lock when any unchanged
-  repository in staging differs from the exact production target; it must not
-  validate a subset against unrelated staged content;
+- qualification never validates when an unchanged repository in staging
+  differs from the exact production target. After a stable idle handshake, an
+  immutable mismatch transactionally cancels the impossible qualification and
+  parent, releases the production lane, and preserves every explicit candidate
+  as `WAITING_FOR_PRODUCTION_REPLAN`;
+- held production candidates are reclaimed only when the current ready set
+  makes every mismatched repository candidate-bearing, or each unchanged
+  staging ref exactly matches the current `main` base. This lets later
+  complementary work join one safe replan without repeated impossible trains;
 - immediately before mutation, require every `main` ref to equal its recorded
   base. A moved ref cancels and requeues the set for fresh qualification;
 - advance exact tested commits, deploy the same artifacts in dependency order,
@@ -183,12 +189,19 @@ current locks, and active workflow state, but must not update a shared ref,
 dispatch a deploy/E2E workflow, or create/claim a live candidate. With the
 allowlist absent, a worker invocation must claim and advance nothing.
 The only permitted OFF/empty maintenance mutations are reconciling a stranded
-internal `ADVANCE_MAIN_*` operation from a read-only exact `main` ref check and
+internal `ADVANCE_MAIN_*` operation from a read-only exact `main` ref check,
 releasing an environment lock already owned by a terminal train after every one
-of that train's operations is terminal. The cleanup emits
+of that train's operations is terminal, and the operator-authenticated
+`/deploy/release-bus-v2/maintenance/recover-stalled-qualifications` recovery.
+Recovery is available in `OFF` with `ALL` paused or in `STAGING` with
+`PRODUCTION` paused. It requires every v2 lock free, a double stable/idle
+staging-ref handshake, and terminal parent/qualification operations before
+using the same transactional yield as the active reconciler. The cleanup emits
 `TERMINAL_INTERNAL_REF_OPERATION_RECONCILED` and
-`TERMINAL_ENVIRONMENT_LOCK_RELEASED`; an unknown ref identity retains the lock.
-Cleanup cannot claim a candidate, advance a train, update a shared ref, or
+`TERMINAL_ENVIRONMENT_LOCK_RELEASED`; recovery emits
+`PRODUCTION_QUALIFICATION_YIELDED` and
+`PRODUCTION_TRAIN_YIELDED_FOR_SAFE_REPLAN`. An unknown ref identity retains the
+lock. Cleanup cannot claim a candidate, advance a train, update a shared ref, or
 dispatch a workflow.
 
 For each single bounded staging test:
