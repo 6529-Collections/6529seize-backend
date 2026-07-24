@@ -1,5 +1,13 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+
+type RetirementMigration = {
+  up(db: { runSql(sql: string): Promise<void> }): Promise<void>;
+  down(db: { runSql(sql: string): Promise<void> }): Promise<void>;
+};
+
+const requireModule = createRequire(__filename);
 
 function read(relativePath: string): string {
   return fs.readFileSync(
@@ -37,26 +45,49 @@ describe('Release Bus v1 retirement', () => {
     );
   });
 
-  it('retires legacy tables atomically and reversibly before deletion', () => {
+  it('retires legacy tables atomically and reversibly before deletion', async () => {
     const migration = read(
       'migrations/20260724202500-retire-release-bus-v1-tables.js'
     );
+    const executableMigration = requireModule(
+      path.resolve(
+        __dirname,
+        '../../migrations/20260724202500-retire-release-bus-v1-tables.js'
+      )
+    ) as RetirementMigration;
+    const statements: string[] = [];
+    const db = {
+      runSql: jest.fn(async (sql: string) => {
+        statements.push(sql);
+      })
+    };
 
     expect(migration).toContain('RENAME TABLE');
     expect(migration).toContain('exports.down');
     expect(migration).not.toMatch(/\bDROP\s+TABLE\b/i);
-    for (const table of [
-      'release_ready_deployments',
-      'release_candidate_dependencies',
-      'release_trains',
-      'release_train_items',
-      'release_train_operations',
-      'release_train_evidence',
-      'release_deployment_lanes',
-      'release_bus_controls',
-      'release_train_events'
-    ]) {
-      expect(migration).toContain(`'${table}'`);
+    await executableMigration.up(db);
+    await executableMigration.down(db);
+
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toMatch(/^RENAME TABLE /);
+    expect(statements[1]).toMatch(/^RENAME TABLE /);
+    const pairs = [
+      ['release_ready_deployments', 'retired_release_bus_v1_ready_deployments'],
+      [
+        'release_candidate_dependencies',
+        'retired_release_bus_v1_candidate_dependencies'
+      ],
+      ['release_trains', 'retired_release_bus_v1_trains'],
+      ['release_train_items', 'retired_release_bus_v1_train_items'],
+      ['release_train_operations', 'retired_release_bus_v1_train_operations'],
+      ['release_train_evidence', 'retired_release_bus_v1_train_evidence'],
+      ['release_deployment_lanes', 'retired_release_bus_v1_deployment_lanes'],
+      ['release_bus_controls', 'retired_release_bus_v1_controls'],
+      ['release_train_events', 'retired_release_bus_v1_train_events']
+    ];
+    for (const [active, retired] of pairs) {
+      expect(statements[0]).toContain(`\`${active}\` TO \`${retired}\``);
+      expect(statements[1]).toContain(`\`${retired}\` TO \`${active}\``);
     }
   });
 });

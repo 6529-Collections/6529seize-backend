@@ -10,6 +10,10 @@
  * MySQL executes a multi-table RENAME TABLE atomically. Keeping every row under
  * a clearly retired name gives operators a forward-fix recovery window without
  * leaving any legacy table name available to an accidental v1 claimant.
+ *
+ * Precondition: all nine source tables exist and none of the retired target
+ * names exist. A mismatch intentionally fails the whole atomic statement
+ * closed; silently accepting a partial or ambiguous retirement is unsafe.
  */
 var TABLE_RENAMES = [
   ['release_ready_deployments', 'retired_release_bus_v1_ready_deployments'],
@@ -52,4 +56,3 @@ exports.down = function (db) {
 };
 
 exports._meta = { version: 1 };
-
