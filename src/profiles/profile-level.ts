@@ -416,12 +416,15 @@ export function getLevelFromScore(score: number): number {
   return LEVELS.find((l) => score >= l.minTdh)?.level ?? 0;
 }
 
-export function getLevelComponentsBorderByLevel(level: number): number {
-  if (level < 0) {
-    return level;
+export function getLevelComponentsBorderByLevel(
+  level: number | string
+): number {
+  const numericLevel = Number(level);
+  if (numericLevel < 0) {
+    return numericLevel;
   }
-  if (level > 100) {
+  if (numericLevel > 100) {
     return Number.MAX_SAFE_INTEGER;
   }
-  return LEVELS.find((l) => l.level === level)?.minTdh ?? 0;
+  return LEVELS.find((l) => l.level === numericLevel)?.minTdh ?? 0;
 }
