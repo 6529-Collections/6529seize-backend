@@ -1,7 +1,8 @@
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '../sql-executor';
 import {
   GroupBeneficiaryGrantMatchMode,
@@ -34,7 +35,6 @@ import {
   MembershipRefreshProducer,
   MembershipRefreshReason
 } from '../membership/membership-refresh.producer';
-import { SqlExecutor } from '../sql-executor';
 
 const mysql = require('mysql');
 

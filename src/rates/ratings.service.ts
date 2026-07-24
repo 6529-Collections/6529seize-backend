@@ -384,18 +384,26 @@ export class RatingsService {
         timer?.stop(`${this.constructor.name}->updateRatingUnsafe->insertLogs`);
       }
 
-      if (getMattersWhereTargetIsProfile().includes(request.matter)) {
-        await membershipRefreshProducer.markProfilesDirty(
-          [request.rater_profile_id, request.matter_target_id],
-          MembershipRefreshReason.RATING_CHANGED,
-          { connection }
-        );
-      }
+      await this.markProfilesDirtyForRating(request, connection);
 
       return { identityUpdate };
     } finally {
       timer?.stop(`${this.constructor.name}->updateRatingUnsafe`);
     }
+  }
+
+  private async markProfilesDirtyForRating(
+    request: UpdateRatingRequest,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    if (!getMattersWhereTargetIsProfile().includes(request.matter)) {
+      return;
+    }
+    await membershipRefreshProducer.markProfilesDirty(
+      [request.rater_profile_id, request.matter_target_id],
+      MembershipRefreshReason.RATING_CHANGED,
+      { connection }
+    );
   }
 
   private async insertLogs(

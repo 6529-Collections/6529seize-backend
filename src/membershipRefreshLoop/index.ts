@@ -40,7 +40,11 @@ function parsePositiveInteger(
     return undefined;
   }
   const parsed =
-    typeof value === 'number' ? value : Number.parseInt(String(value), 10);
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`[${name}] must be a positive integer`);
   }
@@ -95,7 +99,7 @@ function getMessages(event: unknown): MembershipRefreshMessage[] {
     Array.isArray((event as { Records?: unknown }).Records)
   ) {
     return (event as { Records: { body?: unknown }[] }).Records.map((record) =>
-      parseMessageBody(String(record.body ?? '{}'))
+      parseMessageBody(typeof record.body === 'string' ? record.body : '{}')
     );
   }
   if (event === null || typeof event !== 'object') {

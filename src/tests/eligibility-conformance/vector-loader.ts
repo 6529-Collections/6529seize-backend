@@ -130,14 +130,16 @@ function readVectorFiles(): EligibilityConformanceVector[] {
       fs.readFileSync(path.join(VECTORS_DIR, file), 'utf8')
     ) as EligibilityConformanceVector[];
     if (!Array.isArray(parsed)) {
-      throw new Error(`Vector file ${file} must contain an array of vectors`);
+      throw new TypeError(
+        `Vector file ${file} must contain an array of vectors`
+      );
     }
     return parsed;
   });
   const names = new Set<string>();
   for (const vector of vectors) {
     if (names.has(vector.name)) {
-      throw new Error(`Duplicate vector name: ${vector.name}`);
+      throw new TypeError(`Duplicate vector name: ${vector.name}`);
     }
     names.add(vector.name);
   }
