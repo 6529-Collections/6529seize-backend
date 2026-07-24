@@ -51,10 +51,12 @@ function createClassList(initial: string[] = []): FakeClassList {
 
 function createAppHarness({
   storedToken,
-  sessionError
+  sessionError,
+  refreshError
 }: {
   storedToken?: string;
   sessionError?: string;
+  refreshError?: string;
 } = {}): AppHarness {
   const elements: Record<string, FakeElement> = {};
   const document = {
@@ -87,6 +89,7 @@ function createAppHarness({
 
   document.getElementById('authentication');
   document.getElementById('authenticated');
+  document.getElementById('manifests');
   document.getElementById('token');
   document.getElementById('repository').value = 'frontend';
 
@@ -103,6 +106,9 @@ function createAppHarness({
   const fetch = async (url: string) => {
     if (url === '/deploy/ui/session' && sessionError) {
       throw new Error(sessionError);
+    }
+    if (url.startsWith('/deploy/release-bus-v2/candidates') && refreshError) {
+      throw new Error(refreshError);
     }
     const responses: Record<string, object> = {
       '/deploy/ui/session': { login: 'GelatoGenesis' },
@@ -186,9 +192,12 @@ describe('deploy-bus-ui.renderer', () => {
       false
     );
     expect(harness.elements.forget.classList.contains('hidden')).toBe(false);
+    expect(harness.elements.connect.disabled).toBe(false);
+    expect(harness.elements.token.disabled).toBe(false);
     expect(harness.document.activeElement).toBe(harness.elements.forget);
     expect(harness.localStorage.getItem('deploy-ui-token')).toBe('valid-token');
 
+    harness.elements.manifests.innerHTML = 'stale manifest';
     await harness.elements.forget.onclick?.();
 
     expect(harness.elements.authentication.classList.contains('hidden')).toBe(
@@ -200,6 +209,7 @@ describe('deploy-bus-ui.renderer', () => {
     expect(harness.elements.forget.classList.contains('hidden')).toBe(true);
     expect(harness.document.activeElement).toBe(harness.elements.token);
     expect(harness.localStorage.getItem('deploy-ui-token')).toBeNull();
+    expect(harness.elements.manifests.innerHTML).toBe('');
   });
 
   it('clears a rejected stored token and explains how to recover', async () => {
@@ -219,6 +229,29 @@ describe('deploy-bus-ui.renderer', () => {
     );
     expect(harness.elements['auth-status'].textContent).toBe(
       'Stored token was rejected. Paste a new GitHub token.'
+    );
+    expect(harness.elements.connect.disabled).toBe(false);
+    expect(harness.elements.token.disabled).toBe(false);
+  });
+
+  it('keeps a clean authenticated shell visible when refresh fails', async () => {
+    const harness = createAppHarness({
+      refreshError: 'Refresh failed'
+    });
+    harness.elements.manifests.innerHTML = 'stale manifest';
+    harness.elements.token.value = 'valid-token';
+
+    await harness.elements.connect.onclick?.();
+
+    expect(harness.elements.authentication.classList.contains('hidden')).toBe(
+      true
+    );
+    expect(harness.elements.authenticated.classList.contains('hidden')).toBe(
+      false
+    );
+    expect(harness.elements.manifests.innerHTML).toBe('');
+    expect(harness.elements['register-status'].textContent).toBe(
+      'Refresh failed'
     );
   });
 
