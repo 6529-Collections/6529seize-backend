@@ -65,6 +65,65 @@ async function runNotifier(
 }
 
 describe('notify-ci-wave release-note metadata', () => {
+  it('sends canonical release train contributors and the deployed SHA', async () => {
+    const expectedSha = 'b'.repeat(40);
+    const result = await runNotifier({
+      CI_RELEASE_TRAIN_ID: 'train-123',
+      CI_RELEASE_CONTRIBUTORS: JSON.stringify([
+        'GelatoGenesis',
+        'prxt6529',
+        'gelatogenesis'
+      ]),
+      CI_PIPELINES_SHA: expectedSha
+    });
+
+    expect(result).toMatchObject({
+      code: 0,
+      stderr: '',
+      payload: {
+        release_train_id: 'train-123',
+        contributor_github_logins: ['GelatoGenesis', 'prxt6529'],
+        sha: expectedSha
+      }
+    });
+  });
+
+  it('rejects release contributors without a train id', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_CONTRIBUTORS: JSON.stringify(['GelatoGenesis'])
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'CI_RELEASE_TRAIN_ID is required with CI_RELEASE_CONTRIBUTORS'
+    );
+    expect(result.payload).toBeNull();
+  });
+
+  it('omits new fields until a dispatcher supplies contributors', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_TRAIN_ID: 'train-123',
+      CI_RELEASE_CONTRIBUTORS: '[]'
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.payload).not.toHaveProperty('release_train_id');
+    expect(result.payload).not.toHaveProperty('contributor_github_logins');
+  });
+
+  it('rejects invalid release contributor metadata', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_TRAIN_ID: 'train-123',
+      CI_RELEASE_CONTRIBUTORS: JSON.stringify(['not a login'])
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'CI_RELEASE_CONTRIBUTORS contains an invalid GitHub login'
+    );
+    expect(result.payload).toBeNull();
+  });
+
   it('sends canonical per-PR v2 release-note groups', async () => {
     const result = await runNotifier({
       CI_RELEASE_NOTE_GROUPS: JSON.stringify([

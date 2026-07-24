@@ -240,6 +240,27 @@ function prEvidence(
   return parseStoredJson(candidate.pr_evidence_json);
 }
 
+export function releaseTrainContributorGithubLogins(
+  candidates: readonly ReleaseBusV2CandidateRecord[]
+): string[] {
+  const logins: string[] = [];
+  for (const candidate of candidates) {
+    for (const value of prEvidence(candidate)?.contributor_github_logins ??
+      []) {
+      const login = value.trim();
+      if (
+        !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/.test(login) ||
+        logins.some(
+          (existing) => existing.toLowerCase() === login.toLowerCase()
+        )
+      )
+        continue;
+      logins.push(login);
+    }
+  }
+  return logins;
+}
+
 export function canUseSingleCandidateFastPath(
   candidate: ReleaseBusV2CandidateRecord,
   baseSha: string
@@ -2552,6 +2573,9 @@ export class ReleaseBusV2Reconciler {
   ): Promise<DeployResult> {
     const train = context.train;
     const source = await this.artifactSource(artifactSourceTrainId);
+    const releaseContributors = JSON.stringify(
+      releaseTrainContributorGithubLogins(relevantCandidates(context))
+    );
     const backendCandidates = relevantCandidates(context, 'backend');
     const graph = backendGraph(backendCandidates);
     const operations: ReleaseBusV2OperationRecord[] = [];
@@ -2581,7 +2605,8 @@ export class ReleaseBusV2Reconciler {
             artifactSourceTrainId,
             source.backendRunId,
             unit,
-            backendCandidates
+            backendCandidates,
+            releaseContributors
           )
         )
       );
@@ -2603,7 +2628,8 @@ export class ReleaseBusV2Reconciler {
         train,
         environment,
         artifactSourceTrainId,
-        source.frontendRunId
+        source.frontendRunId,
+        releaseContributors
       );
       operations.push(frontend);
       if (frontend.status === 'FAILED')
@@ -2623,7 +2649,8 @@ export class ReleaseBusV2Reconciler {
     artifactTrainId: string,
     artifactRunId: string | null,
     service: string,
-    candidates: readonly ReleaseBusV2CandidateRecord[]
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
     if (!artifactRunId)
       throw new Error('Missing backend artifact workflow run');
@@ -2658,6 +2685,7 @@ export class ReleaseBusV2Reconciler {
         artifact_run_id: artifactRunId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.backend_artifact_digest ?? '',
+        release_contributors: releaseContributors,
         ...releaseNoteInputs
       }
     });
@@ -2667,7 +2695,8 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
-    artifactRunId: string | null
+    artifactRunId: string | null,
+    releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
     if (!artifactRunId)
       throw new Error('Missing frontend artifact workflow run');
@@ -2700,7 +2729,8 @@ export class ReleaseBusV2Reconciler {
         artifact_run_id: artifactRunId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.frontend_artifact_digest ?? '',
-        artifact_environment: environment === 'prod' ? 'production' : 'staging'
+        artifact_environment: environment === 'prod' ? 'production' : 'staging',
+        release_contributors: releaseContributors
       }
     });
   }

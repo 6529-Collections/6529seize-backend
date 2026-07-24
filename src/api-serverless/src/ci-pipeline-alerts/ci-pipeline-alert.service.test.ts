@@ -15,6 +15,7 @@ import {
   CiPipelineAlertService,
   formatMarkdownLink,
   normalizeConfiguredHandle,
+  normalizeContributorGithubLogins,
   normalizeTargetEnvironment,
   parseProfileHandles,
   truncate
@@ -186,6 +187,18 @@ describe('CiPipelineAlertService', () => {
         }
       )
     );
+  });
+
+  it('normalizes and deduplicates contributor GitHub logins', () => {
+    expect(
+      normalizeContributorGithubLogins([
+        ' GelatoGenesis ',
+        'gelatogenesis',
+        'ragnep',
+        'dependabot[bot]',
+        'invalid login'
+      ])
+    ).toEqual(['GelatoGenesis', 'ragnep', 'dependabot[bot]']);
   });
 
   it('posts failures with configured profile mentions', async () => {
@@ -377,6 +390,80 @@ describe('CiPipelineAlertService', () => {
       );
     }
   );
+
+  it('adds mapped train contributors as real mentions and links unmapped contributors', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      GelatoGenesis: 'profile-gelato',
+      ragne: 'profile-ragne'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        environment: 'staging',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'train-123',
+        contributor_github_logins: [
+          'GelatoGenesis',
+          'ragnep',
+          'external-user',
+          'gelatogenesis'
+        ]
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
+      'GelatoGenesis',
+      'ragne'
+    ]);
+    const createDropRequest =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(createDropRequest.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'profile-gelato',
+        handle_in_content: 'GelatoGenesis'
+      },
+      {
+        mentioned_profile_id: 'profile-ragne',
+        handle_in_content: 'ragne'
+      }
+    ]);
+    expect(createDropRequest.parts[0].content).toContain(
+      [
+        'Initiated by: Release Train',
+        'Contributors: @[GelatoGenesis], @[ragne], [@external-user](https://github.com/external-user)'
+      ].join('\n')
+    );
+  });
+
+  it('ignores contributor metadata for a manually initiated deployment', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        release_train_id: 'train-123',
+        contributor_github_logins: ['GelatoGenesis']
+      },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    expect(content).toContain('Initiated by: @[prxt0]');
+    expect(content).not.toContain('Contributors:');
+  });
 
   it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
     const service = new CiPipelineAlertService(

@@ -19,6 +19,9 @@ const {
   CI_RELEASE_NOTE_PUBLISH,
   CI_RELEASE_NOTE_GROUPS,
   CI_RELEASE_NOTE_OPT_OUT,
+  CI_RELEASE_TRAIN_ID,
+  CI_RELEASE_CONTRIBUTORS,
+  CI_PIPELINES_SHA,
   GITHUB_REPOSITORY,
   GITHUB_WORKFLOW,
   GITHUB_RUN_ID,
@@ -129,6 +132,42 @@ function releaseNoteMetadataErrorMessage(error) {
   return 'Release-note metadata is invalid';
 }
 
+function parseReleaseContributors(value) {
+  if (!value) return [];
+  const parsed = JSON.parse(value);
+  if (!Array.isArray(parsed) || parsed.length > 100) {
+    throw new Error(
+      'CI_RELEASE_CONTRIBUTORS must be an array with at most 100 entries'
+    );
+  }
+  const contributors = [];
+  const seen = new Set();
+  for (const value of parsed) {
+    if (
+      typeof value !== 'string' ||
+      !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/.test(value.trim())
+    ) {
+      throw new Error(
+        'CI_RELEASE_CONTRIBUTORS contains an invalid GitHub login'
+      );
+    }
+    const login = value.trim();
+    const key = login.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    contributors.push(login);
+  }
+  return contributors;
+}
+
+function releaseContributorMetadataErrorMessage(error) {
+  if (error instanceof SyntaxError) {
+    return 'CI_RELEASE_CONTRIBUTORS is not valid JSON';
+  }
+  if (error instanceof Error) return error.message;
+  return 'Release contributor metadata is invalid';
+}
+
 const targetEnvironment = normalizeTargetEnvironment(
   CI_PIPELINES_TARGET_ENV || CI_PIPELINES_ENVIRONMENT
 );
@@ -174,6 +213,7 @@ if (
   process.exit(1);
 }
 let releaseNoteGroups = null;
+let releaseContributors = [];
 try {
   validateOptionalBoolean('CI_RELEASE_NOTE_PUBLISH', CI_RELEASE_NOTE_PUBLISH);
   validateOptionalBoolean('CI_RELEASE_NOTE_OPT_OUT', CI_RELEASE_NOTE_OPT_OUT);
@@ -183,6 +223,23 @@ try {
   );
 } catch (error) {
   console.error(releaseNoteMetadataErrorMessage(error));
+  process.exit(1);
+}
+try {
+  releaseContributors = parseReleaseContributors(CI_RELEASE_CONTRIBUTORS);
+} catch (error) {
+  console.error(releaseContributorMetadataErrorMessage(error));
+  process.exit(1);
+}
+if (
+  CI_RELEASE_TRAIN_ID &&
+  !/^[A-Za-z0-9._-]{1,100}$/.test(CI_RELEASE_TRAIN_ID)
+) {
+  console.error('CI_RELEASE_TRAIN_ID is invalid');
+  process.exit(1);
+}
+if (releaseContributors.length > 0 && !CI_RELEASE_TRAIN_ID) {
+  console.error('CI_RELEASE_TRAIN_ID is required with CI_RELEASE_CONTRIBUTORS');
   process.exit(1);
 }
 if (
@@ -222,6 +279,13 @@ const releaseNotesFields = isReleaseNotesEligible
         deployed_at: new Date().toISOString()
       }
   : {};
+const releaseTrainFields =
+  CI_RELEASE_TRAIN_ID && releaseContributors.length > 0
+    ? {
+        release_train_id: CI_RELEASE_TRAIN_ID,
+        contributor_github_logins: releaseContributors
+      }
+    : {};
 
 const payload = {
   repo: repository.split('/').pop() ?? repository,
@@ -233,10 +297,11 @@ const payload = {
   run_id: runId,
   run_number: GITHUB_RUN_NUMBER || null,
   run_url: `${GITHUB_SERVER_URL}/${repository}/actions/runs/${runId}`,
-  sha: GITHUB_SHA || null,
+  sha: CI_PIPELINES_SHA || GITHUB_SHA || null,
   branch: GITHUB_REF_NAME || null,
   environment: targetEnvironment || null,
   service: CI_PIPELINES_SERVICE || null,
+  ...releaseTrainFields,
   ...releaseNotesFields
 };
 

@@ -234,7 +234,8 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
       checksCompletedAt: 1,
       artifactRunId: null,
       artifactName: null,
-      artifactDigest: null
+      artifactDigest: null,
+      contributorGithubLogins: ['GelatoGenesis', 'ragnep']
     });
   });
 
@@ -298,7 +299,12 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
       })
     );
     expect(repository.createCandidate).toHaveBeenCalledWith(
-      expect.objectContaining({ candidateId: betaId }),
+      expect.objectContaining({
+        candidateId: betaId,
+        prEvidence: expect.objectContaining({
+          contributor_github_logins: ['GelatoGenesis', 'ragnep']
+        })
+      }),
       expect.anything()
     );
     expect(repository.supersedeOtherPrHeads).not.toHaveBeenCalled();
@@ -312,6 +318,20 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
       'staging readiness is disabled'
     );
     expect(mockResolveRef).not.toHaveBeenCalled();
+    expect(repository.createCandidate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a branch that moves while contributor evidence is collected', async () => {
+    const repository = betaRepository();
+    const service = new ReleaseBusV2Service(repository as never);
+    mockResolveRef
+      .mockResolvedValueOnce(headSha)
+      .mockResolvedValueOnce('f'.repeat(40));
+
+    await expect(service.register(input(), 'BETA-OPERATOR')).rejects.toThrow(
+      `Branch moved from ${headSha} to ${'f'.repeat(40)}`
+    );
+    expect(mockQualification).toHaveBeenCalledTimes(1);
     expect(repository.createCandidate).not.toHaveBeenCalled();
   });
 
