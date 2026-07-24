@@ -1,8 +1,7 @@
 # Simple Release Bus v2
 
 Simple Release Bus v2 is the deployment authority for exact frontend/backend
-candidate SHAs when its live mode enables a lane. Release Bus v1 stays disabled
-as rollback reference.
+candidate SHAs when its live mode enables a lane.
 
 ## Route every request from live state
 
@@ -12,19 +11,18 @@ Run:
 node ops/scripts/release-bus-status.mjs
 ```
 
-The helper prefers `/deploy/release-bus-v2/controls` and temporarily falls back
-to the v1 endpoint only before the additive v2 API exists.
+The helper reads `/deploy/release-bus-v2/controls` and fails closed if the
+versioned status is unavailable or malformed.
 
 | Mode         | Staging                        | Production                                                                         |
 | ------------ | ------------------------------ | ---------------------------------------------------------------------------------- |
-| `OFF`        | Serialized legacy manual route | Serialized manual route with explicit owner authority; no staging evidence gate    |
+| `OFF`        | Serialized manual route        | Serialized manual route with explicit owner authority; no staging evidence gate    |
 | `STAGING`    | V2 readiness                   | Manual/disabled by default; exact operator-only production beta may be allowlisted |
 | `PRODUCTION` | V2 readiness                   | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate             |
 
 For an active mode, `ALL` and the target lane must be running. In `OFF`, v2
-controls are non-authoritative and the manual fallback remains available when
-`RELEASE_BUS_ENFORCEMENT` is absent or `false`, including owner-authorized
-production without prior staging evidence.
+controls are non-authoritative and the manual fallback remains available,
+including owner-authorized production without prior staging evidence.
 
 ## Candidate contract
 
@@ -281,8 +279,8 @@ node ops/scripts/release-bus-v2-fast-off.mjs --execute
 It best-effort pauses only v2, disables the reconciler schedule, clears the
 operator beta and sets both repository variables to `OFF`, updates production
 API then reconciler with Lambda revision guards while preserving unrelated
-environment values, and verifies empty `OFF`. Manual workflows and
-`RELEASE_BUS_ENFORCEMENT` are untouched. Every mutation is idempotent; if a
+environment values, and verifies empty `OFF`. Manual workflows remain
+available. Every mutation is idempotent; if a
 concurrent deploy or transient failure interrupts the command, run the same
 command again until its final verification succeeds. The GitHub OFF source and
 disabled schedule are intentionally retained after partial failure because
@@ -294,6 +292,6 @@ they are the safe direction, not compensated back to enabled automation.
 3. verify no v2 train owns staging or production;
 4. use the serialized manual fallback, dispatching backend `Deploy a service`
    workflows one at a time because shared concurrency can cancel sibling runs;
-5. preserve v2 rows and v1 code for diagnosis—do not destructively delete them.
+5. preserve v2 rows and immutable manifests for diagnosis.
 
 Never cancel another actor's shared workflow or force-push a shared ref.

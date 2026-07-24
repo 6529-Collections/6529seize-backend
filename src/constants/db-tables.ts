@@ -219,16 +219,6 @@ export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
 export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
-export const RELEASE_READY_DEPLOYMENTS_TABLE = 'release_ready_deployments';
-export const RELEASE_CANDIDATE_DEPENDENCIES_TABLE =
-  'release_candidate_dependencies';
-export const RELEASE_TRAINS_TABLE = 'release_trains';
-export const RELEASE_TRAIN_ITEMS_TABLE = 'release_train_items';
-export const RELEASE_TRAIN_OPERATIONS_TABLE = 'release_train_operations';
-export const RELEASE_TRAIN_EVIDENCE_TABLE = 'release_train_evidence';
-export const RELEASE_DEPLOYMENT_LANES_TABLE = 'release_deployment_lanes';
-export const RELEASE_BUS_CONTROLS_TABLE = 'release_bus_controls';
-export const RELEASE_TRAIN_EVENTS_TABLE = 'release_train_events';
 export const RELEASE_BUS_V2_CANDIDATES_TABLE = 'release_bus_v2_candidates';
 export const RELEASE_BUS_V2_CANDIDATE_DEPENDENCIES_TABLE =
   'release_bus_v2_candidate_dependencies';

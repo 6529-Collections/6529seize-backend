@@ -160,9 +160,8 @@ flowchart TD
 | `dbDumpsDaily`                       | Create daily database dumps.                                         |
 | `nextgenMediaUploader`               | Upload NextGen media.                                                |
 | `nextgenMediaImageResolutions`       | Generate NextGen image resolutions.                                  |
-| `releaseBusStarter`                  | Reconcile queued immutable candidates and start one release train.   |
 | `releaseBusV2Reconciler`             | Claim and reconcile exact Simple Release Bus v2 trains.              |
-| `releaseBusCleaner`                  | Remove expired temporary release branches that no active train owns. |
+| `releaseBusCleaner`                  | Remove expired temporary v2 release branches that no active train owns. |
 
 ### Triggered Lambdas
 
@@ -180,7 +179,6 @@ flowchart TD
 | `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` mentions and direct follow-ups to bot replies.                                                           |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Production only: accumulate successful backend service runs by PR, then publish one repository-prompted note per completed PR as `ci6529`. |
-| `releaseBusWorker`               | AWS Standard Step Functions                                                                                                        | Advance and reconcile one durable staging or production release train without waiting inside Lambda.                        |
 | `waveDropMetricsRefreshLoop`      | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                |
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo`; self-queued stats phase                                                  | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
 | `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                        |
@@ -514,13 +512,11 @@ overwritten.
 Infrastructure and retryable deployment failures retry only the same operation.
 Control-plane defects pause automated claiming without blaming candidates, and
 the serialized manual workflow remains available after v2 is deliberately set
-`OFF`. Release Bus v1 starter/worker/Step Functions components and their tables
-remain deployed but disabled as rollback reference; v2 does not read or claim
-v1 candidates. The cleaner also removes expired unowned v2 release refs.
+`OFF`. The cleaner removes expired unowned v2 release refs.
 
 The GitHub App private key and workflow authorization token use the existing
 `prod/lambdas` secret bootstrap. Production API and releaseBus deployments copy
-only the non-secret v1/v2 mode and App identity into Lambda configuration.
+only the non-secret v2 mode and App identity into Lambda configuration.
 
 For successful production backend operations, v2 emits one canonical group per
 candidate PR and fans overlapping service deployments into each applicable

@@ -139,7 +139,7 @@ async function runWithResponse(
 }
 
 describe('release-bus-status helper', () => {
-  test.each(['OFF', 'SHADOW', 'STAGING', 'PRODUCTION'])(
+  test.each(['OFF', 'STAGING', 'PRODUCTION'])(
     'prints sanitized status for %s mode',
     async (mode) => {
       const result = await runWithResponse({
@@ -177,25 +177,17 @@ describe('release-bus-status helper', () => {
     }
   );
 
-  it('falls back to the disabled legacy endpoint before v2 is deployed', async () => {
+  it('fails closed when the v2 status endpoint is missing', async () => {
     const paths: string[] = [];
     const testServer = await startServer((request, response) => {
       paths.push(request.url ?? '');
-      if (request.url === '/deploy/release-bus-v2/controls') {
-        response.writeHead(404).end();
-        return;
-      }
-      response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ mode: 'OFF', controls: VALID_CONTROLS }));
+      response.writeHead(404).end();
     });
     try {
       const result = await runHelper({ RELEASE_BUS_API_URL: testServer.url });
-      expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout).mode).toBe('OFF');
-      expect(paths).toEqual([
-        '/deploy/release-bus-v2/controls',
-        '/deploy/release-bus/controls'
-      ]);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('HTTP 404');
+      expect(paths).toEqual(['/deploy/release-bus-v2/controls']);
     } finally {
       await stopServer(testServer.server);
     }

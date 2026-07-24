@@ -2,7 +2,7 @@ const mockGetWorkflowRunIdentity = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
 
-jest.mock('@/releaseBus/release-bus.github-app', () => {
+jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
   class ReleaseBusGitHubInfrastructureError extends Error {
     public constructor(message: string) {
       super(message);
@@ -20,7 +20,7 @@ jest.mock('@/releaseBus/release-bus.github-app', () => {
   };
 });
 
-import { ReleaseBusGitHubInfrastructureError } from '@/releaseBus/release-bus.github-app';
+import { ReleaseBusGitHubInfrastructureError } from '@/releaseBusV2/release-bus-v2.github-app';
 import { ReleaseBusV2Operations } from '@/releaseBusV2/release-bus-v2.operations';
 import type { ReleaseBusV2OperationRecord } from '@/releaseBusV2/release-bus-v2.types';
 

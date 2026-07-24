@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   releaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError
-} from '@/releaseBus/release-bus.github-app';
+} from '@/releaseBusV2/release-bus-v2.github-app';
 import {
   releaseBusV2Repository,
   type ReleaseBusV2Repository as ReleaseBusV2RepositoryClass

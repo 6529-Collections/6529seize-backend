@@ -548,8 +548,6 @@
         "prod": "us-east-1"
       },
       "verification_targets": [
-        "releaseBusStarter",
-        "releaseBusWorker",
         "releaseBusCleaner",
         "releaseBusV2Reconciler"
       ],

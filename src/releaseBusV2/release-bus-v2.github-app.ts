@@ -1,8 +1,8 @@
 import { createSign } from 'node:crypto';
 import fetch, { type RequestInit, type Response } from 'node-fetch';
 import { Logger } from '@/logging';
-import { isReleaseBusGitHubAppActor } from '@/releaseBus/release-bus.constants';
-import type { ReleaseRepository } from '@/releaseBus/release-bus.types';
+import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
+import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
 
 type InstallationToken = {
   readonly token: string;
@@ -79,13 +79,6 @@ type GitHubCommitStatus = {
   readonly state?: string;
   readonly description?: string | null;
 };
-type GitHubFileContent = {
-  readonly type?: string;
-  readonly encoding?: string;
-  readonly content?: string;
-  readonly size?: number;
-};
-type GitHubActionsVariable = { readonly value?: string };
 type GitHubPullRequestDetails = {
   readonly number?: number;
   readonly state?: string;
@@ -115,7 +108,7 @@ type GitHubArtifact = {
   readonly workflow_run?: { readonly id?: number; readonly head_sha?: string };
 };
 
-const REPOSITORIES: Readonly<Record<ReleaseRepository, string>> = {
+const REPOSITORIES: Readonly<Record<ReleaseBusV2Repository, string>> = {
   frontend: '6529seize-frontend',
   backend: '6529seize-backend'
 };
@@ -208,7 +201,6 @@ function assertAllowedWritableRef(ref: string): void {
   if (
     ref === 'main' ||
     ref === '1a-staging' ||
-    /^release-bus\/(staging|production)-train-[A-Za-z0-9._-]+$/.test(ref) ||
     /^release-bus-v2\/(staging|production|qualification)-train-[A-Za-z0-9._-]+$/.test(
       ref
     )
@@ -273,7 +265,7 @@ export class ReleaseBusGitHubApp {
   }
 
   private async request(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     path: string,
     options: RequestInit = {}
   ): Promise<Response> {
@@ -329,7 +321,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async resolveRef(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     ref: string
   ): Promise<string> {
     const response = await this.request(
@@ -343,65 +335,8 @@ export class ReleaseBusGitHubApp {
     return sha.toLowerCase();
   }
 
-  public async getFileContent(
-    repository: ReleaseRepository,
-    file: string,
-    ref: string
-  ): Promise<string> {
-    if (
-      !/^[A-Za-z0-9._/-]{1,500}$/.test(file) ||
-      file.startsWith('/') ||
-      file.split('/').includes('..')
-    )
-      throw new Error('Invalid repository file path');
-    if (!/^[a-f0-9]{40}$/.test(ref)) throw new Error('Invalid file ref SHA');
-    const response = await this.request(
-      repository,
-      `/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${ref}`
-    );
-    await this.assertOk(response, `read ${repository} file ${file}`);
-    const payload = (await response.json()) as GitHubFileContent;
-    if (
-      payload.type !== 'file' ||
-      payload.encoding !== 'base64' ||
-      typeof payload.content !== 'string' ||
-      !Number.isInteger(payload.size) ||
-      Number(payload.size) < 0 ||
-      Number(payload.size) > 1_000_000
-    )
-      throw new Error(`Invalid GitHub file response for ${repository}:${file}`);
-    const content = Buffer.from(
-      payload.content.replace(/\s/g, ''),
-      'base64'
-    ).toString('utf8');
-    if (Buffer.byteLength(content) !== payload.size)
-      throw new Error(`GitHub file size mismatch for ${repository}:${file}`);
-    return content;
-  }
-
-  public async getActionsVariable(
-    repository: ReleaseRepository,
-    name: string
-  ): Promise<string | null> {
-    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(name))
-      throw new Error('Invalid GitHub Actions variable name');
-    const response = await this.request(
-      repository,
-      `/actions/variables/${encodeURIComponent(name)}`
-    );
-    if (response.status === 404) return null;
-    await this.assertOk(
-      response,
-      `read ${repository} Actions variable ${name}`
-    );
-    const value = ((await response.json()) as GitHubActionsVariable).value;
-    if (typeof value !== 'string' || value.length > 500)
-      throw new Error(`Invalid ${repository} Actions variable ${name}`);
-    return value;
-  }
-
   public async getPullRequestQualification(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     pullNumber: number,
     expectedHeadSha: string
   ): Promise<{
@@ -535,7 +470,7 @@ export class ReleaseBusGitHubApp {
   }
 
   private async getPullRequestContributorGithubLogins(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     pullNumber: number,
     pull: GitHubPullRequestDetails
   ): Promise<readonly string[]> {
@@ -587,7 +522,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async resolveRefIfExists(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     ref: string
   ): Promise<string | null> {
     const response = await this.request(
@@ -603,7 +538,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async createRef(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     ref: string,
     sha: string
   ): Promise<void> {
@@ -621,7 +556,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async updateRef(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     ref: string,
     expectedOldSha: string,
     newSha: string
@@ -644,24 +579,8 @@ export class ReleaseBusGitHubApp {
     await this.assertOk(response, `fast-forward ${repository}:${ref}`);
   }
 
-  public async listReleaseBusRefs(
-    repository: ReleaseRepository
-  ): Promise<Array<{ ref: string; sha: string }>> {
-    const response = await this.request(
-      repository,
-      '/git/matching-refs/heads/release-bus/'
-    );
-    await this.assertOk(response, `list ${repository} release-bus refs`);
-    return ((await response.json()) as GitHubMatchingRef[])
-      .map((item) => ({
-        ref: item.ref.replace(/^refs\/heads\//, ''),
-        sha: item.object?.sha ?? ''
-      }))
-      .filter((item) => item.sha.length > 0);
-  }
-
   public async listReleaseBusV2Refs(
-    repository: ReleaseRepository
+    repository: ReleaseBusV2Repository
   ): Promise<Array<{ ref: string; sha: string }>> {
     const response = await this.request(
       repository,
@@ -677,7 +596,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async commitTimestamp(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     sha: string
   ): Promise<number> {
     const response = await this.request(repository, `/commits/${sha}`);
@@ -693,24 +612,8 @@ export class ReleaseBusGitHubApp {
     return timestamp;
   }
 
-  public async deleteReleaseBusRef(
-    repository: ReleaseRepository,
-    ref: string
-  ): Promise<void> {
-    assertAllowedWritableRef(ref);
-    if (!ref.startsWith('release-bus/'))
-      throw new Error(`Ref ${ref} is not a temporary release-bus branch`);
-    const response = await this.request(
-      repository,
-      `/git/refs/heads/${encodeURIComponent(ref)}`,
-      { method: 'DELETE' }
-    );
-    if (response.status === 404) return;
-    await this.assertOk(response, `delete ${repository} ref ${ref}`);
-  }
-
   public async deleteReleaseBusV2Ref(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     ref: string
   ): Promise<void> {
     assertAllowedWritableRef(ref);
@@ -726,7 +629,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async dispatchWorkflow(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     workflow: string,
     ref: string,
     inputs: Readonly<Record<string, string>>
@@ -746,7 +649,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async findWorkflowRun(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     workflow: string,
     operationKey: string,
     externalId?: string | null
@@ -783,7 +686,7 @@ export class ReleaseBusGitHubApp {
   }
 
   private async withWorkflowJobs(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     run: GitHubRun
   ): Promise<GitHubRun> {
     const response = await this.request(
@@ -797,7 +700,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async getWorkflowRunIdentity(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     workflowRunId: string
   ): Promise<ReleaseBusWorkflowRunIdentity> {
     if (!/^\d+$/.test(workflowRunId))
@@ -823,38 +726,8 @@ export class ReleaseBusGitHubApp {
     };
   }
 
-  public async hasActiveDeploymentRun(
-    repository: ReleaseRepository,
-    environment: 'staging' | 'prod'
-  ): Promise<boolean> {
-    return this.hasActiveWorkflowRun(
-      repository,
-      `${environment} deployment`,
-      (run) => {
-        if (repository === 'backend') {
-          return this.isBackendDeploymentRun(run, environment);
-        }
-        const paths =
-          environment === 'prod'
-            ? [
-                '.github/workflows/build-upload-deploy-prod.yml',
-                '.github/workflows/release-bus-deploy-production.yml'
-              ]
-            : [
-                '.github/workflows/deploy-staging.yml',
-                '.github/workflows/release-bus-deploy-staging.yml'
-              ];
-        const legacyNames =
-          environment === 'prod'
-            ? ['Web Deploy - PROD', 'Release Bus - Deploy Frontend Production']
-            : ['Web Deploy - STAGING', 'Release Bus - Deploy Frontend Staging'];
-        return paths.includes(run.path ?? '') || legacyNames.includes(run.name);
-      }
-    );
-  }
-
   public async hasActiveStagingMutationOrE2ERun(
-    repository: ReleaseRepository
+    repository: ReleaseBusV2Repository
   ): Promise<boolean> {
     return this.hasActiveWorkflowRun(
       repository,
@@ -864,7 +737,7 @@ export class ReleaseBusGitHubApp {
   }
 
   public async hasStagingMutationOrE2ERunSince(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     since: number,
     ignoredRunIds: readonly string[] = []
   ): Promise<boolean> {
@@ -905,7 +778,7 @@ export class ReleaseBusGitHubApp {
   }
 
   private isStagingMutationOrE2ERun(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     run: GitHubRun
   ): boolean {
     if (repository === 'backend') {
@@ -914,20 +787,18 @@ export class ReleaseBusGitHubApp {
     const paths = [
       '.github/workflows/deploy-staging.yml',
       '.github/workflows/release-bus-deploy-staging.yml',
-      '.github/workflows/release-bus-sync-staging.yml',
       '.github/workflows/staging-e2e.yml'
     ];
     const legacyNames = [
       'Web Deploy - STAGING',
       'Release Bus - Deploy Frontend Staging',
-      'Release Bus - Sync Main To Staging',
       'Staging E2E'
     ];
     return paths.includes(run.path ?? '') || legacyNames.includes(run.name);
   }
 
   public async hasActiveProductionMutationOrE2ERun(
-    repository: ReleaseRepository
+    repository: ReleaseBusV2Repository
   ): Promise<boolean> {
     return this.hasActiveWorkflowRun(
       repository,
@@ -963,7 +834,7 @@ export class ReleaseBusGitHubApp {
   }
 
   private async hasActiveWorkflowRun(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     description: string,
     matches: (run: GitHubRun) => boolean
   ): Promise<boolean> {
@@ -984,50 +855,8 @@ export class ReleaseBusGitHubApp {
     return false;
   }
 
-  public async createReleasePullRequest(
-    repository: ReleaseRepository,
-    head: string,
-    title: string,
-    body: string
-  ): Promise<{ readonly number: number; readonly html_url: string }> {
-    assertAllowedWritableRef(head);
-    const response = await this.request(repository, '/pulls', {
-      method: 'POST',
-      body: JSON.stringify({ title, head, base: 'main', body })
-    });
-    if (response.status === 422) {
-      const existing = await this.request(
-        repository,
-        `/pulls?state=open&head=${encodeURIComponent(`${this.owner}:${head}`)}&base=main&per_page=1`
-      );
-      await this.assertOk(existing, `find existing ${repository} release PR`);
-      const pull = (
-        (await existing.json()) as Array<{ number: number; html_url: string }>
-      )[0];
-      if (pull) return pull;
-    }
-    await this.assertOk(response, `create ${repository} release PR`);
-    return (await response.json()) as { number: number; html_url: string };
-  }
-
-  public async commentOnPullRequest(
-    repository: ReleaseRepository,
-    pullNumber: number,
-    body: string
-  ): Promise<void> {
-    const response = await this.request(
-      repository,
-      `/issues/${pullNumber}/comments`,
-      { method: 'POST', body: JSON.stringify({ body }) }
-    );
-    await this.assertOk(
-      response,
-      `comment on ${repository} pull request ${pullNumber}`
-    );
-  }
-
   public async ensureCommitStatus(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     sha: string,
     state: 'error' | 'failure' | 'pending' | 'success',
     description: string,
@@ -1056,52 +885,8 @@ export class ReleaseBusGitHubApp {
     await this.assertOk(response, `update ${repository} Release Bus status`);
   }
 
-  public async closePullRequest(
-    repository: ReleaseRepository,
-    pullNumber: number
-  ): Promise<void> {
-    const response = await this.request(repository, `/pulls/${pullNumber}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ state: 'closed' })
-    });
-    await this.assertOk(
-      response,
-      `close ${repository} pull request ${pullNumber}`
-    );
-  }
-
-  public async mergePullRequest(
-    repository: ReleaseRepository,
-    pullNumber: number,
-    expectedHeadSha: string,
-    message: string
-  ): Promise<string> {
-    const response = await this.request(
-      repository,
-      `/pulls/${pullNumber}/merge`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({
-          sha: expectedHeadSha,
-          merge_method: 'merge',
-          commit_title: message
-        })
-      }
-    );
-    await this.assertOk(
-      response,
-      `merge ${repository} release PR ${pullNumber}`
-    );
-    const sha = ((await response.json()) as { sha?: string }).sha;
-    if (!sha)
-      throw new Error(
-        `GitHub did not return merge SHA for ${repository} PR ${pullNumber}`
-      );
-    return sha;
-  }
-
   public async refContainsCommit(
-    repository: ReleaseRepository,
+    repository: ReleaseBusV2Repository,
     ref: string,
     commitSha: string
   ): Promise<boolean> {
