@@ -701,7 +701,11 @@ export class ReleaseBusV2Service {
               typeof supersededEvent.payload_json === 'string'
                 ? JSON.parse(supersededEvent.payload_json)
                 : supersededEvent.payload_json;
-            if (value && typeof value === 'object' && !Array.isArray(value))
+            if (
+              typeof value === 'object' &&
+              value !== null &&
+              !Array.isArray(value)
+            )
               supersededPayload = value as Record<string, unknown>;
           } catch {
             supersededPayload = null;
