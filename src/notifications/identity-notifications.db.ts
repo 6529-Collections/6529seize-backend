@@ -459,7 +459,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async findIdentitiesNotification(
+  async findIdentitiesNotifiedForDropCreation(
     waveId: string,
     dropId: string,
     connection?: ConnectionWrapper<any>
@@ -468,8 +468,23 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       .execute<{
         identity_id: string;
       }>(
-        `select identity_id from ${IDENTITY_NOTIFICATIONS_TABLE} where wave_id = :waveId and (related_drop_id = :dropId or related_drop_2_id = :dropId)`,
-        { waveId, dropId },
+        `
+          select distinct identity_id
+          from ${IDENTITY_NOTIFICATIONS_TABLE}
+          where wave_id = :waveId
+            and related_drop_id = :dropId
+            and cause in (:causes)
+        `,
+        {
+          waveId,
+          dropId,
+          causes: [
+            IdentityNotificationCause.DROP_REPLIED,
+            IdentityNotificationCause.DROP_QUOTED,
+            IdentityNotificationCause.IDENTITY_MENTIONED,
+            IdentityNotificationCause.ALL_DROPS
+          ]
+        },
         { wrappedConnection: connection }
       )
       .then((it) => it.map((it) => it.identity_id));

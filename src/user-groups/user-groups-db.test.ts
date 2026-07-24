@@ -8,6 +8,10 @@ import {
   aUserGroup,
   withUserGroups
 } from '@/tests/fixtures/user-group.fixture';
+import {
+  aProfileGroup,
+  withProfileGroups
+} from '@/tests/fixtures/profile-group.fixture';
 
 const pureProfileGroup = aUserGroup(
   {
@@ -81,3 +85,236 @@ describeWithSeed(
     });
   }
 );
+
+const membershipProfileGroupId = randomUUID();
+const membershipGroup = aUserGroup(
+  {
+    profile_group_id: membershipProfileGroupId,
+    is_direct_message: false
+  },
+  {
+    id: 'membership-group',
+    name: 'Membership Group'
+  }
+);
+const candidateMembership = aProfileGroup({
+  profile_group_id: membershipProfileGroupId,
+  profile_id: 'candidate-profile'
+});
+const unrelatedMembership = aProfileGroup({
+  profile_group_id: membershipProfileGroupId,
+  profile_id: 'unrelated-profile'
+});
+
+describeWithSeed(
+  'UserGroupsDb findIdentityGroupMemberships',
+  [
+    withUserGroups([membershipGroup]),
+    withProfileGroups([candidateMembership, unrelatedMembership])
+  ],
+  () => {
+    const repo = new UserGroupsDb(() => sqlExecutor);
+    const ctx: RequestContext = { timer: undefined };
+
+    it('limits membership rows to the supplied recipient candidates', async () => {
+      await expect(
+        repo.findIdentityGroupMemberships(
+          {
+            groupIds: [membershipGroup.id],
+            profileIds: ['candidate-profile', 'missing-profile']
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        {
+          groupId: membershipGroup.id,
+          profileId: 'candidate-profile'
+        }
+      ]);
+    });
+
+    it('returns no rows without querying for an empty candidate set', async () => {
+      await expect(
+        repo.findIdentityGroupMemberships(
+          { groupIds: [membershipGroup.id], profileIds: [] },
+          ctx
+        )
+      ).resolves.toEqual([]);
+    });
+
+    it('returns complete group membership through the bounded page API', async () => {
+      await expect(
+        repo.findIdentityGroupMembershipPage(
+          {
+            groupIds: [membershipGroup.id],
+            after: null
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        memberships: [
+          {
+            groupId: membershipGroup.id,
+            profileId: 'candidate-profile'
+          },
+          {
+            groupId: membershipGroup.id,
+            profileId: 'unrelated-profile'
+          }
+        ],
+        nextCursor: null
+      });
+    });
+  }
+);
+
+const firstPaginationProfileGroupId = randomUUID();
+const secondPaginationProfileGroupId = randomUUID();
+const firstPaginationGroup = aUserGroup(
+  {
+    profile_group_id: firstPaginationProfileGroupId,
+    is_direct_message: false
+  },
+  {
+    id: 'pagination-group-a',
+    name: 'Pagination Group A'
+  }
+);
+const secondPaginationGroup = aUserGroup(
+  {
+    profile_group_id: secondPaginationProfileGroupId,
+    is_direct_message: false
+  },
+  {
+    id: 'pagination-group-b',
+    name: 'Pagination Group B'
+  }
+);
+const firstPaginationGroupMemberships = Array.from(
+  { length: 500 },
+  (_, index) =>
+    aProfileGroup({
+      profile_group_id: firstPaginationProfileGroupId,
+      profile_id: `pagination-profile-${index.toString().padStart(3, '0')}`
+    })
+);
+const secondPaginationGroupMembership = aProfileGroup({
+  profile_group_id: secondPaginationProfileGroupId,
+  profile_id: 'pagination-profile-000'
+});
+
+describeWithSeed(
+  'UserGroupsDb findIdentityGroupMembershipPage database pagination',
+  [
+    withUserGroups([firstPaginationGroup, secondPaginationGroup]),
+    withProfileGroups([
+      ...firstPaginationGroupMemberships,
+      secondPaginationGroupMembership
+    ])
+  ],
+  () => {
+    const repo = new UserGroupsDb(() => sqlExecutor);
+    const ctx: RequestContext = { timer: undefined };
+
+    it('continues across a group boundary after a full database page', async () => {
+      const firstPage = await repo.findIdentityGroupMembershipPage(
+        {
+          groupIds: [firstPaginationGroup.id, secondPaginationGroup.id],
+          after: null
+        },
+        ctx
+      );
+
+      expect(firstPage.memberships).toHaveLength(500);
+      expect(firstPage.memberships[0]).toEqual({
+        groupId: firstPaginationGroup.id,
+        profileId: 'pagination-profile-000'
+      });
+      expect(firstPage.nextCursor).toEqual({
+        groupId: firstPaginationGroup.id,
+        profileId: 'pagination-profile-499'
+      });
+
+      await expect(
+        repo.findIdentityGroupMembershipPage(
+          {
+            groupIds: [firstPaginationGroup.id, secondPaginationGroup.id],
+            after: firstPage.nextCursor
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        memberships: [
+          {
+            groupId: secondPaginationGroup.id,
+            profileId: secondPaginationGroupMembership.profile_id
+          }
+        ],
+        nextCursor: null
+      });
+    });
+  }
+);
+
+describe('UserGroupsDb findIdentityGroupMembershipPage', () => {
+  it('bounds each query and returns a stable continuation cursor', async () => {
+    const firstGroupRows = Array.from({ length: 500 }, (_, index) => ({
+      group_id: 'group-1',
+      profile_id: `profile-${index.toString().padStart(3, '0')}`
+    }));
+    const firstRowInSecondGroup = {
+      group_id: 'group-2',
+      profile_id: 'profile-000'
+    };
+    const executor = {
+      execute: jest
+        .fn()
+        .mockResolvedValueOnce([...firstGroupRows, firstRowInSecondGroup])
+        .mockResolvedValueOnce([firstRowInSecondGroup])
+    };
+    const repo = new UserGroupsDb(() => executor as never);
+
+    const page = await repo.findIdentityGroupMembershipPage(
+      {
+        groupIds: ['group-1', 'group-2'],
+        after: null
+      },
+      { timer: undefined }
+    );
+
+    expect(page.memberships).toHaveLength(500);
+    expect(page.nextCursor).toEqual({
+      groupId: 'group-1',
+      profileId: 'profile-499'
+    });
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('LIMIT :limit'),
+      { groupIds: ['group-1', 'group-2'], limit: 501 },
+      { wrappedConnection: undefined }
+    );
+
+    await expect(
+      repo.findIdentityGroupMembershipPage(
+        {
+          groupIds: ['group-1', 'group-2'],
+          after: page.nextCursor
+        },
+        { timer: undefined }
+      )
+    ).resolves.toEqual({
+      memberships: [{ groupId: 'group-2', profileId: 'profile-000' }],
+      nextCursor: null
+    });
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('ug.id > :afterGroupId'),
+      {
+        groupIds: ['group-1', 'group-2'],
+        afterGroupId: 'group-1',
+        afterProfileId: 'profile-499',
+        limit: 501
+      },
+      { wrappedConnection: undefined }
+    );
+  });
+});
