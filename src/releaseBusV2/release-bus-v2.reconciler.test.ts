@@ -3,6 +3,7 @@ import {
   backendReleaseNoteInputs,
   backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
+  candidateUnavailableForTrainUpdate,
   candidateExclusionClosure,
   dagLayers,
   releaseBusV2Branch
@@ -45,6 +46,31 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
+  it('keeps an immutable active membership authoritative over stale superseded bookkeeping', () => {
+    const claimed = {
+      ...candidate('claimed', 'a'.repeat(40)),
+      status: 'PRODUCTION_DEPLOYING' as const,
+      current_train_id: 'train-1'
+    };
+    expect(
+      candidateUnavailableForTrainUpdate(
+        { ...claimed, status: 'SUPERSEDED', superseded_at: 2 },
+        claimed
+      )
+    ).toBe(false);
+    expect(
+      candidateUnavailableForTrainUpdate(
+        {
+          ...claimed,
+          status: 'SUPERSEDED',
+          current_train_id: null,
+          superseded_at: 2
+        },
+        claimed
+      )
+    ).toBe(true);
+  });
+
   it('orders backend DAG frontiers while preserving independent concurrency', () => {
     expect(
       dagLayers(

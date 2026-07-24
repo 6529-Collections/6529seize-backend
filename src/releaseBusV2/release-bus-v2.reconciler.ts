@@ -451,6 +451,18 @@ function relevantCandidates(
   );
 }
 
+export function candidateUnavailableForTrainUpdate(
+  current: ReleaseBusV2CandidateRecord,
+  claimed: ReleaseBusV2CandidateRecord
+): boolean {
+  if (current.status === 'CANCELLED') return true;
+  return (
+    current.status === 'SUPERSEDED' &&
+    (!claimed.current_train_id ||
+      current.current_train_id !== claimed.current_train_id)
+  );
+}
+
 function frontendDependsOnBackend(context: TrainContext): boolean {
   const included = new Set(relevantCandidates(context).map(({ id }) => id));
   const backend = new Set(
@@ -2185,6 +2197,15 @@ export class ReleaseBusV2Reconciler {
       return;
     }
     if (train.status === 'PRODUCTION_DEPLOYING') {
+      // A merge can delete the source branch and race the push webhook. Keep
+      // the immutable, already-claimed membership authoritative and repair any
+      // stale superseded bookkeeping before reconciling its deployments.
+      await this.updateCandidateStatuses(
+        relevantCandidates(context),
+        'PRODUCTION_DEPLOYING',
+        train.id,
+        false
+      );
       const sourceTrainId = await this.artifactSourceTrainId(train);
       const deployed = await this.reconcileDeployments(
         context,
@@ -2811,7 +2832,7 @@ export class ReleaseBusV2Reconciler {
       const current = await this.repository.findCandidateById(candidate.id, {});
       if (
         !current ||
-        ['SUPERSEDED', 'CANCELLED'].includes(current.status) ||
+        candidateUnavailableForTrainUpdate(current, candidate) ||
         (current.status === status &&
           current.current_train_id === currentTrainId &&
           current.hold_reason === null)

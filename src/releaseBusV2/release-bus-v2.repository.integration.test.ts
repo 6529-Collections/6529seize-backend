@@ -153,6 +153,53 @@ describeWithSeed(
       ).toBe('SUPERSEDED');
     });
 
+    it('does not supersede an immutable candidate after a train claims it', async () => {
+      const claimed = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 112,
+          branchName: 'feature/deleted-after-merge',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      const service = new ReleaseBusV2Service(repository);
+      const train = await service.claimLane(
+        'STAGING',
+        SHA_B,
+        SHA_B,
+        'claim-before-branch-deletion'
+      );
+
+      expect(train).not.toBeNull();
+      await expect(
+        repository.supersedeMovedBranchHeads(
+          'frontend',
+          claimed.branch_name,
+          'deleted',
+          {}
+        )
+      ).resolves.toEqual([]);
+      await expect(
+        repository.supersedeOtherPrHeads(
+          'frontend',
+          claimed.pr_number,
+          SHA_B,
+          {}
+        )
+      ).resolves.toEqual([]);
+      expect(await repository.findCandidateById(claimed.id, {})).toEqual(
+        expect.objectContaining({
+          status: 'STAGING_IN_TRAIN',
+          current_train_id: train?.id,
+          superseded_at: null
+        })
+      );
+    });
+
     it('claims only explicitly production-ready candidates', async () => {
       process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
       const explicit = await repository.createCandidate(

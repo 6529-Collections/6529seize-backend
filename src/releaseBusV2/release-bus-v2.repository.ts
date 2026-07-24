@@ -191,6 +191,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     const superseded = await this.db.execute<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, prNumber, headSha },
       dbOptions(ctx)
@@ -200,6 +201,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
        set status = 'SUPERSEDED', superseded_at = :now, updated_at = :now,
            row_version = row_version + 1
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, prNumber, headSha, now },
       dbOptions(ctx)
@@ -217,6 +219,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, branchName, currentHeadSha },
       dbOptions(ctx)
@@ -229,6 +232,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            row_version = row_version + 1
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
+         and current_train_id is null
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, branchName, currentHeadSha, now },
       dbOptions(ctx)
