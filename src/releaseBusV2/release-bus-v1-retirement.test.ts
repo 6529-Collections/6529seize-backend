@@ -3,8 +3,8 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 type RetirementMigration = {
-  up(db: { runSql(sql: string): Promise<void> }): Promise<void>;
-  down(db: { runSql(sql: string): Promise<void> }): Promise<void>;
+  up(db: { runSql(sql: string): Promise<unknown> }): Promise<void>;
+  down(db: { runSql(sql: string): Promise<unknown> }): Promise<void>;
 };
 
 const requireModule = createRequire(__filename);
@@ -55,22 +55,9 @@ describe('Release Bus v1 retirement', () => {
         '../../migrations/20260724202500-retire-release-bus-v1-tables.js'
       )
     ) as RetirementMigration;
-    const statements: string[] = [];
-    const db = {
-      runSql: jest.fn(async (sql: string) => {
-        statements.push(sql);
-      })
-    };
-
     expect(migration).toContain('RENAME TABLE');
     expect(migration).toContain('exports.down');
     expect(migration).not.toMatch(/\bDROP\s+TABLE\b/i);
-    await executableMigration.up(db);
-    await executableMigration.down(db);
-
-    expect(statements).toHaveLength(2);
-    expect(statements[0]).toMatch(/^RENAME TABLE /);
-    expect(statements[1]).toMatch(/^RENAME TABLE /);
     const pairs = [
       ['release_ready_deployments', 'retired_release_bus_v1_ready_deployments'],
       [
@@ -85,9 +72,50 @@ describe('Release Bus v1 retirement', () => {
       ['release_bus_controls', 'retired_release_bus_v1_controls'],
       ['release_train_events', 'retired_release_bus_v1_train_events']
     ];
+    const executeWithTables = async (
+      direction: 'up' | 'down',
+      tables: string[]
+    ) => {
+      const statements: string[] = [];
+      const db = {
+        runSql: jest.fn(async (sql: string) => {
+          statements.push(sql);
+          return sql.startsWith('SELECT ')
+            ? tables.map((table_name) => ({ table_name }))
+            : undefined;
+        })
+      };
+      await executableMigration[direction](db);
+      return statements;
+    };
+    const up = await executeWithTables(
+      'up',
+      pairs.map(([active]) => active)
+    );
+    const down = await executeWithTables(
+      'down',
+      pairs.map(([, retired]) => retired)
+    );
+
+    expect(up).toHaveLength(2);
+    expect(down).toHaveLength(2);
+    expect(up[0]).toMatch(/^SELECT /);
+    expect(down[0]).toMatch(/^SELECT /);
+    expect(up[1]).toMatch(/^RENAME TABLE /);
+    expect(down[1]).toMatch(/^RENAME TABLE /);
     for (const [active, retired] of pairs) {
-      expect(statements[0]).toContain(`\`${active}\` TO \`${retired}\``);
-      expect(statements[1]).toContain(`\`${retired}\` TO \`${active}\``);
+      expect(up[1]).toContain(`\`${active}\` TO \`${retired}\``);
+      expect(down[1]).toContain(`\`${retired}\` TO \`${active}\``);
     }
+
+    await expect(
+      executeWithTables('up', [pairs[0][0], pairs[0][1]])
+    ).rejects.toThrow('Ambiguous Release Bus v1 table retirement state');
+    await expect(
+      executeWithTables(
+        'up',
+        pairs.map(([, retired]) => retired)
+      )
+    ).resolves.toHaveLength(1);
   });
 });
