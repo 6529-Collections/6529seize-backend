@@ -124,7 +124,7 @@ describe('notify-ci-wave release-note metadata', () => {
     expect(result.payload).toBeNull();
   });
 
-  it.each(['trailing-', 'double--hyphen'])(
+  it.each(['trailing-', 'double--hyphen', `${'a'.repeat(35)}[bot]`])(
     'rejects impossible GitHub login %s',
     async (login) => {
       const result = await runNotifier({
@@ -138,6 +138,18 @@ describe('notify-ci-wave release-note metadata', () => {
       );
     }
   );
+
+  it('rejects an invalid deployed SHA override', async () => {
+    const result = await runNotifier({
+      CI_PIPELINES_SHA: 'not-a-git-sha'
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'CI_PIPELINES_SHA must be a 40-character lowercase Git SHA'
+    );
+    expect(result.payload).toBeNull();
+  });
 
   it('sends canonical per-PR v2 release-note groups', async () => {
     const result = await runNotifier({

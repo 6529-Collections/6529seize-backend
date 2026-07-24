@@ -1,5 +1,6 @@
 import { createSign } from 'node:crypto';
 import fetch, { type RequestInit, type Response } from 'node-fetch';
+import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBus/release-bus.constants';
 import type { ReleaseRepository } from '@/releaseBus/release-bus.types';
 
@@ -217,6 +218,7 @@ function assertAllowedWritableRef(ref: string): void {
 }
 
 export class ReleaseBusGitHubApp {
+  private readonly logger = Logger.get(this.constructor.name);
   private cachedToken: {
     readonly value: string;
     readonly expiresAt: number;
@@ -550,28 +552,36 @@ export class ReleaseBusGitHubApp {
       logins.push(login);
     };
     addLogin(pull.user?.login);
-    for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page += 1) {
-      const response = await this.request(
-        repository,
-        `/pulls/${pullNumber}/commits?per_page=${GITHUB_PAGE_SIZE}&page=${page}`
-      );
-      await this.assertOk(
-        response,
-        `read ${repository} pull request ${pullNumber} commits`
-      );
-      const commits = (await response.json()) as GitHubPullRequestCommit[];
-      if (!Array.isArray(commits))
-        throw new Error(
-          `Invalid ${repository} pull request ${pullNumber} commits response`
+    try {
+      for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page += 1) {
+        const response = await this.request(
+          repository,
+          `/pulls/${pullNumber}/commits?per_page=${GITHUB_PAGE_SIZE}&page=${page}`
         );
-      for (const commit of commits) {
-        addLogin(commit.author?.login);
+        await this.assertOk(
+          response,
+          `read ${repository} pull request ${pullNumber} commits`
+        );
+        const commits = (await response.json()) as GitHubPullRequestCommit[];
+        if (!Array.isArray(commits))
+          throw new Error(
+            `Invalid ${repository} pull request ${pullNumber} commits response`
+          );
+        for (const commit of commits) {
+          addLogin(commit.author?.login);
+        }
+        if (commits.length < GITHUB_PAGE_SIZE) break;
+        if (page === MAX_PULL_REQUEST_COMMIT_PAGES) {
+          this.logger.warn(
+            `Contributor scan for ${repository} pull request ${pullNumber} reached ${MAX_PULL_REQUEST_COMMIT_PAGES * GITHUB_PAGE_SIZE} commits; using the contributors collected so far`
+          );
+        }
       }
-      if (commits.length < GITHUB_PAGE_SIZE) break;
-      if (page === MAX_PULL_REQUEST_COMMIT_PAGES)
-        throw new Error(
-          `Pull request ${pullNumber} exceeds the contributor scan limit`
-        );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      this.logger.warn(
+        `Contributor scan for ${repository} pull request ${pullNumber} failed; using the contributors collected so far: ${reason}`
+      );
     }
     return logins;
   }

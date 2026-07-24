@@ -18,6 +18,8 @@ describe('GITHUB_TO_6529_HANDLES', () => {
   it('accepts only GitHub-shaped contributor logins', () => {
     expect(isGithubContributorLogin('GelatoGenesis')).toBe(true);
     expect(isGithubContributorLogin('dependabot[bot]')).toBe(true);
+    expect(isGithubContributorLogin('a'.repeat(39))).toBe(true);
+    expect(isGithubContributorLogin(`${'a'.repeat(35)}[bot]`)).toBe(false);
     expect(isGithubContributorLogin('trailing-')).toBe(false);
     expect(isGithubContributorLogin('double--hyphen')).toBe(false);
   });

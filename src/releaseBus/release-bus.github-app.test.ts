@@ -114,6 +114,39 @@ describe('GitHub pull request qualification evidence', () => {
       fetchMock.mockReset();
     }
   });
+
+  it('keeps qualification available when commit contributor enrichment fails', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: 'secondary rate limit' }), {
+        status: 429
+      })
+    );
+
+    try {
+      await expect(
+        (
+          app as unknown as {
+            getPullRequestContributorGithubLogins(
+              repository: 'backend',
+              pullNumber: number,
+              pull: { user: { login: string } }
+            ): Promise<readonly string[]>;
+          }
+        ).getPullRequestContributorGithubLogins('backend', 42, {
+          user: { login: 'PR-Author' }
+        })
+      ).resolves.toEqual(['PR-Author']);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
 });
 
 describe('GitHub pull request release eligibility', () => {

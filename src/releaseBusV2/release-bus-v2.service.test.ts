@@ -335,6 +335,24 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
     expect(repository.createCandidate).not.toHaveBeenCalled();
   });
 
+  it('reports a branch deleted while contributor evidence is collected', async () => {
+    const repository = betaRepository();
+    const service = new ReleaseBusV2Service(repository as never);
+    mockResolveRef
+      .mockResolvedValueOnce(headSha)
+      .mockRejectedValueOnce(
+        new Error(
+          'Failed to resolve backend ref agent/rb2-beta-backend-one: 404 Not Found'
+        )
+      );
+
+    await expect(service.register(input(), 'BETA-OPERATOR')).rejects.toThrow(
+      'Failed to resolve backend ref agent/rb2-beta-backend-one: 404 Not Found'
+    );
+    expect(mockQualification).toHaveBeenCalledTimes(1);
+    expect(repository.createCandidate).not.toHaveBeenCalled();
+  });
+
   it('rejects reusing the one-shot beta id after the branch head moves', async () => {
     const repository = betaRepository();
     repository.findCandidateById.mockResolvedValue({

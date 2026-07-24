@@ -8,7 +8,7 @@ export const GITHUB_CONTRIBUTOR_LOGIN_PATTERN =
   /^(?:[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})(?:\[bot\])?$/;
 
 export function isGithubContributorLogin(value: string): boolean {
-  return GITHUB_CONTRIBUTOR_LOGIN_PATTERN.test(value);
+  return value.length <= 39 && GITHUB_CONTRIBUTOR_LOGIN_PATTERN.test(value);
 }
 
 export const GITHUB_TO_6529_HANDLES: Readonly<Record<string, string>> =

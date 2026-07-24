@@ -57,7 +57,9 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .allow(null, '')
       .optional(),
     contributor_github_logins: Joi.array()
-      .items(Joi.string().trim().pattern(GITHUB_CONTRIBUTOR_LOGIN_PATTERN))
+      .items(
+        Joi.string().trim().max(39).pattern(GITHUB_CONTRIBUTOR_LOGIN_PATTERN)
+      )
       .max(100)
       .optional(),
     release_notes_prompt_path: Joi.string()
