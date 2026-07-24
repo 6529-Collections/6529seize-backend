@@ -15,6 +15,11 @@ import {
   externalCollectionSaleDetector,
   ExternalCollectionSaleDetector
 } from './external-collection-sale-detector';
+import {
+  membershipRefreshProducer,
+  MembershipCriteriaDimension,
+  MembershipRefreshReason
+} from '../membership/membership-refresh.producer';
 
 const PUNKS_ABI_EVENTS = [
   'event PunkTransfer(address indexed from, address indexed to, uint256 punkIndex)',
@@ -30,6 +35,14 @@ const IFACE_ERC721 = new ethers.Interface([
 ]);
 
 const CRYPTOPUNKS_MAINNET = '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb';
+
+interface LiveTailingCollection {
+  readonly partition: string;
+  readonly chain: number;
+  readonly contract: string;
+  readonly safe_head_block: number;
+  readonly last_indexed_block: number;
+}
 
 export class ExternalCollectionLiveTailService {
   private readonly log = Logger.get(this.constructor.name);
@@ -179,6 +192,13 @@ export class ExternalCollectionLiveTailService {
 
     const events = await this.normalizeTransferLogs(contract, rawLogs);
     const now = Time.currentMillis();
+    if (events.length > 0) {
+      await membershipRefreshProducer.markGroupsByDimensionDirty(
+        MembershipCriteriaDimension.GRANT,
+        MembershipRefreshReason.GRANT_CHANGED,
+        ctx
+      );
+    }
 
     // ✅ Per-tx memo so we call the detector at most once per transaction
     const saleByTx = new Map<string, Promise<boolean>>();
@@ -270,7 +290,69 @@ export class ExternalCollectionLiveTailService {
     return { events: events.length, lastBlockProcessed: toBlock };
   }
 
-  public async liveTailCycle() {
+  private async processLiveTailingCollection(
+    collection: LiveTailingCollection,
+    safeTarget: number,
+    range: number,
+    ctx: RequestContext
+  ): Promise<number> {
+    const { partition, chain, contract, safe_head_block, last_indexed_block } =
+      collection;
+    const fromBlock = Math.max(safe_head_block, last_indexed_block) + 1;
+    const toBlock = Math.min(fromBlock + range - 1, safeTarget);
+    const perLog = Logger.get(
+      `${this.log.name} ${JSON.stringify({ chain, contract })}`
+    );
+
+    if (fromBlock > safeTarget || fromBlock > toBlock) {
+      const safeTs =
+        safeTarget > 0 ? await this.getBlockTimestamp(safeTarget) : undefined;
+      const nowSec = Time.now().toSeconds();
+      const lagBlocks = Math.max(
+        0,
+        safeTarget - Math.max(safe_head_block, last_indexed_block)
+      );
+      const lagSeconds = safeTs ? Math.max(0, nowSec - safeTs) : 0;
+      await this.indexingRepo.refreshLagMetrics(
+        { partition, lag_blocks: lagBlocks, lag_seconds: lagSeconds },
+        ctx
+      );
+      return 0;
+    }
+
+    try {
+      const { events, lastBlockProcessed } = await this.processLiveRange(
+        { partition, chain, contract },
+        fromBlock,
+        toBlock,
+        ctx
+      );
+      const safeTs =
+        safeTarget > 0 ? await this.getBlockTimestamp(safeTarget) : undefined;
+      const nowSec = Time.now().toSeconds();
+      const lagBlocks = Math.max(0, safeTarget - lastBlockProcessed);
+      const lagSeconds = safeTs ? Math.max(0, nowSec - safeTs) : 0;
+      const ok = await this.indexingRepo.advanceHeadsIfNotSnapshotting(
+        {
+          partition,
+          to_block: lastBlockProcessed,
+          lag_blocks: lagBlocks,
+          lag_seconds: lagSeconds
+        },
+        ctx
+      );
+
+      if (!ok) {
+        perLog.warn('Skipped advancing: snapshotting detected mid-cycle');
+      }
+      return events;
+    } catch (error) {
+      perLog.error('Failed to process collection', { error: String(error) });
+      return 0;
+    }
+  }
+
+  public async liveTailCycle(): Promise<number> {
     const timer = new Timer(`${this.constructor.name}`);
     const ctx: RequestContext = { timer };
     this.log.info('Starting live tail cycle...');
@@ -282,83 +364,28 @@ export class ExternalCollectionLiveTailService {
       );
       if (collections.length === 0) {
         this.log.info('No collections in LIVE_TAILING state');
-        return;
+        return 0;
       }
 
       const best = await this.getBestBlock();
       const reorgDepth = env.getIntOrThrow('NFT_INDEXER_REORG_DEPTH_BLOCKS');
       const safeTarget = best - reorgDepth;
       const range = env.getIntOrNull('NFT_INDEXER_LIVE_TAIL_RANGE') ?? 2000;
+      let processedEvents = 0;
 
-      for (const c of collections) {
-        const {
-          partition,
-          chain,
-          contract,
-          safe_head_block,
-          last_indexed_block
-        } = c;
-        const fromBlock = Math.max(safe_head_block, last_indexed_block) + 1;
-        const toBlock = Math.min(fromBlock + range - 1, safeTarget);
-
-        const perLog = Logger.get(
-          `${this.log.name} ${JSON.stringify({ chain, contract })}`
+      for (const collection of collections) {
+        processedEvents += await this.processLiveTailingCollection(
+          collection,
+          safeTarget,
+          range,
+          ctx
         );
-
-        if (fromBlock > safeTarget || fromBlock > toBlock) {
-          const safeTs =
-            safeTarget > 0
-              ? await this.getBlockTimestamp(safeTarget)
-              : undefined;
-          const nowSec = Time.now().toSeconds();
-          const lagBlocks = Math.max(
-            0,
-            safeTarget - Math.max(safe_head_block, last_indexed_block)
-          );
-          const lagSeconds = safeTs ? Math.max(0, nowSec - safeTs) : 0;
-          await this.indexingRepo.refreshLagMetrics(
-            { partition, lag_blocks: lagBlocks, lag_seconds: lagSeconds },
-            ctx
-          );
-          continue;
-        }
-
-        try {
-          const { lastBlockProcessed } = await this.processLiveRange(
-            { partition, chain, contract },
-            fromBlock,
-            toBlock,
-            ctx
-          );
-
-          const safeTs =
-            safeTarget > 0
-              ? await this.getBlockTimestamp(safeTarget)
-              : undefined;
-          const nowSec = Time.now().toSeconds();
-          const lagBlocks = Math.max(0, safeTarget - lastBlockProcessed);
-          const lagSeconds = safeTs ? Math.max(0, nowSec - safeTs) : 0;
-
-          const ok = await this.indexingRepo.advanceHeadsIfNotSnapshotting(
-            {
-              partition,
-              to_block: lastBlockProcessed,
-              lag_blocks: lagBlocks,
-              lag_seconds: lagSeconds
-            },
-            ctx
-          );
-
-          if (!ok)
-            perLog.warn('Skipped advancing: snapshotting detected mid-cycle');
-        } catch (e: any) {
-          perLog.error('Failed to process collection', { error: String(e) });
-        }
       }
 
       this.log.info(
         `Live tail cycle complete: processed ${collections.length} collections`
       );
+      return processedEvents;
     } finally {
       this.log.info(`[liveTailCycle timing report ${ctx.timer?.getReport()}]`);
     }

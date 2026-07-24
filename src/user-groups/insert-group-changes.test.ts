@@ -4,8 +4,11 @@ import { SqlExecutor } from '@/sql-executor';
 
 function buildDb() {
   const execute = jest.fn().mockResolvedValue([]);
-  const db = new UserGroupsDb(() => ({ execute }) as unknown as SqlExecutor);
-  return { db, execute };
+  const markProfilesDirty = jest.fn().mockResolvedValue(undefined);
+  const db = new UserGroupsDb(() => ({ execute }) as unknown as SqlExecutor, {
+    markProfilesDirty
+  } as unknown as ConstructorParameters<typeof UserGroupsDb>[1]);
+  return { db, execute, markProfilesDirty };
 }
 
 function countInsertedRows(statements: string[]): number {
@@ -14,22 +17,28 @@ function countInsertedRows(statements: string[]): number {
 
 describe('UserGroupsDb insertGroupChanges', () => {
   it('does nothing for an empty profile id list', async () => {
-    const { db, execute } = buildDb();
+    const { db, execute, markProfilesDirty } = buildDb();
     await db.insertGroupChanges([]);
     expect(execute).not.toHaveBeenCalled();
+    expect(markProfilesDirty).not.toHaveBeenCalled();
   });
 
   it('inserts small lists in a single statement', async () => {
-    const { db, execute } = buildDb();
+    const { db, execute, markProfilesDirty } = buildDb();
     await db.insertGroupChanges(['profile-1', 'profile-2']);
     expect(execute).toHaveBeenCalledTimes(1);
     const sql = execute.mock.calls[0][0] as string;
     expect(sql).toContain("('profile-1'");
     expect(sql).toContain("('profile-2'");
+    expect(markProfilesDirty).toHaveBeenCalledWith(
+      ['profile-1', 'profile-2'],
+      'PROFILE_GROUP_CHANGED',
+      { connection: undefined }
+    );
   });
 
   it('chunks large lists into multiple statements of at most 1000 rows', async () => {
-    const { db, execute } = buildDb();
+    const { db, execute, markProfilesDirty } = buildDb();
     const profileIds = Array.from(
       { length: 2500 },
       (_, index) => `profile-${index}`
@@ -47,5 +56,11 @@ describe('UserGroupsDb insertGroupChanges', () => {
     expect(statements[2]).toContain("('profile-2000'");
     expect(statements[2]).toContain("('profile-2499'");
     expect(countInsertedRows(statements)).toBe(2500);
+    expect(markProfilesDirty).toHaveBeenCalledTimes(1);
+    expect(markProfilesDirty).toHaveBeenCalledWith(
+      profileIds,
+      'PROFILE_GROUP_CHANGED',
+      { connection: undefined }
+    );
   });
 });

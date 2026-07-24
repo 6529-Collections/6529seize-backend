@@ -1,4 +1,7 @@
-import { calculateLevel } from './profile-level';
+import {
+  calculateLevel,
+  getLevelComponentsBorderByLevel
+} from './profile-level';
 
 describe('Profile Level', () => {
   it('resolves when tdh is negative', () => {
@@ -31,5 +34,9 @@ describe('Profile Level', () => {
 
   it('negative rep is subtracted from TDH', () => {
     expect(calculateLevel({ tdh: 10000, rep: -9900 })).toBe(3);
+  });
+
+  it('normalizes database bigint strings when resolving a level boundary', () => {
+    expect(getLevelComponentsBorderByLevel('35')).toBe(220000);
   });
 });
