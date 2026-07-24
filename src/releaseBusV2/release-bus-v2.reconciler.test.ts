@@ -301,6 +301,25 @@ describe('Release Bus v2 deterministic orchestration', () => {
     });
   });
 
+  it('preserves ordering across a backend unit filtered from the environment', () => {
+    const planned = {
+      ...candidate('projected-ordering', 'd'.repeat(40)),
+      deploy_plan_json: {
+        units: ['dbMigrationsLoop', 'mediaResizerLoop', 'ethPriceLoop'],
+        edges: [
+          ['dbMigrationsLoop', 'mediaResizerLoop'],
+          ['mediaResizerLoop', 'ethPriceLoop']
+        ] as Array<readonly [string, string]>
+      }
+    };
+
+    expect(backendGraph([planned], 'staging')).toEqual({
+      units: ['dbMigrationsLoop', 'ethPriceLoop'],
+      edges: [['dbMigrationsLoop', 'ethPriceLoop']],
+      layers: [['dbMigrationsLoop'], ['ethPriceLoop']]
+    });
+  });
+
   it('fails closed on dependency cycles', () => {
     expect(() =>
       dagLayers(

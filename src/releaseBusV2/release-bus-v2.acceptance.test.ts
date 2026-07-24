@@ -2063,6 +2063,41 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.lock.owner_train_id).toBeNull();
   });
 
+  it('fails closed when a production main ref does not resolve to a valid SHA', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('production-invalid-main', {
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.map((membership) => ({
+        ...membership,
+        train_id: production.id
+      })),
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'frontend' ? null : production.backend_base_sha
+    );
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advancePreparation(input: typeof context): Promise<void>;
+        }
+      ).advancePreparation(context)
+    ).rejects.toThrow(
+      'Invalid SHA returned for frontend:main while fencing a production replan'
+    );
+    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+  });
+
   it('waits for dispatched composition before requeueing a moved production plan', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
@@ -2103,6 +2138,21 @@ describe('Release Bus v2 offline acceptance harness', () => {
       completed_at: null
     };
     state.repository.operations.push(running);
+    let completeDuringReconcile = false;
+    mockReconcileWorkflow.mockImplementation(async () => {
+      const runningIndex = state.repository.operations.findIndex(
+        ({ id }) => id === running.id
+      );
+      if (completeDuringReconcile) {
+        state.repository.operations[runningIndex] = {
+          ...state.repository.operations[runningIndex],
+          status: 'SUCCEEDED',
+          completed_at: Date.now(),
+          row_version: state.repository.operations[runningIndex].row_version + 1
+        };
+      }
+      return state.repository.operations[runningIndex];
+    });
     mockResolveRef.mockImplementation(async (repository: string) =>
       repository === 'frontend' ? '9'.repeat(40) : production.backend_base_sha
     );
@@ -2132,15 +2182,21 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
     expect(state.repository.operations).toHaveLength(3);
 
-    const runningIndex = state.repository.operations.findIndex(
-      ({ id }) => id === running.id
+    completeDuringReconcile = true;
+    mockFindWorkflowRun.mockResolvedValue({ status: 'in_progress' });
+    await state.reconciler.runOnce(
+      'acceptance-production-main-moved-terminal-callback'
     );
-    state.repository.operations[runningIndex] = {
-      ...state.repository.operations[runningIndex],
-      status: 'SUCCEEDED',
-      completed_at: Date.now(),
-      row_version: state.repository.operations[runningIndex].row_version + 1
-    };
+
+    expect(state.repository.trains.get(production.id)?.status).toBe(
+      'COMPOSING'
+    );
+    expect(
+      state.repository.operations.find(({ id }) => id === running.id)?.status
+    ).toBe('SUCCEEDED');
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(4);
+
+    mockFindWorkflowRun.mockResolvedValue({ status: 'completed' });
     await state.reconciler.runOnce('acceptance-production-main-moved-terminal');
 
     expect(state.repository.trains.get(production.id)?.status).toBe(
@@ -2152,7 +2208,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
           status === 'READY_FOR_PRODUCTION' && current_train_id === null
       )
     ).toBe(true);
-    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(3);
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(4);
     expect(state.repository.operations).toHaveLength(3);
   });
 

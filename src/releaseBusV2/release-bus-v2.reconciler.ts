@@ -171,6 +171,26 @@ function isOptimisticConcurrencyConflict(error: unknown): error is Error {
   );
 }
 
+function operationMayStillBeRunning(
+  operation: ReleaseBusV2OperationRecord
+): boolean {
+  return (
+    ['DISPATCHED', 'RUNNING'].includes(operation.status) ||
+    (operation.status === 'PENDING' && operation.external_id !== null)
+  );
+}
+
+function stringRecord(value: unknown): Readonly<Record<string, string>> | null {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !Object.values(value).every((item) => typeof item === 'string')
+  )
+    return null;
+  return value as Readonly<Record<string, string>>;
+}
+
 function parseStoredJson<T>(value: unknown): T | null {
   if (value === null) return null;
   return typeof value === 'string' ? (JSON.parse(value) as T) : (value as T);
@@ -319,7 +339,7 @@ export function backendGraph(
   readonly layers: readonly string[][];
 } {
   const serviceConfigs = getDeployServiceConfigs();
-  const allowedUnits = environment
+  const allowedServiceNames = environment
     ? new Set(
         serviceConfigs
           .filter(({ allowed_environments }) =>
@@ -328,36 +348,68 @@ export function backendGraph(
           .map(({ name }) => name)
       )
     : null;
-  const units = new Set<string>();
-  const edgeKeys = new Set<string>();
-  const edges: Array<readonly [string, string]> = [];
+  const requestedUnits = new Set<string>();
   for (const candidate of candidates) {
     if (candidate.repository !== 'backend') continue;
     const plan = storedDeployPlan(candidate);
-    for (const unit of plan?.units ?? []) {
-      if (!allowedUnits || allowedUnits.has(unit)) units.add(unit);
-    }
+    for (const unit of plan?.units ?? []) requestedUnits.add(unit);
   }
+  const allEdgeKeys = new Set<string>();
+  const allEdges: Array<readonly [string, string]> = [];
+  const addEdge = (
+    target: Array<readonly [string, string]>,
+    keys: Set<string>,
+    from: string,
+    to: string
+  ) => {
+    const key = `${from}\u0000${to}`;
+    if (keys.has(key)) return;
+    keys.add(key);
+    target.push([from, to]);
+  };
   for (const candidate of candidates) {
     if (candidate.repository !== 'backend') continue;
     const plan = storedDeployPlan(candidate);
     for (const [from, to] of plan?.edges ?? []) {
-      if (!units.has(from) || !units.has(to)) continue;
-      const key = `${from}\u0000${to}`;
-      if (edgeKeys.has(key)) continue;
-      edgeKeys.add(key);
-      edges.push([from, to]);
+      if (!requestedUnits.has(from) || !requestedUnits.has(to)) continue;
+      addEdge(allEdges, allEdgeKeys, from, to);
     }
   }
   for (const service of serviceConfigs) {
-    if (!units.has(service.name)) continue;
+    if (!requestedUnits.has(service.name)) continue;
     for (const dependency of service.default_dependencies) {
-      if (!units.has(dependency)) continue;
-      const key = `${dependency}\u0000${service.name}`;
-      if (edgeKeys.has(key)) continue;
-      edgeKeys.add(key);
-      edges.push([dependency, service.name]);
+      if (!requestedUnits.has(dependency)) continue;
+      addEdge(allEdges, allEdgeKeys, dependency, service.name);
     }
+  }
+  const units = new Set(
+    Array.from(requestedUnits).filter(
+      (unit) => !allowedServiceNames || allowedServiceNames.has(unit)
+    )
+  );
+  let edges = allEdges;
+  if (allowedServiceNames) {
+    const adjacency = new Map(
+      Array.from(requestedUnits).map((unit) => [unit, [] as string[]])
+    );
+    for (const [from, to] of allEdges) adjacency.get(from)?.push(to);
+    const projectedEdges: Array<readonly [string, string]> = [];
+    const projectedKeys = new Set<string>();
+    for (const source of Array.from(units)) {
+      const visited = new Set<string>();
+      const pending = [...(adjacency.get(source) ?? [])];
+      while (pending.length > 0) {
+        const target = pending.shift()!;
+        if (visited.has(target)) continue;
+        visited.add(target);
+        if (units.has(target)) {
+          addEdge(projectedEdges, projectedKeys, source, target);
+          continue;
+        }
+        pending.push(...(adjacency.get(target) ?? []));
+      }
+    }
+    edges = projectedEdges;
   }
   const orderedUnits = Array.from(units).sort((left, right) =>
     left.localeCompare(right)
@@ -874,6 +926,12 @@ export class ReleaseBusV2Reconciler {
         sha: await releaseBusGitHubApp.resolveRef(repository, 'main')
       }))
     );
+    for (const { repository, sha } of current) {
+      if (!/^[a-f0-9]{40}$/.test(sha))
+        throw new Error(
+          `Invalid SHA returned for ${repository}:main while fencing a production replan`
+        );
+    }
     const moved = current.find(({ repository, sha }) => {
       const base =
         repository === 'frontend'
@@ -892,57 +950,79 @@ export class ReleaseBusV2Reconciler {
         : train.backend_base_sha;
     const message = `${moved.repository} main moved from ${base} to ${moved.sha}; production composition must be rebuilt and requalified`;
     const operations = await this.repository.listOperations(train.id, {});
-    const active = operations.filter(
-      ({ external_id, status }) =>
-        ['DISPATCHED', 'RUNNING'].includes(status) ||
-        (status === 'PENDING' && external_id !== null)
+    const carriedOperationIds = new Set(
+      /; observing operations: ([^;]+)$/
+        .exec(train.recovery_message ?? '')?.[1]
+        ?.split(',')
+        .map((id) => id.trim())
+        .filter(Boolean) ?? []
     );
-    if (active.length === 0) throw new MainMovedError(message);
-    await Promise.all(
-      active.map(async (operation) => {
+    const observed = operations.filter(
+      (operation) =>
+        operationMayStillBeRunning(operation) ||
+        carriedOperationIds.has(operation.id)
+    );
+    if (observed.length === 0) throw new MainMovedError(message);
+    const results = await Promise.all(
+      observed.map(async (operation) => {
         const request = parseStoredJson<{
           readonly workflow?: unknown;
           readonly ref?: unknown;
           readonly inputs?: unknown;
         }>(operation.request_json);
+        const inputs = stringRecord(request?.inputs);
         if (
           !operation.repository ||
           !operation.environment ||
           !operation.expected_sha ||
           typeof request?.workflow !== 'string' ||
           typeof request.ref !== 'string' ||
-          !request.inputs ||
-          typeof request.inputs !== 'object'
+          !inputs
         )
           throw new Error(
             `Dispatched operation ${operation.id} has no immutable workflow identity`
           );
-        await releaseBusV2Operations.reconcileWorkflow({
-          idempotencyKey: operation.idempotency_key,
-          trainId: operation.train_id,
-          operationType: operation.operation_type,
-          repository: operation.repository,
-          workflow: request.workflow,
-          ref: request.ref,
-          environment: operation.environment,
-          service: operation.service,
-          expectedSha: operation.expected_sha,
-          artifactDigest: operation.artifact_digest,
-          inputs: request.inputs as Readonly<Record<string, string>>,
-          maxAttempts: operation.max_attempts
-        });
+        if (operationMayStillBeRunning(operation))
+          await releaseBusV2Operations.reconcileWorkflow({
+            idempotencyKey: operation.idempotency_key,
+            trainId: operation.train_id,
+            operationType: operation.operation_type,
+            repository: operation.repository,
+            workflow: request.workflow,
+            ref: request.ref,
+            environment: operation.environment,
+            service: operation.service,
+            expectedSha: operation.expected_sha,
+            artifactDigest: operation.artifact_digest,
+            inputs,
+            maxAttempts: operation.max_attempts
+          });
+        const refreshed =
+          (await this.repository.findOperation(
+            operation.idempotency_key,
+            {}
+          )) ?? operation;
+        if (operationMayStillBeRunning(refreshed))
+          return { id: operation.id, stillRunning: true };
+        if (!refreshed.external_id)
+          return { id: operation.id, stillRunning: false };
+        const run = await releaseBusGitHubApp.findWorkflowRun(
+          operation.repository,
+          request.workflow,
+          `${operation.idempotency_key}:a${refreshed.attempt}`,
+          refreshed.external_id
+        );
+        return {
+          id: operation.id,
+          stillRunning: run !== null && run.status !== 'completed'
+        };
       })
     );
-    const refreshed = await this.repository.listOperations(train.id, {});
-    if (
-      !refreshed.some(
-        ({ external_id, status }) =>
-          ['DISPATCHED', 'RUNNING'].includes(status) ||
-          (status === 'PENDING' && external_id !== null)
-      )
-    )
-      throw new MainMovedError(message);
-    const recoveryMessage = `${message}; waiting for already-dispatched orchestration to report terminal before the safe replan`;
+    const stillRunningIds = results
+      .filter(({ stillRunning }) => stillRunning)
+      .map(({ id }) => id);
+    if (stillRunningIds.length === 0) throw new MainMovedError(message);
+    const recoveryMessage = `${message}; waiting for already-dispatched orchestration to report terminal before the safe replan; observing operations: ${stillRunningIds.join(',')}`;
     if (train.recovery_message !== recoveryMessage)
       await this.transitionTrain(train, {
         status: train.status,
