@@ -1613,7 +1613,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.lock.owner_train_id).toBe('train-1');
   });
 
-  it('starts exact production qualification after unchanged staging matches the target', async () => {
+  it('binds the immutable frontend workflow ref before starting exact production qualification', async () => {
     const state = harness('SUCCEEDED');
     state.repository.trains.set(
       'train-1',
@@ -1650,6 +1650,11 @@ describe('Release Bus v2 offline acceptance harness', () => {
         backend_composed_sha: BACKEND_SHA
       })
     );
+    expect(mockCreateRef).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-v2/qualification-train-train-1-frontend',
+      FRONTEND_SHA
+    );
     expect(state.repository.lock.owner_train_id).toBe('train-1');
     expect(state.repository.events).toContainEqual(
       expect.objectContaining({
@@ -1662,6 +1667,35 @@ describe('Release Bus v2 offline acceptance harness', () => {
         })
       })
     );
+  });
+
+  it('fails before acquiring staging when the qualification workflow ref cannot be bound', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { lane: 'PRODUCTION_QUALIFICATION' })
+    );
+    const context = {
+      train: state.repository.trains.get('train-1')!,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+    mockCreateRef.mockRejectedValueOnce(
+      new Error('immutable qualification ref conflict')
+    );
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceStagingOrQualification(input: typeof context): Promise<void>;
+        }
+      ).advanceStagingOrQualification(context)
+    ).rejects.toThrow('immutable qualification ref conflict');
+
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.lock.lease_token).toBeNull();
+    expect(mockResolveRefIfExists).not.toHaveBeenCalled();
   });
 
   it('releases the production beta lock when the post-lock idle snapshot fails', async () => {
