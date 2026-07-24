@@ -252,14 +252,27 @@ describe('Release Bus v2 route authorization and exact actions', () => {
 
   it('does not expose any unversioned v1 route', async () => {
     await withServer(async (baseUrl) => {
-      for (const path of [
-        '/deploy/release-candidates',
-        '/deploy/release-trains',
-        '/deploy/release-bus/controls',
-        '/deploy/release-bus/authorize'
+      for (const [method, path] of [
+        ['POST', '/deploy/release-candidates/ready'],
+        ['POST', `/deploy/release-candidates/${RESET_ID}/cancel`],
+        ['GET', '/deploy/release-candidates'],
+        ['GET', '/deploy/release-trains'],
+        ['GET', `/deploy/release-trains/${TRAIN_ID}`],
+        ['GET', '/deploy/release-bus/controls'],
+        ['POST', '/deploy/release-bus/pause'],
+        ['POST', '/deploy/release-bus/resume'],
+        ['POST', '/deploy/release-bus/reset-experimental-history'],
+        ['POST', '/deploy/release-bus/authorize'],
+        ['POST', '/deploy/release-bus/report-progress'],
+        ['POST', '/deploy/release-bus/authorize-break-glass']
       ]) {
         const response = await fetch(`${baseUrl}${path}`, {
-          headers: { authorization: `Bearer ${WORKFLOW_TOKEN}` }
+          method,
+          headers: {
+            authorization: `Bearer ${WORKFLOW_TOKEN}`,
+            'content-type': 'application/json'
+          },
+          body: method === 'POST' ? '{}' : undefined
         });
         expect(response.status).toBe(404);
       }
