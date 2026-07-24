@@ -9,7 +9,8 @@ import {
   dagLayers,
   e2eWorkflowInputs,
   releaseTrainContributorGithubLogins,
-  releaseBusV2Branch
+  releaseBusV2Branch,
+  releaseBusV2WorkflowBranch
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
   normalizeDeployPlan,
@@ -407,5 +408,31 @@ describe('Release Bus v2 deterministic orchestration', () => {
         'frontend'
       )
     ).toBe('release-bus-v2/qualification-train-train-id-frontend');
+  });
+
+  it('runs qualification deploy and E2E workflows from the immutable parent production ref', () => {
+    expect(
+      releaseBusV2WorkflowBranch(
+        {
+          id: 'qualification-id',
+          lane: 'PRODUCTION_QUALIFICATION',
+          parent_train_id: 'production-id'
+        },
+        'frontend'
+      )
+    ).toBe('release-bus-v2/production-train-production-id-frontend');
+  });
+
+  it('fails closed when a qualification loses its immutable parent ref identity', () => {
+    expect(() =>
+      releaseBusV2WorkflowBranch(
+        {
+          id: 'qualification-id',
+          lane: 'PRODUCTION_QUALIFICATION',
+          parent_train_id: null
+        },
+        'frontend'
+      )
+    ).toThrow('Production qualification train is missing its parent');
   });
 });

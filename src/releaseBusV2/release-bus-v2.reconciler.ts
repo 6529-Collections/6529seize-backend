@@ -216,6 +216,23 @@ export function releaseBusV2Branch(
   return `release-bus-v2/${laneBranchSegment(train.lane)}-train-${train.id}-${repository}`;
 }
 
+export function releaseBusV2WorkflowBranch(
+  train: Pick<ReleaseBusV2TrainRecord, 'id' | 'lane' | 'parent_train_id'>,
+  repository: ReleaseBusV2Repository
+): string {
+  if (train.lane !== 'PRODUCTION_QUALIFICATION')
+    return releaseBusV2Branch(train, repository);
+  if (!train.parent_train_id)
+    throw new Error('Production qualification train is missing its parent');
+  // Qualification children inherit the exact parent composition/artifacts;
+  // they do not run composition and therefore never create a child release
+  // ref. Keep deploy and E2E tooling bound to the parent's immutable ref.
+  return releaseBusV2Branch(
+    { id: train.parent_train_id, lane: 'PRODUCTION' },
+    repository
+  );
+}
+
 export function dagLayers(
   units: readonly string[],
   edges: ReadonlyArray<readonly [string, string]>
@@ -3093,7 +3110,7 @@ export class ReleaseBusV2Reconciler {
         source_ref:
           environment === 'prod'
             ? 'main'
-            : releaseBusV2Branch(train, 'frontend'),
+            : releaseBusV2WorkflowBranch(train, 'frontend'),
         expected_sha: expectedSha,
         artifact_run_id: artifactRunId,
         artifact_train_id: artifactTrainId,
@@ -3129,7 +3146,7 @@ export class ReleaseBusV2Reconciler {
           : null)
     )
       throw new Error('E2E manifest does not match the exact train release');
-    const releaseBranch = releaseBusV2Branch(train, 'frontend');
+    const releaseBranch = releaseBusV2WorkflowBranch(train, 'frontend');
     let exactSourceRef = 'main';
     if (environment === 'staging') {
       const sourceRefs = [releaseBranch, '1a-staging', 'main'];
