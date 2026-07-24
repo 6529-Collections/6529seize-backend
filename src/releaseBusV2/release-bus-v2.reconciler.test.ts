@@ -8,6 +8,7 @@ import {
   candidateExclusionClosure,
   dagLayers,
   e2eWorkflowInputs,
+  releaseTrainContributorGithubLogins,
   releaseBusV2Branch
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -48,6 +49,40 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
+  it('deduplicates exact candidate contributor logins in train order', () => {
+    const first = candidate('first', 'a'.repeat(40), {
+      base_sha: 'b'.repeat(40),
+      merge_sha: 'c'.repeat(40),
+      checks_run_id: '1',
+      checks_completed_at: 1,
+      artifact_run_id: null,
+      artifact_name: null,
+      artifact_digest: null,
+      contributor_github_logins: ['GelatoGenesis', 'ragnep', 'invalid login']
+    });
+    const second = candidate('second', 'd'.repeat(40), {
+      base_sha: 'e'.repeat(40),
+      merge_sha: 'f'.repeat(40),
+      checks_run_id: '2',
+      checks_completed_at: 2,
+      artifact_run_id: null,
+      artifact_name: null,
+      artifact_digest: null,
+      contributor_github_logins: [
+        'gelatogenesis',
+        'external-user',
+        'dependabot[bot]'
+      ]
+    });
+
+    expect(releaseTrainContributorGithubLogins([first, second])).toEqual([
+      'GelatoGenesis',
+      'ragnep',
+      'external-user',
+      'dependabot[bot]'
+    ]);
+  });
+
   it('sends only workflow-supported inputs to each E2E environment', () => {
     const fields = {
       release_train_id: 'train-1',

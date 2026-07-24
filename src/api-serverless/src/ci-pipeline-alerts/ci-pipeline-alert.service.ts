@@ -14,7 +14,10 @@ import {
   releaseNoteGenerationQueue,
   ReleaseNoteGenerationQueue
 } from '@/release-notes/release-note-generation-queue';
-import { GITHUB_TO_6529_HANDLES } from '@/release-notes/release-note-contributors.config';
+import {
+  GITHUB_TO_6529_HANDLES,
+  isGithubContributorLogin
+} from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
@@ -40,6 +43,8 @@ export interface CiPipelineAlertRequest {
   readonly branch?: string | null;
   readonly environment?: string | null;
   readonly service?: string | null;
+  readonly release_train_id?: string | null;
+  readonly contributor_github_logins?: string[];
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
@@ -61,8 +66,14 @@ interface MentionedProfile {
   readonly handle: string;
 }
 
+interface AlertContributor {
+  readonly githubLogin: string;
+  readonly mention: MentionedProfile | null;
+}
+
 interface AlertMentions {
   readonly triggeredBy: MentionedProfile | null;
+  readonly contributors: AlertContributor[];
   readonly failureCc: MentionedProfile[];
   readonly all: MentionedProfile[];
 }
@@ -175,6 +186,22 @@ export function normalizeTargetEnvironment(value: string | null | undefined) {
     return 'prod';
   }
   return null;
+}
+
+export function normalizeContributorGithubLogins(
+  values: readonly string[] | null | undefined
+): string[] {
+  const logins: string[] = [];
+  for (const value of values ?? []) {
+    const login = value.trim();
+    if (
+      !isGithubContributorLogin(login) ||
+      logins.some((existing) => existing.toLowerCase() === login.toLowerCase())
+    )
+      continue;
+    logins.push(login);
+  }
+  return logins;
 }
 
 function formatStatusEmoji(status: CiPipelineAlertStatus): string {
@@ -421,6 +448,19 @@ export class CiPipelineAlertService {
       request.triggered_by_github_login
     );
     const isReleaseTrain = isReleaseBusGitHubAppActor(triggeredByGithubLogin);
+    const releaseTrainId = normalizeOptionalValue(request.release_train_id);
+    const contributorGithubLogins =
+      isReleaseTrain && releaseTrainId
+        ? normalizeContributorGithubLogins(request.contributor_github_logins)
+        : [];
+    const contributorHandlesByGithubLogin = new Map(
+      contributorGithubLogins
+        .map((login): [string, string | undefined] => [
+          login,
+          GITHUB_TO_6529_HANDLES[login.toLowerCase()]?.trim()
+        ])
+        .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    );
     const triggeredByHandle =
       triggeredByGithubLogin && !isReleaseTrain
         ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
@@ -443,6 +483,7 @@ export class CiPipelineAlertService {
         : [];
     const handlesToResolve = [
       ...(triggeredByHandle ? [triggeredByHandle] : []),
+      ...Array.from(contributorHandlesByGithubLogin.values()),
       ...failureHandles
     ].filter(
       (handle, index, handles) =>
@@ -451,7 +492,15 @@ export class CiPipelineAlertService {
         ) === index
     );
     if (!handlesToResolve.length) {
-      return { triggeredBy: null, failureCc: [], all: [] };
+      return {
+        triggeredBy: null,
+        contributors: contributorGithubLogins.map((githubLogin) => ({
+          githubLogin,
+          mention: null
+        })),
+        failureCc: [],
+        all: []
+      };
     }
 
     const profileIdsByHandle =
@@ -475,6 +524,18 @@ export class CiPipelineAlertService {
       );
     }
 
+    const contributors = contributorGithubLogins.map((githubLogin) => {
+      const handle = contributorHandlesByGithubLogin.get(githubLogin);
+      const mention = handle
+        ? (mentionsByNormalizedHandle.get(handle.toLowerCase()) ?? null)
+        : null;
+      if (handle && !mention) {
+        this.logger.warn(
+          `Skipping CI pipeline contributor mention for GitHub user ${githubLogin}; 6529 profile ${handle} is missing`
+        );
+      }
+      return { githubLogin, mention };
+    });
     const missingHandles = failureHandles.filter(
       (handle) => !mentionsByNormalizedHandle.has(handle.toLowerCase())
     );
@@ -487,14 +548,20 @@ export class CiPipelineAlertService {
       .map((handle) => mentionsByNormalizedHandle.get(handle.toLowerCase()))
       .filter((mention): mention is MentionedProfile => !!mention);
     // Profile IDs collapse handle aliases while preserving initiator-first order.
-    const all = [...(triggeredBy ? [triggeredBy] : []), ...failureCc].filter(
+    const all = [
+      ...(triggeredBy ? [triggeredBy] : []),
+      ...contributors
+        .map(({ mention }) => mention)
+        .filter((mention): mention is MentionedProfile => Boolean(mention)),
+      ...failureCc
+    ].filter(
       (mention, index, mentions) =>
         mentions.findIndex(
           (candidate) => candidate.profileId === mention.profileId
         ) === index
     );
 
-    return { triggeredBy, failureCc, all };
+    return { triggeredBy, contributors, failureCc, all };
   }
 
   private resolveWaveId(request: CiPipelineAlertRequest): string {
@@ -561,6 +628,16 @@ export class CiPipelineAlertService {
       ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
       : null;
     const triggeredBy = formatInitiator(request, mentions);
+    const contributorCredits = mentions.contributors
+      .map(({ githubLogin, mention }) =>
+        mention
+          ? `@[${mention.handle}]`
+          : formatMarkdownLink(
+              `@${githubLogin}`,
+              `https://github.com/${githubLogin}`
+            )
+      )
+      .join(', ');
     const lines = [
       formatAlertHeading(request),
       '',
@@ -570,6 +647,7 @@ export class CiPipelineAlertService {
       ...(branch ? [`Branch: ${branch}`] : []),
       ...(commit ? [`Commit: ${commit}`] : []),
       `Initiated by: ${triggeredBy}`,
+      ...(contributorCredits ? [`Contributors: ${contributorCredits}`] : []),
       `Run: ${formatRun(request)}`,
       ...failureMentionLines
     ];
