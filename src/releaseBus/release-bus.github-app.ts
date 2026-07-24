@@ -1,5 +1,6 @@
 import { createSign } from 'node:crypto';
 import fetch, { type RequestInit, type Response } from 'node-fetch';
+import { isReleaseBusGitHubAppActor } from '@/releaseBus/release-bus.constants';
 import type { ReleaseRepository } from '@/releaseBus/release-bus.types';
 
 type InstallationToken = {
@@ -31,7 +32,7 @@ export function isValidGitHubWorkflowActor(actor: string): boolean {
   // `[bot]` suffix. Only the Release Bus App may drive automated operations;
   // human logins retain GitHub's 39-character limit for manual attribution.
   return (
-    /^[A-Za-z0-9-]{1,39}$/.test(actor) || actor === '6529-release-bus[bot]'
+    /^[A-Za-z0-9-]{1,39}$/.test(actor) || isReleaseBusGitHubAppActor(actor)
   );
 }
 export type GitHubWorkflowJob = {
