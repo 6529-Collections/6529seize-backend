@@ -150,7 +150,7 @@
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["dbMigrationsLoop"],
+      "verification_targets": ["dbMigrationsLoop", "membershipRefreshLoop"],
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
       "default_dependencies": [],
@@ -313,20 +313,6 @@
       "validation_profile": "lambda-version",
       "staging_policy": "production-only",
       "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "membershipRefreshLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["membershipRefreshLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": ["dbMigrationsLoop"],
       "automatic_rollback_supported": false
     },
     {

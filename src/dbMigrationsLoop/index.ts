@@ -4,6 +4,7 @@ import * as Entities from '../entities/entities';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
 import { competitionRepository } from '../competitions/competition.repository';
+export { handler as membershipRefreshHandler } from '../membershipRefreshLoop';
 
 const DBMigrate = require('db-migrate');
 
