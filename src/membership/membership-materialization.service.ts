@@ -25,15 +25,25 @@ import {
   MEMBERSHIP_FULL_BACKFILL_WATERMARK,
   MEMBERSHIP_GRANT_BOUNDARY_WATERMARK,
   MEMBERSHIP_MAX_BATCH_SIZE,
-  MEMBERSHIP_MAX_REFRESH_ATTEMPTS
+  MEMBERSHIP_MAX_REFRESH_ATTEMPTS,
+  MEMBERSHIP_MISSING_PROFILE_SWEEP_PAGE_SIZE,
+  MEMBERSHIP_MISSING_PROFILE_SWEEP_WATERMARK
 } from './membership.constants';
-import { MembershipRefreshReason } from './membership-refresh.producer';
+import {
+  membershipRefreshProducer,
+  MembershipRefreshReason
+} from './membership-refresh.producer';
 
 interface MembershipRefreshRequestRow {
   readonly scope: MembershipRefreshScope;
   readonly target_id: string;
   readonly dirty_at: number | string;
   readonly attempts: number;
+}
+
+interface IdentityProfileSweepRow {
+  readonly consolidation_key: string;
+  readonly profile_id: string;
 }
 
 export interface RefreshDirtyMembershipsOptions {
@@ -198,7 +208,7 @@ export class MembershipMaterializationService extends LazyDbAccessCompatibleServ
     ctx: RequestContext = {}
   ): Promise<RefreshDirtyMembershipsResult> {
     await this.captureGrantBoundaryChanges(ctx);
-    await this.captureProfilesMissingMaterializationState(ctx);
+    await this.captureMissingProfilesPage(ctx);
     const batchSize = this.getBatchSize(options.batchSize);
     const maxBatches = Math.max(
       1,
@@ -559,10 +569,6 @@ export class MembershipMaterializationService extends LazyDbAccessCompatibleServ
       const now = Time.currentMillis();
       const transactionContext = { ...ctx, connection };
       await this.pruneNonWaveMemberships(transactionContext);
-      await this.captureProfilesMissingMaterializationState(
-        transactionContext,
-        false
-      );
       await this.captureGrantBoundaryChangesBetween(
         asOfMillis,
         now,
@@ -664,56 +670,139 @@ export class MembershipMaterializationService extends LazyDbAccessCompatibleServ
     });
   }
 
-  private async captureProfilesMissingMaterializationState(
-    ctx: RequestContext,
-    requireFullWatermark = true
-  ): Promise<void> {
-    const now = Time.currentMillis();
-    await this.db.execute(
+  private async captureMissingProfilesPage(ctx: RequestContext): Promise<void> {
+    await this.executeNativeQueriesInTransaction(async (connection) => {
+      const transactionContext = { ...ctx, connection };
+      const fullBackfillRows = await this.db.execute<{
+        readonly dimension: string;
+      }>(
+        `
+        select dimension
+        from ${MEMBERSHIP_WATERMARKS_TABLE}
+        where dimension = :fullBackfillWatermark
+        limit 1
+        `,
+        { fullBackfillWatermark: MEMBERSHIP_FULL_BACKFILL_WATERMARK },
+        { wrappedConnection: connection, forcePool: DbPoolName.WRITE }
+      );
+      if (!fullBackfillRows.length) {
+        return;
+      }
+
+      const sweepRows = await this.db.execute<{
+        readonly detail: string | null;
+      }>(
+        `
+        select detail
+        from ${MEMBERSHIP_WATERMARKS_TABLE}
+        where dimension = :missingProfileSweepWatermark
+        for update
+        `,
+        {
+          missingProfileSweepWatermark:
+            MEMBERSHIP_MISSING_PROFILE_SWEEP_WATERMARK
+        },
+        { wrappedConnection: connection, forcePool: DbPoolName.WRITE }
+      );
+      const cursor = sweepRows[0]?.detail ?? null;
+      const identityRows = await this.getIdentityProfileSweepPage(
+        cursor,
+        transactionContext
+      );
+      const profileIds = Array.from(
+        new Set(identityRows.map((row) => row.profile_id))
+      );
+      const missingProfileIds = await this.getProfileIdsMissingState(
+        profileIds,
+        transactionContext
+      );
+      await membershipRefreshProducer.markProfilesDirty(
+        missingProfileIds,
+        MembershipRefreshReason.GROUP_CHANGED,
+        transactionContext
+      );
+
+      const hasAnotherPage =
+        identityRows.length === MEMBERSHIP_MISSING_PROFILE_SWEEP_PAGE_SIZE;
+      const nextCursor = hasAnotherPage
+        ? identityRows[identityRows.length - 1].consolidation_key
+        : null;
+      await this.upsertWatermark(
+        MEMBERSHIP_MISSING_PROFILE_SWEEP_WATERMARK,
+        Time.currentMillis(),
+        nextCursor,
+        transactionContext
+      );
+    });
+  }
+
+  private async getIdentityProfileSweepPage(
+    cursor: string | null,
+    ctx: RequestContext
+  ): Promise<IdentityProfileSweepRow[]> {
+    const cursorClause = cursor
+      ? 'and consolidation_key > :consolidationKeyCursor'
+      : '';
+    return await this.db.execute<IdentityProfileSweepRow>(
       `
-      insert into ${MEMBERSHIP_REFRESH_REQUESTS_TABLE}
-        (scope, target_id, reason, dirty_at, attempts, last_error, created_at, updated_at)
-      select
-        :profileScope,
-        identities.profile_id,
-        :reason,
-        :dirtyAt,
-        0,
-        null,
-        :createdAt,
-        :updatedAt
-      from ${IDENTITIES_TABLE} identities
-      left join ${MEMBERSHIP_MATERIALIZATION_STATES_TABLE} states
-        on states.scope = :profileScope
-        and states.target_id = identities.profile_id
-        and states.spec_version = :specVersion
-      where identities.profile_id is not null
-        and states.target_id is null
-        ${
-          requireFullWatermark
-            ? `and exists (
-          select 1
-          from ${MEMBERSHIP_WATERMARKS_TABLE}
-          where dimension = :fullBackfillWatermark
-        )`
-            : ''
-        }
-      order by identities.profile_id
-      limit 1000
-      on duplicate key update
-        target_id = values(target_id)
+      select consolidation_key, profile_id
+      from ${IDENTITIES_TABLE} force index (primary)
+      where profile_id is not null
+        ${cursorClause}
+      order by consolidation_key asc
+      limit ${MEMBERSHIP_MISSING_PROFILE_SWEEP_PAGE_SIZE}
       `,
+      cursor ? { consolidationKeyCursor: cursor } : undefined,
       {
-        profileScope: MembershipRefreshScope.PROFILE,
-        reason: MembershipRefreshReason.GROUP_CHANGED,
-        dirtyAt: now,
-        createdAt: now,
-        updatedAt: now,
-        specVersion: ELIGIBILITY_SPEC_VERSION,
-        fullBackfillWatermark: MEMBERSHIP_FULL_BACKFILL_WATERMARK
-      },
-      { wrappedConnection: ctx.connection }
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
     );
+  }
+
+  private async getProfileIdsMissingState(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const missingProfileIds = new Set<string>();
+    for (
+      let offset = 0;
+      offset < profileIds.length;
+      offset += MEMBERSHIP_MAX_BATCH_SIZE
+    ) {
+      const profileIdChunk = profileIds.slice(
+        offset,
+        offset + MEMBERSHIP_MAX_BATCH_SIZE
+      );
+      if (!profileIdChunk.length) {
+        continue;
+      }
+      const rows = await this.db.execute<{ readonly target_id: string }>(
+        `
+        select target_id
+        from ${MEMBERSHIP_MATERIALIZATION_STATES_TABLE}
+        where scope = :profileScope
+          and spec_version = :specVersion
+          and target_id in (:profileIds)
+        `,
+        {
+          profileScope: MembershipRefreshScope.PROFILE,
+          specVersion: ELIGIBILITY_SPEC_VERSION,
+          profileIds: profileIdChunk
+        },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+      const materializedProfileIds = new Set(rows.map((row) => row.target_id));
+      profileIdChunk.forEach((profileId) => {
+        if (!materializedProfileIds.has(profileId)) {
+          missingProfileIds.add(profileId);
+        }
+      });
+    }
+    return Array.from(missingProfileIds);
   }
 
   private async captureGrantBoundaryChangesBetween(
