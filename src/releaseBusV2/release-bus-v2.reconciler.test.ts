@@ -3,8 +3,11 @@ import {
   backendReleaseNoteInputs,
   backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
+  candidateUnavailableForTrainUpdate,
+  deletedProductionCandidateCanRetainReadiness,
   candidateExclusionClosure,
   dagLayers,
+  e2eWorkflowInputs,
   releaseBusV2Branch
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -45,6 +48,79 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
+  it('sends only workflow-supported inputs to each E2E environment', () => {
+    const fields = {
+      release_train_id: 'train-1',
+      release_train_revision: '1',
+      operation_key: 'replaced-by-reconciler',
+      staging_source_ref: 'release-bus-v2/train-1/frontend',
+      expected_sha: 'a'.repeat(40),
+      release_manifest_id: 'manifest-1',
+      release_manifest_identity_sha256: 'b'.repeat(64),
+      frontend_sha: 'a'.repeat(40),
+      backend_sha: 'c'.repeat(40),
+      frontend_artifact_digest: 'd'.repeat(64),
+      backend_artifact_digest: 'e'.repeat(64)
+    };
+
+    expect(e2eWorkflowInputs('staging', fields)).toMatchObject({
+      pack: 'all',
+      source_ref: 'release-bus-v2/train-1/frontend'
+    });
+    expect(e2eWorkflowInputs('prod', fields)).toEqual(
+      expect.objectContaining({ source_ref: 'main' })
+    );
+    expect(e2eWorkflowInputs('prod', fields)).not.toHaveProperty('pack');
+  });
+
+  it('keeps an immutable active membership authoritative over stale superseded bookkeeping', () => {
+    const claimed = {
+      ...candidate('claimed', 'a'.repeat(40)),
+      status: 'PRODUCTION_DEPLOYING' as const,
+      current_train_id: 'train-1'
+    };
+    expect(
+      candidateUnavailableForTrainUpdate(
+        { ...claimed, status: 'SUPERSEDED', superseded_at: 2 },
+        claimed
+      )
+    ).toBe(false);
+    expect(
+      candidateUnavailableForTrainUpdate(
+        {
+          ...claimed,
+          status: 'SUPERSEDED',
+          current_train_id: null,
+          superseded_at: 2
+        },
+        claimed
+      )
+    ).toBe(true);
+  });
+
+  it('retains explicit production readiness only for a deleted exact head already on main', () => {
+    const ready = {
+      ...candidate('production-ready', 'a'.repeat(40)),
+      status: 'READY_FOR_PRODUCTION' as const,
+      staging_validated_manifest_id: 'manifest-1',
+      production_requested_at: 2,
+      production_requested_by: 'owner'
+    };
+    expect(deletedProductionCandidateCanRetainReadiness(ready)).toBe(true);
+    expect(
+      deletedProductionCandidateCanRetainReadiness({
+        ...ready,
+        current_train_id: 'active-train'
+      })
+    ).toBe(false);
+    expect(
+      deletedProductionCandidateCanRetainReadiness({
+        ...ready,
+        staging_validated_manifest_id: null
+      })
+    ).toBe(false);
+  });
+
   it('orders backend DAG frontiers while preserving independent concurrency', () => {
     expect(
       dagLayers(
