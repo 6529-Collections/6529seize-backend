@@ -2800,7 +2800,7 @@ export class ReleaseBusV2Reconciler {
     if (!manifestId) throw new Error('Staging validation has no manifest');
     for (const candidate of relevantCandidates(context)) {
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (!current || candidateUnavailableForTrainUpdate(current, candidate))
         continue;
       await this.repository.updateCandidate(
         current.id,
@@ -2810,7 +2810,8 @@ export class ReleaseBusV2Reconciler {
           currentTrainId: null,
           stagingValidatedTrainId: context.train.id,
           stagingValidatedManifestId: manifestId,
-          holdReason: null
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
         },
         {}
       );
@@ -2841,7 +2842,12 @@ export class ReleaseBusV2Reconciler {
       await this.repository.updateCandidate(
         current.id,
         current.row_version,
-        { status, currentTrainId, holdReason: null },
+        {
+          status,
+          currentTrainId,
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
+        },
         {}
       );
     }

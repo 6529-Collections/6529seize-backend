@@ -306,6 +306,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly productionRequestedAt?: number | null;
       readonly productionRequestedBy?: string | null;
       readonly holdReason?: string | null;
+      readonly supersededAt?: number | null;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -318,6 +319,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            production_requested_at = case when :setProductionRequestedAt = 1 then :productionRequestedAt else production_requested_at end,
            production_requested_by = case when :setProductionRequestedBy = 1 then :productionRequestedBy else production_requested_by end,
            hold_reason = case when :setHoldReason = 1 then :holdReason else hold_reason end,
+           superseded_at = case when :setSupersededAt = 1 then :supersededAt else superseded_at end,
            updated_at = :now, row_version = row_version + 1
        where id = :id and row_version = :rowVersion`,
       {
@@ -340,6 +342,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         productionRequestedBy: fields.productionRequestedBy ?? null,
         setHoldReason: fields.holdReason === undefined ? 0 : 1,
         holdReason: fields.holdReason ?? null,
+        setSupersededAt: fields.supersededAt === undefined ? 0 : 1,
+        supersededAt: fields.supersededAt ?? null,
         now: Date.now()
       },
       dbOptions(ctx)

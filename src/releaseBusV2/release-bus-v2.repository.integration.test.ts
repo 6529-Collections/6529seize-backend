@@ -200,6 +200,56 @@ describeWithSeed(
       );
     });
 
+    it('clears stale supersession bookkeeping when an active train repairs its candidate', async () => {
+      const claimed = await repository.createCandidate(
+        {
+          repository: 'backend',
+          prNumber: 113,
+          branchName: 'feature/repair-active-candidate',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: { units: ['api'], edges: [] },
+          prEvidence: null
+        },
+        {}
+      );
+      const service = new ReleaseBusV2Service(repository);
+      const train = await service.claimLane(
+        'STAGING',
+        SHA_B,
+        SHA_B,
+        'claim-before-repair'
+      );
+      const active = await repository.findCandidateById(claimed.id, {});
+      expect(active).not.toBeNull();
+      await repository.updateCandidate(
+        claimed.id,
+        active!.row_version,
+        { status: 'SUPERSEDED', supersededAt: 2 },
+        {}
+      );
+      const stale = await repository.findCandidateById(claimed.id, {});
+      expect(stale).not.toBeNull();
+      await repository.updateCandidate(
+        claimed.id,
+        stale!.row_version,
+        {
+          status: 'STAGING_IN_TRAIN',
+          currentTrainId: train!.id,
+          supersededAt: null
+        },
+        {}
+      );
+
+      expect(await repository.findCandidateById(claimed.id, {})).toEqual(
+        expect.objectContaining({
+          status: 'STAGING_IN_TRAIN',
+          current_train_id: train?.id,
+          superseded_at: null
+        })
+      );
+    });
+
     it('claims only explicitly production-ready candidates', async () => {
       process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
       const explicit = await repository.createCandidate(
