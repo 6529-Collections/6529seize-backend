@@ -3585,14 +3585,7 @@ export class ReleaseBusV2Reconciler {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const operations = await this.repository.listOperations(current.id, {});
-    if (
-      operations.some(
-        ({ external_id, status }) =>
-          ['DISPATCHED', 'RUNNING'].includes(status) ||
-          (status === 'PENDING' && external_id !== null)
-      )
-    )
-      return;
+    if (operations.some(operationMayStillBeRunning)) return;
     for (const operation of operations) {
       if (TERMINAL_OPERATIONS.has(operation.status)) continue;
       if (
