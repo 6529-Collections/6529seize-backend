@@ -282,6 +282,14 @@ describeWithSeed(
         'deleted',
         'reconciler'
       );
+      await repository.appendEvent(
+        {
+          candidateId: registered.id,
+          eventType: 'CANDIDATE_STATUS_OBSERVED_AFTER_SUPERSESSION',
+          actor: 'integration'
+        },
+        {}
+      );
 
       await expect(
         service.restoreProductionReadinessAfterBranchCleanup(

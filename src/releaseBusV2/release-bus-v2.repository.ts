@@ -1063,15 +1063,16 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listCandidateEvents(
     candidateId: string,
+    eventType: string,
     limit: number,
     ctx: RequestContext
   ): Promise<ReleaseBusV2EventRecord[]> {
     const boundedLimit = Math.max(1, Math.min(limit, 500));
     return this.db.execute<ReleaseBusV2EventRecord>(
       `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
-       where candidate_id = :candidateId
+       where candidate_id = :candidateId and event_type = :eventType
        order by created_at desc, id desc limit ${boundedLimit}`,
-      { candidateId },
+      { candidateId, eventType },
       dbOptions(ctx)
     );
   }

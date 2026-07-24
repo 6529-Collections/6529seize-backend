@@ -4,7 +4,7 @@ import {
   backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
   candidateUnavailableForTrainUpdate,
-  deletedMergedProductionCandidateCanRetainReadiness,
+  deletedProductionCandidateCanRetainReadiness,
   candidateExclusionClosure,
   dagLayers,
   e2eWorkflowInputs,
@@ -106,23 +106,18 @@ describe('Release Bus v2 deterministic orchestration', () => {
       production_requested_at: 2,
       production_requested_by: 'owner'
     };
+    expect(deletedProductionCandidateCanRetainReadiness(ready)).toBe(true);
     expect(
-      deletedMergedProductionCandidateCanRetainReadiness(ready, true)
-    ).toBe(true);
-    expect(
-      deletedMergedProductionCandidateCanRetainReadiness(ready, false)
+      deletedProductionCandidateCanRetainReadiness({
+        ...ready,
+        current_train_id: 'active-train'
+      })
     ).toBe(false);
     expect(
-      deletedMergedProductionCandidateCanRetainReadiness(
-        { ...ready, current_train_id: 'active-train' },
-        true
-      )
-    ).toBe(false);
-    expect(
-      deletedMergedProductionCandidateCanRetainReadiness(
-        { ...ready, staging_validated_manifest_id: null },
-        true
-      )
+      deletedProductionCandidateCanRetainReadiness({
+        ...ready,
+        staging_validated_manifest_id: null
+      })
     ).toBe(false);
   });
 

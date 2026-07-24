@@ -463,12 +463,10 @@ export function candidateUnavailableForTrainUpdate(
   );
 }
 
-export function deletedMergedProductionCandidateCanRetainReadiness(
-  candidate: ReleaseBusV2CandidateRecord,
-  exactHeadIsOnMain: boolean
+export function deletedProductionCandidateCanRetainReadiness(
+  candidate: ReleaseBusV2CandidateRecord
 ): boolean {
   return (
-    exactHeadIsOnMain &&
     candidate.current_train_id === null &&
     candidate.production_requested_at !== null &&
     candidate.staging_validated_manifest_id !== null &&
@@ -741,7 +739,7 @@ export class ReleaseBusV2Reconciler {
       if (currentHead === candidate.head_sha) continue;
       if (
         currentHead === null &&
-        deletedMergedProductionCandidateCanRetainReadiness(candidate, true) &&
+        deletedProductionCandidateCanRetainReadiness(candidate) &&
         (await releaseBusGitHubApp.refContainsCommit(
           candidate.repository,
           'main',

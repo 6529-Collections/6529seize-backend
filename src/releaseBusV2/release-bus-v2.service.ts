@@ -685,7 +685,14 @@ export class ReleaseBusV2Service {
           true
         );
         const supersededEvent = candidate
-          ? (await this.repository.listCandidateEvents(candidate.id, 1, ctx))[0]
+          ? (
+              await this.repository.listCandidateEvents(
+                candidate.id,
+                'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
+                1,
+                ctx
+              )
+            )[0]
           : null;
         let supersededPayload: Record<string, unknown> | null = null;
         if (supersededEvent) {
