@@ -75,6 +75,7 @@ import {
   createSiweWebAuthChallenge,
   resolveSiweWalletAuthApiAudience,
   signSiweWebAuthChallenge,
+  type VerifiedSessionChallenge,
   verifySessionChallengeToken,
   verifySiweWebAuthSignature
 } from '../wallet-signatures/siwe-wallet-auth';
@@ -267,35 +268,45 @@ router.post(
       req.body,
       SessionLoginRequestSchema
     );
-    try {
-      const challenge = verifySessionChallengeToken({
-        token: loginRequest.server_signature,
-        expectedApiAudience: resolveSiweWalletAuthApiAudience(req.headers.host),
-        jwtSecret: getJwtSecret()
-      });
-      if (challenge.format === 'siwe') {
-        await loginWithSiweSessionChallenge({
-          req,
-          res,
-          loginRequest,
-          message: challenge.message,
-          signedClientOrigin: challenge.clientOrigin,
-          timer
-        });
-        return;
-      }
-      await loginWithLegacySessionChallenge({
+    const challenge = verifySessionChallengeForLogin(
+      req,
+      loginRequest.server_signature
+    );
+    if (challenge.format === 'siwe') {
+      await loginWithSiweSessionChallenge({
         req,
         res,
         loginRequest,
         message: challenge.message,
+        signedClientOrigin: challenge.clientOrigin,
         timer
       });
-    } catch {
-      throw new UnauthorisedException('Authentication failed');
+      return;
     }
+    await loginWithLegacySessionChallenge({
+      req,
+      res,
+      loginRequest,
+      message: challenge.message,
+      timer
+    });
   }
 );
+
+function verifySessionChallengeForLogin(
+  req: Request<any, any, any, any, any>,
+  token: string
+): VerifiedSessionChallenge {
+  try {
+    return verifySessionChallengeToken({
+      token,
+      expectedApiAudience: resolveSiweWalletAuthApiAudience(req.headers.host),
+      jwtSecret: getJwtSecret()
+    });
+  } catch {
+    throw new UnauthorisedException('Authentication failed');
+  }
+}
 
 interface SessionLoginFlowParams {
   readonly req: Request<any, any, ApiSessionLoginRequest, any, any>;

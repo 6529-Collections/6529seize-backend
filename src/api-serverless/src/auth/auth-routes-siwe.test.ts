@@ -345,7 +345,9 @@ describe('wallet auth SIWE routes', () => {
         }),
         makeResponse()
       )
-    ).rejects.toThrow('Authentication failed');
+    ).rejects.toThrow(
+      'Wallet auth web session Origin does not match the signed challenge'
+    );
 
     await expect(
       sessionLoginHandler(
@@ -376,7 +378,7 @@ describe('wallet auth SIWE routes', () => {
         }),
         makeResponse()
       )
-    ).rejects.toThrow('Authentication failed');
+    ).rejects.toThrow('SIWE wallet auth challenges require a web session');
 
     await expect(
       sessionLoginHandler(
@@ -458,7 +460,9 @@ describe('wallet auth SIWE routes', () => {
         }),
         makeResponse()
       )
-    ).rejects.toThrow('Authentication failed');
+    ).rejects.toThrow(
+      'Wallet auth desktop sessions require a desktop structured signature'
+    );
 
     await expect(
       sessionLoginHandler(
@@ -479,6 +483,28 @@ describe('wallet auth SIWE routes', () => {
         clientType: 'native'
       })
     );
+  });
+
+  it('does not disguise session persistence failures as authentication failures', async () => {
+    const issued = issueWebChallenge();
+    const signature = await wallet.signMessage(issued.message);
+    const persistenceError = new Error('session persistence failed');
+    createWebSessionMock.mockRejectedValueOnce(persistenceError);
+
+    await expect(
+      sessionLoginHandler(
+        makeRequest({
+          body: sessionLoginBody({
+            messageSignature: signature,
+            serverSignature: issued.serverSignature,
+            clientType: 'web'
+          }),
+          origin: 'https://6529.io',
+          host: 'api.6529.io'
+        }),
+        makeResponse()
+      )
+    ).rejects.toBe(persistenceError);
   });
 
   it('keeps the new object envelope outside legacy /auth/login', async () => {

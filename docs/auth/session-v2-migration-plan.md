@@ -129,6 +129,9 @@ Backend checks after deploy:
   before deployment remain valid only through their existing five-minute
   expiration. The post-deploy issuance path does not create new legacy web
   challenges.
+- For SIWE, the signed JWT envelope proves server issuance. The final Redis
+  nonce consumption makes that authenticated challenge single-use; it is not a
+  separate registry populated at issuance.
 - Multi-account web refresh/logout preserve account isolation: sign A and B into
   v2, let the compatibility cookie point at B, then refresh/logout A by
   `client_address` without rotating or revoking B.

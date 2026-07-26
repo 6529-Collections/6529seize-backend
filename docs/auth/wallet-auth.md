@@ -85,13 +85,17 @@ envelope. It binds the exact SIWE message, web client type, normalized frontend
 Origin, allowed API audience, issuer, subject, issued-at time, and expiration.
 The API request Host must resolve to an allowed API audience; the SIWE path does
 not substitute the production audience for a malformed or unrecognized Host.
-Clients must treat this token as opaque.
+This envelope is the server-issuance proof. The Redis nonce record is created
+only when a fully verified login consumes the challenge, and then prevents that
+server-authenticated challenge from being used again. Clients must treat the
+token as opaque.
 
 Native and desktop challenges continue to use the previous signed-string token.
 The login endpoint also accepts valid outstanding `first_party_web` structured
 challenges issued before the SIWE deployment, subject to their existing
-five-minute expiration. The nonce endpoint does not issue new legacy web
-challenges.
+five-minute expiration and message-level allowed-audience validation. These
+compatibility challenges do not acquire the new current-Host JWT audience check.
+The nonce endpoint does not issue new legacy web challenges.
 
 ## Session V2 Login
 
