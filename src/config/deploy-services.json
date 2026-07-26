@@ -522,7 +522,7 @@
       "verification_targets": ["pushNotificationsHandler"],
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
-      "default_dependencies": [],
+      "default_dependencies": ["dbMigrationsLoop"],
       "automatic_rollback_supported": false
     },
     {
@@ -642,6 +642,24 @@
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
       "default_dependencies": [],
+      "automatic_rollback_supported": false
+    },
+    {
+      "name": "subscriptionCoverageReconciliationLoop",
+      "allowed_environments": ["staging", "prod"],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": ["subscriptionCoverageReconciliationLoop"],
+      "validation_profile": "lambda-version",
+      "staging_policy": "allowed",
+      "default_dependencies": [
+        "api",
+        "dbMigrationsLoop",
+        "pushNotificationsHandler"
+      ],
       "automatic_rollback_supported": false
     },
     {

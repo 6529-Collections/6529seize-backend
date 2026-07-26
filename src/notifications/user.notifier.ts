@@ -16,7 +16,8 @@ import {
   IdentityMentionNotificationData,
   IdentityNicNotificationData,
   IdentityRepNotificationData,
-  IdentitySubscriptionNotificationData
+  IdentitySubscriptionNotificationData,
+  SubscriptionCoverageNotificationData
 } from './user-notification.types';
 
 export class UserNotifier {
@@ -134,6 +135,33 @@ export class UserNotifier {
       );
     }
     timer?.stop('userNotifier->notifyOfIdentityMention');
+  }
+
+  public async notifyOfSubscriptionCoverage(
+    recipientProfileId: string,
+    data: SubscriptionCoverageNotificationData,
+    connection: ConnectionWrapper<any>
+  ): Promise<number[]> {
+    return this.identityNotificationsDb.insertManyNotifications(
+      [
+        {
+          identity_id: recipientProfileId,
+          additional_identity_id: null,
+          related_drop_id: null,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          additional_data: {
+            ...data,
+            recipient_profile_id: recipientProfileId
+          },
+          wave_id: null,
+          visibility_group_id: null
+        }
+      ],
+      connection
+    );
   }
 
   public async notifyOfDropVote(

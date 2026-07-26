@@ -27,6 +27,7 @@ import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
+import type { SubscriptionCoverageNotificationData } from '../notifications/user-notification.types';
 import { dbSupplier } from '../sql-executor';
 import { sumBadgeContributions } from './badge-count';
 import {
@@ -48,22 +49,11 @@ import {
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
 import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
 import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
-
-const CAUSE_TO_SETTING_KEY: Partial<
-  Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
-> = {
-  [IdentityNotificationCause.IDENTITY_SUBSCRIBED]: 'identity_subscribed',
-  [IdentityNotificationCause.IDENTITY_MENTIONED]: 'identity_mentioned',
-  [IdentityNotificationCause.IDENTITY_REP]: 'identity_rep',
-  [IdentityNotificationCause.IDENTITY_NIC]: 'identity_nic',
-  [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
-  [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
-  [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
-  [IdentityNotificationCause.DROP_POLL_VOTED]: 'drop_voted',
-  [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
-  [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
-  [IdentityNotificationCause.WAVE_CREATED]: 'wave_created'
-};
+import {
+  getEnabledCauses,
+  isNotificationEnabledForDevice
+} from '@/pushNotificationsHandler/identity-push-notification-settings';
+import { buildSubscriptionCoveragePushNotificationData } from '@/pushNotificationsHandler/subscription-coverage-push-notification';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 const SKIP_NOTIFICATION_PUSH = Symbol('SKIP_NOTIFICATION_PUSH');
@@ -95,10 +85,10 @@ interface PollVoteAdditionalDataOption {
   option_string: string;
 }
 
-function extractAdditionalData(
+function extractAdditionalData<T extends object = AdditionalDataPayload>(
   notification: IdentityNotificationEntity
-): AdditionalDataPayload {
-  return (notification.additional_data ?? {}) as AdditionalDataPayload;
+): T {
+  return (notification.additional_data ?? {}) as unknown as T;
 }
 
 function numbersOrNull(value: unknown): number | null {
@@ -162,31 +152,9 @@ async function getDeviceSettings(
     drop_voted: result.drop_voted,
     drop_reacted: result.drop_reacted,
     drop_boosted: result.drop_boosted,
-    wave_created: result.wave_created
+    wave_created: result.wave_created,
+    subscription_coverage: result.subscription_coverage
   };
-}
-
-function isNotificationEnabledForDevice(
-  cause: IdentityNotificationCause,
-  settings: PushNotificationSettingsData
-): boolean {
-  const settingKey = CAUSE_TO_SETTING_KEY[cause];
-  if (!settingKey) {
-    return true;
-  }
-  return settings[settingKey];
-}
-
-function getEnabledCauses(
-  settings: PushNotificationSettingsData
-): IdentityNotificationCause[] {
-  return (
-    Object.values(IdentityNotificationCause) as IdentityNotificationCause[]
-  ).filter((cause) => {
-    const key = CAUSE_TO_SETTING_KEY[cause];
-    if (key == null) return true;
-    return settings[key];
-  });
 }
 
 function getDeviceTokenKey(deviceId: string, token: string): string {
@@ -412,7 +380,10 @@ async function buildIdentityNotificationMessages(
     return [];
   }
 
-  const notificationData = await generateNotificationData(notification);
+  const notificationData = await generateNotificationData(
+    notification,
+    targetProfile
+  );
   if (notificationData === SKIP_NOTIFICATION_PUSH) {
     logger.info(`[ID ${notification.id}] Skipping push notification`);
     return [];
@@ -560,40 +531,61 @@ async function handleSendResults(
 }
 
 async function generateNotificationData(
-  notification: IdentityNotificationEntity
+  notification: IdentityNotificationEntity,
+  targetProfile: ApiIdentity
 ) {
-  const additionalEntity = await getAdditionalIdOrThrow(notification);
+  const getAdditionalEntity = () => getAdditionalIdOrThrow(notification);
 
   switch (notification.cause) {
     case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
-      return handleIdentitySubscribed(additionalEntity);
+      return handleIdentitySubscribed(await getAdditionalEntity());
     case IdentityNotificationCause.IDENTITY_MENTIONED:
-      return handleIdentityMentioned(notification, additionalEntity);
+      return handleIdentityMentioned(notification, await getAdditionalEntity());
     case IdentityNotificationCause.IDENTITY_REP:
-      return handleIdentityRep(notification, additionalEntity);
+      return handleIdentityRep(notification, await getAdditionalEntity());
     case IdentityNotificationCause.IDENTITY_NIC:
-      return handleIdentityNic(notification, additionalEntity);
+      return handleIdentityNic(notification, await getAdditionalEntity());
     case IdentityNotificationCause.DROP_QUOTED:
-      return handleDropQuoted(notification, additionalEntity);
+      return handleDropQuoted(notification, await getAdditionalEntity());
     case IdentityNotificationCause.DROP_REPLIED:
-      return handleDropReplied(notification, additionalEntity);
+      return handleDropReplied(notification, await getAdditionalEntity());
     case IdentityNotificationCause.DROP_VOTED:
-      return handleDropVoted(notification, additionalEntity);
+      return handleDropVoted(notification, await getAdditionalEntity());
     case IdentityNotificationCause.DROP_POLL_VOTED:
-      return handleDropPollVoted(notification, additionalEntity);
+      return handleDropPollVoted(notification, await getAdditionalEntity());
     case IdentityNotificationCause.DROP_REACTED:
-      return handleDropReacted(notification, additionalEntity);
+      return handleDropReacted(notification, await getAdditionalEntity());
     case IdentityNotificationCause.DROP_BOOSTED:
-      return handleDropBoosted(notification, additionalEntity);
+      return handleDropBoosted(notification, await getAdditionalEntity());
     case IdentityNotificationCause.WAVE_CREATED:
-      return handleWaveCreated(notification, additionalEntity);
+      return handleWaveCreated(notification, await getAdditionalEntity());
     case IdentityNotificationCause.ALL_DROPS:
-      return handleAllDrops(notification, additionalEntity);
+      return handleAllDrops(notification, await getAdditionalEntity());
     case IdentityNotificationCause.PRIORITY_ALERT:
-      return handlePriorityAlert(notification, additionalEntity);
+      return handlePriorityAlert(notification, await getAdditionalEntity());
+    case IdentityNotificationCause.SUBSCRIPTION_COVERAGE:
+      return handleSubscriptionCoverage(notification, targetProfile);
     default:
       return null;
   }
+}
+
+function handleSubscriptionCoverage(
+  notification: IdentityNotificationEntity,
+  targetProfile: ApiIdentity
+) {
+  const additionalData =
+    extractAdditionalData<SubscriptionCoverageNotificationData>(notification);
+  const handle = targetProfile.normalised_handle ?? targetProfile.handle;
+  if (!handle) {
+    throw new Error(
+      `[ID ${notification.id}] Subscription coverage profile handle not found`
+    );
+  }
+  return (
+    buildSubscriptionCoveragePushNotificationData(additionalData, handle) ??
+    SKIP_NOTIFICATION_PUSH
+  );
 }
 
 async function handleIdentitySubscribed(additionalEntity: ApiIdentity) {

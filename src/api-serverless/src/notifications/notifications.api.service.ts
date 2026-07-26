@@ -17,8 +17,10 @@ import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
+import { ApiNotificationAdditionalContextV2 } from '@/api/generated/models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
   DropReactionProfileRow,
@@ -429,6 +431,9 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
+          break;
+        }
         default: {
           assertUnreachable(notificationCause);
         }
@@ -463,7 +468,8 @@ export class NotificationsApiService {
     switch (notificationCause) {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
-      case IdentityNotificationCause.IDENTITY_NIC: {
+      case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return null;
       }
       case IdentityNotificationCause.IDENTITY_MENTIONED:
@@ -490,7 +496,8 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
-      case IdentityNotificationCause.WAVE_CREATED: {
+      case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return [];
       }
       case IdentityNotificationCause.IDENTITY_MENTIONED:
@@ -737,6 +744,19 @@ export class NotificationsApiService {
           related_identity: profiles[data.additional_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: this.getSubscriptionCoverageAdditionalContext(
+            notification.data
+          )
         };
       }
       default: {
@@ -1014,10 +1034,50 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: this.getSubscriptionCoverageAdditionalContext(
+            notification.data
+          )
+        };
+      }
       default: {
         return assertUnreachable(notificationCause);
       }
     }
+  }
+
+  private getSubscriptionCoverageAdditionalContext(
+    data: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE }
+    >['data']
+  ): ApiNotificationAdditionalContextV2 {
+    return {
+      ...data,
+      status: enums.resolveOrThrow(ApiSubscriptionCoverageStatus, data.status),
+      funded_through: data.funded_through
+        ? {
+            ...data.funded_through,
+            mint_at: new Date(data.funded_through.mint_at)
+          }
+        : null,
+      next_unfunded: data.next_unfunded
+        ? {
+            ...data.next_unfunded,
+            mint_at: new Date(data.next_unfunded.mint_at)
+          }
+        : null,
+      top_up_deadline: data.top_up_deadline
+        ? new Date(data.top_up_deadline)
+        : null
+    };
   }
 
   public async getWaveSubscription(

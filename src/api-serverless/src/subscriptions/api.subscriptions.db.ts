@@ -41,6 +41,7 @@ import {
   fetchSubscriptionEligibilityForKeys
 } from '@/subscriptionsDaily/db.subscriptions';
 import { Time } from '@/time';
+import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -157,6 +158,11 @@ export async function updateSubscriptionMode(
   await updateSubscriptionModeInternal(
     consolidationKey,
     automatic,
+    connectionToUse
+  );
+  await markSubscriptionCoverageDirty(
+    [consolidationKey],
+    'MODE_CHANGED',
     connectionToUse
   );
 
@@ -284,6 +290,11 @@ export async function updateSubscribeAllEditions(
   await updateSubscribeAllEditionsInternal(
     consolidationKey,
     subscribe_all_editions,
+    connectionToUse
+  );
+  await markSubscriptionCoverageDirty(
+    [consolidationKey],
+    'EDITION_PREFERENCE_CHANGED',
     connectionToUse
   );
 
@@ -483,6 +494,11 @@ export async function updateSubscription(
         },
         { wrappedConnection }
       );
+      await markSubscriptionCoverageDirty(
+        [consolidationKey],
+        'SELECTION_CHANGED',
+        wrappedConnection
+      );
       await sqlExecutor.execute(
         `
           INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log, additional_info)
@@ -566,6 +582,11 @@ export async function updateSubscriptionCount(
         `,
         { consolidationKey, log, additionalInfo },
         { wrappedConnection }
+      );
+      await markSubscriptionCoverageDirty(
+        [consolidationKey],
+        'QUANTITY_CHANGED',
+        wrappedConnection
       );
     }
   );

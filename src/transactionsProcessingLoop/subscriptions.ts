@@ -32,6 +32,7 @@ import {
   getLastProcessingBlock,
   persistBlock
 } from './db.transactions_processing';
+import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -337,6 +338,13 @@ async function processSubscription(
   await entityManager
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);
+  if (entityManager.queryRunner) {
+    await markSubscriptionCoverageDirty(
+      [finalSubscription.consolidation_key],
+      'SUBSCRIPTION_REDEEMED',
+      { connection: entityManager.queryRunner }
+    );
+  }
 }
 
 function buildTransactionLink(transactionHash: string): string {

@@ -89,7 +89,8 @@ const settingsSchema: Joi.ObjectSchema<Partial<PushNotificationSettingsData>> =
     drop_voted: Joi.boolean().optional(),
     drop_reacted: Joi.boolean().optional(),
     drop_boosted: Joi.boolean().optional(),
-    wave_created: Joi.boolean().optional()
+    wave_created: Joi.boolean().optional(),
+    subscription_coverage: Joi.boolean().optional()
   });
 
 router.get(

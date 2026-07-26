@@ -32,7 +32,8 @@ export async function getPushNotificationSettings(
     drop_voted: result.drop_voted,
     drop_reacted: result.drop_reacted,
     drop_boosted: result.drop_boosted,
-    wave_created: result.wave_created
+    wave_created: result.wave_created,
+    subscription_coverage: result.subscription_coverage
   };
 }
 
@@ -61,7 +62,8 @@ export async function upsertPushNotificationSettings(
       drop_voted,
       drop_reacted,
       drop_boosted,
-      wave_created
+      wave_created,
+      subscription_coverage
     ) VALUES (
       :profileId,
       :deviceId,
@@ -74,7 +76,8 @@ export async function upsertPushNotificationSettings(
       :drop_voted,
       :drop_reacted,
       :drop_boosted,
-      :wave_created
+      :wave_created,
+      :subscription_coverage
     )
     ON DUPLICATE KEY UPDATE
       identity_subscribed = VALUES(identity_subscribed),
@@ -86,7 +89,8 @@ export async function upsertPushNotificationSettings(
       drop_voted = VALUES(drop_voted),
       drop_reacted = VALUES(drop_reacted),
       drop_boosted = VALUES(drop_boosted),
-      wave_created = VALUES(wave_created)
+      wave_created = VALUES(wave_created),
+      subscription_coverage = VALUES(subscription_coverage)
     `,
     {
       profileId,

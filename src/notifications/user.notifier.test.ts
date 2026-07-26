@@ -46,6 +46,67 @@ describe('UserNotifier notifyWaveDropCreatedRecipients', () => {
   });
 });
 
+describe('UserNotifier notifyOfSubscriptionCoverage', () => {
+  it('stores an actorless notification in the supplied transaction', async () => {
+    const identityNotificationsDb = {
+      insertManyNotifications: jest.fn().mockResolvedValue([77])
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+    const connection = {} as any;
+    const data = {
+      recipient_profile_id: 'stale-profile',
+      profile_handle: 'alice',
+      status: 'RUNNING_LOW' as const,
+      consolidation_key: '0xabc-0xdef',
+      mint_capacity: 3,
+      allocated_mints: 3,
+      fully_funded_drops: 3,
+      funded_through: {
+        token_id: 530,
+        mint_at: '2026-08-17T00:00:00.000Z'
+      },
+      next_unfunded: {
+        token_id: 531,
+        mint_at: '2026-08-24T00:00:00.000Z',
+        requested_mints: 1,
+        funded_mints: 0,
+        missing_mints: 1
+      },
+      minimum_top_up_eth: '0.06529',
+      top_up_deadline: null,
+      calculation_version: 1,
+      forecast_fingerprint: 'risk-531-x1'
+    };
+
+    await expect(
+      notifier.notifyOfSubscriptionCoverage('recipient-1', data, connection)
+    ).resolves.toEqual([77]);
+
+    expect(
+      identityNotificationsDb.insertManyNotifications
+    ).toHaveBeenCalledWith(
+      [
+        {
+          identity_id: 'recipient-1',
+          additional_identity_id: null,
+          related_drop_id: null,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          additional_data: {
+            ...data,
+            recipient_profile_id: 'recipient-1'
+          },
+          wave_id: null,
+          visibility_group_id: null
+        }
+      ],
+      connection
+    );
+  });
+});
+
 describe('UserNotifier notifyOfDropVote', () => {
   afterEach(() => {
     jest.restoreAllMocks();

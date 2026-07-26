@@ -18,6 +18,7 @@ import {
   sendSubscriptionTopUpWaveUpdate
 } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
+import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
@@ -86,6 +87,11 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           );
         }
       }
+      await markSubscriptionCoverageDirty(
+        [consolidationKey],
+        'BALANCE_TOPPED_UP',
+        qrHolder
+      );
 
       processedTopUps.push(topUp);
     }
