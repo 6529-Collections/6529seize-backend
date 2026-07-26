@@ -1,11 +1,12 @@
 # Wallet Auth Session V2 Migration Plan
 
-Revision: June 2026
+Revision: July 2026
 
 This is the deploy runbook for wallet auth session v2. The rollout keeps v1
 refresh available until the backend migration deadline so existing users are not
-logged out by deploy alone, but new v2 sessions are created only by a v2
-structured signature or by connection sharing from an already-v2 session.
+logged out by deploy alone, but new v2 sessions are created only by a
+server-authenticated wallet challenge or by connection sharing from an
+already-v2 session.
 
 ## Target Shape
 
@@ -19,6 +20,9 @@ structured signature or by connection sharing from an already-v2 session.
   multi-account sessions target the active wallet instead of whichever account
   last wrote the compatibility cookie.
 - Native session v2 uses the native refresh token in secure storage.
+- Web session-v2 wallet challenges are canonical ERC-4361 SIWE messages. Native
+  and desktop session-v2 challenges retain the existing structured-message
+  format.
 - External API clients are not blocked by browser CORS allowlists. Browser
   credentialed CORS remains narrow only on cookie-backed web auth routes.
 - Legacy refresh remains a temporary bridge until the configured migration
@@ -53,10 +57,13 @@ Defaults if `WEB_APP_ORIGIN` is unset:
 - Requests served by `api.staging.6529.io` allow credentialed web auth from
   `https://staging.6529.io`.
 - Localhost API hosts allow common localhost frontend ports.
-- Session-v2 signable messages use the accepted request API host as `Audience`
-  when the request is served through `api.6529.io` or `api.staging.6529.io`.
-  If the request host is not accepted, the backend falls back to `API_BASE_URL`
-  and then `api.6529.io`.
+- Web session-v2 challenge envelopes use the normalized, allowlisted request API
+  host as their JWT `aud`. A malformed or unrecognized supplied `Host` fails
+  closed; the backend never substitutes a production audience for that request.
+- Web SIWE messages use the exact normalized first-party request `Origin` for
+  their scheme, domain, and URI. Origins containing credentials, a non-root
+  path, query, fragment, unsupported scheme, or `null` are rejected instead of
+  being canonicalized into an accepted origin.
 
 Additive origin config:
 
@@ -114,6 +121,14 @@ Backend checks after deploy:
   `/accept-connection-sharing?token=...&address=...` path.
 - V2 web auth routes return exact credentialed CORS for the real web origin and
   reject unrelated browser origins.
+- New web challenges are canonical SIWE v1 messages with a five-minute
+  expiration and no more than 60 seconds of future `Issued At` skew. The
+  configured `AUTH_WALLET_CHAIN_ID` is authoritative; an obsolete request
+  `chain_id` remains syntax-validated but does not select the issued chain.
+- Outstanding server-authenticated legacy structured web challenges issued
+  before deployment remain valid only through their existing five-minute
+  expiration. The post-deploy issuance path does not create new legacy web
+  challenges.
 - Multi-account web refresh/logout preserve account isolation: sign A and B into
   v2, let the compatibility cookie point at B, then refresh/logout A by
   `client_address` without rotating or revoking B.
@@ -235,11 +250,12 @@ zero and rollback is no longer needed.
 Do not silently convert v1 refresh tokens into v2 sessions. Users should migrate
 through one of these paths:
 
-- sign the v2 structured auth message; or
+- sign the web SIWE or native/desktop structured auth message; or
 - use connection sharing from an already-v2 authenticated session.
 
-This keeps the v2 session model clean: every v2 session is created by a v2
-signature or by a v2-authenticated connection-sharing flow.
+This keeps the v2 session model clean: every v2 session is created by a
+server-authenticated challenge signature or by a v2-authenticated
+connection-sharing flow.
 Mobile/native/desktop connection-share URLs carry the one-time code and address
 only; the server stores and returns the role associated with the share. Redeem
 responses include the created `client_type` so clients persist refresh tokens
