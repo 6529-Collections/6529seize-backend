@@ -226,6 +226,23 @@ describe('wallet auth SIWE routes', () => {
     ).toThrow('allowed API Host');
   });
 
+  it('validates the signer before resolving the web API Host', () => {
+    expect(() =>
+      sessionNonceHandler(
+        makeRequest({
+          query: {
+            signer_address: 'not-an-address',
+            client_type: 'web',
+            chain_id: 1
+          },
+          origin: 'https://6529.io',
+          host: 'untrusted-api.example'
+        }),
+        makeResponse()
+      )
+    ).toThrow('Invalid signer address');
+  });
+
   it.each([
     {
       clientType: 'native',
@@ -361,6 +378,38 @@ describe('wallet auth SIWE routes', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('fails closed on an unrecognized login Host without consuming SIWE', async () => {
+    const issued = issueWebChallenge();
+    const signature = await wallet.signMessage(issued.message);
+    const body = sessionLoginBody({
+      messageSignature: signature,
+      serverSignature: issued.serverSignature,
+      clientType: 'web'
+    });
+
+    await expect(
+      sessionLoginHandler(
+        makeRequest({
+          body,
+          origin: 'https://6529.io',
+          host: 'untrusted-api.example'
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow('Authentication failed');
+
+    await expect(
+      sessionLoginHandler(
+        makeRequest({
+          body,
+          origin: 'https://6529.io',
+          host: 'api.6529.io'
+        }),
+        makeResponse()
+      )
+    ).resolves.toBeUndefined();
+  });
+
   it('rejects SIWE for native without consuming the web challenge', async () => {
     const issued = issueWebChallenge();
     const signature = await wallet.signMessage(issued.message);
@@ -393,31 +442,14 @@ describe('wallet auth SIWE routes', () => {
   });
 
   it('accepts a valid outstanding legacy first_party_web challenge', async () => {
-    const issuedAt = new Date();
-    const message = buildStructuredWalletSignatureMessage({
-      kind: 'authentication',
-      audience: 'api.6529.io',
-      domain: '6529.io',
-      clientOrigin: 'https://6529.io',
-      sessionType: 'first_party_web',
-      wallet: wallet.address,
-      issuedAt,
-      expirationTime: new Date(issuedAt.getTime() + 5 * 60 * 1000),
-      nonce: 'outstanding-legacy-web-challenge',
-      action: 'login',
-      purpose: 'Sign this message to authenticate with 6529.'
-    });
-    const signature = await wallet.signMessage(message);
-    const serverSignature = jwt.sign(message, JWT_SECRET, {
-      algorithm: 'HS256'
-    });
+    const challenge = await issueLegacyWebChallenge();
 
     await expect(
       sessionLoginHandler(
         makeRequest({
           body: sessionLoginBody({
-            messageSignature: signature,
-            serverSignature,
+            messageSignature: challenge.signature,
+            serverSignature: challenge.serverSignature,
             clientType: 'web'
           }),
           origin: 'https://6529.io',
@@ -426,6 +458,51 @@ describe('wallet auth SIWE routes', () => {
         makeResponse()
       )
     ).resolves.toBeUndefined();
+  });
+
+  it('rejects an expired outstanding legacy web challenge', async () => {
+    const issuedAt = new Date(Date.now() - 6 * 60 * 1000);
+    const challenge = await issueLegacyWebChallenge({
+      issuedAt,
+      expirationTime: new Date(issuedAt.getTime() + 5 * 60 * 1000)
+    });
+
+    await expect(
+      sessionLoginHandler(
+        makeRequest({
+          body: sessionLoginBody({
+            messageSignature: challenge.signature,
+            serverSignature: challenge.serverSignature,
+            clientType: 'web'
+          }),
+          origin: 'https://6529.io',
+          host: 'api.6529.io'
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow('Invalid client signature');
+  });
+
+  it('consumes an outstanding legacy web challenge exactly once', async () => {
+    const challenge = await issueLegacyWebChallenge();
+    const body = sessionLoginBody({
+      messageSignature: challenge.signature,
+      serverSignature: challenge.serverSignature,
+      clientType: 'web'
+    });
+    const request = () =>
+      makeRequest({
+        body,
+        origin: 'https://6529.io',
+        host: 'api.6529.io'
+      });
+
+    await expect(
+      sessionLoginHandler(request(), makeResponse())
+    ).resolves.toBeUndefined();
+    await expect(
+      sessionLoginHandler(request(), makeResponse())
+    ).rejects.toThrow('Invalid or consumed wallet auth challenge');
   });
 
   it('keeps native challenges bound to the matching custom Session Type', async () => {
@@ -543,6 +620,39 @@ function issueWebChallenge(): {
       challenge,
       apiAudience: 'api.6529.io',
       jwtSecret: JWT_SECRET
+    })
+  };
+}
+
+async function issueLegacyWebChallenge({
+  issuedAt = new Date(),
+  expirationTime = new Date(issuedAt.getTime() + 5 * 60 * 1000)
+}: {
+  readonly issuedAt?: Date;
+  readonly expirationTime?: Date;
+} = {}): Promise<{
+  readonly message: string;
+  readonly signature: string;
+  readonly serverSignature: string;
+}> {
+  const message = buildStructuredWalletSignatureMessage({
+    kind: 'authentication',
+    audience: 'api.6529.io',
+    domain: '6529.io',
+    clientOrigin: 'https://6529.io',
+    sessionType: 'first_party_web',
+    wallet: wallet.address,
+    issuedAt,
+    expirationTime,
+    nonce: 'outstandinglegacywebchallenge01',
+    action: 'login',
+    purpose: 'Sign this message to authenticate with 6529.'
+  });
+  return {
+    message,
+    signature: await wallet.signMessage(message),
+    serverSignature: jwt.sign(message, JWT_SECRET, {
+      algorithm: 'HS256'
     })
   };
 }

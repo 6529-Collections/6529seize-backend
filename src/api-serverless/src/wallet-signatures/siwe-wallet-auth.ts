@@ -221,8 +221,7 @@ export function signSiweWebAuthChallenge({
 }: SignSiweWebAuthChallengeParams): string {
   const parsed = parseSiweWebAuthMessage(challenge.message);
   if (
-    !parsed ||
-    parsed.uri !== challenge.clientOrigin ||
+    parsed?.uri !== challenge.clientOrigin ||
     parsed.domain !== challenge.domain ||
     parsed.nonce !== challenge.nonce ||
     parsed.issuedAt.getTime() !== challenge.issuedAt.getTime() ||
@@ -287,8 +286,7 @@ export function verifySessionChallengeToken({
 
   const parsed = parseSiweWebAuthMessage(verified.message);
   if (
-    !parsed ||
-    parsed.uri !== verified.client_origin ||
+    parsed?.uri !== verified.client_origin ||
     toEpochSeconds(parsed.issuedAt) !== verified.iat ||
     toEpochSeconds(parsed.expirationTime) !== verified.exp
   ) {

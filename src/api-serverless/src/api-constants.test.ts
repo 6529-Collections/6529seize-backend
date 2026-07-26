@@ -166,11 +166,14 @@ describe('api CORS constants', () => {
 
   it('ignores configured values that are not exact origins', () => {
     process.env.WEB_APP_ADDITIONAL_ORIGINS =
-      'https://user:pass@preview.6529.io,https://preview.6529.io/path';
+      'https://valid.6529.io,https://user:pass@preview.6529.io,https://preview.6529.io/path';
 
     expect(
       isWebAuthCredentialOriginAllowed('https://preview.6529.io', 'api.6529.io')
     ).toBe(false);
+    expect(
+      isWebAuthCredentialOriginAllowed('https://valid.6529.io', 'api.6529.io')
+    ).toBe(true);
   });
 
   function restoreEnv(envName: keyof typeof originalEnv): void {
