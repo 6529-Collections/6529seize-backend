@@ -545,12 +545,22 @@ response proves there are no further live qualifications to yield.
 
 GitHub Actions performs exact composition, combined preflight, immutable
 packaging, backend DAG deployment, frontend deployment, and manifest-bound E2E.
-Frontend artifacts contain independently checksummed staging and production
-profiles inside one immutable aggregate. Frontend/backend preparation and
-independent backend DAG frontiers run concurrently; only shared environment
-mutation plus E2E ownership is serialized. Operation keys, workflow titles,
-workflow authorization, SHA/artifact checks, row versions, and callback
-identity make retries and duplicate reconciliation idempotent.
+For cumulative staging, each affected repository's immutable release commit has
+the recorded `1a-staging` head as its first parent and the composed candidate
+tree as its second parent. After preparation and the staging fence, the
+reconciler advances only affected `1a-staging` refs with non-force
+compare-and-swap operations before deployment. The branch heads, deployed
+runtime, manifest identity, and E2E inputs therefore describe the same combined
+state. A retry observes a completed ref operation and continues idempotently;
+an unexpected ref move fails closed and pauses only the staging lane. Rollback
+uses the same forward-only pattern with an immutable restore commit instead of
+rewinding a shared ref. Frontend artifacts contain independently checksummed
+staging and production profiles inside one immutable aggregate.
+Frontend/backend preparation and independent backend DAG frontiers run
+concurrently; only shared environment mutation plus E2E ownership is
+serialized. Operation keys, workflow titles, workflow authorization,
+SHA/artifact checks, row versions, and callback identity make retries and
+duplicate reconciliation idempotent.
 
 The staging manifest distinguishes deployed from validated state and binds E2E
 to exact frontend/backend tree SHAs, artifact digests, service operations, and
