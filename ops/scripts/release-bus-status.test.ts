@@ -11,6 +11,18 @@ const VALID_CONTROLS = [
   { scope: 'STAGING', paused: false },
   { scope: 'PRODUCTION', paused: 0 }
 ];
+const VALID_STAGING_STATE = {
+  status: 'LIVE',
+  current_manifest_id: 'manifest-current',
+  last_validated_manifest_id: 'manifest-current',
+  frontend_sha: 'a'.repeat(40),
+  backend_sha: 'b'.repeat(40),
+  frontend_staging_ref_sha: 'a'.repeat(40),
+  backend_staging_ref_sha: 'b'.repeat(40),
+  clean_main: false,
+  last_transition_train_id: 'train-current',
+  row_version: 7
+};
 
 type HelperResult = {
   readonly code: number;
@@ -144,7 +156,8 @@ describe('release-bus-status helper', () => {
     async (mode) => {
       const result = await runWithResponse({
         mode,
-        controls: VALID_CONTROLS
+        controls: VALID_CONTROLS,
+        staging_state: VALID_STAGING_STATE
       });
 
       expect(result.code).toBe(0);
@@ -156,6 +169,18 @@ describe('release-bus-status helper', () => {
           ALL: 'RUNNING',
           STAGING: 'RUNNING',
           PRODUCTION: 'RUNNING'
+        },
+        staging: {
+          status: 'LIVE',
+          current_manifest_id: 'manifest-current',
+          last_validated_manifest_id: 'manifest-current',
+          frontend_sha: 'a'.repeat(40),
+          backend_sha: 'b'.repeat(40),
+          frontend_staging_ref_sha: 'a'.repeat(40),
+          backend_staging_ref_sha: 'b'.repeat(40),
+          clean_main: false,
+          last_transition_train_id: 'train-current',
+          row_version: 7
         }
       });
     }
@@ -169,7 +194,8 @@ describe('release-bus-status helper', () => {
         controls: VALID_CONTROLS.map((control) => ({
           ...control,
           paused: control.scope === pausedScope
-        }))
+        })),
+        staging_state: VALID_STAGING_STATE
       });
 
       expect(result.code).toBe(0);
@@ -346,5 +372,15 @@ describe('release-bus-status helper', () => {
 
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('invalid status data');
+  });
+
+  it('fails closed when authoritative staging state is missing', async () => {
+    const result = await runWithResponse({
+      mode: 'OFF',
+      controls: VALID_CONTROLS
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('invalid staging state');
   });
 });

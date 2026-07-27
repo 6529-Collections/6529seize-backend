@@ -8,6 +8,7 @@ import {
   RELEASE_BUS_V2_LOCKS_TABLE,
   RELEASE_BUS_V2_MANIFESTS_TABLE,
   RELEASE_BUS_V2_OPERATIONS_TABLE,
+  RELEASE_BUS_V2_STAGING_STATE_TABLE,
   RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE,
   RELEASE_BUS_V2_TRAINS_TABLE
 } from '@/constants';
@@ -29,6 +30,11 @@ import type {
   ReleaseBusV2OperationStatus,
   ReleaseBusV2PrEvidence,
   ReleaseBusV2Repository as ReleaseBusV2RepositoryName,
+  ReleaseBusV2StagingLiveState,
+  ReleaseBusV2StagingPolicy,
+  ReleaseBusV2StagingStateRecord,
+  ReleaseBusV2StagingStateStatus,
+  ReleaseBusV2StagingTransition,
   ReleaseBusV2TrainRecord,
   ReleaseBusV2TrainStatus
 } from '@/releaseBusV2/release-bus-v2.types';
@@ -59,6 +65,7 @@ export type ReleaseBusV2TrainCandidateRecord = {
   readonly candidate_id: string;
   readonly sequence: number;
   readonly disposition: string;
+  readonly candidate_role?: string;
   readonly created_at: number;
 };
 
@@ -191,7 +198,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     const superseded = await this.db.execute<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
-         and current_train_id is null
+         and current_train_id is null and staging_live_state = 'NOT_LIVE'
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, prNumber, headSha },
       dbOptions(ctx)
@@ -201,7 +208,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
        set status = 'SUPERSEDED', superseded_at = :now, updated_at = :now,
            row_version = row_version + 1
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
-         and current_train_id is null
+         and current_train_id is null and staging_live_state = 'NOT_LIVE'
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, prNumber, headSha, now },
       dbOptions(ctx)
@@ -219,7 +226,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
-         and current_train_id is null
+         and current_train_id is null and staging_live_state = 'NOT_LIVE'
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, branchName, currentHeadSha },
       dbOptions(ctx)
@@ -232,7 +239,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            row_version = row_version + 1
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
-         and current_train_id is null
+         and current_train_id is null and staging_live_state = 'NOT_LIVE'
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, branchName, currentHeadSha, now },
       dbOptions(ctx)
@@ -295,6 +302,32 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async listLiveStagingCandidates(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2CandidateRecord[]> {
+    return this.db.execute<ReleaseBusV2CandidateRecord>(
+      `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
+       where staging_live_state = 'LIVE'
+       order by staging_admitted_at asc, created_at asc, id asc${forUpdate ? ' for update' : ''}`,
+      {},
+      dbOptions(ctx)
+    );
+  }
+
+  public async listStagingTransitionRequests(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2CandidateRecord[]> {
+    return this.db.execute<ReleaseBusV2CandidateRecord>(
+      `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
+       where staging_transition_request in ('REMOVE', 'ABSORB')
+       order by staging_transition_requested_at asc, id asc${forUpdate ? ' for update' : ''}`,
+      {},
+      dbOptions(ctx)
+    );
+  }
+
   public async updateCandidate(
     id: string,
     rowVersion: number,
@@ -303,6 +336,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly currentTrainId?: string | null;
       readonly stagingValidatedTrainId?: string | null;
       readonly stagingValidatedManifestId?: string | null;
+      readonly stagingLiveState?: ReleaseBusV2StagingLiveState;
+      readonly stagingLiveManifestId?: string | null;
+      readonly stagingAdmittedAt?: number | null;
+      readonly stagingLiveUpdatedAt?: number | null;
+      readonly stagingTransitionRequest?: 'REMOVE' | 'ABSORB' | null;
+      readonly stagingTransitionRequestedAt?: number | null;
+      readonly stagingTransitionRequestedBy?: string | null;
+      readonly stagingTransitionReason?: string | null;
       readonly productionRequestedAt?: number | null;
       readonly productionRequestedBy?: string | null;
       readonly holdReason?: string | null;
@@ -316,6 +357,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            current_train_id = case when :setCurrentTrainId = 1 then :currentTrainId else current_train_id end,
            staging_validated_train_id = case when :setStagingValidatedTrainId = 1 then :stagingValidatedTrainId else staging_validated_train_id end,
            staging_validated_manifest_id = case when :setStagingValidatedManifestId = 1 then :stagingValidatedManifestId else staging_validated_manifest_id end,
+           staging_live_state = case when :setStagingLiveState = 1 then :stagingLiveState else staging_live_state end,
+           staging_live_manifest_id = case when :setStagingLiveManifestId = 1 then :stagingLiveManifestId else staging_live_manifest_id end,
+           staging_admitted_at = case when :setStagingAdmittedAt = 1 then :stagingAdmittedAt else staging_admitted_at end,
+           staging_live_updated_at = case when :setStagingLiveUpdatedAt = 1 then :stagingLiveUpdatedAt else staging_live_updated_at end,
+           staging_transition_request = case when :setStagingTransitionRequest = 1 then :stagingTransitionRequest else staging_transition_request end,
+           staging_transition_requested_at = case when :setStagingTransitionRequestedAt = 1 then :stagingTransitionRequestedAt else staging_transition_requested_at end,
+           staging_transition_requested_by = case when :setStagingTransitionRequestedBy = 1 then :stagingTransitionRequestedBy else staging_transition_requested_by end,
+           staging_transition_reason = case when :setStagingTransitionReason = 1 then :stagingTransitionReason else staging_transition_reason end,
            production_requested_at = case when :setProductionRequestedAt = 1 then :productionRequestedAt else production_requested_at end,
            production_requested_by = case when :setProductionRequestedBy = 1 then :productionRequestedBy else production_requested_by end,
            hold_reason = case when :setHoldReason = 1 then :holdReason else hold_reason end,
@@ -334,6 +383,30 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         setStagingValidatedManifestId:
           fields.stagingValidatedManifestId === undefined ? 0 : 1,
         stagingValidatedManifestId: fields.stagingValidatedManifestId ?? null,
+        setStagingLiveState: fields.stagingLiveState === undefined ? 0 : 1,
+        stagingLiveState: fields.stagingLiveState ?? 'NOT_LIVE',
+        setStagingLiveManifestId:
+          fields.stagingLiveManifestId === undefined ? 0 : 1,
+        stagingLiveManifestId: fields.stagingLiveManifestId ?? null,
+        setStagingAdmittedAt: fields.stagingAdmittedAt === undefined ? 0 : 1,
+        stagingAdmittedAt: fields.stagingAdmittedAt ?? null,
+        setStagingLiveUpdatedAt:
+          fields.stagingLiveUpdatedAt === undefined ? 0 : 1,
+        stagingLiveUpdatedAt: fields.stagingLiveUpdatedAt ?? null,
+        setStagingTransitionRequest:
+          fields.stagingTransitionRequest === undefined ? 0 : 1,
+        stagingTransitionRequest: fields.stagingTransitionRequest ?? null,
+        setStagingTransitionRequestedAt:
+          fields.stagingTransitionRequestedAt === undefined ? 0 : 1,
+        stagingTransitionRequestedAt:
+          fields.stagingTransitionRequestedAt ?? null,
+        setStagingTransitionRequestedBy:
+          fields.stagingTransitionRequestedBy === undefined ? 0 : 1,
+        stagingTransitionRequestedBy:
+          fields.stagingTransitionRequestedBy ?? null,
+        setStagingTransitionReason:
+          fields.stagingTransitionReason === undefined ? 0 : 1,
+        stagingTransitionReason: fields.stagingTransitionReason ?? null,
         setProductionRequestedAt:
           fields.productionRequestedAt === undefined ? 0 : 1,
         productionRequestedAt: fields.productionRequestedAt ?? null,
@@ -381,6 +454,12 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly frontendBaseSha: string;
       readonly backendBaseSha: string;
       readonly candidateIds: readonly string[];
+      readonly stagingPolicy?: ReleaseBusV2StagingPolicy;
+      readonly stagingBaselineManifestId?: string | null;
+      readonly stagingTransition?: ReleaseBusV2StagingTransition;
+      readonly candidateRoles?: Readonly<Record<string, string>>;
+      readonly candidateDispositions?: Readonly<Record<string, string>>;
+      readonly initialStatus?: ReleaseBusV2TrainStatus;
     },
     ctx: RequestContext
   ): Promise<ReleaseBusV2TrainRecord> {
@@ -389,13 +468,20 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_TRAINS_TABLE}
        (id, lane, status, frontend_base_sha, backend_base_sha, phase_started_at,
+        staging_policy, staging_baseline_manifest_id, staging_transition_json,
         created_at, updated_at, row_version)
-       values (:id, :lane, 'CLAIMED', :frontendBaseSha, :backendBaseSha, :now, :now, :now, 1)`,
+       values (:id, :lane, :initialStatus, :frontendBaseSha, :backendBaseSha, :now,
+        :stagingPolicy, :stagingBaselineManifestId, :stagingTransition,
+        :now, :now, 1)`,
       {
         id,
         lane: input.lane,
         frontendBaseSha: input.frontendBaseSha,
         backendBaseSha: input.backendBaseSha,
+        stagingPolicy: input.stagingPolicy ?? null,
+        stagingBaselineManifestId: input.stagingBaselineManifestId ?? null,
+        stagingTransition: json(input.stagingTransition ?? null),
+        initialStatus: input.initialStatus ?? 'CLAIMED',
         now
       },
       dbOptions(ctx)
@@ -404,13 +490,15 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       const candidateId = input.candidateIds[index];
       await this.db.execute(
         `insert into ${RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE}
-         (id, train_id, candidate_id, sequence, disposition, created_at)
-         values (:id, :trainId, :candidateId, :sequence, 'INCLUDED', :now)`,
+         (id, train_id, candidate_id, sequence, disposition, candidate_role, created_at)
+         values (:id, :trainId, :candidateId, :sequence, :disposition, :candidateRole, :now)`,
         {
           id: randomUUID(),
           trainId: id,
           candidateId,
           sequence: index + 1,
+          candidateRole: input.candidateRoles?.[candidateId] ?? 'NEW',
+          disposition: input.candidateDispositions?.[candidateId] ?? 'INCLUDED',
           now
         },
         dbOptions(ctx)
@@ -419,6 +507,127 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     const train = await this.findTrain(id, ctx);
     if (!train) throw new Error('Release Bus v2 train insert was not visible');
     return train;
+  }
+
+  public async getStagingState(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2StagingStateRecord> {
+    const state = await this.db.oneOrNull<ReleaseBusV2StagingStateRecord>(
+      `select * from ${RELEASE_BUS_V2_STAGING_STATE_TABLE}
+       where id = 'current'${forUpdate ? ' for update' : ''}`,
+      {},
+      dbOptions(ctx)
+    );
+    if (!state)
+      throw new Error('Release Bus v2 staging state singleton is missing');
+    return state;
+  }
+
+  public async updateStagingState(
+    expectedRowVersion: number,
+    fields: {
+      readonly status: ReleaseBusV2StagingStateStatus;
+      readonly currentManifestId: string | null;
+      readonly lastValidatedManifestId: string | null;
+      readonly frontendSha: string | null;
+      readonly backendSha: string | null;
+      readonly frontendStagingRefSha: string | null;
+      readonly backendStagingRefSha: string | null;
+      readonly cleanMain: boolean;
+      readonly lastTransitionTrainId: string;
+    },
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const result = await this.db.execute(
+      `update ${RELEASE_BUS_V2_STAGING_STATE_TABLE}
+       set status = :status, current_manifest_id = :currentManifestId,
+           last_validated_manifest_id = :lastValidatedManifestId,
+           frontend_sha = :frontendSha, backend_sha = :backendSha,
+           frontend_staging_ref_sha = :frontendStagingRefSha,
+           backend_staging_ref_sha = :backendStagingRefSha,
+           clean_main = :cleanMain,
+           last_transition_train_id = :lastTransitionTrainId,
+           updated_at = :now, row_version = row_version + 1
+       where id = 'current' and row_version = :expectedRowVersion`,
+      {
+        expectedRowVersion,
+        ...fields,
+        cleanMain: fields.cleanMain ? 1 : 0,
+        now: Date.now()
+      },
+      dbOptions(ctx)
+    );
+    return this.db.getAffectedRows(result) === 1;
+  }
+
+  public async commitValidatedStaging(
+    input: {
+      readonly trainId: string;
+      readonly expectedStateVersion: number;
+      readonly manifestId: string;
+      readonly frontendSha: string;
+      readonly backendSha: string;
+      readonly frontendStagingRefSha: string;
+      readonly backendStagingRefSha: string;
+      readonly admittedCandidateIds: readonly string[];
+      readonly removedCandidateIds: readonly string[];
+      readonly newCandidateIds: readonly string[];
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const now = Date.now();
+    const admitted = Array.from(new Set(input.admittedCandidateIds));
+    const removed = Array.from(new Set(input.removedCandidateIds)).filter(
+      (id) => !admitted.includes(id)
+    );
+    const stateUpdated = await this.updateStagingState(
+      input.expectedStateVersion,
+      {
+        status: admitted.length === 0 ? 'CLEAN_MAIN' : 'LIVE',
+        currentManifestId: input.manifestId,
+        lastValidatedManifestId: input.manifestId,
+        frontendSha: input.frontendSha,
+        backendSha: input.backendSha,
+        frontendStagingRefSha: input.frontendStagingRefSha,
+        backendStagingRefSha: input.backendStagingRefSha,
+        cleanMain: admitted.length === 0,
+        lastTransitionTrainId: input.trainId
+      },
+      ctx
+    );
+    if (!stateUpdated)
+      throw new Error(
+        'Authoritative staging state changed during validation commit'
+      );
+    if (admitted.length > 0)
+      await this.db.execute(
+        `update ${RELEASE_BUS_V2_CANDIDATES_TABLE}
+         set staging_live_state = 'LIVE',
+             staging_live_manifest_id = :manifestId,
+             staging_admitted_at = coalesce(staging_admitted_at, :now),
+             staging_live_updated_at = :now,
+             updated_at = :now, row_version = row_version + 1
+         where id in (:admitted)`,
+        { admitted, manifestId: input.manifestId, now },
+        dbOptions(ctx)
+      );
+    if (removed.length > 0)
+      await this.db.execute(
+        `update ${RELEASE_BUS_V2_CANDIDATES_TABLE}
+         set staging_live_state = 'NOT_LIVE',
+             staging_live_manifest_id = null,
+             staging_transition_request = null,
+             staging_transition_requested_at = null,
+             staging_transition_requested_by = null,
+             staging_transition_reason = null,
+             hold_reason = null,
+             staging_live_updated_at = :now,
+             updated_at = :now, row_version = row_version + 1
+         where id in (:removed)`,
+        { removed, now },
+        dbOptions(ctx)
+      );
   }
 
   public async createQualificationTrain(
@@ -964,6 +1173,23 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       { frontendSha, backendSha },
       dbOptions(ctx)
     );
+  }
+
+  public async findStagingValidatedManifestByShas(
+    frontendSha: string,
+    backendSha: string,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2ManifestRecord | null> {
+    const matches = await this.db.execute<ReleaseBusV2ManifestRecord>(
+      `select * from ${RELEASE_BUS_V2_MANIFESTS_TABLE}
+       where frontend_sha = :frontendSha and backend_sha = :backendSha
+         and lane = 'STAGING' and status = 'STAGING_VALIDATED'
+         and validated_at is not null and e2e_run_id is not null
+       order by validated_at desc, created_at desc limit 2`,
+      { frontendSha, backendSha },
+      dbOptions(ctx)
+    );
+    return matches.length === 1 ? matches[0] : null;
   }
 
   public async listManifests(

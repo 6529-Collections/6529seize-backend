@@ -15,6 +15,7 @@ const mockLambdaSend = jest.fn();
 const mockV2MarkReadyForProduction = jest.fn();
 const mockV2Cancel = jest.fn();
 const mockV2Register = jest.fn();
+const mockV2RequestStagingTransition = jest.fn();
 const mockV2IsBetaTrainAllowed = jest.fn();
 const mockV2Authorize = jest.fn();
 const mockV2ReportProgress = jest.fn();
@@ -65,8 +66,11 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
 }));
 
 jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
+  ReleaseBusV2StagingTransitionConflictError: class extends Error {},
   releaseBusV2Service: {
     register: (...args: unknown[]) => mockV2Register(...args),
+    requestStagingTransition: (...args: unknown[]) =>
+      mockV2RequestStagingTransition(...args),
     markReadyForProduction: (...args: unknown[]) =>
       mockV2MarkReadyForProduction(...args),
     revokeProductionReadiness: jest.fn(),
@@ -228,6 +232,12 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     mockV2ListOperations.mockResolvedValue([]);
     mockV2ListEvents.mockResolvedValue([]);
     mockV2IsBetaTrainAllowed.mockResolvedValue(true);
+    mockV2RequestStagingTransition.mockResolvedValue({
+      ...v2Candidate,
+      staging_live_state: 'LIVE',
+      staging_transition_request: 'REMOVE',
+      row_version: 5
+    });
     mockRecoverUnsatisfiableProductionQualifications.mockResolvedValue({
       recovered: [
         {
@@ -295,6 +305,80 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       SHA,
       4,
       'developer'
+    );
+  });
+
+  it('records an explicit audited staging lifecycle transition', async () => {
+    const response = await post(
+      `/deploy/release-bus-v2/candidates/${candidateId}/staging-transition`,
+      {
+        expected_head_sha: SHA,
+        expected_row_version: 4,
+        transition: 'REMOVE',
+        reason: 'Operator retirement'
+      }
+    );
+
+    expect(response.status).toBe(202);
+    expect(mockV2RequestStagingTransition).toHaveBeenCalledWith({
+      candidateId,
+      expectedHeadSha: SHA,
+      expectedRowVersion: 4,
+      transition: 'REMOVE',
+      reason: 'Operator retirement',
+      actor: 'developer'
+    });
+    expect(mockLambdaSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an accepted transition successful when the best-effort reconciler wake-up fails', async () => {
+    mockLambdaSend.mockRejectedValueOnce(
+      new Error('temporary Lambda invoke failure')
+    );
+
+    const response = await post(
+      `/deploy/release-bus-v2/candidates/${candidateId}/staging-transition`,
+      {
+        expected_head_sha: SHA,
+        expected_row_version: 4,
+        transition: 'REMOVE',
+        reason: 'Operator retirement'
+      }
+    );
+
+    expect(response.status).toBe(202);
+    expect(mockV2AppendEvent).toHaveBeenCalledWith(
+      {
+        candidateId,
+        eventType: 'STAGING_TRANSITION_RECONCILER_WAKEUP_FAILED',
+        actor: 'developer',
+        payload: { scheduled_reconciliation_will_retry: true }
+      },
+      {}
+    );
+  });
+
+  it('does not expose an unexpected staging-transition repository failure', async () => {
+    mockV2RequestStagingTransition.mockRejectedValueOnce(
+      new Error('mysql connection secret detail')
+    );
+
+    const response = await post(
+      `/deploy/release-bus-v2/candidates/${candidateId}/staging-transition`,
+      {
+        expected_head_sha: SHA,
+        expected_row_version: 4,
+        transition: 'REMOVE',
+        reason: 'Operator retirement'
+      }
+    );
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(response.body)).toContain(
+      'Release Bus v2 staging transition failed'
+    );
+    expect(JSON.stringify(response.body)).not.toContain(
+      'mysql connection secret detail'
     );
   });
 
