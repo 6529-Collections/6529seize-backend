@@ -464,7 +464,6 @@ export class CiPipelineAlertService {
       request.triggered_by_github_login
     );
     const isReleaseTrain = isReleaseBusGitHubAppActor(triggeredByGithubLogin);
-    const releaseTrainId = normalizeOptionalValue(request.release_train_id);
     const contributorGithubLogins = this.getReleaseTrainContributors(request);
     const contributorHandlesByGithubLogin = new Map(
       contributorGithubLogins
