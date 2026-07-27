@@ -225,6 +225,9 @@ describe('Release Bus v2 cumulative admitted staging', () => {
       appendEvent
     };
     const service = new ReleaseBusV2Service(repository as never);
+    mockEnsureCommitStatus.mockRejectedValueOnce(
+      new Error('transient GitHub failure')
+    );
 
     await expect(
       service.repairTerminalCumulativeCarryForwardStatuses('reconciler')
@@ -324,6 +327,126 @@ describe('Release Bus v2 cumulative admitted staging', () => {
       'pending',
       'Release Bus v2: ready for candidate evidence production',
       'Release Bus v2'
+    );
+  });
+
+  it('restores preserved legacy production intent on carry-forward repair', async () => {
+    const stuck = {
+      ...candidate('a1', 'frontend', 'STAGING_BUILDING', true),
+      current_train_id: 'train-cumulative',
+      production_requested_at: 2,
+      production_requested_by: 'operator',
+      production_selection_id: null,
+      row_version: 10
+    };
+    const validatedTrain = {
+      ...train('train-cumulative'),
+      status: 'STAGING_VALIDATED' as const
+    };
+    const updateCandidate = jest.fn(async () => true);
+    const repository = {
+      listCandidates: async () => [stuck],
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      findCandidateById: async () => stuck,
+      findTrain: async () => validatedTrain,
+      listTrainCandidates: async () => [
+        {
+          train_id: validatedTrain.id,
+          candidate_id: stuck.id,
+          candidate_role: 'CARRY_FORWARD',
+          disposition: 'INCLUDED'
+        }
+      ],
+      listProductionManifestsForCandidate: async () => [],
+      updateCandidate,
+      appendEvent: async () => undefined
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await service.repairTerminalCumulativeCarryForwardStatuses('reconciler');
+
+    expect(updateCandidate).toHaveBeenCalledWith(
+      stuck.id,
+      stuck.row_version,
+      expect.objectContaining({
+        status: 'READY_FOR_PRODUCTION',
+        currentTrainId: null
+      }),
+      expect.anything()
+    );
+  });
+
+  it('restores exact terminal production deployment evidence on carry-forward repair', async () => {
+    const stuck = {
+      ...candidate('a1', 'frontend', 'STAGING_BUILDING', true),
+      current_train_id: 'train-cumulative',
+      production_requested_at: 2,
+      production_requested_by: 'operator',
+      production_selection_id: 'selection-a',
+      row_version: 10
+    };
+    const validatedTrain = {
+      ...train('train-cumulative'),
+      status: 'STAGING_VALIDATED' as const
+    };
+    const updateCandidate = jest.fn(async () => true);
+    const repository = {
+      listCandidates: async () => [stuck],
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      findCandidateById: async () => stuck,
+      findTrain: async () => validatedTrain,
+      listTrainCandidates: async () => [
+        {
+          train_id: validatedTrain.id,
+          candidate_id: stuck.id,
+          candidate_role: 'CARRY_FORWARD',
+          disposition: 'INCLUDED'
+        }
+      ],
+      listProductionManifestsForCandidate: async () => [
+        {
+          train_id: 'production-train',
+          manifest_json: {
+            candidates: [
+              {
+                candidate_id: stuck.id,
+                repository: stuck.repository,
+                pr_number: stuck.pr_number,
+                head_sha: stuck.head_sha
+              }
+            ],
+            operations: [
+              { type: 'E2E_PROD', workflow_run_id: 'production-e2e-run' }
+            ]
+          }
+        }
+      ],
+      listOperations: async () => [
+        {
+          operation_type: 'E2E_PROD',
+          status: 'SUCCEEDED',
+          external_id: 'production-e2e-run'
+        }
+      ],
+      updateCandidate,
+      appendEvent: async () => undefined
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await service.repairTerminalCumulativeCarryForwardStatuses('reconciler');
+
+    expect(updateCandidate).toHaveBeenCalledWith(
+      stuck.id,
+      stuck.row_version,
+      expect.objectContaining({
+        status: 'PRODUCTION_DEPLOYED',
+        currentTrainId: null
+      }),
+      expect.anything()
     );
   });
 

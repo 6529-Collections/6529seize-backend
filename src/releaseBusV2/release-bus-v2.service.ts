@@ -975,6 +975,8 @@ export class ReleaseBusV2Service {
   public async repairTerminalCumulativeCarryForwardStatuses(
     actor: string
   ): Promise<readonly ReleaseBusV2CandidateRecord[]> {
+    // Each repaired row leaves STAGING_BUILDING, so later ticks deterministically
+    // drain any backlog beyond this bounded transaction batch.
     const stuck = await this.repository.listCandidates(
       ['STAGING_BUILDING'],
       500,
@@ -1079,7 +1081,9 @@ export class ReleaseBusV2Service {
       );
       if (result) repaired.push(result);
     }
-    await Promise.all(
+    // GitHub status is advisory after the durable repair. A transient publish
+    // failure must not abort the reconciler tick after the database committed.
+    await Promise.allSettled(
       repaired.map((candidate) => {
         const published = candidateRegistrationStatus(candidate);
         return releaseBusGitHubApp.ensureCommitStatus(
