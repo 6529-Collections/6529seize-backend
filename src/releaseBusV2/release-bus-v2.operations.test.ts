@@ -656,6 +656,76 @@ describe('Release Bus v2 exact operation callbacks', () => {
     });
   });
 
+  it('bounded-retries a failed artifact preparation whose terminal callback was not stored', async () => {
+    const state = repositoryFor(operation());
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    mockFindWorkflowRun.mockResolvedValue({
+      id: 12345,
+      status: 'completed',
+      conclusion: 'failure'
+    });
+
+    await service.reconcileWorkflow({
+      idempotencyKey: 'rb2:train-id:prepare:frontend',
+      trainId: 'train-id',
+      operationType: 'PREPARE_ARTIFACT_FRONTEND',
+      repository: 'frontend',
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'release-bus-v2/staging-train-train-id-frontend',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: null,
+      inputs: {}
+    });
+
+    expect(state.current()).toMatchObject({
+      status: 'RETRY_WAIT',
+      attempt: 1,
+      external_id: '12345',
+      failure_class: 'INFRASTRUCTURE',
+      failure_message:
+        'GitHub workflow concluded failure without a structured terminal callback',
+      completed_at: null
+    });
+  });
+
+  it('still fails closed when a mutating workflow omits its terminal callback', async () => {
+    const state = repositoryFor(
+      operation({
+        idempotency_key: 'rb2:train-id:deploy:frontend',
+        operation_type: 'DEPLOY_FRONTEND',
+        environment: 'staging'
+      })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    mockFindWorkflowRun.mockResolvedValue({
+      id: 12345,
+      status: 'completed',
+      conclusion: 'failure'
+    });
+
+    await service.reconcileWorkflow({
+      idempotencyKey: 'rb2:train-id:deploy:frontend',
+      trainId: 'train-id',
+      operationType: 'DEPLOY_FRONTEND',
+      repository: 'frontend',
+      workflow: 'deploy-release-bus-v2.yml',
+      ref: 'main',
+      environment: 'staging',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: 'b'.repeat(64),
+      inputs: {}
+    });
+
+    expect(state.current()).toMatchObject({
+      status: 'FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: expect.any(Number)
+    });
+  });
+
   it('rejects authorization after an operation reaches a terminal state', async () => {
     const state = repositoryFor(operation({ status: 'FAILED' }));
     const service = new ReleaseBusV2Operations(state.repository as never);
