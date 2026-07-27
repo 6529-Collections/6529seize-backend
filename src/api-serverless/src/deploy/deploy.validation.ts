@@ -167,6 +167,13 @@ export const ReleaseBusV2ControlBodySchema = Joi.object({
   reason: Joi.string().trim().min(3).max(1000).required()
 }).required();
 
+export const ReleaseBusV2StagingTransitionBodySchema = Joi.object({
+  expected_head_sha: ReleaseShaSchema.required(),
+  expected_row_version: Joi.number().integer().positive().required(),
+  transition: Joi.string().valid('REMOVE', 'ABSORB').required(),
+  reason: Joi.string().trim().min(3).max(1000).required()
+}).required();
+
 export const ReleaseBusV2ProgressBodySchema = Joi.object({
   train_id: Joi.string()
     .guid({ version: ['uuidv4'] })

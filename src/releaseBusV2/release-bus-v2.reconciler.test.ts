@@ -9,7 +9,10 @@ import {
   dagLayers,
   e2eWorkflowInputs,
   releaseTrainContributorGithubLogins,
-  releaseBusV2Branch
+  releaseBusV2Branch,
+  ReleaseBusV2Reconciler,
+  relevantCandidates,
+  stagingDeploymentCandidates
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
   normalizeDeployPlan,
@@ -17,7 +20,9 @@ import {
 } from '@/releaseBusV2/release-bus-v2.service';
 import type {
   ReleaseBusV2CandidateRecord,
-  ReleaseBusV2PrEvidence
+  ReleaseBusV2FailureClass,
+  ReleaseBusV2PrEvidence,
+  ReleaseBusV2TrainRecord
 } from '@/releaseBusV2/release-bus-v2.types';
 
 function candidate(
@@ -49,6 +54,140 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
+  it('omits removal candidates from composition but redeploys their exact runtime units', () => {
+    const carried = candidate('carried', 'a'.repeat(40));
+    const removed = {
+      ...candidate('removed', 'b'.repeat(40)),
+      deploy_plan_json: { units: ['public-api'], edges: [] }
+    };
+    const stagingTrain: ReleaseBusV2TrainRecord = {
+      id: 'train-remove',
+      lane: 'STAGING',
+      status: 'CLAIMED',
+      frontend_base_sha: 'c'.repeat(40),
+      backend_base_sha: 'd'.repeat(40),
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null,
+      manifest_id: null,
+      parent_train_id: null,
+      qualification_identity_sha256: null,
+      qualification_train_id: null,
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'manifest-before-removal',
+      staging_transition_json: null,
+      failure_class: null,
+      failure_message: null,
+      recovery_message: null,
+      phase_started_at: 1,
+      completed_at: null,
+      created_at: 1,
+      updated_at: 1,
+      row_version: 1
+    };
+    const context = {
+      train: stagingTrain,
+      memberships: [
+        {
+          id: 'membership-carried',
+          train_id: stagingTrain.id,
+          candidate_id: carried.id,
+          sequence: 1,
+          disposition: 'INCLUDED',
+          candidate_role: 'CARRY_FORWARD',
+          created_at: 1
+        },
+        {
+          id: 'membership-removed',
+          train_id: stagingTrain.id,
+          candidate_id: removed.id,
+          sequence: 2,
+          disposition: 'AUDIT_ONLY',
+          candidate_role: 'REMOVAL',
+          created_at: 1
+        }
+      ],
+      candidates: [carried, removed],
+      dependencies: []
+    };
+
+    expect(relevantCandidates(context)).toEqual([carried]);
+    expect(stagingDeploymentCandidates(context, 'backend')).toEqual([
+      carried,
+      removed
+    ]);
+  });
+
+  it('keeps the admitted state unchanged while a failed cumulative train enters rollback', async () => {
+    const train: ReleaseBusV2TrainRecord = {
+      id: 'train-cumulative',
+      lane: 'STAGING',
+      status: 'E2E_RUNNING',
+      frontend_base_sha: 'a'.repeat(40),
+      backend_base_sha: 'b'.repeat(40),
+      frontend_composed_sha: 'c'.repeat(40),
+      backend_composed_sha: 'd'.repeat(40),
+      frontend_artifact_digest: 'e'.repeat(64),
+      backend_artifact_digest: 'f'.repeat(64),
+      manifest_id: 'failed-manifest',
+      parent_train_id: null,
+      qualification_identity_sha256: null,
+      qualification_train_id: null,
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'validated-manifest-a',
+      staging_transition_json: null,
+      failure_class: null,
+      failure_message: null,
+      recovery_message: null,
+      phase_started_at: 1,
+      completed_at: null,
+      created_at: 1,
+      updated_at: 1,
+      row_version: 4
+    };
+    const updateTrain = jest.fn(async () => true);
+    const updateStagingState = jest.fn();
+    const updateCandidate = jest.fn();
+    const repository = {
+      updateManifestStatus: jest.fn(async () => undefined),
+      appendEvent: jest.fn(async () => undefined),
+      findTrain: jest.fn(async () => train),
+      updateTrain,
+      updateStagingState,
+      updateCandidate
+    };
+    const reconciler = new ReleaseBusV2Reconciler(
+      repository as never,
+      {} as never
+    ) as unknown as {
+      beginCumulativeStagingRollback(
+        train: ReleaseBusV2TrainRecord,
+        failureClass: ReleaseBusV2FailureClass,
+        message: string
+      ): Promise<void>;
+    };
+
+    await reconciler.beginCumulativeStagingRollback(
+      train,
+      'E2E',
+      'new candidate B failed'
+    );
+
+    expect(updateTrain).toHaveBeenCalledWith(
+      train.id,
+      train.row_version,
+      expect.objectContaining({
+        status: 'STAGING_ROLLING_BACK',
+        failureClass: 'E2E',
+        failureMessage: 'new candidate B failed'
+      }),
+      {}
+    );
+    expect(updateStagingState).not.toHaveBeenCalled();
+    expect(updateCandidate).not.toHaveBeenCalled();
+  });
+
   it('deduplicates exact candidate contributor logins in train order', () => {
     const first = candidate('first', 'a'.repeat(40), {
       base_sha: 'b'.repeat(40),

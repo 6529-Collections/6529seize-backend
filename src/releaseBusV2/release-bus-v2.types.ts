@@ -58,6 +58,8 @@ export const RELEASE_BUS_V2_TRAIN_STATUSES = [
   'STAGING_DEPLOYED',
   'E2E_RUNNING',
   'STAGING_VALIDATED',
+  'STAGING_ROLLING_BACK',
+  'STAGING_ROLLBACK_FAILED',
   'MERGING_PRODUCTION',
   'PRODUCTION_DEPLOYING',
   'PRODUCTION_DEPLOYED',
@@ -97,6 +99,23 @@ export type ReleaseBusV2ManifestStatus =
   | 'PRODUCTION_DEPLOYED'
   | 'FAILED';
 
+export const RELEASE_BUS_V2_STAGING_POLICIES = [
+  'CUMULATIVE_ADMITTED_SET_V1',
+  'RESTORE_VALIDATED_STAGING_V1'
+] as const;
+export type ReleaseBusV2StagingPolicy =
+  (typeof RELEASE_BUS_V2_STAGING_POLICIES)[number];
+
+export const RELEASE_BUS_V2_STAGING_LIVE_STATES = ['NOT_LIVE', 'LIVE'] as const;
+export type ReleaseBusV2StagingLiveState =
+  (typeof RELEASE_BUS_V2_STAGING_LIVE_STATES)[number];
+
+export type ReleaseBusV2StagingStateStatus =
+  | 'UNINITIALIZED'
+  | 'LIVE'
+  | 'CLEAN_MAIN'
+  | 'ROLLBACK_FAILED';
+
 export type ReleaseBusV2DeployPlan = {
   readonly units: readonly string[];
   readonly edges: ReadonlyArray<readonly [string, string]>;
@@ -132,6 +151,14 @@ export type ReleaseBusV2CandidateRecord = {
   readonly current_train_id: string | null;
   readonly staging_validated_train_id: string | null;
   readonly staging_validated_manifest_id: string | null;
+  readonly staging_live_state?: ReleaseBusV2StagingLiveState;
+  readonly staging_live_manifest_id?: string | null;
+  readonly staging_admitted_at?: number | null;
+  readonly staging_live_updated_at?: number | null;
+  readonly staging_transition_request?: 'REMOVE' | 'ABSORB' | null;
+  readonly staging_transition_requested_at?: number | null;
+  readonly staging_transition_requested_by?: string | null;
+  readonly staging_transition_reason?: string | null;
   readonly production_requested_at: number | null;
   readonly production_requested_by: string | null;
   readonly hold_reason: string | null;
@@ -155,6 +182,9 @@ export type ReleaseBusV2TrainRecord = {
   readonly parent_train_id: string | null;
   readonly qualification_identity_sha256: string | null;
   readonly qualification_train_id: string | null;
+  readonly staging_policy?: ReleaseBusV2StagingPolicy | null;
+  readonly staging_baseline_manifest_id?: string | null;
+  readonly staging_transition_json?: unknown;
   readonly failure_class: ReleaseBusV2FailureClass | null;
   readonly failure_message: string | null;
   readonly recovery_message: string | null;
@@ -163,6 +193,40 @@ export type ReleaseBusV2TrainRecord = {
   readonly created_at: number;
   readonly updated_at: number;
   readonly row_version: number;
+};
+
+export type ReleaseBusV2StagingStateRecord = {
+  readonly id: 'current';
+  readonly status: ReleaseBusV2StagingStateStatus;
+  readonly current_manifest_id: string | null;
+  readonly last_validated_manifest_id: string | null;
+  readonly frontend_sha: string | null;
+  readonly backend_sha: string | null;
+  readonly frontend_staging_ref_sha: string | null;
+  readonly backend_staging_ref_sha: string | null;
+  readonly clean_main: boolean | number;
+  readonly last_transition_train_id: string | null;
+  readonly updated_at: number;
+  readonly row_version: number;
+};
+
+export type ReleaseBusV2StagingTransition = {
+  readonly actor: string;
+  readonly reason?: string;
+  readonly requested_at: number;
+  readonly baseline_state_version: number;
+  readonly baseline_manifest_id: string | null;
+  readonly baseline_frontend_sha: string | null;
+  readonly baseline_backend_sha: string | null;
+  readonly observed_frontend_staging_sha?: string;
+  readonly observed_backend_staging_sha?: string;
+  readonly new_candidate_ids?: readonly string[];
+  readonly carried_candidate_ids?: readonly string[];
+  readonly replaced_candidate_ids?: readonly string[];
+  readonly removed_candidate_ids?: readonly string[];
+  readonly absorbed_candidate_ids?: readonly string[];
+  readonly rollback_parent_train_id?: string;
+  readonly rollback_artifact_source_train_id?: string;
 };
 
 export type ReleaseBusV2OperationRecord = {

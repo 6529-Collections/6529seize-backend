@@ -29,7 +29,8 @@ import {
   ReleaseBusV2CandidateListQuerySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
-  ReleaseBusV2ProgressBodySchema
+  ReleaseBusV2ProgressBodySchema,
+  ReleaseBusV2StagingTransitionBodySchema
 } from '@/api/deploy/deploy.validation';
 import { setNoStoreHeaders } from '@/api/response-headers';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -480,6 +481,73 @@ deployRoutes.post('/release-bus-v2/candidates/:id/cancel', async (req, res) => {
   }
 });
 
+deployRoutes.post(
+  '/release-bus-v2/candidates/:id/staging-transition',
+  async (req, res) => {
+    const actor = await requireV2CandidateWriteAccess(req, req.params.id);
+    const body = getValidatedByJoiOrThrow<{
+      expected_head_sha: string;
+      expected_row_version: number;
+      transition: 'REMOVE' | 'ABSORB';
+      reason: string;
+    }>(req.body, ReleaseBusV2StagingTransitionBodySchema);
+    try {
+      const candidate = await releaseBusV2Service.requestStagingTransition({
+        candidateId: req.params.id,
+        expectedHeadSha: body.expected_head_sha,
+        expectedRowVersion: body.expected_row_version,
+        transition: body.transition,
+        reason: body.reason,
+        actor
+      });
+      try {
+        await lambdaClient.send(
+          new InvokeCommand({
+            FunctionName: 'releaseBusV2Reconciler',
+            InvocationType: 'Event',
+            Payload: Buffer.from(
+              JSON.stringify({
+                staging_transition_candidate_id: candidate.id,
+                requested_by: actor,
+                requested_at: Date.now()
+              })
+            )
+          })
+        );
+      } catch {
+        // The transition is already durable. The scheduled reconciler will
+        // self-drain it, so a failed best-effort wake-up must not be reported
+        // to the operator as a failed mutation.
+        try {
+          await releaseBusV2Repository.appendEvent(
+            {
+              candidateId: candidate.id,
+              eventType: 'STAGING_TRANSITION_RECONCILER_WAKEUP_FAILED',
+              actor,
+              payload: {
+                scheduled_reconciliation_will_retry: true
+              }
+            },
+            {}
+          );
+        } catch {
+          // Preserve the truthful accepted response even if observability is
+          // temporarily unavailable; the original transition event remains.
+        }
+      }
+      setNoStoreHeaders(res);
+      return res.status(202).json({ candidate });
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error
+          ? error.message
+          : 'Release Bus v2 staging transition failed'
+      );
+    }
+  }
+);
+
 deployRoutes.get('/release-bus-v2/trains', async (req, res) => {
   await requireAuthenticatedViewer(req);
   setNoStoreHeaders(res);
@@ -580,6 +648,7 @@ deployRoutes.get('/release-bus-v2/controls', async (req, res) => {
   return res.json({
     controls: await releaseBusV2Repository.listControls({}),
     locks: await releaseBusV2Repository.listLocks({}),
+    staging_state: await releaseBusV2Repository.getStagingState({}),
     mode: getReleaseBusV2Mode()
   });
 });
