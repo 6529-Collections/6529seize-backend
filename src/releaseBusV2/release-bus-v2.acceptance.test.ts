@@ -590,6 +590,7 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
   );
   const service = {
     claimLane: jest.fn(async () => null),
+    repairTerminalCumulativeCarryForwardStatuses: jest.fn(async () => []),
     setPaused: jest.fn(
       async (
         scope: ReleaseBusV2ControlRecord['scope'],
