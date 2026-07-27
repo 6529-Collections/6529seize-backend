@@ -998,8 +998,7 @@ export class ReleaseBusV2Service {
             return null;
           const train = await this.repository.findTrain(
             current.current_train_id,
-            ctx,
-            true
+            ctx
           );
           if (
             !train ||
