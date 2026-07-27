@@ -61,6 +61,12 @@ const TERMINAL_OPERATIONS = new Set<ReleaseBusV2OperationRecord['status']>([
   'FAILED',
   'CANCELLED'
 ]);
+const STAGING_REF_OPERATION_TYPES = new Set([
+  'ADVANCE_STAGING_RELEASE_FRONTEND',
+  'ADVANCE_STAGING_RELEASE_BACKEND',
+  'ADVANCE_STAGING_ROLLBACK_FRONTEND',
+  'ADVANCE_STAGING_ROLLBACK_BACKEND'
+]);
 // The lock is renewed every minute, but its expiry must also outlive the
 // longest deployment/E2E workflow during a temporary control-plane outage.
 // Workflow timeouts are at most 90 minutes, so two hours prevents overlapping
@@ -194,6 +200,10 @@ function operationMayStillBeRunning(
     ['DISPATCHED', 'RUNNING'].includes(operation.status) ||
     (operation.status === 'PENDING' && operation.external_id !== null)
   );
+}
+
+function isStagingRefOperation(operationType: string): boolean {
+  return STAGING_REF_OPERATION_TYPES.has(operationType);
 }
 
 function stringRecord(value: unknown): Readonly<Record<string, string>> | null {
@@ -2405,6 +2415,9 @@ export class ReleaseBusV2Reconciler {
       ({ observedSha, baseSha, targetSha }) =>
         !baseSha || (observedSha !== baseSha && observedSha !== targetSha)
     );
+    // targetSha is accepted because GitHub may have applied one repository's
+    // CAS before the worker crashed; advanceStagingRef records that leg as
+    // succeeded and continues the still-pending repository.
     if (invalid)
       throw new StagingRefMovedError(
         `${invalid.repository} 1a-staging moved outside rollback intent ${invalid.baseSha} -> ${invalid.targetSha}`
@@ -3511,10 +3524,18 @@ export class ReleaseBusV2Reconciler {
       );
       return;
     } catch (error) {
-      const afterFailure = await releaseBusGitHubApp.resolveRef(
-        repository,
-        '1a-staging'
-      );
+      let afterFailure: string;
+      try {
+        afterFailure = await releaseBusGitHubApp.resolveRef(
+          repository,
+          '1a-staging'
+        );
+      } catch (resolveError) {
+        // Preserve the write as first cause when transport failed before GitHub
+        // could prove whether the exact CAS applied.
+        if (isGitHubInfrastructureError(error)) throw error;
+        throw resolveError;
+      }
       if (afterFailure === targetSha) return;
       if (afterFailure !== baseSha)
         return this.rejectStagingRefDrift(
@@ -3537,9 +3558,10 @@ export class ReleaseBusV2Reconciler {
         'CONTROL_PLANE',
         message
       );
-      throw new StagingRefMovedError(
-        `${repository} exact ${phase} CAS was rejected while 1a-staging remained ${baseSha}: ${message}`
-      );
+      // An unchanged ref is not drift. The caller handles a deterministic
+      // rejection as a control-plane failure/rollback without falsely raising
+      // STAGING_REF_DRIFT_DETECTED.
+      throw error;
     }
   }
 
@@ -3868,9 +3890,7 @@ export class ReleaseBusV2Reconciler {
     const operations = await this.repository.listOperations(trainId, {});
     const runIds = new Set(
       operations
-        .filter(
-          ({ operation_type }) => !operation_type.startsWith('ADVANCE_STAGING_')
-        )
+        .filter(({ operation_type }) => !isStagingRefOperation(operation_type))
         .map(({ external_id }) => external_id)
         .filter((runId): runId is string => runId !== null)
     );
@@ -3878,7 +3898,7 @@ export class ReleaseBusV2Reconciler {
       if (
         operation.attempt <= 1 ||
         operation.repository === null ||
-        operation.operation_type.startsWith('ADVANCE_STAGING_')
+        isStagingRefOperation(operation.operation_type)
       )
         return [];
       const request = parseStoredJson<{ workflow?: unknown }>(

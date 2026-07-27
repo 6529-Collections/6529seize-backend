@@ -22,6 +22,8 @@ function composeScript(): string {
     path.join(process.cwd(), '.github/workflows/release-bus-v2-compose.yml'),
     'utf8'
   );
+  // This executes the workflow's shell verbatim; keep the expression coupled
+  // to the YAML step indentation so formatting drift fails the test loudly.
   const match = workflow.match(
     /\n {8}id: compose\n[\s\S]*?\n {8}run: \|\n([\s\S]*?)(?=\n {6}- )/
   );
@@ -276,6 +278,84 @@ describe('Release Bus v2 backend composition workflow', () => {
       expect(runGit(repository, 'show', `${releaseSha}:candidate-b.txt`)).toBe(
         'candidate b'
       );
+
+      const releaseBranch = 'release-bus-v2/staging-train-cumulative-backend';
+      runGit(
+        repository,
+        'push',
+        'origin',
+        `${releaseSha}:refs/heads/${releaseBranch}`
+      );
+      runGit(repository, 'switch', 'main');
+      execFileSync('bash', ['-c', composeScript()], {
+        cwd: repository,
+        env: {
+          ...process.env,
+          BASE_SHA: baseSha,
+          CANDIDATE_SHAS: JSON.stringify([stagingParentSha, candidateSha]),
+          RELEASE_BRANCH: releaseBranch,
+          RELEASE_BUS_GIT_EMAIL: 'release-bus-test@example.com',
+          RELEASE_BUS_GIT_NAME: 'Release Bus Test',
+          RELEASE_PARENT_SHA: stagingParentSha,
+          RUNNER_TEMP: runnerTemp,
+          TRAIN_ID: 'cumulative'
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      expect(
+        JSON.parse(
+          readFileSync(path.join(runnerTemp, 'composition.json'), 'utf8')
+        )
+      ).toEqual({
+        composed_sha: releaseSha,
+        excluded_shas: [],
+        reused: true
+      });
+
+      expect(() =>
+        execFileSync('bash', ['-c', composeScript()], {
+          cwd: repository,
+          env: {
+            ...process.env,
+            BASE_SHA: baseSha,
+            CANDIDATE_SHAS: JSON.stringify([stagingParentSha, candidateSha]),
+            RELEASE_BRANCH: releaseBranch,
+            RELEASE_BUS_GIT_EMAIL: 'release-bus-test@example.com',
+            RELEASE_BUS_GIT_NAME: 'Release Bus Test',
+            RELEASE_PARENT_SHA: baseSha,
+            RUNNER_TEMP: runnerTemp,
+            TRAIN_ID: 'wrong-parent'
+          },
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+      ).toThrow();
+
+      runGit(repository, 'switch', '--detach', stagingParentSha);
+      const emptyBranch =
+        'release-bus-v2/staging-train-empty-cumulative-backend';
+      execFileSync('bash', ['-c', composeScript()], {
+        cwd: repository,
+        env: {
+          ...process.env,
+          BASE_SHA: stagingParentSha,
+          CANDIDATE_SHAS: JSON.stringify([stagingParentSha]),
+          RELEASE_BRANCH: emptyBranch,
+          RELEASE_BUS_GIT_EMAIL: 'release-bus-test@example.com',
+          RELEASE_BUS_GIT_NAME: 'Release Bus Test',
+          RELEASE_PARENT_SHA: stagingParentSha,
+          RUNNER_TEMP: runnerTemp,
+          TRAIN_ID: 'empty-cumulative'
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      const emptyReleaseSha = runGit(repository, 'rev-parse', 'HEAD');
+      expect(emptyReleaseSha).not.toBe(stagingParentSha);
+      expect(
+        runGit(repository, 'rev-list', '--parents', '-n', '1', emptyReleaseSha)
+      ).toBe(`${emptyReleaseSha} ${stagingParentSha}`);
+      expect(
+        runGit(repository, 'show', '-s', '--format=%B', emptyReleaseSha)
+      ).toContain(`Release-Parent-SHA: ${stagingParentSha}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
