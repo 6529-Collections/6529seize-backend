@@ -37,7 +37,6 @@ SERVICES=(
   royaltiesLoop
   s3Uploader
   subscriptionsDaily
-  subscriptionCoverageReconciliationLoop
   subscriptionsTopUpLoop
   tdhHistoryLoop
   tdhLoop

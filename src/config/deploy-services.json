@@ -638,27 +638,19 @@
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["subscriptionsDaily"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "subscriptionCoverageReconciliationLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["subscriptionCoverageReconciliationLoop"],
+      "verification_targets": [
+        "subscriptionsDaily",
+        "subscriptionCoverageReconciliationLoop"
+      ],
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
       "default_dependencies": [
         "api",
         "dbMigrationsLoop",
-        "pushNotificationsHandler"
+        "ownersBalancesLoop",
+        "pushNotificationsHandler",
+        "subscriptionsTopUpLoop",
+        "transactionsProcessingLoop"
       ],
       "automatic_rollback_supported": false
     },

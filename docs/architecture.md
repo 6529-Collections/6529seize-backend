@@ -55,7 +55,7 @@ flowchart TD
     WaveDropMetricsRefreshLoop ~~~ WaveScoreRefreshLoop["waveScoreRefreshLoop"]
     WaveScoreRefreshLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
     XTdhGrantsReviewerLoop ~~~ SubscriptionsDaily["subscriptionsDaily"]
-    SubscriptionsDaily ~~~ SubscriptionCoverageReconciliationLoop["subscriptionCoverageReconciliationLoop"]
+    SubscriptionsDaily ~~~ SubscriptionCoverageReconciliationLoop["subscriptionCoverageReconciliationLoop (subscriptionsDaily stack)"]
     SubscriptionCoverageReconciliationLoop ~~~ SubscriptionsTopUpLoop["subscriptionsTopUpLoop"]
     SubscriptionsTopUpLoop ~~~ DiscoverEnsLoop["discoverEnsLoop"]
     DiscoverEnsLoop ~~~ RefreshEnsLoop["refreshEnsLoop"]
@@ -149,8 +149,8 @@ flowchart TD
 | `waveDropMetricsRefreshLoop`             | Scheduled fallback that drains dirty drop metric refresh requests.                                           |
 | `waveScoreRefreshLoop`                   | Scheduled fallback that drains dirty Wave Score refresh requests.                                            |
 | `xTdhGrantsReviewerLoop`                 | Review xTDH grants.                                                                                          |
-| `subscriptionsDaily`                     | Process daily subscription work.                                                                             |
-| `subscriptionCoverageReconciliationLoop` | Reconcile projected subscription coverage from durable dirty keys every minute and run an hourly full sweep. |
+| `subscriptionsDaily`                     | Process daily subscription work and own the shared Serverless deployment stack for subscription reconciliation. |
+| `subscriptionCoverageReconciliationLoop` | Reconcile projected subscription coverage from durable dirty keys every minute and run an hourly full sweep as a separate Lambda in the `subscriptionsDaily` stack. |
 | `subscriptionsTopUpLoop`                 | Process subscription top-ups.                                                                                |
 | `discoverEnsLoop`                        | Discover ENS names.                                                                                          |
 | `refreshEnsLoop`                         | Refresh known ENS names.                                                                                     |
@@ -389,7 +389,11 @@ make a best-effort upsert into `subscription_coverage_refresh_requests`; this
 bookkeeping never runs forecasts or creates notifications in those critical
 paths. Notification delivery still uses the existing post-commit SQS-backed
 push pipeline.
-`subscriptionCoverageReconciliationLoop` drains versioned dirty rows every
+`subscriptionCoverageReconciliationLoop` is a separate Lambda function in the
+existing allowlisted `subscriptionsDaily` Serverless stack. Deploying that unit
+updates both handlers and verifies both Lambda versions; its release-bus
+dependencies place the stack after schema, API, push, top-up, transaction, and
+owner-balance prerequisites. The function drains versioned dirty rows every
 minute and performs an hourly bounded full sweep to cover projected calendar
 changes, clock boundaries, and missed dirty writes. It reads subscription
 balances as decimal strings, derives demonstrated intent only from normalized
