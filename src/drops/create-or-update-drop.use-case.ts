@@ -547,6 +547,14 @@ export class CreateOrUpdateDropUseCase {
       },
       { timer, connection }
     );
+    await this.dropsDb.applyInsertedDropMetricsDelta(
+      {
+        wave_id: validatedModel.wave_id,
+        author_id: authorId,
+        drop_type: validatedModel.drop_type
+      },
+      { timer, connection }
+    );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return {
       drop_id: dropId,
@@ -1544,7 +1552,8 @@ export class CreateOrUpdateDropUseCase {
           hide_link_preview: model.hide_link_preview,
           is_additional_action_promised: model.is_additional_action_promised
         },
-        connection
+        connection,
+        { deferMetrics: true }
       ),
       this.createDropReplyNotifications({ model, wave }, { timer, connection }),
       this.identitySubscriptionsDb.addIdentitySubscription(
