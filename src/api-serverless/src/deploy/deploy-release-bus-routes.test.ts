@@ -22,6 +22,16 @@ const mockV2Authorize = jest.fn();
 const mockV2ReportProgress = jest.fn();
 const mockRecoverUnsatisfiableProductionQualifications = jest.fn();
 
+class MockReleaseBusV2ProductionSelectionError extends Error {
+  public constructor(
+    public readonly code: 'CONFLICT' | 'DISABLED' | 'NOT_FOUND',
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2ProductionSelectionError';
+  }
+}
+
 jest.mock('@aws-sdk/client-lambda', () => ({
   InvokeCommand: class InvokeCommand {
     public constructor(public readonly input: unknown) {}
@@ -67,6 +77,8 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
 }));
 
 jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
+  ReleaseBusV2ProductionSelectionError:
+    MockReleaseBusV2ProductionSelectionError,
   ReleaseBusV2StagingTransitionConflictError: class extends Error {},
   releaseBusV2Service: {
     register: (...args: unknown[]) => mockV2Register(...args),
@@ -425,6 +437,158 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       ],
       'developer'
     );
+  });
+
+  it('canonicalizes one non-empty actor across an atomic production selection', async () => {
+    const secondCandidateId = '123e4567-e89b-42d3-a456-426614174098';
+    mockGetViewer.mockResolvedValue({ login: 'DeVeLoPeR' });
+    mockV2MarkSelectionReadyForProduction.mockResolvedValue([
+      {
+        ...v2Candidate,
+        status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+        production_selection_id: RESET_ID,
+        row_version: 5
+      },
+      {
+        ...v2Candidate,
+        id: secondCandidateId,
+        status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+        production_selection_id: RESET_ID,
+        row_version: 5
+      }
+    ]);
+
+    const response = await post(
+      '/deploy/release-bus-v2/production-selections',
+      {
+        candidates: [
+          {
+            candidate_id: candidateId,
+            expected_head_sha: SHA,
+            expected_row_version: 4
+          },
+          {
+            candidate_id: secondCandidateId,
+            expected_head_sha: SHA,
+            expected_row_version: 4
+          }
+        ]
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockV2MarkSelectionReadyForProduction).toHaveBeenCalledWith(
+      expect.any(Array),
+      'developer'
+    );
+  });
+
+  it('rejects an empty production-selection actor before mutation', async () => {
+    mockGetViewer.mockResolvedValue({ login: '   ' });
+
+    const response = await post(
+      '/deploy/release-bus-v2/production-selections',
+      {
+        candidates: [
+          {
+            candidate_id: candidateId,
+            expected_head_sha: SHA,
+            expected_row_version: 4
+          }
+        ]
+      }
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockV2MarkSelectionReadyForProduction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['DISABLED', 403],
+    ['NOT_FOUND', 404],
+    ['CONFLICT', 409]
+  ] as const)(
+    'maps the %s production-selection service result to HTTP %i',
+    async (code, expectedStatus) => {
+      mockV2MarkSelectionReadyForProduction.mockRejectedValueOnce(
+        new MockReleaseBusV2ProductionSelectionError(
+          code,
+          'Selection rejected safely'
+        )
+      );
+
+      const response = await post(
+        '/deploy/release-bus-v2/production-selections',
+        {
+          candidates: [
+            {
+              candidate_id: candidateId,
+              expected_head_sha: SHA,
+              expected_row_version: 4
+            }
+          ]
+        }
+      );
+
+      expect(response.status).toBe(expectedStatus);
+      expect(response.body).toEqual({ error: 'Selection rejected safely' });
+    }
+  );
+
+  it('does not expose an unexpected production-selection failure', async () => {
+    mockV2MarkSelectionReadyForProduction.mockRejectedValueOnce(
+      new Error('database credential detail')
+    );
+
+    const response = await post(
+      '/deploy/release-bus-v2/production-selections',
+      {
+        candidates: [
+          {
+            candidate_id: candidateId,
+            expected_head_sha: SHA,
+            expected_row_version: 4
+          }
+        ]
+      }
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'Release Bus v2 production selection failed'
+    });
+  });
+
+  it('fails closed on inconsistent returned production selection identities', async () => {
+    mockV2MarkSelectionReadyForProduction.mockResolvedValue([
+      {
+        ...v2Candidate,
+        production_selection_id: RESET_ID
+      },
+      {
+        ...v2Candidate,
+        id: '123e4567-e89b-42d3-a456-426614174099',
+        production_selection_id: '123e4567-e89b-42d3-a456-426614174098'
+      }
+    ]);
+
+    const response = await post(
+      '/deploy/release-bus-v2/production-selections',
+      {
+        candidates: [
+          {
+            candidate_id: candidateId,
+            expected_head_sha: SHA,
+            expected_row_version: 4
+          }
+        ]
+      }
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'Release Bus v2 production selection failed'
+    });
   });
 
   it('does not expose candidate mutation when the exact candidate is missing', async () => {

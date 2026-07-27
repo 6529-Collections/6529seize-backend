@@ -3500,12 +3500,25 @@ export class ReleaseBusV2Reconciler {
     const stored = parseStoredJson<
       readonly ReleaseBusV2CandidateStagingEvidence[]
     >(train.qualification_evidence_json);
-    if (!stored || stored.length !== relevantCandidates(context).length)
+    const candidates = relevantCandidates(context);
+    const expectedCandidateIds = new Set(candidates.map(({ id }) => id));
+    const storedCandidateIds = new Set(
+      stored?.map(({ candidate_id }) => candidate_id) ?? []
+    );
+    if (
+      !stored ||
+      stored.length !== candidates.length ||
+      storedCandidateIds.size !== stored.length ||
+      storedCandidateIds.size !== expectedCandidateIds.size ||
+      Array.from(expectedCandidateIds).some(
+        (candidateId) => !storedCandidateIds.has(candidateId)
+      )
+    )
       throw new Error(
         `Train ${train.id} has missing or ambiguous candidate staging evidence`
       );
     const current = await this.service.resolveCandidateStagingEvidence(
-      relevantCandidates(context),
+      candidates,
       {}
     );
     if (!isDeepStrictEqual(stored, current))
@@ -3513,7 +3526,7 @@ export class ReleaseBusV2Reconciler {
         `Train ${train.id} candidate staging evidence changed after claim`
       );
     const heads = await Promise.all(
-      relevantCandidates(context).map(async (candidate) => ({
+      candidates.map(async (candidate) => ({
         candidate,
         currentHead: await releaseBusGitHubApp.resolveRefIfExists(
           candidate.repository,

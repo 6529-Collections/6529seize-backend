@@ -351,6 +351,20 @@ describe('Release Bus v2 explicit production opt-in', () => {
     expect(state.current().status).toBe('STAGING_VALIDATED');
   });
 
+  it('rechecks the exact branch SHA while the selected candidate row is locked', async () => {
+    const state = repositoryFor(candidate('STAGING_VALIDATED'));
+    mockResolveRef
+      .mockResolvedValueOnce('a'.repeat(40))
+      .mockResolvedValueOnce('b'.repeat(40));
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction('candidate-id', 'a'.repeat(40), 3, 'owner')
+    ).rejects.toThrow('changed after branch verification');
+    expect(state.current().status).toBe('STAGING_VALIDATED');
+    expect(state.repository.updateCandidate).not.toHaveBeenCalled();
+  });
+
   it('records rollout-safe candidate-evidence readiness only after the explicit exact-SHA action', async () => {
     const state = repositoryFor(candidate('STAGING_VALIDATED'));
     mockResolveRef.mockResolvedValue('a'.repeat(40));
@@ -559,6 +573,11 @@ describe('Release Bus v2 explicit production opt-in', () => {
         status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION'
       })
     ]);
+    expect(state.repository.findCandidateById).toHaveBeenCalledWith(
+      prerequisite.id,
+      expect.objectContaining({ connection: expect.anything() }),
+      true
+    );
   });
 
   it('rejects a deployed dependency whose manifest lacks a matching successful E2E operation', async () => {
@@ -643,6 +662,113 @@ describe('Release Bus v2 explicit production opt-in', () => {
       )
     ).rejects.toThrow('missing exact E2E or artifact identity');
     expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when staging evidence maps one manifest run to multiple operations', async () => {
+    const exact = validatedCandidate(
+      'candidate-ambiguous-e2e',
+      'frontend',
+      '3',
+      111
+    );
+    const state = selectionRepository([exact]);
+    state.repository.listOperations.mockResolvedValue([
+      {
+        id: 'first-e2e-operation',
+        operation_type: 'E2E_STAGING',
+        status: 'SUCCEEDED',
+        external_id: `e2e-${exact.id}`
+      },
+      {
+        id: 'duplicate-e2e-operation',
+        operation_type: 'E2E_STAGING',
+        status: 'SUCCEEDED',
+        external_id: `e2e-${exact.id}`
+      }
+    ]);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markSelectionReadyForProduction(
+        [
+          {
+            candidateId: exact.id,
+            expectedHeadSha: exact.head_sha,
+            expectedRowVersion: exact.row_version
+          }
+        ],
+        'operator'
+      )
+    ).rejects.toThrow('missing exact E2E or artifact identity');
+    expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+
+  it('accepts one legacy manifest identity only when exact train membership disambiguates it', async () => {
+    const exact = candidate('STAGING_VALIDATED');
+    const state = repositoryFor(exact);
+    state.repository.findManifest.mockResolvedValue({
+      id: 'manifest-id',
+      train_id: 'staging-train-id',
+      status: 'STAGING_VALIDATED',
+      identity_sha256: 'e'.repeat(64),
+      frontend_artifact_digest: 'f'.repeat(64),
+      backend_artifact_digest: null,
+      e2e_run_id: '123',
+      manifest_json: {
+        candidates: [
+          {
+            repository: exact.repository,
+            pr_number: exact.pr_number,
+            head_sha: exact.head_sha
+          }
+        ]
+      }
+    } as never);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.resolveCandidateStagingEvidence([exact], {})
+    ).resolves.toEqual([
+      expect.objectContaining({
+        candidate_id: exact.id,
+        staging_manifest_id: 'manifest-id',
+        staging_e2e_operation_id: 'staging-e2e-operation'
+      })
+    ]);
+  });
+
+  it('does not treat a missing candidate id as a wildcard in a mixed manifest', async () => {
+    const exact = candidate('STAGING_VALIDATED');
+    const state = repositoryFor(exact);
+    state.repository.findManifest.mockResolvedValue({
+      id: 'manifest-id',
+      train_id: 'staging-train-id',
+      status: 'STAGING_VALIDATED',
+      identity_sha256: 'e'.repeat(64),
+      frontend_artifact_digest: 'f'.repeat(64),
+      backend_artifact_digest: null,
+      e2e_run_id: '123',
+      manifest_json: {
+        candidates: [
+          {
+            candidate_id: 'another-candidate',
+            repository: 'backend',
+            pr_number: 9,
+            head_sha: '9'.repeat(40)
+          },
+          {
+            repository: exact.repository,
+            pr_number: exact.pr_number,
+            head_sha: exact.head_sha
+          }
+        ]
+      }
+    } as never);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.resolveCandidateStagingEvidence([exact], {})
+    ).rejects.toThrow('missing exact E2E or artifact identity');
   });
 });
 

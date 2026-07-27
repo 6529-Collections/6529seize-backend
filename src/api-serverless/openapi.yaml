@@ -7737,6 +7737,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReleaseBusV2ProductionSelectionResponse"
+        "401":
+          description: GitHub authentication is required
+        "403":
+          description: >-
+            Production readiness is disabled or the actor cannot authorize the
+            full selection
+        "404":
+          description: A selected candidate does not exist
+        "409":
+          description: >-
+            Candidate state, evidence, dependency closure, controls, or exact
+            head identity changed
   /deploy/release-bus-v2/candidates/{id}/revoke-production-readiness:
     post:
       tags:

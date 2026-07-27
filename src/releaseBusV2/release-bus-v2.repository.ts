@@ -1232,7 +1232,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
          and train.lane = 'PRODUCTION'
          and train.status = 'PRODUCTION_DEPLOYED'
          and manifest.status = 'PRODUCTION_DEPLOYED'
-       order by manifest.created_at desc`,
+       order by manifest.created_at desc
+       limit 200`,
       { candidateId },
       dbOptions(ctx)
     );
