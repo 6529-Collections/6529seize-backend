@@ -18,6 +18,7 @@ import {
   sendSubscriptionTopUpWaveUpdate
 } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
+import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
@@ -26,6 +27,7 @@ const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   const processedTopUps: SubscriptionTopUp[] = [];
   const alreadyProcessedTopUpHashes: string[] = [];
+  const dirtyConsolidationKeys = new Set<string>();
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -86,10 +88,14 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           );
         }
       }
-
+      dirtyConsolidationKeys.add(consolidationKey);
       processedTopUps.push(topUp);
     }
   });
+  await markSubscriptionCoverageDirty(
+    Array.from(dirtyConsolidationKeys),
+    'BALANCE_TOPPED_UP'
+  );
 
   for (const hash of alreadyProcessedTopUpHashes) {
     await sendProcessedTopUpWaveWarning(hash);

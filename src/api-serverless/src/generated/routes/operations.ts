@@ -54,6 +54,7 @@ import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiPr
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
+import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
@@ -527,6 +528,22 @@ export type GetGlobalRepCategoryWavesRequest = Request<
   ApiResponse<GetGlobalRepCategoryWavesResponse>,
   never,
   GetGlobalRepCategoryWavesQuery,
+  Record<string, never>
+>;
+
+export interface GetSubscriptionCoveragePathParams {
+  "consolidation_key": string;
+}
+
+export type GetSubscriptionCoverageQuery = Record<string, never>;
+
+export type GetSubscriptionCoverageResponse = ApiSubscriptionCoverage;
+
+export type GetSubscriptionCoverageRequest = Request<
+  GetSubscriptionCoveragePathParams,
+  ApiResponse<GetSubscriptionCoverageResponse>,
+  never,
+  GetSubscriptionCoverageQuery,
   Record<string, never>
 >;
 

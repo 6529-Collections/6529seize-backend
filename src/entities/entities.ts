@@ -165,6 +165,8 @@ export {
   SubscriptionTopUp,
   SubscriptionTopUpLatestBlock
 } from './ISubscription';
+export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
+export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,

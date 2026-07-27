@@ -23,3 +23,16 @@ four authenticated operational routes:
 - `/deploy/release-candidates`
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
+
+## Accepted additive enum extensions
+
+The subscription coverage notification contract adds the
+`SUBSCRIPTION_COVERAGE` value to `ApiNotificationCause`. This exact additive
+extension is accepted so both notification API versions can expose the new
+first-class system notification. The immutable Phase 0 snapshot remains
+unchanged, and the compatibility test permits no other enum additions.
+
+The same accepted extension makes `related_identity` nullable in both
+notification response versions. Subscription coverage is an actorless system
+notification, so fabricating a related profile would be misleading. No other
+reference or nullability change is permitted by the compatibility test.
