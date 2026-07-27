@@ -22,6 +22,10 @@ describe('desktop auth origin validation', () => {
     'https://localhost:6529',
     'http://localhost.evil.example:6529',
     'http://192.168.0.10:6529',
+    'http://user:pass@localhost:6529',
+    'http://localhost:6529/path',
+    'http://localhost:6529?query=1',
+    'http://localhost:6529#fragment',
     'https://6529.io',
     'not-a-url'
   ])('rejects non-desktop origins: %s', (origin) => {
