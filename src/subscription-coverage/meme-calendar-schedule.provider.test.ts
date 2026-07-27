@@ -55,6 +55,35 @@ describe('MemeCalendarScheduleProvider', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it('caps a misconfigured schedule horizon', async () => {
+    process.env.SUBSCRIPTION_COVERAGE_SCHEDULE_HORIZON = '1000';
+    const fetchImpl = jest.fn(async (url: string) => {
+      const tokenId = url.endsWith('/next')
+        ? 527
+        : Number(url.split('/').at(-1));
+      return {
+        ok: true,
+        json: async () => ({
+          mint_number: tokenId,
+          mint_start: new Date(
+            Date.UTC(2026, 6, 27) + (tokenId - 527) * 86_400_000
+          ).toISOString(),
+          status: 'upcoming'
+        })
+      } as Response;
+    });
+    const provider = new MemeCalendarScheduleProvider(
+      fetchImpl as unknown as typeof fetch,
+      () => 100
+    );
+
+    const schedule = await provider.getSchedule();
+
+    expect(schedule.horizon).toBe(60);
+    expect(schedule.drops).toHaveLength(60);
+    expect(fetchImpl).toHaveBeenCalledTimes(60);
+  });
+
   it('rejects malformed calendar data', async () => {
     const fetchImpl = jest.fn(async () => ({
       ok: true,

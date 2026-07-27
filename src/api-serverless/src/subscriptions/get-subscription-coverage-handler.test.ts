@@ -19,7 +19,16 @@ jest.mock('@/time', () => ({
   Timer: { getFromRequest: mockGetFromRequest }
 }));
 
+import { GetSubscriptionCoverageRequest } from '@/api/generated/routes/operations';
 import { handleGetSubscriptionCoverage } from './get-subscription-coverage.handler';
+
+function requestWithConsolidationKey(
+  consolidationKey: string
+): GetSubscriptionCoverageRequest {
+  return {
+    params: { consolidation_key: consolidationKey }
+  } as GetSubscriptionCoverageRequest;
+}
 
 describe('handleGetSubscriptionCoverage', () => {
   const timer = { marker: 'timer' };
@@ -34,9 +43,7 @@ describe('handleGetSubscriptionCoverage', () => {
   });
 
   it('normalizes the consolidation key and returns the generated response', async () => {
-    const req = {
-      params: { consolidation_key: '  0xAbC  ' }
-    } as any;
+    const req = requestWithConsolidationKey('  0xAbC  ');
 
     await expect(handleGetSubscriptionCoverage(req)).resolves.toBe(response);
 
@@ -45,9 +52,7 @@ describe('handleGetSubscriptionCoverage', () => {
   });
 
   it('rejects an empty consolidation key before calculating coverage', async () => {
-    const req = {
-      params: { consolidation_key: '   ' }
-    } as any;
+    const req = requestWithConsolidationKey('   ');
 
     await expect(handleGetSubscriptionCoverage(req)).rejects.toThrow();
     expect(mockCalculateCoverage).not.toHaveBeenCalled();

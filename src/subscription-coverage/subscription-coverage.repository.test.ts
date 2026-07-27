@@ -132,6 +132,31 @@ describe('SubscriptionCoverageRepository source loading', () => {
     expect(profiles.has('ambiguous')).toBe(false);
   });
 
+  it('chunks source queries at the repository query limit', async () => {
+    const { executor, execute } = createExecutor();
+    const repository = new SubscriptionCoverageRepository(() => executor);
+    const keys = Array.from(
+      { length: 501 },
+      (_unused, index) => `profile-key-${index}`
+    );
+
+    const result = await repository.loadSourceData(keys, [528], {});
+
+    expect(result).toHaveProperty('size', 501);
+    expect(execute).toHaveBeenCalledTimes(10);
+  });
+
+  it('pushes pagination into each demonstrated-intent source', async () => {
+    const { executor, execute } = createExecutor();
+    const repository = new SubscriptionCoverageRepository(() => executor);
+
+    await repository.listDemonstratedIntentKeys('profile-key', 100);
+
+    const sql = execute.mock.calls[0][0] as string;
+    expect(sql.match(/> :startAfter/g)).toHaveLength(6);
+    expect(sql.match(/LIMIT :limit/g)).toHaveLength(7);
+  });
+
   it('orders fresh dirty keys ahead of repeatedly failing keys', async () => {
     const { executor, execute } = createExecutor();
     const repository = new SubscriptionCoverageRepository(() => executor);

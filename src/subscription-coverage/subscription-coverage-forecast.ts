@@ -214,6 +214,15 @@ function intendedDropForSchedule(
   };
 }
 
+function sortedSchedule(
+  input: SubscriptionCoverageForecastInput
+): SubscriptionCoverageScheduleEntry[] {
+  return [...input.schedule].sort(
+    (left, right) =>
+      left.mintAtMs - right.mintAtMs || left.tokenId - right.tokenId
+  );
+}
+
 function buildIntendedDrops(
   input: SubscriptionCoverageForecastInput,
   eligibilityCount: number
@@ -227,12 +236,9 @@ function buildIntendedDrops(
     return invalidSubscriptionSelection();
   }
 
-  const sortedSchedule = [...input.schedule].sort(
-    (left, right) =>
-      left.mintAtMs - right.mintAtMs || left.tokenId - right.tokenId
-  );
+  const orderedSchedule = sortedSchedule(input);
   const scheduleTokenIds = new Set(
-    sortedSchedule.map((schedule) => schedule.tokenId)
+    orderedSchedule.map((schedule) => schedule.tokenId)
   );
 
   if (
@@ -244,7 +250,7 @@ function buildIntendedDrops(
   }
 
   const drops: IntendedDrop[] = [];
-  for (const schedule of sortedSchedule) {
+  for (const schedule of orderedSchedule) {
     const selection = selectionsByTokenId.get(schedule.tokenId);
     const drop = intendedDropForSchedule(
       schedule,
@@ -408,16 +414,13 @@ function buildHorizon(
   intendedDrops: ReadonlyArray<IntendedDrop>,
   evaluatedIntendedDrops: number
 ): SubscriptionCoverageForecastHorizon {
-  const sortedSchedule = [...input.schedule].sort(
-    (left, right) =>
-      left.mintAtMs - right.mintAtMs || left.tokenId - right.tokenId
-  );
+  const orderedSchedule = sortedSchedule(input);
   return {
-    providedScheduleDrops: sortedSchedule.length,
+    providedScheduleDrops: orderedSchedule.length,
     intendedDrops: intendedDrops.length,
     evaluatedIntendedDrops,
-    firstTokenId: sortedSchedule[0]?.tokenId ?? null,
-    lastTokenId: sortedSchedule[sortedSchedule.length - 1]?.tokenId ?? null
+    firstTokenId: orderedSchedule[0]?.tokenId ?? null,
+    lastTokenId: orderedSchedule[orderedSchedule.length - 1]?.tokenId ?? null
   };
 }
 

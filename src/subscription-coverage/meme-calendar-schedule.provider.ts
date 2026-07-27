@@ -3,6 +3,7 @@ import { Logger } from '@/logging';
 const PRODUCTION_BASE_URL = 'https://6529.io';
 const STAGING_BASE_URL = 'https://staging.6529.io';
 const DEFAULT_HORIZON = 24;
+const MAX_HORIZON = 60;
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_FAILURE_TTL_MS = 30 * 1000;
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -190,9 +191,12 @@ export class MemeCalendarScheduleProvider {
     const baseUrl = normalizeBaseUrl(
       process.env.SUBSCRIPTION_COVERAGE_CALENDAR_BASE_URL ?? defaultBaseUrl()
     );
-    const horizon = parsePositiveInteger(
-      process.env.SUBSCRIPTION_COVERAGE_SCHEDULE_HORIZON,
-      DEFAULT_HORIZON
+    const horizon = Math.min(
+      parsePositiveInteger(
+        process.env.SUBSCRIPTION_COVERAGE_SCHEDULE_HORIZON,
+        DEFAULT_HORIZON
+      ),
+      MAX_HORIZON
     );
     const timeoutMs = parsePositiveInteger(
       process.env.SUBSCRIPTION_COVERAGE_SCHEDULE_TIMEOUT_MS,

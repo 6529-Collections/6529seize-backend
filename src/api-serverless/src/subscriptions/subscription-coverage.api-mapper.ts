@@ -29,9 +29,19 @@ function mapUnknownReason(
     case SubscriptionCoverageUnknownReason.MissingIntendedSchedule:
     case SubscriptionCoverageUnknownReason.InsufficientForecastHorizon:
       return ApiSubscriptionCoverageUnknownReason.ScheduleUnavailable;
-    default:
+    case SubscriptionCoverageUnknownReason.InvalidClock:
+    case SubscriptionCoverageUnknownReason.MissingEligibility:
+    case SubscriptionCoverageUnknownReason.InvalidEligibility:
+    case SubscriptionCoverageUnknownReason.InvalidMintPrice:
+    case SubscriptionCoverageUnknownReason.InvalidSubscriptionSelection:
       return ApiSubscriptionCoverageUnknownReason.InputInconsistent;
+    default:
+      return assertUnreachable(reason);
   }
+}
+
+function assertUnreachable(value: never): never {
+  throw new Error(`Unhandled subscription coverage unknown reason: ${value}`);
 }
 
 function mapPoint(point: {

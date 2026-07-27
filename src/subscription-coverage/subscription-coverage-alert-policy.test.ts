@@ -41,6 +41,38 @@ const enabledPolicy = {
 };
 
 describe('decideSubscriptionCoverageAlert', () => {
+  it('suppresses notifications when the feature flag is disabled', () => {
+    expect(
+      decideSubscriptionCoverageAlert(
+        state('EARLY_WARNING'),
+        snapshot('ACTION_REQUIRED'),
+        {
+          ...enabledPolicy,
+          notificationsEnabled: false
+        }
+      )
+    ).toMatchObject({
+      shouldNotify: false,
+      reason: 'DISABLED'
+    });
+  });
+
+  it('suppresses notifications in baseline-only mode', () => {
+    expect(
+      decideSubscriptionCoverageAlert(
+        state('EARLY_WARNING'),
+        snapshot('ACTION_REQUIRED'),
+        {
+          ...enabledPolicy,
+          baselineOnly: true
+        }
+      )
+    ).toMatchObject({
+      shouldNotify: false,
+      reason: 'BASELINE'
+    });
+  });
+
   it('suppresses a missing baseline by default', () => {
     expect(
       decideSubscriptionCoverageAlert(

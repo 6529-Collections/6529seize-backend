@@ -368,29 +368,78 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
         `
           SELECT evidence.consolidation_key
           FROM (
-            SELECT LOWER(consolidation_key) AS consolidation_key
-            FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
-            UNION
-            SELECT LOWER(consolidation_key)
-            FROM ${SUBSCRIPTIONS_MODE_TABLE}
-            UNION
-            SELECT LOWER(consolidation_key)
-            FROM ${SUBSCRIPTIONS_NFTS_TABLE}
-            UNION
-            SELECT LOWER(consolidation_key)
-            FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-            UNION
-            SELECT LOWER(consolidation_key)
-            FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
-            UNION
-            SELECT LOWER(
-              COALESCE(keys.consolidation_key, topups.from_wallet)
+            (
+              SELECT LOWER(consolidation_key) AS consolidation_key
+              FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+              WHERE (
+                :startAfter IS NULL OR LOWER(consolidation_key) > :startAfter
+              )
+              ORDER BY consolidation_key ASC
+              LIMIT :limit
             )
-            FROM ${SUBSCRIPTIONS_TOP_UP_TABLE} topups
-            LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} keys
-              ON keys.address = LOWER(topups.from_wallet)
+            UNION
+            (
+              SELECT LOWER(consolidation_key)
+              FROM ${SUBSCRIPTIONS_MODE_TABLE}
+              WHERE (
+                :startAfter IS NULL OR LOWER(consolidation_key) > :startAfter
+              )
+              ORDER BY consolidation_key ASC
+              LIMIT :limit
+            )
+            UNION
+            (
+              SELECT LOWER(consolidation_key)
+              FROM ${SUBSCRIPTIONS_NFTS_TABLE}
+              WHERE (
+                :startAfter IS NULL OR LOWER(consolidation_key) > :startAfter
+              )
+              ORDER BY consolidation_key ASC
+              LIMIT :limit
+            )
+            UNION
+            (
+              SELECT LOWER(consolidation_key)
+              FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+              WHERE (
+                :startAfter IS NULL OR LOWER(consolidation_key) > :startAfter
+              )
+              ORDER BY consolidation_key ASC
+              LIMIT :limit
+            )
+            UNION
+            (
+              SELECT LOWER(consolidation_key)
+              FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
+              WHERE (
+                :startAfter IS NULL OR LOWER(consolidation_key) > :startAfter
+              )
+              ORDER BY consolidation_key ASC
+              LIMIT :limit
+            )
+            UNION
+            (
+              SELECT LOWER(
+                COALESCE(address_keys.consolidation_key, topups.from_wallet)
+              )
+              FROM ${SUBSCRIPTIONS_TOP_UP_TABLE} topups
+              LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} address_keys
+                ON address_keys.address = LOWER(topups.from_wallet)
+              WHERE (
+                :startAfter IS NULL OR
+                LOWER(
+                  COALESCE(
+                    address_keys.consolidation_key,
+                    topups.from_wallet
+                  )
+                ) > :startAfter
+              )
+              ORDER BY LOWER(
+                COALESCE(address_keys.consolidation_key, topups.from_wallet)
+              ) ASC
+              LIMIT :limit
+            )
           ) evidence
-          WHERE (:startAfter IS NULL OR evidence.consolidation_key > :startAfter)
           ORDER BY evidence.consolidation_key ASC
           LIMIT :limit
         `,
@@ -444,24 +493,27 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
         return new Map();
       }
 
-      const [balances, modes, evidenceKeys, selections, eligibility] =
-        await Promise.all([
-          this.fetchBalances(keys, ctx),
-          this.fetchModes(keys, ctx),
-          this.fetchEvidenceKeys(keys, ctx),
-          this.fetchSelections(keys, tokenIds, ctx),
-          this.fetchCoverageEligibility(keys, ctx)
-        ]);
       const result = new Map<string, SubscriptionCoverageSourceData>();
-      for (const key of keys) {
-        result.set(key, {
-          consolidationKey: key,
-          hasDemonstratedIntent: evidenceKeys.has(key),
-          balanceEth: balances.get(key) ?? '0',
-          mode: modes.get(key) ?? null,
-          eligibilityCount: eligibility.get(key) ?? null,
-          selections: selections.get(key) ?? []
-        });
+      for (let offset = 0; offset < keys.length; offset += MAX_KEYS_PER_QUERY) {
+        const chunk = keys.slice(offset, offset + MAX_KEYS_PER_QUERY);
+        const [balances, modes, evidenceKeys, selections, eligibility] =
+          await Promise.all([
+            this.fetchBalances(chunk, ctx),
+            this.fetchModes(chunk, ctx),
+            this.fetchEvidenceKeys(chunk, ctx),
+            this.fetchSelections(chunk, tokenIds, ctx),
+            this.fetchCoverageEligibility(chunk, ctx)
+          ]);
+        for (const key of chunk) {
+          result.set(key, {
+            consolidationKey: key,
+            hasDemonstratedIntent: evidenceKeys.has(key),
+            balanceEth: balances.get(key) ?? '0',
+            mode: modes.get(key) ?? null,
+            eligibilityCount: eligibility.get(key) ?? null,
+            selections: selections.get(key) ?? []
+          });
+        }
       }
       return result;
     } finally {

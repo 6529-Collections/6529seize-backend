@@ -27,7 +27,7 @@ import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
-import type { SubscriptionCoverageNotificationData } from '../notifications/user-notification.types';
+import type { SubscriptionCoverageNotificationData } from '@/notifications/user-notification.types';
 import { dbSupplier } from '../sql-executor';
 import { sumBadgeContributions } from './badge-count';
 import {

@@ -9,10 +9,7 @@ import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { ApiPushNotificationDevice } from '../generated/models/ApiPushNotificationDevice';
 import { ApiRegisterPushNotificationTokenRequest } from '../generated/models/ApiRegisterPushNotificationTokenRequest';
 import { getValidatedByJoiOrThrow } from '../validation';
-import {
-  getPushNotificationSettings,
-  upsertPushNotificationSettings
-} from './push-notification-settings.db';
+import { pushNotificationSettingsDb } from './push-notification-settings.db';
 import {
   deleteDevice,
   getDevicesForProfile,
@@ -150,7 +147,11 @@ router.get(
     }
 
     const deviceId = req.params.device_id;
-    const settings = await getPushNotificationSettings(profileId, deviceId);
+    const settings =
+      await pushNotificationSettingsDb.getPushNotificationSettings(
+        profileId,
+        deviceId
+      );
 
     res.send(settings);
   }
@@ -183,11 +184,12 @@ router.put(
       settingsSchema
     );
 
-    const updatedSettings = await upsertPushNotificationSettings(
-      profileId,
-      deviceId,
-      validatedSettings
-    );
+    const updatedSettings =
+      await pushNotificationSettingsDb.upsertPushNotificationSettings(
+        profileId,
+        deviceId,
+        validatedSettings
+      );
 
     res.send(updatedSettings);
   }
