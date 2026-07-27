@@ -115,6 +115,10 @@ export const SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE =
   'subscriptions_nfts_final_upload';
 export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
+export const SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE =
+  'subscription_coverage_alert_states';
+export const SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE =
+  'subscription_coverage_refresh_requests';
 export const XTDH_GRANTS_TABLE = 'xtdh_grants';
 export const XTDH_GRANT_TOKENS_TABLE = 'xtdh_grant_tokens';
 export const DELETED_DROPS_TABLE = 'deleted_drops';

@@ -32,6 +32,7 @@ import {
   getLastProcessingBlock,
   persistBlock
 } from './db.transactions_processing';
+import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -93,9 +94,15 @@ export const redeemSubscriptions = async (reset?: boolean) => {
   logger.info(`[${airdrops.length} AIRDROPS TO PROCESS]`);
 
   const waveNotifications: SubscriptionWaveNotification[] = [];
+  const dirtyConsolidationKeys = new Set<string>();
   await getDataSource().transaction(async (entityManager) => {
     for (const drop of airdrops) {
-      await processAirdrop(drop, entityManager, waveNotifications);
+      await processAirdrop(
+        drop,
+        entityManager,
+        waveNotifications,
+        dirtyConsolidationKeys
+      );
     }
     const transactionBlockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
@@ -104,13 +111,18 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     logger.info(`[BLOCK ${maxBlockTransaction.block} PERSISTED]`);
   });
 
+  await markSubscriptionCoverageDirty(
+    Array.from(dirtyConsolidationKeys),
+    'SUBSCRIPTION_REDEEMED'
+  );
   await sendSubscriptionWaveNotifications(waveNotifications);
 };
 
 export async function processAirdrop(
   transaction: Transaction,
   entityManager: EntityManager,
-  waveNotifications: SubscriptionWaveNotification[] = []
+  waveNotifications: SubscriptionWaveNotification[] = [],
+  dirtyConsolidationKeys?: Set<string>
 ): Promise<void> {
   const validation = await validateNonSubscriptionAirdrop(
     transaction,
@@ -122,7 +134,12 @@ export async function processAirdrop(
   }
 
   for (let i = 0; i < transaction.token_count; i++) {
-    await processSubscription(transaction, entityManager, waveNotifications);
+    await processSubscription(
+      transaction,
+      entityManager,
+      waveNotifications,
+      dirtyConsolidationKeys
+    );
   }
 }
 
@@ -218,7 +235,8 @@ export async function validateNonSubscriptionAirdrop(
 async function processSubscription(
   transaction: Transaction,
   entityManager: EntityManager,
-  waveNotifications: SubscriptionWaveNotification[]
+  waveNotifications: SubscriptionWaveNotification[],
+  dirtyConsolidationKeys?: Set<string>
 ) {
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
@@ -337,6 +355,7 @@ async function processSubscription(
   await entityManager
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);
+  dirtyConsolidationKeys?.add(finalSubscription.consolidation_key);
 }
 
 function buildTransactionLink(transactionHash: string): string {

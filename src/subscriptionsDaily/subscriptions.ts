@@ -42,6 +42,7 @@ import {
   persistNFTFinalSubscriptions,
   persistSubscriptions
 } from './db.subscriptions';
+import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
@@ -56,9 +57,11 @@ export async function updateSubscriptions() {
 
   await populateAutoSubscriptionsForMemeId(nextMemeId, autoSubscriptions);
 
-  const uploadLink = await buildFinalSubscription(
-    nextMemeId,
-    autoSubscriptions
+  const { uploadLink, affectedConsolidationKeys } =
+    await buildFinalSubscription(nextMemeId, autoSubscriptions);
+  await markSubscriptionCoverageDirty(
+    affectedConsolidationKeys,
+    'DAILY_FINALIZATION'
   );
 
   const seizeDomain =
@@ -150,7 +153,10 @@ async function populateAutoSubscriptionsForMemeId(
 async function buildFinalSubscription(
   newMeme: number,
   autoSubscriptions: SubscriptionMode[]
-): Promise<string> {
+): Promise<{
+  readonly uploadLink: string;
+  readonly affectedConsolidationKeys: string[];
+}> {
   logger.info(`[BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}]`);
 
   const now = Time.now();
@@ -173,7 +179,16 @@ async function buildFinalSubscription(
     newSubscriptionLogs
   );
 
-  return upload.upload_url;
+  return {
+    uploadLink: upload.upload_url,
+    affectedConsolidationKeys: Array.from(
+      new Set(
+        newSubscriptionLogs.map((subscription) =>
+          subscription.consolidation_key.toLowerCase()
+        )
+      )
+    )
+  };
 }
 
 async function createFinalSubscriptions(
