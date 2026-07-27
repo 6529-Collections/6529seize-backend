@@ -28,6 +28,7 @@ import {
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
+  ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
   ReleaseBusV2ProgressBodySchema,
@@ -406,6 +407,64 @@ deployRoutes.get('/release-bus-v2/candidates', async (req, res) => {
     })),
     mode: getReleaseBusV2Mode()
   });
+});
+
+deployRoutes.post('/release-bus-v2/production-selections', async (req, res) => {
+  const body = getValidatedByJoiOrThrow<{
+    candidates: {
+      candidate_id: string;
+      expected_head_sha: string;
+      expected_row_version: number;
+    }[];
+  }>(req.body, ReleaseBusV2ProductionSelectionBodySchema);
+  const actors = await Promise.all(
+    body.candidates.map(({ candidate_id }) =>
+      requireV2CandidateWriteAccess(req, candidate_id)
+    )
+  );
+  const actor = actors[0];
+  if (
+    !actor ||
+    actors.some(
+      (candidateActor) => candidateActor.toLowerCase() !== actor.toLowerCase()
+    )
+  )
+    throw new CustomApiCompliantException(
+      403,
+      'One authenticated actor must authorize the full production selection'
+    );
+  try {
+    const candidates =
+      await releaseBusV2Service.markSelectionReadyForProduction(
+        body.candidates.map(
+          ({ candidate_id, expected_head_sha, expected_row_version }) => ({
+            candidateId: candidate_id,
+            expectedHeadSha: expected_head_sha,
+            expectedRowVersion: expected_row_version
+          })
+        ),
+        actor
+      );
+    const productionSelectionId = candidates[0]?.production_selection_id;
+    if (!productionSelectionId)
+      throw new Error(
+        'Release Bus v2 did not persist the production selection identity'
+      );
+    setNoStoreHeaders(res);
+    return res.json({
+      production_selection_id: productionSelectionId,
+      qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+      candidates,
+      mode: getReleaseBusV2Mode()
+    });
+  } catch (error) {
+    throw new CustomApiCompliantException(
+      409,
+      error instanceof Error
+        ? error.message
+        : 'Release Bus v2 production selection failed'
+    );
+  }
 });
 
 deployRoutes.post(

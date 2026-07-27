@@ -34,6 +34,7 @@ export const RELEASE_BUS_V2_CANDIDATE_STATUSES = [
   'STAGING_VALIDATING',
   'STAGING_VALIDATED',
   'READY_FOR_PRODUCTION',
+  'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
   'WAITING_FOR_PRODUCTION_REPLAN',
   'PRODUCTION_IN_TRAIN',
   'PRODUCTION_BUILDING_OR_QUALIFYING',
@@ -96,6 +97,7 @@ export type ReleaseBusV2FailureClass =
 export type ReleaseBusV2ManifestStatus =
   | 'STAGING_DEPLOYED'
   | 'STAGING_VALIDATED'
+  | 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
   | 'PRODUCTION_DEPLOYED'
   | 'FAILED';
 
@@ -115,6 +117,25 @@ export type ReleaseBusV2StagingStateStatus =
   | 'LIVE'
   | 'CLEAN_MAIN'
   | 'ROLLBACK_FAILED';
+
+export const RELEASE_BUS_V2_PRODUCTION_QUALIFICATION_POLICIES = [
+  'CANDIDATE_STAGING_EVIDENCE_V1',
+  'LEGACY_EXACT_MANIFEST_V1'
+] as const;
+export type ReleaseBusV2ProductionQualificationPolicy =
+  (typeof RELEASE_BUS_V2_PRODUCTION_QUALIFICATION_POLICIES)[number];
+
+export type ReleaseBusV2CandidateStagingEvidence = {
+  readonly candidate_id: string;
+  readonly repository: ReleaseBusV2Repository;
+  readonly pr_number: number;
+  readonly head_sha: string;
+  readonly staging_train_id: string;
+  readonly staging_manifest_id: string;
+  readonly staging_manifest_identity_sha256: string;
+  readonly staging_e2e_operation_id: string;
+  readonly staging_e2e_run_id: string;
+};
 
 export type ReleaseBusV2DeployPlan = {
   readonly units: readonly string[];
@@ -161,6 +182,7 @@ export type ReleaseBusV2CandidateRecord = {
   readonly staging_transition_reason?: string | null;
   readonly production_requested_at: number | null;
   readonly production_requested_by: string | null;
+  readonly production_selection_id?: string | null;
   readonly hold_reason: string | null;
   readonly superseded_at: number | null;
   readonly created_at: number;
@@ -185,6 +207,11 @@ export type ReleaseBusV2TrainRecord = {
   readonly staging_policy?: ReleaseBusV2StagingPolicy | null;
   readonly staging_baseline_manifest_id?: string | null;
   readonly staging_transition_json?: unknown;
+  readonly qualification_policy?: ReleaseBusV2ProductionQualificationPolicy | null;
+  readonly qualification_evidence_json?:
+    | readonly ReleaseBusV2CandidateStagingEvidence[]
+    | string
+    | null;
   readonly failure_class: ReleaseBusV2FailureClass | null;
   readonly failure_message: string | null;
   readonly recovery_message: string | null;

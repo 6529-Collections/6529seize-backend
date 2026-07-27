@@ -13,6 +13,7 @@ const mockV2ListOperations = jest.fn();
 const mockV2ListEvents = jest.fn();
 const mockLambdaSend = jest.fn();
 const mockV2MarkReadyForProduction = jest.fn();
+const mockV2MarkSelectionReadyForProduction = jest.fn();
 const mockV2Cancel = jest.fn();
 const mockV2Register = jest.fn();
 const mockV2RequestStagingTransition = jest.fn();
@@ -73,6 +74,8 @@ jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
       mockV2RequestStagingTransition(...args),
     markReadyForProduction: (...args: unknown[]) =>
       mockV2MarkReadyForProduction(...args),
+    markSelectionReadyForProduction: (...args: unknown[]) =>
+      mockV2MarkSelectionReadyForProduction(...args),
     revokeProductionReadiness: jest.fn(),
     cancel: (...args: unknown[]) => mockV2Cancel(...args),
     setPaused: jest.fn(),
@@ -189,6 +192,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     staging_validated_manifest_id: RESET_ID,
     production_requested_at: null,
     production_requested_by: null,
+    production_selection_id: null,
     hold_reason: null,
     superseded_at: null,
     created_at: 1,
@@ -206,9 +210,17 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     mockV2FindCandidateById.mockResolvedValue(v2Candidate);
     mockV2MarkReadyForProduction.mockResolvedValue({
       ...v2Candidate,
-      status: 'READY_FOR_PRODUCTION',
+      status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
       row_version: 5
     });
+    mockV2MarkSelectionReadyForProduction.mockResolvedValue([
+      {
+        ...v2Candidate,
+        status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+        production_selection_id: RESET_ID,
+        row_version: 5
+      }
+    ]);
     mockV2Cancel.mockResolvedValue({
       ...v2Candidate,
       status: 'CANCELLED',
@@ -379,6 +391,39 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     );
     expect(JSON.stringify(response.body)).not.toContain(
       'mysql connection secret detail'
+    );
+  });
+
+  it('records an explicit atomic candidate-evidence production selection', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/production-selections',
+      {
+        candidates: [
+          {
+            candidate_id: candidateId,
+            expected_head_sha: SHA,
+            expected_row_version: 4
+          }
+        ]
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        production_selection_id: RESET_ID,
+        qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1'
+      })
+    );
+    expect(mockV2MarkSelectionReadyForProduction).toHaveBeenCalledWith(
+      [
+        {
+          candidateId,
+          expectedHeadSha: SHA,
+          expectedRowVersion: 4
+        }
+      ],
+      'developer'
     );
   });
 

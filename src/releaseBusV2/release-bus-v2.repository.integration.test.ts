@@ -121,6 +121,52 @@ describeWithSeed(
       ).toBe('STAGING_IN_TRAIN');
     });
 
+    it('durably round-trips a production selection policy and exact candidate evidence', async () => {
+      const candidate = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 1010,
+          branchName: 'feature/evidence-round-trip',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      const evidence = [
+        {
+          candidate_id: candidate.id,
+          repository: candidate.repository,
+          pr_number: candidate.pr_number,
+          head_sha: candidate.head_sha,
+          staging_train_id: 'staging-train-evidence',
+          staging_manifest_id: 'staging-manifest-evidence',
+          staging_manifest_identity_sha256: '1'.repeat(64),
+          staging_e2e_operation_id: 'staging-e2e-operation',
+          staging_e2e_run_id: 'staging-e2e-run'
+        }
+      ] as const;
+      const train = await repository.createTrain(
+        {
+          lane: 'PRODUCTION',
+          frontendBaseSha: SHA_B,
+          backendBaseSha: SHA_C,
+          candidateIds: [candidate.id],
+          qualificationPolicy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+          qualificationEvidence: evidence
+        },
+        {}
+      );
+
+      expect(train.qualification_policy).toBe('CANDIDATE_STAGING_EVIDENCE_V1');
+      expect(
+        typeof train.qualification_evidence_json === 'string'
+          ? JSON.parse(train.qualification_evidence_json)
+          : train.qualification_evidence_json
+      ).toEqual(evidence);
+    });
+
     it('supersedes an older immutable PR head before the newer head can queue', async () => {
       const older = await repository.createCandidate(
         {
@@ -328,7 +374,7 @@ describeWithSeed(
       );
     });
 
-    it('claims only explicitly production-ready candidates', async () => {
+    it('does not claim explicit production readiness without durable staging evidence', async () => {
       process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
       const explicit = await repository.createCandidate(
         {
@@ -364,22 +410,24 @@ describeWithSeed(
         },
         {}
       );
-      const train = await new ReleaseBusV2Service(repository).claimLane(
-        'PRODUCTION',
-        SHA_A,
-        SHA_B,
-        'production-claim'
-      );
-      expect(train?.lane).toBe('PRODUCTION');
-      expect(await repository.listTrainCandidates(train?.id ?? '', {})).toEqual(
-        [expect.objectContaining({ candidate_id: explicit.id })]
-      );
+      await expect(
+        new ReleaseBusV2Service(repository).claimLane(
+          'PRODUCTION',
+          SHA_A,
+          SHA_B,
+          'production-claim'
+        )
+      ).rejects.toThrow('has no current staging validation evidence');
+      expect(await repository.listTrains(10, {})).toEqual([]);
+      expect(
+        (await repository.findCandidateById(explicit.id, {}))?.status
+      ).toBe('READY_FOR_PRODUCTION');
       expect(
         (await repository.findCandidateById(stagingOnly.id, {}))?.status
       ).toBe('READY_FOR_STAGING');
     });
 
-    it('yields an impossible frontend-only qualification and atomically replans with later backend-ready work', async () => {
+    it('transactionally yields an already-claimed legacy impossible qualification', async () => {
       process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
       const frontend = await repository.createCandidate(
         {
@@ -404,13 +452,15 @@ describeWithSeed(
         {}
       );
       const service = new ReleaseBusV2Service(repository);
-      const parent = await service.claimLane(
-        'PRODUCTION',
-        SHA_A,
-        SHA_B,
-        'deadlock-parent'
+      const parent = await repository.createTrain(
+        {
+          lane: 'PRODUCTION',
+          frontendBaseSha: SHA_A,
+          backendBaseSha: SHA_B,
+          candidateIds: [frontend.id]
+        },
+        {}
       );
-      expect(parent).not.toBeNull();
       const claimedFrontend = await repository.findCandidateById(
         frontend.id,
         {}
@@ -421,13 +471,13 @@ describeWithSeed(
         claimedFrontend!.row_version,
         {
           status: 'PRODUCTION_BUILDING_OR_QUALIFYING',
-          currentTrainId: parent!.id
+          currentTrainId: parent.id
         },
         {}
       );
       await repository.updateTrain(
-        parent!.id,
-        parent!.row_version,
+        parent.id,
+        parent.row_version,
         {
           status: 'PREPARED',
           frontendComposedSha: SHA_C,
@@ -437,11 +487,11 @@ describeWithSeed(
         },
         {}
       );
-      const preparedParent = await repository.findTrain(parent!.id, {});
+      const preparedParent = await repository.findTrain(parent.id, {});
       expect(preparedParent).not.toBeNull();
       const qualification = await repository.createQualificationTrain(
         {
-          parentTrainId: parent!.id,
+          parentTrainId: parent.id,
           frontendBaseSha: SHA_A,
           backendBaseSha: SHA_B,
           frontendComposedSha: SHA_C,
@@ -453,7 +503,7 @@ describeWithSeed(
         {}
       );
       await repository.updateTrain(
-        parent!.id,
+        parent.id,
         preparedParent!.row_version,
         {
           status: 'WAITING_FOR_ENVIRONMENT',
@@ -481,7 +531,7 @@ describeWithSeed(
           maintenanceSchedulerLeaseToken: 'wrong-token'
         })
       ).rejects.toThrow('lost its exclusive all-lock safety fence');
-      expect(await repository.findTrain(parent!.id, {})).toEqual(
+      expect(await repository.findTrain(parent.id, {})).toEqual(
         expect.objectContaining({ status: 'WAITING_FOR_ENVIRONMENT' })
       );
       await expect(
@@ -495,7 +545,7 @@ describeWithSeed(
           maintenanceSchedulerLeaseToken: maintenanceScheduler!.lease_token!
         })
       ).rejects.toThrow('is not unsatisfiable');
-      expect(await repository.findTrain(parent!.id, {})).toEqual(
+      expect(await repository.findTrain(parent.id, {})).toEqual(
         expect.objectContaining({ status: 'WAITING_FOR_ENVIRONMENT' })
       );
       const yielded = await service.yieldUnsatisfiableProductionQualification({
@@ -514,11 +564,11 @@ describeWithSeed(
       );
       expect(yielded).toEqual({
         yielded: true,
-        parentTrainId: parent!.id,
+        parentTrainId: parent.id,
         qualificationTrainId: qualification.id,
         candidateIds: [frontend.id]
       });
-      expect(await repository.findTrain(parent!.id, {})).toEqual(
+      expect(await repository.findTrain(parent.id, {})).toEqual(
         expect.objectContaining({ status: 'CANCELLED' })
       );
       expect(await repository.findTrain(qualification.id, {})).toEqual(
@@ -531,90 +581,7 @@ describeWithSeed(
           production_requested_by: 'owner'
         })
       );
-      await expect(
-        service.claimLane('PRODUCTION', SHA_A, SHA_C, 'deadlock-held-only', {
-          frontendSha: SHA_C,
-          backendSha: SHA_A
-        })
-      ).resolves.toBeNull();
-      expect(await repository.findCandidateById(frontend.id, {})).toEqual(
-        expect.objectContaining({
-          status: 'WAITING_FOR_PRODUCTION_REPLAN',
-          current_train_id: null
-        })
-      );
-
-      const backendCandidates = await Promise.all(
-        [121, 122].map((prNumber) =>
-          repository.createCandidate(
-            {
-              repository: 'backend',
-              prNumber,
-              branchName: `feature/backend-production-${prNumber}`,
-              headSha: prNumber === 121 ? SHA_A : SHA_C,
-              requestedBy: 'integration',
-              deployPlan: { units: ['api'], edges: [] },
-              prEvidence: null
-            },
-            {}
-          )
-        )
-      );
-      for (const backend of backendCandidates)
-        await repository.updateCandidate(
-          backend.id,
-          backend.row_version,
-          {
-            status: 'READY_FOR_PRODUCTION',
-            productionRequestedAt: backend.pr_number,
-            productionRequestedBy: 'owner'
-          },
-          {}
-        );
-
-      const [firstReplan, overlappingReconcile] = await Promise.all([
-        service.claimLane('PRODUCTION', SHA_A, SHA_C, 'deadlock-replan-a', {
-          frontendSha: SHA_C,
-          backendSha: SHA_A
-        }),
-        service.claimLane('PRODUCTION', SHA_A, SHA_C, 'deadlock-replan-b', {
-          frontendSha: SHA_C,
-          backendSha: SHA_A
-        })
-      ]);
-      expect(firstReplan?.id).toBe(overlappingReconcile?.id);
-      expect(firstReplan?.id).not.toBe(parent!.id);
-      const replannedMemberships = await repository.listTrainCandidates(
-        firstReplan!.id,
-        {}
-      );
-      expect(
-        replannedMemberships
-          .map(({ candidate_id }) => candidate_id)
-          .sort((left, right) => left.localeCompare(right))
-      ).toEqual(
-        [frontend.id, ...backendCandidates.map(({ id }) => id)].sort(
-          (left, right) => left.localeCompare(right)
-        )
-      );
-      for (const candidateId of [
-        frontend.id,
-        ...backendCandidates.map(({ id }) => id)
-      ])
-        expect(await repository.findCandidateById(candidateId, {})).toEqual(
-          expect.objectContaining({
-            status: 'PRODUCTION_IN_TRAIN',
-            current_train_id: firstReplan!.id
-          })
-        );
-      expect(
-        (await repository.listTrains(20, {})).filter(
-          ({ lane, status }) =>
-            lane === 'PRODUCTION' &&
-            !['PRODUCTION_DEPLOYED', 'FAILED', 'CANCELLED'].includes(status)
-        )
-      ).toHaveLength(1);
-      expect(await repository.listEvents(parent!.id, 20, {})).toEqual(
+      expect(await repository.listEvents(parent.id, 20, {})).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             event_type: 'PRODUCTION_TRAIN_YIELDED_FOR_SAFE_REPLAN'

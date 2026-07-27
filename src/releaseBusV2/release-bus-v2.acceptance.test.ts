@@ -74,6 +74,8 @@ function train(
     parent_train_id: null,
     qualification_identity_sha256: null,
     qualification_train_id: null,
+    qualification_policy: null,
+    qualification_evidence_json: null,
     failure_class: null,
     failure_message: null,
     recovery_message: null,
@@ -106,6 +108,7 @@ function candidate(
     staging_validated_manifest_id: null,
     production_requested_at: null,
     production_requested_by: null,
+    production_selection_id: null,
     hold_reason: null,
     superseded_at: null,
     created_at: 1,
@@ -297,6 +300,14 @@ class InMemoryAcceptanceRepository {
         fields.backendComposedSha === undefined
           ? current.backend_composed_sha
           : (fields.backendComposedSha as string | null),
+      frontend_artifact_digest:
+        fields.frontendArtifactDigest === undefined
+          ? current.frontend_artifact_digest
+          : (fields.frontendArtifactDigest as string | null),
+      backend_artifact_digest:
+        fields.backendArtifactDigest === undefined
+          ? current.backend_artifact_digest
+          : (fields.backendArtifactDigest as string | null),
       manifest_id:
         fields.manifestId === undefined
           ? current.manifest_id
@@ -602,6 +613,7 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
     restoreProductionReadinessAfterBranchCleanup: jest.fn(
       async () => undefined
     ),
+    resolveCandidateStagingEvidence: jest.fn(async () => []),
     yieldUnsatisfiableProductionQualification: jest.fn(
       async ({
         qualificationTrainId
@@ -3057,6 +3069,212 @@ describe('Release Bus v2 offline acceptance harness', () => {
         })
       })
     );
+  });
+
+  it('freshly composes candidate-evidence production even for one artifact-qualified candidate', async () => {
+    const state = harness('SUCCEEDED');
+    const selectedMembership = state.repository.memberships.find(
+      ({ candidate_id }) => candidate_id === 'frontend-candidate'
+    );
+    if (!selectedMembership) throw new Error('Missing frontend candidate');
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      { ...selectedMembership, train_id: 'fresh-production' }
+    );
+    const selected = state.repository.candidates.get('frontend-candidate');
+    if (!selected) throw new Error('Missing selected candidate');
+    state.repository.candidates.set(selected.id, {
+      ...selected,
+      pr_evidence_json: {
+        base_sha: '1'.repeat(40),
+        merge_sha: selected.head_sha,
+        checks_run_id: 'green-checks',
+        checks_completed_at: 2,
+        artifact_run_id: 'old-artifact-run',
+        artifact_name: 'old-artifact',
+        artifact_digest: '9'.repeat(64)
+      }
+    });
+    const evidence = [
+      {
+        candidate_id: selected.id,
+        repository: selected.repository,
+        pr_number: selected.pr_number,
+        head_sha: selected.head_sha,
+        staging_train_id: 'old-staging-train',
+        staging_manifest_id: 'old-staging-manifest',
+        staging_manifest_identity_sha256: '7'.repeat(64),
+        staging_e2e_operation_id: 'old-staging-e2e-operation',
+        staging_e2e_run_id: 'old-staging-e2e-run'
+      }
+    ];
+    const production = train('fresh-production', {
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null,
+      qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+      qualification_evidence_json: evidence
+    });
+    state.repository.trains.set(production.id, production);
+    const composedSha = '8'.repeat(40);
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) => {
+        if (ref === 'main')
+          return repository === 'frontend'
+            ? production.frontend_base_sha
+            : production.backend_base_sha;
+        return repository === 'frontend' ? composedSha : BACKEND_SHA;
+      }
+    );
+    mockReconcileWorkflow.mockResolvedValue(
+      operation(
+        production.id,
+        'COMPOSE_FRONTEND',
+        'frontend',
+        'fresh-compose-run'
+      )
+    );
+    const context = {
+      train: production,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: []
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advancePreparation(input: typeof context): Promise<void>;
+      }
+    ).advancePreparation(context);
+
+    expect(mockReconcileWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationType: 'COMPOSE_FRONTEND',
+        inputs: expect.objectContaining({
+          base_sha: production.frontend_base_sha,
+          candidate_shas: JSON.stringify([selected.head_sha])
+        })
+      })
+    );
+    expect(mockCreateRef).not.toHaveBeenCalled();
+    expect(state.repository.trains.get(production.id)).toEqual(
+      expect.objectContaining({
+        status: 'PREFLIGHTING',
+        frontend_composed_sha: composedSha,
+        frontend_artifact_digest: null,
+        manifest_id: null
+      })
+    );
+  });
+
+  it('regresses #3464/#3461: candidate evidence reaches production without WAITING_FOR_PRODUCTION_REPLAN', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    const selectedCandidates = Array.from(state.repository.candidates.values());
+    const omitted = {
+      ...candidate('omitted-candidate-b', 'frontend', null),
+      status: 'READY_FOR_PRODUCTION' as const,
+      current_train_id: null,
+      staging_validated_train_id: 'omitted-staging-train',
+      staging_validated_manifest_id: 'omitted-staging-manifest',
+      production_requested_at: 9,
+      production_requested_by: 'operator',
+      production_selection_id: 'omitted-selection'
+    };
+    state.repository.candidates.set(omitted.id, omitted);
+    const evidence = selectedCandidates.map((item, index) => ({
+      candidate_id: item.id,
+      repository: item.repository,
+      pr_number: item.pr_number,
+      head_sha: item.head_sha,
+      staging_train_id: `source-staging-train-${index}`,
+      staging_manifest_id: `source-staging-manifest-${index}`,
+      staging_manifest_identity_sha256: `${index + 1}`.padStart(64, '0'),
+      staging_e2e_operation_id: `source-staging-e2e-operation-${index}`,
+      staging_e2e_run_id: `source-staging-e2e-run-${index}`
+    }));
+    (
+      state.service.resolveCandidateStagingEvidence as jest.Mock<
+        Promise<typeof evidence>
+      >
+    ).mockResolvedValue(evidence);
+    const production = train('candidate-evidence-production', {
+      lane: 'PRODUCTION',
+      status: 'PREPARED',
+      qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+      qualification_evidence_json: evidence
+    });
+    state.repository.trains.set(production.id, production);
+    const memberships = state.repository.memberships.map((item) => ({
+      ...item,
+      train_id: production.id
+    }));
+    const context = {
+      train: production,
+      memberships,
+      candidates: [...selectedCandidates, omitted],
+      dependencies: state.repository.dependencies
+    };
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'frontend'
+        ? production.frontend_base_sha
+        : production.backend_base_sha
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, branch: string) =>
+        selectedCandidates.find((item) => item.branch_name === branch)
+          ?.head_sha ?? null
+    );
+
+    await (
+      state.reconciler as unknown as {
+        advanceProduction(input: typeof context): Promise<void>;
+      }
+    ).advanceProduction(context);
+
+    expect(state.repository.trains.get(production.id)).toEqual(
+      expect.objectContaining({
+        status: 'MERGING_PRODUCTION',
+        qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+        qualification_train_id: null,
+        manifest_id: expect.any(String)
+      })
+    );
+    const qualificationManifest = Array.from(
+      state.repository.manifests.values()
+    ).find(({ train_id }) => train_id === production.id);
+    expect(qualificationManifest).toEqual(
+      expect.objectContaining({
+        status: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED',
+        deployed_at: null,
+        manifest_json: expect.objectContaining({
+          qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+          candidate_staging_evidence: evidence,
+          candidates: expect.arrayContaining([
+            expect.objectContaining({
+              candidate_id: 'backend-candidate'
+            }),
+            expect.objectContaining({
+              candidate_id: 'frontend-candidate'
+            })
+          ])
+        })
+      })
+    );
+    expect(state.repository.trains.get(production.id)?.status).not.toBe(
+      'WAITING_FOR_ENVIRONMENT'
+    );
+    expect(
+      Array.from(state.repository.trains.values()).some(
+        ({ lane }) => lane === 'PRODUCTION_QUALIFICATION'
+      )
+    ).toBe(false);
+    expect(state.repository.candidates.get(omitted.id)).toEqual(omitted);
+    expect(state.repository.lock.owner_train_id).toBeNull();
   });
 
   it('runs staging E2E from the immutable exact-composition release ref', async () => {

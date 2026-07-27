@@ -45,6 +45,7 @@ function candidate(
     staging_validated_manifest_id: null,
     production_requested_at: null,
     production_requested_by: null,
+    production_selection_id: null,
     hold_reason: null,
     superseded_at: null,
     created_at: 1,
