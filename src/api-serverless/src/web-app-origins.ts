@@ -19,15 +19,42 @@ export function normalizeWebAppOrigin(
   if (!value) {
     return null;
   }
+  const rawOrigin = value.trim();
+  if (
+    !rawOrigin ||
+    rawOrigin.toLowerCase() === 'null' ||
+    rawOrigin.includes('\\')
+  ) {
+    return null;
+  }
   try {
-    const parsed = new URL(value.trim());
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    const parsed = new URL(rawOrigin);
+    if (
+      (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      !hasOnlyOptionalRootPath(rawOrigin)
+    ) {
       return null;
     }
-    return parsed.origin;
+    return parsed.origin === 'null' ? null : parsed.origin;
   } catch {
     return null;
   }
+}
+
+function hasOnlyOptionalRootPath(value: string): boolean {
+  const schemeEnd = value.indexOf('://');
+  if (schemeEnd < 1) {
+    return false;
+  }
+  const authorityEnd = value.slice(schemeEnd + 3).search(/[/?#]/);
+  if (authorityEnd < 0) {
+    return true;
+  }
+  return value.slice(schemeEnd + 3 + authorityEnd) === '/';
 }
 
 export function getAllowedWebAuthCredentialOrigins(
