@@ -282,6 +282,16 @@ function candidateRegistrationStatus(candidate: ReleaseBusV2CandidateRecord): {
   };
 }
 
+function restoredCarryForwardStatus(
+  candidate: ReleaseBusV2CandidateRecord,
+  hasProductionDeployment: boolean
+): ReleaseBusV2CandidateStatus {
+  if (hasProductionDeployment) return 'PRODUCTION_DEPLOYED';
+  if (candidate.production_requested_at === null) return 'STAGING_VALIDATED';
+  if (candidate.production_selection_id) return CANDIDATE_EVIDENCE_READY_STATUS;
+  return 'READY_FOR_PRODUCTION';
+}
+
 export class ReleaseBusV2Service {
   public constructor(
     private readonly repository: ReleaseBusV2RepositoryClass = releaseBusV2Repository
@@ -924,6 +934,14 @@ export class ReleaseBusV2Service {
       candidate.superseded_at !== null
     )
       return false;
+    return this.hasExactProductionDeploymentManifestEvidence(candidate, ctx);
+  }
+
+  private async hasExactProductionDeploymentManifestEvidence(
+    candidate: ReleaseBusV2CandidateRecord,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (candidate.superseded_at !== null) return false;
     const manifests = await this.repository.listProductionManifestsForCandidate(
       candidate.id,
       ctx
@@ -962,6 +980,134 @@ export class ReleaseBusV2Service {
       if (matchingE2e.length === 1) return true;
     }
     return false;
+  }
+
+  public async repairTerminalCumulativeCarryForwardStatuses(
+    actor: string
+  ): Promise<readonly ReleaseBusV2CandidateRecord[]> {
+    // Each repaired row leaves STAGING_BUILDING, so later ticks deterministically
+    // drain any backlog beyond this bounded transaction batch.
+    const stuck = await this.repository.listCandidates(
+      ['STAGING_BUILDING'],
+      500,
+      {}
+    );
+    const repaired: ReleaseBusV2CandidateRecord[] = [];
+    for (const candidate of stuck) {
+      const result = await this.repository.executeNativeQueriesInTransaction(
+        async (connection): Promise<ReleaseBusV2CandidateRecord | null> => {
+          const ctx: RequestContext = { connection };
+          const current = await this.repository.findCandidateById(
+            candidate.id,
+            ctx,
+            true
+          );
+          if (
+            !current ||
+            current.status !== 'STAGING_BUILDING' ||
+            current.current_train_id === null
+          )
+            return null;
+          const train = await this.repository.findTrain(
+            current.current_train_id,
+            ctx
+          );
+          if (
+            !train ||
+            train.lane !== 'STAGING' ||
+            train.staging_policy !== 'CUMULATIVE_ADMITTED_SET_V1' ||
+            !TERMINAL_TRAIN_STATUSES.has(train.status)
+          )
+            return null;
+          const isCarryForwardMember = (
+            await this.repository.listTrainCandidates(train.id, ctx)
+          ).some(
+            (item) =>
+              item.candidate_id === current.id &&
+              item.candidate_role === 'CARRY_FORWARD' &&
+              item.disposition === 'INCLUDED'
+          );
+          if (!isCarryForwardMember) return null;
+
+          const hasProductionDeployment =
+            await this.hasExactProductionDeploymentManifestEvidence(
+              current,
+              ctx
+            );
+          const hasHistoricalStagingCertification =
+            current.superseded_at === null &&
+            current.staging_validated_train_id !== null &&
+            current.staging_validated_manifest_id !== null;
+          if (!hasProductionDeployment && !hasHistoricalStagingCertification)
+            return null;
+          const restoredStatus = restoredCarryForwardStatus(
+            current,
+            hasProductionDeployment
+          );
+          if (
+            !(await this.repository.updateCandidate(
+              current.id,
+              current.row_version,
+              {
+                status: restoredStatus,
+                currentTrainId: null,
+                holdReason: null
+              },
+              ctx
+            ))
+          )
+            throw new Error('Candidate changed concurrently');
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              candidateId: current.id,
+              eventType: 'TERMINAL_CUMULATIVE_CARRY_FORWARD_STATUS_REPAIRED',
+              actor,
+              payload: {
+                head_sha: current.head_sha,
+                incorrect_status: current.status,
+                restored_status: restoredStatus,
+                staging_validated_train_id: current.staging_validated_train_id,
+                staging_validated_manifest_id:
+                  current.staging_validated_manifest_id,
+                staging_live_state: current.staging_live_state ?? null,
+                staging_live_manifest_id:
+                  current.staging_live_manifest_id ?? null,
+                production_selection_id:
+                  current.production_selection_id ?? null,
+                exact_production_deployment_evidence: hasProductionDeployment,
+                historical_staging_certification:
+                  hasHistoricalStagingCertification
+              }
+            },
+            ctx
+          );
+          return {
+            ...current,
+            status: restoredStatus,
+            current_train_id: null,
+            hold_reason: null,
+            row_version: current.row_version + 1
+          };
+        }
+      );
+      if (result) repaired.push(result);
+    }
+    // GitHub status is advisory after the durable repair. A transient publish
+    // failure must not abort the reconciler tick after the database committed.
+    await Promise.allSettled(
+      repaired.map((candidate) => {
+        const published = candidateRegistrationStatus(candidate);
+        return releaseBusGitHubApp.ensureCommitStatus(
+          candidate.repository,
+          candidate.head_sha,
+          published.state,
+          published.description,
+          'Release Bus v2'
+        );
+      })
+    );
+    return repaired;
   }
 
   public async revokeProductionReadiness(

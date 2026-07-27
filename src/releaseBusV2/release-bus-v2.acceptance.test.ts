@@ -590,6 +590,7 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
   );
   const service = {
     claimLane: jest.fn(async () => null),
+    repairTerminalCumulativeCarryForwardStatuses: jest.fn(async () => []),
     setPaused: jest.fn(
       async (
         scope: ReleaseBusV2ControlRecord['scope'],
@@ -1017,6 +1018,33 @@ describe('Release Bus v2 offline acceptance harness', () => {
       FRONTEND_SHA,
       BACKEND_SHA,
       'acceptance-staging-production-beta:production',
+      { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
+    );
+  });
+
+  it('continues unrelated reconciliation after a carry repair row-version race', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+    state.service.repairTerminalCumulativeCarryForwardStatuses.mockRejectedValueOnce(
+      new Error('Candidate changed concurrently')
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-carry-repair-race')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.claimLane).toHaveBeenCalledWith(
+      'STAGING',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-carry-repair-race:staging',
       { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
     );
   });

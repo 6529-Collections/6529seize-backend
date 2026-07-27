@@ -564,7 +564,7 @@ export function relevantCandidates(
   );
 }
 
-function stagingStatusCandidates(
+export function stagingStatusCandidates(
   context: TrainContext
 ): ReleaseBusV2CandidateRecord[] {
   if (
@@ -578,6 +578,14 @@ function stagingStatusCandidates(
       .map(({ candidate_id }) => candidate_id)
   );
   return relevantCandidates(context).filter(({ id }) => mutable.has(id));
+}
+
+export function candidateStatusMutationCandidates(
+  context: TrainContext
+): ReleaseBusV2CandidateRecord[] {
+  return context.train.lane === 'STAGING'
+    ? stagingStatusCandidates(context)
+    : relevantCandidates(context);
 }
 
 export function stagingDeploymentCandidates(
@@ -758,6 +766,18 @@ export class ReleaseBusV2Reconciler {
       !isPaused('PRODUCTION') &&
       (mode === 'PRODUCTION' ||
         releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION'));
+    if (stagingEnabled) {
+      try {
+        await this.service.repairTerminalCumulativeCarryForwardStatuses(
+          'release-bus-v2-reconciler'
+        );
+      } catch (error) {
+        // A concurrent row-version winner will be observed on the next tick
+        // and must not delay unrelated train advancement. Other failures stay
+        // fail-closed and propagate.
+        if (!isOptimisticConcurrencyConflict(error)) throw error;
+      }
+    }
     if (stagingEnabled || productionEnabled) {
       try {
         await this.reconcileQueuedCandidateHeads(betaAllowlist, mode);
@@ -1154,7 +1174,7 @@ export class ReleaseBusV2Reconciler {
       return;
     }
     await this.updateCandidateStatuses(
-      relevantCandidates(context),
+      candidateStatusMutationCandidates(context),
       candidateStatusForBuild(train.lane),
       train.id
     );
