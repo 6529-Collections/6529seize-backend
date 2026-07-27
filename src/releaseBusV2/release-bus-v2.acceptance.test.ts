@@ -915,7 +915,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'STAGING',
       FRONTEND_SHA,
       BACKEND_SHA,
-      'acceptance-invalid-production-beta:staging'
+      'acceptance-invalid-production-beta:staging',
+      { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
     );
   });
 
@@ -995,7 +996,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'STAGING',
       FRONTEND_SHA,
       BACKEND_SHA,
-      'acceptance-staging-production-beta:staging'
+      'acceptance-staging-production-beta:staging',
+      { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
     );
     expect(state.service.claimLane).toHaveBeenNthCalledWith(
       2,
@@ -1163,7 +1165,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'STAGING',
       FRONTEND_SHA,
       BACKEND_SHA,
-      'acceptance-beta:staging'
+      'acceptance-beta:staging',
+      { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
     );
     expect(mockReconcileWorkflow).not.toHaveBeenCalled();
     expect(state.repository.trains.get('train-1')?.status).toBe('PREPARED');

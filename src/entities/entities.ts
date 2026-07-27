@@ -232,6 +232,7 @@ export {
   ReleaseBusV2LockEntity,
   ReleaseBusV2ManifestEntity,
   ReleaseBusV2OperationEntity,
+  ReleaseBusV2StagingStateEntity,
   ReleaseBusV2TrainCandidateEntity,
   ReleaseBusV2TrainEntity
 } from './IReleaseBusV2';

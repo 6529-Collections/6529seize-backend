@@ -7,6 +7,12 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 60_000;
 const REQUIRED_SCOPES = ['ALL', 'STAGING', 'PRODUCTION'];
 const VALID_MODES = new Set(['OFF', 'STAGING', 'PRODUCTION']);
+const VALID_STAGING_STATES = new Set([
+  'UNINITIALIZED',
+  'LIVE',
+  'CLEAN_MAIN',
+  'ROLLBACK_FAILED'
+]);
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
 
 class SafeStatusError extends Error {}
@@ -123,7 +129,45 @@ function sanitizeStatus(payload) {
     controls[scope] = normalizePaused(matches[0].paused) ? 'PAUSED' : 'RUNNING';
   }
 
-  return { mode: payload.mode, controls };
+  const staging = payload.staging_state;
+  if (
+    !staging ||
+    typeof staging !== 'object' ||
+    !VALID_STAGING_STATES.has(staging.status) ||
+    !Number.isInteger(Number(staging.row_version)) ||
+    Number(staging.row_version) < 1
+  )
+    throw new SafeStatusError(
+      'Release Bus status API returned invalid staging state.'
+    );
+  const optionalSha = (value) =>
+    value === null || /^[a-f0-9]{40}$/.test(String(value));
+  if (
+    !optionalSha(staging.frontend_sha) ||
+    !optionalSha(staging.backend_sha) ||
+    !optionalSha(staging.frontend_staging_ref_sha) ||
+    !optionalSha(staging.backend_staging_ref_sha)
+  )
+    throw new SafeStatusError(
+      'Release Bus status API returned invalid staging identity.'
+    );
+
+  return {
+    mode: payload.mode,
+    controls,
+    staging: {
+      status: staging.status,
+      current_manifest_id: staging.current_manifest_id ?? null,
+      last_validated_manifest_id: staging.last_validated_manifest_id ?? null,
+      frontend_sha: staging.frontend_sha,
+      backend_sha: staging.backend_sha,
+      frontend_staging_ref_sha: staging.frontend_staging_ref_sha,
+      backend_staging_ref_sha: staging.backend_staging_ref_sha,
+      clean_main: normalizePaused(staging.clean_main),
+      last_transition_train_id: staging.last_transition_train_id ?? null,
+      row_version: Number(staging.row_version)
+    }
+  };
 }
 
 async function requestStatus(token, statusUrl, timeoutMs) {

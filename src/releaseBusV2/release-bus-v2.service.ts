@@ -26,6 +26,7 @@ import type {
   ReleaseBusV2DeployPlan,
   ReleaseBusV2Lane,
   ReleaseBusV2OperationRecord,
+  ReleaseBusV2PrEvidence,
   ReleaseBusV2RegisterInput,
   ReleaseBusV2Repository,
   ReleaseBusV2TrainRecord
@@ -33,6 +34,7 @@ import type {
 
 const TERMINAL_TRAIN_STATUSES = new Set([
   'STAGING_VALIDATED',
+  'STAGING_ROLLBACK_FAILED',
   'PRODUCTION_DEPLOYED',
   'FAILED',
   'CANCELLED'
@@ -45,6 +47,13 @@ const REQUIRED_MAINTENANCE_LOCKS = new Set([
   'staging-environment',
   'production-environment'
 ]);
+
+export class ReleaseBusV2StagingTransitionConflictError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'ReleaseBusV2StagingTransitionConflictError';
+  }
+}
 
 export type ReleaseBusV2StagingIdentity = {
   readonly frontendSha: string | null;
@@ -147,9 +156,9 @@ export function topologicalOrder(
   return result;
 }
 
-function parseStoredJson<T>(value: T | string | null): T | null {
+function parseStoredJson<T>(value: unknown): T | null {
   if (value === null) return null;
-  return typeof value === 'string' ? (JSON.parse(value) as T) : value;
+  return typeof value === 'string' ? (JSON.parse(value) as T) : (value as T);
 }
 
 function laneScope(lane: ReleaseBusV2Lane): 'STAGING' | 'PRODUCTION' {
@@ -193,7 +202,7 @@ function sameQualificationIdentity(
     readonly artifact_digest: string | null;
   }
 ): boolean {
-  const evidence = parseStoredJson(stored);
+  const evidence = parseStoredJson<ReleaseBusV2PrEvidence>(stored);
   if (!evidence) return false;
   return (
     evidence.base_sha === current.base_sha &&
@@ -815,6 +824,229 @@ export class ReleaseBusV2Service {
     return restored;
   }
 
+  public async requestStagingTransition(input: {
+    readonly candidateId: string;
+    readonly expectedHeadSha: string;
+    readonly expectedRowVersion: number;
+    readonly transition: 'REMOVE' | 'ABSORB';
+    readonly reason: string;
+    readonly actor: string;
+  }): Promise<ReleaseBusV2CandidateRecord> {
+    if (input.reason.trim().length < 3)
+      throw new ReleaseBusV2StagingTransitionConflictError(
+        'Staging removal requires an audited reason'
+      );
+    if (input.transition === 'ABSORB') {
+      const candidate = await this.repository.findCandidateById(
+        input.candidateId,
+        {}
+      );
+      if (!candidate || candidate.head_sha !== input.expectedHeadSha)
+        throw new ReleaseBusV2StagingTransitionConflictError(
+          'Candidate identity changed before absorption'
+        );
+      if (
+        !(await releaseBusGitHubApp.refContainsCommit(
+          candidate.repository,
+          'main',
+          candidate.head_sha
+        ))
+      )
+        throw new ReleaseBusV2StagingTransitionConflictError(
+          'Candidate exact SHA is not safely absorbed into current main'
+        );
+    }
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx: RequestContext = { connection };
+        const candidate = await this.repository.findCandidateById(
+          input.candidateId,
+          ctx,
+          true
+        );
+        if (
+          !candidate ||
+          candidate.head_sha !== input.expectedHeadSha ||
+          candidate.row_version !== input.expectedRowVersion
+        )
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            'Candidate identity or version changed'
+          );
+        if (candidate.staging_live_state !== 'LIVE')
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            'Only an exact candidate currently live in staging can leave the admitted set'
+          );
+        if (candidate.staging_transition_request)
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            'Candidate already has a staging lifecycle request'
+          );
+        const live = await this.repository.listLiveStagingCandidates(ctx, true);
+        const dependencies = await this.repository.listDependencies(
+          live.map(({ id }) => id),
+          ctx
+        );
+        const dependent = dependencies.find(
+          ({ prerequisite_candidate_id, candidate_id, environment }) =>
+            prerequisite_candidate_id === candidate.id &&
+            ['STAGING', 'BOTH'].includes(environment) &&
+            live.some(
+              (item) =>
+                item.id === candidate_id && !item.staging_transition_request
+            )
+        );
+        if (dependent)
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            `Candidate ${dependent.candidate_id} still requires this exact staging candidate`
+          );
+        if (
+          !(await this.repository.updateCandidate(
+            candidate.id,
+            candidate.row_version,
+            {
+              status: candidate.status,
+              stagingTransitionRequest: input.transition,
+              stagingTransitionRequestedAt: Date.now(),
+              stagingTransitionRequestedBy: input.actor,
+              stagingTransitionReason: input.reason.trim()
+            },
+            ctx
+          ))
+        )
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            'Candidate changed during staging lifecycle request'
+          );
+        await this.repository.appendEvent(
+          {
+            candidateId: candidate.id,
+            eventType:
+              input.transition === 'ABSORB'
+                ? 'STAGING_ABSORPTION_REQUESTED'
+                : 'STAGING_REMOVAL_REQUESTED',
+            actor: input.actor,
+            payload: {
+              head_sha: candidate.head_sha,
+              current_live_manifest_id: candidate.staging_live_manifest_id,
+              reason: input.reason.trim(),
+              production_evidence_preserved: true
+            }
+          },
+          ctx
+        );
+        const updated = await this.repository.findCandidateById(
+          candidate.id,
+          ctx
+        );
+        if (!updated)
+          throw new Error('Staging lifecycle request was not visible');
+        return updated;
+      }
+    );
+  }
+
+  private async bootstrapCumulativeStagingState(
+    state: Awaited<ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>>,
+    stagingIdentity: ReleaseBusV2StagingIdentity | undefined,
+    ctx: RequestContext
+  ): Promise<Awaited<
+    ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>
+  > | null> {
+    if (state.status !== 'UNINITIALIZED') return state;
+    const frontendSha = stagingIdentity?.frontendSha;
+    const backendSha = stagingIdentity?.backendSha;
+    if (!frontendSha || !backendSha) return null;
+    const manifest = await this.repository.findStagingValidatedManifestByShas(
+      frontendSha,
+      backendSha,
+      ctx
+    );
+    if (!manifest?.e2e_run_id) return null;
+    const operations = await this.repository.listOperations(
+      manifest.train_id,
+      ctx
+    );
+    if (
+      !operations.some(
+        ({ operation_type, status, external_id }) =>
+          operation_type === 'E2E_STAGING' &&
+          status === 'SUCCEEDED' &&
+          external_id === manifest.e2e_run_id
+      )
+    )
+      return null;
+    const body = parseStoredJson<{
+      candidates?: ReadonlyArray<{
+        candidate_id?: unknown;
+        repository?: unknown;
+        pr_number?: unknown;
+        head_sha?: unknown;
+      }>;
+    }>(manifest.manifest_json);
+    if (!Array.isArray(body?.candidates) || body.candidates.length === 0)
+      return null;
+    const identities = new Set<string>();
+    const candidates: ReleaseBusV2CandidateRecord[] = [];
+    for (const entry of body.candidates) {
+      if (
+        !['frontend', 'backend'].includes(String(entry.repository)) ||
+        !Number.isInteger(entry.pr_number) ||
+        Number(entry.pr_number) <= 0 ||
+        typeof entry.head_sha !== 'string' ||
+        !/^[a-f0-9]{40}$/.test(entry.head_sha)
+      )
+        return null;
+      const key = `${entry.repository}:${entry.pr_number}:${entry.head_sha}`;
+      if (identities.has(key)) return null;
+      identities.add(key);
+      const candidate = await this.repository.findCandidateByIdentity(
+        entry.repository as ReleaseBusV2Repository,
+        Number(entry.pr_number),
+        entry.head_sha,
+        ctx
+      );
+      if (
+        !candidate ||
+        (entry.candidate_id !== undefined &&
+          entry.candidate_id !== candidate.id) ||
+        candidate.staging_validated_train_id !== manifest.train_id ||
+        candidate.staging_validated_manifest_id !== manifest.id
+      )
+        return null;
+      candidates.push(candidate);
+    }
+    await this.repository.commitValidatedStaging(
+      {
+        trainId: manifest.train_id,
+        expectedStateVersion: state.row_version,
+        manifestId: manifest.id,
+        frontendSha,
+        backendSha,
+        frontendStagingRefSha: frontendSha,
+        backendStagingRefSha: backendSha,
+        admittedCandidateIds: candidates.map(({ id }) => id),
+        removedCandidateIds: [],
+        newCandidateIds: []
+      },
+      ctx
+    );
+    await this.repository.appendEvent(
+      {
+        trainId: manifest.train_id,
+        eventType:
+          'CUMULATIVE_STAGING_STATE_BOOTSTRAPPED_FROM_VALIDATED_MANIFEST',
+        actor: 'release-bus-v2',
+        payload: {
+          manifest_id: manifest.id,
+          frontend_sha: frontendSha,
+          backend_sha: backendSha,
+          e2e_run_id: manifest.e2e_run_id,
+          admitted_candidate_ids: candidates.map(({ id }) => id)
+        }
+      },
+      ctx
+    );
+    return this.repository.getStagingState(ctx, true);
+  }
+
   public async claimLane(
     lane: ReleaseBusV2Lane,
     frontendBaseSha: string,
@@ -847,10 +1079,14 @@ export class ReleaseBusV2Service {
         );
         if (!scheduler?.lease_token) return null;
         try {
-          await this.refreshDependencyHolds(lane, ctx, betaAllowlist);
+          let stagingState =
+            lane === 'STAGING' &&
+            typeof this.repository.getStagingState === 'function'
+              ? await this.repository.getStagingState(ctx, true)
+              : null;
           const active = (await this.repository.listTrains(100, ctx)).filter(
             (train) =>
-              train.lane === lane && !TERMINAL_TRAIN_STATUSES.has(train.status)
+              !TERMINAL_TRAIN_STATUSES.has(train.status) && train.lane === lane
           );
           if (!betaLaneEnabled && active.length > 0) return active[0] ?? null;
           if (betaLaneEnabled) {
@@ -859,6 +1095,21 @@ export class ReleaseBusV2Service {
                 return train;
             }
           }
+          if (stagingState?.status === 'UNINITIALIZED') {
+            const bootstrapped = await this.bootstrapCumulativeStagingState(
+              stagingState,
+              stagingIdentity,
+              ctx
+            );
+            if (!bootstrapped) return null;
+            stagingState = bootstrapped;
+          }
+          if (
+            stagingState &&
+            !['LIVE', 'CLEAN_MAIN'].includes(stagingState.status)
+          )
+            return null;
+          await this.refreshDependencyHolds(lane, ctx, betaAllowlist);
           const readyCandidates = (
             await this.repository.listCandidates(
               [readyStatus(lane)],
@@ -888,34 +1139,119 @@ export class ReleaseBusV2Service {
                     )
                 )
               : [];
-          if (readyCandidates.length === 0 && heldCandidates.length === 0)
+          const stagingTransitionRequests =
+            lane === 'STAGING' && stagingState
+              ? await this.repository.listStagingTransitionRequests(ctx, true)
+              : [];
+          if (
+            readyCandidates.length === 0 &&
+            heldCandidates.length === 0 &&
+            stagingTransitionRequests.length === 0
+          )
             return null;
           const replanCandidates = [...heldCandidates, ...readyCandidates];
           const replanDependencies = await this.repository.listDependencies(
             replanCandidates.map((candidate) => candidate.id),
             ctx
           );
-          const eligibleReplan =
-            heldCandidates.length === 0
-              ? []
-              : await this.selectDependencyClosedCandidates(
-                  replanCandidates,
-                  replanDependencies,
-                  lane,
-                  ctx,
-                  betaAllowlist,
-                  false
-                );
-          // This snapshot only admits composition. Qualification reacquires
-          // staging and rebinds the exact identity before any deploy or E2E.
-          const replanCanBind = productionReplanCanBind(
-            eligibleReplan,
-            frontendBaseSha,
-            backendBaseSha,
-            stagingIdentity
-          );
-          const candidates = replanCanBind ? eligibleReplan : readyCandidates;
-          if (candidates.length === 0) return null;
+          let candidates: readonly ReleaseBusV2CandidateRecord[];
+          let carriedCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
+          let replacedCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
+          let removalCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
+          if (lane === 'STAGING') {
+            candidates = readyCandidates;
+            const live = stagingState
+              ? await this.repository.listLiveStagingCandidates(ctx, true)
+              : [];
+            const replacements = new Set(
+              candidates.map(
+                ({ repository, pr_number }) => `${repository}:${pr_number}`
+              )
+            );
+            replacedCandidates = live.filter((candidate) =>
+              replacements.has(`${candidate.repository}:${candidate.pr_number}`)
+            );
+            const replacedIds = new Set(replacedCandidates.map(({ id }) => id));
+            const requestedIds = new Set(
+              stagingTransitionRequests.map(({ id }) => id)
+            );
+            removalCandidates = live.filter((candidate) =>
+              requestedIds.has(candidate.id)
+            );
+            for (const candidate of removalCandidates) {
+              if (
+                candidate.staging_transition_request === 'ABSORB' &&
+                !(await releaseBusGitHubApp.refContainsCommit(
+                  candidate.repository,
+                  'main',
+                  candidate.head_sha
+                ))
+              ) {
+                const holdReason =
+                  'Absorption blocked: exact candidate SHA is not contained in current main';
+                if (candidate.hold_reason !== holdReason) {
+                  if (
+                    !(await this.repository.updateCandidate(
+                      candidate.id,
+                      candidate.row_version,
+                      {
+                        status: candidate.status,
+                        holdReason
+                      },
+                      ctx
+                    ))
+                  )
+                    throw new Error(
+                      `Candidate ${candidate.id} changed while recording an absorption hold`
+                    );
+                  await this.repository.appendEvent(
+                    {
+                      candidateId: candidate.id,
+                      eventType: 'STAGING_ABSORPTION_BLOCKED_MAIN_IDENTITY',
+                      actor: owner,
+                      payload: {
+                        repository: candidate.repository,
+                        pr_number: candidate.pr_number,
+                        head_sha: candidate.head_sha,
+                        reason: holdReason
+                      }
+                    },
+                    ctx
+                  );
+                }
+                return null;
+              }
+            }
+            carriedCandidates = live.filter(
+              (candidate) =>
+                !replacedIds.has(candidate.id) &&
+                !requestedIds.has(candidate.id)
+            );
+            candidates = [...carriedCandidates, ...candidates];
+          } else {
+            const eligibleReplan =
+              heldCandidates.length === 0
+                ? []
+                : await this.selectDependencyClosedCandidates(
+                    replanCandidates,
+                    replanDependencies,
+                    lane,
+                    ctx,
+                    betaAllowlist,
+                    false
+                  );
+            // This snapshot only admits composition. Qualification reacquires
+            // staging and rebinds the exact identity before deploy or E2E.
+            const replanCanBind = productionReplanCanBind(
+              eligibleReplan,
+              frontendBaseSha,
+              backendBaseSha,
+              stagingIdentity
+            );
+            candidates = replanCanBind ? eligibleReplan : readyCandidates;
+          }
+          if (candidates.length === 0 && removalCandidates.length === 0)
+            return null;
           const dependencies = await this.repository.listDependencies(
             candidates.map((candidate) => candidate.id),
             ctx
@@ -925,9 +1261,28 @@ export class ReleaseBusV2Service {
             dependencies,
             lane,
             ctx,
-            betaAllowlist
+            betaAllowlist,
+            lane !== 'STAGING'
           );
-          if (eligible.length === 0) return null;
+          if (lane === 'STAGING' && eligible.length !== candidates.length) {
+            const eligibleIds = new Set(eligible.map(({ id }) => id));
+            for (const candidate of readyCandidates) {
+              if (eligibleIds.has(candidate.id)) continue;
+              await this.repository.updateCandidate(
+                candidate.id,
+                candidate.row_version,
+                {
+                  status: 'WAITING_FOR_DEPENDENCY',
+                  holdReason:
+                    'Cumulative staging dependency closure is incomplete'
+                },
+                ctx
+              );
+            }
+            return null;
+          }
+          if (eligible.length === 0 && removalCandidates.length === 0)
+            return null;
           const order = topologicalOrder(
             eligible.map((candidate) => candidate.id),
             dependencies
@@ -951,7 +1306,74 @@ export class ReleaseBusV2Service {
               )
           );
           const train = await this.repository.createTrain(
-            { lane, frontendBaseSha, backendBaseSha, candidateIds: order },
+            {
+              lane,
+              frontendBaseSha,
+              backendBaseSha,
+              candidateIds: [
+                ...order,
+                ...removalCandidates.map(({ id }) => id)
+              ],
+              ...(lane === 'STAGING' && stagingState
+                ? {
+                    stagingPolicy: 'CUMULATIVE_ADMITTED_SET_V1' as const,
+                    stagingBaselineManifestId: stagingState.current_manifest_id,
+                    stagingTransition: {
+                      actor: owner,
+                      reason:
+                        'Ordinary cumulative staging admission and validation',
+                      requested_at: Date.now(),
+                      baseline_state_version: stagingState.row_version,
+                      baseline_manifest_id: stagingState.current_manifest_id,
+                      baseline_frontend_sha: stagingState.frontend_sha,
+                      baseline_backend_sha: stagingState.backend_sha,
+                      observed_frontend_staging_sha:
+                        stagingIdentity?.frontendSha ?? undefined,
+                      observed_backend_staging_sha:
+                        stagingIdentity?.backendSha ?? undefined,
+                      new_candidate_ids: readyCandidates.map(({ id }) => id),
+                      carried_candidate_ids: carriedCandidates.map(
+                        ({ id }) => id
+                      ),
+                      replaced_candidate_ids: replacedCandidates.map(
+                        ({ id }) => id
+                      ),
+                      removed_candidate_ids: removalCandidates
+                        .filter(
+                          ({ staging_transition_request }) =>
+                            staging_transition_request === 'REMOVE'
+                        )
+                        .map(({ id }) => id),
+                      absorbed_candidate_ids: removalCandidates
+                        .filter(
+                          ({ staging_transition_request }) =>
+                            staging_transition_request === 'ABSORB'
+                        )
+                        .map(({ id }) => id)
+                    },
+                    candidateRoles: Object.fromEntries([
+                      ...carriedCandidates.map(
+                        ({ id }) => [id, 'CARRY_FORWARD'] as const
+                      ),
+                      ...readyCandidates.map(({ id }) => [id, 'NEW'] as const),
+                      ...removalCandidates.map(
+                        ({ id, staging_transition_request }) =>
+                          [
+                            id,
+                            staging_transition_request === 'ABSORB'
+                              ? 'ABSORPTION'
+                              : 'REMOVAL'
+                          ] as const
+                      )
+                    ]),
+                    candidateDispositions: Object.fromEntries(
+                      removalCandidates.map(
+                        ({ id }) => [id, 'AUDIT_ONLY'] as const
+                      )
+                    )
+                  }
+                : {})
+            },
             ctx
           );
           const byId = new Map(
@@ -960,6 +1382,11 @@ export class ReleaseBusV2Service {
           for (const candidateId of order) {
             const candidate = byId.get(candidateId);
             if (!candidate) continue;
+            if (
+              lane === 'STAGING' &&
+              carriedCandidates.some(({ id }) => id === candidate.id)
+            )
+              continue;
             if (
               !(await this.repository.updateCandidate(
                 candidate.id,
@@ -980,7 +1407,46 @@ export class ReleaseBusV2Service {
               eventType: 'TRAIN_CLAIMED',
               payload: {
                 lane,
-                candidate_ids: order,
+                candidate_ids: [
+                  ...order,
+                  ...removalCandidates.map(({ id }) => id)
+                ],
+                staging_policy:
+                  lane === 'STAGING' ? 'CUMULATIVE_ADMITTED_SET_V1' : null,
+                staging_baseline_manifest_id:
+                  lane === 'STAGING'
+                    ? (stagingState?.current_manifest_id ?? null)
+                    : null,
+                new_candidate_ids:
+                  lane === 'STAGING'
+                    ? readyCandidates.map(({ id }) => id)
+                    : null,
+                carried_candidate_ids:
+                  lane === 'STAGING'
+                    ? carriedCandidates.map(({ id }) => id)
+                    : null,
+                replaced_candidate_ids:
+                  lane === 'STAGING'
+                    ? replacedCandidates.map(({ id }) => id)
+                    : null,
+                removed_candidate_ids:
+                  lane === 'STAGING'
+                    ? removalCandidates
+                        .filter(
+                          ({ staging_transition_request }) =>
+                            staging_transition_request === 'REMOVE'
+                        )
+                        .map(({ id }) => id)
+                    : null,
+                absorbed_candidate_ids:
+                  lane === 'STAGING'
+                    ? removalCandidates
+                        .filter(
+                          ({ staging_transition_request }) =>
+                            staging_transition_request === 'ABSORB'
+                        )
+                        .map(({ id }) => id)
+                    : null,
                 production_replan_candidate_ids: eligible
                   .filter(
                     ({ status }) => status === 'WAITING_FOR_PRODUCTION_REPLAN'
@@ -1392,15 +1858,12 @@ export class ReleaseBusV2Service {
           dependency.prerequisite_candidate_id,
           ctx
         );
+        // Cumulative staging contains every exact prerequisite in the proposed
+        // live manifest. Historical staging validation is not current presence
+        // and can never satisfy an omitted staging dependency.
         const alreadySatisfied =
-          lane === 'PRODUCTION'
-            ? prerequisite?.status === 'PRODUCTION_DEPLOYED'
-            : [
-                'STAGING_VALIDATED',
-                'READY_FOR_PRODUCTION',
-                'PRODUCTION_IN_TRAIN',
-                'PRODUCTION_DEPLOYED'
-              ].includes(prerequisite?.status ?? '');
+          lane === 'PRODUCTION' &&
+          prerequisite?.status === 'PRODUCTION_DEPLOYED';
         if (!prerequisiteInBatch && !alreadySatisfied) {
           eligible.delete(dependency.candidate_id);
           changed = true;

@@ -46,5 +46,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('Production remains explicit');
     expect(app).toContain('failure_message');
     expect(app).toContain('artifact_digest');
+    expect(app).toContain('current-live manifest');
+    expect(app).toContain('Authoritative shared staging');
+    expect(app).toContain('CURRENT STAGING PRESENCE UNKNOWN');
   });
 });
