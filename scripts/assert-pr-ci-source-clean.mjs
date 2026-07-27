@@ -2,7 +2,7 @@
 import { spawnSync } from 'node:child_process';
 
 const result = spawnSync(
-  '/usr/bin/git',
+  'git', // NOSONAR -- CI owns PATH; shell is disabled and every argument is fixed.
   ['status', '--porcelain=v1', '--untracked-files=all', '--', 'src'],
   {
     encoding: 'utf8',
