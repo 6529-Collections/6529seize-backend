@@ -7,6 +7,7 @@ import {
   AssetTransfersCategory,
   AssetTransfersWithMetadataParams,
   AssetTransfersWithMetadataResult,
+  SortingOrder,
   fromHex
 } from '@/alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
@@ -83,6 +84,7 @@ export class TransactionsDiscoveryService {
   ): AsyncGenerator<Transaction[], void, void> {
     let pageKey: string | undefined = undefined;
     let transactionsBuffer: Transaction[] = [];
+    const seenTransferIds = new Map<string, number>();
     let timer = Time.now(); // For measuring time between each yield
     do {
       const alchemyParams = this.getAlchemyAssetTransfersParams(
@@ -94,9 +96,14 @@ export class TransactionsDiscoveryService {
       const { transfers, pageKey: nextPageKey } =
         await this.alchemy.core.getAssetTransfers(alchemyParams);
 
-      transactionsBuffer.push(
-        ...transfers.map(this.mapAlchemyTransferToTransactionEntities).flat()
-      );
+      const { transactions: newTransactions, duplicateCount } =
+        this.mapNewAlchemyTransfers(transfers, seenTransferIds);
+      transactionsBuffer.push(...newTransactions);
+      if (duplicateCount > 0) {
+        this.logger.info(
+          `Ignored ${duplicateCount} duplicate Alchemy transfer events`
+        );
+      }
       const indexUntilWhichToCommit = !nextPageKey
         ? transactionsBuffer.length - 1
         : this.getLastFullBlockIndex(transactionsBuffer);
@@ -106,6 +113,10 @@ export class TransactionsDiscoveryService {
         );
         transactionsBuffer = transactionsBuffer.slice(
           indexUntilWhichToCommit + 1
+        );
+        this.forgetCommittedAlchemyTransfers(
+          seenTransferIds,
+          transactionsBuffer.at(0)?.block
         );
         yield transactionsToFlush;
         this.logger.info(
@@ -117,6 +128,67 @@ export class TransactionsDiscoveryService {
       }
       pageKey = nextPageKey;
     } while (pageKey);
+  }
+
+  private mapNewAlchemyTransfers(
+    transfers: AssetTransfersWithMetadataResult[],
+    seenTransferIds: Map<string, number>
+  ): { transactions: Transaction[]; duplicateCount: number } {
+    const transactions: Transaction[] = [];
+    let duplicateCount = 0;
+
+    transfers.forEach((transfer) => {
+      const mappedTransactions =
+        this.mapAlchemyTransferToTransactionEntities(transfer);
+      if (!mappedTransactions.length) {
+        return;
+      }
+      if (!this.isNewAlchemyTransfer(transfer, seenTransferIds)) {
+        duplicateCount++;
+        return;
+      }
+      transactions.push(...mappedTransactions);
+    });
+
+    return { transactions, duplicateCount };
+  }
+
+  private isNewAlchemyTransfer(
+    transfer: AssetTransfersWithMetadataResult,
+    seenTransferIds: Map<string, number>
+  ): boolean {
+    if (!transfer.uniqueId) {
+      return true;
+    }
+
+    const transferId = transfer.uniqueId.toLowerCase();
+    if (seenTransferIds.has(transferId)) {
+      return false;
+    }
+
+    const block = fromHex(transfer.blockNum);
+    if (Number.isFinite(block)) {
+      seenTransferIds.set(transferId, block);
+    }
+    return true;
+  }
+
+  private forgetCommittedAlchemyTransfers(
+    seenTransferIds: Map<string, number>,
+    firstPendingBlock: number | undefined
+  ): void {
+    if (firstPendingBlock === undefined) {
+      seenTransferIds.clear();
+      return;
+    }
+
+    seenTransferIds.forEach((block, transferId) => {
+      // Results are explicitly requested in ascending block order. Keep the
+      // boundary block because Alchemy can split one block across pages.
+      if (block < firstPendingBlock) {
+        seenTransferIds.delete(transferId);
+      }
+    });
   }
 
   private getLastFullBlockIndex(transactions: Transaction[]) {
@@ -139,6 +211,7 @@ export class TransactionsDiscoveryService {
     return {
       category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
       contractAddresses: [contract],
+      order: SortingOrder.ASCENDING,
       withMetadata: true,
       maxCount: 150,
       fromBlock: startingBlockHex,
