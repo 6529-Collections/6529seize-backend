@@ -535,7 +535,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly frontendStagingRefSha: string | null;
       readonly backendStagingRefSha: string | null;
       readonly cleanMain: boolean;
-      readonly lastTransitionTrainId: string;
+      readonly lastTransitionTrainId: string | null;
     },
     ctx: RequestContext
   ): Promise<boolean> {
