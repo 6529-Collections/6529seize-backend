@@ -41,6 +41,7 @@ import {
   fetchSubscriptionEligibilityForKeys
 } from '@/subscriptionsDaily/db.subscriptions';
 import { Time } from '@/time';
+import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -148,17 +149,23 @@ export async function updateSubscriptionMode(
     }
   }
 
-  const connectionToUse =
-    connection ||
-    (await sqlExecutor.executeNativeQueriesInTransaction(
-      async (wrappedConnection) => wrappedConnection
-    ));
-
-  await updateSubscriptionModeInternal(
-    consolidationKey,
-    automatic,
-    connectionToUse
-  );
+  if (connection) {
+    await updateSubscriptionModeInternal(
+      consolidationKey,
+      automatic,
+      connection
+    );
+  } else {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) =>
+        updateSubscriptionModeInternal(
+          consolidationKey,
+          automatic,
+          wrappedConnection
+        )
+    );
+    await markSubscriptionCoverageDirty([consolidationKey], 'MODE_CHANGED');
+  }
 
   return {
     consolidation_key: consolidationKey,
@@ -275,17 +282,26 @@ export async function updateSubscribeAllEditions(
   subscribe_all_editions: boolean,
   connection?: any
 ) {
-  const connectionToUse =
-    connection ||
-    (await sqlExecutor.executeNativeQueriesInTransaction(
-      async (wrappedConnection) => wrappedConnection
-    ));
-
-  await updateSubscribeAllEditionsInternal(
-    consolidationKey,
-    subscribe_all_editions,
-    connectionToUse
-  );
+  if (connection) {
+    await updateSubscribeAllEditionsInternal(
+      consolidationKey,
+      subscribe_all_editions,
+      connection
+    );
+  } else {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) =>
+        updateSubscribeAllEditionsInternal(
+          consolidationKey,
+          subscribe_all_editions,
+          wrappedConnection
+        )
+    );
+    await markSubscriptionCoverageDirty(
+      [consolidationKey],
+      'EDITION_PREFERENCE_CHANGED'
+    );
+  }
 
   return {
     consolidation_key: consolidationKey,
@@ -493,6 +509,7 @@ export async function updateSubscription(
       );
     }
   );
+  await markSubscriptionCoverageDirty([consolidationKey], 'SELECTION_CHANGED');
 
   return {
     consolidation_key: consolidationKey,
@@ -569,6 +586,7 @@ export async function updateSubscriptionCount(
       );
     }
   );
+  await markSubscriptionCoverageDirty([consolidationKey], 'QUANTITY_CHANGED');
 
   return {
     consolidation_key: consolidationKey,

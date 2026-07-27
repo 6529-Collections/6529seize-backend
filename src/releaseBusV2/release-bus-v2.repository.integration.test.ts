@@ -7,7 +7,7 @@ import { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository
 import { ReleaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
 import { describeWithSeed } from '@/tests/_setup/seed';
 
-jest.mock('@/releaseBus/release-bus.github-app', () => ({
+jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
     ensureCommitStatus: jest.fn(),
     resolveRef: jest.fn()

@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { getDeployServiceConfigs } from '@/api/deploy/deploy.config';
+import {
+  getDeployServiceConfigs,
+  type DeployEnvironment
+} from '@/api/deploy/deploy.config';
 import {
   releaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError
-} from '@/releaseBus/release-bus.github-app';
+} from '@/releaseBusV2/release-bus-v2.github-app';
 import {
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
@@ -32,6 +35,7 @@ import {
   topologicalOrder,
   type ReleaseBusV2Service
 } from '@/releaseBusV2/release-bus-v2.service';
+import { isGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type {
   ReleaseBusV2CandidateRecord,
   ReleaseBusV2CandidateStatus,
@@ -134,7 +138,13 @@ type IsolationDiagnosis = {
   } | null;
 };
 
-class MainMovedError extends Error {}
+class MainMovedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'MainMovedError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
 
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
@@ -160,6 +170,26 @@ function isOptimisticConcurrencyConflict(error: unknown): error is Error {
         error.message
       ))
   );
+}
+
+function operationMayStillBeRunning(
+  operation: ReleaseBusV2OperationRecord
+): boolean {
+  return (
+    ['DISPATCHED', 'RUNNING'].includes(operation.status) ||
+    (operation.status === 'PENDING' && operation.external_id !== null)
+  );
+}
+
+function stringRecord(value: unknown): Readonly<Record<string, string>> | null {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !Object.values(value).every((item) => typeof item === 'string')
+  )
+    return null;
+  return value as Readonly<Record<string, string>>;
 }
 
 function parseStoredJson<T>(value: unknown): T | null {
@@ -246,6 +276,27 @@ function prEvidence(
   return parseStoredJson(candidate.pr_evidence_json);
 }
 
+export function releaseTrainContributorGithubLogins(
+  candidates: readonly ReleaseBusV2CandidateRecord[]
+): string[] {
+  const logins: string[] = [];
+  for (const candidate of candidates) {
+    for (const value of prEvidence(candidate)?.contributor_github_logins ??
+      []) {
+      const login = value.trim();
+      if (
+        !isGithubContributorLogin(login) ||
+        logins.some(
+          (existing) => existing.toLowerCase() === login.toLowerCase()
+        )
+      )
+        continue;
+      logins.push(login);
+    }
+  }
+  return logins;
+}
+
 export function canUseSingleCandidateFastPath(
   candidate: ReleaseBusV2CandidateRecord,
   baseSha: string
@@ -302,35 +353,85 @@ function candidateStatusForDeploy(
 }
 
 export function backendGraph(
-  candidates: readonly ReleaseBusV2CandidateRecord[]
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  environment?: DeployEnvironment
 ): {
   readonly units: readonly string[];
   readonly edges: ReadonlyArray<readonly [string, string]>;
   readonly layers: readonly string[][];
 } {
-  const units = new Set<string>();
-  const edgeKeys = new Set<string>();
-  const edges: Array<readonly [string, string]> = [];
+  const serviceConfigs = getDeployServiceConfigs();
+  const allowedServiceNames = environment
+    ? new Set(
+        serviceConfigs
+          .filter(({ allowed_environments }) =>
+            allowed_environments.includes(environment)
+          )
+          .map(({ name }) => name)
+      )
+    : null;
+  const requestedUnits = new Set<string>();
   for (const candidate of candidates) {
     if (candidate.repository !== 'backend') continue;
     const plan = storedDeployPlan(candidate);
-    for (const unit of plan?.units ?? []) units.add(unit);
+    for (const unit of plan?.units ?? []) requestedUnits.add(unit);
+  }
+  const allEdgeKeys = new Set<string>();
+  const allEdges: Array<readonly [string, string]> = [];
+  const addEdge = (
+    target: Array<readonly [string, string]>,
+    keys: Set<string>,
+    from: string,
+    to: string
+  ) => {
+    const key = `${from}\u0000${to}`;
+    if (keys.has(key)) return;
+    keys.add(key);
+    target.push([from, to]);
+  };
+  for (const candidate of candidates) {
+    if (candidate.repository !== 'backend') continue;
+    const plan = storedDeployPlan(candidate);
     for (const [from, to] of plan?.edges ?? []) {
-      const key = `${from}\u0000${to}`;
-      if (edgeKeys.has(key)) continue;
-      edgeKeys.add(key);
-      edges.push([from, to]);
+      if (!requestedUnits.has(from) || !requestedUnits.has(to)) continue;
+      addEdge(allEdges, allEdgeKeys, from, to);
     }
   }
-  for (const service of getDeployServiceConfigs()) {
-    if (!units.has(service.name)) continue;
+  for (const service of serviceConfigs) {
+    if (!requestedUnits.has(service.name)) continue;
     for (const dependency of service.default_dependencies) {
-      if (!units.has(dependency)) continue;
-      const key = `${dependency}\u0000${service.name}`;
-      if (edgeKeys.has(key)) continue;
-      edgeKeys.add(key);
-      edges.push([dependency, service.name]);
+      if (!requestedUnits.has(dependency)) continue;
+      addEdge(allEdges, allEdgeKeys, dependency, service.name);
     }
+  }
+  const units = new Set(
+    Array.from(requestedUnits).filter(
+      (unit) => !allowedServiceNames || allowedServiceNames.has(unit)
+    )
+  );
+  let edges = allEdges;
+  if (allowedServiceNames) {
+    const adjacency = new Map(
+      Array.from(requestedUnits).map((unit) => [unit, [] as string[]])
+    );
+    for (const [from, to] of allEdges) adjacency.get(from)?.push(to);
+    const projectedEdges: Array<readonly [string, string]> = [];
+    const projectedKeys = new Set<string>();
+    for (const source of Array.from(units)) {
+      const visited = new Set<string>();
+      const pending = [...(adjacency.get(source) ?? [])];
+      while (pending.length > 0) {
+        const target = pending.shift()!;
+        if (visited.has(target)) continue;
+        visited.add(target);
+        if (units.has(target)) {
+          addEdge(projectedEdges, projectedKeys, source, target);
+          continue;
+        }
+        pending.push(...(adjacency.get(target) ?? []));
+      }
+    }
+    edges = projectedEdges;
   }
   const orderedUnits = Array.from(units).sort((left, right) =>
     left.localeCompare(right)
@@ -835,8 +936,126 @@ export class ReleaseBusV2Reconciler {
     };
   }
 
+  private async deferMovedProductionPlan(
+    context: TrainContext
+  ): Promise<boolean> {
+    const train = context.train;
+    if (train.lane !== 'PRODUCTION') return false;
+    const repositories = ['backend', 'frontend'] as const;
+    const current = await Promise.all(
+      repositories.map(async (repository) => ({
+        repository,
+        sha: await releaseBusGitHubApp.resolveRef(repository, 'main')
+      }))
+    );
+    for (const { repository, sha } of current) {
+      if (!/^[a-f0-9]{40}$/.test(sha))
+        throw new Error(
+          `Invalid SHA returned for ${repository}:main while fencing a production replan`
+        );
+    }
+    const moved = current.find(({ repository, sha }) => {
+      const base =
+        repository === 'frontend'
+          ? train.frontend_base_sha
+          : train.backend_base_sha;
+      const composed =
+        repository === 'frontend'
+          ? train.frontend_composed_sha
+          : train.backend_composed_sha;
+      return sha !== base && sha !== composed;
+    });
+    if (!moved) return false;
+    const base =
+      moved.repository === 'frontend'
+        ? train.frontend_base_sha
+        : train.backend_base_sha;
+    const message = `${moved.repository} main moved from ${base} to ${moved.sha}; production composition must be rebuilt and requalified`;
+    const operations = await this.repository.listOperations(train.id, {});
+    const carriedOperationIds = new Set(
+      /; observing operations: ([^;]+)$/
+        .exec(train.recovery_message ?? '')?.[1]
+        ?.split(',')
+        .map((id) => id.trim())
+        .filter(Boolean) ?? []
+    );
+    const observed = operations.filter(
+      (operation) =>
+        operationMayStillBeRunning(operation) ||
+        carriedOperationIds.has(operation.id)
+    );
+    if (observed.length === 0) throw new MainMovedError(message);
+    const results = await Promise.all(
+      observed.map(async (operation) => {
+        const request = parseStoredJson<{
+          readonly workflow?: unknown;
+          readonly ref?: unknown;
+          readonly inputs?: unknown;
+        }>(operation.request_json);
+        const inputs = stringRecord(request?.inputs);
+        if (
+          !operation.repository ||
+          !operation.environment ||
+          !operation.expected_sha ||
+          typeof request?.workflow !== 'string' ||
+          typeof request.ref !== 'string' ||
+          !inputs
+        )
+          throw new Error(
+            `Dispatched operation ${operation.id} has no immutable workflow identity`
+          );
+        if (operationMayStillBeRunning(operation))
+          await releaseBusV2Operations.reconcileWorkflow({
+            idempotencyKey: operation.idempotency_key,
+            trainId: operation.train_id,
+            operationType: operation.operation_type,
+            repository: operation.repository,
+            workflow: request.workflow,
+            ref: request.ref,
+            environment: operation.environment,
+            service: operation.service,
+            expectedSha: operation.expected_sha,
+            artifactDigest: operation.artifact_digest,
+            inputs,
+            maxAttempts: operation.max_attempts
+          });
+        const refreshed =
+          (await this.repository.findOperation(
+            operation.idempotency_key,
+            {}
+          )) ?? operation;
+        if (operationMayStillBeRunning(refreshed))
+          return { id: operation.id, stillRunning: true };
+        if (!refreshed.external_id)
+          return { id: operation.id, stillRunning: false };
+        const run = await releaseBusGitHubApp.findWorkflowRun(
+          operation.repository,
+          request.workflow,
+          `${operation.idempotency_key}:a${refreshed.attempt}`,
+          refreshed.external_id
+        );
+        return {
+          id: operation.id,
+          stillRunning: run !== null && run.status !== 'completed'
+        };
+      })
+    );
+    const stillRunningIds = results
+      .filter(({ stillRunning }) => stillRunning)
+      .map(({ id }) => id);
+    if (stillRunningIds.length === 0) throw new MainMovedError(message);
+    const recoveryMessage = `${message}; waiting for already-dispatched orchestration to report terminal before the safe replan; observing operations: ${stillRunningIds.join(',')}`;
+    if (train.recovery_message !== recoveryMessage)
+      await this.transitionTrain(train, {
+        status: train.status,
+        recoveryMessage
+      });
+    return true;
+  }
+
   private async advancePreparation(context: TrainContext): Promise<void> {
     const train = context.train;
+    if (await this.deferMovedProductionPlan(context)) return;
     if (relevantCandidates(context).length === 0) {
       await this.transitionTrain(train, {
         status: 'CANCELLED',
@@ -1119,6 +1338,18 @@ export class ReleaseBusV2Reconciler {
         };
     }
     if (!composedSha) throw new Error(`Missing ${repository} composed SHA`);
+    if (fastCandidate) {
+      // The compose workflow creates the immutable release ref for multi-PR
+      // trains. The single-PR fast path skips that workflow, so bind the same
+      // lane-scoped ref here before any artifact preparation or deployment.
+      // createRef is idempotent only when an existing ref already resolves to
+      // this exact SHA; a moved or conflicting ref fails closed.
+      await releaseBusGitHubApp.createRef(
+        repository,
+        releaseBusV2Branch(train, repository),
+        composedSha
+      );
+    }
     if (compositionOnly)
       return {
         repository,
@@ -1633,6 +1864,22 @@ export class ReleaseBusV2Reconciler {
     ].includes(train.status);
     const requiresBetaIdleHandshake =
       getReleaseBusV2Mode() === 'OFF' && requiresIdleHandshake;
+    if (
+      requiresIdleHandshake &&
+      relevantCandidates(context, 'frontend').length > 0
+    ) {
+      if (!train.frontend_composed_sha)
+        throw new Error(
+          'Frontend qualification has no exact composed SHA for its immutable workflow ref'
+        );
+      // createRef is retry-safe: an existing ref is accepted only when it
+      // already resolves to this exact SHA; a conflicting target fails closed.
+      await releaseBusGitHubApp.createRef(
+        'frontend',
+        releaseBusV2Branch(train, 'frontend'),
+        train.frontend_composed_sha
+      );
+    }
     const workflowFenceStartedAt = requiresIdleHandshake ? Date.now() : null;
     const beforeLock = requiresIdleHandshake
       ? await this.captureStagingIdleSnapshot()
@@ -2282,6 +2529,7 @@ export class ReleaseBusV2Reconciler {
   private async advanceProduction(context: TrainContext): Promise<void> {
     const train = context.train;
     if (train.status === 'PREPARED') {
+      if (await this.deferMovedProductionPlan(context)) return;
       const exact = await this.repository.findValidatedManifestByRelease(
         train.frontend_composed_sha,
         train.backend_composed_sha,
@@ -2710,8 +2958,11 @@ export class ReleaseBusV2Reconciler {
   ): Promise<DeployResult> {
     const train = context.train;
     const source = await this.artifactSource(artifactSourceTrainId);
+    const releaseContributors = JSON.stringify(
+      releaseTrainContributorGithubLogins(relevantCandidates(context))
+    );
     const backendCandidates = relevantCandidates(context, 'backend');
-    const graph = backendGraph(backendCandidates);
+    const graph = backendGraph(backendCandidates, environment);
     const operations: ReleaseBusV2OperationRecord[] = [];
     let backendComplete = graph.units.length === 0;
     for (const layer of graph.layers) {
@@ -2739,7 +2990,8 @@ export class ReleaseBusV2Reconciler {
             artifactSourceTrainId,
             source.backendRunId,
             unit,
-            backendCandidates
+            backendCandidates,
+            releaseContributors
           )
         )
       );
@@ -2761,7 +3013,8 @@ export class ReleaseBusV2Reconciler {
         train,
         environment,
         artifactSourceTrainId,
-        source.frontendRunId
+        source.frontendRunId,
+        releaseContributors
       );
       operations.push(frontend);
       if (frontend.status === 'FAILED')
@@ -2781,7 +3034,8 @@ export class ReleaseBusV2Reconciler {
     artifactTrainId: string,
     artifactRunId: string | null,
     service: string,
-    candidates: readonly ReleaseBusV2CandidateRecord[]
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
     if (!artifactRunId)
       throw new Error('Missing backend artifact workflow run');
@@ -2816,6 +3070,7 @@ export class ReleaseBusV2Reconciler {
         artifact_run_id: artifactRunId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.backend_artifact_digest ?? '',
+        release_contributors: releaseContributors,
         ...releaseNoteInputs
       }
     });
@@ -2825,7 +3080,8 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
-    artifactRunId: string | null
+    artifactRunId: string | null,
+    releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
     if (!artifactRunId)
       throw new Error('Missing frontend artifact workflow run');
@@ -2858,7 +3114,8 @@ export class ReleaseBusV2Reconciler {
         artifact_run_id: artifactRunId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.frontend_artifact_digest ?? '',
-        artifact_environment: environment === 'prod' ? 'production' : 'staging'
+        artifact_environment: environment === 'prod' ? 'production' : 'staging',
+        release_contributors: releaseContributors
       }
     });
   }
@@ -2888,6 +3145,22 @@ export class ReleaseBusV2Reconciler {
           : null)
     )
       throw new Error('E2E manifest does not match the exact train release');
+    const releaseBranch = releaseBusV2Branch(train, 'frontend');
+    let exactSourceRef = 'main';
+    if (environment === 'staging') {
+      const sourceRefs = [releaseBranch, '1a-staging', 'main'];
+      const sourceShas = await Promise.all(
+        sourceRefs.map((ref) =>
+          releaseBusGitHubApp.resolveRefIfExists('frontend', ref)
+        )
+      );
+      const exactIndex = sourceShas.findIndex((sha) => sha === expectedSha);
+      if (exactIndex < 0)
+        throw new Error(
+          `No immutable frontend workflow ref resolves to exact staging SHA ${expectedSha}`
+        );
+      exactSourceRef = sourceRefs[exactIndex];
+    }
     const spec: ReleaseBusV2WorkflowSpec = {
       idempotencyKey: operationKey(train.id, `e2e:${environment}`),
       trainId: train.id,
@@ -2895,7 +3168,7 @@ export class ReleaseBusV2Reconciler {
       repository: 'frontend',
       workflow:
         environment === 'staging' ? 'staging-e2e.yml' : 'production-e2e.yml',
-      ref: 'main',
+      ref: exactSourceRef,
       environment,
       service: null,
       expectedSha,
@@ -2904,9 +3177,7 @@ export class ReleaseBusV2Reconciler {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        staging_source_ref: relevantCandidates(context, 'frontend').length
-          ? releaseBusV2Branch(train, 'frontend')
-          : 'main',
+        staging_source_ref: exactSourceRef,
         expected_sha: expectedSha,
         release_manifest_id: manifest.id,
         release_manifest_identity_sha256: manifest.identity_sha256,
@@ -2986,7 +3257,10 @@ export class ReleaseBusV2Reconciler {
       artifact_source_train_id: artifactSourceTrainId,
       train_id: train.id,
       lane: train.lane,
-      backend_graph: backendGraph(relevantCandidates(context, 'backend')),
+      backend_graph: backendGraph(
+        relevantCandidates(context, 'backend'),
+        status === 'PRODUCTION_DEPLOYED' ? 'prod' : 'staging'
+      ),
       operations: operations.map((operation) => ({
         type: operation.operation_type,
         service: operation.service,
@@ -3369,6 +3643,25 @@ export class ReleaseBusV2Reconciler {
   ): Promise<void> {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
+    const operations = await this.repository.listOperations(current.id, {});
+    if (operations.some(operationMayStillBeRunning)) return;
+    for (const operation of operations) {
+      if (TERMINAL_OPERATIONS.has(operation.status)) continue;
+      if (
+        !(await this.repository.updateOperation(
+          operation.id,
+          operation.row_version,
+          {
+            status: 'CANCELLED',
+            failureClass: 'INTERACTION',
+            failureMessage: message,
+            completedAt: Date.now()
+          },
+          {}
+        ))
+      )
+        throw new Error('Release Bus v2 operation changed concurrently');
+    }
     const context = await this.loadContext(current);
     await this.updateCandidateStatuses(
       relevantCandidates(context),

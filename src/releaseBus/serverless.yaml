@@ -17,51 +17,6 @@ provider:
     RELEASE_BUS_UI_URL: ${env:RELEASE_BUS_UI_URL, 'https://api.6529.io/deploy/ui/bus'}
 
 functions:
-  starter:
-    handler: index.starterHandler
-    name: releaseBusStarter
-    reservedConcurrency: 1
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
-    vpc:
-      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
-      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
-    events:
-      - schedule: rate(1 minute)
-    environment:
-      RELEASE_BUS_MODE: ${env:RELEASE_BUS_MODE, 'OFF'}
-      RELEASE_BUS_MAX_TRAIN_CANDIDATES: ${env:RELEASE_BUS_MAX_TRAIN_CANDIDATES, '20'}
-      RELEASE_BUS_STATE_MACHINE_ARN: !Ref ReleaseBusStateMachine
-      RELEASE_BUS_WORKER_FUNCTION_NAME: releaseBusWorker
-      SENTRY_DSN: ${env:SENTRY_DSN}
-  worker:
-    handler: index.workerHandler
-    name: releaseBusWorker
-    reservedConcurrency: 1
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
-    vpc:
-      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
-      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
-    environment:
-      RELEASE_BUS_MODE: ${env:RELEASE_BUS_MODE, 'OFF'}
-      RELEASE_BUS_MAX_TRAIN_CANDIDATES: ${env:RELEASE_BUS_MAX_TRAIN_CANDIDATES, '20'}
-      RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY: ${env:RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY, '20'}
-      RELEASE_BUS_BASE_EVIDENCE_REUSE: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE, 'false'}
-      RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: ${env:RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW, 'false'}
-      RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: ${env:RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS, '24'}
-      SENTRY_DSN: ${env:SENTRY_DSN}
-  cleaner:
-    handler: index.cleanerHandler
-    name: releaseBusCleaner
-    reservedConcurrency: 1
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
-    vpc:
-      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
-      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
-    events:
-      - schedule: rate(1 day)
-    environment:
-      RELEASE_BUS_BRANCH_RETENTION_DAYS: ${env:RELEASE_BUS_BRANCH_RETENTION_DAYS, '7'}
-      SENTRY_DSN: ${env:SENTRY_DSN}
   v2Reconciler:
     handler: index.v2ReconcilerHandler
     name: releaseBusV2Reconciler
@@ -77,45 +32,22 @@ functions:
       RELEASE_BUS_V2_MODE: ${env:RELEASE_BUS_V2_MODE, 'OFF'}
       RELEASE_BUS_V2_BETA_ALLOWLIST: ${env:RELEASE_BUS_V2_BETA_ALLOWLIST, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
+  cleaner:
+    handler: index.cleanerHandler
+    name: releaseBusCleaner
+    reservedConcurrency: 1
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    events:
+      - schedule: rate(1 day)
+    environment:
+      RELEASE_BUS_V2_BRANCH_RETENTION_DAYS: ${env:RELEASE_BUS_V2_BRANCH_RETENTION_DAYS, '7'}
+      SENTRY_DSN: ${env:SENTRY_DSN}
 
 resources:
   Resources:
-    ReleaseBusStateMachineRole:
-      Type: AWS::IAM::Role
-      Properties:
-        AssumeRolePolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Principal: { Service: states.amazonaws.com }
-              Action: sts:AssumeRole
-        Policies:
-          - PolicyName: invoke-release-bus-worker
-            PolicyDocument:
-              Version: '2012-10-17'
-              Statement:
-                - Effect: Allow
-                  Action: lambda:InvokeFunction
-                  Resource:
-                    - !GetAtt WorkerLambdaFunction.Arn
-                    - !Join [':', [!GetAtt WorkerLambdaFunction.Arn, '*']]
-                    - !GetAtt V2ReconcilerLambdaFunction.Arn
-                    - !Join [':', [!GetAtt V2ReconcilerLambdaFunction.Arn, '*']]
-    ReleaseBusStarterExecutionPolicy:
-      Type: AWS::IAM::Policy
-      Properties:
-        PolicyName: !Sub '${AWS::StackName}-start-execution'
-        Roles:
-          - lambda-vpc-role
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action: states:StartExecution
-              Resource: !Ref ReleaseBusStateMachine
-            - Effect: Allow
-              Action: states:DescribeExecution
-              Resource: '*'
     ReleaseBusV2ReconcilerInvokePolicy:
       Type: AWS::IAM::Policy
       Properties:
@@ -130,109 +62,30 @@ resources:
               Resource:
                 - !GetAtt V2ReconcilerLambdaFunction.Arn
                 - !Join [':', [!GetAtt V2ReconcilerLambdaFunction.Arn, '*']]
-    ReleaseBusWorkerVersionReadPolicy:
-      Type: AWS::IAM::Policy
-      Properties:
-        PolicyName: !Sub '${AWS::StackName}-read-worker-versions'
-        Roles:
-          - lambda-vpc-role
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - lambda:GetFunctionConfiguration
-                - lambda:ListVersionsByFunction
-              Resource:
-                - !GetAtt WorkerLambdaFunction.Arn
-                - !Join [':', [!GetAtt WorkerLambdaFunction.Arn, '*']]
-    ReleaseBusMetricsPolicy:
-      Type: AWS::IAM::Policy
-      Properties:
-        PolicyName: !Sub '${AWS::StackName}-publish-metrics'
-        Roles:
-          - lambda-vpc-role
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action: cloudwatch:PutMetricData
-              Resource: '*'
-              Condition:
-                StringEquals:
-                  cloudwatch:namespace: 6529/ReleaseBus
-    ReleaseBusStateMachine:
-      Type: AWS::StepFunctions::StateMachine
-      Properties:
-        StateMachineType: STANDARD
-        RoleArn: !GetAtt ReleaseBusStateMachineRole.Arn
-        Definition: ${file(./state-machine.asl.json)}
-    ReleaseBusStarterErrorAlarm:
+    ReleaseBusV2ReconcilerErrorAlarm:
       Type: AWS::CloudWatch::Alarm
       Properties:
-        AlarmDescription: Release Bus starter failed
+        AlarmDescription: Release Bus v2 reconciler invocation failed
         Namespace: AWS/Lambda
         MetricName: Errors
         Dimensions:
           - Name: FunctionName
-            Value: releaseBusStarter
+            Value: releaseBusV2Reconciler
         Statistic: Sum
         Period: 300
         EvaluationPeriods: 1
         Threshold: 1
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
-    ReleaseBusWorkerErrorAlarm:
+    ReleaseBusV2CleanerErrorAlarm:
       Type: AWS::CloudWatch::Alarm
       Properties:
-        AlarmDescription: Release Bus worker invocation failed
+        AlarmDescription: Release Bus v2 branch cleaner invocation failed
         Namespace: AWS/Lambda
         MetricName: Errors
         Dimensions:
           - Name: FunctionName
-            Value: releaseBusWorker
-        Statistic: Sum
-        Period: 300
-        EvaluationPeriods: 1
-        Threshold: 1
-        ComparisonOperator: GreaterThanOrEqualToThreshold
-        TreatMissingData: notBreaching
-    ReleaseBusStateMachineFailureAlarm:
-      Type: AWS::CloudWatch::Alarm
-      Properties:
-        AlarmDescription: Release Bus state machine execution failed
-        Namespace: AWS/States
-        MetricName: ExecutionsFailed
-        Dimensions:
-          - Name: StateMachineArn
-            Value: !Ref ReleaseBusStateMachine
-        Statistic: Sum
-        Period: 300
-        EvaluationPeriods: 1
-        Threshold: 1
-        ComparisonOperator: GreaterThanOrEqualToThreshold
-        TreatMissingData: notBreaching
-    ReleaseBusStuckTrainAlarm:
-      Type: AWS::CloudWatch::Alarm
-      Properties:
-        AlarmDescription: Release Bus train has remained active for more than two hours
-        Namespace: 6529/ReleaseBus
-        MetricName: ActiveTrainAgeSeconds
-        Statistic: Maximum
-        Period: 300
-        EvaluationPeriods: 1
-        Threshold: 7200
-        ComparisonOperator: GreaterThanThreshold
-        TreatMissingData: notBreaching
-    ReleaseBusProductionFailureAlarm:
-      Type: AWS::CloudWatch::Alarm
-      Properties:
-        AlarmDescription: Release Bus production train failed and production was paused
-        Namespace: 6529/ReleaseBus
-        MetricName: TrainFailure
-        Dimensions:
-          - Name: Lane
-            Value: PRODUCTION
+            Value: releaseBusCleaner
         Statistic: Sum
         Period: 300
         EvaluationPeriods: 1

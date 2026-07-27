@@ -1,6 +1,6 @@
 {
-  "name": "release-bus",
-  "version": "1.0.0",
+  "name": "release-bus-v2",
+  "version": "2.0.0",
   "private": true,
   "main": "index.ts",
   "scripts": {

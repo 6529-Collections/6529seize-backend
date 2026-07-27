@@ -7,6 +7,16 @@ const yaml = require('js-yaml') as {
 
 type JsonObject = Record<string, any>;
 
+const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
+  'schema ApiNotificationCause.enum': ['SUBSCRIPTION_COVERAGE'],
+  'schema ApiPushNotificationSettings.required': ['subscription_coverage']
+};
+
+const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([
+  'schema ApiNotification.properties.related_identity',
+  'schema ApiNotificationV2.properties.related_identity'
+]);
+
 const fixtureRoot = path.resolve(
   __dirname,
   '../../../competitions/contract-fixtures/phase-0'
@@ -29,7 +39,8 @@ function assertSchemaCompatible(
 ): void {
   if (Array.isArray(baseline)) {
     expect(Array.isArray(current)).toBe(true);
-    expect(current).toEqual(baseline);
+    const acceptedAdditions = ACCEPTED_ADDITIVE_ENUM_EXTENSIONS[location] ?? [];
+    expect(current).toEqual([...baseline, ...acceptedAdditions]);
     return;
   }
   if (baseline === null || typeof baseline !== 'object') {
@@ -38,6 +49,16 @@ function assertSchemaCompatible(
   }
   const baselineObject = baseline as JsonObject;
   const currentObject = semanticObject(current);
+  if (
+    ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS.has(location) &&
+    typeof baselineObject.$ref === 'string'
+  ) {
+    expect(currentObject).toEqual({
+      allOf: [{ $ref: baselineObject.$ref }],
+      nullable: true
+    });
+    return;
+  }
   for (const [key, baselineValue] of Object.entries(baselineObject)) {
     if (['description', 'example', 'examples', 'title'].includes(key)) continue;
     expect(currentObject).toHaveProperty(key);

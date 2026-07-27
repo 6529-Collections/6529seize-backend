@@ -170,6 +170,60 @@ describe('IdentityNotificationsDb', () => {
     expect(sendIdentityPushNotification).toHaveBeenCalledWith(401);
   });
 
+  it('keeps actorless system notifications on the write path', async () => {
+    const row = notification({
+      additional_identity_id: null,
+      cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE
+    });
+    const { db, identityMutesDb, repo } = createRepo({
+      filteredNotifications: [row]
+    });
+
+    await repo.insertNotification(row as any, {} as any);
+
+    expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
+      [row],
+      {}
+    );
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('insert into identity_notifications'),
+      expect.objectContaining({
+        additional_identity_id: null,
+        cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE
+      }),
+      { wrappedConnection: {} }
+    );
+  });
+
+  it('includes actorless notifications while suppressing orphaned actors', async () => {
+    const db = {
+      execute: jest.fn().mockResolvedValue([])
+    };
+    const repo = new IdentityNotificationsDb(() => db as any);
+
+    await repo.findNotifications({
+      identity_id: 'recipient-1',
+      id_less_than: null,
+      limit: 20,
+      eligible_group_ids: [],
+      cause: null,
+      cause_exclude: null,
+      unread_only: false
+    });
+
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('n.additional_identity_id IS NULL'),
+      expect.objectContaining({ identity_id: 'recipient-1' }),
+      undefined
+    );
+    expect(db.execute.mock.calls[0][0]).toContain(
+      'WHERE i.profile_id = n.additional_identity_id'
+    );
+    expect(db.execute.mock.calls[0][0]).not.toContain(
+      'JOIN identities i ON n.additional_identity_id'
+    );
+  });
+
   it('counts only unread notifications visible to the recipient', async () => {
     const db = {
       oneOrNull: jest.fn().mockResolvedValue({ cnt: 2 })

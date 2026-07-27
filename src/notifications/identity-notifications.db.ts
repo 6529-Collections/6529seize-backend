@@ -342,7 +342,6 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       .execute<IdentityNotificationEntity>(
         `
         SELECT n.* FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
-        JOIN ${IDENTITIES_TABLE} i ON n.additional_identity_id = i.profile_id
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
@@ -352,6 +351,14 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         WHERE n.identity_id = :identity_id ${
           param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
+        AND (
+          n.additional_identity_id IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM ${IDENTITIES_TABLE} i
+            WHERE i.profile_id = n.additional_identity_id
+          )
+        )
         AND (n.visibility_group_id IS NULL ${
           param.eligible_group_ids.length
             ? ` OR n.visibility_group_id IN (:eligible_group_ids) `
