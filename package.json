@@ -26,9 +26,12 @@
     "drop-media:backfill:live": "ts-node -r tsconfig-paths/register src/dropMediaSanitizer/backfill-existing-drop-media.ts --live",
     "check": "npm run format && npm run lint && npm run build",
     "check:changed": "node scripts/check-changed.mjs",
+    "ci:assert-source-clean": "node scripts/assert-pr-ci-source-clean.mjs",
     "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
     "prelint": "npm run generate:deploy-config",
-    "lint": "NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --fix --max-warnings=0"
+    "lint": "NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --fix --max-warnings=0",
+    "lint:check": "NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --max-warnings=0"
   },
   "keywords": [],
   "author": "",
