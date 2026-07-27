@@ -2,11 +2,14 @@ import 'reflect-metadata';
 import {
   RELEASE_BUS_V2_CONTROLS_TABLE,
   RELEASE_BUS_V2_LOCKS_TABLE,
+  RELEASE_BUS_V2_MANIFESTS_TABLE,
   RELEASE_BUS_V2_STAGING_STATE_TABLE
 } from '@/constants';
 import { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
 import { ReleaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
+import { dbSupplier } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import path from 'node:path';
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
@@ -755,6 +758,62 @@ describeWithSeed(
           staging_live_manifest_id: manifest.id
         })
       ]);
+    });
+
+    it('round-trips the full candidate-evidence qualification manifest status', async () => {
+      const manifest = await repository.createManifest(
+        {
+          train_id: 'candidate-evidence-train',
+          lane: 'PRODUCTION',
+          identity_sha256: 'e'.repeat(64),
+          status: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED',
+          frontend_sha: SHA_A,
+          backend_sha: SHA_C,
+          frontend_artifact_digest: null,
+          backend_artifact_digest: null,
+          e2e_run_id: null,
+          manifest_json: {
+            schema_version: 2,
+            scope: 'production-candidate-evidence-qualification',
+            qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1'
+          },
+          deployed_at: null,
+          validated_at: null
+        },
+        {}
+      );
+
+      await expect(repository.findManifest(manifest.id, {})).resolves.toEqual(
+        expect.objectContaining({
+          status: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+        })
+      );
+
+      await dbSupplier().execute(
+        `update ${RELEASE_BUS_V2_MANIFESTS_TABLE}
+         set status = 'PRODUCTION_CANDIDATE_EVIDENCE_QU'
+         where id = :id`,
+        { id: manifest.id }
+      );
+      const migration = require(
+        path.resolve(
+          process.cwd(),
+          'migrations/20260727203000-widen-release-bus-v2-manifest-status.js'
+        )
+      ) as {
+        up: (db: {
+          runSql: (sql: string) => Promise<unknown>;
+        }) => Promise<void>;
+      };
+      await migration.up({
+        runSql: async (sql: string) => dbSupplier().execute(sql)
+      });
+
+      await expect(repository.findManifest(manifest.id, {})).resolves.toEqual(
+        expect.objectContaining({
+          status: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+        })
+      );
     });
 
     it('atomically removes every candidate in a multi-candidate transition set', async () => {
