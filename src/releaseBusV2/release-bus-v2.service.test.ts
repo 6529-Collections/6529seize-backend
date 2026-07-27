@@ -33,6 +33,7 @@ function candidate(
       status === 'STAGING_VALIDATED' ? 'manifest-id' : null,
     production_requested_at: null,
     production_requested_by: null,
+    production_selection_id: null,
     hold_reason: null,
     superseded_at: null,
     created_at: 1,
@@ -48,6 +49,47 @@ function repositoryFor(initial: ReleaseBusV2CandidateRecord) {
     repository: {
       listControls: jest.fn(async () => []),
       findCandidateById: jest.fn(async () => current),
+      findTrain: jest.fn(async () => ({
+        id: 'staging-train-id',
+        lane: 'STAGING',
+        status: 'STAGING_VALIDATED',
+        manifest_id: 'manifest-id'
+      })),
+      findManifest: jest.fn(async () => ({
+        id: 'manifest-id',
+        train_id: 'staging-train-id',
+        status: 'STAGING_VALIDATED',
+        identity_sha256: 'e'.repeat(64),
+        frontend_artifact_digest: 'f'.repeat(64),
+        backend_artifact_digest: null,
+        e2e_run_id: '123',
+        manifest_json: {
+          candidates: [
+            {
+              candidate_id: current.id,
+              repository: current.repository,
+              pr_number: current.pr_number,
+              head_sha: current.head_sha
+            }
+          ]
+        }
+      })),
+      listTrainCandidates: jest.fn(async () => [
+        {
+          candidate_id: current.id,
+          disposition: 'INCLUDED'
+        }
+      ]),
+      listOperations: jest.fn(async () => [
+        {
+          id: 'staging-e2e-operation',
+          operation_type: 'E2E_STAGING',
+          status: 'SUCCEEDED',
+          external_id: '123'
+        }
+      ]),
+      listDependencies: jest.fn(async () => []),
+      listProductionManifestsForCandidate: jest.fn(async () => []),
       executeNativeQueriesInTransaction: jest.fn(
         async (callback: (connection: unknown) => Promise<unknown>) =>
           callback({})
@@ -58,8 +100,9 @@ function repositoryFor(initial: ReleaseBusV2CandidateRecord) {
           rowVersion: number,
           fields: {
             status?: ReleaseBusV2CandidateRecord['status'];
-            productionRequestedAt?: number;
-            productionRequestedBy?: string;
+            productionRequestedAt?: number | null;
+            productionRequestedBy?: string | null;
+            productionSelectionId?: string | null;
           }
         ) => {
           if (rowVersion !== current.row_version) return false;
@@ -67,9 +110,17 @@ function repositoryFor(initial: ReleaseBusV2CandidateRecord) {
             ...current,
             status: fields.status ?? current.status,
             production_requested_at:
-              fields.productionRequestedAt ?? current.production_requested_at,
+              'productionRequestedAt' in fields
+                ? (fields.productionRequestedAt ?? null)
+                : current.production_requested_at,
             production_requested_by:
-              fields.productionRequestedBy ?? current.production_requested_by,
+              'productionRequestedBy' in fields
+                ? (fields.productionRequestedBy ?? null)
+                : current.production_requested_by,
+            production_selection_id:
+              'productionSelectionId' in fields
+                ? (fields.productionSelectionId ?? null)
+                : current.production_selection_id,
             row_version: current.row_version + 1
           };
           return true;
@@ -78,6 +129,193 @@ function repositoryFor(initial: ReleaseBusV2CandidateRecord) {
       appendEvent: jest.fn(async () => undefined)
     }
   };
+}
+
+function validatedCandidate(
+  id: string,
+  repository: 'frontend' | 'backend',
+  headCharacter: string,
+  prNumber: number
+): ReleaseBusV2CandidateRecord {
+  return {
+    ...candidate('STAGING_VALIDATED'),
+    id,
+    repository,
+    pr_number: prNumber,
+    branch_name: `feature/${id}`,
+    head_sha: headCharacter.repeat(40),
+    staging_validated_train_id: `staging-train-${id}`,
+    staging_validated_manifest_id: `staging-manifest-${id}`,
+    row_version: 1
+  };
+}
+
+function selectionRepository(
+  initial: readonly ReleaseBusV2CandidateRecord[],
+  dependencies: readonly {
+    readonly candidate_id: string;
+    readonly prerequisite_candidate_id: string;
+    readonly environment: 'STAGING' | 'PRODUCTION' | 'BOTH';
+  }[] = [],
+  productionManifests: ReadonlyMap<string, readonly unknown[]> = new Map(),
+  productionE2eRuns: ReadonlyMap<string, string> = new Map()
+) {
+  const candidates = new Map(initial.map((item) => [item.id, item]));
+  const appendEvent = jest.fn(async () => undefined);
+  const createTrain = jest.fn(
+    async (input: {
+      lane: string;
+      qualificationPolicy?: string;
+      qualificationEvidence?: readonly unknown[];
+    }) => ({
+      id: 'claimed-selection-train',
+      lane: input.lane,
+      status: 'CLAIMED',
+      qualification_policy: input.qualificationPolicy ?? null,
+      qualification_evidence_json: input.qualificationEvidence ?? null
+    })
+  );
+  const repository = {
+    listControls: jest.fn(async () => []),
+    listTrains: jest.fn(async () => []),
+    listCandidates: jest.fn(async (statuses: readonly string[]) =>
+      Array.from(candidates.values()).filter(({ status }) =>
+        statuses.includes(status)
+      )
+    ),
+    acquireLock: jest.fn(async () => ({ lease_token: 'scheduler-lease' })),
+    releaseLock: jest.fn(async () => true),
+    findCandidateById: jest.fn(
+      async (id: string) => candidates.get(id) ?? null
+    ),
+    findTrain: jest.fn(async (id: string) => {
+      const item = Array.from(candidates.values()).find(
+        ({ staging_validated_train_id }) => staging_validated_train_id === id
+      );
+      return item
+        ? {
+            id,
+            lane: 'STAGING',
+            status: 'STAGING_VALIDATED',
+            manifest_id: item.staging_validated_manifest_id
+          }
+        : null;
+    }),
+    findManifest: jest.fn(async (id: string) => {
+      const item = Array.from(candidates.values()).find(
+        ({ staging_validated_manifest_id }) =>
+          staging_validated_manifest_id === id
+      );
+      return item
+        ? {
+            id,
+            train_id: item.staging_validated_train_id,
+            status: 'STAGING_VALIDATED',
+            identity_sha256: `${item.pr_number}`.padStart(64, '0'),
+            frontend_artifact_digest:
+              item.repository === 'frontend' ? 'e'.repeat(64) : null,
+            backend_artifact_digest:
+              item.repository === 'backend' ? 'f'.repeat(64) : null,
+            e2e_run_id: `e2e-${item.id}`,
+            manifest_json: {
+              candidates: [
+                {
+                  candidate_id: item.id,
+                  repository: item.repository,
+                  pr_number: item.pr_number,
+                  head_sha: item.head_sha
+                }
+              ]
+            }
+          }
+        : null;
+    }),
+    listTrainCandidates: jest.fn(async (trainId: string) => {
+      const item = Array.from(candidates.values()).find(
+        ({ staging_validated_train_id }) =>
+          staging_validated_train_id === trainId
+      );
+      return item ? [{ candidate_id: item.id, disposition: 'INCLUDED' }] : [];
+    }),
+    listOperations: jest.fn(async (trainId: string) => {
+      const item = Array.from(candidates.values()).find(
+        ({ staging_validated_train_id }) =>
+          staging_validated_train_id === trainId
+      );
+      if (item)
+        return [
+          {
+            id: `e2e-operation-${item.id}`,
+            operation_type: 'E2E_STAGING',
+            status: 'SUCCEEDED',
+            external_id: `e2e-${item.id}`
+          }
+        ];
+      const productionRun = productionE2eRuns.get(trainId);
+      return productionRun
+        ? [
+            {
+              id: `production-e2e-operation-${trainId}`,
+              operation_type: 'E2E_PROD',
+              status: 'SUCCEEDED',
+              external_id: productionRun
+            }
+          ]
+        : [];
+    }),
+    listDependencies: jest.fn(async (candidateIds: readonly string[]) =>
+      dependencies.filter(({ candidate_id }) =>
+        candidateIds.includes(candidate_id)
+      )
+    ),
+    listProductionManifestsForCandidate: jest.fn(async (id: string) =>
+      Array.from(productionManifests.get(id) ?? [])
+    ),
+    createTrain,
+    executeNativeQueriesInTransaction: jest.fn(
+      async (callback: (connection: unknown) => Promise<unknown>) =>
+        callback({})
+    ),
+    updateCandidate: jest.fn(
+      async (
+        id: string,
+        rowVersion: number,
+        fields: {
+          status?: ReleaseBusV2CandidateRecord['status'];
+          productionRequestedAt?: number | null;
+          productionRequestedBy?: string | null;
+          productionSelectionId?: string | null;
+          currentTrainId?: string | null;
+          holdReason?: string | null;
+        }
+      ) => {
+        const item = candidates.get(id);
+        if (!item || item.row_version !== rowVersion) return false;
+        candidates.set(id, {
+          ...item,
+          status: fields.status ?? item.status,
+          production_requested_at:
+            fields.productionRequestedAt ?? item.production_requested_at,
+          production_requested_by:
+            fields.productionRequestedBy ?? item.production_requested_by,
+          production_selection_id:
+            fields.productionSelectionId ?? item.production_selection_id,
+          current_train_id:
+            fields.currentTrainId === undefined
+              ? item.current_train_id
+              : fields.currentTrainId,
+          hold_reason:
+            fields.holdReason === undefined
+              ? item.hold_reason
+              : fields.holdReason,
+          row_version: item.row_version + 1
+        });
+        return true;
+      }
+    ),
+    appendEvent
+  };
+  return { candidates, repository, appendEvent, createTrain };
 }
 
 describe('Release Bus v2 explicit production opt-in', () => {
@@ -113,7 +351,21 @@ describe('Release Bus v2 explicit production opt-in', () => {
     expect(state.current().status).toBe('STAGING_VALIDATED');
   });
 
-  it('records production readiness only after the explicit exact-SHA action', async () => {
+  it('rechecks the exact branch SHA while the selected candidate row is locked', async () => {
+    const state = repositoryFor(candidate('STAGING_VALIDATED'));
+    mockResolveRef
+      .mockResolvedValueOnce('a'.repeat(40))
+      .mockResolvedValueOnce('b'.repeat(40));
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction('candidate-id', 'a'.repeat(40), 3, 'owner')
+    ).rejects.toThrow('changed after branch verification');
+    expect(state.current().status).toBe('STAGING_VALIDATED');
+    expect(state.repository.updateCandidate).not.toHaveBeenCalled();
+  });
+
+  it('records rollout-safe candidate-evidence readiness only after the explicit exact-SHA action', async () => {
     const state = repositoryFor(candidate('STAGING_VALIDATED'));
     mockResolveRef.mockResolvedValue('a'.repeat(40));
     const service = new ReleaseBusV2Service(state.repository as never);
@@ -123,7 +375,7 @@ describe('Release Bus v2 explicit production opt-in', () => {
       3,
       'owner'
     );
-    expect(result.status).toBe('READY_FOR_PRODUCTION');
+    expect(result.status).toBe('READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION');
     expect(result.production_requested_by).toBe('owner');
     expect(result.production_requested_at).not.toBeNull();
     expect(state.repository.appendEvent).toHaveBeenCalledWith(
@@ -133,6 +385,390 @@ describe('Release Bus v2 explicit production opt-in', () => {
       }),
       expect.anything()
     );
+  });
+
+  it('atomically selects A+C from independently validated A+B+C and preserves B', async () => {
+    const a = validatedCandidate('candidate-a', 'frontend', 'a', 101);
+    const b = validatedCandidate('candidate-b', 'backend', 'b', 102);
+    const c = validatedCandidate('candidate-c', 'backend', 'c', 103);
+    const state = selectionRepository(
+      [a, b, c],
+      [
+        {
+          candidate_id: c.id,
+          prerequisite_candidate_id: a.id,
+          environment: 'BOTH'
+        }
+      ]
+    );
+    mockResolveRef.mockImplementation(
+      async (_repository: string, branch: string) =>
+        [a, b, c].find((item) => item.branch_name === branch)?.head_sha
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const selected = await service.markSelectionReadyForProduction(
+      [a, c].map((item) => ({
+        candidateId: item.id,
+        expectedHeadSha: item.head_sha,
+        expectedRowVersion: item.row_version
+      })),
+      'operator'
+    );
+
+    expect(selected.map(({ id }) => id).sort()).toEqual([a.id, c.id]);
+    expect(
+      new Set(
+        selected.map(({ production_selection_id }) => production_selection_id)
+      ).size
+    ).toBe(1);
+    expect(state.candidates.get(b.id)).toEqual(b);
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_SELECTION_READY',
+        payload: expect.objectContaining({
+          qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+          candidate_ids: [a.id, c.id],
+          candidate_evidence: expect.arrayContaining([
+            expect.objectContaining({
+              candidate_id: a.id,
+              staging_train_id: a.staging_validated_train_id,
+              staging_manifest_id: a.staging_validated_manifest_id
+            }),
+            expect.objectContaining({
+              candidate_id: c.id,
+              staging_train_id: c.staging_validated_train_id,
+              staging_manifest_id: c.staging_validated_manifest_id
+            })
+          ])
+        })
+      }),
+      expect.anything()
+    );
+
+    const claimed = await service.claimLane(
+      'PRODUCTION',
+      '8'.repeat(40),
+      '9'.repeat(40),
+      'scheduler'
+    );
+    expect(claimed).toEqual(
+      expect.objectContaining({
+        id: 'claimed-selection-train',
+        qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1'
+      })
+    );
+    expect(state.createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateIds: [a.id, c.id],
+        qualificationPolicy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+        qualificationEvidence: expect.arrayContaining([
+          expect.objectContaining({ candidate_id: a.id }),
+          expect.objectContaining({ candidate_id: c.id })
+        ])
+      }),
+      expect.anything()
+    );
+    expect(state.repository.listCandidates).toHaveBeenCalledWith(
+      expect.arrayContaining(['READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION']),
+      expect.any(Number),
+      expect.anything()
+    );
+    expect(state.candidates.get(b.id)).toEqual(b);
+  });
+
+  it('rejects an omitted production dependency without exact deployed identity', async () => {
+    const prerequisite = validatedCandidate(
+      'candidate-prerequisite',
+      'backend',
+      'd',
+      104
+    );
+    const dependent = validatedCandidate(
+      'candidate-dependent',
+      'frontend',
+      'e',
+      105
+    );
+    const dependency = {
+      candidate_id: dependent.id,
+      prerequisite_candidate_id: prerequisite.id,
+      environment: 'PRODUCTION' as const
+    };
+    const state = selectionRepository([prerequisite, dependent], [dependency]);
+    mockResolveRef.mockResolvedValue(dependent.head_sha);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markSelectionReadyForProduction(
+        [
+          {
+            candidateId: dependent.id,
+            expectedHeadSha: dependent.head_sha,
+            expectedRowVersion: dependent.row_version
+          }
+        ],
+        'operator'
+      )
+    ).rejects.toThrow(`omits undeployed dependency ${prerequisite.id}`);
+    expect(state.candidates.get(dependent.id)?.status).toBe(
+      'STAGING_VALIDATED'
+    );
+  });
+
+  it('accepts an omitted dependency only with its exact terminal production manifest and E2E', async () => {
+    const prerequisite = {
+      ...validatedCandidate('candidate-deployed', 'backend', 'f', 106),
+      status: 'PRODUCTION_DEPLOYED' as const
+    };
+    const dependent = validatedCandidate(
+      'candidate-next',
+      'frontend',
+      '1',
+      107
+    );
+    const productionManifest = {
+      train_id: 'production-train-deployed',
+      manifest_json: {
+        candidates: [
+          {
+            candidate_id: prerequisite.id,
+            repository: prerequisite.repository,
+            pr_number: prerequisite.pr_number,
+            head_sha: prerequisite.head_sha
+          }
+        ],
+        operations: [{ type: 'E2E_PROD', workflow_run_id: '987' }]
+      }
+    };
+    const state = selectionRepository(
+      [prerequisite, dependent],
+      [
+        {
+          candidate_id: dependent.id,
+          prerequisite_candidate_id: prerequisite.id,
+          environment: 'BOTH'
+        }
+      ],
+      new Map([[prerequisite.id, [productionManifest]]]),
+      new Map([['production-train-deployed', '987']])
+    );
+    mockResolveRef.mockResolvedValue(dependent.head_sha);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markSelectionReadyForProduction(
+        [
+          {
+            candidateId: dependent.id,
+            expectedHeadSha: dependent.head_sha,
+            expectedRowVersion: dependent.row_version
+          }
+        ],
+        'operator'
+      )
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: dependent.id,
+        status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION'
+      })
+    ]);
+    expect(state.repository.findCandidateById).toHaveBeenCalledWith(
+      prerequisite.id,
+      expect.objectContaining({ connection: expect.anything() }),
+      true
+    );
+  });
+
+  it('rejects a deployed dependency whose manifest lacks a matching successful E2E operation', async () => {
+    const prerequisite = {
+      ...validatedCandidate('candidate-unverified-deploy', 'backend', '6', 109),
+      status: 'PRODUCTION_DEPLOYED' as const
+    };
+    const dependent = validatedCandidate(
+      'candidate-after-unverified',
+      'frontend',
+      '7',
+      110
+    );
+    const state = selectionRepository(
+      [prerequisite, dependent],
+      [
+        {
+          candidate_id: dependent.id,
+          prerequisite_candidate_id: prerequisite.id,
+          environment: 'PRODUCTION'
+        }
+      ],
+      new Map([
+        [
+          prerequisite.id,
+          [
+            {
+              train_id: 'production-train-without-e2e',
+              manifest_json: {
+                candidates: [
+                  {
+                    candidate_id: prerequisite.id,
+                    repository: prerequisite.repository,
+                    pr_number: prerequisite.pr_number,
+                    head_sha: prerequisite.head_sha
+                  }
+                ],
+                operations: [{ type: 'E2E_PROD', workflow_run_id: '988' }]
+              }
+            }
+          ]
+        ]
+      ])
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markSelectionReadyForProduction(
+        [
+          {
+            candidateId: dependent.id,
+            expectedHeadSha: dependent.head_sha,
+            expectedRowVersion: dependent.row_version
+          }
+        ],
+        'operator'
+      )
+    ).rejects.toThrow(`omits undeployed dependency ${prerequisite.id}`);
+  });
+
+  it('fails closed when successful staging E2E evidence is missing', async () => {
+    const exact = validatedCandidate(
+      'candidate-missing-e2e',
+      'frontend',
+      '2',
+      108
+    );
+    const state = selectionRepository([exact]);
+    state.repository.listOperations.mockResolvedValue([]);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markSelectionReadyForProduction(
+        [
+          {
+            candidateId: exact.id,
+            expectedHeadSha: exact.head_sha,
+            expectedRowVersion: exact.row_version
+          }
+        ],
+        'operator'
+      )
+    ).rejects.toThrow('missing exact E2E or artifact identity');
+    expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when staging evidence maps one manifest run to multiple operations', async () => {
+    const exact = validatedCandidate(
+      'candidate-ambiguous-e2e',
+      'frontend',
+      '3',
+      111
+    );
+    const state = selectionRepository([exact]);
+    state.repository.listOperations.mockResolvedValue([
+      {
+        id: 'first-e2e-operation',
+        operation_type: 'E2E_STAGING',
+        status: 'SUCCEEDED',
+        external_id: `e2e-${exact.id}`
+      },
+      {
+        id: 'duplicate-e2e-operation',
+        operation_type: 'E2E_STAGING',
+        status: 'SUCCEEDED',
+        external_id: `e2e-${exact.id}`
+      }
+    ]);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markSelectionReadyForProduction(
+        [
+          {
+            candidateId: exact.id,
+            expectedHeadSha: exact.head_sha,
+            expectedRowVersion: exact.row_version
+          }
+        ],
+        'operator'
+      )
+    ).rejects.toThrow('missing exact E2E or artifact identity');
+    expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+
+  it('accepts one legacy manifest identity only when exact train membership disambiguates it', async () => {
+    const exact = candidate('STAGING_VALIDATED');
+    const state = repositoryFor(exact);
+    state.repository.findManifest.mockResolvedValue({
+      id: 'manifest-id',
+      train_id: 'staging-train-id',
+      status: 'STAGING_VALIDATED',
+      identity_sha256: 'e'.repeat(64),
+      frontend_artifact_digest: 'f'.repeat(64),
+      backend_artifact_digest: null,
+      e2e_run_id: '123',
+      manifest_json: {
+        candidates: [
+          {
+            repository: exact.repository,
+            pr_number: exact.pr_number,
+            head_sha: exact.head_sha
+          }
+        ]
+      }
+    } as never);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.resolveCandidateStagingEvidence([exact], {})
+    ).resolves.toEqual([
+      expect.objectContaining({
+        candidate_id: exact.id,
+        staging_manifest_id: 'manifest-id',
+        staging_e2e_operation_id: 'staging-e2e-operation'
+      })
+    ]);
+  });
+
+  it('does not treat a missing candidate id as a wildcard in a mixed manifest', async () => {
+    const exact = candidate('STAGING_VALIDATED');
+    const state = repositoryFor(exact);
+    state.repository.findManifest.mockResolvedValue({
+      id: 'manifest-id',
+      train_id: 'staging-train-id',
+      status: 'STAGING_VALIDATED',
+      identity_sha256: 'e'.repeat(64),
+      frontend_artifact_digest: 'f'.repeat(64),
+      backend_artifact_digest: null,
+      e2e_run_id: '123',
+      manifest_json: {
+        candidates: [
+          {
+            candidate_id: 'another-candidate',
+            repository: 'backend',
+            pr_number: 9,
+            head_sha: '9'.repeat(40)
+          },
+          {
+            repository: exact.repository,
+            pr_number: exact.pr_number,
+            head_sha: exact.head_sha
+          }
+        ]
+      }
+    } as never);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.resolveCandidateStagingEvidence([exact], {})
+    ).rejects.toThrow('missing exact E2E or artifact identity');
   });
 });
 
@@ -182,7 +818,9 @@ describe('Release Bus v2 STAGING-mode production beta opt-in', () => {
         'beta-operator'
       )
     ).resolves.toEqual(
-      expect.objectContaining({ status: 'READY_FOR_PRODUCTION' })
+      expect.objectContaining({
+        status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION'
+      })
     );
   });
 

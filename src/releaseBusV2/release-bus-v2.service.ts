@@ -1,5 +1,6 @@
 import type { RequestContext } from '@/request.context';
 import { isDeepStrictEqual } from 'node:util';
+import { randomUUID } from 'node:crypto';
 import { getDeployServiceConfigs } from '@/api/deploy/deploy.config';
 import { releaseBusGitHubApp } from '@/releaseBusV2/release-bus-v2.github-app';
 import {
@@ -21,6 +22,7 @@ import {
 } from '@/releaseBusV2/release-bus-v2.repository';
 import type {
   ReleaseBusV2CandidateRecord,
+  ReleaseBusV2CandidateStagingEvidence,
   ReleaseBusV2CandidateStatus,
   ReleaseBusV2ControlScope,
   ReleaseBusV2DeployPlan,
@@ -31,6 +33,11 @@ import type {
   ReleaseBusV2Repository,
   ReleaseBusV2TrainRecord
 } from '@/releaseBusV2/release-bus-v2.types';
+
+export const CANDIDATE_STAGING_EVIDENCE_POLICY =
+  'CANDIDATE_STAGING_EVIDENCE_V1' as const;
+export const CANDIDATE_EVIDENCE_READY_STATUS =
+  'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION' as const;
 
 const TERMINAL_TRAIN_STATUSES = new Set([
   'STAGING_VALIDATED',
@@ -53,6 +60,50 @@ export class ReleaseBusV2StagingTransitionConflictError extends Error {
     super(message);
     this.name = 'ReleaseBusV2StagingTransitionConflictError';
   }
+}
+
+export type ReleaseBusV2ProductionSelectionErrorCode =
+  | 'CONFLICT'
+  | 'DISABLED'
+  | 'NOT_FOUND';
+
+export class ReleaseBusV2ProductionSelectionError extends Error {
+  public constructor(
+    public readonly code: ReleaseBusV2ProductionSelectionErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2ProductionSelectionError';
+  }
+}
+
+type ReleaseBusV2ManifestCandidateIdentity = {
+  readonly candidate_id?: string;
+  readonly repository?: string;
+  readonly pr_number?: number;
+  readonly head_sha?: string;
+};
+
+function manifestContainsExactCandidate(
+  manifestCandidates: readonly ReleaseBusV2ManifestCandidateIdentity[] | null,
+  candidate: ReleaseBusV2CandidateRecord
+): boolean {
+  if (!manifestCandidates) return false;
+  // New manifests carry candidate_id on every entry. Legacy manifests carry
+  // none, so their exact train membership plus repository/PR/head identity is
+  // the compatibility fence. A mixed manifest may not use a missing id as a
+  // wildcard.
+  const carriesCandidateIds = manifestCandidates.some(
+    ({ candidate_id }) => candidate_id !== undefined
+  );
+  const matches = manifestCandidates.filter(
+    (item) =>
+      (!carriesCandidateIds || item.candidate_id === candidate.id) &&
+      item.repository === candidate.repository &&
+      item.pr_number === candidate.pr_number &&
+      item.head_sha === candidate.head_sha
+  );
+  return matches.length === 1;
 }
 
 export type ReleaseBusV2StagingIdentity = {
@@ -171,25 +222,6 @@ function readyStatus(lane: ReleaseBusV2Lane): ReleaseBusV2CandidateStatus {
 
 function claimedStatus(lane: ReleaseBusV2Lane): ReleaseBusV2CandidateStatus {
   return lane === 'PRODUCTION' ? 'PRODUCTION_IN_TRAIN' : 'STAGING_IN_TRAIN';
-}
-
-function productionReplanCanBind(
-  candidates: readonly ReleaseBusV2CandidateRecord[],
-  frontendBaseSha: string,
-  backendBaseSha: string,
-  stagingIdentity: ReleaseBusV2StagingIdentity | undefined
-): boolean {
-  if (
-    !candidates.some(({ status }) => status === 'WAITING_FOR_PRODUCTION_REPLAN')
-  )
-    return false;
-  const repositories = new Set(candidates.map(({ repository }) => repository));
-  return (
-    (repositories.has('frontend') ||
-      stagingIdentity?.frontendSha === frontendBaseSha) &&
-    (repositories.has('backend') ||
-      stagingIdentity?.backendSha === backendBaseSha)
-  );
 }
 
 function sameQualificationIdentity(
@@ -486,93 +518,450 @@ export class ReleaseBusV2Service {
     expectedRowVersion: number,
     actor: string
   ): Promise<ReleaseBusV2CandidateRecord> {
+    const candidates = await this.markSelectionReadyForProduction(
+      [{ candidateId, expectedHeadSha, expectedRowVersion }],
+      actor
+    );
+    const candidate = candidates[0];
+    if (!candidate)
+      throw new Error('Production selection did not return its candidate');
+    return candidate;
+  }
+
+  public async markSelectionReadyForProduction(
+    selection: readonly {
+      readonly candidateId: string;
+      readonly expectedHeadSha: string;
+      readonly expectedRowVersion: number;
+    }[],
+    actor: string
+  ): Promise<ReleaseBusV2CandidateRecord[]> {
+    if (selection.length === 0)
+      throw new ReleaseBusV2ProductionSelectionError(
+        'CONFLICT',
+        'Production selection requires at least one candidate'
+      );
+    const selectedIds = new Set(
+      selection.map(({ candidateId }) => candidateId)
+    );
+    if (selectedIds.size !== selection.length)
+      throw new ReleaseBusV2ProductionSelectionError(
+        'CONFLICT',
+        'Production selection contains a duplicate candidate'
+      );
     const mode = getReleaseBusV2Mode();
-    const snapshot = await this.repository.findCandidateById(candidateId, {});
-    if (!snapshot) throw new Error('Candidate not found');
+    const snapshots = await Promise.all(
+      selection.map(({ candidateId }) =>
+        this.repository.findCandidateById(candidateId, {})
+      )
+    );
+    if (snapshots.some((candidate) => candidate === null))
+      throw new ReleaseBusV2ProductionSelectionError(
+        'NOT_FOUND',
+        'Production selection candidate not found'
+      );
+    const candidates = snapshots.filter(
+      (candidate): candidate is ReleaseBusV2CandidateRecord =>
+        candidate !== null
+    );
     const betaAllowlist =
       mode === 'OFF' || mode === 'STAGING'
         ? getReleaseBusV2BetaAllowlist()
         : [];
     const isBetaPromotion =
+      candidates.length > 0 &&
       releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION') &&
-      releaseBusV2BetaAllowsCandidate(betaAllowlist, snapshot, 'PRODUCTION') &&
-      snapshot.requested_by.toLowerCase() === actor.toLowerCase();
-    if (!releaseBusV2AllowsLane(mode, 'PRODUCTION') && !isBetaPromotion)
-      throw new Error('Release Bus v2 production readiness is disabled');
-    await this.assertScopeRunning('PRODUCTION');
-    if (snapshot.row_version !== expectedRowVersion)
-      throw new Error(
-        'Candidate changed; refresh before marking production ready'
+      candidates.every(
+        (candidate) =>
+          releaseBusV2BetaAllowsCandidate(
+            betaAllowlist,
+            candidate,
+            'PRODUCTION'
+          ) && candidate.requested_by.toLowerCase() === actor.toLowerCase()
       );
-    if (snapshot.status !== 'STAGING_VALIDATED')
-      throw new Error('The exact candidate SHA is not staging validated');
-    if (snapshot.head_sha !== expectedHeadSha.toLowerCase())
-      throw new Error('Requested production SHA does not match the candidate');
-    const currentHead = await releaseBusGitHubApp.resolveRef(
-      snapshot.repository,
-      snapshot.branch_name
+    if (!releaseBusV2AllowsLane(mode, 'PRODUCTION') && !isBetaPromotion)
+      throw new ReleaseBusV2ProductionSelectionError(
+        'DISABLED',
+        'Release Bus v2 production readiness is disabled'
+      );
+    try {
+      await this.assertScopeRunning('PRODUCTION');
+    } catch (error) {
+      throw new ReleaseBusV2ProductionSelectionError(
+        'CONFLICT',
+        error instanceof Error
+          ? error.message
+          : 'Release Bus v2 production controls are unavailable'
+      );
+    }
+    const selectionById = new Map(
+      selection.map((item) => [item.candidateId, item])
     );
-    if (currentHead !== snapshot.head_sha)
-      throw new Error('Candidate branch moved after staging validation');
+    for (const candidate of candidates) {
+      const expected = selectionById.get(candidate.id);
+      if (!expected || candidate.row_version !== expected.expectedRowVersion)
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          'Candidate changed; refresh before marking production ready'
+        );
+      if (
+        candidate.status !== 'STAGING_VALIDATED' ||
+        candidate.superseded_at !== null
+      )
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          'The exact candidate SHA is not staging validated'
+        );
+      if (candidate.head_sha !== expected.expectedHeadSha.toLowerCase())
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          'Requested production SHA does not match the candidate'
+        );
+    }
+    await this.resolveCandidateStagingEvidence(candidates, {});
+    await this.assertProductionDependencyClosure(candidates, {});
+    const currentHeads = await Promise.all(
+      candidates.map((candidate) =>
+        releaseBusGitHubApp.resolveRef(
+          candidate.repository,
+          candidate.branch_name
+        )
+      )
+    );
+    for (let index = 0; index < candidates.length; index += 1) {
+      if (currentHeads[index] !== candidates[index]?.head_sha)
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          'Candidate branch moved after staging validation'
+        );
+    }
     return this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx: RequestContext = { connection };
-        const candidate = await this.repository.findCandidateById(
-          candidateId,
-          ctx,
-          true
+        const locked: ReleaseBusV2CandidateRecord[] = [];
+        const orderedIds = Array.from(selectedIds).sort((left, right) =>
+          left.localeCompare(right)
         );
-        if (!candidate) throw new Error('Candidate not found');
-        if (candidate.row_version !== expectedRowVersion)
-          throw new Error(
-            'Candidate changed; refresh before marking production ready'
+        const dependencies = await this.repository.listDependencies(
+          orderedIds,
+          ctx
+        );
+        const lockIds = Array.from(
+          new Set([
+            ...orderedIds,
+            ...dependencies
+              .filter(({ environment }) => environment !== 'STAGING')
+              .map(({ prerequisite_candidate_id }) => prerequisite_candidate_id)
+          ])
+        ).sort((left, right) => left.localeCompare(right));
+        const lockedById = new Map<
+          string,
+          ReleaseBusV2CandidateRecord | null
+        >();
+        for (const candidateId of lockIds)
+          lockedById.set(
+            candidateId,
+            await this.repository.findCandidateById(candidateId, ctx, true)
           );
-        if (
-          candidate.status !== 'STAGING_VALIDATED' ||
-          !candidate.staging_validated_manifest_id
-        )
-          throw new Error('The exact candidate SHA is not staging validated');
-        if (candidate.head_sha !== expectedHeadSha.toLowerCase())
-          throw new Error(
-            'Requested production SHA does not match the candidate'
-          );
-        if (candidate.head_sha !== currentHead)
-          throw new Error('Candidate changed after branch verification');
+        for (const selectedId of orderedIds) {
+          const candidate = lockedById.get(selectedId) ?? null;
+          if (!candidate)
+            throw new ReleaseBusV2ProductionSelectionError(
+              'NOT_FOUND',
+              'Candidate not found'
+            );
+          const expected = selectionById.get(candidate.id);
+          if (
+            !expected ||
+            candidate.row_version !== expected.expectedRowVersion
+          )
+            throw new ReleaseBusV2ProductionSelectionError(
+              'CONFLICT',
+              'Candidate changed; refresh before marking production ready'
+            );
+          if (
+            candidate.status !== 'STAGING_VALIDATED' ||
+            !candidate.staging_validated_manifest_id ||
+            candidate.superseded_at !== null
+          )
+            throw new ReleaseBusV2ProductionSelectionError(
+              'CONFLICT',
+              'The exact candidate SHA is not staging validated'
+            );
+          if (candidate.head_sha !== expected.expectedHeadSha.toLowerCase())
+            throw new ReleaseBusV2ProductionSelectionError(
+              'CONFLICT',
+              'Candidate changed after branch verification'
+            );
+          locked.push(candidate);
+        }
+        // Re-resolve while every selected candidate row is locked. The earlier
+        // resolution is a fast rejection; this is the authoritative
+        // selection-write fence.
+        const lockedHeads = await Promise.all(
+          locked.map((candidate) =>
+            releaseBusGitHubApp.resolveRef(
+              candidate.repository,
+              candidate.branch_name
+            )
+          )
+        );
+        for (let index = 0; index < locked.length; index += 1) {
+          if (lockedHeads[index] !== locked[index]?.head_sha)
+            throw new ReleaseBusV2ProductionSelectionError(
+              'CONFLICT',
+              'Candidate changed after branch verification'
+            );
+        }
+        const evidence = await this.resolveCandidateStagingEvidence(
+          locked,
+          ctx
+        );
+        await this.assertProductionDependencyClosure(locked, ctx, lockedById);
         const now = Date.now();
-        if (
-          !(await this.repository.updateCandidate(
-            candidate.id,
-            candidate.row_version,
-            {
-              status: 'READY_FOR_PRODUCTION',
-              productionRequestedAt: now,
-              productionRequestedBy: actor
-            },
-            ctx
-          ))
-        )
-          throw new Error('Candidate changed concurrently');
+        const selectionId = randomUUID();
+        for (const candidate of locked) {
+          if (
+            !(await this.repository.updateCandidate(
+              candidate.id,
+              candidate.row_version,
+              {
+                status: CANDIDATE_EVIDENCE_READY_STATUS,
+                productionRequestedAt: now,
+                productionRequestedBy: actor,
+                productionSelectionId: selectionId
+              },
+              ctx
+            ))
+          )
+            throw new ReleaseBusV2ProductionSelectionError(
+              'CONFLICT',
+              'Candidate changed concurrently'
+            );
+        }
         await this.repository.appendEvent(
           {
-            candidateId: candidate.id,
-            eventType: 'CANDIDATE_READY_FOR_PRODUCTION',
+            eventType: 'PRODUCTION_SELECTION_READY',
             actor,
             payload: {
-              head_sha: candidate.head_sha,
-              staging_manifest_id: candidate.staging_validated_manifest_id
+              production_selection_id: selectionId,
+              qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
+              candidate_ids: locked.map(({ id }) => id),
+              candidate_evidence: evidence
             }
           },
           ctx
         );
-        const updated = await this.repository.findCandidateById(
-          candidate.id,
-          ctx
-        );
-        if (!updated)
-          throw new Error('Candidate disappeared after production readiness');
+        for (const candidate of locked)
+          await this.repository.appendEvent(
+            {
+              candidateId: candidate.id,
+              eventType: 'CANDIDATE_READY_FOR_PRODUCTION',
+              actor,
+              payload: {
+                head_sha: candidate.head_sha,
+                production_selection_id: selectionId,
+                qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
+                staging_evidence: evidence.find(
+                  ({ candidate_id }) => candidate_id === candidate.id
+                )
+              }
+            },
+            ctx
+          );
+        const updated: ReleaseBusV2CandidateRecord[] = [];
+        for (const candidate of locked) {
+          const current = await this.repository.findCandidateById(
+            candidate.id,
+            ctx
+          );
+          if (!current)
+            throw new ReleaseBusV2ProductionSelectionError(
+              'CONFLICT',
+              'Candidate disappeared after production readiness'
+            );
+          updated.push(current);
+        }
         return updated;
       }
     );
+  }
+
+  public async resolveCandidateStagingEvidence(
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2CandidateStagingEvidence[]> {
+    const evidence: ReleaseBusV2CandidateStagingEvidence[] = [];
+    for (const candidate of candidates) {
+      if (
+        candidate.superseded_at !== null ||
+        !candidate.staging_validated_train_id ||
+        !candidate.staging_validated_manifest_id
+      )
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          `Candidate ${candidate.id} has no current staging validation evidence`
+        );
+      // This method also runs while holding a native SQL transaction. Keep
+      // queries sequential because one connection cannot safely multiplex
+      // protocol commands.
+      const train = await this.repository.findTrain(
+        candidate.staging_validated_train_id,
+        ctx
+      );
+      const manifest = await this.repository.findManifest(
+        candidate.staging_validated_manifest_id,
+        ctx
+      );
+      const memberships = await this.repository.listTrainCandidates(
+        candidate.staging_validated_train_id,
+        ctx
+      );
+      const operations = await this.repository.listOperations(
+        candidate.staging_validated_train_id,
+        ctx
+      );
+      const exactMemberships = memberships.filter(
+        (membership) =>
+          membership.candidate_id === candidate.id &&
+          membership.disposition === 'INCLUDED'
+      );
+      if (
+        !train ||
+        train.lane !== 'STAGING' ||
+        train.status !== 'STAGING_VALIDATED' ||
+        train.manifest_id !== manifest?.id ||
+        manifest.status !== 'STAGING_VALIDATED' ||
+        manifest.train_id !== train.id ||
+        !manifest.e2e_run_id ||
+        exactMemberships.length !== 1
+      )
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          `Candidate ${candidate.id} has incomplete staging manifest evidence`
+        );
+      const manifestBody = parseStoredJson<{
+        readonly candidates?: readonly ReleaseBusV2ManifestCandidateIdentity[];
+      }>(manifest.manifest_json);
+      const manifestCandidate = manifestContainsExactCandidate(
+        manifestBody?.candidates ?? null,
+        candidate
+      );
+      const matchingE2e = operations.filter(
+        (operation) =>
+          operation.operation_type === 'E2E_STAGING' &&
+          operation.status === 'SUCCEEDED' &&
+          operation.external_id === manifest.e2e_run_id
+      );
+      const e2e = matchingE2e.length === 1 ? matchingE2e[0] : null;
+      const repositoryArtifact =
+        candidate.repository === 'frontend'
+          ? manifest.frontend_artifact_digest
+          : manifest.backend_artifact_digest;
+      if (!manifestCandidate || !e2e || !repositoryArtifact)
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          `Candidate ${candidate.id} staging evidence is missing exact E2E or artifact identity`
+        );
+      evidence.push({
+        candidate_id: candidate.id,
+        repository: candidate.repository,
+        pr_number: candidate.pr_number,
+        head_sha: candidate.head_sha,
+        staging_train_id: train.id,
+        staging_manifest_id: manifest.id,
+        staging_manifest_identity_sha256: manifest.identity_sha256,
+        staging_e2e_operation_id: e2e.id,
+        staging_e2e_run_id: manifest.e2e_run_id
+      });
+    }
+    return evidence.sort((left, right) =>
+      left.candidate_id.localeCompare(right.candidate_id)
+    );
+  }
+
+  private async assertProductionDependencyClosure(
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    ctx: RequestContext,
+    lockedCandidates?: ReadonlyMap<string, ReleaseBusV2CandidateRecord | null>
+  ): Promise<void> {
+    const selected = new Set(candidates.map(({ id }) => id));
+    const dependencies = await this.repository.listDependencies(
+      Array.from(selected),
+      ctx
+    );
+    for (const dependency of dependencies) {
+      if (
+        dependency.environment === 'STAGING' ||
+        selected.has(dependency.prerequisite_candidate_id)
+      )
+        continue;
+      const prerequisite = lockedCandidates?.has(
+        dependency.prerequisite_candidate_id
+      )
+        ? (lockedCandidates.get(dependency.prerequisite_candidate_id) ?? null)
+        : await this.repository.findCandidateById(
+            dependency.prerequisite_candidate_id,
+            ctx
+          );
+      if (
+        !prerequisite ||
+        !(await this.hasExactProductionDeploymentEvidence(prerequisite, ctx))
+      )
+        throw new ReleaseBusV2ProductionSelectionError(
+          'CONFLICT',
+          `Production selection omits undeployed dependency ${dependency.prerequisite_candidate_id}`
+        );
+    }
+  }
+
+  private async hasExactProductionDeploymentEvidence(
+    candidate: ReleaseBusV2CandidateRecord,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (
+      candidate.status !== 'PRODUCTION_DEPLOYED' ||
+      candidate.superseded_at !== null
+    )
+      return false;
+    const manifests = await this.repository.listProductionManifestsForCandidate(
+      candidate.id,
+      ctx
+    );
+    for (const manifest of manifests) {
+      const body = parseStoredJson<{
+        readonly candidates?: readonly ReleaseBusV2ManifestCandidateIdentity[];
+        readonly operations?: readonly {
+          readonly type?: string;
+          readonly workflow_run_id?: string | null;
+        }[];
+      }>(manifest.manifest_json);
+      const exactCandidate = manifestContainsExactCandidate(
+        body?.candidates ?? null,
+        candidate
+      );
+      const recordedE2eOperations = body?.operations?.filter(
+        (operation) =>
+          operation.type === 'E2E_PROD' && Boolean(operation.workflow_run_id)
+      );
+      const recordedE2eRunId =
+        recordedE2eOperations?.length === 1
+          ? recordedE2eOperations[0]?.workflow_run_id
+          : null;
+      if (!exactCandidate || !recordedE2eRunId) continue;
+      const operations = await this.repository.listOperations(
+        manifest.train_id,
+        ctx
+      );
+      const matchingE2e = operations.filter(
+        (operation) =>
+          operation.operation_type === 'E2E_PROD' &&
+          operation.status === 'SUCCEEDED' &&
+          operation.external_id === recordedE2eRunId
+      );
+      if (matchingE2e.length === 1) return true;
+    }
+    return false;
   }
 
   public async revokeProductionReadiness(
@@ -594,9 +983,11 @@ export class ReleaseBusV2Service {
             'Candidate changed; refresh before revoking readiness'
           );
         if (
-          !['READY_FOR_PRODUCTION', 'WAITING_FOR_PRODUCTION_REPLAN'].includes(
-            candidate.status
-          )
+          ![
+            'READY_FOR_PRODUCTION',
+            CANDIDATE_EVIDENCE_READY_STATUS,
+            'WAITING_FOR_PRODUCTION_REPLAN'
+          ].includes(candidate.status)
         )
           throw new Error(
             'Production readiness can be revoked only before claim'
@@ -605,7 +996,12 @@ export class ReleaseBusV2Service {
           !(await this.repository.updateCandidate(
             candidate.id,
             candidate.row_version,
-            { status: 'STAGING_VALIDATED' },
+            {
+              status: 'STAGING_VALIDATED',
+              productionRequestedAt: null,
+              productionRequestedBy: null,
+              productionSelectionId: null
+            },
             ctx
           ))
         )
@@ -650,6 +1046,7 @@ export class ReleaseBusV2Service {
             'READY_FOR_STAGING',
             'WAITING_FOR_DEPENDENCY',
             'READY_FOR_PRODUCTION',
+            CANDIDATE_EVIDENCE_READY_STATUS,
             'WAITING_FOR_PRODUCTION_REPLAN',
             'NEEDS_REBASE'
           ].includes(candidate.status)
@@ -790,7 +1187,9 @@ export class ReleaseBusV2Service {
             candidate.id,
             candidate.row_version,
             {
-              status: 'READY_FOR_PRODUCTION',
+              status: candidate.production_selection_id
+                ? CANDIDATE_EVIDENCE_READY_STATUS
+                : 'READY_FOR_PRODUCTION',
               supersededAt: null
             },
             ctx
@@ -1157,7 +1556,9 @@ export class ReleaseBusV2Service {
           await this.refreshDependencyHolds(lane, ctx, betaAllowlist);
           const readyCandidates = (
             await this.repository.listCandidates(
-              [readyStatus(lane)],
+              lane === 'PRODUCTION'
+                ? [CANDIDATE_EVIDENCE_READY_STATUS, 'READY_FOR_PRODUCTION']
+                : [readyStatus(lane)],
               RELEASE_BUS_V2_MAX_CANDIDATES,
               ctx
             )
@@ -1194,15 +1595,17 @@ export class ReleaseBusV2Service {
             stagingTransitionRequests.length === 0
           )
             return null;
-          const replanCandidates = [...heldCandidates, ...readyCandidates];
-          const replanDependencies = await this.repository.listDependencies(
-            replanCandidates.map((candidate) => candidate.id),
-            ctx
+          const queued = [...heldCandidates, ...readyCandidates].sort(
+            (left, right) =>
+              Number(left.production_requested_at ?? left.created_at) -
+                Number(right.production_requested_at ?? right.created_at) ||
+              left.id.localeCompare(right.id)
           );
           let candidates: readonly ReleaseBusV2CandidateRecord[];
           let carriedCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
           let replacedCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
           let removalCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
+          let selectionId: string | null = null;
           if (lane === 'STAGING') {
             candidates = readyCandidates;
             const live = stagingState
@@ -1274,26 +1677,13 @@ export class ReleaseBusV2Service {
             );
             candidates = [...carriedCandidates, ...candidates];
           } else {
-            const eligibleReplan =
-              heldCandidates.length === 0
-                ? []
-                : await this.selectDependencyClosedCandidates(
-                    replanCandidates,
-                    replanDependencies,
-                    lane,
-                    ctx,
-                    betaAllowlist,
-                    false
-                  );
-            // This snapshot only admits composition. Qualification reacquires
-            // staging and rebinds the exact identity before deploy or E2E.
-            const replanCanBind = productionReplanCanBind(
-              eligibleReplan,
-              frontendBaseSha,
-              backendBaseSha,
-              stagingIdentity
+            const first = queued[0];
+            selectionId = first?.production_selection_id ?? null;
+            candidates = queued.filter((candidate) =>
+              selectionId
+                ? candidate.production_selection_id === selectionId
+                : candidate.production_selection_id === null
             );
-            candidates = replanCanBind ? eligibleReplan : readyCandidates;
           }
           if (candidates.length === 0 && removalCandidates.length === 0)
             return null;
@@ -1328,6 +1718,18 @@ export class ReleaseBusV2Service {
           }
           if (eligible.length === 0 && removalCandidates.length === 0)
             return null;
+          if (
+            lane === 'PRODUCTION' &&
+            selectionId !== null &&
+            eligible.length !== candidates.length
+          )
+            return null;
+          const qualificationEvidence =
+            lane === 'PRODUCTION'
+              ? await this.resolveCandidateStagingEvidence(eligible, ctx)
+              : undefined;
+          if (lane === 'PRODUCTION')
+            await this.assertProductionDependencyClosure(eligible, ctx);
           const order = topologicalOrder(
             eligible.map((candidate) => candidate.id),
             dependencies
@@ -1417,7 +1819,12 @@ export class ReleaseBusV2Service {
                       )
                     )
                   }
-                : {})
+                : {}),
+              qualificationPolicy:
+                lane === 'PRODUCTION'
+                  ? CANDIDATE_STAGING_EVIDENCE_POLICY
+                  : undefined,
+              qualificationEvidence
             },
             ctx
           );
@@ -1492,6 +1899,12 @@ export class ReleaseBusV2Service {
                         )
                         .map(({ id }) => id)
                     : null,
+                production_selection_id: selectionId,
+                qualification_policy:
+                  lane === 'PRODUCTION'
+                    ? CANDIDATE_STAGING_EVIDENCE_POLICY
+                    : null,
+                candidate_evidence: qualificationEvidence ?? null,
                 production_replan_candidate_ids: eligible
                   .filter(
                     ({ status }) => status === 'WAITING_FOR_PRODUCTION_REPLAN'
@@ -1840,6 +2253,7 @@ export class ReleaseBusV2Service {
         'STAGING_VALIDATING',
         'STAGING_VALIDATED',
         'READY_FOR_PRODUCTION',
+        CANDIDATE_EVIDENCE_READY_STATUS,
         'WAITING_FOR_PRODUCTION_REPLAN',
         'PRODUCTION_IN_TRAIN',
         'PRODUCTION_BUILDING_OR_QUALIFYING',
@@ -1907,8 +2321,15 @@ export class ReleaseBusV2Service {
         // live manifest. Historical staging validation is not current presence
         // and can never satisfy an omitted staging dependency.
         const alreadySatisfied =
-          lane === 'PRODUCTION' &&
-          prerequisite?.status === 'PRODUCTION_DEPLOYED';
+          lane === 'PRODUCTION'
+            ? Boolean(
+                prerequisite &&
+                (await this.hasExactProductionDeploymentEvidence(
+                  prerequisite,
+                  ctx
+                ))
+              )
+            : false;
         if (!prerequisiteInBatch && !alreadySatisfied) {
           eligible.delete(dependency.candidate_id);
           changed = true;
@@ -1986,10 +2407,17 @@ export class ReleaseBusV2Service {
         );
         const dependencySatisfied =
           lane === 'PRODUCTION'
-            ? prerequisite?.status === 'PRODUCTION_DEPLOYED'
+            ? Boolean(
+                prerequisite &&
+                (await this.hasExactProductionDeploymentEvidence(
+                  prerequisite,
+                  ctx
+                ))
+              )
             : [
                 'STAGING_VALIDATED',
                 'READY_FOR_PRODUCTION',
+                CANDIDATE_EVIDENCE_READY_STATUS,
                 'PRODUCTION_IN_TRAIN',
                 'PRODUCTION_DEPLOYED'
               ].includes(prerequisite?.status ?? '');
@@ -2005,7 +2433,9 @@ export class ReleaseBusV2Service {
         {
           status:
             lane === 'PRODUCTION'
-              ? 'READY_FOR_PRODUCTION'
+              ? candidate.production_selection_id
+                ? CANDIDATE_EVIDENCE_READY_STATUS
+                : 'READY_FOR_PRODUCTION'
               : 'READY_FOR_STAGING',
           holdReason: null
         },

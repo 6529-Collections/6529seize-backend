@@ -151,6 +151,23 @@ export const ReleaseBusV2CandidateActionBodySchema = Joi.object({
   expected_row_version: Joi.number().integer().positive().required()
 }).required();
 
+export const ReleaseBusV2ProductionSelectionBodySchema = Joi.object({
+  candidates: Joi.array()
+    .items(
+      Joi.object({
+        candidate_id: Joi.string()
+          .guid({ version: ['uuidv4'] })
+          .required(),
+        expected_head_sha: ReleaseShaSchema.required(),
+        expected_row_version: Joi.number().integer().positive().required()
+      })
+    )
+    .min(1)
+    .max(100)
+    .unique('candidate_id')
+    .required()
+}).required();
+
 export const ReleaseBusV2CandidateCancelBodySchema = Joi.object({
   expected_row_version: Joi.number().integer().positive().required()
 }).required();

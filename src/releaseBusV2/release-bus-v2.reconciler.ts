@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import {
   getDeployServiceConfigs,
   type DeployEnvironment
@@ -30,6 +31,8 @@ import {
   type ReleaseBusV2TrainCandidateRecord
 } from '@/releaseBusV2/release-bus-v2.repository';
 import {
+  CANDIDATE_EVIDENCE_READY_STATUS,
+  CANDIDATE_STAGING_EVIDENCE_POLICY,
   releaseBusV2Service,
   storedDeployPlan,
   topologicalOrder,
@@ -38,6 +41,7 @@ import {
 import { isGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type {
   ReleaseBusV2CandidateRecord,
+  ReleaseBusV2CandidateStagingEvidence,
   ReleaseBusV2CandidateStatus,
   ReleaseBusV2FailureClass,
   ReleaseBusV2ManifestStatus,
@@ -632,6 +636,7 @@ export function deletedProductionCandidateCanRetainReadiness(
     candidate.staging_validated_manifest_id !== null &&
     [
       'READY_FOR_PRODUCTION',
+      CANDIDATE_EVIDENCE_READY_STATUS,
       'WAITING_FOR_PRODUCTION_REPLAN',
       'SUPERSEDED'
     ].includes(candidate.status)
@@ -887,6 +892,7 @@ export class ReleaseBusV2Reconciler {
           'READY_FOR_STAGING',
           'WAITING_FOR_DEPENDENCY',
           'READY_FOR_PRODUCTION',
+          CANDIDATE_EVIDENCE_READY_STATUS,
           'WAITING_FOR_PRODUCTION_REPLAN',
           'SUPERSEDED'
         ],
@@ -904,6 +910,7 @@ export class ReleaseBusV2Reconciler {
       .filter((candidate) => {
         const lane =
           candidate.status === 'READY_FOR_PRODUCTION' ||
+          candidate.status === CANDIDATE_EVIDENCE_READY_STATUS ||
           candidate.status === 'WAITING_FOR_PRODUCTION_REPLAN' ||
           candidate.status === 'SUPERSEDED'
             ? 'PRODUCTION'
@@ -1151,8 +1158,12 @@ export class ReleaseBusV2Reconciler {
       candidateStatusForBuild(train.lane),
       train.id
     );
-    const exactProductionManifest =
-      await this.findExactValidatedProductionManifest(context);
+    const usesCandidateEvidence =
+      train.lane === 'PRODUCTION' &&
+      train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY;
+    const exactProductionManifest = usesCandidateEvidence
+      ? null
+      : await this.findExactValidatedProductionManifest(context);
     if (exactProductionManifest) {
       await this.repository.appendEvent(
         {
@@ -1218,11 +1229,13 @@ export class ReleaseBusV2Reconciler {
     }
     const allComposed = Boolean(frontend.composedSha && backend.composedSha);
     if (compositionOnly && allComposed) {
-      const exact = await this.repository.findValidatedManifestByShas(
-        frontend.composedSha,
-        backend.composedSha,
-        {}
-      );
+      const exact = usesCandidateEvidence
+        ? null
+        : await this.repository.findValidatedManifestByShas(
+            frontend.composedSha,
+            backend.composedSha,
+            {}
+          );
       await this.transitionTrain(train, {
         status: exact ? 'PREPARED' : 'PREFLIGHTING',
         frontendComposedSha: frontend.composedSha,
@@ -1232,7 +1245,9 @@ export class ReleaseBusV2Reconciler {
         manifestId: exact?.id ?? null,
         recoveryMessage: exact
           ? 'Exact staging-validated composition and immutable artifacts were reused without rebuilding'
-          : 'Exact production composition differs from validated staging; preparing one immutable artifact per application'
+          : usesCandidateEvidence
+            ? 'Fresh production composition is preparing immutable artifacts against the current trusted production bases'
+            : 'Exact production composition differs from validated staging; preparing one immutable artifact per application'
       });
       return;
     }
@@ -1362,6 +1377,10 @@ export class ReleaseBusV2Reconciler {
         ? train.frontend_composed_sha
         : train.backend_composed_sha;
     const fastCandidate =
+      !(
+        train.lane === 'PRODUCTION' &&
+        train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+      ) &&
       candidates.length === 1 &&
       canUseSingleCandidateFastPath(candidates[0], baseSha)
         ? candidates[0]
@@ -1567,7 +1586,10 @@ export class ReleaseBusV2Reconciler {
     const retryStatus: ReleaseBusV2CandidateStatus =
       context.train.lane === 'STAGING'
         ? 'READY_FOR_STAGING'
-        : 'READY_FOR_PRODUCTION';
+        : context.train.qualification_policy ===
+            CANDIDATE_STAGING_EVIDENCE_POLICY
+          ? CANDIDATE_EVIDENCE_READY_STATUS
+          : 'READY_FOR_PRODUCTION';
     const failedCandidates: ReleaseBusV2CandidateRecord[] = [];
     const blockedCandidates: ReleaseBusV2CandidateRecord[] = [];
     const returnedCandidates: ReleaseBusV2CandidateRecord[] = [];
@@ -3467,10 +3489,98 @@ export class ReleaseBusV2Reconciler {
     );
   }
 
+  private async assertCandidateEvidenceCurrent(
+    context: TrainContext
+  ): Promise<readonly ReleaseBusV2CandidateStagingEvidence[]> {
+    const train = context.train;
+    if (train.qualification_policy !== CANDIDATE_STAGING_EVIDENCE_POLICY)
+      throw new Error(
+        `Train ${train.id} does not carry the candidate-evidence production policy`
+      );
+    const stored = parseStoredJson<
+      readonly ReleaseBusV2CandidateStagingEvidence[]
+    >(train.qualification_evidence_json);
+    const candidates = relevantCandidates(context);
+    const expectedCandidateIds = new Set(candidates.map(({ id }) => id));
+    const storedCandidateIds = new Set(
+      stored?.map(({ candidate_id }) => candidate_id) ?? []
+    );
+    if (
+      !stored ||
+      stored.length !== candidates.length ||
+      storedCandidateIds.size !== stored.length ||
+      storedCandidateIds.size !== expectedCandidateIds.size ||
+      Array.from(expectedCandidateIds).some(
+        (candidateId) => !storedCandidateIds.has(candidateId)
+      )
+    )
+      throw new Error(
+        `Train ${train.id} has missing or ambiguous candidate staging evidence`
+      );
+    const current = await this.service.resolveCandidateStagingEvidence(
+      candidates,
+      {}
+    );
+    if (!isDeepStrictEqual(stored, current))
+      throw new Error(
+        `Train ${train.id} candidate staging evidence changed after claim`
+      );
+    const heads = await Promise.all(
+      candidates.map(async (candidate) => ({
+        candidate,
+        currentHead: await releaseBusGitHubApp.resolveRefIfExists(
+          candidate.repository,
+          candidate.branch_name
+        )
+      }))
+    );
+    const moved = heads.find(
+      ({ candidate, currentHead }) => currentHead !== candidate.head_sha
+    );
+    if (moved)
+      throw new Error(
+        `Candidate ${moved.candidate.id} branch moved from ${moved.candidate.head_sha} to ${moved.currentHead ?? 'deleted'}`
+      );
+    return current;
+  }
+
   private async advanceProduction(context: TrainContext): Promise<void> {
     const train = context.train;
     if (train.status === 'PREPARED') {
       if (await this.deferMovedProductionPlan(context)) return;
+      if (train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY) {
+        const evidence = await this.assertCandidateEvidenceCurrent(context);
+        const preparationOperations = (
+          await this.repository.listOperations(train.id, {})
+        ).filter(({ status }) => status === 'SUCCEEDED');
+        const manifest = await this.createManifest(
+          context,
+          train.id,
+          preparationOperations,
+          'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+        );
+        await this.repository.appendEvent(
+          {
+            trainId: train.id,
+            eventType: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED',
+            actor: 'release-bus-v2',
+            payload: {
+              qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
+              qualification_manifest_id: manifest.id,
+              qualification_manifest_identity_sha256: manifest.identity_sha256,
+              candidate_evidence: evidence
+            }
+          },
+          {}
+        );
+        await this.transitionTrain(train, {
+          status: 'MERGING_PRODUCTION',
+          manifestId: manifest.id,
+          recoveryMessage:
+            'Every selected exact candidate SHA has successful staging E2E evidence; the fresh current-base composition is qualified for production without mutating staging'
+        });
+        return;
+      }
       const exact = await this.repository.findValidatedManifestByRelease(
         train.frontend_composed_sha,
         train.backend_composed_sha,
@@ -3600,6 +3710,8 @@ export class ReleaseBusV2Reconciler {
       );
     }
     if (train.status === 'MERGING_PRODUCTION') {
+      if (train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY)
+        await this.assertCandidateEvidenceCurrent(context);
       await this.advanceProductionRefs(context);
       await this.updateCandidateStatuses(
         relevantCandidates(context),
@@ -3609,7 +3721,9 @@ export class ReleaseBusV2Reconciler {
       await this.transitionTrain(train, {
         status: 'PRODUCTION_DEPLOYING',
         recoveryMessage:
-          'Exact qualified composition is on main; immutable artifacts are deploying'
+          train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+            ? 'Fresh candidate-evidence-qualified composition is on main; immutable artifacts are deploying'
+            : 'Exact qualified composition is on main; immutable artifacts are deploying'
       });
       return;
     }
@@ -3665,13 +3779,17 @@ export class ReleaseBusV2Reconciler {
         manifestId: manifest.id,
         completedAt: Date.now(),
         recoveryMessage:
-          'Exact explicit production subset deployed and verified'
+          train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+            ? 'Explicit candidate-evidence production subset deployed and passed read-only production E2E'
+            : 'Exact explicit production subset deployed and verified'
       });
       await this.releaseEnvironmentLease('production-environment', lease);
       await this.publishCandidateStatuses(
         relevantCandidates(context),
         'success',
-        'Exact v2 production deployment completed'
+        train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+          ? 'Candidate-evidence v2 production deployment completed'
+          : 'Exact v2 production deployment completed'
       );
     }
   }
@@ -3693,9 +3811,9 @@ export class ReleaseBusV2Reconciler {
 
   private async advanceProductionRefs(context: TrainContext): Promise<void> {
     const train = context.train;
-    const repositories = (['backend', 'frontend'] as const).filter(
-      (repository) => relevantCandidates(context, repository).length > 0
-    );
+    // Both repository bases are part of the qualified production identity,
+    // even when the explicit subset changes only one application.
+    const repositories = ['backend', 'frontend'] as const;
     const current = await Promise.all(
       repositories.map(async (repository) => ({
         repository,
@@ -3734,7 +3852,9 @@ export class ReleaseBusV2Reconciler {
       throw new MainMovedError(message);
     }
     const advanced: ReleaseBusV2Repository[] = [];
-    for (const item of current) {
+    for (const item of current.filter(
+      ({ repository }) => relevantCandidates(context, repository).length > 0
+    )) {
       try {
         await this.advanceMainRef(train, item.repository, item.sha);
         advanced.push(item.repository);
@@ -4177,12 +4297,25 @@ export class ReleaseBusV2Reconciler {
         ? stagingDeploymentCandidates(context, 'backend')
         : relevantCandidates(context, 'backend')
       ).length > 0;
+    const isProductionManifest =
+      status === 'PRODUCTION_DEPLOYED' ||
+      status === 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED';
+    const qualificationEvidence = parseStoredJson<
+      readonly ReleaseBusV2CandidateStagingEvidence[]
+    >(train.qualification_evidence_json);
     const identity = {
       train_id: train.id,
       lane: train.lane,
-      scope: status === 'PRODUCTION_DEPLOYED' ? 'production' : 'staging',
+      scope:
+        status === 'PRODUCTION_DEPLOYED'
+          ? 'production'
+          : status === 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+            ? 'production-candidate-evidence-qualification'
+            : 'staging',
       staging_policy: train.staging_policy,
       staging_baseline_manifest_id: train.staging_baseline_manifest_id,
+      qualification_policy: train.qualification_policy,
+      candidate_staging_evidence: qualificationEvidence,
       // The manifest is the exact environment identity used by E2E, not only
       // the changed subset. Preparation always resolves both repositories to
       // either their composed tree or their unchanged base tree.
@@ -4196,6 +4329,7 @@ export class ReleaseBusV2Reconciler {
         : null,
       candidates: relevantCandidates(context).map(
         ({ id, repository, pr_number, head_sha }) => ({
+          candidate_id: id,
           repository,
           pr_number,
           head_sha,
@@ -4214,11 +4348,13 @@ export class ReleaseBusV2Reconciler {
       staging_policy: train.staging_policy,
       staging_baseline_manifest_id: train.staging_baseline_manifest_id,
       staging_transition: parseStoredJson(train.staging_transition_json),
+      qualification_policy: train.qualification_policy,
+      candidate_staging_evidence: qualificationEvidence,
       backend_graph: backendGraph(
         train.lane === 'STAGING'
           ? stagingDeploymentCandidates(context, 'backend')
           : relevantCandidates(context, 'backend'),
-        status === 'PRODUCTION_DEPLOYED' ? 'prod' : 'staging'
+        isProductionManifest ? 'prod' : 'staging'
       ),
       operations: operations.map((operation) => ({
         type: operation.operation_type,
@@ -4234,6 +4370,12 @@ export class ReleaseBusV2Reconciler {
         current_phase: Date.now() - Number(train.phase_started_at)
       }
     };
+    const successfulE2eRunId =
+      operations.find(
+        (operation) =>
+          operation.status === 'SUCCEEDED' &&
+          ['E2E_STAGING', 'E2E_PROD'].includes(operation.operation_type)
+      )?.external_id ?? null;
     return this.repository.createManifest(
       {
         train_id: train.id,
@@ -4244,9 +4386,12 @@ export class ReleaseBusV2Reconciler {
         backend_sha: identity.backend_sha,
         frontend_artifact_digest: identity.frontend_artifact_digest,
         backend_artifact_digest: identity.backend_artifact_digest,
-        e2e_run_id: null,
+        e2e_run_id: successfulE2eRunId,
         manifest_json: manifestJson,
-        deployed_at: Date.now(),
+        deployed_at:
+          status === 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+            ? null
+            : Date.now(),
         validated_at: null
       },
       {}
@@ -4460,6 +4605,8 @@ export class ReleaseBusV2Reconciler {
       STAGING_DEPLOYED: 'Exact staging deployment complete; E2E is pending',
       STAGING_VALIDATING: 'Staging is frozen for exact-manifest E2E',
       READY_FOR_PRODUCTION: 'Explicitly queued for exact v2 production',
+      READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION:
+        'Explicit candidate-evidence production selection queued',
       PRODUCTION_IN_TRAIN: 'Claimed by an explicit v2 production train',
       PRODUCTION_BUILDING_OR_QUALIFYING:
         'Exact production composition is building or qualifying',
@@ -4710,13 +4857,66 @@ export class ReleaseBusV2Reconciler {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const context = await this.loadContext(current);
+    // PRODUCTION_DEPLOYING is entered only after advanceProductionRefs has
+    // compare-and-swap advanced every affected main ref to the exact composed
+    // SHA. A later deploy/E2E failure must therefore stop new production
+    // claims until an operator proves main/runtime parity or completes an
+    // explicit rollback. Requeueing these candidates would let a later train
+    // inherit already-landed, potentially only partially deployed code.
+    const productionMainAdvanced =
+      current.lane === 'PRODUCTION' &&
+      current.status === 'PRODUCTION_DEPLOYING';
+    const postMainRecoveryMessage =
+      'The exact production composition is already on main, but deployment or read-only E2E did not complete successfully. PRODUCTION is paused and selected candidates are failed closed; reconcile the recorded main SHAs with production runtime before explicitly resuming';
+    if (productionMainAdvanced) {
+      const controls = await this.repository.listControls({});
+      if (
+        !controls.some(
+          ({ scope, paused }) => scope === 'PRODUCTION' && Boolean(paused)
+        )
+      )
+        await this.service.setPaused(
+          'PRODUCTION',
+          true,
+          `Release Bus v2 post-main production failure in train ${train.id}: ${message}`,
+          'release-bus-v2'
+        );
+      const alreadyAudited = (
+        await this.repository.listEvents(current.id, 200, {})
+      ).some(
+        ({ event_type }) => event_type === 'PRODUCTION_POST_MAIN_FAILURE_PAUSED'
+      );
+      if (!alreadyAudited)
+        await this.repository.appendEvent(
+          {
+            trainId: current.id,
+            eventType: 'PRODUCTION_POST_MAIN_FAILURE_PAUSED',
+            actor: 'release-bus-v2',
+            payload: {
+              failure_class: failureClass,
+              failure_message: message,
+              frontend_main_sha: current.frontend_composed_sha,
+              backend_main_sha: current.backend_composed_sha,
+              production_control: 'PAUSED',
+              selected_candidate_status: 'FAILED',
+              recovery_contract:
+                'PROVE_EXACT_MAIN_RUNTIME_PARITY_OR_EXPLICIT_ROLLBACK_BEFORE_RESUME'
+            }
+          },
+          {}
+        );
+    }
     const retryStatus: ReleaseBusV2CandidateStatus =
-      current.lane === 'STAGING' ? 'READY_FOR_STAGING' : 'READY_FOR_PRODUCTION';
-    const candidateStatus = ['INFRASTRUCTURE', 'CONTROL_PLANE'].includes(
-      failureClass
-    )
-      ? retryStatus
-      : 'FAILED';
+      current.lane === 'STAGING'
+        ? 'READY_FOR_STAGING'
+        : current.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+          ? CANDIDATE_EVIDENCE_READY_STATUS
+          : 'READY_FOR_PRODUCTION';
+    const candidateStatus = productionMainAdvanced
+      ? 'FAILED'
+      : ['INFRASTRUCTURE', 'CONTROL_PLANE'].includes(failureClass)
+        ? retryStatus
+        : 'FAILED';
     const statusCandidates =
       current.lane === 'STAGING'
         ? stagingStatusCandidates(context)
@@ -4750,8 +4950,9 @@ export class ReleaseBusV2Reconciler {
       status: 'FAILED',
       failureClass,
       failureMessage: message,
-      recoveryMessage:
-        failureClass === 'CONTROL_PLANE'
+      recoveryMessage: productionMainAdvanced
+        ? postMainRecoveryMessage
+        : failureClass === 'CONTROL_PLANE'
           ? 'Automation is paused; retain exact state and use the documented manual fallback'
           : 'Exact state is retained for idempotent diagnosis or retry',
       completedAt: Date.now()
@@ -4820,7 +5021,9 @@ export class ReleaseBusV2Reconciler {
     const context = await this.loadContext(current);
     await this.updateCandidateStatuses(
       relevantCandidates(context),
-      'READY_FOR_PRODUCTION',
+      current.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+        ? CANDIDATE_EVIDENCE_READY_STATUS
+        : 'READY_FOR_PRODUCTION',
       null,
       false
     );

@@ -93,7 +93,7 @@ an audited operator request. The removed candidate's declared units are
 redeployed from the new candidate-free composition so prior runtime bytes
 cannot survive. Production selection does not change staging membership.
 
-Every staging and production-qualification train records a
+Every staging and legacy production-qualification train records a
 `STAGING_IDLE_HANDSHAKE` under `staging-environment`. After E2E succeeds, the
 reconciler rechecks both exact staging refs and all staging deploy/E2E workflow
 history created since the pre-lock snapshot, ignoring only the train's exact
@@ -103,31 +103,50 @@ it can never become `STAGING_VALIDATED`. Operator beta emits the existing
 
 ## Production lifecycle
 
-Staging validation never creates production readiness. A developer explicitly
-marks the unchanged exact candidate SHA ready through the Deploy UI or the
-versioned mark-ready endpoint.
+Staging validation never creates production readiness. An operator explicitly
+selects one or more unchanged exact candidates through the Deploy UI or
+`POST /deploy/release-bus-v2/production-selections`. The action is atomic: all
+selected candidates share one `production_selection_id`, and every selected
+candidate must still be `STAGING_VALIDATED` at the submitted head SHA.
 
-Production selects only explicit candidates. It composes the proposed subset
-from current `main`:
+The selection must be transitively dependency-closed. A production-scoped
+prerequisite must either be selected in the same action or already be terminal
+`PRODUCTION_DEPLOYED` with a production manifest containing that exact
+candidate/repository/PR/head identity and successful production E2E. Omitted
+unrelated candidates keep their staging evidence and separate production
+intent.
 
-- if both exact composed tree SHAs match a validated manifest, reuse its
-  validation and immutable artifacts;
-- otherwise enqueue an exact `PRODUCTION_QUALIFICATION` staging train, run
-  manifest-bound E2E, then continue automatically;
-- qualification never validates when an unchanged repository in staging
-  differs from the exact production target. After a stable idle handshake, an
-  immutable mismatch transactionally cancels the impossible qualification and
-  parent, releases the production lane, and preserves every explicit candidate
-  as `WAITING_FOR_PRODUCTION_REPLAN`;
-- held production candidates are reclaimed only when the current ready set
-  makes every mismatched repository candidate-bearing, or each unchanged
-  staging ref exactly matches the current `main` base. This lets later
-  complementary work join one safe replan without repeated impossible trains;
-- immediately before mutation, require every `main` ref to equal its recorded
-  base. A moved ref cancels and requeues the set for fresh qualification;
-- advance exact tested commits, deploy the same artifacts in dependency order,
-  verify exact versions, run production-safe read-only E2E, and mark
-  `PRODUCTION_DEPLOYED`.
+New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`:
+
+- resolve and persist, per selected candidate, candidate ID, repository, PR,
+  head SHA, staging train, validated manifest identity, and the successful
+  staging E2E operation/run;
+- freshly compose both repositories against the current trusted `main` bases.
+  Frontend and backend preparation may run concurrently. A candidate's old PR
+  artifact or an exact combined staging artifact is never reused for ordinary
+  production qualification;
+- fail closed on moved candidate heads, superseded or ambiguous evidence,
+  missing staging E2E/artifact identity, an invalid dependency DAG, composition
+  conflicts, failed checks/builds, artifact mismatch, or either stale
+  production base;
+- persist a `PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED` manifest containing the
+  policy and exact evidence mapping. This is not a staging qualification and
+  does not mutate shared staging;
+- never create `PRODUCTION_QUALIFICATION` or
+  `WAITING_FOR_PRODUCTION_REPLAN` merely because the selected set differs from
+  a current or validated staging manifest;
+- serialize production ownership, advance only compare-and-swap exact tested
+  commits, deploy immutable artifacts in DAG order, verify exact versions, and
+  dispatch mandatory production-safe read-only E2E;
+- use the distinct `production-environment` lock and production-scoped
+  frontend/backend workflow concurrency. An unrelated staging train keeps its
+  own `staging-environment` lock and staging-scoped workflow groups, so ordinary
+  production does not wait on unrelated staging activity;
+- create `PRODUCTION_DEPLOYED` only after that E2E is terminal-successful.
+
+Trains claimed before this policy deployment have a null policy and continue
+under their immutable legacy exact-manifest/qualification behavior. That
+compatibility path is not selectable for new ordinary production trains.
 
 The dedicated Release Bus GitHub App must be an `always` bypass actor on the
 default-branch ruleset in both repositories. V2 uses that narrowly scoped App
@@ -145,13 +164,14 @@ explicitly.
 
 ## Failure behavior
 
-| Class                | Behavior                                                                                                                                                                               |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Candidate merge/test | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable          |
-| Infrastructure       | Bounded idempotent retry; no candidate isolation                                                                                                                                       |
-| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence                                                                                                                  |
-| Control plane        | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                     |
-| E2E                  | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates |
+| Class                         | Behavior                                                                                                                                                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Candidate merge/test          | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable                                                                          |
+| Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                       |
+| Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                  |
+| Control plane                 | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                                                                                     |
+| E2E                           | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates                                                                 |
+| Production after main advance | Fail selected candidates closed, pause `PRODUCTION`, and block later production claims. `main` remains truthful and is never rewritten; an operator must prove the recorded exact main/runtime parity or complete an explicit rollback before resuming |
 
 Every pending GitHub status must map to a visible candidate/train/operation state
 and recovery message. Duplicate callbacks and worker invocations reuse immutable
@@ -173,6 +193,14 @@ rolling it back leaves its additive table and columns in place so older workers
 cannot erase the authoritative admitted set. A genuine schema teardown requires
 a separate destructive migration and is permitted only while v2 is confirmed
 `OFF`.
+
+The candidate-evidence policy is safe in that rolling order even when v2 is
+already enabled. Its API writes new selections as
+`READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION`; an older reconciler does not query
+or claim that additive status. After runtime/ref parity confirms the new
+reconciler is live, it claims the preserved selection under
+`CANDIDATE_STAGING_EVIDENCE_V1`. Do not rewrite the status or fall back to the
+legacy ready value during the rollout window.
 
 ### Operator-only OFF beta
 
@@ -280,16 +308,19 @@ production-only allowlist enables only those exact production candidates and
 never filters, enrolls, or blocks ordinary staging candidates. Invalid beta
 configuration pauses only `PRODUCTION`; staging automation and the manual
 fallback remain available.
-With exact validated candidates A/B/C and a reusable exact manifest, prove the
-production train is claimable and prepares while an unrelated D/E staging
-train is active, acquires only `production-environment`, and completes without
-waiting for, cancelling, or interfering with D/E. Record overlapping train and
-operation run IDs, distinct environment-lock ownership, and timings; the
-scheduler lock must be claim-only and brief rather than serializing either
-lane's workflows. Separately prove that an exact A/B/C set without a reusable
-validated manifest enters `PRODUCTION_QUALIFICATION` and waits for
-`staging-environment` behind D/E instead of contaminating D/E E2E, then may
-proceed after qualification. Any dependency on D/E must hold A/B/C throughout.
+With exact validated candidates A/B/C, explicitly select dependency-closed A+C
+and prove it claims directly under `CANDIDATE_STAGING_EVIDENCE_V1`, even when
+A and C were validated in different trains/manifests. B must retain its exact
+evidence and any separate production intent. Repeat with independent mixed
+frontend/backend subsets while unrelated D/E staging work is active. The
+production train may prepare concurrently, must never acquire
+`staging-environment`, create `PRODUCTION_QUALIFICATION`, or enter
+`WAITING_FOR_PRODUCTION_REPLAN`, and must not wait for, cancel, or interfere
+with D/E. Any actual dependency on B/D/E must reject the omitted set unless the
+required exact identity is already terminal in production.
+Record overlapping train and operation run IDs, distinct environment-lock
+ownership, evidence mappings, manifests, and timings; the scheduler lock must
+be claim-only and brief rather than serializing either lane's workflows.
 Before production mutation the reconciler performs the analogous double
 active-workflow/main-ref snapshot under `production-environment` and records
 `BETA_PRODUCTION_IDLE_HANDSHAKE`. Prove 3–5 minute backend or 10–15 minute

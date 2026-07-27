@@ -2,6 +2,7 @@ import {
   DeployDispatchBodySchema,
   ReleaseBusV2CandidateActionBodySchema,
   ReleaseBusV2CandidateBodySchema,
+  ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
   ReleaseBusV2ProgressBodySchema
 } from '@/api/deploy/deploy.validation';
@@ -160,6 +161,25 @@ describe('Release Bus v2 validation', () => {
       ReleaseBusV2CandidateActionBodySchema.validate({
         expected_head_sha: 'main',
         expected_row_version: 0
+      }).error
+    ).toBeDefined();
+  });
+
+  it('accepts a bounded unique exact candidate production selection', () => {
+    const candidateId = '8af60034-9741-4b9d-bb1c-80b483f75455';
+    const item = {
+      candidate_id: candidateId,
+      expected_head_sha: 'b'.repeat(40),
+      expected_row_version: 4
+    };
+    expect(
+      ReleaseBusV2ProductionSelectionBodySchema.validate({
+        candidates: [item]
+      }).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2ProductionSelectionBodySchema.validate({
+        candidates: [item, item]
       }).error
     ).toBeDefined();
   });

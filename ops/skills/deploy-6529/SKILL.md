@@ -38,17 +38,26 @@ through the documented fallback.
    manual deploy after v2 accepts the candidate.
 5. Wait for `STAGING_VALIDATED`. `STAGING_DEPLOYED` means E2E is still pending
    and is not production evidence.
-6. Production is a separate explicit action. Re-resolve the branch and mark
-   ready only when it still equals the exact staging-validated SHA. Staging
-   validation never schedules production automatically.
+6. Production is a separate explicit action. Re-resolve each branch, select the
+   complete dependency-closed set in one action, and mark ready only when every
+   branch still equals its exact staging-validated SHA. Staging validation never
+   schedules production automatically. Omitted candidates retain their
+   validation evidence and any separate production intent.
+   During an API-before-reconciler rolling upgrade, the selection parks at
+   `READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION`; never rewrite it to the legacy
+   ready status to make an older worker claim it.
 
-V2 composes from current `main`, reuses exact green PR merge-tree evidence when
-eligible, otherwise runs one combined preflight and one immutable build, owns
-shared staging only for deploy plus manifest-bound E2E, and reuses the same
-qualified artifacts for production. It updates `main` only after exact
-qualification. It never authors or posts release notes; every production
-operation emits the autonomous bot's canonical grouping metadata and finalize
-signal unless the candidate explicitly opts out.
+For staging, v2 reuses exact green PR merge-tree evidence when eligible and
+otherwise runs one combined preflight and immutable build. For production, the
+default `CANDIDATE_STAGING_EVIDENCE_V1` policy records every selected
+candidate's staging train, manifest, and successful E2E operation/run, then
+freshly composes and builds the selected set from both current `main` bases.
+It does not mutate shared staging or create a `PRODUCTION_QUALIFICATION` child
+merely because the selected combination differs from a staging manifest. It
+updates `main` only after candidate evidence, fresh checks, immutable artifacts,
+and both base refs pass their fences. It never authors or posts release notes;
+every production operation emits the autonomous bot's canonical grouping
+metadata and finalize signal unless the candidate explicitly opts out.
 
 ## Manual fallback while OFF
 
@@ -88,8 +97,17 @@ signal unless the candidate explicitly opts out.
   disables v2, and resume explicitly after repair.
 - Failed E2E never creates staging validation. Do not mutate staging while the
   manifest owner still holds the environment lock.
-- If production `main` moved, v2 must recompose and requalify; never force the
-  recorded composition over a newer ref.
+- If either production `main` base moved, v2 must cancel/requeue and freshly
+  compose again; never force the recorded composition over a newer ref.
+- Once a production train reaches `PRODUCTION_DEPLOYING`, its exact composition
+  is already on `main`. Any exhausted deployment retry or production E2E
+  failure must pause `PRODUCTION`, fail the selected candidates closed, and
+  block later production claims. Do not resume until the recorded main SHAs
+  and runtime are reconciled exactly or an explicit rollback is complete;
+  never rewrite `main` to hide the failed release.
+- `PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED` is an auditable pre-deploy
+  composition manifest, not staging validation. Production success still
+  requires terminal production-safe read-only E2E.
 
 ## Closeout
 

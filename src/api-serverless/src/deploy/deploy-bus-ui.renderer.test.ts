@@ -10,13 +10,13 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('Register exact green PR for staging');
     expect(html).toContain('id="staging-candidates"');
     expect(html).toContain('id="production-candidates"');
-    expect(html).toContain('Only exact STAGING_VALIDATED SHAs');
-    expect(html).toContain('STAGING_DEPLOYED is visible');
+    expect(html).toContain('successful staging E2E evidence');
+    expect(html).toContain('STAGING_DEPLOYED is distinct');
+    expect(html).toContain('Mark selected for production');
     expect(html).toContain('Operator controls');
     expect(html).toContain('Pause all');
-    expect(html).toContain(
-      'Active staging, qualification, and production work'
-    );
+    expect(html).toContain('Active staging and production work');
+    expect(html).toContain('Legacy exact-manifest qualification records');
     expect(html).toContain('id="active-trains"');
     expect(html).toContain('Exact manifests');
     expect(html).toContain('Runtime and environment ownership');
@@ -30,7 +30,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('replace(/[&<>"\']/g');
     expect(app).toContain('expected_head_sha:');
     expect(app).toContain('pr_number:');
-    expect(app).toContain('mark-ready-for-production');
+    expect(app).toContain('/release-bus-v2/production-selections');
+    expect(app).toContain('data-select-production');
     expect(app).toContain('revoke-production-readiness');
     expect(app).toContain("data.mode==='OFF'");
     expect(app).toContain('item.reason');
