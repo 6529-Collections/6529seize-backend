@@ -249,14 +249,16 @@ Important API responsibilities:
 
 - Authentication and refresh-token flows. Legacy wallet auth keeps `/auth/nonce`,
   `/auth/login`, and `/auth/redeem-refresh-token`; wallet auth session v2 uses
-  separate structured-session endpoints such as `/auth/session-nonce`,
+  separate endpoints such as `/auth/session-nonce`,
   `/auth/session-login`, `/auth/session-refresh`, and `/auth/session-logout`.
-  Web session v2 challenges derive their domain and client origin from the
-  request `Origin` header and refresh/logout checks are bound to the stored
-  origin. Native and desktop session v2 challenges are explicitly requested with
-  `client_type=native` or `client_type=desktop` and do not receive first-party
-  web semantics. The full
-  auth contract is documented in
+  Web session-v2 challenges are canonical ERC-4361 SIWE messages whose scheme,
+  domain, and URI are bound to the exact normalized first-party request
+  `Origin`. They are carried in short-lived, server-signed object envelopes
+  bound to the allowlisted request API host. Native and desktop session-v2
+  challenges retain the existing structured-message format and are explicitly
+  requested with `client_type=native` or `client_type=desktop`. Both formats
+  complete all semantic and wallet-signature checks before a final atomic nonce
+  consumption. The full auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
