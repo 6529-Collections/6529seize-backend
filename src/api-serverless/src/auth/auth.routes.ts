@@ -59,6 +59,7 @@ import {
 } from './auth-session-v2';
 import {
   buildStructuredWalletSignatureMessage,
+  consumeStructuredWalletSignatureNonce,
   ETHEREUM_MAINNET_CHAIN_ID,
   getDefaultStructuredWalletSignatureAudience,
   getStructuredWalletSignatureAudienceForHost,
@@ -69,11 +70,21 @@ import {
   verifyStructuredWalletSignature,
   verifyWalletMessageSignature
 } from '../wallet-signatures/structured-wallet-signatures';
+import {
+  consumeSiweWalletAuthNonce,
+  createSiweWebAuthChallenge,
+  resolveSiweWalletAuthApiAudience,
+  signSiweWebAuthChallenge,
+  type VerifiedSessionChallenge,
+  verifySessionChallengeToken,
+  verifySiweWebAuthSignature
+} from '../wallet-signatures/siwe-wallet-auth';
 import type {
   ParsedStructuredWalletSignatureMessage,
   StructuredWalletSignatureSessionType
 } from '../wallet-signatures/structured-wallet-signatures';
 import type { WalletAuthClientType } from '@/entities/IWalletAuthSession';
+import { normalizeWebAppOrigin } from '../web-app-origins';
 
 const router = asyncRouter();
 
@@ -161,10 +172,34 @@ router.get(
       );
     }
     const nonceContext = resolveSessionNonceContext(req, nonceRequest);
+    const authWalletChainId = getAuthWalletChainId();
+    if (nonceRequest.client_type === 'web') {
+      const apiAudience = resolveSiweWalletAuthApiAudience(req.headers.host);
+      if (!apiAudience || !nonceContext.clientOrigin) {
+        throw new BadRequestException(
+          'Wallet auth web sessions require an allowed API Host'
+        );
+      }
+      const challenge = createSiweWebAuthChallenge({
+        address: signerAddress,
+        clientOrigin: nonceContext.clientOrigin,
+        chainId: authWalletChainId
+      });
+      const serverSignature = signSiweWebAuthChallenge({
+        challenge,
+        apiAudience,
+        jwtSecret: getJwtSecret()
+      });
+      res.status(200).send({
+        signable_message: challenge.message,
+        server_signature: serverSignature
+      });
+      return;
+    }
+
     const audience =
       getStructuredWalletSignatureAudienceForHost(req.headers.host) ??
       getDefaultStructuredWalletSignatureAudience();
-    const authWalletChainId = getAuthWalletChainId();
     const signableMessage = buildStructuredWalletSignatureMessage({
       kind: 'authentication',
       audience,
@@ -233,61 +268,218 @@ router.post(
       req.body,
       SessionLoginRequestSchema
     );
-    try {
-      const nonce = verifyServerSignature(loginRequest.server_signature);
-      const signingAddress = await verifyClientSignature(
-        nonce,
-        loginRequest.client_signature,
-        loginRequest.client_address
-      );
-      const chosenRole = await resolveAuthenticatedRole(
-        signingAddress,
-        loginRequest.role ?? null,
+    const challenge = verifySessionChallengeForLogin(
+      req,
+      loginRequest.server_signature
+    );
+    if (challenge.format === 'siwe') {
+      await loginWithSiweSessionChallenge({
+        req,
+        res,
+        loginRequest,
+        message: challenge.message,
+        signedClientOrigin: challenge.clientOrigin,
         timer
-      );
-      if (isRefreshTokenSessionClientType(loginRequest.client_type)) {
-        const parsedMessage = assertSessionLoginSignatureType(
-          nonce,
-          loginRequest.client_type
-        );
-        if (loginRequest.client_type === 'desktop') {
-          assertDesktopSessionOriginAllowed(req, parsedMessage);
-        }
-        const created = await createNativeSession({
-          address: signingAddress,
-          role: chosenRole,
-          userAgent: getUserAgent(req),
-          clientType: loginRequest.client_type
-        });
-        res.status(201).send(created.response);
-        return;
-      }
-      const parsedMessage = assertSessionLoginSignatureType(nonce, 'web');
-      if (!parsedMessage.clientOrigin) {
-        throw new BadRequestException(
-          'Wallet auth web sessions require a client origin'
-        );
-      }
-      assertWebAuthCredentialOriginAllowed(
-        parsedMessage.clientOrigin,
-        req.headers.host
-      );
-      assertSessionOriginMatchesRequest(req, parsedMessage.clientOrigin);
-      const created = await createWebSession({
-        address: signingAddress,
-        role: chosenRole,
-        userAgent: getUserAgent(req),
-        signatureDomain: parsedMessage.domain,
-        clientOrigin: parsedMessage.clientOrigin,
-        apiHost: req.headers.host
       });
-      res.setHeader('Set-Cookie', created.setCookie);
-      res.status(201).send(created.response);
-    } catch (err: any) {
-      throw new UnauthorisedException(`Authentication failed: ${err.message}`);
+      return;
     }
+    await loginWithLegacySessionChallenge({
+      req,
+      res,
+      loginRequest,
+      message: challenge.message,
+      timer
+    });
   }
 );
+
+function verifySessionChallengeForLogin(
+  req: Request<any, any, any, any, any>,
+  token: string
+): VerifiedSessionChallenge {
+  try {
+    return verifySessionChallengeToken({
+      token,
+      expectedApiAudience: resolveSiweWalletAuthApiAudience(req.headers.host),
+      jwtSecret: getJwtSecret()
+    });
+  } catch {
+    throw new UnauthorisedException('Authentication failed');
+  }
+}
+
+interface SessionLoginFlowParams {
+  readonly req: Request<any, any, ApiSessionLoginRequest, any, any>;
+  readonly res: Response<ApiResponse<CreateWalletAuthSession201Response>>;
+  readonly loginRequest: ApiSessionLoginRequest;
+  readonly message: string;
+  readonly timer: Timer;
+}
+
+interface SiweSessionLoginFlowParams extends SessionLoginFlowParams {
+  readonly signedClientOrigin: string;
+}
+
+async function loginWithSiweSessionChallenge({
+  req,
+  res,
+  loginRequest,
+  message,
+  signedClientOrigin,
+  timer
+}: SiweSessionLoginFlowParams): Promise<void> {
+  if (loginRequest.client_type !== 'web') {
+    throw new BadRequestException(
+      'SIWE wallet auth challenges require a web session'
+    );
+  }
+  assertSessionOriginMatchesRequest(req, signedClientOrigin);
+  const verified = await verifySiweWebAuthSignature({
+    message,
+    signature: loginRequest.client_signature,
+    expectedAddress: loginRequest.client_address,
+    expectedChainId: getAuthWalletChainId(),
+    expectedClientOrigin: signedClientOrigin
+  });
+  if (!verified) {
+    throw new UnauthorisedException('Invalid client signature');
+  }
+  const chosenRole = await resolveAuthenticatedRole(
+    verified.address,
+    loginRequest.role ?? null,
+    timer
+  );
+  if (!(await consumeSiweWalletAuthNonce(verified))) {
+    throw new UnauthorisedException(
+      'Invalid or consumed wallet auth challenge'
+    );
+  }
+  const created = await createWebSession({
+    address: verified.address,
+    role: chosenRole,
+    userAgent: getUserAgent(req),
+    signatureDomain: verified.domain,
+    clientOrigin: signedClientOrigin,
+    apiHost: req.headers.host
+  });
+  res.setHeader('Set-Cookie', created.setCookie);
+  res.status(201).send(created.response);
+}
+
+async function loginWithLegacySessionChallenge({
+  req,
+  res,
+  loginRequest,
+  message,
+  timer
+}: SessionLoginFlowParams): Promise<void> {
+  const parsedMessage = assertSessionLoginSignatureType(
+    message,
+    loginRequest.client_type
+  );
+  assertLegacySessionOriginAllowed(
+    req,
+    loginRequest.client_type,
+    parsedMessage
+  );
+  const signingAddress = await verifyLegacySessionWalletSignature({
+    message,
+    signature: loginRequest.client_signature,
+    expectedAddress: loginRequest.client_address,
+    parsedMessage
+  });
+  const chosenRole = await resolveAuthenticatedRole(
+    signingAddress,
+    loginRequest.role ?? null,
+    timer
+  );
+  if (!(await consumeStructuredWalletSignatureNonce(parsedMessage))) {
+    throw new UnauthorisedException(
+      'Invalid or consumed wallet auth challenge'
+    );
+  }
+
+  if (isRefreshTokenSessionClientType(loginRequest.client_type)) {
+    const created = await createNativeSession({
+      address: signingAddress,
+      role: chosenRole,
+      userAgent: getUserAgent(req),
+      clientType: loginRequest.client_type
+    });
+    res.status(201).send(created.response);
+    return;
+  }
+
+  if (!parsedMessage.clientOrigin) {
+    throw new BadRequestException(
+      'Wallet auth web sessions require a client origin'
+    );
+  }
+  const created = await createWebSession({
+    address: signingAddress,
+    role: chosenRole,
+    userAgent: getUserAgent(req),
+    signatureDomain: parsedMessage.domain,
+    clientOrigin: parsedMessage.clientOrigin,
+    apiHost: req.headers.host
+  });
+  res.setHeader('Set-Cookie', created.setCookie);
+  res.status(201).send(created.response);
+}
+
+function assertLegacySessionOriginAllowed(
+  req: Request<any, any, any, any, any>,
+  clientType: WalletAuthClientType,
+  parsedMessage: ParsedStructuredWalletSignatureMessage
+): void {
+  if (clientType === 'desktop') {
+    assertDesktopSessionOriginAllowed(req, parsedMessage);
+    return;
+  }
+  if (clientType !== 'web') {
+    return;
+  }
+  if (!parsedMessage.clientOrigin) {
+    throw new BadRequestException(
+      'Wallet auth web sessions require a client origin'
+    );
+  }
+  assertWebAuthCredentialOriginAllowed(
+    parsedMessage.clientOrigin,
+    req.headers.host
+  );
+  assertSessionOriginMatchesRequest(req, parsedMessage.clientOrigin);
+}
+
+async function verifyLegacySessionWalletSignature({
+  message,
+  signature,
+  expectedAddress,
+  parsedMessage
+}: {
+  readonly message: string;
+  readonly signature: string;
+  readonly expectedAddress: string;
+  readonly parsedMessage: ParsedStructuredWalletSignatureMessage;
+}): Promise<string> {
+  if (!ethers.isAddress(expectedAddress)) {
+    throw new BadRequestException('Invalid client address');
+  }
+  const signingAddress = await verifyStructuredWalletSignature({
+    message,
+    signature,
+    expectedAddress,
+    expectedChainId: getAuthWalletChainId(),
+    expectedAction: 'login',
+    expectedKind: 'authentication',
+    requireAllowedDomain: parsedMessage.sessionType === 'first_party_web',
+    consumeNonce: false
+  });
+  if (!signingAddress) {
+    throw new UnauthorisedException('Invalid client signature');
+  }
+  return signingAddress;
+}
 
 router.post(
   '/session-refresh',
@@ -647,9 +839,11 @@ async function resolveLegacyRefreshRole({
 }
 
 function verifyServerSignature(serverSignature: string): string {
-  const nonce = jwt.verify(serverSignature, getJwtSecret());
+  const nonce = jwt.verify(serverSignature, getJwtSecret(), {
+    algorithms: ['HS256']
+  });
   if (!nonce || typeof nonce !== 'string') {
-    throw new Error(`Invalid server signature ${serverSignature}`);
+    throw new Error('Invalid server signature');
   }
   return nonce;
 }
@@ -765,19 +959,7 @@ function getRequestOrigin(
 function getNormalizedRequestOrigin(
   req: Request<any, any, any, any, any>
 ): string | null {
-  return normalizeOrigin(getRequestOrigin(req));
-}
-
-function normalizeOrigin(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  try {
-    const origin = new URL(value.trim().toLowerCase()).origin;
-    return origin === 'null' ? null : origin;
-  } catch {
-    return null;
-  }
+  return normalizeWebAppOrigin(getRequestOrigin(req));
 }
 
 function normalizeDomain(value: string | null | undefined): string | null {
@@ -794,7 +976,7 @@ function normalizeDomain(value: string | null | undefined): string | null {
 export function isDesktopSessionOriginAllowed(
   origin: string | null | undefined
 ): boolean {
-  const normalizedOrigin = normalizeOrigin(origin);
+  const normalizedOrigin = normalizeWebAppOrigin(origin);
   if (!normalizedOrigin) {
     return false;
   }

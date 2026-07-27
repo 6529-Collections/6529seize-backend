@@ -113,11 +113,11 @@ describe('api CORS constants', () => {
   });
 
   it('adds WEB_APP_ORIGIN to the allowed credentialed origins', () => {
-    process.env.WEB_APP_ORIGIN = 'https://custom.6529.io/path';
+    process.env.WEB_APP_ORIGIN = 'https://custom.6529.io/';
 
     expect(
       isWebAuthCredentialOriginAllowed(
-        'https://custom.6529.io/other',
+        'https://custom.6529.io',
         'api.custom.6529.io'
       )
     ).toBe(true);
@@ -125,7 +125,7 @@ describe('api CORS constants', () => {
 
   it('adds WEB_APP_ADDITIONAL_ORIGINS without removing defaults', () => {
     process.env.WEB_APP_ADDITIONAL_ORIGINS =
-      'https://preview.6529.io/path, https://www.6529.io';
+      'https://preview.6529.io/, https://www.6529.io';
 
     expect(
       isWebAuthCredentialOriginAllowed('https://preview.6529.io', 'api.6529.io')
@@ -136,7 +136,7 @@ describe('api CORS constants', () => {
   });
 
   it('keeps deprecated AUTH_WEB_CREDENTIAL_ORIGINS as an additive compatibility alias', () => {
-    process.env.AUTH_WEB_CREDENTIAL_ORIGINS = 'https://legacy.6529.io/path';
+    process.env.AUTH_WEB_CREDENTIAL_ORIGINS = 'https://legacy.6529.io/';
 
     expect(
       isWebAuthCredentialOriginAllowed('https://legacy.6529.io', 'api.6529.io')
@@ -144,6 +144,36 @@ describe('api CORS constants', () => {
     expect(
       isWebAuthCredentialOriginAllowed('https://www.6529.io', 'api.6529.io')
     ).toBe(false);
+  });
+
+  it.each([
+    'null',
+    'ftp://6529.io',
+    'https://user:pass@6529.io',
+    'https://6529.io/path',
+    'https://6529.io/a/..',
+    'https://6529.io?query=1',
+    'https://6529.io#fragment',
+    'https://6529.io\\path'
+  ])(
+    'rejects malformed credential Origin %s before canonicalization',
+    (origin) => {
+      expect(isWebAuthCredentialOriginAllowed(origin, 'api.6529.io')).toBe(
+        false
+      );
+    }
+  );
+
+  it('ignores configured values that are not exact origins', () => {
+    process.env.WEB_APP_ADDITIONAL_ORIGINS =
+      'https://valid.6529.io,https://user:pass@preview.6529.io,https://preview.6529.io/path';
+
+    expect(
+      isWebAuthCredentialOriginAllowed('https://preview.6529.io', 'api.6529.io')
+    ).toBe(false);
+    expect(
+      isWebAuthCredentialOriginAllowed('https://valid.6529.io', 'api.6529.io')
+    ).toBe(true);
   });
 
   function restoreEnv(envName: keyof typeof originalEnv): void {
