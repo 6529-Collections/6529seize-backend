@@ -282,6 +282,16 @@ function candidateRegistrationStatus(candidate: ReleaseBusV2CandidateRecord): {
   };
 }
 
+function restoredCarryForwardStatus(
+  candidate: ReleaseBusV2CandidateRecord,
+  hasProductionDeployment: boolean
+): ReleaseBusV2CandidateStatus {
+  if (hasProductionDeployment) return 'PRODUCTION_DEPLOYED';
+  if (candidate.production_requested_at === null) return 'STAGING_VALIDATED';
+  if (candidate.production_selection_id) return CANDIDATE_EVIDENCE_READY_STATUS;
+  return 'READY_FOR_PRODUCTION';
+}
+
 export class ReleaseBusV2Service {
   public constructor(
     private readonly repository: ReleaseBusV2RepositoryClass = releaseBusV2Repository
@@ -1009,15 +1019,15 @@ export class ReleaseBusV2Service {
             !TERMINAL_TRAIN_STATUSES.has(train.status)
           )
             return null;
-          const membership = (
+          const isCarryForwardMember = (
             await this.repository.listTrainCandidates(train.id, ctx)
-          ).find(
+          ).some(
             (item) =>
               item.candidate_id === current.id &&
               item.candidate_role === 'CARRY_FORWARD' &&
               item.disposition === 'INCLUDED'
           );
-          if (!membership) return null;
+          if (!isCarryForwardMember) return null;
 
           const hasProductionDeployment =
             await this.hasExactProductionDeploymentManifestEvidence(
@@ -1030,14 +1040,10 @@ export class ReleaseBusV2Service {
             current.staging_validated_manifest_id !== null;
           if (!hasProductionDeployment && !hasHistoricalStagingCertification)
             return null;
-          const restoredStatus: ReleaseBusV2CandidateStatus =
+          const restoredStatus = restoredCarryForwardStatus(
+            current,
             hasProductionDeployment
-              ? 'PRODUCTION_DEPLOYED'
-              : current.production_requested_at === null
-                ? 'STAGING_VALIDATED'
-                : current.production_selection_id
-                  ? CANDIDATE_EVIDENCE_READY_STATUS
-                  : 'READY_FOR_PRODUCTION';
+          );
           if (
             !(await this.repository.updateCandidate(
               current.id,
@@ -1050,9 +1056,7 @@ export class ReleaseBusV2Service {
               ctx
             ))
           )
-            throw new Error(
-              'Cumulative carry-forward candidate changed concurrently'
-            );
+            throw new Error('Candidate changed concurrently');
           await this.repository.appendEvent(
             {
               trainId: train.id,

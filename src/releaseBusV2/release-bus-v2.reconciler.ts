@@ -766,10 +766,18 @@ export class ReleaseBusV2Reconciler {
       !isPaused('PRODUCTION') &&
       (mode === 'PRODUCTION' ||
         releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION'));
-    if (stagingEnabled)
-      await this.service.repairTerminalCumulativeCarryForwardStatuses(
-        'release-bus-v2-reconciler'
-      );
+    if (stagingEnabled) {
+      try {
+        await this.service.repairTerminalCumulativeCarryForwardStatuses(
+          'release-bus-v2-reconciler'
+        );
+      } catch (error) {
+        // A concurrent row-version winner will be observed on the next tick
+        // and must not delay unrelated train advancement. Other failures stay
+        // fail-closed and propagate.
+        if (!isOptimisticConcurrencyConflict(error)) throw error;
+      }
+    }
     if (stagingEnabled || productionEnabled) {
       try {
         await this.reconcileQueuedCandidateHeads(betaAllowlist, mode);

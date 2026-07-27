@@ -1022,6 +1022,33 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
+  it('continues unrelated reconciliation after a carry repair row-version race', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', { status: 'CANCELLED', completed_at: 2 })
+    );
+    state.service.repairTerminalCumulativeCarryForwardStatuses.mockRejectedValueOnce(
+      new Error('Candidate changed concurrently')
+    );
+
+    await expect(
+      state.reconciler.runOnce('acceptance-carry-repair-race')
+    ).resolves.toEqual({
+      mode: 'STAGING',
+      claimed: [],
+      advanced: []
+    });
+    expect(state.service.claimLane).toHaveBeenCalledWith(
+      'STAGING',
+      FRONTEND_SHA,
+      BACKEND_SHA,
+      'acceptance-carry-repair-race:staging',
+      { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
+    );
+  });
+
   it('repairs an allowlisted production candidate after its exact merged branch is deleted', async () => {
     const state = harness('SUCCEEDED');
     const candidateId = '11111111-1111-4111-8111-111111111111';
