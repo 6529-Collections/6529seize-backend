@@ -108,7 +108,9 @@ register backend first and declare it as the frontend prerequisite.
    For an affected repository, the staging release commit has the recorded
    current `1a-staging` SHA as its first parent and the dependency-closed
    composition as its second parent, so the shared branch can only fast-forward
-   without losing the cumulative tree.
+   without losing the cumulative tree. Normal staging composition starts from
+   that recorded parent and merges current `main` plus every admitted candidate;
+   only rollback deliberately binds a last-validated replacement tree.
 4. Preparation may finish while another train owns staging.
 5. The train acquires the staging lock and repeats the idle/ref snapshot.
    Under that lock it binds every unchanged repository to the exact current

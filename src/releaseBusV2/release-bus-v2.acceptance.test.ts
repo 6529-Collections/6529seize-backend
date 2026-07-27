@@ -2853,6 +2853,73 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
+  it('retries an unchanged staging ref after transient CAS transport failure', async () => {
+    const state = harness('SUCCEEDED');
+    const baseSha = 'f'.repeat(40);
+    const targetSha = '8'.repeat(40);
+    const exactTrain = train('transient-staging-cas', {
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1'
+    });
+    state.repository.trains.set(exactTrain.id, exactTrain);
+    let currentSha = baseSha;
+    const infrastructureError = new Error('GitHub returned 503');
+    infrastructureError.name = 'ReleaseBusGitHubInfrastructureError';
+    mockUpdateRef
+      .mockRejectedValueOnce(infrastructureError)
+      .mockImplementationOnce(async () => {
+        currentSha = targetSha;
+      });
+    mockResolveRef.mockImplementation(async () => currentSha);
+    const advance = () =>
+      (
+        state.reconciler as unknown as {
+          advanceStagingRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string,
+            baseSha: string,
+            targetSha: string,
+            phase: 'release'
+          ): Promise<void>;
+        }
+      ).advanceStagingRef(
+        exactTrain,
+        'backend',
+        baseSha,
+        baseSha,
+        targetSha,
+        'release'
+      );
+
+    await expect(advance()).rejects.toThrow('GitHub returned 503');
+    expect(
+      state.repository.operations.find(
+        ({ operation_type }) =>
+          operation_type === 'ADVANCE_STAGING_RELEASE_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'PENDING',
+        failure_class: null,
+        completed_at: null
+      })
+    );
+
+    await expect(advance()).resolves.toBeUndefined();
+    expect(mockUpdateRef).toHaveBeenCalledTimes(2);
+    expect(
+      state.repository.operations.find(
+        ({ operation_type }) =>
+          operation_type === 'ADVANCE_STAGING_RELEASE_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'SUCCEEDED',
+        external_id: targetSha
+      })
+    );
+  });
+
   it('self-drains a crash after staging CAS without repeating the ref mutation', async () => {
     const state = harness('SUCCEEDED');
     const frontendBase = 'e'.repeat(40);
@@ -3019,6 +3086,107 @@ describe('Release Bus v2 offline acceptance harness', () => {
           operation_type: 'ADVANCE_STAGING_ROLLBACK_FRONTEND',
           expected_sha: frontendRestoreRelease,
           status: 'SUCCEEDED'
+        })
+      ])
+    );
+  });
+
+  it('resumes rollback when one staging CAS applied before the worker crashed', async () => {
+    const state = harness('SUCCEEDED');
+    const frontendRestoreRelease = '7'.repeat(40);
+    const backendRestoreRelease = '8'.repeat(40);
+    const exactTrain = train('train-1', {
+      status: 'STAGING_ROLLING_BACK',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest'
+    });
+    state.repository.trains.set(exactTrain.id, exactTrain);
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      ...state.repository.memberships.map((membership) => ({
+        ...membership,
+        candidate_role: 'NEW'
+      }))
+    );
+    state.repository.operations.push({
+      ...operation(
+        exactTrain.id,
+        'ADVANCE_STAGING_ROLLBACK_BACKEND',
+        'backend',
+        'unused'
+      ),
+      id: 'stranded-rollback-cas',
+      idempotency_key: `rb2:${exactTrain.id}:advance-staging:rollback:backend`,
+      environment: 'staging',
+      expected_sha: backendRestoreRelease,
+      artifact_digest: null,
+      external_id: null,
+      status: 'PENDING',
+      request_json: {
+        ref: '1a-staging',
+        expected_old_sha: BACKEND_SHA,
+        phase: 'rollback'
+      },
+      completed_at: null
+    });
+    const refs = new Map([
+      ['frontend', FRONTEND_SHA],
+      ['backend', backendRestoreRelease]
+    ]);
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      refs.get(repository)
+    );
+    mockUpdateRef.mockImplementation(
+      async (
+        repository: string,
+        _ref: string,
+        expectedOldSha: string,
+        newSha: string
+      ) => {
+        expect(refs.get(repository)).toBe(expectedOldSha);
+        refs.set(repository, newSha);
+      }
+    );
+    const context = {
+      train: exactTrain,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceCumulativeRollbackRefs(
+          input: typeof context,
+          frontendReleaseSha: string,
+          backendReleaseSha: string
+        ): Promise<void>;
+      }
+    ).advanceCumulativeRollbackRefs(
+      context,
+      frontendRestoreRelease,
+      backendRestoreRelease
+    );
+
+    expect(mockUpdateRef).toHaveBeenCalledTimes(1);
+    expect(mockUpdateRef).toHaveBeenCalledWith(
+      'frontend',
+      '1a-staging',
+      FRONTEND_SHA,
+      frontendRestoreRelease
+    );
+    expect(state.repository.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'stranded-rollback-cas',
+          status: 'SUCCEEDED',
+          external_id: backendRestoreRelease
+        }),
+        expect.objectContaining({
+          operation_type: 'ADVANCE_STAGING_ROLLBACK_FRONTEND',
+          status: 'SUCCEEDED',
+          external_id: frontendRestoreRelease
         })
       ])
     );
