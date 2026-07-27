@@ -149,22 +149,23 @@ export async function updateSubscriptionMode(
     }
   }
 
-  const connectionToUse =
-    connection ||
-    (await sqlExecutor.executeNativeQueriesInTransaction(
-      async (wrappedConnection) => wrappedConnection
-    ));
-
-  await updateSubscriptionModeInternal(
-    consolidationKey,
-    automatic,
-    connectionToUse
-  );
-  await markSubscriptionCoverageDirty(
-    [consolidationKey],
-    'MODE_CHANGED',
-    connectionToUse
-  );
+  if (connection) {
+    await updateSubscriptionModeInternal(
+      consolidationKey,
+      automatic,
+      connection
+    );
+  } else {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) =>
+        updateSubscriptionModeInternal(
+          consolidationKey,
+          automatic,
+          wrappedConnection
+        )
+    );
+    await markSubscriptionCoverageDirty([consolidationKey], 'MODE_CHANGED');
+  }
 
   return {
     consolidation_key: consolidationKey,
@@ -281,22 +282,26 @@ export async function updateSubscribeAllEditions(
   subscribe_all_editions: boolean,
   connection?: any
 ) {
-  const connectionToUse =
-    connection ||
-    (await sqlExecutor.executeNativeQueriesInTransaction(
-      async (wrappedConnection) => wrappedConnection
-    ));
-
-  await updateSubscribeAllEditionsInternal(
-    consolidationKey,
-    subscribe_all_editions,
-    connectionToUse
-  );
-  await markSubscriptionCoverageDirty(
-    [consolidationKey],
-    'EDITION_PREFERENCE_CHANGED',
-    connectionToUse
-  );
+  if (connection) {
+    await updateSubscribeAllEditionsInternal(
+      consolidationKey,
+      subscribe_all_editions,
+      connection
+    );
+  } else {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) =>
+        updateSubscribeAllEditionsInternal(
+          consolidationKey,
+          subscribe_all_editions,
+          wrappedConnection
+        )
+    );
+    await markSubscriptionCoverageDirty(
+      [consolidationKey],
+      'EDITION_PREFERENCE_CHANGED'
+    );
+  }
 
   return {
     consolidation_key: consolidationKey,
@@ -494,11 +499,6 @@ export async function updateSubscription(
         },
         { wrappedConnection }
       );
-      await markSubscriptionCoverageDirty(
-        [consolidationKey],
-        'SELECTION_CHANGED',
-        wrappedConnection
-      );
       await sqlExecutor.execute(
         `
           INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log, additional_info)
@@ -509,6 +509,7 @@ export async function updateSubscription(
       );
     }
   );
+  await markSubscriptionCoverageDirty([consolidationKey], 'SELECTION_CHANGED');
 
   return {
     consolidation_key: consolidationKey,
@@ -583,13 +584,9 @@ export async function updateSubscriptionCount(
         { consolidationKey, log, additionalInfo },
         { wrappedConnection }
       );
-      await markSubscriptionCoverageDirty(
-        [consolidationKey],
-        'QUANTITY_CHANGED',
-        wrappedConnection
-      );
     }
   );
+  await markSubscriptionCoverageDirty([consolidationKey], 'QUANTITY_CHANGED');
 
   return {
     consolidation_key: consolidationKey,

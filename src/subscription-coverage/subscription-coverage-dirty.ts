@@ -1,14 +1,18 @@
 import { Logger } from '@/logging';
-import type { ConnectionWrapper } from '@/sql-executor';
 
 const logger = Logger.get('SUBSCRIPTION_COVERAGE_DIRTY');
+const DIRTY_MARKER_BATCH_SIZE = 500;
 
-function uniqueKeyCount(consolidationKeys: readonly string[]): number {
-  return new Set(
-    consolidationKeys
-      .map((key) => key.trim().toLowerCase())
-      .filter((key) => key.length > 0)
-  ).size;
+function normalizeUniqueKeys(
+  consolidationKeys: readonly string[]
+): readonly string[] {
+  return Array.from(
+    new Set(
+      consolidationKeys
+        .map((key) => key.trim().toLowerCase())
+        .filter((key) => key.length > 0)
+    )
+  );
 }
 
 async function getRepository() {
@@ -19,42 +23,93 @@ async function getRepository() {
 
 export async function markSubscriptionCoverageDirty(
   consolidationKeys: readonly string[],
-  reason: string,
-  connection?: ConnectionWrapper<unknown>
+  reason: string
 ): Promise<void> {
+  const normalizedKeys = normalizeUniqueKeys(consolidationKeys);
+  if (normalizedKeys.length === 0) {
+    return;
+  }
+
+  let repository: Awaited<ReturnType<typeof getRepository>>;
   try {
-    const repository = await getRepository();
-    await repository.markDirty(consolidationKeys, reason, { connection });
+    repository = await getRepository();
   } catch (error) {
     logger.error('Failed to persist subscription coverage dirty markers', {
       reason,
-      key_count: uniqueKeyCount(consolidationKeys),
+      key_count: normalizedKeys.length,
       error
     });
+    return;
+  }
+
+  for (
+    let batchStart = 0;
+    batchStart < normalizedKeys.length;
+    batchStart += DIRTY_MARKER_BATCH_SIZE
+  ) {
+    const batch = normalizedKeys.slice(
+      batchStart,
+      batchStart + DIRTY_MARKER_BATCH_SIZE
+    );
+    try {
+      await repository.markDirty(batch, reason);
+    } catch (error) {
+      logger.error('Failed to persist subscription coverage dirty markers', {
+        reason,
+        key_count: batch.length,
+        batch_start: batchStart,
+        error
+      });
+    }
   }
 }
 
 export async function markSubscriptionCoverageDirtyForDemonstratedIntent(
   consolidationKeys: readonly string[],
-  reason: string,
-  connection?: ConnectionWrapper<unknown>
+  reason: string
 ): Promise<void> {
+  const normalizedKeys = normalizeUniqueKeys(consolidationKeys);
+  if (normalizedKeys.length === 0) {
+    return;
+  }
+
+  let repository: Awaited<ReturnType<typeof getRepository>>;
   try {
-    const repository = await getRepository();
-    const ctx = { connection };
-    const intentKeys = await repository.findDemonstratedIntentKeys(
-      consolidationKeys,
-      ctx
-    );
-    await repository.markDirty(intentKeys, reason, ctx);
+    repository = await getRepository();
   } catch (error) {
     logger.error(
       'Failed to persist filtered subscription coverage dirty markers',
       {
         reason,
-        candidate_key_count: uniqueKeyCount(consolidationKeys),
+        candidate_key_count: normalizedKeys.length,
         error
       }
     );
+    return;
+  }
+
+  for (
+    let batchStart = 0;
+    batchStart < normalizedKeys.length;
+    batchStart += DIRTY_MARKER_BATCH_SIZE
+  ) {
+    const batch = normalizedKeys.slice(
+      batchStart,
+      batchStart + DIRTY_MARKER_BATCH_SIZE
+    );
+    try {
+      const intentKeys = await repository.findDemonstratedIntentKeys(batch);
+      await repository.markDirty(intentKeys, reason);
+    } catch (error) {
+      logger.error(
+        'Failed to persist filtered subscription coverage dirty markers',
+        {
+          reason,
+          candidate_key_count: batch.length,
+          batch_start: batchStart,
+          error
+        }
+      );
+    }
   }
 }

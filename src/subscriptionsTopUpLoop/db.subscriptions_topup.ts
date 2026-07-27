@@ -27,6 +27,7 @@ const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   const processedTopUps: SubscriptionTopUp[] = [];
   const alreadyProcessedTopUpHashes: string[] = [];
+  const dirtyConsolidationKeys = new Set<string>();
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -87,15 +88,14 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           );
         }
       }
-      await markSubscriptionCoverageDirty(
-        [consolidationKey],
-        'BALANCE_TOPPED_UP',
-        qrHolder
-      );
-
+      dirtyConsolidationKeys.add(consolidationKey);
       processedTopUps.push(topUp);
     }
   });
+  await markSubscriptionCoverageDirty(
+    Array.from(dirtyConsolidationKeys),
+    'BALANCE_TOPPED_UP'
+  );
 
   for (const hash of alreadyProcessedTopUpHashes) {
     await sendProcessedTopUpWaveWarning(hash);

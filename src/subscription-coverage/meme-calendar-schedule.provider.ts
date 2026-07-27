@@ -4,6 +4,7 @@ const PRODUCTION_BASE_URL = 'https://6529.io';
 const STAGING_BASE_URL = 'https://staging.6529.io';
 const DEFAULT_HORIZON = 24;
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_FAILURE_TTL_MS = 30 * 1000;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const FETCH_CONCURRENCY = 6;
 
@@ -29,7 +30,7 @@ interface MemeCalendarResponse {
 }
 
 interface CachedSchedule {
-  readonly expiresAt: number;
+  expiresAt: number;
   readonly promise: Promise<SubscriptionCoverageSchedule>;
 }
 
@@ -46,11 +47,35 @@ function normalizeBaseUrl(value: string): string {
 }
 
 function defaultBaseUrl(): string {
-  const sentryEnvironment = process.env.SENTRY_ENVIRONMENT?.toLowerCase() ?? '';
-  return process.env.NODE_ENV === 'development' ||
-    sentryEnvironment.includes('staging')
-    ? STAGING_BASE_URL
-    : PRODUCTION_BASE_URL;
+  const configuredEnvironment =
+    process.env.SUBSCRIPTION_COVERAGE_ENVIRONMENT?.trim().toLowerCase();
+  if (configuredEnvironment === 'staging') {
+    return STAGING_BASE_URL;
+  }
+  if (
+    configuredEnvironment === 'production' ||
+    configuredEnvironment === 'prod'
+  ) {
+    return PRODUCTION_BASE_URL;
+  }
+  if (configuredEnvironment) {
+    throw new Error(
+      `Invalid SUBSCRIPTION_COVERAGE_ENVIRONMENT '${configuredEnvironment}'`
+    );
+  }
+
+  switch (process.env.NODE_ENV?.trim().toLowerCase()) {
+    case 'local':
+    case 'development':
+    case 'test':
+      return STAGING_BASE_URL;
+    case 'production':
+      return PRODUCTION_BASE_URL;
+    default:
+      throw new Error(
+        'Subscription coverage calendar environment is not configured'
+      );
+  }
 }
 
 function parseCalendarResponse(value: unknown): MemeCalendarResponse {
@@ -116,6 +141,10 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+type CalendarFetchResult =
+  | { readonly drop: MemeCalendarResponse }
+  | { readonly error: unknown; readonly tokenId: number };
+
 export class MemeCalendarScheduleProvider {
   private readonly logger = Logger.get(MemeCalendarScheduleProvider.name);
   private cache: CachedSchedule | null = null;
@@ -135,13 +164,25 @@ export class MemeCalendarScheduleProvider {
       process.env.SUBSCRIPTION_COVERAGE_SCHEDULE_TTL_MS,
       DEFAULT_TTL_MS
     );
-    const promise = this.fetchSchedule().catch((error) => {
-      if (this.cache?.promise === promise) {
-        this.cache = null;
+    const failureTtlMs = parsePositiveInteger(
+      process.env.SUBSCRIPTION_COVERAGE_SCHEDULE_FAILURE_TTL_MS,
+      DEFAULT_FAILURE_TTL_MS
+    );
+    const promise = this.fetchSchedule().then(
+      (schedule) => {
+        if (this.cache?.promise === promise) {
+          this.cache.expiresAt = this.now() + ttlMs;
+        }
+        return schedule;
+      },
+      (error) => {
+        if (this.cache?.promise === promise) {
+          this.cache.expiresAt = this.now() + failureTtlMs;
+        }
+        throw error;
       }
-      throw error;
-    });
-    this.cache = { expiresAt: now + ttlMs, promise };
+    );
+    this.cache = { expiresAt: Number.POSITIVE_INFINITY, promise };
     return promise;
   }
 
@@ -164,26 +205,59 @@ export class MemeCalendarScheduleProvider {
         timeoutMs
       )
     );
+    const nextIsUpcoming = next.status === 'upcoming';
+    const firstFetchedTokenId = next.mint_number + 1;
+    const remainingDropCount = horizon - (nextIsUpcoming ? 1 : 0);
     const tokenIds = Array.from(
-      { length: horizon },
-      (_unused, index) => next.mint_number + index
+      { length: remainingDropCount },
+      (_unused, index) => firstFetchedTokenId + index
     );
-    const calendarDrops = await mapWithConcurrency(
+    const fetchedResults = await mapWithConcurrency(
       tokenIds,
       FETCH_CONCURRENCY,
-      async (tokenId) =>
-        tokenId === next.mint_number
-          ? next
-          : parseCalendarResponse(
+      async (tokenId): Promise<CalendarFetchResult> => {
+        try {
+          return {
+            drop: parseCalendarResponse(
               await fetchJson(
                 `${baseUrl}/api/meme-calendar/${tokenId}`,
                 this.fetchImpl,
                 timeoutMs
               )
             )
+          };
+        } catch (error) {
+          return { error, tokenId };
+        }
+      }
     );
-    const drops = calendarDrops
-      .filter((drop) => drop.status === 'upcoming')
+    const projectedDrops: MemeCalendarResponse[] = nextIsUpcoming ? [next] : [];
+    for (const result of fetchedResults) {
+      if ('error' in result) {
+        this.logger.warn(
+          'Truncated projected Meme subscription schedule after calendar failure',
+          {
+            token_id: result.tokenId,
+            returned_drops: projectedDrops.length,
+            error: result.error
+          }
+        );
+        break;
+      }
+      if (result.drop.status !== 'upcoming') {
+        this.logger.warn(
+          'Truncated projected Meme subscription schedule at non-upcoming drop',
+          {
+            token_id: result.drop.mint_number,
+            status: result.drop.status,
+            returned_drops: projectedDrops.length
+          }
+        );
+        break;
+      }
+      projectedDrops.push(result.drop);
+    }
+    const drops = projectedDrops
       .map((drop) => ({
         tokenId: drop.mint_number,
         mintAt: drop.mint_start,

@@ -36,6 +36,7 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'subscriptionCoverageReconciliationLoop_${opt:stage, self:provider.stage}'
+      SUBSCRIPTION_COVERAGE_ENVIRONMENT: ${opt:stage, self:provider.stage}
       FEATURE_SUBSCRIPTION_COVERAGE_NOTIFICATIONS: ${env:FEATURE_SUBSCRIPTION_COVERAGE_NOTIFICATIONS, 'true'}
       SUBSCRIPTION_COVERAGE_DRY_RUN: ${env:SUBSCRIPTION_COVERAGE_DRY_RUN, 'false'}
       SUBSCRIPTION_COVERAGE_BASELINE_ONLY: ${env:SUBSCRIPTION_COVERAGE_BASELINE_ONLY, 'false'}

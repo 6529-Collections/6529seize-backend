@@ -395,7 +395,13 @@ balance, mode, top-up, intended-subscription, final-subscription, and redeemed
 rows, and uses a coverage-specific eligibility read where zero is meaningful.
 The shared schedule provider consumes the canonical frontend Meme calendar API,
 uses `mint_start` as a projected instant, caches one bounded horizon in memory,
-and never treats `mint_start` as an operational top-up deadline.
+and never treats `mint_start` as an operational top-up deadline. It selects the
+calendar host from the explicit coverage environment or the Secrets
+Manager-provided `NODE_ENV` and fails closed when neither is authoritative. A
+live `/next` response is backfilled to retain the configured number of future
+drops. Failure or malformed data for a later token truncates the forecast to the
+contiguous valid prefix; failures are cached briefly to bound retry load, while
+successful cache TTLs start only after the calendar fetch completes.
 
 Alert transitions are serialized through a row lock in
 `subscription_coverage_alert_states`. The current alert state and actorless
