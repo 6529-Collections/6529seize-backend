@@ -421,6 +421,7 @@ export class CiPipelineAlertService {
         );
         continue;
       }
+      const contributorGithubLogins = this.getReleaseTrainContributors(request);
       await this.releaseNotesQueue.enqueueBestEffort({
         repo: request.repo,
         workflow: request.workflow,
@@ -435,10 +436,25 @@ export class CiPipelineAlertService {
         release_group_id: normalizedGroup.releaseGroupId,
         release_group_services: normalizedGroup.releaseGroupServices,
         pull_request_number: normalizedGroup.pullRequestNumber,
+        ...(contributorGithubLogins.length
+          ? { contributor_github_logins: contributorGithubLogins }
+          : {}),
         publish_release_note: normalizedGroup.publishReleaseNote,
         deployed_at: deployedAt
       });
     }
+  }
+
+  private getReleaseTrainContributors(
+    request: CiPipelineAlertRequest
+  ): string[] {
+    const triggeredByGithubLogin = normalizeOptionalValue(
+      request.triggered_by_github_login
+    );
+    return isReleaseBusGitHubAppActor(triggeredByGithubLogin) &&
+      normalizeOptionalValue(request.release_train_id)
+      ? normalizeContributorGithubLogins(request.contributor_github_logins)
+      : [];
   }
 
   private async resolveAlertMentions(
@@ -448,11 +464,7 @@ export class CiPipelineAlertService {
       request.triggered_by_github_login
     );
     const isReleaseTrain = isReleaseBusGitHubAppActor(triggeredByGithubLogin);
-    const releaseTrainId = normalizeOptionalValue(request.release_train_id);
-    const contributorGithubLogins =
-      isReleaseTrain && releaseTrainId
-        ? normalizeContributorGithubLogins(request.contributor_github_logins)
-        : [];
+    const contributorGithubLogins = this.getReleaseTrainContributors(request);
     const contributorHandlesByGithubLogin = new Map(
       contributorGithubLogins
         .map((login): [string, string | undefined] => [
