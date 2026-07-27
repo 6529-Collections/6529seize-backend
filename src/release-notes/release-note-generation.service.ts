@@ -547,14 +547,29 @@ export class ReleaseNoteGenerationService {
     githubLogins: string[],
     mentionsByGithubLogin: Map<string, MentionedProfile>
   ): string {
-    return githubLogins
-      .map((login) => {
-        const mention = mentionsByGithubLogin.get(login.toLowerCase());
-        return mention
-          ? `@[${mention.handle}]`
-          : formatMarkdownLink(`@${login}`, `https://github.com/${login}`);
-      })
-      .join(', ');
+    const credits: string[] = [];
+    const seenLogins = new Set<string>();
+    const seenProfileIds = new Set<string>();
+    for (const login of githubLogins) {
+      const normalizedLogin = login.toLowerCase();
+      if (seenLogins.has(normalizedLogin)) {
+        continue;
+      }
+      seenLogins.add(normalizedLogin);
+      const mention = mentionsByGithubLogin.get(normalizedLogin);
+      if (mention) {
+        if (seenProfileIds.has(mention.profileId)) {
+          continue;
+        }
+        seenProfileIds.add(mention.profileId);
+        credits.push(`@[${mention.handle}]`);
+      } else {
+        credits.push(
+          formatMarkdownLink(`@${login}`, `https://github.com/${login}`)
+        );
+      }
+    }
+    return credits.join(', ');
   }
 }
 

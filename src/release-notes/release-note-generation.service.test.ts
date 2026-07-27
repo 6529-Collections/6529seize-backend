@@ -169,6 +169,59 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).not.toContain('Services affected:');
   });
 
+  it('renders mapped and unmapped contributors once with correct mention metadata', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: [
+            {
+              ...context.pull_requests[0],
+              contributors: ['Alice', 'Bob', 'BOB', 'AliceAlias']
+            }
+          ]
+        }),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 42,
+                summary: 'Made notification delivery more reliable.'
+              }
+            ]
+          })
+        )
+      },
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest
+          .fn()
+          .mockResolvedValue({ alice6529: 'alice-profile' })
+      } as unknown as IdentitiesDb,
+      { alice: 'alice6529', alicealias: 'alice6529' },
+      createDropsRepository()
+    );
+
+    await service.generateAndPost(request, {});
+
+    const createDropRequest = createDrop.mock.calls[0][0].createDropRequest;
+    expect(createDropRequest.parts[0].content).toContain(
+      ' - @[alice6529], [@Bob](https://github.com/Bob)'
+    );
+    expect(createDropRequest.parts[0].content).not.toContain('@BOB');
+    expect(createDropRequest.parts[0].content).not.toContain('AliceAlias');
+    expect(createDropRequest.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'alice-profile',
+        handle_in_content: 'alice6529'
+      }
+    ]);
+  });
+
   it('renders repository-specific single-service run links', async () => {
     const createDrop = jest.fn().mockResolvedValue({});
     const service = new ReleaseNoteGenerationService(

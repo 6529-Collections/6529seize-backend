@@ -111,7 +111,7 @@ describe('ReleaseNoteGitHubService', () => {
           body: 'Adds the production mapping.',
           merged_at: '2026-07-14T12:00:00Z',
           merge_commit_sha: 'merge-sha',
-          user: { login: 'prxt0' },
+          user: { login: 'Alice', type: 'User' },
           base: { ref: 'main' }
         })
       )
@@ -123,6 +123,25 @@ describe('ReleaseNoteGitHubService', () => {
             additions: 10,
             deletions: 2,
             changes: 12
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            sha: 'first',
+            author: { login: 'bob', type: 'User' },
+            committer: { login: 'CAROL', type: 'User' }
+          },
+          {
+            sha: 'branch-sync',
+            author: { login: 'Dave', type: 'User' },
+            committer: { login: 'web-flow', type: 'User' }
+          },
+          {
+            sha: 'bot-change',
+            author: { login: 'dependabot[bot]', type: 'Bot' },
+            committer: { login: 'release-app[bot]', type: 'Bot' }
           }
         ])
       );
@@ -137,6 +156,12 @@ describe('ReleaseNoteGitHubService', () => {
       service: 'api',
       release_group_id: 'pr-1749',
       release_group_services: ['dbMigrationsLoop', 'claimsBuilder', 'api'],
+      contributor_github_logins: [
+        'ReleaseTrainUser',
+        'BOB',
+        'release-app[bot]',
+        'alice'
+      ],
       pull_request_number: 1749
     });
 
@@ -149,7 +174,7 @@ describe('ReleaseNoteGitHubService', () => {
           url: 'https://github.com/6529-Collections/6529seize-backend/pull/1749',
           title: 'Link Main Stage winners to Meme cards',
           body: 'Adds the production mapping.',
-          contributors: ['prxt0'],
+          contributors: ['Alice', 'ReleaseTrainUser', 'BOB', 'CAROL', 'Dave'],
           commit_messages: ['Link Main Stage winners to Meme cards'],
           changed_files: [
             {
@@ -163,10 +188,15 @@ describe('ReleaseNoteGitHubService', () => {
         }
       ]
     });
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(5);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
       'https://api.github.com/repos/6529-Collections/6529seize-backend/pulls/1749',
+      expect.any(Object)
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      5,
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/pulls/1749/commits?per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -319,10 +349,28 @@ describe('ReleaseNoteGitHubService', () => {
       .mockResolvedValueOnce(
         response([
           {
+            sha: 'api-pr-commit',
+            author: { login: 'api-coauthor', type: 'User' },
+            committer: { login: 'simo6529', type: 'User' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
             filename: 'src/claimsBuilder/index.ts',
             additions: 6,
             deletions: 2,
             changes: 8
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            sha: 'claims-pr-commit',
+            author: { login: 'claims-coauthor', type: 'User' },
+            committer: { login: 'automation[bot]', type: 'Bot' }
           }
         ])
       );
@@ -341,6 +389,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.pull_requests).toEqual([
       expect.objectContaining({
         number: 101,
+        contributors: ['simo6529', 'api-coauthor'],
         candidate_services: ['api'],
         changed_files: [
           {
@@ -353,6 +402,7 @@ describe('ReleaseNoteGitHubService', () => {
       }),
       expect.objectContaining({
         number: 102,
+        contributors: ['ragnep', 'claims-coauthor'],
         candidate_services: ['claimsBuilder']
       })
     ]);

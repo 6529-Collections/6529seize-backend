@@ -17,11 +17,15 @@ interface GitHubWorkflowRunsResponse {
   readonly workflow_runs?: GitHubWorkflowRun[];
 }
 
+interface GitHubUser {
+  readonly login?: string;
+  readonly type?: string;
+}
+
 interface GitHubCommit {
   readonly sha: string;
-  readonly author?: {
-    readonly login?: string;
-  } | null;
+  readonly author?: GitHubUser | null;
+  readonly committer?: GitHubUser | null;
   readonly commit?: {
     readonly message?: string;
   };
@@ -46,9 +50,7 @@ interface GitHubPullRequest {
   readonly body: string | null;
   readonly merged_at: string | null;
   readonly merge_commit_sha?: string | null;
-  readonly user?: {
-    readonly login?: string;
-  };
+  readonly user?: GitHubUser;
   readonly base?: {
     readonly ref?: string;
   };
@@ -81,10 +83,10 @@ export interface GitHubReleaseContext {
 interface AggregatedPullRequest {
   readonly pullRequest: GitHubPullRequest;
   readonly commitMessages: Set<string>;
-  readonly contributors: Set<string>;
 }
 
 const MAX_COMPARE_PAGES = 3;
+const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const MAX_FILE_PAGES = 3;
 const MAX_WORKFLOW_RUN_PAGES = 10;
 const PAGE_SIZE = 100;
@@ -99,6 +101,12 @@ const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 const GITHUB_REQUEST_TIMEOUT_MS = 15000;
 const MAX_GITHUB_ATTEMPTS = 2;
 const MAX_GITHUB_CONCURRENCY = 5;
+const NON_HUMAN_GITHUB_LOGINS = new Set([
+  'dependabot',
+  'github-actions',
+  'renovate',
+  'web-flow'
+]);
 
 function normalizeRepository(repo: string): string {
   return repo.includes('/') ? repo : `6529-Collections/${repo}`;
@@ -111,6 +119,59 @@ function getRepoName(repo: string): string {
 function normalizeBranch(branch: string | null | undefined): string {
   const trimmed = branch?.trim();
   return trimmed || 'main';
+}
+
+function isHumanGithubUser(user: GitHubUser | null | undefined): boolean {
+  const login = user?.login?.trim();
+  if (!login) {
+    return false;
+  }
+  const normalizedLogin = login.toLowerCase();
+  const normalizedType = user?.type?.trim().toLowerCase();
+  return (
+    normalizedType !== 'bot' &&
+    normalizedType !== 'app' &&
+    !normalizedLogin.endsWith('[bot]') &&
+    !NON_HUMAN_GITHUB_LOGINS.has(normalizedLogin)
+  );
+}
+
+function collectPullRequestContributors(
+  pullRequest: GitHubPullRequest,
+  canonicalContributors: readonly string[],
+  commits: readonly GitHubCommit[]
+): string[] {
+  const contributors: string[] = [];
+  const seen = new Set<string>();
+  const addLogin = (login: string | null | undefined) => {
+    const trimmed = login?.trim();
+    const normalized = trimmed?.toLowerCase();
+    if (
+      !trimmed ||
+      !normalized ||
+      seen.has(normalized) ||
+      normalized.endsWith('[bot]') ||
+      NON_HUMAN_GITHUB_LOGINS.has(normalized)
+    ) {
+      return;
+    }
+    seen.add(normalized);
+    contributors.push(trimmed);
+  };
+
+  if (isHumanGithubUser(pullRequest.user)) {
+    addLogin(pullRequest.user?.login);
+  }
+  canonicalContributors.forEach(addLogin);
+  for (const commit of commits) {
+    if (isHumanGithubUser(commit.author)) {
+      addLogin(commit.author?.login);
+    }
+    if (isHumanGithubUser(commit.committer)) {
+      addLogin(commit.committer?.login);
+    }
+  }
+  return contributors;
 }
 
 function isMatchingProductionRun(
@@ -142,14 +203,8 @@ function mergeAssociatedPullRequests(
     }
     const existing = pullRequests.get(pullRequest.number) ?? {
       pullRequest,
-      commitMessages: new Set<string>(),
-      contributors: new Set<string>()
+      commitMessages: new Set<string>()
     };
-    const contributors = [
-      pullRequest.user?.login?.trim(),
-      commit.author?.login?.trim()
-    ].filter((login): login is string => Boolean(login));
-    contributors.forEach((login) => existing.contributors.add(login));
     const message = commit.commit?.message?.trim();
     if (message) {
       existing.commitMessages.add(message);
@@ -325,7 +380,8 @@ export class ReleaseNoteGitHubService {
       repository,
       normalizeBranch(request.branch),
       commits,
-      request.release_group_services
+      request.release_group_services,
+      request.contributor_github_logins ?? []
     );
 
     return {
@@ -366,8 +422,10 @@ export class ReleaseNoteGitHubService {
         );
       }
     }
-    const files = await this.getPullRequestFiles(repository, pullRequestNumber);
-    const contributor = pullRequest.user?.login?.trim();
+    const [files, commits] = await Promise.all([
+      this.getPullRequestFiles(repository, pullRequestNumber),
+      this.getPullRequestCommits(repository, pullRequestNumber)
+    ]);
     return {
       previous_sha: mergeCommitSha,
       current_sha: request.sha,
@@ -377,7 +435,11 @@ export class ReleaseNoteGitHubService {
           url: pullRequest.html_url,
           title: pullRequest.title,
           body: pullRequest.body,
-          contributors: contributor ? [contributor] : [],
+          contributors: collectPullRequestContributors(
+            pullRequest,
+            request.contributor_github_logins ?? [],
+            commits
+          ),
           commit_messages: [pullRequest.title],
           changed_files: files,
           candidate_services: Array.from(
@@ -485,7 +547,8 @@ export class ReleaseNoteGitHubService {
     repository: string,
     branch: string,
     commits: GitHubCommit[],
-    deployedServices: string[]
+    deployedServices: string[],
+    canonicalContributors: readonly string[]
   ): Promise<ReleasePullRequestContext[]> {
     const pullRequests = await this.collectPullRequests(
       repository,
@@ -495,7 +558,8 @@ export class ReleaseNoteGitHubService {
     const contexts = await this.buildPullRequestContexts(
       repository,
       Array.from(pullRequests.values()),
-      deployedServices
+      deployedServices,
+      canonicalContributors
     );
     const totalChangedFiles = contexts.reduce(
       (total, context) => total + context.changed_files.length,
@@ -546,7 +610,8 @@ export class ReleaseNoteGitHubService {
   private async buildPullRequestContexts(
     repository: string,
     pullRequests: AggregatedPullRequest[],
-    deployedServices: string[]
+    deployedServices: string[],
+    canonicalContributors: readonly string[]
   ): Promise<ReleasePullRequestContext[]> {
     const contexts: ReleasePullRequestContext[] = [];
     for (
@@ -561,7 +626,8 @@ export class ReleaseNoteGitHubService {
             this.buildPullRequestContext(
               repository,
               pullRequest,
-              deployedServices
+              deployedServices,
+              canonicalContributors
             )
           )
       );
@@ -573,19 +639,24 @@ export class ReleaseNoteGitHubService {
   private async buildPullRequestContext(
     repository: string,
     aggregate: AggregatedPullRequest,
-    deployedServices: string[]
+    deployedServices: string[],
+    canonicalContributors: readonly string[]
   ): Promise<ReleasePullRequestContext> {
-    const { pullRequest, commitMessages, contributors } = aggregate;
-    const files = await this.getPullRequestFiles(
-      repository,
-      pullRequest.number
-    );
+    const { pullRequest, commitMessages } = aggregate;
+    const [files, commits] = await Promise.all([
+      this.getPullRequestFiles(repository, pullRequest.number),
+      this.getPullRequestCommits(repository, pullRequest.number)
+    ]);
     return {
       number: pullRequest.number,
       url: pullRequest.html_url,
       title: pullRequest.title,
       body: pullRequest.body,
-      contributors: Array.from(contributors),
+      contributors: collectPullRequestContributors(
+        pullRequest,
+        canonicalContributors,
+        commits
+      ),
       commit_messages: Array.from(commitMessages),
       changed_files: files,
       candidate_services: collectCandidateServices(
@@ -594,6 +665,28 @@ export class ReleaseNoteGitHubService {
         deployedServices
       )
     };
+  }
+
+  private async getPullRequestCommits(
+    repository: string,
+    pullRequestNumber: number
+  ): Promise<GitHubCommit[]> {
+    const commits: GitHubCommit[] = [];
+    for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page++) {
+      const pageCommits = await this.api<GitHubCommit[]>(
+        `/repos/${repository}/pulls/${pullRequestNumber}/commits?per_page=${PAGE_SIZE}&page=${page}`
+      );
+      commits.push(...pageCommits);
+      if (pageCommits.length < PAGE_SIZE) {
+        return commits;
+      }
+      if (page === MAX_PULL_REQUEST_COMMIT_PAGES) {
+        throw new Error(
+          `Pull request ${pullRequestNumber} exceeds maximum of ${MAX_PULL_REQUEST_COMMIT_PAGES * PAGE_SIZE} commits`
+        );
+      }
+    }
+    return commits;
   }
 
   private async getPullRequestFiles(

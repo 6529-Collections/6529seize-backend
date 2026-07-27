@@ -654,6 +654,9 @@ describe('CiPipelineAlertService', () => {
         workflow: 'Deploy a service',
         service: 'api',
         status: 'success',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'train-123',
+        contributor_github_logins: ['Alice', 'BOB', 'alice'],
         release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
         release_note_groups: [
           {
@@ -681,6 +684,7 @@ describe('CiPipelineAlertService', () => {
         release_group_id: 'pr-1801',
         release_group_services: ['api', 'worker'],
         pull_request_number: 1801,
+        contributor_github_logins: ['Alice', 'BOB'],
         publish_release_note: true
       })
     );
@@ -690,6 +694,7 @@ describe('CiPipelineAlertService', () => {
         release_group_id: 'pr-1802',
         release_group_services: ['api'],
         pull_request_number: 1802,
+        contributor_github_logins: ['Alice', 'BOB'],
         publish_release_note: false
       })
     );

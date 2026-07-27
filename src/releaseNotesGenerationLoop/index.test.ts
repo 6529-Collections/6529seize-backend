@@ -36,6 +36,7 @@ describe('parseReleaseNoteMessage', () => {
           prompt_path: 'ops/release-notes/release-notes.prompt.md',
           release_group_id: 'frontend-release',
           release_group_services: ['web'],
+          contributor_github_logins: ['Alice', 'alice', 'Bob'],
           deployed_at: '2026-07-13T11:38:00.000Z'
         })
       )
@@ -53,6 +54,7 @@ describe('parseReleaseNoteMessage', () => {
       release_group_id: 'frontend-release',
       release_group_services: ['web'],
       pull_request_number: null,
+      contributor_github_logins: ['Alice', 'Bob'],
       publish_release_note: false,
       deployed_at: '2026-07-13T11:38:00.000Z'
     });
@@ -90,6 +92,14 @@ describe('parseReleaseNoteMessage', () => {
         JSON.stringify({ ...request, publish_release_note: 'true' })
       )
     ).toThrow('publish_release_note must be a boolean');
+  });
+
+  it('rejects invalid contributor metadata', () => {
+    expect(() =>
+      parseReleaseNoteMessage(
+        JSON.stringify({ ...request, contributor_github_logins: 'Alice' })
+      )
+    ).toThrow('contributor_github_logins must be an array');
   });
 });
 
