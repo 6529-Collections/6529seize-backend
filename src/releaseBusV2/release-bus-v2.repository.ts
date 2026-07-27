@@ -941,11 +941,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listOperations(
     trainId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2OperationRecord[]> {
     return this.db.execute<ReleaseBusV2OperationRecord>(
       `select * from ${RELEASE_BUS_V2_OPERATIONS_TABLE}
-       where train_id = :trainId order by created_at asc, id asc`,
+       where train_id = :trainId order by created_at asc, id asc${
+         forUpdate ? ' for update' : ''
+       }`,
       { trainId },
       dbOptions(ctx)
     );
@@ -1234,6 +1237,25 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
          and manifest.status = 'PRODUCTION_DEPLOYED'
        order by manifest.created_at desc
        limit 200`,
+      { candidateId },
+      dbOptions(ctx)
+    );
+  }
+
+  public async findLatestProductionTrainForCandidate(
+    candidateId: string,
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2TrainRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2TrainRecord>(
+      `select train.* from ${RELEASE_BUS_V2_TRAINS_TABLE} train
+       inner join ${RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE} membership
+         on membership.train_id = train.id
+       where membership.candidate_id = :candidateId
+         and membership.disposition = 'INCLUDED'
+         and train.lane = 'PRODUCTION'
+       order by train.created_at desc, train.id desc
+       limit 1${forUpdate ? ' for update' : ''}`,
       { candidateId },
       dbOptions(ctx)
     );
