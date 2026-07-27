@@ -61,6 +61,24 @@ describe('subscription coverage deployment ownership', () => {
     ).toBe(false);
   });
 
+  it('keeps every dirty-marker producer behind schema synchronization', () => {
+    const producerNames = [
+      'ownersBalancesLoop',
+      'subscriptionsTopUpLoop',
+      'transactionsProcessingLoop'
+    ];
+
+    for (const producerName of producerNames) {
+      expect(
+        deployConfig.services.find((service) => service.name === producerName)
+      ).toEqual(
+        expect.objectContaining({
+          default_dependencies: ['dbMigrationsLoop']
+        })
+      );
+    }
+  });
+
   it('does not retain a standalone package or manual deploy unit', () => {
     expect(
       fs.existsSync(

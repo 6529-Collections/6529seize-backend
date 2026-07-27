@@ -494,7 +494,7 @@
       "verification_targets": ["ownersBalancesLoop"],
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
-      "default_dependencies": [],
+      "default_dependencies": ["dbMigrationsLoop"],
       "automatic_rollback_supported": false
     },
     {
@@ -665,7 +665,7 @@
       "verification_targets": ["subscriptionsTopUpLoop"],
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
-      "default_dependencies": [],
+      "default_dependencies": ["dbMigrationsLoop"],
       "automatic_rollback_supported": false
     },
     {
@@ -753,7 +753,7 @@
       "verification_targets": ["transactionsProcessingLoop"],
       "validation_profile": "lambda-version",
       "staging_policy": "allowed",
-      "default_dependencies": [],
+      "default_dependencies": ["dbMigrationsLoop"],
       "automatic_rollback_supported": false
     },
     {
