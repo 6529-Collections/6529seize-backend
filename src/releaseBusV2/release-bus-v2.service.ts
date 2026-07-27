@@ -1024,6 +1024,12 @@ export class ReleaseBusV2Service {
               current,
               ctx
             );
+          const hasHistoricalStagingCertification =
+            current.superseded_at === null &&
+            current.staging_validated_train_id !== null &&
+            current.staging_validated_manifest_id !== null;
+          if (!hasProductionDeployment && !hasHistoricalStagingCertification)
+            return null;
           const restoredStatus: ReleaseBusV2CandidateStatus =
             hasProductionDeployment
               ? 'PRODUCTION_DEPLOYED'
@@ -1065,7 +1071,9 @@ export class ReleaseBusV2Service {
                   current.staging_live_manifest_id ?? null,
                 production_selection_id:
                   current.production_selection_id ?? null,
-                exact_production_deployment_evidence: hasProductionDeployment
+                exact_production_deployment_evidence: hasProductionDeployment,
+                historical_staging_certification:
+                  hasHistoricalStagingCertification
               }
             },
             ctx

@@ -330,6 +330,45 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     );
   });
 
+  it('does not invent staging certification when a terminal carry-forward row has no historical evidence', async () => {
+    const stuck = {
+      ...candidate('a1', 'frontend', 'STAGING_BUILDING', false),
+      current_train_id: 'train-cumulative',
+      row_version: 10
+    };
+    const terminalTrain = {
+      ...train('train-cumulative'),
+      status: 'FAILED' as const
+    };
+    const updateCandidate = jest.fn(async () => true);
+    const repository = {
+      listCandidates: async () => [stuck],
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      findCandidateById: async () => stuck,
+      findTrain: async () => terminalTrain,
+      listTrainCandidates: async () => [
+        {
+          train_id: terminalTrain.id,
+          candidate_id: stuck.id,
+          candidate_role: 'CARRY_FORWARD',
+          disposition: 'INCLUDED'
+        }
+      ],
+      listProductionManifestsForCandidate: async () => [],
+      updateCandidate,
+      appendEvent: async () => undefined
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(
+      service.repairTerminalCumulativeCarryForwardStatuses('reconciler')
+    ).resolves.toEqual([]);
+    expect(updateCandidate).not.toHaveBeenCalled();
+    expect(mockEnsureCommitStatus).not.toHaveBeenCalled();
+  });
+
   it('restores preserved legacy production intent on carry-forward repair', async () => {
     const stuck = {
       ...candidate('a1', 'frontend', 'STAGING_BUILDING', true),
