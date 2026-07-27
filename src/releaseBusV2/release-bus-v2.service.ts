@@ -347,26 +347,10 @@ export class ReleaseBusV2Service {
         item.staging_train_id === candidate.staging_validated_train_id &&
         item.staging_manifest_id === candidate.staging_validated_manifest_id
     );
-    const claimEvents = (
-      await this.repository.listEvents(
-        train.id,
-        200,
-        ctx,
-        Boolean(ctx.connection)
-      )
-    ).filter(({ event_type }) => event_type === 'TRAIN_CLAIMED');
-    const claim = parseStoredJson<{
-      readonly candidate_ids?: readonly string[];
-      readonly production_selection_id?: string;
-    }>(claimEvents.length === 1 ? claimEvents[0]?.payload_json : null);
-    if (
-      exactEvidence.length !== 1 ||
-      claim?.production_selection_id !== candidate.production_selection_id ||
-      !claim.candidate_ids?.includes(candidate.id)
-    )
+    if (exactEvidence.length !== 1)
       throw new ReleaseBusV2ProductionSelectionError(
         'CONFLICT',
-        'Failed candidate retry source does not match its exact selection and staging evidence'
+        'Failed candidate retry source does not match its exact staging evidence'
       );
     const operations = await this.repository.listOperations(
       train.id,
@@ -383,7 +367,11 @@ export class ReleaseBusV2Service {
         PRE_MAIN_PRODUCTION_OPERATION_TYPES.has(operation.operation_type) &&
         TERMINAL_OPERATION_STATUSES.has(operation.status)
     );
-    if (!failedPreflight || !onlyTerminalPreMainOperations)
+    if (
+      operations.length === 0 ||
+      !failedPreflight ||
+      !onlyTerminalPreMainOperations
+    )
       throw new ReleaseBusV2ProductionSelectionError(
         'CONFLICT',
         'Failed candidate is not eligible for an exact pre-main production retry'
@@ -766,6 +754,10 @@ export class ReleaseBusV2Service {
             candidateId,
             await this.repository.findCandidateById(candidateId, ctx, true)
           );
+        // The exact candidate rows remain locked until the new selection is
+        // committed. A production claim must change one of those rows from a
+        // ready state while holding the scheduler lease, so no newer train can
+        // include a FAILED retry candidate between this lookup and its update.
         for (const selectedId of orderedIds) {
           const candidate = lockedById.get(selectedId) ?? null;
           if (!candidate)

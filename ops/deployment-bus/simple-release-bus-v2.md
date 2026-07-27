@@ -112,11 +112,13 @@ only retry exception is a new explicit selection of an unchanged `FAILED`
 candidate whose latest candidate-evidence production train failed an immutable
 artifact preflight while containing only terminal compose/preflight operations.
 Release Bus locks the terminal train and its operation range, binds its durable
-claim to the candidate's current selection ID and exact historical
-staging train/manifest/E2E evidence, revalidates the unchanged branch head,
-creates a new production-selection identity, and records the failed train as
-the retry source. Any deploy, E2E, ref-mutation, unknown, or nonterminal
-operation makes the failure ineligible for this path.
+membership to the locked exact candidate row and exact historical staging
+train/manifest/E2E evidence, revalidates the unchanged branch head, creates a
+new production-selection identity, and records the failed train as the retry
+source. Selection IDs remain attempt-level audit provenance; eligibility does
+not trust an event payload as authoritative state. Any empty operation range,
+deploy, E2E, ref-mutation, unknown, or nonterminal operation makes the failure
+ineligible for this path.
 
 The selection must be transitively dependency-closed. A production-scoped
 prerequisite must either be selected in the same action or already be terminal

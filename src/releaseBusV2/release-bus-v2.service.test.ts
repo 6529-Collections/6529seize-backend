@@ -346,7 +346,6 @@ function configureRetrySource(
       readonly external_id: string;
     }[];
     readonly evidence?: readonly unknown[];
-    readonly productionSelectionId?: string | null;
   }
 ) {
   const train = {
@@ -365,16 +364,6 @@ function configureRetrySource(
   state.repository.findLatestProductionTrainForCandidate.mockResolvedValue(
     train as never
   );
-  state.repository.listEvents.mockResolvedValue([
-    {
-      event_type: 'TRAIN_CLAIMED',
-      payload_json: {
-        candidate_ids: [candidate.id],
-        production_selection_id:
-          options.productionSelectionId ?? candidate.production_selection_id
-      }
-    }
-  ]);
   state.repository.listOperations.mockImplementation(async (trainId: string) =>
     trainId === train.id
       ? (options.operations as never)
@@ -475,15 +464,6 @@ describe('Release Bus v2 explicit production opt-in', () => {
     state.repository.findLatestProductionTrainForCandidate.mockResolvedValue(
       failedTrain as never
     );
-    state.repository.listEvents.mockResolvedValue([
-      {
-        event_type: 'TRAIN_CLAIMED',
-        payload_json: {
-          candidate_ids: [failed.id],
-          production_selection_id: failed.production_selection_id
-        }
-      }
-    ]);
     state.repository.listOperations.mockImplementation(
       async (trainId: string) =>
         trainId === failedTrain.id
@@ -531,12 +511,6 @@ describe('Release Bus v2 explicit production opt-in', () => {
     );
     expect(state.repository.listOperations).toHaveBeenCalledWith(
       failedTrain.id,
-      expect.objectContaining({ connection: expect.anything() }),
-      true
-    );
-    expect(state.repository.listEvents).toHaveBeenCalledWith(
-      failedTrain.id,
-      200,
       expect.objectContaining({ connection: expect.anything() }),
       true
     );
@@ -588,15 +562,6 @@ describe('Release Bus v2 explicit production opt-in', () => {
     state.repository.findLatestProductionTrainForCandidate.mockResolvedValue(
       failedTrain as never
     );
-    state.repository.listEvents.mockResolvedValue([
-      {
-        event_type: 'TRAIN_CLAIMED',
-        payload_json: {
-          candidate_ids: [failed.id],
-          production_selection_id: failed.production_selection_id
-        }
-      }
-    ]);
     state.repository.listOperations.mockResolvedValue([
       {
         id: 'failed-preflight',
@@ -738,19 +703,14 @@ describe('Release Bus v2 explicit production opt-in', () => {
         'operator'
       )
     ).rejects.toThrow(
-      'Failed candidate retry source does not match its exact selection and staging evidence'
+      'Failed candidate retry source does not match its exact staging evidence'
     );
     expect(mockResolveRef).not.toHaveBeenCalled();
   });
 
-  it('rejects a failed train claimed for a different production selection', async () => {
+  it('rejects a failed train with no durable pre-main operations', async () => {
     const failed = {
-      ...validatedCandidate(
-        'candidate-selection-mismatch',
-        'backend',
-        '9',
-        119
-      ),
+      ...validatedCandidate('candidate-empty-operations', 'backend', '9', 119),
       status: 'FAILED' as const,
       production_requested_at: 10,
       production_requested_by: 'operator',
@@ -758,16 +718,8 @@ describe('Release Bus v2 explicit production opt-in', () => {
     };
     const state = selectionRepository([failed]);
     configureRetrySource(state, failed, {
-      trainId: 'failed-for-another-selection',
-      productionSelectionId: 'different-selection',
-      operations: [
-        {
-          id: 'failed-preflight',
-          operation_type: 'PREPARE_ARTIFACT_BACKEND',
-          status: 'FAILED',
-          external_id: '203'
-        }
-      ]
+      trainId: 'failed-without-operations',
+      operations: []
     });
     const service = new ReleaseBusV2Service(state.repository as never);
 
@@ -783,7 +735,7 @@ describe('Release Bus v2 explicit production opt-in', () => {
         'operator'
       )
     ).rejects.toThrow(
-      'Failed candidate retry source does not match its exact selection and staging evidence'
+      'Failed candidate is not eligible for an exact pre-main production retry'
     );
     expect(mockResolveRef).not.toHaveBeenCalled();
   });
