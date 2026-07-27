@@ -115,7 +115,9 @@ register backend first and declare it as the frontend prerequisite.
 5. The train acquires the staging lock and repeats the idle/ref snapshot.
    Under that lock it binds every unchanged repository to the exact current
    `1a-staging` ref, so a frontend-only or backend-only manifest describes the
-   environment E2E actually sees rather than the unrelated `main` ref.
+   environment E2E actually sees rather than the unrelated `main` ref. A
+   carry-forward-only repository must already have `composed_sha` equal to that
+   exact ref or the train fails before any ref advance or deployment dispatch.
 6. Before any deployment dispatch, each affected `1a-staging` ref advances to
    the immutable release commit through a non-force compare-and-swap from its
    recorded base. Unaffected repositories do not move. A stale base, moved ref,
