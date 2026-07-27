@@ -105,18 +105,39 @@ register backend first and declare it as the frontend prerequisite.
    its immutable exact-manifest checks for trains claimed before the new
    artifact policy; it is compatibility for those frozen trains, not permission
    to reuse their bytes in a new train.
+   For an affected repository, the staging release commit has the recorded
+   current `1a-staging` SHA as its first parent and the dependency-closed
+   composition as its second parent, so the shared branch can only fast-forward
+   without losing the cumulative tree.
 4. Preparation may finish while another train owns staging.
-5. The train acquires the staging lock only for deployment plus E2E.
+5. The train acquires the staging lock and repeats the idle/ref snapshot.
    Under that lock it binds every unchanged repository to the exact current
    `1a-staging` ref, so a frontend-only or backend-only manifest describes the
    environment E2E actually sees rather than the unrelated `main` ref.
-6. Independent backend DAG frontier units deploy concurrently; dependency edges
+6. Before any deployment dispatch, each affected `1a-staging` ref advances to
+   the immutable release commit through a non-force compare-and-swap from its
+   recorded base. Unaffected repositories do not move. A stale base, moved ref,
+   or CAS conflict starts no train deployment, records exact drift, and pauses
+   only staging for serialized recovery.
+7. Independent backend DAG frontier units deploy concurrently; dependency edges
    serialize only required units. Dependent frontend deploys after backend.
-7. The controller persists `STAGING_DEPLOYED` with exact SHAs, artifact
+8. The controller persists `STAGING_DEPLOYED` with exact SHAs, artifact
    digests, services, operation runs, and timings.
-8. E2E receives and authorizes against that manifest identity. Staging remains
-   locked until E2E is terminal.
-9. Only E2E success produces `STAGING_VALIDATED`.
+9. E2E runs from an immutable ref at the exact frontend release SHA and receives
+   the paired manifest identity. Staging remains locked until E2E is terminal.
+10. Only E2E success plus exact agreement among both `1a-staging` refs,
+    deployed-runtime evidence, the manifest, and E2E produces
+    `STAGING_VALIDATED`.
+
+Ref-advance operations are durable. A crash after GitHub accepts a CAS but
+before the operation or train transition is stored re-reads the ref, records
+the completed mutation, and continues with the same deployment idempotency
+keys. A post-CAS deploy or E2E failure never validates the failed manifest.
+Rollback composes a new immutable restore commit whose first parent is the
+failed staging release and whose tree is the last validated release,
+CAS-advances `1a-staging` forward, redeploys that exact commit, and requires
+rollback E2E before releasing the staging lock. Recovery never force-pushes a
+shared ref backward or loses the failed train's durable intent.
 
 Before every further preparation or environment operation, an active staging
 train rechecks every NEW PR head. If a head moved or a newer exact registration
@@ -268,7 +289,7 @@ explicitly.
 | Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                                                                     |
 | Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                                                                |
 | Control plane                 | Fail the train, preserve or requeue exact candidates, turn the affected automation lane off where safe, release its environment lock only after every operation is terminal, and permit manual fallback only after the lane drain gate                                                               |
-| E2E                           | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates                                                                                                               |
+| E2E                           | Keep the failed manifest unvalidated and forward-CAS/deploy/E2E an immutable restore commit with the exact last validated live tree under the same staging lock; commit no admission change until restoration validates                                                                               |
 | Production preflight          | Fail before shared mutation. A later explicit exact-SHA selection may retry only after the unchanged staging evidence is revalidated and the locked failed train contains only terminal compose/preflight operations; audit both selection identities and the failed source train                    |
 | Production base moved         | Before irreversible mutation, transactionally preserve explicit intent and form a new audited replacement from all currently eligible dependency-closed selections; retain every omission reason. After irreversible mutation, freeze the original exact set and pause production for exact recovery |
 | Production after main advance | Fail selected candidates closed, pause `PRODUCTION`, and block later production claims. `main` remains truthful and is never rewritten; an operator must prove the recorded exact main/runtime parity or complete an explicit rollback before resuming                                               |

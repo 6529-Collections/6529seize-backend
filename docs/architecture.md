@@ -601,6 +601,17 @@ E2E ownership is serialized. Operation keys, workflow titles, workflow
 authorization, SHA/artifact checks, row versions, and callback identity make
 retries and duplicate reconciliation idempotent.
 
+For cumulative staging, each affected repository's immutable release commit
+has the recorded `1a-staging` head as its first parent and the composed
+candidate tree as its second parent. After preparation and the staging fence,
+the reconciler advances only affected `1a-staging` refs with non-force
+compare-and-swap operations before deployment. Branch heads, deployed runtime,
+manifest identity, and E2E inputs therefore describe the same combined state.
+A retry observes a completed ref operation and continues idempotently; an
+unexpected ref move fails closed and pauses only the staging lane. Rollback
+uses the same forward-only pattern with an immutable restore commit instead of
+rewinding a shared ref.
+
 Each staging reconcile rechecks every mutable NEW candidate against its open
 PR's current exact head, including candidates already building or deploying.
 Once a newer registered/current head supersedes a candidate, no additional

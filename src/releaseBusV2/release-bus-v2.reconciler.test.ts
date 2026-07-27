@@ -57,7 +57,7 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
-  it('omits removal candidates from composition but redeploys their exact runtime units', () => {
+  it('keeps carried candidates in composition without spuriously redeploying their runtime units', () => {
     const carried = candidate('carried', 'a'.repeat(40));
     const removed = {
       ...candidate('removed', 'b'.repeat(40)),
@@ -116,10 +116,7 @@ describe('Release Bus v2 deterministic orchestration', () => {
     };
 
     expect(relevantCandidates(context)).toEqual([carried]);
-    expect(stagingDeploymentCandidates(context, 'backend')).toEqual([
-      carried,
-      removed
-    ]);
+    expect(stagingDeploymentCandidates(context, 'backend')).toEqual([removed]);
   });
 
   it('uses the bounded legacy preparation bridge when transition-only work has no source candidate', () => {

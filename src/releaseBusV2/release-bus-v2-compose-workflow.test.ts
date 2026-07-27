@@ -33,6 +33,16 @@ function composeScript(): string {
 }
 
 describe('Release Bus v2 backend composition workflow', () => {
+  it('accepts immutable rollback branches for forward-only staging recovery', () => {
+    const workflow = readFileSync(
+      path.join(process.cwd(), '.github/workflows/release-bus-v2-compose.yml'),
+      'utf8'
+    );
+    expect(workflow).toContain(
+      '(staging|production|qualification|rollback)-train-'
+    );
+  });
+
   it('successfully reuses current main when every candidate is already an ancestor', () => {
     const root = mkdtempSync(
       path.join(tmpdir(), 'release-bus-v2-compose-ancestor-')
@@ -179,6 +189,93 @@ describe('Release Bus v2 backend composition workflow', () => {
       expect(
         runGit(repository, 'rev-list', '--parents', '-n', '1', 'HEAD')
       ).toBe(`${composedSha} ${baseSha} ${newCandidateSha}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('creates an immutable release commit that fast-forwards the exact staging parent', () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), 'release-bus-v2-compose-staging-parent-')
+    );
+    const origin = path.join(root, 'origin.git');
+    const repository = path.join(root, 'repository');
+    const runnerTemp = path.join(root, 'runner-temp');
+    try {
+      execFileSync('git', ['init', '--bare', origin]);
+      execFileSync('git', ['init', '--initial-branch=main', repository]);
+      mkdirSync(runnerTemp);
+      runGit(repository, 'config', 'user.name', 'Release Bus Test');
+      runGit(
+        repository,
+        'config',
+        'user.email',
+        'release-bus-test@example.com'
+      );
+      runGit(repository, 'remote', 'add', 'origin', origin);
+      writeFileSync(path.join(repository, 'main.txt'), 'main\n');
+      runGit(repository, 'add', 'main.txt');
+      runGit(repository, 'commit', '-m', 'main');
+      const baseSha = runGit(repository, 'rev-parse', 'HEAD');
+      runGit(repository, 'push', 'origin', 'main');
+
+      runGit(repository, 'switch', '-c', 'staging-parent', baseSha);
+      writeFileSync(path.join(repository, 'admitted-a.txt'), 'candidate a\n');
+      runGit(repository, 'add', 'admitted-a.txt');
+      runGit(repository, 'commit', '-m', 'staging candidate a');
+      const stagingParentSha = runGit(repository, 'rev-parse', 'HEAD');
+      runGit(repository, 'push', 'origin', 'staging-parent');
+
+      runGit(repository, 'switch', '-c', 'candidate-b', baseSha);
+      writeFileSync(path.join(repository, 'candidate-b.txt'), 'candidate b\n');
+      runGit(repository, 'add', 'candidate-b.txt');
+      runGit(repository, 'commit', '-m', 'candidate b');
+      const candidateSha = runGit(repository, 'rev-parse', 'HEAD');
+      runGit(repository, 'push', 'origin', 'candidate-b');
+      runGit(repository, 'switch', 'main');
+
+      execFileSync('bash', ['-c', composeScript()], {
+        cwd: repository,
+        env: {
+          ...process.env,
+          BASE_SHA: baseSha,
+          CANDIDATE_SHAS: JSON.stringify([stagingParentSha, candidateSha]),
+          RELEASE_BRANCH: 'release-bus-v2/staging-train-cumulative-backend',
+          RELEASE_BUS_GIT_EMAIL: 'release-bus-test@example.com',
+          RELEASE_BUS_GIT_NAME: 'Release Bus Test',
+          RELEASE_PARENT_SHA: stagingParentSha,
+          RUNNER_TEMP: runnerTemp,
+          TRAIN_ID: 'cumulative'
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      const releaseSha = runGit(repository, 'rev-parse', 'HEAD');
+      const parents = runGit(
+        repository,
+        'rev-list',
+        '--parents',
+        '-n',
+        '1',
+        releaseSha
+      ).split(' ');
+      expect(parents).toHaveLength(3);
+      expect(parents[1]).toBe(stagingParentSha);
+      expect(
+        runGit(
+          repository,
+          'merge-base',
+          '--is-ancestor',
+          candidateSha,
+          releaseSha
+        )
+      ).toBe('');
+      expect(runGit(repository, 'show', `${releaseSha}:admitted-a.txt`)).toBe(
+        'candidate a'
+      );
+      expect(runGit(repository, 'show', `${releaseSha}:candidate-b.txt`)).toBe(
+        'candidate b'
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
