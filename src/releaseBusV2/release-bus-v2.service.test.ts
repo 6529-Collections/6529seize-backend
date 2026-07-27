@@ -188,6 +188,7 @@ function selectionRepository(
     findCandidateById: jest.fn(
       async (id: string) => candidates.get(id) ?? null
     ),
+    findLatestProductionTrainForCandidate: jest.fn(async () => null),
     findTrain: jest.fn(async (id: string) => {
       const item = Array.from(candidates.values()).find(
         ({ staging_validated_train_id }) => staging_validated_train_id === id
@@ -385,6 +386,146 @@ describe('Release Bus v2 explicit production opt-in', () => {
       }),
       expect.anything()
     );
+  });
+
+  it('permits an explicit exact-evidence retry after a pre-main candidate preflight failure', async () => {
+    const failed = {
+      ...validatedCandidate('candidate-retry', 'backend', '4', 112),
+      status: 'FAILED' as const,
+      production_requested_at: 10,
+      production_requested_by: 'operator',
+      production_selection_id: 'failed-selection'
+    };
+    const failedTrain = {
+      id: 'failed-pre-main-production-train',
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CANDIDATE',
+      completed_at: 20,
+      qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1'
+    };
+    const state = selectionRepository([failed]);
+    const originalListOperations =
+      state.repository.listOperations.getMockImplementation()!;
+    state.repository.findLatestProductionTrainForCandidate.mockResolvedValue(
+      failedTrain as never
+    );
+    state.repository.listOperations.mockImplementation(
+      async (trainId: string) =>
+        trainId === failedTrain.id
+          ? [
+              {
+                id: 'failed-preflight',
+                operation_type: 'PREPARE_ARTIFACT_BACKEND',
+                status: 'FAILED',
+                external_id: '100'
+              }
+            ]
+          : originalListOperations(trainId)
+    );
+    mockResolveRef.mockResolvedValue(failed.head_sha);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const selected = await service.markSelectionReadyForProduction(
+      [
+        {
+          candidateId: failed.id,
+          expectedHeadSha: failed.head_sha,
+          expectedRowVersion: failed.row_version
+        }
+      ],
+      'operator'
+    );
+
+    expect(selected).toEqual([
+      expect.objectContaining({
+        id: failed.id,
+        status: 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+        staging_validated_train_id: failed.staging_validated_train_id,
+        staging_validated_manifest_id: failed.staging_validated_manifest_id
+      })
+    ]);
+    expect(selected[0]?.production_selection_id).not.toBe(
+      failed.production_selection_id
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_SELECTION_READY',
+        payload: expect.objectContaining({
+          retry_sources: [
+            {
+              candidate_id: failed.id,
+              failed_train_id: failedTrain.id
+            }
+          ]
+        })
+      }),
+      expect.anything()
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: failed.id,
+        eventType: 'CANDIDATE_PRE_MAIN_PRODUCTION_RETRY_READY',
+        payload: expect.objectContaining({
+          failed_train_id: failedTrain.id,
+          head_sha: failed.head_sha
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('rejects retry after any production main-ref mutation operation was created', async () => {
+    const failed = {
+      ...validatedCandidate('candidate-post-main', 'backend', '5', 113),
+      status: 'FAILED' as const,
+      production_requested_at: 10,
+      production_requested_by: 'operator',
+      production_selection_id: 'post-main-selection'
+    };
+    const failedTrain = {
+      id: 'failed-post-main-production-train',
+      lane: 'PRODUCTION',
+      status: 'FAILED',
+      failure_class: 'CANDIDATE',
+      completed_at: 20,
+      qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1'
+    };
+    const state = selectionRepository([failed]);
+    state.repository.findLatestProductionTrainForCandidate.mockResolvedValue(
+      failedTrain as never
+    );
+    state.repository.listOperations.mockResolvedValue([
+      {
+        id: 'failed-preflight',
+        operation_type: 'PREPARE_ARTIFACT_BACKEND',
+        status: 'FAILED',
+        external_id: '100'
+      },
+      {
+        id: 'main-advanced',
+        operation_type: 'ADVANCE_MAIN_BACKEND',
+        status: 'SUCCEEDED',
+        external_id: failed.head_sha
+      }
+    ]);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markSelectionReadyForProduction(
+        [
+          {
+            candidateId: failed.id,
+            expectedHeadSha: failed.head_sha,
+            expectedRowVersion: failed.row_version
+          }
+        ],
+        'operator'
+      )
+    ).rejects.toThrow(
+      'Failed candidate is not eligible for an exact pre-main production retry'
+    );
+    expect(mockResolveRef).not.toHaveBeenCalled();
   });
 
   it('atomically selects A+C from independently validated A+B+C and preserves B', async () => {

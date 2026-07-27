@@ -1239,6 +1239,24 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async findLatestProductionTrainForCandidate(
+    candidateId: string,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2TrainRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2TrainRecord>(
+      `select train.* from ${RELEASE_BUS_V2_TRAINS_TABLE} train
+       inner join ${RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE} membership
+         on membership.train_id = train.id
+       where membership.candidate_id = :candidateId
+         and membership.disposition = 'INCLUDED'
+         and train.lane = 'PRODUCTION'
+       order by train.created_at desc, train.id desc
+       limit 1`,
+      { candidateId },
+      dbOptions(ctx)
+    );
+  }
+
   public async updateManifestStatus(
     id: string,
     status: ReleaseBusV2ManifestStatus,
