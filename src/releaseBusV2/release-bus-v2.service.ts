@@ -1006,7 +1006,7 @@ export class ReleaseBusV2Service {
             !train ||
             train.lane !== 'STAGING' ||
             train.staging_policy !== 'CUMULATIVE_ADMITTED_SET_V1' ||
-            train.status !== 'STAGING_VALIDATED'
+            !TERMINAL_TRAIN_STATUSES.has(train.status)
           )
             return null;
           const membership = (

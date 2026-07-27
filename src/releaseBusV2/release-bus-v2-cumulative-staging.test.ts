@@ -190,7 +190,7 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     );
   });
 
-  it('repairs a terminal cumulative carry-forward status without changing staging evidence or live membership', async () => {
+  it('repairs a failed terminal cumulative carry-forward status without changing staging evidence or live membership', async () => {
     const stuck = {
       ...candidate('a1', 'frontend', 'STAGING_BUILDING', true),
       current_train_id: 'train-cumulative',
@@ -199,9 +199,9 @@ describe('Release Bus v2 cumulative admitted staging', () => {
       staging_live_manifest_id: 'manifest-cumulative',
       row_version: 10
     };
-    const validatedTrain = {
+    const terminalTrain = {
       ...train('train-cumulative'),
-      status: 'STAGING_VALIDATED' as const
+      status: 'FAILED' as const
     };
     const updateCandidate = jest.fn(async () => true);
     const appendEvent = jest.fn(async () => undefined);
@@ -211,10 +211,10 @@ describe('Release Bus v2 cumulative admitted staging', () => {
         callback: (connection: unknown) => unknown
       ) => callback({}),
       findCandidateById: async () => stuck,
-      findTrain: async () => validatedTrain,
+      findTrain: async () => terminalTrain,
       listTrainCandidates: async () => [
         {
-          train_id: validatedTrain.id,
+          train_id: terminalTrain.id,
           candidate_id: stuck.id,
           candidate_role: 'CARRY_FORWARD',
           disposition: 'INCLUDED'
@@ -254,7 +254,7 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     );
     expect(appendEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        trainId: validatedTrain.id,
+        trainId: terminalTrain.id,
         candidateId: stuck.id,
         eventType: 'TERMINAL_CUMULATIVE_CARRY_FORWARD_STATUS_REPAIRED',
         payload: expect.objectContaining({
