@@ -3438,6 +3438,7 @@ export class ReleaseBusV2Reconciler {
         targetSha,
         phase
       );
+    else await this.verifyCompletedStagingRef(repository, targetSha, phase);
     await this.recordStagingRefSuccess(
       operation,
       repository,

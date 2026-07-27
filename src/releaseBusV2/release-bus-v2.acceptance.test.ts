@@ -1436,6 +1436,23 @@ describe('Release Bus v2 offline acceptance harness', () => {
       dependencies: state.repository.dependencies
     };
 
+    expect(() =>
+      (
+        state.reconciler as unknown as {
+          bindStagingEnvironmentIdentity(
+            input: typeof context,
+            snapshot: {
+              frontend_staging_sha: string;
+              backend_staging_sha: string;
+            }
+          ): unknown;
+        }
+      ).bindStagingEnvironmentIdentity(context, {
+        frontend_staging_sha: '9'.repeat(40),
+        backend_staging_sha: backendBase
+      })
+    ).toThrow('frontend 1a-staging moved outside train');
+
     await (
       state.reconciler as unknown as {
         advanceStagingOrQualification(input: typeof context): Promise<void>;
@@ -1591,6 +1608,56 @@ describe('Release Bus v2 offline acceptance harness', () => {
       expect.objectContaining({
         status: 'SUCCEEDED',
         external_id: targetSha
+      })
+    );
+  });
+
+  it('re-verifies an already-applied staging CAS before recording success', async () => {
+    const state = harness('SUCCEEDED');
+    const baseSha = 'f'.repeat(40);
+    const targetSha = '8'.repeat(40);
+    const movedSha = '9'.repeat(40);
+    const exactTrain = train('moved-after-staging-cas', {
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1'
+    });
+    state.repository.trains.set(exactTrain.id, exactTrain);
+    mockResolveRef.mockResolvedValue(movedSha);
+
+    await expect(
+      (
+        state.reconciler as unknown as {
+          advanceStagingRef(
+            input: ReleaseBusV2TrainRecord,
+            repository: 'backend',
+            observedSha: string,
+            baseSha: string,
+            targetSha: string,
+            phase: 'release'
+          ): Promise<void>;
+        }
+      ).advanceStagingRef(
+        exactTrain,
+        'backend',
+        targetSha,
+        baseSha,
+        targetSha,
+        'release'
+      )
+    ).rejects.toThrow(
+      `backend 1a-staging moved after exact release CAS from ${targetSha} to ${movedSha}`
+    );
+
+    expect(mockUpdateRef).not.toHaveBeenCalled();
+    expect(
+      state.repository.operations.find(
+        ({ operation_type }) =>
+          operation_type === 'ADVANCE_STAGING_RELEASE_BACKEND'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        status: 'PENDING',
+        external_id: null,
+        completed_at: null
       })
     );
   });
