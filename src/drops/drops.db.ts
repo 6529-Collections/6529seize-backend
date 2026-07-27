@@ -549,6 +549,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ) {
     // These shared rows serialize concurrent drops in the same wave. Call this
     // at the transaction tail so their locks are released as soon as possible.
+    // Keep wave before dropper metrics in insert and delete paths to avoid lock
+    // order inversion.
     const timerName = `${this.constructor.name}->applyInsertedDropMetricsDelta`;
     ctx.timer?.start(timerName);
     try {
@@ -2043,9 +2045,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       const chatDropsDelta = drop.drop_type === DropType.CHAT ? 1 : 0;
       const participatoryDropsDelta =
         drop.drop_type === DropType.PARTICIPATORY ? 1 : 0;
-      await Promise.all([
-        this.db.execute(
-          `
+      await this.db.execute(
+        `
           update ${WAVE_METRICS_TABLE} wm
           set wm.drops_count = greatest(wm.drops_count - :chatDropsDelta, 0),
               wm.participatory_drops_count = greatest(
@@ -2059,15 +2060,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               )
           where wm.wave_id = :waveId
         `,
-          {
-            waveId: drop.wave_id,
-            chatDropsDelta,
-            participatoryDropsDelta
-          },
-          { wrappedConnection: ctx.connection }
-        ),
-        this.db.execute(
-          `
+        {
+          waveId: drop.wave_id,
+          chatDropsDelta,
+          participatoryDropsDelta
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      await this.db.execute(
+        `
           update ${WAVE_DROPPER_METRICS_TABLE} wdm
           set wdm.drops_count = greatest(wdm.drops_count - :chatDropsDelta, 0),
               wdm.participatory_drops_count = greatest(
@@ -2083,15 +2084,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where wdm.wave_id = :waveId
             and wdm.dropper_id = :dropperId
         `,
-          {
-            waveId: drop.wave_id,
-            dropperId: drop.author_id,
-            chatDropsDelta,
-            participatoryDropsDelta
-          },
-          { wrappedConnection: ctx.connection }
-        )
-      ]);
+        {
+          waveId: drop.wave_id,
+          dropperId: drop.author_id,
+          chatDropsDelta,
+          participatoryDropsDelta
+        },
+        { wrappedConnection: ctx.connection }
+      );
     } finally {
       ctx.timer?.stop('dropsDb->applyDeletedDropMetricsDelta');
     }

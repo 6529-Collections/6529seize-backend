@@ -547,14 +547,16 @@ export class CreateOrUpdateDropUseCase {
       },
       { timer, connection }
     );
-    await this.dropsDb.applyInsertedDropMetricsDelta(
-      {
-        wave_id: validatedModel.wave_id,
-        author_id: authorId,
-        drop_type: validatedModel.drop_type
-      },
-      { timer, connection }
-    );
+    if (!preExistingDropId) {
+      await this.dropsDb.applyInsertedDropMetricsDelta(
+        {
+          wave_id: validatedModel.wave_id,
+          author_id: authorId,
+          drop_type: validatedModel.drop_type
+        },
+        { timer, connection }
+      );
+    }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return {
       drop_id: dropId,
