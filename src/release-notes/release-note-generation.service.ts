@@ -317,12 +317,7 @@ export class ReleaseNoteGenerationService {
       );
       return 'no-pull-requests';
     }
-    const repositoryPrompt = await this.githubService.getReleasePrompt(request);
-
-    const reply = await this.aiPrompter.promptAndGetReply(
-      this.buildPrompt(repositoryPrompt, context)
-    );
-    const generatedNotes = this.parseGeneratedNotes(reply, context);
+    const generatedNotes = await this.generateReleaseNotes(request, context);
     const contributors = await this.resolveContributors(context.pull_requests);
     const createDropRequest = this.buildCreateDropRequest({
       request,
@@ -346,6 +341,32 @@ export class ReleaseNoteGenerationService {
       }
     );
     return 'published';
+  }
+
+  private async generateReleaseNotes(
+    request: ReleaseNoteGenerationRequest,
+    context: GitHubReleaseContext
+  ): Promise<GeneratedReleaseNote[]> {
+    try {
+      const repositoryPrompt =
+        await this.githubService.getReleasePrompt(request);
+      const reply = await this.aiPrompter.promptAndGetReply(
+        this.buildPrompt(repositoryPrompt, context)
+      );
+      return this.parseGeneratedNotes(reply, context);
+    } catch (error) {
+      this.logger.warn(
+        `Using pull request titles as release-note summaries after generation failed: ${error}`
+      );
+      return context.pull_requests
+        .map((pullRequest) => ({
+          number: pullRequest.number,
+          summary:
+            normalizeSummary(pullRequest.title) ??
+            'Updated the production release.'
+        }))
+        .sort((a, b) => a.number - b.number);
+    }
   }
 
   private buildPrompt(

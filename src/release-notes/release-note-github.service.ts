@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import deployConfig from '@/config/deploy-services.json';
 import { env } from '@/env';
+import { Logger } from '@/logging';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
 
@@ -72,6 +73,8 @@ export interface ReleasePullRequestContext {
   readonly commit_messages: string[];
   readonly changed_files: GitHubPullRequestFile[];
   readonly candidate_services: string[];
+  readonly changed_files_incomplete?: boolean;
+  readonly commit_contributors_incomplete?: boolean;
 }
 
 export interface GitHubReleaseContext {
@@ -85,6 +88,11 @@ interface AggregatedPullRequest {
   readonly commitMessages: Set<string>;
 }
 
+interface BoundedGitHubCollection<T> {
+  readonly items: T[];
+  readonly incomplete: boolean;
+}
+
 const MAX_COMPARE_PAGES = 3;
 const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const MAX_FILE_PAGES = 3;
@@ -95,7 +103,6 @@ const FRONTEND_REPO = '6529seize-frontend';
 const FRONTEND_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
 const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
 const MAX_PULL_REQUESTS = 100;
-const MAX_TOTAL_CHANGED_FILES = 3000;
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 const GITHUB_REQUEST_TIMEOUT_MS = 15000;
@@ -265,6 +272,7 @@ function collectCandidateServices(
 
 export class ReleaseNoteGitHubService {
   private readonly apiBaseUrl = 'https://api.github.com';
+  private readonly logger = Logger.get(this.constructor.name);
 
   private async api<T>(path: string): Promise<T> {
     const token = env.getStringOrThrow('RELEASE_NOTES_GITHUB_TOKEN');
@@ -422,9 +430,9 @@ export class ReleaseNoteGitHubService {
         );
       }
     }
-    const [files, commits] = await Promise.all([
-      this.getPullRequestFiles(repository, pullRequestNumber),
-      this.getPullRequestCommits(repository, pullRequestNumber)
+    const [fileResult, commitResult] = await Promise.all([
+      this.getPullRequestFilesBestEffort(repository, pullRequestNumber),
+      this.getPullRequestCommitsBestEffort(repository, pullRequestNumber)
     ]);
     return {
       previous_sha: mergeCommitSha,
@@ -438,13 +446,17 @@ export class ReleaseNoteGitHubService {
           contributors: collectPullRequestContributors(
             pullRequest,
             request.contributor_github_logins ?? [],
-            commits
+            commitResult.items
           ),
           commit_messages: [pullRequest.title],
-          changed_files: files,
+          changed_files: fileResult.items,
           candidate_services: Array.from(
             new Set(request.release_group_services)
-          ).sort((a, b) => a.localeCompare(b))
+          ).sort((a, b) => a.localeCompare(b)),
+          ...(fileResult.incomplete ? { changed_files_incomplete: true } : {}),
+          ...(commitResult.incomplete
+            ? { commit_contributors_incomplete: true }
+            : {})
         }
       ]
     };
@@ -561,16 +573,6 @@ export class ReleaseNoteGitHubService {
       deployedServices,
       canonicalContributors
     );
-    const totalChangedFiles = contexts.reduce(
-      (total, context) => total + context.changed_files.length,
-      0
-    );
-    if (totalChangedFiles > MAX_TOTAL_CHANGED_FILES) {
-      throw new Error(
-        `Release context exceeds maximum of ${MAX_TOTAL_CHANGED_FILES} changed files`
-      );
-    }
-
     return contexts.sort((a, b) => a.number - b.number);
   }
 
@@ -643,9 +645,9 @@ export class ReleaseNoteGitHubService {
     canonicalContributors: readonly string[]
   ): Promise<ReleasePullRequestContext> {
     const { pullRequest, commitMessages } = aggregate;
-    const [files, commits] = await Promise.all([
-      this.getPullRequestFiles(repository, pullRequest.number),
-      this.getPullRequestCommits(repository, pullRequest.number)
+    const [fileResult, commitResult] = await Promise.all([
+      this.getPullRequestFilesBestEffort(repository, pullRequest.number),
+      this.getPullRequestCommitsBestEffort(repository, pullRequest.number)
     ]);
     return {
       number: pullRequest.number,
@@ -655,22 +657,26 @@ export class ReleaseNoteGitHubService {
       contributors: collectPullRequestContributors(
         pullRequest,
         canonicalContributors,
-        commits
+        commitResult.items
       ),
       commit_messages: Array.from(commitMessages),
-      changed_files: files,
+      changed_files: fileResult.items,
       candidate_services: collectCandidateServices(
         repository,
-        files,
+        fileResult.items,
         deployedServices
-      )
+      ),
+      ...(fileResult.incomplete ? { changed_files_incomplete: true } : {}),
+      ...(commitResult.incomplete
+        ? { commit_contributors_incomplete: true }
+        : {})
     };
   }
 
   private async getPullRequestCommits(
     repository: string,
     pullRequestNumber: number
-  ): Promise<GitHubCommit[]> {
+  ): Promise<BoundedGitHubCollection<GitHubCommit>> {
     const commits: GitHubCommit[] = [];
     for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page++) {
       const pageCommits = await this.api<GitHubCommit[]>(
@@ -678,21 +684,39 @@ export class ReleaseNoteGitHubService {
       );
       commits.push(...pageCommits);
       if (pageCommits.length < PAGE_SIZE) {
-        return commits;
-      }
-      if (page === MAX_PULL_REQUEST_COMMIT_PAGES) {
-        throw new Error(
-          `Pull request ${pullRequestNumber} exceeds maximum of ${MAX_PULL_REQUEST_COMMIT_PAGES * PAGE_SIZE} commits`
-        );
+        return { items: commits, incomplete: false };
       }
     }
-    return commits;
+    return { items: commits, incomplete: true };
+  }
+
+  private async getPullRequestCommitsBestEffort(
+    repository: string,
+    pullRequestNumber: number
+  ): Promise<BoundedGitHubCollection<GitHubCommit>> {
+    try {
+      const result = await this.getPullRequestCommits(
+        repository,
+        pullRequestNumber
+      );
+      if (result.incomplete) {
+        this.logger.warn(
+          `Using the first ${result.items.length} commits for release-note contributors from pull request ${pullRequestNumber}`
+        );
+      }
+      return result;
+    } catch (error) {
+      this.logger.warn(
+        `Generating release-note context for pull request ${pullRequestNumber} without commit contributor enrichment: ${error}`
+      );
+      return { items: [], incomplete: true };
+    }
   }
 
   private async getPullRequestFiles(
     repository: string,
     pullRequestNumber: number
-  ): Promise<GitHubPullRequestFile[]> {
+  ): Promise<BoundedGitHubCollection<GitHubPullRequestFile>> {
     const files: GitHubPullRequestFile[] = [];
     for (let page = 1; page <= MAX_FILE_PAGES; page++) {
       const pageFiles = await this.api<GitHubPullRequestFile[]>(
@@ -707,15 +731,33 @@ export class ReleaseNoteGitHubService {
         }))
       );
       if (pageFiles.length < PAGE_SIZE) {
-        break;
-      }
-      if (page === MAX_FILE_PAGES) {
-        throw new Error(
-          `Pull request ${pullRequestNumber} exceeds maximum of ${MAX_FILE_PAGES * PAGE_SIZE} changed files`
-        );
+        return { items: files, incomplete: false };
       }
     }
-    return files;
+    return { items: files, incomplete: true };
+  }
+
+  private async getPullRequestFilesBestEffort(
+    repository: string,
+    pullRequestNumber: number
+  ): Promise<BoundedGitHubCollection<GitHubPullRequestFile>> {
+    try {
+      const result = await this.getPullRequestFiles(
+        repository,
+        pullRequestNumber
+      );
+      if (result.incomplete) {
+        this.logger.warn(
+          `Using the first ${result.items.length} changed files for release-note context from pull request ${pullRequestNumber}`
+        );
+      }
+      return result;
+    } catch (error) {
+      this.logger.warn(
+        `Generating release-note context for pull request ${pullRequestNumber} without changed-file enrichment: ${error}`
+      );
+      return { items: [], incomplete: true };
+    }
   }
 }
 

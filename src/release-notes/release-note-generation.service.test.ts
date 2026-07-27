@@ -386,7 +386,8 @@ describe('ReleaseNoteGenerationService', () => {
     );
   });
 
-  it('rejects a model response that omits a pull request', async () => {
+  it('falls back to sanitized PR titles when generated notes are invalid', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue(context),
@@ -397,14 +398,21 @@ describe('ReleaseNoteGenerationService', () => {
           .fn()
           .mockResolvedValue(JSON.stringify({ pull_requests: [] }))
       },
-      { createDrop: jest.fn() } as unknown as DropCreationApiService,
-      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
       undefined,
       createDropsRepository()
     );
 
-    await expect(service.generateAndPost(request, {})).rejects.toThrow(
-      'did not include every pull request'
+    await expect(service.generateAndPost(request, {})).resolves.toBe(
+      'published'
+    );
+    expect(
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content
+    ).toContain(
+      '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Improve notifications'
     );
   });
 
