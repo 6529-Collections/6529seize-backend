@@ -328,6 +328,9 @@ describe('DropsDb', () => {
       chatDropsDelta: 1,
       participatoryDropsDelta: 0
     });
+    expect(execute.mock.calls[1]?.[2]).toEqual({
+      wrappedConnection: { connection }
+    });
     expect(execute.mock.calls[2]?.[0]).toContain(
       `insert into ${WAVE_DROPPER_METRICS_TABLE}`
     );
@@ -336,6 +339,9 @@ describe('DropsDb', () => {
       dropperId: 'author-1',
       chatDropsDelta: 1,
       participatoryDropsDelta: 0
+    });
+    expect(execute.mock.calls[2]?.[2]).toEqual({
+      wrappedConnection: { connection }
     });
 
     const directExecute = jest.fn().mockResolvedValue([]);
