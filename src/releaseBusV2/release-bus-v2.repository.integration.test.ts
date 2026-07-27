@@ -816,6 +816,218 @@ describeWithSeed(
       );
     });
 
+    it('deterministically restores blank manifest lifecycle statuses', async () => {
+      const inputs = [
+        {
+          train_id: 'repair-candidate-evidence',
+          lane: 'PRODUCTION' as const,
+          identity_sha256: '1'.repeat(64),
+          status: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED' as const,
+          validated_at: null,
+          manifest_json: {
+            schema_version: 2,
+            scope: 'production-candidate-evidence-qualification',
+            qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1'
+          }
+        },
+        {
+          train_id: 'repair-production',
+          lane: 'PRODUCTION' as const,
+          identity_sha256: '2'.repeat(64),
+          status: 'PRODUCTION_DEPLOYED' as const,
+          validated_at: null,
+          manifest_json: { schema_version: 2, scope: 'production' }
+        },
+        {
+          train_id: 'repair-staging-validated',
+          lane: 'STAGING' as const,
+          identity_sha256: '3'.repeat(64),
+          status: 'STAGING_VALIDATED' as const,
+          validated_at: 2,
+          manifest_json: { schema_version: 2, scope: 'staging' }
+        },
+        {
+          train_id: 'repair-staging-deployed',
+          lane: 'PRODUCTION_QUALIFICATION' as const,
+          identity_sha256: '4'.repeat(64),
+          status: 'STAGING_DEPLOYED' as const,
+          validated_at: null,
+          manifest_json: { schema_version: 2, scope: 'staging' }
+        },
+        {
+          train_id: 'repair-staging-failed',
+          lane: 'STAGING' as const,
+          identity_sha256: '5'.repeat(64),
+          status: 'FAILED' as const,
+          validated_at: null,
+          manifest_json: { schema_version: 2, scope: 'staging' }
+        }
+      ];
+      const manifests = [];
+      for (const input of inputs) {
+        manifests.push(
+          await repository.createManifest(
+            {
+              ...input,
+              frontend_sha: SHA_A,
+              backend_sha: SHA_C,
+              frontend_artifact_digest: null,
+              backend_artifact_digest: null,
+              e2e_run_id: null,
+              deployed_at: 1
+            },
+            {}
+          )
+        );
+      }
+      await repository.appendEvent(
+        {
+          trainId: 'repair-staging-deployed',
+          eventType: 'TRAIN_STAGING_DEPLOYED'
+        },
+        {}
+      );
+      await repository.appendEvent(
+        {
+          trainId: 'repair-staging-validated',
+          eventType: 'TRAIN_STAGING_DEPLOYED'
+        },
+        {}
+      );
+      await repository.appendEvent(
+        {
+          trainId: 'repair-staging-failed',
+          eventType: 'STAGING_FINAL_FENCE_VIOLATED'
+        },
+        {}
+      );
+      for (const manifest of manifests) {
+        await dbSupplier().execute(
+          `update ${RELEASE_BUS_V2_MANIFESTS_TABLE}
+           set status = '' where id = :id`,
+          { id: manifest.id }
+        );
+      }
+      const migration = require(
+        path.resolve(
+          process.cwd(),
+          'migrations/20260727211500-repair-release-bus-v2-manifest-status-ledger.js'
+        )
+      ) as {
+        up: (db: {
+          runSql: (sql: string) => Promise<unknown>;
+          all: (
+            sql: string,
+            callback: (error: Error | null, rows?: unknown[]) => void
+          ) => void;
+        }) => Promise<void>;
+      };
+      await migration.up({
+        runSql: async (sql: string) => dbSupplier().execute(sql),
+        all: (sql, callback) => {
+          dbSupplier()
+            .execute(sql)
+            .then(
+              (rows) => callback(null, rows),
+              (error) =>
+                callback(
+                  error instanceof Error ? error : new Error(String(error))
+                )
+            );
+        }
+      });
+
+      await expect(
+        Promise.all(
+          manifests.map(async ({ id }) => {
+            const manifest = await repository.findManifest(id, {});
+            return manifest?.status;
+          })
+        )
+      ).resolves.toEqual([
+        'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED',
+        'PRODUCTION_DEPLOYED',
+        'STAGING_VALIDATED',
+        'STAGING_DEPLOYED',
+        'FAILED'
+      ]);
+    });
+
+    it('rejects contradictory validated and failed manifest evidence', async () => {
+      const manifest = await repository.createManifest(
+        {
+          train_id: 'repair-contradictory-staging',
+          lane: 'STAGING',
+          identity_sha256: '6'.repeat(64),
+          status: 'STAGING_VALIDATED',
+          frontend_sha: SHA_A,
+          backend_sha: SHA_C,
+          frontend_artifact_digest: null,
+          backend_artifact_digest: null,
+          e2e_run_id: 'contradictory-e2e',
+          manifest_json: { schema_version: 2, scope: 'staging' },
+          deployed_at: 1,
+          validated_at: 2
+        },
+        {}
+      );
+      await repository.appendEvent(
+        {
+          trainId: manifest.train_id,
+          eventType: 'TRAIN_STAGING_DEPLOYED'
+        },
+        {}
+      );
+      await repository.appendEvent(
+        {
+          trainId: manifest.train_id,
+          eventType: 'STAGING_FINAL_FENCE_VIOLATED'
+        },
+        {}
+      );
+      await dbSupplier().execute(
+        `update ${RELEASE_BUS_V2_MANIFESTS_TABLE}
+         set status = '' where id = :id`,
+        { id: manifest.id }
+      );
+      const migration = require(
+        path.resolve(
+          process.cwd(),
+          'migrations/20260727211500-repair-release-bus-v2-manifest-status-ledger.js'
+        )
+      ) as {
+        up: (db: {
+          runSql: (sql: string) => Promise<unknown>;
+          all: (
+            sql: string,
+            callback: (error: Error | null, rows?: unknown[]) => void
+          ) => void;
+        }) => Promise<void>;
+      };
+
+      await expect(
+        migration.up({
+          runSql: async (sql: string) => dbSupplier().execute(sql),
+          all: (sql, callback) => {
+            dbSupplier()
+              .execute(sql)
+              .then(
+                (rows) => callback(null, rows),
+                (error) =>
+                  callback(
+                    error instanceof Error ? error : new Error(String(error))
+                  )
+              );
+          }
+        })
+      ).rejects.toThrow(
+        'Release Bus v2 manifest status repair found 1 unclassified row(s) before mutation'
+      );
+      await expect(repository.findManifest(manifest.id, {})).resolves.toEqual(
+        expect.objectContaining({ status: '' })
+      );
+    });
+
     it('atomically removes every candidate in a multi-candidate transition set', async () => {
       const candidates = await Promise.all([
         repository.createCandidate(
