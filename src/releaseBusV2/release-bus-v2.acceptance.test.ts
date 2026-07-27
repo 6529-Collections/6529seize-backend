@@ -2535,6 +2535,139 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
+  it.each([
+    {
+      failureClass: 'DEPLOYMENT' as const,
+      operationType: 'DEPLOY_FRONTEND_PRODUCTION',
+      message: 'frontend deployment failed'
+    },
+    {
+      failureClass: 'E2E' as const,
+      operationType: 'E2E_PRODUCTION',
+      message: 'read-only smoke failed'
+    }
+  ])(
+    'pauses only production and blocks later claims after a post-main $failureClass failure',
+    async ({ failureClass, operationType, message }) => {
+      const state = harness('SUCCEEDED');
+      process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+      state.repository.trains.set(
+        'train-1',
+        train('train-1', { status: 'CANCELLED', completed_at: 2 })
+      );
+      const production = train('post-main-production', {
+        lane: 'PRODUCTION',
+        status: 'PRODUCTION_DEPLOYING',
+        qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1'
+      });
+      state.repository.trains.set(production.id, production);
+      state.repository.memberships.forEach((membership, index) => {
+        state.repository.memberships[index] = {
+          ...membership,
+          train_id: production.id
+        };
+      });
+      state.repository.lock = {
+        ...state.repository.lock,
+        name: 'production-environment'
+      };
+      await state.repository.acquireLock(
+        'production-environment',
+        production.id,
+        `train:${production.id}`
+      );
+      state.repository.operations.push({
+        ...operation(
+          production.id,
+          operationType,
+          'frontend',
+          `failed-production-${failureClass.toLowerCase()}`
+        ),
+        environment: 'prod',
+        status: 'FAILED',
+        failure_class: failureClass,
+        failure_message: message
+      });
+
+      const failPostMain = () =>
+        (
+          state.reconciler as unknown as {
+            failTrain(
+              input: ReleaseBusV2TrainRecord,
+              failureClass: 'DEPLOYMENT' | 'E2E',
+              message: string
+            ): Promise<void>;
+          }
+        ).failTrain(production, failureClass, message);
+
+      await failPostMain();
+      // A callback retry after the terminal transition must not duplicate the
+      // pause or its durable audit event.
+      await failPostMain();
+
+      expect(state.repository.controls.get('PRODUCTION')).toEqual(
+        expect.objectContaining({
+          paused: true,
+          github_actor: 'release-bus-v2',
+          reason: expect.stringContaining('post-main production failure')
+        })
+      );
+      expect(state.repository.controls.get('ALL')?.paused).toBe(false);
+      expect(state.repository.controls.get('STAGING')?.paused).toBe(false);
+      expect(state.service.setPaused).toHaveBeenCalledTimes(1);
+      expect(state.service.setPaused).toHaveBeenCalledWith(
+        'PRODUCTION',
+        true,
+        expect.stringContaining(production.id),
+        'release-bus-v2'
+      );
+      expect(
+        state.repository.events.filter(
+          ({ eventType }) => eventType === 'PRODUCTION_POST_MAIN_FAILURE_PAUSED'
+        )
+      ).toEqual([
+        expect.objectContaining({
+          trainId: production.id,
+          payload: expect.objectContaining({
+            failure_class: failureClass,
+            frontend_main_sha: production.frontend_composed_sha,
+            backend_main_sha: production.backend_composed_sha,
+            production_control: 'PAUSED',
+            selected_candidate_status: 'FAILED',
+            recovery_contract:
+              'PROVE_EXACT_MAIN_RUNTIME_PARITY_OR_EXPLICIT_ROLLBACK_BEFORE_RESUME'
+          })
+        })
+      ]);
+      expect(state.repository.trains.get(production.id)).toEqual(
+        expect.objectContaining({
+          status: 'FAILED',
+          recovery_message: expect.stringContaining(
+            'reconcile the recorded main SHAs with production runtime'
+          )
+        })
+      );
+      expect(
+        Array.from(state.repository.candidates.values()).every(
+          ({ status, current_train_id }) =>
+            status === 'FAILED' && current_train_id === null
+        )
+      ).toBe(true);
+      expect(state.repository.lock.owner_train_id).toBeNull();
+
+      state.service.claimLane.mockClear();
+      await state.reconciler.runOnce('post-main-production-pause');
+      expect(state.service.claimLane).toHaveBeenCalledTimes(1);
+      expect(state.service.claimLane).toHaveBeenCalledWith(
+        'STAGING',
+        FRONTEND_SHA,
+        BACKEND_SHA,
+        'post-main-production-pause:staging',
+        { frontendSha: FRONTEND_SHA, backendSha: BACKEND_SHA }
+      );
+    }
+  );
+
   it('accepts an exact main update that succeeded before its transport error', async () => {
     const state = harness('SUCCEEDED');
     const production = train('accepted-production', {

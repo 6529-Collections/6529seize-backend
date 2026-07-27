@@ -160,13 +160,14 @@ explicitly.
 
 ## Failure behavior
 
-| Class                | Behavior                                                                                                                                                                               |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Candidate merge/test | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable          |
-| Infrastructure       | Bounded idempotent retry; no candidate isolation                                                                                                                                       |
-| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence                                                                                                                  |
-| Control plane        | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                     |
-| E2E                  | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates |
+| Class                         | Behavior                                                                                                                                                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Candidate merge/test          | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable                                                                          |
+| Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                       |
+| Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                  |
+| Control plane                 | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                                                                                     |
+| E2E                           | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates                                                                 |
+| Production after main advance | Fail selected candidates closed, pause `PRODUCTION`, and block later production claims. `main` remains truthful and is never rewritten; an operator must prove the recorded exact main/runtime parity or complete an explicit rollback before resuming |
 
 Every pending GitHub status must map to a visible candidate/train/operation state
 and recovery message. Duplicate callbacks and worker invocations reuse immutable

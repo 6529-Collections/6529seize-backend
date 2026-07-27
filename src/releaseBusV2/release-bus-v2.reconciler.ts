@@ -4857,17 +4857,66 @@ export class ReleaseBusV2Reconciler {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const context = await this.loadContext(current);
+    // PRODUCTION_DEPLOYING is entered only after advanceProductionRefs has
+    // compare-and-swap advanced every affected main ref to the exact composed
+    // SHA. A later deploy/E2E failure must therefore stop new production
+    // claims until an operator proves main/runtime parity or completes an
+    // explicit rollback. Requeueing these candidates would let a later train
+    // inherit already-landed, potentially only partially deployed code.
+    const productionMainAdvanced =
+      current.lane === 'PRODUCTION' &&
+      current.status === 'PRODUCTION_DEPLOYING';
+    const postMainRecoveryMessage =
+      'The exact production composition is already on main, but deployment or read-only E2E did not complete successfully. PRODUCTION is paused and selected candidates are failed closed; reconcile the recorded main SHAs with production runtime before explicitly resuming';
+    if (productionMainAdvanced) {
+      const controls = await this.repository.listControls({});
+      if (
+        !controls.some(
+          ({ scope, paused }) => scope === 'PRODUCTION' && Boolean(paused)
+        )
+      )
+        await this.service.setPaused(
+          'PRODUCTION',
+          true,
+          `Release Bus v2 post-main production failure in train ${train.id}: ${message}`,
+          'release-bus-v2'
+        );
+      const alreadyAudited = (
+        await this.repository.listEvents(current.id, 200, {})
+      ).some(
+        ({ event_type }) => event_type === 'PRODUCTION_POST_MAIN_FAILURE_PAUSED'
+      );
+      if (!alreadyAudited)
+        await this.repository.appendEvent(
+          {
+            trainId: current.id,
+            eventType: 'PRODUCTION_POST_MAIN_FAILURE_PAUSED',
+            actor: 'release-bus-v2',
+            payload: {
+              failure_class: failureClass,
+              failure_message: message,
+              frontend_main_sha: current.frontend_composed_sha,
+              backend_main_sha: current.backend_composed_sha,
+              production_control: 'PAUSED',
+              selected_candidate_status: 'FAILED',
+              recovery_contract:
+                'PROVE_EXACT_MAIN_RUNTIME_PARITY_OR_EXPLICIT_ROLLBACK_BEFORE_RESUME'
+            }
+          },
+          {}
+        );
+    }
     const retryStatus: ReleaseBusV2CandidateStatus =
       current.lane === 'STAGING'
         ? 'READY_FOR_STAGING'
         : current.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
           ? CANDIDATE_EVIDENCE_READY_STATUS
           : 'READY_FOR_PRODUCTION';
-    const candidateStatus = ['INFRASTRUCTURE', 'CONTROL_PLANE'].includes(
-      failureClass
-    )
-      ? retryStatus
-      : 'FAILED';
+    const candidateStatus = productionMainAdvanced
+      ? 'FAILED'
+      : ['INFRASTRUCTURE', 'CONTROL_PLANE'].includes(failureClass)
+        ? retryStatus
+        : 'FAILED';
     const statusCandidates =
       current.lane === 'STAGING'
         ? stagingStatusCandidates(context)
@@ -4901,8 +4950,9 @@ export class ReleaseBusV2Reconciler {
       status: 'FAILED',
       failureClass,
       failureMessage: message,
-      recoveryMessage:
-        failureClass === 'CONTROL_PLANE'
+      recoveryMessage: productionMainAdvanced
+        ? postMainRecoveryMessage
+        : failureClass === 'CONTROL_PLANE'
           ? 'Automation is paused; retain exact state and use the documented manual fallback'
           : 'Exact state is retained for idempotent diagnosis or retry',
       completedAt: Date.now()

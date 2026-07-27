@@ -99,6 +99,12 @@ metadata and finalize signal unless the candidate explicitly opts out.
   manifest owner still holds the environment lock.
 - If either production `main` base moved, v2 must cancel/requeue and freshly
   compose again; never force the recorded composition over a newer ref.
+- Once a production train reaches `PRODUCTION_DEPLOYING`, its exact composition
+  is already on `main`. Any exhausted deployment retry or production E2E
+  failure must pause `PRODUCTION`, fail the selected candidates closed, and
+  block later production claims. Do not resume until the recorded main SHAs
+  and runtime are reconciled exactly or an explicit rollback is complete;
+  never rewrite `main` to hide the failed release.
 - `PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED` is an auditable pre-deploy
   composition manifest, not staging validation. Production success still
   requires terminal production-safe read-only E2E.
