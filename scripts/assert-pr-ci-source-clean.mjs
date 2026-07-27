@@ -2,7 +2,7 @@
 import { spawnSync } from 'node:child_process';
 
 const result = spawnSync(
-  'git',
+  '/usr/bin/git',
   ['status', '--porcelain=v1', '--untracked-files=all', '--', 'src'],
   {
     encoding: 'utf8',
