@@ -298,6 +298,110 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     );
   });
 
+  it('bootstraps an exact clean-main reset without creating staging validation evidence', async () => {
+    const b = candidate('b2', 'backend', 'READY_FOR_STAGING', false);
+    const frontendSha = 'f'.repeat(40);
+    const backendSha = 'b'.repeat(40);
+    let state: ReleaseBusV2StagingStateRecord = {
+      id: 'current',
+      status: 'UNINITIALIZED',
+      current_manifest_id: null,
+      last_validated_manifest_id: null,
+      frontend_sha: null,
+      backend_sha: null,
+      frontend_staging_ref_sha: null,
+      backend_staging_ref_sha: null,
+      clean_main: false,
+      last_transition_train_id: null,
+      updated_at: 1,
+      row_version: 1
+    };
+    const updateStagingState = jest.fn(async () => {
+      state = {
+        ...state,
+        status: 'CLEAN_MAIN',
+        frontend_sha: frontendSha,
+        backend_sha: backendSha,
+        frontend_staging_ref_sha: frontendSha,
+        backend_staging_ref_sha: backendSha,
+        clean_main: true,
+        row_version: 2
+      };
+      return true;
+    });
+    const appendEvent = jest.fn(async () => undefined);
+    const findStagingValidatedManifestByShas = jest.fn();
+    const createTrain = jest.fn(async () => train('clean-main-plus-b'));
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      acquireLock: async () => ({ lease_token: 'scheduler' }),
+      releaseLock: async () => true,
+      getStagingState: async () => state,
+      updateStagingState,
+      findStagingValidatedManifestByShas,
+      listControls: async () => [
+        { scope: 'ALL', paused: false },
+        { scope: 'STAGING', paused: false },
+        { scope: 'PRODUCTION', paused: false }
+      ],
+      listTrains: async () => [],
+      listCandidates: async (statuses: string[]) =>
+        statuses.includes('READY_FOR_STAGING') ? [b] : [],
+      listLiveStagingCandidates: async () => [],
+      listStagingTransitionRequests: async () => [],
+      listDependencies: async () => [],
+      createTrain,
+      updateCandidate: async () => true,
+      appendEvent
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(
+      service.claimLane('STAGING', frontendSha, backendSha, 'operator', {
+        frontendSha,
+        backendSha
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 'clean-main-plus-b' }));
+    expect(updateStagingState).toHaveBeenCalledWith(
+      1,
+      {
+        status: 'CLEAN_MAIN',
+        currentManifestId: null,
+        lastValidatedManifestId: null,
+        frontendSha,
+        backendSha,
+        frontendStagingRefSha: frontendSha,
+        backendStagingRefSha: backendSha,
+        cleanMain: true,
+        lastTransitionTrainId: null
+      },
+      expect.anything()
+    );
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CUMULATIVE_STAGING_STATE_BOOTSTRAPPED_FROM_CLEAN_MAIN',
+        payload: expect.objectContaining({
+          admitted_candidate_ids: [],
+          staging_validation_created: false
+        })
+      }),
+      expect.anything()
+    );
+    expect(findStagingValidatedManifestByShas).not.toHaveBeenCalled();
+    expect(createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stagingBaselineManifestId: null,
+        stagingTransition: expect.objectContaining({
+          baseline_state_version: 2,
+          baseline_manifest_id: null
+        })
+      }),
+      expect.anything()
+    );
+  });
+
   it('fences stale validation before it can overwrite a newer authoritative live manifest', async () => {
     const statements: string[] = [];
     const db = {

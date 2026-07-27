@@ -946,6 +946,8 @@ export class ReleaseBusV2Service {
   private async bootstrapCumulativeStagingState(
     state: Awaited<ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>>,
     stagingIdentity: ReleaseBusV2StagingIdentity | undefined,
+    frontendBaseSha: string,
+    backendBaseSha: string,
     ctx: RequestContext
   ): Promise<Awaited<
     ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>
@@ -954,6 +956,47 @@ export class ReleaseBusV2Service {
     const frontendSha = stagingIdentity?.frontendSha;
     const backendSha = stagingIdentity?.backendSha;
     if (!frontendSha || !backendSha) return null;
+    if (
+      frontendSha === frontendBaseSha &&
+      backendSha === backendBaseSha &&
+      (await this.repository.listLiveStagingCandidates(ctx, true)).length === 0
+    ) {
+      if (
+        !(await this.repository.updateStagingState(
+          state.row_version,
+          {
+            status: 'CLEAN_MAIN',
+            currentManifestId: null,
+            lastValidatedManifestId: null,
+            frontendSha,
+            backendSha,
+            frontendStagingRefSha: frontendSha,
+            backendStagingRefSha: backendSha,
+            cleanMain: true,
+            lastTransitionTrainId: null
+          },
+          ctx
+        ))
+      )
+        throw new Error(
+          'Authoritative staging state changed during clean-main bootstrap'
+        );
+      await this.repository.appendEvent(
+        {
+          eventType: 'CUMULATIVE_STAGING_STATE_BOOTSTRAPPED_FROM_CLEAN_MAIN',
+          actor: 'release-bus-v2',
+          payload: {
+            frontend_sha: frontendSha,
+            backend_sha: backendSha,
+            current_manifest_id: null,
+            admitted_candidate_ids: [],
+            staging_validation_created: false
+          }
+        },
+        ctx
+      );
+      return this.repository.getStagingState(ctx, true);
+    }
     const manifest = await this.repository.findStagingValidatedManifestByShas(
       frontendSha,
       backendSha,
@@ -1099,6 +1142,8 @@ export class ReleaseBusV2Service {
             const bootstrapped = await this.bootstrapCumulativeStagingState(
               stagingState,
               stagingIdentity,
+              frontendBaseSha,
+              backendBaseSha,
               ctx
             );
             if (!bootstrapped) return null;
