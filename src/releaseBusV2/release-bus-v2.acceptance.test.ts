@@ -2123,6 +2123,61 @@ describe('Release Bus v2 offline acceptance harness', () => {
     ).toBe(true);
   });
 
+  it('requeues staging without globally pausing when artifact callback retries are exhausted', async () => {
+    const state = harness('SUCCEEDED');
+    state.repository.trains.set(
+      'train-1',
+      train('train-1', {
+        status: 'PREFLIGHTING',
+        frontend_artifact_digest: null
+      })
+    );
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as {
+        operationType: string;
+        service: string | null;
+      };
+      if (typed.operationType === 'PREPARE_ARTIFACT_FRONTEND') {
+        return {
+          ...operation(
+            'train-1',
+            'PREPARE_ARTIFACT_FRONTEND',
+            'frontend',
+            'callback-failed'
+          ),
+          status: 'FAILED' as const,
+          attempt: 3,
+          max_attempts: 3,
+          failure_class: 'INFRASTRUCTURE' as const,
+          failure_message:
+            'GitHub workflow concluded failure without a structured terminal callback'
+        };
+      }
+      throw new Error(`Unexpected operation ${typed.operationType}`);
+    });
+
+    await state.reconciler.runOnce('acceptance-preflight-callback-exhausted');
+
+    expect(state.repository.trains.get('train-1')).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failure_class: 'INFRASTRUCTURE',
+        failure_message:
+          'GitHub workflow concluded failure without a structured terminal callback'
+      })
+    );
+    expect(
+      Array.from(state.repository.candidates.values()).map(
+        ({ status, current_train_id }) => ({ status, current_train_id })
+      )
+    ).toEqual([
+      { status: 'READY_FOR_STAGING', current_train_id: null },
+      { status: 'READY_FOR_STAGING', current_train_id: null }
+    ]);
+    expect(state.service.setPaused).not.toHaveBeenCalled();
+    expect(state.repository.lock.owner_train_id).toBeNull();
+  });
+
   it('requeues a production plan when candidate-bearing main moves before qualification', async () => {
     const state = harness('SUCCEEDED');
     process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
