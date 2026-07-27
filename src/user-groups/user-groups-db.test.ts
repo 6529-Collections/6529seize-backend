@@ -168,6 +168,48 @@ describeWithSeed(
   }
 );
 
+describe('UserGroupsDb findIdentityGroupMemberships batching', () => {
+  it('queries distinct profile ids in bounded batches', async () => {
+    const execute = jest
+      .fn()
+      .mockImplementation(
+        async (
+          _sql: string,
+          params: { groupIds: string[]; profileIds: string[] }
+        ) =>
+          params.profileIds.map((profileId) => ({
+            group_id: params.groupIds[0],
+            profile_id: profileId
+          }))
+      );
+    const repo = new UserGroupsDb(() => ({ execute }) as never);
+    const distinctProfileIds = Array.from(
+      { length: 501 },
+      (_, index) => `profile-${index}`
+    );
+
+    await expect(
+      repo.findIdentityGroupMemberships(
+        {
+          groupIds: ['group-1'],
+          profileIds: [...distinctProfileIds, distinctProfileIds[0]]
+        },
+        { timer: undefined }
+      )
+    ).resolves.toHaveLength(501);
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0][1]).toEqual({
+      groupIds: ['group-1'],
+      profileIds: distinctProfileIds.slice(0, 500)
+    });
+    expect(execute.mock.calls[1][1]).toEqual({
+      groupIds: ['group-1'],
+      profileIds: distinctProfileIds.slice(500)
+    });
+  });
+});
+
 const firstPaginationProfileGroupId = randomUUID();
 const secondPaginationProfileGroupId = randomUUID();
 const firstPaginationGroup = aUserGroup(

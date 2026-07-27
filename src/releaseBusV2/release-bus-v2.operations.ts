@@ -185,7 +185,7 @@ function transportRetryState(result: unknown): {
 }
 
 function unreportedWorkflowFailureClass(
-  _operationType: string,
+  operationType: string,
   conclusion: string | null
 ): ReleaseBusV2FailureClass {
   if (
@@ -193,6 +193,12 @@ function unreportedWorkflowFailureClass(
       conclusion ?? ''
     )
   )
+    return 'INFRASTRUCTURE';
+  if (operationType.startsWith('PREPARE_ARTIFACT_') && conclusion === 'failure')
+    // Artifact preparation cannot mutate shared staging or production state.
+    // Its run also concludes failure when otherwise-successful artifact work
+    // cannot deliver the terminal callback (for example during an intentional
+    // fast-off). A bounded retry is safe and recovers the missing evidence.
     return 'INFRASTRUCTURE';
   // Every v2 workflow that reaches its trusted authorization boundary emits a
   // structured terminal report. A completed run without one is therefore a

@@ -317,12 +317,7 @@ export class ReleaseNoteGenerationService {
       );
       return 'no-pull-requests';
     }
-    const repositoryPrompt = await this.githubService.getReleasePrompt(request);
-
-    const reply = await this.aiPrompter.promptAndGetReply(
-      this.buildPrompt(repositoryPrompt, context)
-    );
-    const generatedNotes = this.parseGeneratedNotes(reply, context);
+    const generatedNotes = await this.generateReleaseNotes(request, context);
     const contributors = await this.resolveContributors(context.pull_requests);
     const createDropRequest = this.buildCreateDropRequest({
       request,
@@ -346,6 +341,32 @@ export class ReleaseNoteGenerationService {
       }
     );
     return 'published';
+  }
+
+  private async generateReleaseNotes(
+    request: ReleaseNoteGenerationRequest,
+    context: GitHubReleaseContext
+  ): Promise<GeneratedReleaseNote[]> {
+    try {
+      const repositoryPrompt =
+        await this.githubService.getReleasePrompt(request);
+      const reply = await this.aiPrompter.promptAndGetReply(
+        this.buildPrompt(repositoryPrompt, context)
+      );
+      return this.parseGeneratedNotes(reply, context);
+    } catch (error) {
+      this.logger.warn(
+        `Using pull request titles as release-note summaries after generation failed: ${error}`
+      );
+      return context.pull_requests
+        .map((pullRequest) => ({
+          number: pullRequest.number,
+          summary:
+            normalizeSummary(pullRequest.title) ??
+            'Updated the production release.'
+        }))
+        .sort((a, b) => a.number - b.number);
+    }
   }
 
   private buildPrompt(
@@ -547,14 +568,29 @@ export class ReleaseNoteGenerationService {
     githubLogins: string[],
     mentionsByGithubLogin: Map<string, MentionedProfile>
   ): string {
-    return githubLogins
-      .map((login) => {
-        const mention = mentionsByGithubLogin.get(login.toLowerCase());
-        return mention
-          ? `@[${mention.handle}]`
-          : formatMarkdownLink(`@${login}`, `https://github.com/${login}`);
-      })
-      .join(', ');
+    const credits: string[] = [];
+    const seenLogins = new Set<string>();
+    const seenProfileIds = new Set<string>();
+    for (const login of githubLogins) {
+      const normalizedLogin = login.toLowerCase();
+      if (seenLogins.has(normalizedLogin)) {
+        continue;
+      }
+      seenLogins.add(normalizedLogin);
+      const mention = mentionsByGithubLogin.get(normalizedLogin);
+      if (mention) {
+        if (seenProfileIds.has(mention.profileId)) {
+          continue;
+        }
+        seenProfileIds.add(mention.profileId);
+        credits.push(`@[${mention.handle}]`);
+      } else {
+        credits.push(
+          formatMarkdownLink(`@${login}`, `https://github.com/${login}`)
+        );
+      }
+    }
+    return credits.join(', ');
   }
 }
 

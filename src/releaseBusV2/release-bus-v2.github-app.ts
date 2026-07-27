@@ -201,7 +201,7 @@ function assertAllowedWritableRef(ref: string): void {
   if (
     ref === 'main' ||
     ref === '1a-staging' ||
-    /^release-bus-v2\/(staging|production|qualification)-train-[A-Za-z0-9._-]+$/.test(
+    /^release-bus-v2\/(staging|production|qualification|rollback)-train-[A-Za-z0-9._-]+$/.test(
       ref
     )
   )

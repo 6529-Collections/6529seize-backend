@@ -50,6 +50,7 @@ export interface IdentityGroupMembershipPage {
 }
 
 const IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE = 500;
+const IDENTITY_GROUP_MEMBERSHIP_LOOKUP_BATCH_SIZE = 500;
 
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async save(
@@ -856,21 +857,38 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->findIdentityGroupMemberships`;
     try {
       ctx.timer?.start(timerName);
-      return await this.db
-        .execute<{ group_id: string; profile_id: string }>(
-          `
+      const distinctProfileIds = Array.from(new Set(profileIds));
+      const memberships: IdentityGroupMembership[] = [];
+      for (
+        let index = 0;
+        index < distinctProfileIds.length;
+        index += IDENTITY_GROUP_MEMBERSHIP_LOOKUP_BATCH_SIZE
+      ) {
+        const profileIdBatch = distinctProfileIds.slice(
+          index,
+          index + IDENTITY_GROUP_MEMBERSHIP_LOOKUP_BATCH_SIZE
+        );
+        const batchMemberships = await this.db
+          .execute<{ group_id: string; profile_id: string }>(
+            `
           SELECT DISTINCT ug.id AS group_id, pg.profile_id
           FROM ${PROFILE_GROUPS_TABLE} pg
           JOIN ${USER_GROUPS_TABLE} ug ON pg.profile_group_id = ug.profile_group_id
           WHERE ug.id IN (:groupIds)
             AND pg.profile_id IN (:profileIds)
       `,
-          { groupIds, profileIds },
-          { wrappedConnection: ctx.connection }
-        )
-        .then((res) =>
-          res.map((it) => ({ groupId: it.group_id, profileId: it.profile_id }))
-        );
+            { groupIds, profileIds: profileIdBatch },
+            { wrappedConnection: ctx.connection }
+          )
+          .then((res) =>
+            res.map((it) => ({
+              groupId: it.group_id,
+              profileId: it.profile_id
+            }))
+          );
+        memberships.push(...batchMemberships);
+      }
+      return memberships;
     } finally {
       ctx.timer?.stop(timerName);
     }

@@ -14,11 +14,11 @@ node ops/scripts/release-bus-status.mjs
 The helper reads `/deploy/release-bus-v2/controls` and fails closed if the
 versioned status is unavailable or malformed.
 
-| Mode         | Staging                        | Production                                                                         |
-| ------------ | ------------------------------ | ---------------------------------------------------------------------------------- |
-| `OFF`        | Serialized manual route        | Serialized manual route with explicit owner authority; no staging evidence gate    |
-| `STAGING`    | V2 readiness                   | Manual/disabled by default; exact operator-only production beta may be allowlisted |
-| `PRODUCTION` | V2 readiness                   | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate             |
+| Mode         | Staging                 | Production                                                                         |
+| ------------ | ----------------------- | ---------------------------------------------------------------------------------- |
+| `OFF`        | Serialized manual route | Serialized manual route with explicit owner authority; no staging evidence gate    |
+| `STAGING`    | V2 readiness            | Manual/disabled by default; exact operator-only production beta may be allowlisted |
+| `PRODUCTION` | V2 readiness            | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate             |
 
 For an active mode, `ALL` and the target lane must be running. In `OFF`, v2
 controls are non-authoritative and the manual fallback remains available,
@@ -52,7 +52,10 @@ register backend first and declare it as the frontend prerequisite.
 
 ## Staging lifecycle
 
-1. The scheduler claims a dependency-closed set with zero fixed batch delay.
+1. The scheduler starts from the authoritative cumulative admitted-staging set,
+   carries every unchanged exact live candidate forward, and adds a
+   dependency-closed set of newly ready candidates with zero fixed batch
+   delay. A later ordinary train cannot omit or evict an admitted candidate.
 2. Frontend/backend composition and preparation run concurrently.
 3. A single exact PR merge-tree artifact is reused when eligible. Otherwise,
    each application runs one combined sharded preflight and one immutable build.
@@ -70,6 +73,25 @@ register backend first and declare it as the frontend prerequisite.
 9. Only E2E success produces `STAGING_VALIDATED`.
 
 `STAGING_DEPLOYED` and `STAGING_VALIDATED` are separate milestones.
+`STAGING_VALIDATED` is historical certification. It does not mean the
+candidate is present in the current shared staging runtime. The candidate
+`staging_live_state`/`staging_live_manifest_id` fields and the singleton
+`staging_state` returned by the controls endpoint are authoritative for current
+presence.
+
+The first cumulative claim after rollout bootstraps the singleton only from an
+exact current pair of `1a-staging` refs, a matching terminal
+`STAGING_VALIDATED` manifest, its successful manifest-bound E2E operation, and
+the exact immutable candidate identities recorded by that manifest. Missing or
+ambiguous evidence prevents a new claim. An already-claimed legacy train is
+allowed to finish under its immutable policy before bootstrap.
+
+Supersession replaces the old exact candidate only when the cumulative
+replacement manifest validates. Explicit removal and safe absorption into
+`main` are the only other ordinary ways to leave the admitted set; both require
+an audited operator request. The removed candidate's declared units are
+redeployed from the new candidate-free composition so prior runtime bytes
+cannot survive. Production selection does not change staging membership.
 
 Every staging and production-qualification train records a
 `STAGING_IDLE_HANDSHAKE` under `staging-environment`. After E2E succeeds, the
@@ -123,13 +145,13 @@ explicitly.
 
 ## Failure behavior
 
-| Class                | Behavior                                                                                                                                           |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Candidate merge/test | Mark the direct candidate `NEEDS_REBASE` or failed; hold only transitive dependants                                                                |
-| Infrastructure       | Bounded idempotent retry; no candidate isolation                                                                                                   |
-| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence                                                                              |
-| Control plane        | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback |
-| E2E                  | Keep the manifest unvalidated; do not globally pause unless state is unverifiable                                                                  |
+| Class                | Behavior                                                                                                                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Candidate merge/test | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable          |
+| Infrastructure       | Bounded idempotent retry; no candidate isolation                                                                                                                                       |
+| Retryable deployment | Retry only the failed operation; preserve successful sibling evidence                                                                                                                  |
+| Control plane        | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                     |
+| E2E                  | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates |
 
 Every pending GitHub status must map to a visible candidate/train/operation state
 and recovery message. Duplicate callbacks and worker invocations reuse immutable
@@ -138,10 +160,19 @@ operation identities and never repeat completed mutations.
 ## Operator rollout and rollback
 
 Deploy additive changes in this order: database migrations, API/UI, then the v2
-reconciler. Keep `RELEASE_BUS_V2_MODE=OFF` throughout offline, shadow, staging
-beta, and production beta validation. The status helpers must continue to
-report `OFF`; manual fallback remains authoritative for everyone except the
-exact operator beta entries below.
+reconciler. Run the currently deployed status helper before the migration/API
+mutations. After the API is live, use the new helper, which requires and shows
+the authoritative `staging_state`. Do not deploy the cumulative reconciler
+until the migration and API are both live. Keep `RELEASE_BUS_V2_MODE=OFF`
+throughout offline, shadow, staging beta, and production beta validation. The
+status helpers must continue to report `OFF`; manual fallback remains
+authoritative for everyone except the exact operator beta entries below.
+
+The cumulative-staging migration has an intentionally non-destructive `down`:
+rolling it back leaves its additive table and columns in place so older workers
+cannot erase the authoritative admitted set. A genuine schema teardown requires
+a separate destructive migration and is permitted only while v2 is confirmed
+`OFF`.
 
 ### Operator-only OFF beta
 
