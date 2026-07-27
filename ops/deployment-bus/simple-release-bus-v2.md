@@ -138,6 +138,10 @@ New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`:
 - serialize production ownership, advance only compare-and-swap exact tested
   commits, deploy immutable artifacts in DAG order, verify exact versions, and
   dispatch mandatory production-safe read-only E2E;
+- use the distinct `production-environment` lock and production-scoped
+  frontend/backend workflow concurrency. An unrelated staging train keeps its
+  own `staging-environment` lock and staging-scoped workflow groups, so ordinary
+  production does not wait on unrelated staging activity;
 - create `PRODUCTION_DEPLOYED` only after that E2E is terminal-successful.
 
 Trains claimed before this policy deployment have a null policy and continue
