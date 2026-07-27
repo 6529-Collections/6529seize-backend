@@ -1553,8 +1553,8 @@ export class ReleaseBusV2Reconciler {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        source_ref: fastCandidate
-          ? fastCandidate.branch_name
+        source_ref: releaseFastCandidate
+          ? releaseFastCandidate.branch_name
           : releaseBusV2Branch(train, repository),
         expected_sha: composedSha,
         deploy_units: JSON.stringify(graph?.units ?? []),
