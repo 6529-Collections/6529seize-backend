@@ -254,7 +254,7 @@ export class ReleaseBusV2ManifestEntity {
   @Column({ type: 'varchar', length: 36 }) readonly train_id!: string;
   @Column({ type: 'varchar', length: 32 }) readonly lane!: ReleaseBusV2Lane;
   @Column({ type: 'char', length: 64 }) readonly identity_sha256!: string;
-  @Column({ type: 'varchar', length: 32 })
+  @Column({ type: 'varchar', length: 48 })
   readonly status!: ReleaseBusV2ManifestStatus;
   @Column({ type: 'char', length: 40, nullable: true, default: null })
   readonly frontend_sha!: string | null;
