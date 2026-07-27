@@ -941,11 +941,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listOperations(
     trainId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2OperationRecord[]> {
     return this.db.execute<ReleaseBusV2OperationRecord>(
       `select * from ${RELEASE_BUS_V2_OPERATIONS_TABLE}
-       where train_id = :trainId order by created_at asc, id asc`,
+       where train_id = :trainId order by created_at asc, id asc${
+         forUpdate ? ' for update' : ''
+       }`,
       { trainId },
       dbOptions(ctx)
     );
@@ -1241,7 +1244,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async findLatestProductionTrainForCandidate(
     candidateId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2TrainRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2TrainRecord>(
       `select train.* from ${RELEASE_BUS_V2_TRAINS_TABLE} train
@@ -1251,7 +1255,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
          and membership.disposition = 'INCLUDED'
          and train.lane = 'PRODUCTION'
        order by train.created_at desc, train.id desc
-       limit 1`,
+       limit 1${forUpdate ? ' for update' : ''}`,
       { candidateId },
       dbOptions(ctx)
     );
@@ -1330,12 +1334,15 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   public async listEvents(
     trainId: string,
     limit: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2EventRecord[]> {
     const boundedLimit = Math.max(1, Math.min(limit, 500));
     return this.db.execute<ReleaseBusV2EventRecord>(
       `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
-       where train_id = :trainId order by created_at desc limit ${boundedLimit}`,
+       where train_id = :trainId order by created_at desc limit ${boundedLimit}${
+         forUpdate ? ' for update' : ''
+       }`,
       { trainId },
       dbOptions(ctx)
     );

@@ -49,6 +49,12 @@ const TERMINAL_TRAIN_STATUSES = new Set([
 const TERMINAL_OPERATION_STATUSES = new Set<
   ReleaseBusV2OperationRecord['status']
 >(['SUCCEEDED', 'FAILED', 'CANCELLED']);
+const PRE_MAIN_PRODUCTION_OPERATION_TYPES = new Set([
+  'COMPOSE_BACKEND',
+  'COMPOSE_FRONTEND',
+  'PREPARE_ARTIFACT_BACKEND',
+  'PREPARE_ARTIFACT_FRONTEND'
+]);
 const REQUIRED_MAINTENANCE_LOCKS = new Set([
   'scheduler',
   'staging-environment',
@@ -314,7 +320,8 @@ export class ReleaseBusV2Service {
       );
     const train = await this.repository.findLatestProductionTrainForCandidate(
       candidate.id,
-      ctx
+      ctx,
+      Boolean(ctx.connection)
     );
     if (
       !train ||
@@ -327,16 +334,56 @@ export class ReleaseBusV2Service {
         'CONFLICT',
         'Failed candidate is not eligible for an exact pre-main production retry'
       );
-    const operations = await this.repository.listOperations(train.id, ctx);
+    const evidence =
+      parseStoredJson<readonly ReleaseBusV2CandidateStagingEvidence[]>(
+        train.qualification_evidence_json
+      ) ?? [];
+    const exactEvidence = evidence.filter(
+      (item) =>
+        item.candidate_id === candidate.id &&
+        item.repository === candidate.repository &&
+        item.pr_number === candidate.pr_number &&
+        item.head_sha === candidate.head_sha &&
+        item.staging_train_id === candidate.staging_validated_train_id &&
+        item.staging_manifest_id === candidate.staging_validated_manifest_id
+    );
+    const claimEvents = (
+      await this.repository.listEvents(
+        train.id,
+        200,
+        ctx,
+        Boolean(ctx.connection)
+      )
+    ).filter(({ event_type }) => event_type === 'TRAIN_CLAIMED');
+    const claim = parseStoredJson<{
+      readonly candidate_ids?: readonly string[];
+      readonly production_selection_id?: string;
+    }>(claimEvents.length === 1 ? claimEvents[0]?.payload_json : null);
+    if (
+      exactEvidence.length !== 1 ||
+      claim?.production_selection_id !== candidate.production_selection_id ||
+      !claim.candidate_ids?.includes(candidate.id)
+    )
+      throw new ReleaseBusV2ProductionSelectionError(
+        'CONFLICT',
+        'Failed candidate retry source does not match its exact selection and staging evidence'
+      );
+    const operations = await this.repository.listOperations(
+      train.id,
+      ctx,
+      Boolean(ctx.connection)
+    );
     const failedPreflight = operations.some(
       (operation) =>
         operation.operation_type.startsWith('PREPARE_ARTIFACT_') &&
         operation.status === 'FAILED'
     );
-    const productionRefMutationStarted = operations.some((operation) =>
-      operation.operation_type.startsWith('ADVANCE_MAIN_')
+    const onlyTerminalPreMainOperations = operations.every(
+      (operation) =>
+        PRE_MAIN_PRODUCTION_OPERATION_TYPES.has(operation.operation_type) &&
+        TERMINAL_OPERATION_STATUSES.has(operation.status)
     );
-    if (!failedPreflight || productionRefMutationStarted)
+    if (!failedPreflight || !onlyTerminalPreMainOperations)
       throw new ReleaseBusV2ProductionSelectionError(
         'CONFLICT',
         'Failed candidate is not eligible for an exact pre-main production retry'
@@ -809,12 +856,12 @@ export class ReleaseBusV2Service {
               qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
               candidate_ids: locked.map(({ id }) => id),
               candidate_evidence: evidence,
-              retry_sources: locked
-                .filter(({ id }) => retrySourceByCandidateId.has(id))
-                .map(({ id }) => ({
-                  candidate_id: id,
-                  failed_train_id: retrySourceByCandidateId.get(id)
-                }))
+              retry_sources: locked.flatMap(({ id }) => {
+                const failedTrainId = retrySourceByCandidateId.get(id);
+                return failedTrainId
+                  ? [{ candidate_id: id, failed_train_id: failedTrainId }]
+                  : [];
+              })
             }
           },
           ctx
