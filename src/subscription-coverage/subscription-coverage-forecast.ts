@@ -34,6 +34,10 @@ interface IntendedDrop {
   readonly source: SubscriptionCoverageIntentSource;
 }
 
+type IntendedDropsResult =
+  | { readonly drops: IntendedDrop[] }
+  | { readonly unknownReason: SubscriptionCoverageUnknownReason };
+
 interface AllocationResult {
   readonly allocatedMints: number;
   readonly fullyFundedDrops: number;
@@ -121,10 +125,11 @@ function requestedMintsForSelection(
   }
 
   if (selection.automaticSubscription) {
+    const requestedMints = subscribeAllEditions
+      ? eligibilityCount
+      : Math.min(selection.subscribedCount, eligibilityCount);
     return {
-      requestedMints: subscribeAllEditions
-        ? eligibilityCount
-        : Math.min(selection.subscribedCount, eligibilityCount),
+      requestedMints,
       source: SubscriptionCoverageIntentSource.Automatic
     };
   }
@@ -139,37 +144,87 @@ function implicitAutomaticRequestedMints(
   subscribeAllEditions: boolean,
   eligibilityCount: number
 ): number {
-  return subscribeAllEditions
-    ? eligibilityCount
-    : Math.min(1, eligibilityCount);
+  if (subscribeAllEditions) {
+    return eligibilityCount;
+  }
+  return Math.min(1, eligibilityCount);
+}
+
+function selectionsByTokenIdOrNull(
+  selections: readonly SubscriptionCoverageSelection[]
+): Map<number, SubscriptionCoverageSelection> | null {
+  if (!selections.every(selectionIsValid)) {
+    return null;
+  }
+  const selectionsByTokenId = new Map<number, SubscriptionCoverageSelection>();
+  for (const selection of selections) {
+    if (selectionsByTokenId.has(selection.tokenId)) {
+      return null;
+    }
+    selectionsByTokenId.set(selection.tokenId, selection);
+  }
+  return selectionsByTokenId;
+}
+
+function hasManualSelectionWithoutSchedule(
+  mode: SubscriptionCoverageMode,
+  selections: readonly SubscriptionCoverageSelection[],
+  scheduleTokenIds: ReadonlySet<number>
+): boolean {
+  return (
+    mode === SubscriptionCoverageMode.Manual &&
+    selections.some(
+      (selection) =>
+        selection.subscribed && !scheduleTokenIds.has(selection.tokenId)
+    )
+  );
+}
+
+function intendedDropForSchedule(
+  schedule: SubscriptionCoverageScheduleEntry,
+  selection: SubscriptionCoverageSelection | undefined,
+  mode: SubscriptionCoverageMode,
+  subscribeAllEditions: boolean,
+  eligibilityCount: number
+): IntendedDrop | null {
+  if (selection && !selection.subscribed) {
+    return null;
+  }
+  if (mode === SubscriptionCoverageMode.Manual && !selection) {
+    return null;
+  }
+  if (selection) {
+    return {
+      ...schedule,
+      ...requestedMintsForSelection(
+        selection,
+        mode,
+        subscribeAllEditions,
+        eligibilityCount
+      )
+    };
+  }
+  return {
+    ...schedule,
+    requestedMints: implicitAutomaticRequestedMints(
+      subscribeAllEditions,
+      eligibilityCount
+    ),
+    source: SubscriptionCoverageIntentSource.Automatic
+  };
 }
 
 function buildIntendedDrops(
   input: SubscriptionCoverageForecastInput,
   eligibilityCount: number
-):
-  | { readonly drops: IntendedDrop[] }
-  | { readonly unknownReason: SubscriptionCoverageUnknownReason } {
+): IntendedDropsResult {
   const mode = input.mode;
   if (mode === null) {
     return { unknownReason: SubscriptionCoverageUnknownReason.MissingMode };
   }
-  if (!input.selections.every(selectionIsValid)) {
-    return {
-      unknownReason:
-        SubscriptionCoverageUnknownReason.InvalidSubscriptionSelection
-    };
-  }
-
-  const selectionsByTokenId = new Map<number, SubscriptionCoverageSelection>();
-  for (const selection of input.selections) {
-    if (selectionsByTokenId.has(selection.tokenId)) {
-      return {
-        unknownReason:
-          SubscriptionCoverageUnknownReason.InvalidSubscriptionSelection
-      };
-    }
-    selectionsByTokenId.set(selection.tokenId, selection);
+  const selectionsByTokenId = selectionsByTokenIdOrNull(input.selections);
+  if (!selectionsByTokenId) {
+    return invalidSubscriptionSelection();
   }
 
   const sortedSchedule = [...input.schedule].sort(
@@ -181,11 +236,7 @@ function buildIntendedDrops(
   );
 
   if (
-    input.mode === SubscriptionCoverageMode.Manual &&
-    input.selections.some(
-      (selection) =>
-        selection.subscribed && !scheduleTokenIds.has(selection.tokenId)
-    )
+    hasManualSelectionWithoutSchedule(mode, input.selections, scheduleTokenIds)
   ) {
     return {
       unknownReason: SubscriptionCoverageUnknownReason.MissingIntendedSchedule
@@ -195,53 +246,30 @@ function buildIntendedDrops(
   const drops: IntendedDrop[] = [];
   for (const schedule of sortedSchedule) {
     const selection = selectionsByTokenId.get(schedule.tokenId);
-    if (selection && !selection.subscribed) {
-      continue;
+    const drop = intendedDropForSchedule(
+      schedule,
+      selection,
+      mode,
+      input.subscribeAllEditions,
+      eligibilityCount
+    );
+    if (drop) {
+      drops.push(drop);
     }
-
-    if (mode === SubscriptionCoverageMode.Manual) {
-      if (!selection) {
-        continue;
-      }
-      const resolved = requestedMintsForSelection(
-        selection,
-        mode,
-        input.subscribeAllEditions,
-        eligibilityCount
-      );
-      drops.push({ ...schedule, ...resolved });
-      continue;
-    }
-
-    if (selection) {
-      const resolved = requestedMintsForSelection(
-        selection,
-        mode,
-        input.subscribeAllEditions,
-        eligibilityCount
-      );
-      drops.push({ ...schedule, ...resolved });
-      continue;
-    }
-
-    drops.push({
-      ...schedule,
-      requestedMints: implicitAutomaticRequestedMints(
-        input.subscribeAllEditions,
-        eligibilityCount
-      ),
-      source: SubscriptionCoverageIntentSource.Automatic
-    });
   }
 
   if (!drops.every((drop) => isValidCount(drop.requestedMints))) {
-    return {
-      unknownReason:
-        SubscriptionCoverageUnknownReason.InvalidSubscriptionSelection
-    };
+    return invalidSubscriptionSelection();
   }
 
   return { drops };
+}
+
+function invalidSubscriptionSelection(): IntendedDropsResult {
+  return {
+    unknownReason:
+      SubscriptionCoverageUnknownReason.InvalidSubscriptionSelection
+  };
 }
 
 function allocate(
@@ -459,111 +487,173 @@ function unknownForecast(
   });
 }
 
-export function forecastSubscriptionCoverage(
+interface ValidatedForecastInput {
+  readonly valid: true;
+  readonly calculatedAt: string;
+  readonly mintCapacity: number;
+  readonly eligibilityCount: number;
+}
+
+interface TerminalForecastInput {
+  readonly valid: false;
+  readonly forecast: SubscriptionCoverageForecast;
+}
+
+function notSetUpMintCapacity(
   input: SubscriptionCoverageForecastInput
-): SubscriptionCoverageForecast {
+): number | null {
+  if (input.mintPriceWei <= ZERO_WEI) {
+    return null;
+  }
+  const nonNegativeBalance =
+    input.balanceWei > ZERO_WEI ? input.balanceWei : ZERO_WEI;
+  return toSafeNumber(nonNegativeBalance / input.mintPriceWei);
+}
+
+function validateForecastInput(
+  input: SubscriptionCoverageForecastInput
+): ValidatedForecastInput | TerminalForecastInput {
   if (
     !Number.isSafeInteger(input.calculatedAtMs) ||
     Number.isNaN(new Date(input.calculatedAtMs).getTime())
   ) {
-    return unknownForecast(
-      input,
-      new Date(0).toISOString(),
-      SubscriptionCoverageUnknownReason.InvalidClock
-    );
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        new Date(0).toISOString(),
+        SubscriptionCoverageUnknownReason.InvalidClock
+      )
+    };
   }
   const calculatedAt = new Date(input.calculatedAtMs).toISOString();
-
   if (!input.hasDemonstratedIntent) {
-    return assembleForecast(input, calculatedAt, {
-      status: SubscriptionCoverageStatus.NotSetUp,
-      unknownReason: null,
-      mintCapacity:
-        input.mintPriceWei > ZERO_WEI
-          ? toSafeNumber(
-              input.balanceWei > ZERO_WEI
-                ? input.balanceWei / input.mintPriceWei
-                : ZERO_WEI
-            )
-          : null,
-      allocatedMints: 0,
-      fullyFundedDrops: 0,
-      fundedThrough: null,
-      nextUnfunded: null,
-      minimumTopUp: null,
-      recommendedTopUp: null,
-      horizon: baseHorizon(input)
-    });
+    return {
+      valid: false,
+      forecast: assembleForecast(input, calculatedAt, {
+        status: SubscriptionCoverageStatus.NotSetUp,
+        unknownReason: null,
+        mintCapacity: notSetUpMintCapacity(input),
+        allocatedMints: 0,
+        fullyFundedDrops: 0,
+        fundedThrough: null,
+        nextUnfunded: null,
+        minimumTopUp: null,
+        recommendedTopUp: null,
+        horizon: baseHorizon(input)
+      })
+    };
   }
-
   if (input.mintPriceWei <= ZERO_WEI) {
-    return unknownForecast(
-      input,
-      calculatedAt,
-      SubscriptionCoverageUnknownReason.InvalidMintPrice
-    );
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        calculatedAt,
+        SubscriptionCoverageUnknownReason.InvalidMintPrice
+      )
+    };
+  }
+  if (input.balanceValid === false) {
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        calculatedAt,
+        SubscriptionCoverageUnknownReason.InvalidBalance
+      )
+    };
   }
   if (input.balanceWei < ZERO_WEI) {
-    return unknownForecast(
-      input,
-      calculatedAt,
-      SubscriptionCoverageUnknownReason.InvalidBalance
-    );
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        calculatedAt,
+        SubscriptionCoverageUnknownReason.InvalidBalance
+      )
+    };
   }
-
-  const mintCapacity = toSafeNumber(
-    input.balanceWei > ZERO_WEI
-      ? input.balanceWei / input.mintPriceWei
-      : ZERO_WEI
-  );
+  const mintCapacity = toSafeNumber(input.balanceWei / input.mintPriceWei);
   if (mintCapacity === null) {
-    return unknownForecast(
-      input,
-      calculatedAt,
-      SubscriptionCoverageUnknownReason.InvalidBalance
-    );
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        calculatedAt,
+        SubscriptionCoverageUnknownReason.InvalidBalance
+      )
+    };
   }
   if (input.mode === null) {
-    return unknownForecast(
-      input,
-      calculatedAt,
-      SubscriptionCoverageUnknownReason.MissingMode,
-      mintCapacity
-    );
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        calculatedAt,
+        SubscriptionCoverageUnknownReason.MissingMode,
+        mintCapacity
+      )
+    };
   }
   if (input.eligibilityCount === null) {
-    return unknownForecast(
-      input,
-      calculatedAt,
-      SubscriptionCoverageUnknownReason.MissingEligibility,
-      mintCapacity
-    );
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        calculatedAt,
+        SubscriptionCoverageUnknownReason.MissingEligibility,
+        mintCapacity
+      )
+    };
   }
   if (
     !Number.isSafeInteger(input.eligibilityCount) ||
     input.eligibilityCount < 0
   ) {
-    return unknownForecast(
-      input,
-      calculatedAt,
-      SubscriptionCoverageUnknownReason.InvalidEligibility,
-      mintCapacity
-    );
+    return {
+      valid: false,
+      forecast: unknownForecast(
+        input,
+        calculatedAt,
+        SubscriptionCoverageUnknownReason.InvalidEligibility,
+        mintCapacity
+      )
+    };
   }
   if (input.eligibilityCount === 0) {
-    return assembleForecast(input, calculatedAt, {
-      status: SubscriptionCoverageStatus.NoCurrentEligibility,
-      unknownReason: null,
-      mintCapacity,
-      allocatedMints: 0,
-      fullyFundedDrops: 0,
-      fundedThrough: null,
-      nextUnfunded: null,
-      minimumTopUp: null,
-      recommendedTopUp: null,
-      horizon: baseHorizon(input)
-    });
+    return {
+      valid: false,
+      forecast: assembleForecast(input, calculatedAt, {
+        status: SubscriptionCoverageStatus.NoCurrentEligibility,
+        unknownReason: null,
+        mintCapacity,
+        allocatedMints: 0,
+        fullyFundedDrops: 0,
+        fundedThrough: null,
+        nextUnfunded: null,
+        minimumTopUp: null,
+        recommendedTopUp: null,
+        horizon: baseHorizon(input)
+      })
+    };
   }
+  return {
+    valid: true,
+    calculatedAt,
+    mintCapacity,
+    eligibilityCount: input.eligibilityCount
+  };
+}
+
+export function forecastSubscriptionCoverage(
+  input: SubscriptionCoverageForecastInput
+): SubscriptionCoverageForecast {
+  const validation = validateForecastInput(input);
+  if (!validation.valid) {
+    return validation.forecast;
+  }
+  const { calculatedAt, mintCapacity, eligibilityCount } = validation;
 
   if (!scheduleIsValid(input.schedule, input.calculatedAtMs)) {
     return unknownForecast(
@@ -592,7 +682,7 @@ export function forecastSubscriptionCoverage(
     });
   }
 
-  const intendedResult = buildIntendedDrops(input, input.eligibilityCount);
+  const intendedResult = buildIntendedDrops(input, eligibilityCount);
   if ('unknownReason' in intendedResult) {
     return unknownForecast(
       input,

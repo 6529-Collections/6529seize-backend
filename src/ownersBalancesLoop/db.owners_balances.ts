@@ -201,7 +201,10 @@ export async function persistConsolidatedOwnerBalances(
     });
   }
   await markSubscriptionCoverageDirtyForDemonstratedIntent(
-    consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
+    [
+      ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
+      ...Array.from(deleteDelta)
+    ],
     'ELIGIBILITY_CHANGED'
   );
 }

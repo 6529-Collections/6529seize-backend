@@ -300,3 +300,80 @@ describe('SubscriptionCoverageReconciliationService reads', () => {
     expect(mockSendIdentityPushNotifications).toHaveBeenCalledWith([42]);
   });
 });
+
+describe('SubscriptionCoverageReconciliationService batch isolation', () => {
+  it('keeps valid keys moving when one stored balance is malformed', async () => {
+    const source = (
+      consolidationKey: string,
+      balanceEth: string
+    ): SubscriptionCoverageSourceData => ({
+      consolidationKey,
+      hasDemonstratedIntent: true,
+      balanceEth,
+      mode: {
+        automatic: true,
+        subscribeAllEditions: false
+      },
+      eligibilityCount: 1,
+      selections: []
+    });
+    const repository = {
+      listDemonstratedIntentKeys: jest.fn(async () => ['valid', 'malformed']),
+      loadSourceData: jest.fn(
+        async () =>
+          new Map([
+            ['valid', source('valid', '0.52232')],
+            ['malformed', source('malformed', 'not-a-decimal')]
+          ])
+      ),
+      resolveCanonicalProfiles: jest.fn(async () => new Map()),
+      readAlertStates: jest.fn(async () => new Map()),
+      applyAlertSnapshot: jest.fn(async () => ({
+        notificationIds: [],
+        notificationStatus: null,
+        decisionReason: 'INITIAL_SUPPRESSED',
+        createdBaseline: true
+      }))
+    } as unknown as SubscriptionCoverageRepository;
+    const scheduleProvider = {
+      getSchedule: jest.fn(async () => ({
+        drops: Array.from({ length: 8 }, (_unused, index) => ({
+          tokenId: 528 + index,
+          mintAt: new Date(
+            Date.parse('2026-07-27T14:40:00.000Z') + index * 24 * 60 * 60 * 1000
+          ).toISOString(),
+          topUpDeadline: null
+        })),
+        basis: 'PROJECTED',
+        deadlineBasis: 'UNAVAILABLE',
+        horizon: 8,
+        fetchedAt: '2026-07-26T22:00:00.000Z',
+        truncated: true
+      }))
+    } as unknown as MemeCalendarScheduleProvider;
+    const service = new SubscriptionCoverageReconciliationService(
+      repository,
+      scheduleProvider,
+      () => Date.parse('2026-07-26T22:00:00.000Z')
+    );
+
+    const result = await service.reconcileFullPage(undefined, 100, {
+      dryRun: false,
+      notificationsEnabled: true,
+      baselineOnly: false,
+      notifyInitialCritical: false,
+      pushEnabled: true
+    });
+
+    expect(result).toMatchObject({
+      scanned: 2,
+      succeeded: 2,
+      failed: 0,
+      statusCounts: {
+        COVERED: 1,
+        UNKNOWN: 1
+      }
+    });
+    expect(repository.applyAlertSnapshot).toHaveBeenCalledTimes(2);
+  });
+});

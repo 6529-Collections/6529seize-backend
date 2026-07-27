@@ -578,9 +578,10 @@ function handleSubscriptionCoverage(
     extractAdditionalData<SubscriptionCoverageNotificationData>(notification);
   const handle = targetProfile.normalised_handle ?? targetProfile.handle;
   if (!handle) {
-    throw new Error(
-      `[ID ${notification.id}] Subscription coverage profile handle not found`
+    logger.warn(
+      `[ID ${notification.id}] Skipping subscription coverage push because profile handle was not found`
     );
+    return SKIP_NOTIFICATION_PUSH;
   }
   return (
     buildSubscriptionCoveragePushNotificationData(additionalData, handle) ??

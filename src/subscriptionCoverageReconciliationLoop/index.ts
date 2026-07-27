@@ -117,6 +117,22 @@ function emptyResult(
   };
 }
 
+export function shouldStopSubscriptionCoverageReconciliation(
+  page: SubscriptionCoverageReconciliationResult,
+  options: SubscriptionCoverageReconciliationOptions
+): boolean {
+  const dirtyPageMadeNoProgress =
+    page.mode === 'DIRTY' &&
+    page.succeeded === 0 &&
+    page.failed === page.scanned;
+  return (
+    !page.hasMore ||
+    page.scanned === 0 ||
+    dirtyPageMadeNoProgress ||
+    (page.mode === 'DIRTY' && options.dryRun)
+  );
+}
+
 async function reconcile(
   event: ReconciliationEvent
 ): Promise<SubscriptionCoverageReconciliationResult> {
@@ -152,11 +168,7 @@ async function reconcile(
           );
     result = addResult(result, page);
     startAfter = page.lastConsolidationKey ?? undefined;
-    if (
-      !page.hasMore ||
-      page.scanned === 0 ||
-      (mode === 'DIRTY' && options.dryRun)
-    ) {
+    if (shouldStopSubscriptionCoverageReconciliation(page, options)) {
       break;
     }
   }

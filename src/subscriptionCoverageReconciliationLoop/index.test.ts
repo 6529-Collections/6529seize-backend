@@ -1,4 +1,7 @@
-import { resolveSubscriptionCoverageReconciliationOptions } from './index';
+import {
+  resolveSubscriptionCoverageReconciliationOptions,
+  shouldStopSubscriptionCoverageReconciliation
+} from './index';
 
 describe('subscription coverage reconciliation rollout options', () => {
   const originalEnv = process.env;
@@ -40,5 +43,36 @@ describe('subscription coverage reconciliation rollout options', () => {
       notifyInitialCritical: true,
       pushEnabled: false
     });
+  });
+});
+
+describe('subscription coverage reconciliation paging', () => {
+  it('stops a dirty drain when every selected key fails', () => {
+    expect(
+      shouldStopSubscriptionCoverageReconciliation(
+        {
+          mode: 'DIRTY',
+          scanned: 100,
+          succeeded: 0,
+          failed: 100,
+          baselined: 0,
+          notificationsCreated: 0,
+          pushesQueued: 0,
+          wouldNotify: 0,
+          deduplicatedOrSuppressed: 0,
+          unroutable: 0,
+          statusCounts: {},
+          hasMore: true,
+          lastConsolidationKey: 'poison-key'
+        },
+        {
+          dryRun: false,
+          notificationsEnabled: true,
+          baselineOnly: false,
+          notifyInitialCritical: false,
+          pushEnabled: true
+        }
+      )
+    ).toBe(true);
   });
 });

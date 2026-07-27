@@ -69,6 +69,7 @@ export interface SubscriptionCoverageForecastInput {
   readonly subscribeAllEditions: boolean;
   readonly eligibilityCount: number | null;
   readonly balanceWei: bigint;
+  readonly balanceValid?: boolean;
   readonly mintPriceWei: bigint;
   readonly selections: ReadonlyArray<SubscriptionCoverageSelection>;
   readonly schedule: ReadonlyArray<SubscriptionCoverageScheduleEntry>;

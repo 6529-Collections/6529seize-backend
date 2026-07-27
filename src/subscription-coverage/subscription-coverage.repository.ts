@@ -75,6 +75,17 @@ export interface SubscriptionCoverageAlertWriteResult {
   readonly createdBaseline: boolean;
 }
 
+interface LockedAlertState {
+  readonly currentState: StoredSubscriptionCoverageAlertState | null;
+  readonly insertedPlaceholder: boolean;
+}
+
+interface LastNotifiedFields {
+  readonly status: SubscriptionCoverageAlertStatus | null;
+  readonly fingerprint: string | null;
+  readonly at: number | null;
+}
+
 export interface SubscriptionCoverageNotificationWriter {
   insertManyNotifications(
     notifications: NewIdentityNotification[],
@@ -174,6 +185,30 @@ function createIdentityNotification(
   };
 }
 
+function deriveLastNotifiedFields(
+  resetNotificationState: boolean,
+  notificationInserted: boolean,
+  snapshot: SubscriptionCoverageNotificationSnapshot,
+  currentState: StoredSubscriptionCoverageAlertState | null,
+  now: number
+): LastNotifiedFields {
+  if (resetNotificationState) {
+    return { status: null, fingerprint: null, at: null };
+  }
+  if (notificationInserted) {
+    return {
+      status: snapshot.status,
+      fingerprint: snapshot.fingerprint,
+      at: now
+    };
+  }
+  return {
+    status: currentState?.last_notified_status ?? null,
+    fingerprint: currentState?.last_notified_fingerprint ?? null,
+    at: currentState?.last_notified_at ?? null
+  };
+}
+
 export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(SubscriptionCoverageRepository.name);
 
@@ -255,7 +290,7 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
         `
           SELECT *
           FROM ${SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE}
-          ORDER BY dirty_at ASC, consolidation_key ASC
+          ORDER BY attempts ASC, dirty_at ASC, consolidation_key ASC
           LIMIT :limit
         `,
         { limit },
@@ -547,13 +582,13 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
     );
   }
 
-  private async applyAlertSnapshotInTransaction(
+  private async lockOrInitializeAlertState(
+    consolidationKey: string,
     snapshot: SubscriptionCoverageNotificationSnapshot,
-    policy: SubscriptionCoverageAlertPolicy,
+    now: number,
     connection: ConnectionWrapper<unknown>
-  ): Promise<SubscriptionCoverageAlertWriteResult> {
-    const consolidationKey = snapshot.consolidationKey.toLowerCase();
-    let existing =
+  ): Promise<LockedAlertState> {
+    const existing =
       await this.db.oneOrNull<SubscriptionCoverageAlertStateEntity>(
         `
           SELECT *
@@ -564,70 +599,122 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
         { consolidationKey },
         { wrappedConnection: connection }
       );
-    let currentState = existing ? storedStateFromEntity(existing) : null;
-    let insertedPlaceholder = false;
-    const now = Time.currentMillis();
-    if (!existing) {
-      const insertResult = await this.db.execute(
+    if (existing) {
+      return {
+        currentState: storedStateFromEntity(existing),
+        insertedPlaceholder: false
+      };
+    }
+
+    const insertResult = await this.db.execute(
+      `
+        INSERT IGNORE INTO ${SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE} (
+          consolidation_key,
+          current_status,
+          current_fingerprint,
+          current_at_risk_token_id,
+          current_fully_funded_drops,
+          current_requested_mints,
+          current_missing_mints,
+          recipient_profile_id,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          :consolidationKey,
+          :currentStatus,
+          :currentFingerprint,
+          :currentAtRiskTokenId,
+          :currentFullyFundedDrops,
+          :currentRequestedMints,
+          :currentMissingMints,
+          :recipientProfileId,
+          :now,
+          :now
+        )
+      `,
+      {
+        consolidationKey,
+        currentStatus: snapshot.status,
+        currentFingerprint: snapshot.fingerprint,
+        currentAtRiskTokenId: snapshot.atRiskTokenId,
+        currentFullyFundedDrops: snapshot.fullyFundedDrops,
+        currentRequestedMints: snapshot.requestedMints,
+        currentMissingMints: snapshot.missingMints,
+        recipientProfileId: snapshot.recipientProfileId,
+        now
+      },
+      { wrappedConnection: connection }
+    );
+    const insertedPlaceholder = this.db.getAffectedRows(insertResult) === 1;
+    const locked =
+      await this.db.oneOrNull<SubscriptionCoverageAlertStateEntity>(
         `
-          INSERT IGNORE INTO ${SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE} (
-            consolidation_key,
-            current_status,
-            current_fingerprint,
-            current_at_risk_token_id,
-            current_fully_funded_drops,
-            current_requested_mints,
-            current_missing_mints,
-            recipient_profile_id,
-            created_at,
-            updated_at
-          )
-          VALUES (
-            :consolidationKey,
-            :currentStatus,
-            :currentFingerprint,
-            :currentAtRiskTokenId,
-            :currentFullyFundedDrops,
-            :currentRequestedMints,
-            :currentMissingMints,
-            :recipientProfileId,
-            :now,
-            :now
-          )
+          SELECT *
+          FROM ${SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE}
+          WHERE consolidation_key = :consolidationKey
+          FOR UPDATE
         `,
-        {
-          consolidationKey,
-          currentStatus: snapshot.status,
-          currentFingerprint: snapshot.fingerprint,
-          currentAtRiskTokenId: snapshot.atRiskTokenId,
-          currentFullyFundedDrops: snapshot.fullyFundedDrops,
-          currentRequestedMints: snapshot.requestedMints,
-          currentMissingMints: snapshot.missingMints,
-          recipientProfileId: snapshot.recipientProfileId,
-          now
-        },
-        { wrappedConnection: connection }
-      );
-      insertedPlaceholder = this.db.getAffectedRows(insertResult) === 1;
-      existing = await this.db.oneOrNull<SubscriptionCoverageAlertStateEntity>(
-        `
-            SELECT *
-            FROM ${SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE}
-            WHERE consolidation_key = :consolidationKey
-            FOR UPDATE
-          `,
         { consolidationKey },
         { wrappedConnection: connection }
       );
-      if (!insertedPlaceholder && existing) {
-        currentState = storedStateFromEntity(existing);
-      }
+    let currentState: StoredSubscriptionCoverageAlertState | null = null;
+    if (!insertedPlaceholder && locked) {
+      currentState = storedStateFromEntity(locked);
     }
+    return { currentState, insertedPlaceholder };
+  }
+
+  private async discardInsertedPlaceholder(
+    consolidationKey: string,
+    insertedPlaceholder: boolean,
+    connection: ConnectionWrapper<unknown>
+  ): Promise<void> {
+    if (!insertedPlaceholder) {
+      return;
+    }
+    await this.db.execute(
+      `
+        DELETE FROM ${SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE}
+        WHERE consolidation_key = :consolidationKey
+      `,
+      { consolidationKey },
+      { wrappedConnection: connection }
+    );
+  }
+
+  private async applyAlertSnapshotInTransaction(
+    snapshot: SubscriptionCoverageNotificationSnapshot,
+    policy: SubscriptionCoverageAlertPolicy,
+    connection: ConnectionWrapper<unknown>
+  ): Promise<SubscriptionCoverageAlertWriteResult> {
+    const consolidationKey = snapshot.consolidationKey.toLowerCase();
+    const now = Time.currentMillis();
+    const { currentState, insertedPlaceholder } =
+      await this.lockOrInitializeAlertState(
+        consolidationKey,
+        snapshot,
+        now,
+        connection
+      );
     const decision = decideSubscriptionCoverageAlert(
       currentState,
       snapshot,
       policy
     );
+    if (decision.shouldNotify && !snapshot.notificationData) {
+      await this.discardInsertedPlaceholder(
+        consolidationKey,
+        insertedPlaceholder,
+        connection
+      );
+      return {
+        notificationIds: [],
+        notificationStatus: null,
+        decisionReason: decision.reason,
+        createdBaseline: false
+      };
+    }
     let notificationIds: number[] = [];
     if (decision.shouldNotify && snapshot.notificationData) {
       if (!this.notificationsDb) {
@@ -641,21 +728,13 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
       );
     }
     const notificationInserted = notificationIds.length === 1;
-    const lastNotifiedStatus = decision.resetNotificationState
-      ? null
-      : notificationInserted
-        ? snapshot.status
-        : (currentState?.last_notified_status ?? null);
-    const lastNotifiedFingerprint = decision.resetNotificationState
-      ? null
-      : notificationInserted
-        ? snapshot.fingerprint
-        : (currentState?.last_notified_fingerprint ?? null);
-    const lastNotifiedAt = decision.resetNotificationState
-      ? null
-      : notificationInserted
-        ? now
-        : (currentState?.last_notified_at ?? null);
+    const lastNotified = deriveLastNotifiedFields(
+      decision.resetNotificationState,
+      notificationInserted,
+      snapshot,
+      currentState,
+      now
+    );
 
     await this.db.execute(
       `
@@ -712,9 +791,9 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
         currentRequestedMints: snapshot.requestedMints,
         currentMissingMints: snapshot.missingMints,
         recipientProfileId: snapshot.recipientProfileId,
-        lastNotifiedStatus,
-        lastNotifiedFingerprint,
-        lastNotifiedAt,
+        lastNotifiedStatus: lastNotified.status,
+        lastNotifiedFingerprint: lastNotified.fingerprint,
+        lastNotifiedAt: lastNotified.at,
         now
       },
       { wrappedConnection: connection }

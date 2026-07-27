@@ -383,10 +383,12 @@ Wave Score refreshes use a hybrid DB-backed/SQS pattern. Request-path mutations 
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
 
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
-a cross-service queue. Top-up, redemption, subscription preference/selection,
-daily finalization, and consolidated eligibility writes make a best-effort
-upsert into `subscription_coverage_refresh_requests`; this bookkeeping never
-runs forecasts or creates notifications in those critical paths.
+a cross-service dirty-event queue. Top-up, redemption, subscription
+preference/selection, daily finalization, and consolidated eligibility writes
+make a best-effort upsert into `subscription_coverage_refresh_requests`; this
+bookkeeping never runs forecasts or creates notifications in those critical
+paths. Notification delivery still uses the existing post-commit SQS-backed
+push pipeline.
 `subscriptionCoverageReconciliationLoop` drains versioned dirty rows every
 minute and performs an hourly bounded full sweep to cover projected calendar
 changes, clock boundaries, and missed dirty writes. It reads subscription

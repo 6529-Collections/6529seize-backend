@@ -38,6 +38,16 @@ describe('buildSubscriptionCoveragePushNotificationData', () => {
     ).toBeNull();
   });
 
+  it('skips stale non-pushable coverage statuses', () => {
+    const staleData = {
+      ...coverageData(),
+      status: 'COVERED'
+    } as unknown as SubscriptionCoverageNotificationData;
+    expect(
+      buildSubscriptionCoveragePushNotificationData(staleData, 'alice')
+    ).toBeNull();
+  });
+
   it('builds a running-low push to the profile subscriptions tab', () => {
     expect(
       buildSubscriptionCoveragePushNotificationData(

@@ -4,14 +4,11 @@ export function buildSubscriptionCoveragePushNotificationData(
   additionalData: SubscriptionCoverageNotificationData,
   handle: string
 ) {
-  if (additionalData.status === 'EARLY_WARNING') {
-    return null;
-  }
   if (
     additionalData.status !== 'RUNNING_LOW' &&
     additionalData.status !== 'ACTION_REQUIRED'
   ) {
-    throw new TypeError('Invalid subscription coverage status');
+    return null;
   }
 
   const nextUnfunded = additionalData.next_unfunded;

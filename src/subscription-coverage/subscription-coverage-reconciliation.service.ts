@@ -25,6 +25,7 @@ import {
 import {
   CanonicalSubscriptionCoverageProfile,
   subscriptionCoverageRepository,
+  SubscriptionCoverageAlertWriteResult,
   SubscriptionCoverageNotificationSnapshot,
   SubscriptionCoverageRepository,
   SubscriptionCoverageSourceData
@@ -85,6 +86,14 @@ function isPushStatus(status: SubscriptionCoverageStatus): boolean {
   );
 }
 
+function isWarningStatus(status: SubscriptionCoverageStatus): boolean {
+  return (
+    status === SubscriptionCoverageStatus.EarlyWarning ||
+    status === SubscriptionCoverageStatus.RunningLow ||
+    status === SubscriptionCoverageStatus.ActionRequired
+  );
+}
+
 function alertPolicy(
   options: SubscriptionCoverageReconciliationOptions
 ): SubscriptionCoverageAlertPolicy {
@@ -102,17 +111,13 @@ function createNotificationData(
   if (!profile) {
     return null;
   }
-  const warningStatus =
-    forecast.status === SubscriptionCoverageStatus.EarlyWarning ||
-    forecast.status === SubscriptionCoverageStatus.RunningLow ||
-    forecast.status === SubscriptionCoverageStatus.ActionRequired;
-  if (!warningStatus) {
+  if (!isWarningStatus(forecast.status)) {
     return null;
   }
   return {
     recipient_profile_id: profile.profileId,
     profile_handle: profile.handle,
-    status: forecast.status,
+    status: forecast.status as SubscriptionCoverageNotificationData['status'],
     consolidation_key: forecast.consolidationKey,
     mint_capacity: forecast.mintCapacity ?? 0,
     allocated_mints: forecast.allocatedMints,
@@ -141,24 +146,42 @@ function createNotificationData(
   };
 }
 
+function sourceMode(
+  source: SubscriptionCoverageSourceData
+): SubscriptionCoverageMode | null {
+  if (source.mode === null) {
+    return null;
+  }
+  return source.mode.automatic
+    ? SubscriptionCoverageMode.Automatic
+    : SubscriptionCoverageMode.Manual;
+}
+
+function sourceBalance(balanceEth: string): {
+  readonly balanceWei: bigint;
+  readonly balanceValid: boolean;
+} {
+  try {
+    return { balanceWei: exactEthToWei(balanceEth), balanceValid: true };
+  } catch {
+    return { balanceWei: BigInt(0), balanceValid: false };
+  }
+}
+
 function toForecast(
   source: SubscriptionCoverageSourceData,
   schedule: SubscriptionCoverageSchedule,
   calculatedAtMs: number
 ): SubscriptionCoverageForecast {
+  const balance = sourceBalance(source.balanceEth);
   return forecastSubscriptionCoverage({
     consolidationKey: source.consolidationKey,
     calculatedAtMs,
     hasDemonstratedIntent: source.hasDemonstratedIntent,
-    mode:
-      source.mode === null
-        ? null
-        : source.mode.automatic
-          ? SubscriptionCoverageMode.Automatic
-          : SubscriptionCoverageMode.Manual,
+    mode: sourceMode(source),
     subscribeAllEditions: source.mode?.subscribeAllEditions ?? false,
     eligibilityCount: source.eligibilityCount,
-    balanceWei: exactEthToWei(source.balanceEth),
+    ...balance,
     mintPriceWei: MEMES_MINT_PRICE_WEI,
     selections: source.selections,
     schedule: schedule.drops.map((drop) => ({
@@ -195,6 +218,75 @@ function materiallyMatchesStoredState(
     state.current_missing_mints === snapshot.missingMints &&
     state.recipient_profile_id === snapshot.recipientProfileId
   );
+}
+
+function buildSnapshot(
+  key: string,
+  coverage: ReconciledCoverage
+): {
+  readonly snapshot: SubscriptionCoverageNotificationSnapshot;
+  readonly unroutable: boolean;
+} {
+  const forecast = coverage.forecast;
+  const notificationData = createNotificationData(forecast, coverage.profile);
+  return {
+    snapshot: {
+      consolidationKey: key,
+      status: forecast.status as SubscriptionCoverageAlertStatus,
+      fingerprint: forecast.fingerprint,
+      atRiskTokenId: forecast.nextUnfunded?.tokenId ?? null,
+      fullyFundedDrops: forecast.fullyFundedDrops,
+      requestedMints: forecast.nextUnfunded?.requestedMints ?? null,
+      missingMints: forecast.nextUnfunded?.missingMints ?? null,
+      recipientProfileId: coverage.profile?.profileId ?? null,
+      notificationData
+    },
+    unroutable: isWarningStatus(forecast.status) && !coverage.profile
+  };
+}
+
+function recordDryRunDecision(
+  counters: BatchCounters,
+  state: StoredSubscriptionCoverageAlertState | null,
+  snapshot: SubscriptionCoverageNotificationSnapshot,
+  options: SubscriptionCoverageReconciliationOptions
+): void {
+  const decision = decideSubscriptionCoverageAlert(
+    state,
+    snapshot,
+    alertPolicy(options)
+  );
+  if (decision.shouldNotify && snapshot.notificationData) {
+    counters.wouldNotify++;
+  } else {
+    counters.deduplicatedOrSuppressed++;
+  }
+  counters.succeeded++;
+}
+
+function recordWriteResult(
+  counters: BatchCounters,
+  pendingNotificationDispatchIds: number[],
+  writeResult: SubscriptionCoverageAlertWriteResult,
+  pushEnabled: boolean
+): number {
+  counters.baselined += writeResult.createdBaseline ? 1 : 0;
+  counters.notificationsCreated += writeResult.notificationIds.length;
+  if (!writeResult.notificationIds.length) {
+    counters.deduplicatedOrSuppressed++;
+  }
+  if (!writeResult.notificationStatus) {
+    return 0;
+  }
+  const status = writeResult.notificationStatus as SubscriptionCoverageStatus;
+  const mobilePushEligible = pushEnabled && isPushStatus(status);
+  if (
+    mobilePushEligible ||
+    status === SubscriptionCoverageStatus.EarlyWarning
+  ) {
+    pendingNotificationDispatchIds.push(...writeResult.notificationIds);
+  }
+  return mobilePushEligible ? writeResult.notificationIds.length : 0;
 }
 
 export class SubscriptionCoverageReconciliationService {
@@ -327,6 +419,20 @@ export class SubscriptionCoverageReconciliationService {
     return result;
   }
 
+  private async persistSnapshot(
+    snapshot: SubscriptionCoverageNotificationSnapshot,
+    existingState: StoredSubscriptionCoverageAlertState | undefined,
+    options: SubscriptionCoverageReconciliationOptions
+  ): Promise<SubscriptionCoverageAlertWriteResult | null> {
+    if (
+      existingState &&
+      materiallyMatchesStoredState(existingState, snapshot)
+    ) {
+      return null;
+    }
+    return this.repository.applyAlertSnapshot(snapshot, alertPolicy(options));
+  }
+
   private async reconcileKeys(
     keys: readonly string[],
     options: SubscriptionCoverageReconciliationOptions,
@@ -373,81 +479,35 @@ export class SubscriptionCoverageReconciliationService {
       }
       try {
         incrementCount(counters.statusCounts, coverage.forecast.status);
-        const notificationData = createNotificationData(
-          coverage.forecast,
-          coverage.profile
-        );
-        const warningStatus =
-          coverage.forecast.status ===
-            SubscriptionCoverageStatus.EarlyWarning ||
-          coverage.forecast.status === SubscriptionCoverageStatus.RunningLow ||
-          coverage.forecast.status ===
-            SubscriptionCoverageStatus.ActionRequired;
-        if (warningStatus && !coverage.profile) {
-          counters.unroutable++;
-        }
-        const snapshot = {
-          consolidationKey: key,
-          status: coverage.forecast.status as SubscriptionCoverageAlertStatus,
-          fingerprint: coverage.forecast.fingerprint,
-          atRiskTokenId: coverage.forecast.nextUnfunded?.tokenId ?? null,
-          fullyFundedDrops: coverage.forecast.fullyFundedDrops,
-          requestedMints:
-            coverage.forecast.nextUnfunded?.requestedMints ?? null,
-          missingMints: coverage.forecast.nextUnfunded?.missingMints ?? null,
-          recipientProfileId: coverage.profile?.profileId ?? null,
-          notificationData
-        };
+        const { snapshot, unroutable } = buildSnapshot(key, coverage);
+        counters.unroutable += unroutable ? 1 : 0;
 
         if (options.dryRun) {
-          const decision = decideSubscriptionCoverageAlert(
+          recordDryRunDecision(
+            counters,
             existingStates.get(key) ?? null,
             snapshot,
-            alertPolicy(options)
+            options
           );
-          if (decision.shouldNotify && notificationData) {
-            counters.wouldNotify++;
-          } else {
-            counters.deduplicatedOrSuppressed++;
-          }
-          counters.succeeded++;
           continue;
         }
 
-        const existingState = existingStates.get(key);
-        if (
-          existingState &&
-          materiallyMatchesStoredState(existingState, snapshot)
-        ) {
-          counters.deduplicatedOrSuppressed++;
-          counters.succeeded++;
-          continue;
-        }
-
-        const writeResult = await this.repository.applyAlertSnapshot(
+        const writeResult = await this.persistSnapshot(
           snapshot,
-          alertPolicy(options)
+          existingStates.get(key),
+          options
         );
-        counters.baselined += writeResult.createdBaseline ? 1 : 0;
-        counters.notificationsCreated += writeResult.notificationIds.length;
-        if (!writeResult.notificationIds.length) {
+        if (!writeResult) {
           counters.deduplicatedOrSuppressed++;
+          counters.succeeded++;
+          continue;
         }
-        if (writeResult.notificationStatus) {
-          const notificationStatus =
-            writeResult.notificationStatus as SubscriptionCoverageStatus;
-          const mobilePushEligible =
-            options.pushEnabled && isPushStatus(notificationStatus);
-          if (
-            mobilePushEligible ||
-            notificationStatus === SubscriptionCoverageStatus.EarlyWarning
-          ) {
-            pendingNotificationDispatchIds.push(...writeResult.notificationIds);
-          }
-          if (mobilePushEligible) {
-            pendingPushCount += writeResult.notificationIds.length;
-          }
-        }
+        pendingPushCount += recordWriteResult(
+          counters,
+          pendingNotificationDispatchIds,
+          writeResult,
+          options.pushEnabled
+        );
         counters.succeeded++;
       } catch (error) {
         failuresByKey.set(key, error);
