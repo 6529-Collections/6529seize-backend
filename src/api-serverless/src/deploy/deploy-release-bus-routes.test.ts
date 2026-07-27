@@ -66,6 +66,7 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
 }));
 
 jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
+  ReleaseBusV2StagingTransitionConflictError: class extends Error {},
   releaseBusV2Service: {
     register: (...args: unknown[]) => mockV2Register(...args),
     requestStagingTransition: (...args: unknown[]) =>
@@ -354,6 +355,30 @@ describe('Release Bus v2 route authorization and exact actions', () => {
         payload: { scheduled_reconciliation_will_retry: true }
       },
       {}
+    );
+  });
+
+  it('does not expose an unexpected staging-transition repository failure', async () => {
+    mockV2RequestStagingTransition.mockRejectedValueOnce(
+      new Error('mysql connection secret detail')
+    );
+
+    const response = await post(
+      `/deploy/release-bus-v2/candidates/${candidateId}/staging-transition`,
+      {
+        expected_head_sha: SHA,
+        expected_row_version: 4,
+        transition: 'REMOVE',
+        reason: 'Operator retirement'
+      }
+    );
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(response.body)).toContain(
+      'Release Bus v2 staging transition failed'
+    );
+    expect(JSON.stringify(response.body)).not.toContain(
+      'mysql connection secret detail'
     );
   });
 

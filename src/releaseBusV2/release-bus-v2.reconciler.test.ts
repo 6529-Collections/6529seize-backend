@@ -188,6 +188,167 @@ describe('Release Bus v2 deterministic orchestration', () => {
     expect(updateCandidate).not.toHaveBeenCalled();
   });
 
+  it('records rollback failure under the authoritative staging row lock before pausing', async () => {
+    const train: ReleaseBusV2TrainRecord = {
+      id: 'train-rollback-failed',
+      lane: 'STAGING',
+      status: 'STAGING_ROLLING_BACK',
+      frontend_base_sha: 'a'.repeat(40),
+      backend_base_sha: 'b'.repeat(40),
+      frontend_composed_sha: 'c'.repeat(40),
+      backend_composed_sha: 'd'.repeat(40),
+      frontend_artifact_digest: 'e'.repeat(64),
+      backend_artifact_digest: 'f'.repeat(64),
+      manifest_id: 'rollback-manifest',
+      parent_train_id: null,
+      qualification_identity_sha256: null,
+      qualification_train_id: null,
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'validated-manifest-a',
+      staging_transition_json: null,
+      failure_class: 'E2E',
+      failure_message: 'candidate manifest failed',
+      recovery_message: null,
+      phase_started_at: 1,
+      completed_at: null,
+      created_at: 1,
+      updated_at: 1,
+      row_version: 4
+    };
+    const connection = {};
+    let stagingState = {
+      id: 'current',
+      status: 'LIVE' as string,
+      current_manifest_id: train.staging_baseline_manifest_id as string | null,
+      last_validated_manifest_id: train.staging_baseline_manifest_id,
+      frontend_sha: 'a'.repeat(40),
+      backend_sha: 'b'.repeat(40),
+      frontend_staging_ref_sha: 'a'.repeat(40),
+      backend_staging_ref_sha: 'b'.repeat(40),
+      clean_main: false,
+      last_transition_train_id: 'prior-train',
+      updated_at: 1,
+      row_version: 7
+    };
+    let currentTrain = train;
+    let stagingPaused = false;
+    const getStagingState = jest.fn(async () => stagingState);
+    const updateStagingState = jest.fn(
+      async (
+        rowVersion: number,
+        fields: {
+          status: string;
+          currentManifestId: string | null;
+          lastTransitionTrainId: string;
+        }
+      ) => {
+        if (rowVersion !== stagingState.row_version) return false;
+        stagingState = {
+          ...stagingState,
+          status: fields.status,
+          current_manifest_id: fields.currentManifestId,
+          last_transition_train_id: fields.lastTransitionTrainId,
+          row_version: rowVersion + 1
+        };
+        return true;
+      }
+    );
+    const updateTrain = jest.fn(
+      async (
+        _id: string,
+        rowVersion: number,
+        fields: Partial<ReleaseBusV2TrainRecord>
+      ) => {
+        if (rowVersion !== currentTrain.row_version) return false;
+        currentTrain = {
+          ...currentTrain,
+          ...fields,
+          row_version: rowVersion + 1
+        };
+        return true;
+      }
+    );
+    const appendEvent = jest.fn(
+      async (_event: unknown, _ctx: unknown) => undefined
+    );
+    const setControl = jest.fn(async () => {
+      stagingPaused = true;
+    });
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (value: unknown) => unknown
+      ) => callback(connection),
+      getStagingState,
+      updateStagingState,
+      findTrain: jest.fn(async () => currentTrain),
+      updateTrain,
+      listControls: jest.fn(async () => [
+        { scope: 'STAGING', paused: stagingPaused }
+      ]),
+      setControl,
+      appendEvent,
+      listLocks: jest.fn(async () => [])
+    };
+    const reconciler = new ReleaseBusV2Reconciler(
+      repository as never,
+      {} as never
+    ) as unknown as {
+      failCumulativeStagingRollback(
+        context: {
+          train: ReleaseBusV2TrainRecord;
+          memberships: [];
+          candidates: [];
+          dependencies: [];
+        },
+        message: string
+      ): Promise<void>;
+    };
+
+    await reconciler.failCumulativeStagingRollback(
+      { train, memberships: [], candidates: [], dependencies: [] },
+      'rollback deployment failed'
+    );
+    await reconciler.failCumulativeStagingRollback(
+      { train, memberships: [], candidates: [], dependencies: [] },
+      'rollback deployment failed'
+    );
+
+    expect(getStagingState).toHaveBeenCalledTimes(2);
+    expect(getStagingState).toHaveBeenCalledWith({ connection }, true);
+    expect(updateStagingState).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        status: 'ROLLBACK_FAILED',
+        currentManifestId: null,
+        lastTransitionTrainId: train.id
+      }),
+      { connection }
+    );
+    expect(updateStagingState).toHaveBeenCalledTimes(1);
+    expect(setControl).toHaveBeenCalledWith(
+      'STAGING',
+      true,
+      expect.stringContaining(train.id),
+      'release-bus-v2',
+      { connection }
+    );
+    expect(setControl).toHaveBeenCalledTimes(1);
+    expect(updateTrain).toHaveBeenCalledWith(
+      train.id,
+      train.row_version,
+      expect.objectContaining({ status: 'STAGING_ROLLBACK_FAILED' }),
+      { connection }
+    );
+    expect(updateTrain).toHaveBeenCalledTimes(1);
+    expect(
+      appendEvent.mock.calls.filter(
+        ([event]) =>
+          (event as { eventType?: string }).eventType ===
+          'CUMULATIVE_STAGING_ROLLBACK_FAILED'
+      )
+    ).toHaveLength(1);
+  });
+
   it('deduplicates exact candidate contributor logins in train order', () => {
     const first = candidate('first', 'a'.repeat(40), {
       base_sha: 'b'.repeat(40),
@@ -267,6 +428,12 @@ describe('Release Bus v2 deterministic orchestration', () => {
           current_train_id: null,
           superseded_at: 2
         },
+        claimed
+      )
+    ).toBe(true);
+    expect(
+      candidateUnavailableForTrainUpdate(
+        { ...claimed, current_train_id: 'newer-train' },
         claimed
       )
     ).toBe(true);

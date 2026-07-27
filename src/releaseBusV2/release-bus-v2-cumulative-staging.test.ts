@@ -188,7 +188,7 @@ describe('Release Bus v2 cumulative admitted staging', () => {
 
   it('bootstraps the legacy live manifest by exact refs and successful E2E before admitting B', async () => {
     const a = {
-      ...candidate('a1', 'frontend', 'STAGING_VALIDATED', true),
+      ...candidate('a1', 'frontend', 'PRODUCTION_DEPLOYED', true),
       staging_validated_train_id: 'train-a',
       staging_validated_manifest_id: 'manifest-a'
     };
@@ -289,7 +289,10 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     expect(createTrain).toHaveBeenCalledWith(
       expect.objectContaining({
         candidateIds: [a.id, b.id],
-        candidateRoles: { [a.id]: 'CARRY_FORWARD', [b.id]: 'NEW' }
+        candidateRoles: { [a.id]: 'CARRY_FORWARD', [b.id]: 'NEW' },
+        stagingTransition: expect.objectContaining({
+          baseline_state_version: 2
+        })
       }),
       expect.anything()
     );

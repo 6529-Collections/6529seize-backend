@@ -3,6 +3,7 @@ import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { CustomApiCompliantException } from '@/exceptions';
+import { Logger } from '@/logging';
 import { asyncRouter } from '@/api/async.router';
 import {
   canDeployServiceToEnvironment,
@@ -47,7 +48,10 @@ import {
 } from '@/releaseBusV2/release-bus-v2.operations';
 import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
-import { releaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
+import {
+  releaseBusV2Service,
+  ReleaseBusV2StagingTransitionConflictError
+} from '@/releaseBusV2/release-bus-v2.service';
 import {
   RELEASE_BUS_V2_CANDIDATE_STATUSES,
   type ReleaseBusV2Repository,
@@ -55,6 +59,8 @@ import {
   type ReleaseBusV2ControlScope,
   type ReleaseBusV2RegisterInput
 } from '@/releaseBusV2/release-bus-v2.types';
+
+const logger = Logger.get('DeployRoutes');
 
 function getGitHubTokenOrThrow(req: Request): string {
   const authorizationHeader = req.get('authorization');
@@ -538,12 +544,16 @@ deployRoutes.post(
       setNoStoreHeaders(res);
       return res.status(202).json({ candidate });
     } catch (error) {
-      throw new CustomApiCompliantException(
-        409,
-        error instanceof Error
-          ? error.message
-          : 'Release Bus v2 staging transition failed'
-      );
+      if (!(error instanceof ReleaseBusV2StagingTransitionConflictError)) {
+        logger.error('Unexpected Release Bus v2 staging transition failure', {
+          error
+        });
+        throw new CustomApiCompliantException(
+          500,
+          'Release Bus v2 staging transition failed'
+        );
+      }
+      throw new CustomApiCompliantException(409, error.message);
     }
   }
 );

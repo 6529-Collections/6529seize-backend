@@ -48,6 +48,13 @@ const REQUIRED_MAINTENANCE_LOCKS = new Set([
   'production-environment'
 ]);
 
+export class ReleaseBusV2StagingTransitionConflictError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'ReleaseBusV2StagingTransitionConflictError';
+  }
+}
+
 export type ReleaseBusV2StagingIdentity = {
   readonly frontendSha: string | null;
   readonly backendSha: string | null;
@@ -826,14 +833,18 @@ export class ReleaseBusV2Service {
     readonly actor: string;
   }): Promise<ReleaseBusV2CandidateRecord> {
     if (input.reason.trim().length < 3)
-      throw new Error('Staging removal requires an audited reason');
+      throw new ReleaseBusV2StagingTransitionConflictError(
+        'Staging removal requires an audited reason'
+      );
     if (input.transition === 'ABSORB') {
       const candidate = await this.repository.findCandidateById(
         input.candidateId,
         {}
       );
       if (!candidate || candidate.head_sha !== input.expectedHeadSha)
-        throw new Error('Candidate identity changed before absorption');
+        throw new ReleaseBusV2StagingTransitionConflictError(
+          'Candidate identity changed before absorption'
+        );
       if (
         !(await releaseBusGitHubApp.refContainsCommit(
           candidate.repository,
@@ -841,7 +852,7 @@ export class ReleaseBusV2Service {
           candidate.head_sha
         ))
       )
-        throw new Error(
+        throw new ReleaseBusV2StagingTransitionConflictError(
           'Candidate exact SHA is not safely absorbed into current main'
         );
     }
@@ -858,13 +869,17 @@ export class ReleaseBusV2Service {
           candidate.head_sha !== input.expectedHeadSha ||
           candidate.row_version !== input.expectedRowVersion
         )
-          throw new Error('Candidate identity or version changed');
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            'Candidate identity or version changed'
+          );
         if (candidate.staging_live_state !== 'LIVE')
-          throw new Error(
+          throw new ReleaseBusV2StagingTransitionConflictError(
             'Only an exact candidate currently live in staging can leave the admitted set'
           );
         if (candidate.staging_transition_request)
-          throw new Error('Candidate already has a staging lifecycle request');
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            'Candidate already has a staging lifecycle request'
+          );
         const live = await this.repository.listLiveStagingCandidates(ctx, true);
         const dependencies = await this.repository.listDependencies(
           live.map(({ id }) => id),
@@ -880,7 +895,7 @@ export class ReleaseBusV2Service {
             )
         );
         if (dependent)
-          throw new Error(
+          throw new ReleaseBusV2StagingTransitionConflictError(
             `Candidate ${dependent.candidate_id} still requires this exact staging candidate`
           );
         if (
@@ -897,7 +912,9 @@ export class ReleaseBusV2Service {
             ctx
           ))
         )
-          throw new Error('Candidate changed during staging lifecycle request');
+          throw new ReleaseBusV2StagingTransitionConflictError(
+            'Candidate changed during staging lifecycle request'
+          );
         await this.repository.appendEvent(
           {
             candidateId: candidate.id,

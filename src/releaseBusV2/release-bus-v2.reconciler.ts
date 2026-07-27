@@ -611,6 +611,11 @@ export function candidateUnavailableForTrainUpdate(
   claimed: ReleaseBusV2CandidateRecord
 ): boolean {
   if (current.status === 'CANCELLED') return true;
+  if (
+    claimed.current_train_id &&
+    current.current_train_id !== claimed.current_train_id
+  )
+    return true;
   return (
     current.status === 'SUPERSEDED' &&
     (!claimed.current_train_id ||
@@ -2473,6 +2478,13 @@ export class ReleaseBusV2Reconciler {
       {}
     );
     const baseline = await this.cumulativeRollbackBaseline(context);
+    const statusCandidates = stagingStatusCandidates(context);
+    const terminalCandidateStatus: ReleaseBusV2CandidateStatus = [
+      'INFRASTRUCTURE',
+      'CONTROL_PLANE'
+    ].includes(train.failure_class ?? '')
+      ? 'READY_FOR_STAGING'
+      : 'FAILED';
     const commitResult =
       await this.repository.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -2511,6 +2523,12 @@ export class ReleaseBusV2Reconciler {
         }
       );
     if (commitResult === 'SUPERSEDED') {
+      await this.updateCandidateStatuses(
+        statusCandidates,
+        terminalCandidateStatus,
+        null,
+        false
+      );
       const current = await this.repository.findTrain(train.id, {});
       if (current && !TERMINAL_TRAINS.has(current.status))
         await this.transitionTrain(current, {
@@ -2536,13 +2554,6 @@ export class ReleaseBusV2Reconciler {
       await this.releaseTerminalEnvironmentLocks();
       return;
     }
-    const statusCandidates = stagingStatusCandidates(context);
-    const terminalCandidateStatus: ReleaseBusV2CandidateStatus = [
-      'INFRASTRUCTURE',
-      'CONTROL_PLANE'
-    ].includes(train.failure_class ?? '')
-      ? 'READY_FOR_STAGING'
-      : 'FAILED';
     await this.updateCandidateStatuses(
       statusCandidates,
       terminalCandidateStatus,
@@ -2585,53 +2596,161 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext,
     message: string
   ): Promise<void> {
-    const state = await this.repository.getStagingState({});
-    if (
-      state.current_manifest_id === context.train.staging_baseline_manifest_id
-    )
-      await this.repository.updateStagingState(
-        state.row_version,
-        {
-          status: 'ROLLBACK_FAILED',
-          currentManifestId: null,
-          lastValidatedManifestId: state.last_validated_manifest_id,
-          frontendSha: null,
-          backendSha: null,
-          frontendStagingRefSha: state.frontend_staging_ref_sha,
-          backendStagingRefSha: state.backend_staging_ref_sha,
-          cleanMain: false,
-          lastTransitionTrainId: context.train.id
-        },
-        {}
-      );
-    const current = await this.repository.findTrain(context.train.id, {});
-    if (current)
-      await this.transitionTrain(current, {
-        status: 'STAGING_ROLLBACK_FAILED',
-        failureClass: 'CONTROL_PLANE',
-        failureMessage: message,
-        recoveryMessage:
-          'Rollback could not be proven. Current staging membership is unknown; keep STAGING paused and use the documented serialized manual recovery',
-        completedAt: Date.now()
-      });
-    await this.service.setPaused(
-      'STAGING',
-      true,
-      `Cumulative staging rollback failed in train ${context.train.id}: ${message}`,
-      'release-bus-v2'
-    );
-    await this.repository.appendEvent(
-      {
-        trainId: context.train.id,
-        eventType: 'CUMULATIVE_STAGING_ROLLBACK_FAILED',
-        actor: 'release-bus-v2',
-        payload: {
-          source_manifest_id: context.train.staging_baseline_manifest_id,
-          failure_message: message,
-          recover_with: 'SERIALIZED_MANUAL_STAGING_RECOVERY'
+    await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        const state = await this.repository.getStagingState(ctx, true);
+        const train = await this.repository.findTrain(
+          context.train.id,
+          ctx,
+          true
+        );
+        if (!train) throw new Error('Rollback train disappeared');
+        const stateAlreadyMarked =
+          state.status === 'ROLLBACK_FAILED' &&
+          state.last_transition_train_id === context.train.id;
+        const stateSuperseded =
+          !stateAlreadyMarked &&
+          state.current_manifest_id !==
+            context.train.staging_baseline_manifest_id;
+        if (stateSuperseded) {
+          if (TERMINAL_TRAINS.has(train.status)) return;
+          const recoveryMessage =
+            'A newer authoritative staging transition superseded this failed rollback callback; current live state was not changed or paused';
+          if (
+            !(await this.repository.updateTrain(
+              train.id,
+              train.row_version,
+              {
+                status: 'FAILED',
+                failureClass: context.train.failure_class,
+                failureMessage: message,
+                recoveryMessage,
+                completedAt: Date.now()
+              },
+              ctx
+            ))
+          )
+            throw new Error(
+              'Rollback train changed while recording a superseded failure'
+            );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TRAIN_FAILED',
+              actor: 'release-bus-v2',
+              payload: {
+                previous_status: train.status,
+                failure_class: context.train.failure_class,
+                recovery_message: recoveryMessage
+              }
+            },
+            ctx
+          );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'CUMULATIVE_STAGING_ROLLBACK_FAILURE_SUPERSEDED',
+              actor: 'release-bus-v2',
+              payload: {
+                source_manifest_id: context.train.staging_baseline_manifest_id,
+                failure_message: message
+              }
+            },
+            ctx
+          );
+          return;
         }
-      },
-      {}
+        if (!TERMINAL_TRAINS.has(train.status)) {
+          if (
+            !stateAlreadyMarked &&
+            !(await this.repository.updateStagingState(
+              state.row_version,
+              {
+                status: 'ROLLBACK_FAILED',
+                currentManifestId: null,
+                lastValidatedManifestId: state.last_validated_manifest_id,
+                frontendSha: null,
+                backendSha: null,
+                frontendStagingRefSha: state.frontend_staging_ref_sha,
+                backendStagingRefSha: state.backend_staging_ref_sha,
+                cleanMain: false,
+                lastTransitionTrainId: train.id
+              },
+              ctx
+            ))
+          )
+            throw new Error(
+              'Authoritative staging state changed while recording rollback failure'
+            );
+          const recoveryMessage =
+            'Rollback could not be proven. Current staging membership is unknown; keep STAGING paused and use the documented serialized manual recovery';
+          if (
+            !(await this.repository.updateTrain(
+              train.id,
+              train.row_version,
+              {
+                status: 'STAGING_ROLLBACK_FAILED',
+                failureClass: 'CONTROL_PLANE',
+                failureMessage: message,
+                recoveryMessage,
+                completedAt: Date.now()
+              },
+              ctx
+            ))
+          )
+            throw new Error(
+              'Rollback train changed while recording its terminal failure'
+            );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TRAIN_STAGING_ROLLBACK_FAILED',
+              actor: 'release-bus-v2',
+              payload: {
+                previous_status: train.status,
+                failure_class: 'CONTROL_PLANE',
+                recovery_message: recoveryMessage
+              }
+            },
+            ctx
+          );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'CUMULATIVE_STAGING_ROLLBACK_FAILED',
+              actor: 'release-bus-v2',
+              payload: {
+                source_manifest_id: context.train.staging_baseline_manifest_id,
+                failure_message: message,
+                recover_with: 'SERIALIZED_MANUAL_STAGING_RECOVERY'
+              }
+            },
+            ctx
+          );
+        }
+        const controls = await this.repository.listControls(ctx);
+        if (
+          !controls.some(({ scope, paused }) => scope === 'STAGING' && paused)
+        ) {
+          const reason = `Cumulative staging rollback failed in train ${train.id}: ${message}`;
+          await this.repository.setControl(
+            'STAGING',
+            true,
+            reason,
+            'release-bus-v2',
+            ctx
+          );
+          await this.repository.appendEvent(
+            {
+              eventType: 'BUS_PAUSED',
+              actor: 'release-bus-v2',
+              payload: { scope: 'STAGING', reason }
+            },
+            ctx
+          );
+        }
+      }
     );
     await this.releaseTerminalEnvironmentLocks();
   }

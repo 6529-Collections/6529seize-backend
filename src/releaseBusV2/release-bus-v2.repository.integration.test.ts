@@ -790,6 +790,141 @@ describeWithSeed(
       ]);
     });
 
+    it('atomically removes every candidate in a multi-candidate transition set', async () => {
+      const candidates = await Promise.all([
+        repository.createCandidate(
+          {
+            repository: 'frontend',
+            prNumber: 203,
+            branchName: 'feature/remove-first',
+            headSha: SHA_A,
+            requestedBy: 'integration',
+            deployPlan: null,
+            prEvidence: null
+          },
+          {}
+        ),
+        repository.createCandidate(
+          {
+            repository: 'backend',
+            prNumber: 204,
+            branchName: 'feature/remove-second',
+            headSha: SHA_C,
+            requestedBy: 'integration',
+            deployPlan: { units: ['api'], edges: [] },
+            prEvidence: null
+          },
+          {}
+        )
+      ]);
+      const admittedManifest = await repository.createManifest(
+        {
+          train_id: 'multi-removal-admit',
+          lane: 'STAGING',
+          identity_sha256: '1'.repeat(64),
+          status: 'STAGING_VALIDATED',
+          frontend_sha: SHA_A,
+          backend_sha: SHA_C,
+          frontend_artifact_digest: null,
+          backend_artifact_digest: null,
+          e2e_run_id: 'multi-removal-admit-e2e',
+          manifest_json: {
+            schema_version: 2,
+            train_id: 'multi-removal-admit'
+          },
+          deployed_at: 1,
+          validated_at: 2
+        },
+        {}
+      );
+      await repository.executeNativeQueriesInTransaction(async (connection) => {
+        const state = await repository.getStagingState({ connection }, true);
+        await repository.commitValidatedStaging(
+          {
+            trainId: 'multi-removal-admit',
+            expectedStateVersion: state.row_version,
+            manifestId: admittedManifest.id,
+            frontendSha: SHA_A,
+            backendSha: SHA_C,
+            frontendStagingRefSha: SHA_A,
+            backendStagingRefSha: SHA_C,
+            admittedCandidateIds: candidates.map(({ id }) => id),
+            removedCandidateIds: [],
+            newCandidateIds: candidates.map(({ id }) => id)
+          },
+          { connection }
+        );
+      });
+      for (const candidate of candidates) {
+        const live = await repository.findCandidateById(candidate.id, {});
+        expect(live).not.toBeNull();
+        await repository.updateCandidate(
+          live!.id,
+          live!.row_version,
+          {
+            status: live!.status,
+            stagingTransitionRequest: 'REMOVE',
+            stagingTransitionRequestedAt: 3,
+            stagingTransitionRequestedBy: 'integration',
+            stagingTransitionReason: 'multi removal',
+            holdReason: 'pending removal'
+          },
+          {}
+        );
+      }
+      const removedManifest = await repository.createManifest(
+        {
+          train_id: 'multi-removal-complete',
+          lane: 'STAGING',
+          identity_sha256: '2'.repeat(64),
+          status: 'STAGING_VALIDATED',
+          frontend_sha: SHA_B,
+          backend_sha: SHA_B,
+          frontend_artifact_digest: null,
+          backend_artifact_digest: null,
+          e2e_run_id: 'multi-removal-complete-e2e',
+          manifest_json: {
+            schema_version: 2,
+            train_id: 'multi-removal-complete'
+          },
+          deployed_at: 3,
+          validated_at: 4
+        },
+        {}
+      );
+      await repository.executeNativeQueriesInTransaction(async (connection) => {
+        const state = await repository.getStagingState({ connection }, true);
+        await repository.commitValidatedStaging(
+          {
+            trainId: 'multi-removal-complete',
+            expectedStateVersion: state.row_version,
+            manifestId: removedManifest.id,
+            frontendSha: SHA_B,
+            backendSha: SHA_B,
+            frontendStagingRefSha: SHA_B,
+            backendStagingRefSha: SHA_B,
+            admittedCandidateIds: [],
+            removedCandidateIds: candidates.map(({ id }) => id),
+            newCandidateIds: []
+          },
+          { connection }
+        );
+      });
+
+      for (const candidate of candidates)
+        await expect(
+          repository.findCandidateById(candidate.id, {})
+        ).resolves.toEqual(
+          expect.objectContaining({
+            staging_live_state: 'NOT_LIVE',
+            staging_live_manifest_id: null,
+            staging_transition_request: null,
+            staging_transition_reason: null,
+            hold_reason: null
+          })
+        );
+    });
+
     it('rejects ambiguous bootstrap evidence for the same exact staging refs', async () => {
       for (const [suffix, validatedAt] of [
         ['a', 2],
