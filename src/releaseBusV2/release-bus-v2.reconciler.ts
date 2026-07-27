@@ -1406,13 +1406,13 @@ export class ReleaseBusV2Reconciler {
         ? candidates[0]
         : null;
     const releaseFastCandidate = releaseParentSha ? null : fastCandidate;
-    let composedSha =
-      storedComposedSha ??
-      (releaseParentSha
-        ? null
-        : candidates.length === 0
+    let initialComposedSha: string | null | undefined = null;
+    if (!releaseParentSha)
+      initialComposedSha =
+        candidates.length === 0
           ? baseSha
-          : prEvidence(releaseFastCandidate ?? candidates[0])?.merge_sha);
+          : prEvidence(releaseFastCandidate ?? candidates[0])?.merge_sha;
+    let composedSha = storedComposedSha ?? initialComposedSha;
     if (
       !storedComposedSha &&
       !releaseFastCandidate &&
@@ -3278,29 +3278,20 @@ export class ReleaseBusV2Reconciler {
       stagingDeploymentCandidates(context, 'frontend').length > 0;
     const hasBackend =
       stagingDeploymentCandidates(context, 'backend').length > 0;
-    if (
-      train.lane === 'STAGING' &&
-      train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
-    ) {
-      const frontendBase = cumulativeStagingReleaseParent(context, 'frontend');
-      const backendBase = cumulativeStagingReleaseParent(context, 'backend');
-      if (
-        (hasFrontend &&
-          ![frontendBase, frontendTarget].includes(frontendStaging)) ||
-        (!hasFrontend && frontendStaging !== frontendTarget)
-      )
-        throw new StagingRefMovedError(
-          `frontend 1a-staging moved outside train ${train.id}'s exact ${frontendBase} -> ${frontendTarget} release intent`
-        );
-      if (
-        (hasBackend &&
-          ![backendBase, backendTarget].includes(backendStaging)) ||
-        (!hasBackend && backendStaging !== backendTarget)
-      )
-        throw new StagingRefMovedError(
-          `backend 1a-staging moved outside train ${train.id}'s exact ${backendBase} -> ${backendTarget} release intent`
-        );
-    }
+    this.assertCumulativeStagingRefIntent(
+      context,
+      'frontend',
+      hasFrontend,
+      frontendStaging,
+      frontendTarget
+    );
+    this.assertCumulativeStagingRefIntent(
+      context,
+      'backend',
+      hasBackend,
+      backendStaging,
+      backendTarget
+    );
     if (train.lane === 'PRODUCTION_QUALIFICATION') {
       // Candidate-bearing repositories are about to be deployed to their
       // composed targets. Only unchanged counterparts must already match the
@@ -3320,6 +3311,29 @@ export class ReleaseBusV2Reconciler {
       frontendFromExistingStaging: train.lane === 'STAGING' && !hasFrontend,
       backendFromExistingStaging: train.lane === 'STAGING' && !hasBackend
     };
+  }
+
+  private assertCumulativeStagingRefIntent(
+    context: TrainContext,
+    repository: ReleaseBusV2Repository,
+    affected: boolean,
+    stagingSha: string,
+    targetSha: string
+  ): void {
+    const train = context.train;
+    if (
+      train.lane !== 'STAGING' ||
+      train.staging_policy !== 'CUMULATIVE_ADMITTED_SET_V1'
+    )
+      return;
+    const baseSha = cumulativeStagingReleaseParent(context, repository);
+    const matchesIntent = affected
+      ? [baseSha, targetSha].includes(stagingSha)
+      : stagingSha === targetSha;
+    if (!matchesIntent)
+      throw new StagingRefMovedError(
+        `${repository} 1a-staging moved outside train ${train.id}'s exact ${baseSha} -> ${targetSha} release intent`
+      );
   }
 
   private async advanceCumulativeStagingRefs(
@@ -3373,7 +3387,7 @@ export class ReleaseBusV2Reconciler {
       train.id,
       `advance-staging:${phase}:${repository}`
     );
-    let operation = await this.repository.getOrCreateOperation(
+    const operation = await this.repository.getOrCreateOperation(
       {
         idempotencyKey: key,
         trainId: train.id,
@@ -3392,94 +3406,150 @@ export class ReleaseBusV2Reconciler {
       },
       {}
     );
-    if (operation.status === 'SUCCEEDED') {
-      const current = await releaseBusGitHubApp.resolveRef(
+    if (operation.status === 'SUCCEEDED')
+      return this.verifyCompletedStagingRef(repository, targetSha, phase);
+    if (observedSha !== baseSha && observedSha !== targetSha)
+      return this.rejectStagingRefDrift(
+        operation,
+        repository,
+        baseSha,
+        observedSha,
+        phase,
+        'before'
+      );
+    if (observedSha === baseSha)
+      await this.attemptStagingRefCas(
+        operation,
+        repository,
+        baseSha,
+        targetSha,
+        phase
+      );
+    await this.recordStagingRefSuccess(
+      operation,
+      repository,
+      baseSha,
+      targetSha,
+      phase
+    );
+  }
+
+  private async verifyCompletedStagingRef(
+    repository: ReleaseBusV2Repository,
+    targetSha: string,
+    phase: 'release' | 'rollback'
+  ): Promise<void> {
+    const current = await releaseBusGitHubApp.resolveRef(
+      repository,
+      '1a-staging'
+    );
+    if (current !== targetSha)
+      throw new StagingRefMovedError(
+        `${repository} 1a-staging moved after exact ${phase} CAS from ${targetSha} to ${current}`
+      );
+  }
+
+  private async terminalizeStagingRefOperation(
+    operation: ReleaseBusV2OperationRecord,
+    repository: ReleaseBusV2Repository,
+    status: 'CANCELLED' | 'FAILED',
+    failureClass: ReleaseBusV2FailureClass,
+    failureMessage: string
+  ): Promise<void> {
+    if (
+      !(await this.repository.updateOperation(
+        operation.id,
+        operation.row_version,
+        {
+          status,
+          failureClass,
+          failureMessage,
+          completedAt: Date.now()
+        },
+        {}
+      ))
+    )
+      throw new Error(
+        `${repository} staging-ref operation changed concurrently`
+      );
+  }
+
+  private async rejectStagingRefDrift(
+    operation: ReleaseBusV2OperationRecord,
+    repository: ReleaseBusV2Repository,
+    baseSha: string,
+    observedSha: string | null,
+    phase: 'release' | 'rollback',
+    timing: 'before' | 'during'
+  ): Promise<never> {
+    if (!TERMINAL_OPERATIONS.has(operation.status))
+      await this.terminalizeStagingRefOperation(
+        operation,
+        repository,
+        'CANCELLED',
+        'INTERACTION',
+        `${repository} 1a-staging moved to ${observedSha} ${timing} exact ${phase} CAS`
+      );
+    throw new StagingRefMovedError(
+      `${repository} 1a-staging moved from ${baseSha} to ${observedSha} ${timing} exact ${phase} CAS`
+    );
+  }
+
+  private async attemptStagingRefCas(
+    operation: ReleaseBusV2OperationRecord,
+    repository: ReleaseBusV2Repository,
+    baseSha: string,
+    targetSha: string,
+    phase: 'release' | 'rollback'
+  ): Promise<void> {
+    try {
+      await releaseBusGitHubApp.updateRef(
+        repository,
+        '1a-staging',
+        baseSha,
+        targetSha
+      );
+      return;
+    } catch (error) {
+      const afterFailure = await releaseBusGitHubApp.resolveRef(
         repository,
         '1a-staging'
       );
-      if (current !== targetSha)
-        throw new StagingRefMovedError(
-          `${repository} 1a-staging moved after exact ${phase} CAS from ${targetSha} to ${current}`
+      if (afterFailure === targetSha) return;
+      if (afterFailure !== baseSha)
+        return this.rejectStagingRefDrift(
+          operation,
+          repository,
+          baseSha,
+          afterFailure,
+          phase,
+          'during'
         );
-      return;
-    }
-    if (observedSha !== baseSha && observedSha !== targetSha) {
-      if (!TERMINAL_OPERATIONS.has(operation.status))
-        await this.repository.updateOperation(
-          operation.id,
-          operation.row_version,
-          {
-            status: 'CANCELLED',
-            failureClass: 'INTERACTION',
-            failureMessage: `${repository} 1a-staging moved to ${observedSha} before exact ${phase} CAS`,
-            completedAt: Date.now()
-          },
-          {}
-        );
+      if (isGitHubInfrastructureError(error)) throw error;
+      const message =
+        error instanceof Error
+          ? error.message
+          : `Failed to advance ${repository} 1a-staging`;
+      await this.terminalizeStagingRefOperation(
+        operation,
+        repository,
+        'FAILED',
+        'CONTROL_PLANE',
+        message
+      );
       throw new StagingRefMovedError(
-        `${repository} 1a-staging moved from ${baseSha} to ${observedSha} before exact ${phase} CAS`
+        `${repository} exact ${phase} CAS was rejected while 1a-staging remained ${baseSha}: ${message}`
       );
     }
-    if (observedSha === baseSha) {
-      try {
-        await releaseBusGitHubApp.updateRef(
-          repository,
-          '1a-staging',
-          baseSha,
-          targetSha
-        );
-      } catch (error) {
-        const afterFailure = await releaseBusGitHubApp.resolveRef(
-          repository,
-          '1a-staging'
-        );
-        if (afterFailure !== targetSha) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : `Failed to advance ${repository} 1a-staging`;
-          if (afterFailure !== baseSha) {
-            if (
-              !(await this.repository.updateOperation(
-                operation.id,
-                operation.row_version,
-                {
-                  status: 'CANCELLED',
-                  failureClass: 'INTERACTION',
-                  failureMessage: `${repository} 1a-staging moved to ${afterFailure} during exact ${phase} CAS`,
-                  completedAt: Date.now()
-                },
-                {}
-              ))
-            )
-              throw new Error(
-                `${repository} staging-ref operation changed concurrently`
-              );
-            throw new StagingRefMovedError(
-              `${repository} 1a-staging moved from ${baseSha} to ${afterFailure} during exact ${phase} CAS`
-            );
-          }
-          if (isGitHubInfrastructureError(error)) throw error;
-          if (
-            !(await this.repository.updateOperation(
-              operation.id,
-              operation.row_version,
-              {
-                status: 'FAILED',
-                failureClass: 'CONTROL_PLANE',
-                failureMessage: message,
-                completedAt: Date.now()
-              },
-              {}
-            ))
-          )
-            throw new Error(
-              `${repository} staging-ref operation changed concurrently`
-            );
-          throw error;
-        }
-      }
-    }
+  }
+
+  private async recordStagingRefSuccess(
+    operation: ReleaseBusV2OperationRecord,
+    repository: ReleaseBusV2Repository,
+    baseSha: string,
+    targetSha: string,
+    phase: 'release' | 'rollback'
+  ): Promise<void> {
     if (
       !(await this.repository.updateOperation(
         operation.id,
@@ -3501,7 +3571,6 @@ export class ReleaseBusV2Reconciler {
       throw new Error(
         `${repository} staging-ref operation changed concurrently`
       );
-    operation = (await this.repository.findOperation(key, {})) ?? operation;
   }
 
   private async captureStagingIdleSnapshot(fence?: {
@@ -4498,44 +4567,12 @@ export class ReleaseBusV2Reconciler {
     const manifest = await this.repository.findManifest(train.manifest_id, {});
     if (!manifest)
       throw new Error('Exact release manifest does not exist before E2E');
-    if (
-      manifest.frontend_sha !== train.frontend_composed_sha ||
-      manifest.backend_sha !== train.backend_composed_sha ||
-      manifest.frontend_artifact_digest !==
-        (stagingDeploymentCandidates(context, 'frontend').length
-          ? train.frontend_artifact_digest
-          : null) ||
-      manifest.backend_artifact_digest !==
-        (stagingDeploymentCandidates(context, 'backend').length
-          ? train.backend_artifact_digest
-          : null)
-    )
-      throw new Error('E2E manifest does not match the exact train release');
+    this.assertE2EManifestMatchesTrain(context, manifest);
+    if (environment === 'staging')
+      await this.assertCumulativeStagingE2ERefParity(train, manifest);
     const releaseBranch = releaseBusV2Branch(train, 'frontend');
     let exactSourceRef = 'main';
     if (environment === 'staging') {
-      if (
-        train.lane === 'STAGING' &&
-        train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
-      ) {
-        const identity = parseStoredJson<{
-          frontend_staging_ref_sha?: unknown;
-          backend_staging_ref_sha?: unknown;
-        }>(manifest.manifest_json);
-        const [frontendStaging, backendStaging] = await Promise.all([
-          releaseBusGitHubApp.resolveRefIfExists('frontend', '1a-staging'),
-          releaseBusGitHubApp.resolveRefIfExists('backend', '1a-staging')
-        ]);
-        if (
-          identity?.frontend_staging_ref_sha !== manifest.frontend_sha ||
-          identity.backend_staging_ref_sha !== manifest.backend_sha ||
-          frontendStaging !== manifest.frontend_sha ||
-          backendStaging !== manifest.backend_sha
-        )
-          throw new StagingRefMovedError(
-            'E2E refused a staging manifest whose 1a-staging refs no longer match its exact release SHAs'
-          );
-      }
       const sourceRefs = [releaseBranch, '1a-staging', 'main'];
       const sourceShas = await Promise.all(
         sourceRefs.map((ref) =>
@@ -4577,6 +4614,54 @@ export class ReleaseBusV2Reconciler {
       maxAttempts: 2
     };
     return releaseBusV2Operations.reconcileWorkflow(spec);
+  }
+
+  private assertE2EManifestMatchesTrain(
+    context: TrainContext,
+    manifest: ReleaseBusV2ManifestRecord
+  ): void {
+    const train = context.train;
+    if (
+      manifest.frontend_sha !== train.frontend_composed_sha ||
+      manifest.backend_sha !== train.backend_composed_sha ||
+      manifest.frontend_artifact_digest !==
+        (stagingDeploymentCandidates(context, 'frontend').length
+          ? train.frontend_artifact_digest
+          : null) ||
+      manifest.backend_artifact_digest !==
+        (stagingDeploymentCandidates(context, 'backend').length
+          ? train.backend_artifact_digest
+          : null)
+    )
+      throw new Error('E2E manifest does not match the exact train release');
+  }
+
+  private async assertCumulativeStagingE2ERefParity(
+    train: ReleaseBusV2TrainRecord,
+    manifest: ReleaseBusV2ManifestRecord
+  ): Promise<void> {
+    if (
+      train.lane !== 'STAGING' ||
+      train.staging_policy !== 'CUMULATIVE_ADMITTED_SET_V1'
+    )
+      return;
+    const identity = parseStoredJson<{
+      frontend_staging_ref_sha?: unknown;
+      backend_staging_ref_sha?: unknown;
+    }>(manifest.manifest_json);
+    const [frontendStaging, backendStaging] = await Promise.all([
+      releaseBusGitHubApp.resolveRefIfExists('frontend', '1a-staging'),
+      releaseBusGitHubApp.resolveRefIfExists('backend', '1a-staging')
+    ]);
+    if (
+      identity?.frontend_staging_ref_sha !== manifest.frontend_sha ||
+      identity.backend_staging_ref_sha !== manifest.backend_sha ||
+      frontendStaging !== manifest.frontend_sha ||
+      backendStaging !== manifest.backend_sha
+    )
+      throw new StagingRefMovedError(
+        'E2E refused a staging manifest whose 1a-staging refs no longer match its exact release SHAs'
+      );
   }
 
   private async artifactSource(trainId: string): Promise<ArtifactSource> {
@@ -4670,7 +4755,10 @@ export class ReleaseBusV2Reconciler {
       // either their composed tree or their unchanged base tree.
       frontend_sha: train.frontend_composed_sha,
       backend_sha: train.backend_composed_sha,
-      ...(stagingRefs ?? {}),
+      frontend_staging_ref_sha:
+        stagingRefs?.frontend_staging_ref_sha ?? undefined,
+      backend_staging_ref_sha:
+        stagingRefs?.backend_staging_ref_sha ?? undefined,
       frontend_artifact_digest: hasFrontend
         ? train.frontend_artifact_digest
         : null,
