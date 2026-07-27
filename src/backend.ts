@@ -84,11 +84,18 @@ async function runRequestedLoopIfPresent() {
 async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await dbMigrationsLoop.handler(
-    undefined as any,
-    undefined as any,
-    undefined as any
-  );
+  const requestedLoopName = getRequestedLoopName();
+  if (requestedLoopName === 'customReplayLoop') {
+    logger.info(
+      `[SKIPPING DB MIGRATIONS FOR SURGICAL LOOP] [${requestedLoopName}]`
+    );
+  } else {
+    await dbMigrationsLoop.handler(
+      undefined as any,
+      undefined as any,
+      undefined as any
+    );
+  }
 
   await runRequestedLoopIfPresent();
 
