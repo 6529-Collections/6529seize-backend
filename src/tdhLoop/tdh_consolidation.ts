@@ -258,13 +258,16 @@ export const consolidateMissingWallets = async (
 export const consolidateAndPersistTDH = async (
   block: number,
   blockTimestamp: Date,
-  startingWallets?: string[]
+  startingWallets?: string[],
+  currentConsolidatedTdh?: ConsolidatedTDH[]
 ): Promise<ConsolidatedTDH[]> => {
-  const { adjustedSeasons, consolidatedTdh } = await consolidateTDH(
-    block,
-    blockTimestamp,
-    startingWallets
-  );
+  const { adjustedSeasons, consolidatedTdh, consolidationKeysToReplace } =
+    await consolidateTDH(
+      block,
+      blockTimestamp,
+      startingWallets,
+      currentConsolidatedTdh
+    );
   const memesTdh = (await calculateMemesTdh(
     adjustedSeasons,
     consolidatedTdh,
@@ -273,12 +276,14 @@ export const consolidateAndPersistTDH = async (
 
   const tdhEditions = await calculateTdhEditions(consolidatedTdh, true);
 
+  assertNoOverlappingConsolidationWallets(consolidatedTdh);
   await persistConsolidatedTDH(
     block,
     consolidatedTdh,
     memesTdh,
     tdhEditions,
-    startingWallets
+    startingWallets,
+    consolidationKeysToReplace
   );
   await updateNftTDH(consolidatedTdh, startingWallets);
   await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
@@ -289,10 +294,12 @@ export const consolidateAndPersistTDH = async (
 export const consolidateTDH = async (
   block: number,
   blockTimestamp: Date,
-  startingWallets?: string[]
+  startingWallets?: string[],
+  currentConsolidatedTdh?: ConsolidatedTDH[]
 ): Promise<{
   adjustedSeasons: MemesSeason[];
   consolidatedTdh: ConsolidatedTDH[];
+  consolidationKeysToReplace?: string[];
 }> => {
   const tdh: TDHENS[] = await fetchAllTDH(block, startingWallets);
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
@@ -329,6 +336,7 @@ export const consolidateTDH = async (
   }
 
   let rankedTdh: ConsolidatedTDH[];
+  let consolidationKeysToReplace: string[] | undefined;
   if (startingWallets) {
     const startingWalletsSet = new Set(
       startingWallets.filter(Boolean).map((sw) => sw.toLowerCase())
@@ -337,10 +345,16 @@ export const consolidateTDH = async (
       t.wallets.some(
         (tw: string) => !!tw && startingWalletsSet.has(tw.toLowerCase())
       );
-    const allCurrentTdh = await fetchAllConsolidatedTdh();
+    const allCurrentTdh =
+      currentConsolidatedTdh ?? (await fetchAllConsolidatedTdh());
+    const rowsToReplace = allCurrentTdh.filter(containsStartingWallet);
+    consolidationKeysToReplace = rowsToReplace.map(
+      (row) => row.consolidation_key
+    );
     const allTdh = allCurrentTdh
       .filter((t: ConsolidatedTDH) => !containsStartingWallet(t))
       .concat(consolidatedBoostedTdh);
+    assertNoOverlappingConsolidationWallets(allTdh);
     const allRankedTdh = await calculateRanks(
       allGradientsTDH,
       allNextgenTDH,
@@ -364,9 +378,35 @@ export const consolidateTDH = async (
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
   return {
     adjustedSeasons: ADJUSTED_SEASONS,
-    consolidatedTdh: rankedTdh
+    consolidatedTdh: rankedTdh,
+    consolidationKeysToReplace
   };
 };
+
+export function assertNoOverlappingConsolidationWallets(
+  consolidations: ConsolidatedTDH[]
+): void {
+  const consolidationByWallet = new Map<string, string>();
+  for (const consolidation of consolidations) {
+    const wallets = Array.isArray(consolidation.wallets)
+      ? consolidation.wallets
+      : consolidation.consolidation_key.split('-');
+    for (const rawWallet of wallets) {
+      const wallet = rawWallet.toLowerCase();
+      const existingConsolidation = consolidationByWallet.get(wallet);
+      if (
+        existingConsolidation &&
+        existingConsolidation !== consolidation.consolidation_key
+      ) {
+        throw new Error(
+          `Wallet ${wallet} appears in multiple TDH consolidations: ` +
+            `${existingConsolidation} and ${consolidation.consolidation_key}`
+        );
+      }
+      consolidationByWallet.set(wallet, consolidation.consolidation_key);
+    }
+  }
+}
 
 export function consolidateCards(
   consolidationTokens: TokenTDH[],

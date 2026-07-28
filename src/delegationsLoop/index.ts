@@ -1,10 +1,8 @@
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import { USE_CASE_PRIMARY_ADDRESS } from '@/constants';
 import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  USE_CASE_PRIMARY_ADDRESS
-} from '@/constants';
-import {
+  fetchAllConsolidatedTdh,
   fetchLatestNftDelegationBlock,
   persistConsolidations,
   persistDelegations,
@@ -50,11 +48,11 @@ import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
-import { sqlExecutor } from '../sql-executor';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { Time } from '../time';
+import { getAffectedWallets } from './reconsolidation';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -171,13 +169,11 @@ async function findNewDelegations(
 }
 
 async function reconsolidateWallets(events: ConsolidationEvent[]) {
-  const wallets = new Set<string>();
-  events.forEach((c) => {
-    wallets.add(c.wallet1.toLowerCase());
-    wallets.add(c.wallet2.toLowerCase());
-  });
-
-  const affectedWallets = await getAffectedWallets(wallets);
+  const currentConsolidations = await fetchAllConsolidatedTdh();
+  const affectedWallets = await getAffectedWallets(
+    events,
+    currentConsolidations
+  );
 
   if (affectedWallets.size > 0) {
     logger.info(
@@ -191,7 +187,12 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
       lastTDHCalc,
       walletsArray
     );
-    await consolidateAndPersistTDH(block, blockTimestamp, walletsArray);
+    await consolidateAndPersistTDH(
+      block,
+      blockTimestamp,
+      walletsArray,
+      currentConsolidations
+    );
     await consolidateNftOwners(affectedWallets);
     await consolidateOwnerBalances(affectedWallets);
     await consolidateActivity(affectedWallets);
@@ -199,31 +200,6 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }
-}
-
-async function getConsolidationsContainingAddress(
-  wallets: Set<string>
-): Promise<ConsolidatedTDH[]> {
-  const likeConditions = Array.from(wallets)
-    .map((wallet) => `consolidation_key LIKE '%${wallet.toLowerCase()}%'`)
-    .join(' OR ');
-
-  const query = `
-    SELECT * FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-    WHERE ${likeConditions}
-  `;
-
-  return await sqlExecutor.execute<ConsolidatedTDH>(query);
-}
-
-async function getAffectedWallets(wallets: Set<string>) {
-  const allConsolidations = await getConsolidationsContainingAddress(wallets);
-  allConsolidations.map((c) => {
-    const cWallets = JSON.parse(c.wallets);
-    cWallets.forEach((w: string) => wallets.add(w.toLowerCase()));
-  });
-
-  return wallets;
 }
 
 async function updatePrimaryAddresses(events: DelegationEvent[]) {

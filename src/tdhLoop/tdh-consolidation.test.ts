@@ -6,10 +6,11 @@ import {
   retrieveConsolidationsForWallets,
   retrieveWalletConsolidations
 } from '@/db';
-import { TDHENS } from '@/entities/ITDH';
+import { ConsolidatedTDH, TDHENS } from '@/entities/ITDH';
 import { equalIgnoreCase } from '@/strings';
 import { createMemesData, getGenesisAndNaka } from './tdh';
 import {
+  assertNoOverlappingConsolidationWallets,
   consolidateCards,
   consolidateMissingWallets,
   consolidateTDHForWallets
@@ -345,7 +346,91 @@ describe('consolidateTDHForWallets', () => {
       { numRuns: 50 }
     );
   });
+
+  it('rebuilds restored A-B TDH completely and leaves C standalone', async () => {
+    const a = '0x3c8a67ff9d751c3cce50c9acf617959396daacd3';
+    const b = '0xd7342ea20a5afbf24352b5ca61e09844167914cb';
+    const c = '0x145717c6af8f36060344f3725e6e5911ca4e0921';
+    const abKey = buildConsolidationKey([a, b]);
+    const entries = [
+      { wallet: a, tdh: 3000 },
+      { wallet: b, tdh: 2178 },
+      { wallet: c, tdh: 700 }
+    ].map(
+      ({ wallet, tdh }) =>
+        ({
+          wallet,
+          block: 99,
+          tdh,
+          tdh__raw: tdh,
+          balance: 1,
+          memes_tdh: tdh,
+          memes_tdh__raw: tdh,
+          memes_balance: 1,
+          gradients_tdh: 0,
+          gradients_tdh__raw: 0,
+          gradients_balance: 0,
+          nextgen_tdh: 0,
+          nextgen_tdh__raw: 0,
+          nextgen_balance: 0,
+          memes: [],
+          gradients: [],
+          nextgen: []
+        }) as unknown as TDHENS
+    );
+    mockedRetrieveConsolidationsForWallets.mockResolvedValue({
+      [a]: abKey,
+      [b]: abKey,
+      [c]: c
+    });
+    mockedFetchConsolidationDisplays.mockResolvedValue({
+      [abKey]: 'A - B',
+      [c]: 'C'
+    });
+
+    const result = await consolidateTDHForWallets(entries, 100);
+
+    expect(
+      result.consolidatedTdh.map((row) => ({
+        key: row.consolidation_key,
+        tdh: row.tdh
+      }))
+    ).toEqual([
+      { key: abKey, tdh: 5178 },
+      { key: c, tdh: 700 }
+    ]);
+    expect(
+      result.consolidatedTdh.some((row) => row.consolidation_key === b)
+    ).toBe(false);
+  });
 });
+
+describe('assertNoOverlappingConsolidationWallets', () => {
+  it('accepts the restored A-B row alongside standalone C', () => {
+    expect(() =>
+      assertNoOverlappingConsolidationWallets([
+        currentConsolidatedTdh(['a', 'b']),
+        currentConsolidatedTdh(['c'])
+      ])
+    ).not.toThrow();
+  });
+
+  it('fails closed on A-B plus a simultaneous standalone B row', () => {
+    expect(() =>
+      assertNoOverlappingConsolidationWallets([
+        currentConsolidatedTdh(['a', 'b']),
+        currentConsolidatedTdh(['b'])
+      ])
+    ).toThrow('Wallet b appears in multiple TDH consolidations');
+  });
+});
+
+function currentConsolidatedTdh(wallets: string[]): ConsolidatedTDH {
+  return {
+    consolidation_key: wallets.join('-'),
+    wallets
+  } as ConsolidatedTDH;
+}
 
 describe('consolidateMissingWallets', () => {
   beforeEach(() => {

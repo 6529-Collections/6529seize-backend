@@ -6,7 +6,8 @@ import {
   LessThan,
   MoreThanOrEqual,
   Brackets,
-  QueryRunner
+  QueryRunner,
+  Repository
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
 import {
@@ -1059,9 +1060,15 @@ export async function persistConsolidatedTDH(
   tdh: ConsolidatedTDH[],
   memesTdh: ConsolidatedTDHMemes[],
   tdhEditions: ConsolidatedTDHEditions[],
-  wallets?: string[]
+  wallets?: string[],
+  consolidationKeysToReplace?: string[]
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
+  if (wallets && !consolidationKeysToReplace) {
+    throw new Error(
+      'Partial consolidated TDH persistence requires exact keys to replace'
+    );
+  }
   let unreadCacheInvalidations: WaveUnreadCacheInvalidations = {
     waveIds: [],
     readerWaves: []
@@ -1075,31 +1082,14 @@ export async function persistConsolidatedTDH(
 
     if (wallets) {
       logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
-      await Promise.all(
-        wallets.map(async (wallet) => {
-          const walletPattern = `%${wallet}%`;
-          await tdhRepo
-            .createQueryBuilder()
-            .delete()
-            .where('consolidation_key like :walletPattern', {
-              walletPattern
-            })
-            .execute();
-          await tdhMemesRepo
-            .createQueryBuilder()
-            .delete()
-            .where('consolidation_key like :walletPattern', {
-              walletPattern
-            })
-            .execute();
-          await tdhEditionsRepo
-            .createQueryBuilder()
-            .delete()
-            .where('consolidation_key like :walletPattern', {
-              walletPattern
-            })
-            .execute();
-        })
+      await deleteConsolidationsByKeys(tdhRepo, consolidationKeysToReplace!);
+      await deleteConsolidationsByKeys(
+        tdhMemesRepo,
+        consolidationKeysToReplace!
+      );
+      await deleteConsolidationsByKeys(
+        tdhEditionsRepo,
+        consolidationKeysToReplace!
       );
       await tdhRepo.save(tdh);
 
@@ -1127,7 +1117,13 @@ export async function persistConsolidatedTDH(
     await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
 
-    await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
+    await persistHistoricConsolidatedTDH(
+      manager,
+      block,
+      tdh,
+      wallets,
+      consolidationKeysToReplace
+    );
   });
 
   await invalidateWaveUnreadCache(unreadCacheInvalidations);
@@ -1139,6 +1135,33 @@ export async function persistConsolidatedTDH(
   }
   await recalculateXTdhUseCase.activateLoop({});
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+const CONSOLIDATION_DELETE_BATCH_SIZE = 100;
+
+async function deleteConsolidationsByKeys(
+  repository: Repository<any>,
+  consolidationKeys: string[],
+  block?: number
+): Promise<void> {
+  for (
+    let offset = 0;
+    offset < consolidationKeys.length;
+    offset += CONSOLIDATION_DELETE_BATCH_SIZE
+  ) {
+    const keys = consolidationKeys.slice(
+      offset,
+      offset + CONSOLIDATION_DELETE_BATCH_SIZE
+    );
+    const query = repository
+      .createQueryBuilder()
+      .delete()
+      .where('consolidation_key IN (:...keys)', { keys });
+    if (block !== undefined) {
+      query.andWhere('block = :block', { block });
+    }
+    await query.execute();
+  }
 }
 
 async function updateBoostedTdhRates(connection: ConnectionWrapper<any>) {
@@ -1165,23 +1188,21 @@ export async function persistHistoricConsolidatedTDH(
   entityManager: EntityManager,
   block: number,
   tdh: ConsolidatedTDH[],
-  wallets?: string[]
+  wallets?: string[],
+  consolidationKeysToReplace?: string[]
 ) {
   logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTING BLOCK [${block}]`);
   const historicTdhRepo = entityManager.getRepository(HistoricConsolidatedTDH);
   if (wallets) {
-    await Promise.all(
-      wallets.map(async (wallet) => {
-        const walletPattern = `%${wallet}%`;
-        await historicTdhRepo
-          .createQueryBuilder()
-          .delete()
-          .where('consolidation_key like :walletPattern and block = :block', {
-            walletPattern,
-            block
-          })
-          .execute();
-      })
+    if (!consolidationKeysToReplace) {
+      throw new Error(
+        'Partial historic TDH persistence requires exact keys to replace'
+      );
+    }
+    await deleteConsolidationsByKeys(
+      historicTdhRepo,
+      consolidationKeysToReplace,
+      block
     );
     await historicTdhRepo.save(tdh);
   } else {
