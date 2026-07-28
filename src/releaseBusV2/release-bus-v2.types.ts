@@ -20,6 +20,20 @@ export const RELEASE_BUS_V2_CONTROL_SCOPES = [
 export type ReleaseBusV2ControlScope =
   (typeof RELEASE_BUS_V2_CONTROL_SCOPES)[number];
 
+export const RELEASE_BUS_V2_AUTOMATION_LANES = [
+  'STAGING',
+  'PRODUCTION'
+] as const;
+export type ReleaseBusV2AutomationLane =
+  (typeof RELEASE_BUS_V2_AUTOMATION_LANES)[number];
+
+export type ReleaseBusV2LaneState = {
+  readonly lane: ReleaseBusV2AutomationLane;
+  readonly status: 'ON' | 'OFF';
+  readonly changeable: boolean;
+  readonly reason: string | null;
+};
+
 export type ReleaseBusV2DependencyEnvironment =
   | 'STAGING'
   | 'PRODUCTION'
