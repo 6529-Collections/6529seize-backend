@@ -28,6 +28,7 @@ import {
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
+  ReleaseBusV2CurrentStagingRepairBodySchema,
   ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
@@ -51,6 +52,8 @@ import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
   releaseBusV2Service,
+  ReleaseBusV2CurrentStagingRepairError,
+  type ReleaseBusV2CurrentStagingRepairIdentity,
   ReleaseBusV2ProductionSelectionError,
   ReleaseBusV2StagingTransitionConflictError
 } from '@/releaseBusV2/release-bus-v2.service';
@@ -125,6 +128,24 @@ function isProductionSelectionError(
   return ['CONFLICT', 'DISABLED', 'NOT_FOUND'].includes(
     String((error as { code?: unknown }).code)
   );
+}
+
+function isCurrentStagingRepairError(
+  error: unknown
+): error is ReleaseBusV2CurrentStagingRepairError {
+  if (error instanceof ReleaseBusV2CurrentStagingRepairError) return true;
+  if (
+    !(error instanceof Error) ||
+    error.name !== 'ReleaseBusV2CurrentStagingRepairError'
+  )
+    return false;
+  return [
+    'BAD_REQUEST',
+    'CONFLICT',
+    'DISABLED',
+    'NOT_FOUND',
+    'UNPROCESSABLE'
+  ].includes(String((error as { code?: unknown }).code));
 }
 
 async function requireOperator(token: string): Promise<string> {
@@ -869,6 +890,53 @@ deployRoutes.post(
         error instanceof Error
           ? error.message
           : 'Stalled production qualification recovery failed'
+      );
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/repair-current-staging-candidates',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    const body = getValidatedByJoiOrThrow<{
+      dry_run: boolean;
+      candidates?: readonly ReleaseBusV2CurrentStagingRepairIdentity[];
+    }>(req.body, ReleaseBusV2CurrentStagingRepairBodySchema);
+    try {
+      const result =
+        await releaseBusV2Service.repairCurrentStagingManifestCandidates(
+          body.candidates ?? null,
+          actor,
+          body.dry_run
+        );
+      setNoStoreHeaders(res);
+      return res.json({
+        ...result,
+        mode: getReleaseBusV2Mode(),
+        repaired_by: actor
+      });
+    } catch (error) {
+      if (isCurrentStagingRepairError(error)) {
+        const status =
+          error.code === 'BAD_REQUEST'
+            ? 400
+            : error.code === 'DISABLED'
+              ? 403
+              : error.code === 'NOT_FOUND'
+                ? 404
+                : error.code === 'UNPROCESSABLE'
+                  ? 422
+                  : 409;
+        throw new CustomApiCompliantException(status, error.message);
+      }
+      logger.error('Unexpected current staging manifest repair failure', {
+        error
+      });
+      throw new CustomApiCompliantException(
+        500,
+        'Current staging manifest candidate repair failed'
       );
     }
   }

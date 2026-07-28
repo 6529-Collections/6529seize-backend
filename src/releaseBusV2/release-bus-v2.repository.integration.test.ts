@@ -223,7 +223,7 @@ describeWithSeed(
       ).toBe('SUPERSEDED');
     });
 
-    it('does not supersede an immutable candidate after a train claims it', async () => {
+    it('lets only the owning train supersede a claimed non-live staging candidate', async () => {
       const claimed = await repository.createCandidate(
         {
           repository: 'frontend',
@@ -254,6 +254,15 @@ describeWithSeed(
         )
       ).resolves.toEqual([]);
       await expect(
+        repository.supersedeMovedBranchHeads(
+          'frontend',
+          claimed.branch_name,
+          'deleted',
+          {},
+          'not-the-owning-train'
+        )
+      ).resolves.toEqual([]);
+      await expect(
         repository.supersedeOtherPrHeads(
           'frontend',
           claimed.pr_number,
@@ -266,6 +275,22 @@ describeWithSeed(
           status: 'STAGING_IN_TRAIN',
           current_train_id: train?.id,
           superseded_at: null
+        })
+      );
+      await expect(
+        repository.supersedeMovedBranchHeads(
+          'frontend',
+          claimed.branch_name,
+          'deleted',
+          {},
+          train!.id
+        )
+      ).resolves.toEqual([expect.objectContaining({ id: claimed.id })]);
+      expect(await repository.findCandidateById(claimed.id, {})).toEqual(
+        expect.objectContaining({
+          status: 'SUPERSEDED',
+          current_train_id: train?.id,
+          superseded_at: expect.anything()
         })
       );
     });
