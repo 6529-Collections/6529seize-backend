@@ -2,6 +2,7 @@ import { createSign } from 'node:crypto';
 import fetch, { type RequestInit, type Response } from 'node-fetch';
 import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
+import { isHumanGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
 
 // The helper owns the abort signal so every request has one authoritative
@@ -87,13 +88,17 @@ type GitHubPullRequestDetails = {
   readonly state?: string;
   readonly mergeable?: boolean | null;
   readonly mergeable_state?: string;
-  readonly user?: { readonly login?: string } | null;
+  readonly user?: { readonly login?: string; readonly type?: string } | null;
   readonly head?: { readonly sha?: string; readonly ref?: string };
   readonly base?: { readonly sha?: string; readonly ref?: string };
   readonly merge_commit_sha?: string | null;
 };
 type GitHubPullRequestCommit = {
-  readonly author?: { readonly login?: string } | null;
+  readonly author?: { readonly login?: string; readonly type?: string } | null;
+  readonly committer?: {
+    readonly login?: string;
+    readonly type?: string;
+  } | null;
 };
 type GitHubCheckRun = {
   readonly id?: number;
@@ -514,9 +519,20 @@ export class ReleaseBusGitHubApp {
     pull: GitHubPullRequestDetails
   ): Promise<readonly string[]> {
     const logins: string[] = [];
-    const addLogin = (value: string | undefined) => {
-      const login = value?.trim();
-      if (!login || isReleaseBusGitHubAppActor(login)) return;
+    const addUser = (
+      value:
+        { readonly login?: string; readonly type?: string } | null | undefined
+    ) => {
+      const login = value?.login?.trim();
+      const type = value?.type?.trim().toLowerCase();
+      if (
+        !login ||
+        type === 'bot' ||
+        type === 'app' ||
+        !isHumanGithubContributorLogin(login) ||
+        isReleaseBusGitHubAppActor(login)
+      )
+        return;
       if (
         logins.some(
           (candidate) => candidate.toLowerCase() === login.toLowerCase()
@@ -525,7 +541,7 @@ export class ReleaseBusGitHubApp {
         return;
       logins.push(login);
     };
-    addLogin(pull.user?.login);
+    addUser(pull.user);
     try {
       for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page += 1) {
         const response = await this.request(
@@ -542,7 +558,8 @@ export class ReleaseBusGitHubApp {
             `Invalid ${repository} pull request ${pullNumber} commits response`
           );
         for (const commit of commits) {
-          addLogin(commit.author?.login);
+          addUser(commit.author);
+          addUser(commit.committer);
         }
         if (commits.length < GITHUB_PAGE_SIZE) break;
         if (page === MAX_PULL_REQUEST_COMMIT_PAGES) {

@@ -12,6 +12,11 @@ interface GitHubWorkflowRun {
   readonly head_sha: string;
   readonly run_number: number;
   readonly workflow_id: number;
+  readonly head_branch?: string | null;
+  readonly status?: string;
+  readonly conclusion?: string | null;
+  readonly created_at?: string;
+  readonly path?: string;
 }
 
 interface GitHubWorkflowRunsResponse {
@@ -100,7 +105,14 @@ const MAX_WORKFLOW_RUN_PAGES = 10;
 const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
 const FRONTEND_REPO = '6529seize-frontend';
-const FRONTEND_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
+const FRONTEND_MANUAL_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
+const FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW =
+  'Release Bus - Deploy Frontend Production';
+const FRONTEND_PRODUCTION_WORKFLOWS = Object.freeze({
+  [FRONTEND_MANUAL_PRODUCTION_WORKFLOW]: 'build-upload-deploy-prod.yml',
+  [FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW]:
+    'release-bus-deploy-production.yml'
+});
 const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
 const MAX_PULL_REQUESTS = 100;
 const MAX_PROMPT_LENGTH = 20000;
@@ -188,10 +200,7 @@ function isMatchingProductionRun(
     return run.display_title.endsWith(' to prod');
   }
   if (repoName === FRONTEND_REPO) {
-    return (
-      request.workflow === FRONTEND_PRODUCTION_WORKFLOW &&
-      run.name === FRONTEND_PRODUCTION_WORKFLOW
-    );
+    return run.name in FRONTEND_PRODUCTION_WORKFLOWS;
   }
   return false;
 }
@@ -465,16 +474,132 @@ export class ReleaseNoteGitHubService {
     const currentRun = await this.api<GitHubWorkflowRun>(
       `/repos/${repository}/actions/runs/${encodeURIComponent(request.run_id)}`
     );
+    const repoName = getRepoName(request.repo);
+    const branch = normalizeBranch(request.branch);
     if (
       String(currentRun.id) !== request.run_id ||
       currentRun.head_sha !== request.sha ||
-      !Number.isSafeInteger(currentRun.workflow_id)
+      !Number.isSafeInteger(currentRun.workflow_id) ||
+      (currentRun.head_branch !== undefined &&
+        currentRun.head_branch !== null &&
+        currentRun.head_branch !== branch)
     ) {
       throw new Error(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
       );
     }
+    if (repoName === FRONTEND_REPO) {
+      const workflowFile =
+        FRONTEND_PRODUCTION_WORKFLOWS[
+          request.workflow as keyof typeof FRONTEND_PRODUCTION_WORKFLOWS
+        ];
+      const runWorkflowFile =
+        currentRun.path?.split('@')[0].split('/').at(-1) ?? null;
+      if (
+        !workflowFile ||
+        currentRun.name !== request.workflow ||
+        currentRun.status !== 'completed' ||
+        currentRun.conclusion !== 'success' ||
+        !currentRun.created_at ||
+        Number.isNaN(Date.parse(currentRun.created_at)) ||
+        (runWorkflowFile !== null && runWorkflowFile !== workflowFile)
+      ) {
+        throw new Error(
+          `GitHub release run ${request.run_id} is not an approved successful frontend production workflow`
+        );
+      }
+    }
     return currentRun;
+  }
+
+  private async listPreviousFrontendProductionRuns(
+    repository: string,
+    request: ReleaseNoteGenerationRequest,
+    currentRun: GitHubWorkflowRun,
+    workflowName: keyof typeof FRONTEND_PRODUCTION_WORKFLOWS
+  ): Promise<GitHubWorkflowRun[]> {
+    const workflowFile = FRONTEND_PRODUCTION_WORKFLOWS[workflowName];
+    const branch = encodeURIComponent(normalizeBranch(request.branch));
+    const currentCreatedAt = Date.parse(currentRun.created_at!);
+    const matches: GitHubWorkflowRun[] = [];
+    for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
+      const payload = await this.api<GitHubWorkflowRunsResponse>(
+        `/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?status=success&branch=${branch}&per_page=${PAGE_SIZE}&page=${page}`
+      );
+      const runs = payload.workflow_runs ?? [];
+      for (const run of runs) {
+        const runWorkflowFile =
+          run.path?.split('@')[0].split('/').at(-1) ?? null;
+        const createdAt = Date.parse(run.created_at ?? '');
+        if (
+          String(run.id) === request.run_id ||
+          run.head_sha === request.sha ||
+          run.name !== workflowName ||
+          run.status !== 'completed' ||
+          run.conclusion !== 'success' ||
+          (run.head_branch !== undefined &&
+            run.head_branch !== null &&
+            run.head_branch !== normalizeBranch(request.branch)) ||
+          (runWorkflowFile !== null && runWorkflowFile !== workflowFile) ||
+          !Number.isFinite(createdAt) ||
+          createdAt >= currentCreatedAt
+        )
+          continue;
+        matches.push(run);
+      }
+      if (runs.length < PAGE_SIZE) break;
+      if (page === MAX_WORKFLOW_RUN_PAGES)
+        throw new Error(
+          `Frontend production history exceeds ${MAX_WORKFLOW_RUN_PAGES * PAGE_SIZE} runs for ${workflowName}`
+        );
+    }
+    return matches.sort(
+      (left, right) =>
+        Date.parse(right.created_at!) - Date.parse(left.created_at!)
+    );
+  }
+
+  private async findPreviousFrontendSuccessfulRun(
+    repository: string,
+    request: ReleaseNoteGenerationRequest,
+    currentRun: GitHubWorkflowRun
+  ): Promise<GitHubWorkflowRun | null> {
+    if (request.workflow === FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW) {
+      const releaseBusRuns = await this.listPreviousFrontendProductionRuns(
+        repository,
+        request,
+        currentRun,
+        FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW
+      );
+      if (releaseBusRuns.length) return releaseBusRuns[0];
+      const manualRuns = await this.listPreviousFrontendProductionRuns(
+        repository,
+        request,
+        currentRun,
+        FRONTEND_MANUAL_PRODUCTION_WORKFLOW
+      );
+      return manualRuns[0] ?? null;
+    }
+    const [manualRuns, releaseBusRuns] = await Promise.all([
+      this.listPreviousFrontendProductionRuns(
+        repository,
+        request,
+        currentRun,
+        FRONTEND_MANUAL_PRODUCTION_WORKFLOW
+      ),
+      this.listPreviousFrontendProductionRuns(
+        repository,
+        request,
+        currentRun,
+        FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW
+      )
+    ]);
+    return (
+      [...manualRuns, ...releaseBusRuns].sort(
+        (left, right) =>
+          Date.parse(right.created_at!) - Date.parse(left.created_at!)
+      )[0] ?? null
+    );
   }
 
   private async findPreviousSuccessfulRun(
@@ -482,6 +607,13 @@ export class ReleaseNoteGitHubService {
     request: ReleaseNoteGenerationRequest
   ): Promise<GitHubWorkflowRun | null> {
     const currentRun = await this.getValidatedCurrentRun(repository, request);
+    if (getRepoName(request.repo) === FRONTEND_REPO) {
+      return this.findPreviousFrontendSuccessfulRun(
+        repository,
+        request,
+        currentRun
+      );
+    }
 
     const branch = encodeURIComponent(normalizeBranch(request.branch));
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {

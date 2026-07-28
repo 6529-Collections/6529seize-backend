@@ -141,7 +141,7 @@ describe('GitHub pull request qualification evidence', () => {
             state: 'open',
             mergeable: true,
             mergeable_state: 'blocked',
-            user: { login: 'PR-Author' },
+            user: { login: 'PR-Author', type: 'User' },
             head: { sha: headSha, ref: 'agent/test' },
             base: { sha: baseSha, ref: 'main' },
             merge_commit_sha: mergeSha
@@ -183,10 +183,12 @@ describe('GitHub pull request qualification evidence', () => {
         new Response(
           JSON.stringify([
             {
-              author: { login: 'Commit-Author' }
+              author: { login: 'Commit-Author', type: 'User' },
+              committer: { login: 'Commit-Committer', type: 'User' }
             },
             {
-              author: { login: '6529-release-bus[bot]' }
+              author: { login: '6529-release-bus[bot]', type: 'Bot' },
+              committer: { login: 'github-actions', type: 'Bot' }
             }
           ])
         )
@@ -210,7 +212,11 @@ describe('GitHub pull request qualification evidence', () => {
         artifactRunId: String(runId),
         artifactName: `release-bus-v2-pr-${mergeSha}`,
         artifactDigest: 'd'.repeat(64),
-        contributorGithubLogins: ['PR-Author', 'Commit-Author']
+        contributorGithubLogins: [
+          'PR-Author',
+          'Commit-Author',
+          'Commit-Committer'
+        ]
       });
       expect(String(fetchMock.mock.calls[3]?.[0])).toContain(
         '/pulls/42/commits?per_page=100&page=1'

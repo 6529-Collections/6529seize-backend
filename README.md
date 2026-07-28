@@ -108,6 +108,7 @@ This opens:
 
 - a single-select environment picker for `staging` or `prod`
 - then a multi-select service picker with all deployable services
+- the exact pull request represented by the selected deployment
 
 Environment picker controls:
 
@@ -135,13 +136,14 @@ cd src/tdhLoop
 ghdeploy
 ```
 
-Single-service mode opens the same environment picker and resolves the service from the current folder. For production it also asks for the merged PR number and whether this successful deploy should hold or publish the release note. Use `hold` while more services for that PR remain, then choose `publish` for the final service. The published note includes every successful service accumulated for that PR, even when later services deploy a descendant commit. For staging, it triggers:
+Single-service mode opens the same environment picker, resolves the service from the current folder, and asks for the exact PR represented by the deployment. For production it also asks whether this successful deploy should hold or publish the release note. Use `hold` while more services for that PR remain, then choose `publish` for the final service. The published note includes every successful service accumulated for that PR, even when later services deploy a descendant commit. For staging, it triggers:
 
 ```bash
 gh workflow run "Deploy a service" \
   --ref <current-branch> \
   -f environment=<selected-environment> \
   -f service=<resolved-service> \
+  -f release_pull_request=<represented-pr-number> \
   -R 6529-Collections/6529seize-backend
 ```
 

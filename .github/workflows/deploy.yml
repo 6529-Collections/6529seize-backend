@@ -78,7 +78,7 @@ on:
           - xTdhLoop
       release_pull_request:
         type: string
-        description: 'Merged PR represented by this production release'
+        description: 'Exact PR represented by this manual deployment'
         required: false
       release_note_publish:
         type: boolean
@@ -134,6 +134,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 # The workflow-level control mutex keeps manual production deployments globally
 # serial. Release Bus v2 operations use their exact operation
@@ -194,6 +195,7 @@ jobs:
           INPUT_ARTIFACT_RUN_ID: ${{ github.event.inputs.artifact_run_id }}
           INPUT_ARTIFACT_TRAIN_ID: ${{ github.event.inputs.artifact_train_id }}
           INPUT_ARTIFACT_DIGEST: ${{ github.event.inputs.artifact_digest }}
+          INPUT_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
@@ -201,7 +203,7 @@ jobs:
           # Semantic GitHub-login validation is centralized in notify-ci-wave.mjs.
           jq -e 'type == "array" and length <= 100 and all(.[]; type == "string" and length >= 1 and length <= 39)' <<< "$INPUT_RELEASE_CONTRIBUTORS" > /dev/null
           if [ -n "$INPUT_OPERATION_KEY" ]; then
-            [[ "$INPUT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
+            [[ "$INPUT_TRAIN_ID" =~ ^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$ ]]
             [[ "$INPUT_TRAIN_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]
             [[ "$INPUT_OPERATION_KEY" =~ ^[A-Za-z0-9:._-]{1,180}$ ]]
             [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
@@ -210,6 +212,8 @@ jobs:
             if [ -n "$INPUT_ARTIFACT_TRAIN_ID" ]; then
               [[ "$INPUT_ARTIFACT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             fi
+          else
+            [[ "$INPUT_RELEASE_PULL_REQUEST" =~ ^[1-9][0-9]{0,9}$ ]]
           fi
       - name: Validate Release Bus GitHub App configuration
         if: github.event.inputs.service == 'releaseBus'
@@ -736,7 +740,10 @@ jobs:
           CI_PIPELINES_SERVICE: ${{ github.event.inputs.service }}
           CI_PIPELINES_SHA: ${{ github.event.inputs.expected_sha || github.sha }}
           CI_RELEASE_TRAIN_ID: ${{ github.event.inputs.release_train_id }}
+          CI_RELEASE_OPERATION_KEY: ${{ github.event.inputs.operation_key }}
           CI_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}
+          CI_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/notify-ci-wave.mjs
 
       - name: Notify about success
@@ -762,6 +769,7 @@ jobs:
           CI_PIPELINES_SERVICE: ${{ github.event.inputs.service }}
           CI_PIPELINES_SHA: ${{ github.event.inputs.expected_sha || github.sha }}
           CI_RELEASE_TRAIN_ID: ${{ github.event.inputs.release_train_id }}
+          CI_RELEASE_OPERATION_KEY: ${{ github.event.inputs.operation_key }}
           CI_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}
           CI_RELEASE_NOTES_PROMPT_PATH: ops/release-notes/release-notes.prompt.md
           CI_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
@@ -769,4 +777,5 @@ jobs:
           CI_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}
           CI_RELEASE_NOTE_GROUPS: ${{ github.event.inputs.release_note_groups }}
           CI_RELEASE_NOTE_OPT_OUT: ${{ github.event.inputs.release_note_opt_out }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/notify-ci-wave.mjs

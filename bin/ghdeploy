@@ -385,6 +385,7 @@ run_batch_mode() {
   local upstream_ref="$3"
   local allowed_service
   local environment
+  local release_pull_request
   local continue_choice
   local idx
   local selected_output
@@ -394,6 +395,7 @@ run_batch_mode() {
   if [[ "$environment" == 'prod' ]]; then
     die 'Deploy production services one at a time from their service directories so each run can hold or publish its PR release note'
   fi
+  release_pull_request="$(read_release_pr_number)"
 
   selected_output="$(choose_services_for_batch "$branch" "$environment" "${BATCH_SERVICES[@]}")" ||
     die 'Cancelled'
@@ -410,7 +412,7 @@ run_batch_mode() {
   BATCH_SKIPPED=()
 
   for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
-    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" '' false; then
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_pull_request" false; then
       BATCH_SUCCEEDED+=("${selected_services[$idx]}")
       continue
     fi
@@ -489,8 +491,8 @@ main() {
     die "Directory '$current_dir' does not map to a deployable service in $WORKFLOW_FILE"
 
   environment="$(choose_environment "$service" "$branch")"
+  release_pull_request="$(read_release_pr_number)"
   if [[ "$environment" == 'prod' ]]; then
-    release_pull_request="$(read_release_pr_number)"
     if [[ "$(choose_release_note_mode "$release_pull_request")" == 'publish' ]]; then
       release_note_publish='true'
     fi

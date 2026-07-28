@@ -65,10 +65,76 @@ async function runNotifier(
 }
 
 describe('notify-ci-wave release-note metadata', () => {
+  it('derives manual backend contributors from exact PR and service evidence', async () => {
+    const githubServer = createServer((request, response) => {
+      const pathName = request.url ?? '';
+      let body: unknown;
+      if (pathName.endsWith('/pulls/42')) {
+        body = {
+          number: 42,
+          merge_commit_sha: 'a'.repeat(40),
+          user: { login: 'PR-Author', type: 'User' }
+        };
+      } else if (pathName.includes('/pulls/42/files')) {
+        body = [{ filename: 'src/api-serverless/src/example.ts' }];
+      } else if (pathName.includes('/pulls/42/commits')) {
+        body = [
+          {
+            author: { login: 'Commit-Author', type: 'User' },
+            committer: { login: 'Commit-Committer', type: 'User' }
+          },
+          {
+            author: { login: 'dependabot[bot]', type: 'Bot' }
+          }
+        ];
+      } else {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) =>
+      githubServer.listen(0, '127.0.0.1', resolve)
+    );
+    const address = githubServer.address();
+    if (!address || typeof address === 'string')
+      throw new Error('missing port');
+
+    try {
+      const result = await runNotifier({
+        CI_RELEASE_PULL_REQUEST: '42',
+        GITHUB_TOKEN: 'test-token',
+        GITHUB_API_URL: `http://127.0.0.1:${address.port}`
+      });
+
+      expect(result).toMatchObject({
+        code: 0,
+        stderr: '',
+        payload: {
+          contributor_evidence: 'manual-pr',
+          contributor_github_logins: [
+            'PR-Author',
+            'Commit-Author',
+            'Commit-Committer'
+          ]
+        }
+      });
+      expect(result.payload).not.toHaveProperty('release_train_id');
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        githubServer.close((error) => (error ? reject(error) : resolve()))
+      );
+    }
+  });
+
   it('sends canonical release train contributors and the deployed SHA', async () => {
     const expectedSha = 'b'.repeat(40);
     const result = await runNotifier({
-      CI_RELEASE_TRAIN_ID: 'train-123',
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_OPERATION_KEY:
+        'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
       CI_RELEASE_CONTRIBUTORS: JSON.stringify([
         'GelatoGenesis',
         'prxt6529',
@@ -81,39 +147,46 @@ describe('notify-ci-wave release-note metadata', () => {
       code: 0,
       stderr: '',
       payload: {
-        release_train_id: 'train-123',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
+        contributor_evidence: 'release-bus-operation',
         contributor_github_logins: ['GelatoGenesis', 'prxt6529'],
         sha: expectedSha
       }
     });
   });
 
-  it('rejects release contributors without a train id', async () => {
+  it('does not trust user-supplied contributors on a manual deployment', async () => {
     const result = await runNotifier({
       CI_RELEASE_CONTRIBUTORS: JSON.stringify(['GelatoGenesis'])
     });
 
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(
+      'Ignoring user-supplied contributors on a manual deployment'
+    );
+    expect(result.payload).not.toHaveProperty('contributor_github_logins');
+  });
+
+  it('requires Release Bus train and operation identities together', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_CONTRIBUTORS: '[]'
+    });
+
     expect(result.code).toBe(1);
     expect(result.stderr).toContain(
-      'CI_RELEASE_TRAIN_ID is required with CI_RELEASE_CONTRIBUTORS'
+      'CI_RELEASE_TRAIN_ID and CI_RELEASE_OPERATION_KEY must be supplied together'
     );
     expect(result.payload).toBeNull();
   });
 
-  it('keeps new fields atomic until the updated dispatcher supplies contributors', async () => {
-    const result = await runNotifier({
-      CI_RELEASE_TRAIN_ID: 'train-123',
-      CI_RELEASE_CONTRIBUTORS: '[]'
-    });
-
-    expect(result.code).toBe(0);
-    expect(result.payload).not.toHaveProperty('release_train_id');
-    expect(result.payload).not.toHaveProperty('contributor_github_logins');
-  });
-
   it('rejects invalid release contributor metadata', async () => {
     const result = await runNotifier({
-      CI_RELEASE_TRAIN_ID: 'train-123',
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_OPERATION_KEY:
+        'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
       CI_RELEASE_CONTRIBUTORS: JSON.stringify(['not a login'])
     });
 
@@ -128,7 +201,9 @@ describe('notify-ci-wave release-note metadata', () => {
     'rejects impossible GitHub login %s',
     async (login) => {
       const result = await runNotifier({
-        CI_RELEASE_TRAIN_ID: 'train-123',
+        CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        CI_RELEASE_OPERATION_KEY:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
         CI_RELEASE_CONTRIBUTORS: JSON.stringify([login])
       });
 

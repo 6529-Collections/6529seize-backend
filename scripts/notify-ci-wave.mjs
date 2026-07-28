@@ -21,6 +21,7 @@ const {
   CI_RELEASE_NOTE_OPT_OUT,
   CI_RELEASE_TRAIN_ID,
   CI_RELEASE_CONTRIBUTORS,
+  CI_RELEASE_OPERATION_KEY,
   CI_PIPELINES_SHA,
   GITHUB_REPOSITORY,
   GITHUB_WORKFLOW,
@@ -30,7 +31,9 @@ const {
   GITHUB_SHA,
   GITHUB_REF_NAME,
   GITHUB_TRIGGERING_ACTOR,
-  GITHUB_ACTOR
+  GITHUB_ACTOR,
+  GITHUB_TOKEN,
+  GITHUB_API_URL = 'https://api.github.com'
 } = process.env;
 
 function requireValue(name, value) {
@@ -141,6 +144,25 @@ function isContributorGithubLogin(value) {
   );
 }
 
+const NON_HUMAN_GITHUB_LOGINS = new Set([
+  'dependabot',
+  'github-actions',
+  'renovate',
+  'web-flow'
+]);
+
+function isHumanGithubUser(user) {
+  const login = user?.login?.trim();
+  const type = user?.type?.trim().toLowerCase();
+  return Boolean(
+    login &&
+    type !== 'bot' &&
+    type !== 'app' &&
+    !login.toLowerCase().endsWith('[bot]') &&
+    !NON_HUMAN_GITHUB_LOGINS.has(login.toLowerCase())
+  );
+}
+
 function parseReleaseContributors(value) {
   if (!value) return [];
   const parsed = JSON.parse(value);
@@ -159,11 +181,103 @@ function parseReleaseContributors(value) {
     }
     const login = entry.trim();
     const key = login.toLowerCase();
-    if (seen.has(key)) continue;
+    if (
+      seen.has(key) ||
+      key.endsWith('[bot]') ||
+      NON_HUMAN_GITHUB_LOGINS.has(key)
+    )
+      continue;
     seen.add(key);
     contributors.push(login);
   }
   return contributors;
+}
+
+async function githubApi(repository, path) {
+  const response = await fetch(
+    `${GITHUB_API_URL.replace(/\/$/, '')}/repos/${repository}${path}`,
+    {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
+        'User-Agent': '6529-ci-contributor-attribution',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    }
+  );
+  if (!response.ok) {
+    throw new Error(
+      `GitHub contributor evidence request failed: ${response.status} ${response.statusText}`
+    );
+  }
+  return response.json();
+}
+
+async function deriveManualPullRequestContributors({
+  repository,
+  pullRequestNumber,
+  deployedSha,
+  service
+}) {
+  const pull = await githubApi(repository, `/pulls/${pullRequestNumber}`);
+  if (pull.number !== pullRequestNumber) {
+    throw new Error(`PR #${pullRequestNumber} identity did not match`);
+  }
+  const evidenceSha = (
+    pull.merge_commit_sha ||
+    pull.head?.sha ||
+    ''
+  ).toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(evidenceSha)) {
+    throw new Error(`PR #${pullRequestNumber} has no immutable SHA evidence`);
+  }
+  if (evidenceSha !== deployedSha) {
+    const comparison = await githubApi(
+      repository,
+      `/compare/${encodeURIComponent(evidenceSha)}...${encodeURIComponent(deployedSha)}`
+    );
+    if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
+      throw new Error(
+        `Deployed SHA ${deployedSha} does not contain PR #${pullRequestNumber}`
+      );
+    }
+  }
+  const files = [];
+  for (let page = 1; page <= 3; page += 1) {
+    const pageFiles = await githubApi(
+      repository,
+      `/pulls/${pullRequestNumber}/files?per_page=100&page=${page}`
+    );
+    files.push(...pageFiles);
+    if (pageFiles.length < 100) break;
+    if (page === 3) {
+      throw new Error(`PR #${pullRequestNumber} file evidence is incomplete`);
+    }
+  }
+  const servicePrefix =
+    service === 'api' ? 'src/api-serverless/' : `src/${service}/`;
+  if (!files.some((file) => file.filename?.startsWith(servicePrefix))) {
+    throw new Error(
+      `PR #${pullRequestNumber} does not contain changes for ${service}`
+    );
+  }
+  const users = [pull.user];
+  for (let page = 1; page <= 3; page += 1) {
+    const commits = await githubApi(
+      repository,
+      `/pulls/${pullRequestNumber}/commits?per_page=100&page=${page}`
+    );
+    for (const commit of commits) {
+      users.push(commit.author, commit.committer);
+    }
+    if (commits.length < 100) break;
+    if (page === 3) {
+      throw new Error(`PR #${pullRequestNumber} commit evidence is incomplete`);
+    }
+  }
+  return parseReleaseContributors(
+    JSON.stringify(users.filter(isHumanGithubUser).map((user) => user.login))
+  );
 }
 
 function releaseContributorMetadataErrorMessage(error) {
@@ -239,13 +353,30 @@ try {
 }
 if (
   CI_RELEASE_TRAIN_ID &&
-  !/^[A-Za-z0-9._-]{1,100}$/.test(CI_RELEASE_TRAIN_ID)
+  !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+    CI_RELEASE_TRAIN_ID
+  )
 ) {
   console.error('CI_RELEASE_TRAIN_ID is invalid');
   process.exit(1);
 }
-if (releaseContributors.length > 0 && !CI_RELEASE_TRAIN_ID) {
-  console.error('CI_RELEASE_TRAIN_ID is required with CI_RELEASE_CONTRIBUTORS');
+if (
+  (CI_RELEASE_TRAIN_ID && !CI_RELEASE_OPERATION_KEY) ||
+  (!CI_RELEASE_TRAIN_ID && CI_RELEASE_OPERATION_KEY)
+) {
+  console.error(
+    'CI_RELEASE_TRAIN_ID and CI_RELEASE_OPERATION_KEY must be supplied together'
+  );
+  process.exit(1);
+}
+if (
+  CI_RELEASE_OPERATION_KEY &&
+  (!/^rb2:[A-Za-z0-9:._-]{1,220}:a[1-9]\d{0,8}$/.test(
+    CI_RELEASE_OPERATION_KEY
+  ) ||
+    !CI_RELEASE_OPERATION_KEY.startsWith(`rb2:${CI_RELEASE_TRAIN_ID}:`))
+) {
+  console.error('CI_RELEASE_OPERATION_KEY is invalid for CI_RELEASE_TRAIN_ID');
   process.exit(1);
 }
 if (CI_PIPELINES_SHA && !/^[a-f0-9]{40}$/.test(CI_PIPELINES_SHA)) {
@@ -289,14 +420,50 @@ const releaseNotesFields = isReleaseNotesEligible
         deployed_at: new Date().toISOString()
       }
   : {};
-// Keep the two new fields atomic. During the ordered rollout, the old
-// dispatcher supplies an empty array and the old receiver rejects unknown
-// fields; the train id has no downstream use unless contributor credits exist.
-const releaseTrainFields =
-  CI_RELEASE_TRAIN_ID && releaseContributors.length > 0
+let contributorEvidence = null;
+if (CI_RELEASE_TRAIN_ID && CI_RELEASE_OPERATION_KEY) {
+  contributorEvidence = 'release-bus-operation';
+} else if (releaseContributors.length > 0) {
+  console.warn(
+    'Ignoring user-supplied contributors on a manual deployment; immutable GitHub evidence is required.'
+  );
+  releaseContributors = [];
+}
+const deployedSha = CI_PIPELINES_SHA || GITHUB_SHA || null;
+if (
+  status === 'success' &&
+  !CI_RELEASE_TRAIN_ID &&
+  GITHUB_TOKEN &&
+  pullRequestNumber &&
+  deployedSha &&
+  CI_PIPELINES_SERVICE
+) {
+  try {
+    releaseContributors = await deriveManualPullRequestContributors({
+      repository,
+      pullRequestNumber,
+      deployedSha,
+      service: CI_PIPELINES_SERVICE
+    });
+    contributorEvidence = releaseContributors.length ? 'manual-pr' : null;
+  } catch (error) {
+    console.warn(
+      `Contributors row omitted because exact manual deployment scope could not be established: ${getFetchFailureMessage(error)}`
+    );
+  }
+}
+const releaseIdentityFields =
+  CI_RELEASE_TRAIN_ID && CI_RELEASE_OPERATION_KEY
     ? {
         release_train_id: CI_RELEASE_TRAIN_ID,
-        contributor_github_logins: releaseContributors
+        release_operation_key: CI_RELEASE_OPERATION_KEY
+      }
+    : {};
+const contributorFields =
+  contributorEvidence && releaseContributors.length
+    ? {
+        contributor_github_logins: releaseContributors,
+        contributor_evidence: contributorEvidence
       }
     : {};
 
@@ -310,11 +477,12 @@ const payload = {
   run_id: runId,
   run_number: GITHUB_RUN_NUMBER || null,
   run_url: `${GITHUB_SERVER_URL}/${repository}/actions/runs/${runId}`,
-  sha: CI_PIPELINES_SHA || GITHUB_SHA || null,
+  sha: deployedSha,
   branch: GITHUB_REF_NAME || null,
   environment: targetEnvironment || null,
   service: CI_PIPELINES_SERVICE || null,
-  ...releaseTrainFields,
+  ...releaseIdentityFields,
+  ...contributorFields,
   ...releaseNotesFields
 };
 
@@ -363,4 +531,32 @@ if (!response.ok) {
   process.exit(1);
 }
 
-console.log('CI pipeline wave notification sent.');
+let outcome = null;
+try {
+  outcome = await response.json();
+} catch {
+  // Older receivers returned an empty response. Preserve rollout compatibility.
+}
+if (outcome?.ci_drop === 'accepted') {
+  console.log('CI drop accepted.');
+} else if (outcome?.ci_drop === 'duplicate') {
+  console.log('CI drop already accepted; duplicate notification skipped.');
+} else if (outcome?.ci_drop === 'failed') {
+  console.error('CI drop processing failed after receiver acceptance.');
+} else {
+  console.log('CI pipeline wave notification accepted by receiver.');
+}
+if (outcome?.release_note === 'enqueued') {
+  console.log('Release-note request eligible and enqueued.');
+} else if (outcome?.release_note === 'queue-failed') {
+  console.error(
+    `Release-note queue failure: ${outcome.release_note_reason || 'unknown'}`
+  );
+} else if (
+  outcome?.release_note === 'skipped' ||
+  outcome?.release_note === 'ineligible'
+) {
+  console.log(
+    `Release-note request ${outcome.release_note}: ${outcome.release_note_reason || 'unspecified'}`
+  );
+}

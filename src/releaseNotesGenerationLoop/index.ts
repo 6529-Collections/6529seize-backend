@@ -120,6 +120,12 @@ export function parseReleaseNoteMessage(
     branch: optionalString('branch'),
     environment: requireString(payload, 'environment'),
     service: optionalString('service'),
+    ...(optionalString('release_train_id')
+      ? { release_train_id: optionalString('release_train_id') }
+      : {}),
+    ...(optionalString('release_operation_key')
+      ? { release_operation_key: optionalString('release_operation_key') }
+      : {}),
     prompt_path: requireString(payload, 'prompt_path'),
     release_group_id: requireString(payload, 'release_group_id'),
     release_group_services: parseServices(payload.release_group_services),
@@ -420,6 +426,19 @@ export async function processRequest(
       },
       {}
     );
+    if (outcome === 'published') {
+      logger.info(
+        `Release note successfully published for ${request.repo} run ${request.run_id}`
+      );
+    } else if (outcome === 'already-published') {
+      logger.info(
+        `Release note already published for ${request.repo} run ${request.run_id}`
+      );
+    } else {
+      logger.info(
+        `Release note generation skipped for ${request.repo} run ${request.run_id}: ${outcome}`
+      );
+    }
     if (outcome !== 'no-baseline') {
       await redis.set(dedupeKey, '1', {
         EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS

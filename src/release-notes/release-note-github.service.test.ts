@@ -35,7 +35,12 @@ const currentRun = {
   display_title: 'Web Deploy - PROD',
   head_sha: 'abc123',
   run_number: 45,
-  workflow_id: 7
+  workflow_id: 7,
+  head_branch: 'main',
+  status: 'completed',
+  conclusion: 'success',
+  created_at: '2026-07-13T11:38:00Z',
+  path: '.github/workflows/build-upload-deploy-prod.yml@refs/heads/main'
 };
 
 describe('ReleaseNoteGitHubService', () => {
@@ -201,32 +206,19 @@ describe('ReleaseNoteGitHubService', () => {
     );
   });
 
-  it('does not use a frontend non-production run as the release baseline', async () => {
-    (fetch as unknown as jest.Mock)
-      .mockResolvedValueOnce(response(currentRun))
-      .mockResolvedValueOnce(
-        response({
-          workflow_runs: [
-            {
-              id: 122,
-              name: 'Deploy Staging',
-              display_title: 'Deploy Staging',
-              head_sha: 'previous-sha',
-              run_number: 44,
-              workflow_id: 7
-            }
-          ]
-        })
-      );
+  it('rejects a frontend non-production workflow', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(response(currentRun));
 
-    const context = await new ReleaseNoteGitHubService().getReleaseContext({
-      ...request,
-      workflow: 'Deploy Staging',
-      run_number: '45'
-    });
-
-    expect(context).toBeNull();
-    expect(fetch).toHaveBeenCalledTimes(2);
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext({
+        ...request,
+        workflow: 'Deploy Staging',
+        run_number: '45'
+      })
+    ).rejects.toThrow(
+      'not an approved successful frontend production workflow'
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('finds a previous production run when run_number is missing', async () => {
@@ -236,16 +228,16 @@ describe('ReleaseNoteGitHubService', () => {
         response({
           workflow_runs: [
             {
+              ...currentRun,
               id: 122,
-              name: 'Web Deploy - PROD',
-              display_title: 'Web Deploy - PROD',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 7
+              created_at: '2026-07-12T11:38:00Z'
             }
           ]
         })
       )
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
       .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext(
@@ -257,12 +249,198 @@ describe('ReleaseNoteGitHubService', () => {
       current_sha: 'abc123',
       pull_requests: []
     });
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?status=success&branch=main&per_page=100&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/build-upload-deploy-prod.yml/runs?status=success&branch=main&per_page=100&page=1',
       expect.any(Object)
     );
+  });
+
+  it('builds the run #15 Release Bus context from the preceding Release Bus production run', async () => {
+    const deployedSha = '9d85844ca9c63274083612f211463d31588ae954';
+    const releaseBusRequest: ReleaseNoteGenerationRequest = {
+      ...request,
+      workflow: 'Release Bus - Deploy Frontend Production',
+      run_id: '30379747148',
+      run_number: '15',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/30379747148',
+      sha: deployedSha,
+      branch: 'main'
+    };
+    const releaseBusRun = {
+      id: 30379747148,
+      name: 'Release Bus - Deploy Frontend Production',
+      display_title: 'Deploy frontend production train',
+      head_sha: deployedSha,
+      head_branch: 'main',
+      run_number: 15,
+      workflow_id: 99,
+      status: 'completed',
+      conclusion: 'success',
+      created_at: '2026-07-23T11:38:00Z',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...releaseBusRun,
+              id: 30370000000,
+              head_sha: '8'.repeat(40),
+              run_number: 14,
+              created_at: '2026-07-22T11:38:00Z'
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          commits: [
+            {
+              sha: deployedSha,
+              author: { login: 'prxt6529', type: 'User' },
+              committer: { login: 'web-flow', type: 'User' },
+              commit: { message: 'Restore Release Bus frontend release notes' }
+            }
+          ],
+          total_commits: 1,
+          status: 'ahead'
+        })
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            number: 3498,
+            html_url:
+              'https://github.com/6529-Collections/6529seize-frontend/pull/3498',
+            title: 'Restore Release Bus frontend production release notes',
+            body: 'Restore the reviewed prompt path.',
+            merged_at: '2026-07-23T10:00:00Z',
+            user: { login: 'prxt6529', type: 'User' },
+            base: { ref: 'main' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            filename: '.github/workflows/release-bus-deploy-production.yml',
+            additions: 1,
+            deletions: 0,
+            changes: 1
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            sha: deployedSha,
+            author: { login: 'prxt6529', type: 'User' },
+            committer: { login: 'web-flow', type: 'User' }
+          }
+        ])
+      );
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      releaseBusRequest
+    );
+
+    expect(context).toEqual({
+      previous_sha: '8'.repeat(40),
+      current_sha: deployedSha,
+      pull_requests: [
+        expect.objectContaining({
+          number: 3498,
+          contributors: ['prxt6529']
+        })
+      ]
+    });
+  });
+
+  it('bridges the first Release Bus production run to the latest approved manual production run', async () => {
+    const releaseBusRun = {
+      ...currentRun,
+      name: 'Release Bus - Deploy Frontend Production',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...currentRun,
+              id: 122,
+              head_sha: 'manual-production-sha',
+              created_at: '2026-07-12T11:38:00Z'
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      workflow: releaseBusRun.name
+    });
+
+    expect(context?.previous_sha).toBe('manual-production-sha');
+  });
+
+  it('allows an approved manual production run to follow Release Bus production', async () => {
+    const priorReleaseBus = {
+      ...currentRun,
+      id: 122,
+      name: 'Release Bus - Deploy Frontend Production',
+      head_sha: 'release-bus-production-sha',
+      created_at: '2026-07-12T12:00:00Z',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
+      .mockResolvedValueOnce(response({ workflow_runs: [priorReleaseBus] }))
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request
+    );
+
+    expect(context?.previous_sha).toBe('release-bus-production-sha');
+  });
+
+  it('returns no baseline when approved production history is absent or same-SHA', async () => {
+    const releaseBusRun = {
+      ...currentRun,
+      name: 'Release Bus - Deploy Frontend Production',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...releaseBusRun,
+              id: 122,
+              created_at: '2026-07-12T11:38:00Z'
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(response({ workflow_runs: [] }));
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext({
+        ...request,
+        workflow: releaseBusRun.name
+      })
+    ).resolves.toBeNull();
   });
 
   it('uses service-specific backend run names from the deploy workflow', async () => {
@@ -491,7 +669,9 @@ describe('ReleaseNoteGitHubService', () => {
       if (url.endsWith('/actions/runs/123')) {
         return Promise.resolve(response(currentRun));
       }
-      if (url.includes('/actions/workflows/7/runs?')) {
+      if (
+        url.includes('/actions/workflows/build-upload-deploy-prod.yml/runs?')
+      ) {
         return Promise.resolve(
           response({
             workflow_runs: [
@@ -499,11 +679,19 @@ describe('ReleaseNoteGitHubService', () => {
                 ...currentRun,
                 id: 122,
                 head_sha: 'previous-sha',
-                run_number: 44
+                run_number: 44,
+                created_at: '2026-07-12T11:38:00Z'
               }
             ]
           })
         );
+      }
+      if (
+        url.includes(
+          '/actions/workflows/release-bus-deploy-production.yml/runs?'
+        )
+      ) {
+        return Promise.resolve(response({ workflow_runs: [] }));
       }
       if (url.includes('/compare/previous-sha...abc123')) {
         return Promise.resolve(
