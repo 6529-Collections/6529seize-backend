@@ -265,8 +265,11 @@ superseded older head that is absent from the current manifest is never
 restored. Dry-run discovery is allowed while v2 is `OFF`, but execution is
 rejected until v2 is enabled. The execution response reports attempted,
 succeeded, and failed GitHub status publications with every failed exact
-candidate identity; a nonzero failure count requires operator follow-up even
-though the durable ledger repair already committed.
+candidate identity. `newly_derived` counts rows changed by this execution;
+`reasserted` counts already-correct rows whose status is intentionally
+republished so an idempotent retry can recover a prior GitHub outage. A nonzero
+failure count requires operator follow-up even though the durable ledger repair
+already committed.
 
 ## Operator rollout and rollback
 

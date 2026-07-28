@@ -168,6 +168,8 @@ export type ReleaseBusV2CurrentStagingRepairResult = {
     readonly attempted: number;
     readonly succeeded: number;
     readonly failed: number;
+    readonly newly_derived: number;
+    readonly reasserted: number;
     readonly failed_candidates: readonly {
       readonly candidate_id: string;
       readonly repository: ReleaseBusV2Repository;
@@ -1911,6 +1913,12 @@ export class ReleaseBusV2Service {
         attempted: statusResults.length,
         succeeded: statusResults.length - failedCandidates.length,
         failed: failedCandidates.length,
+        newly_derived: dryRun
+          ? 0
+          : result.candidates.filter(({ changed }) => changed).length,
+        reasserted: dryRun
+          ? 0
+          : result.candidates.filter(({ changed }) => !changed).length,
         failed_candidates: failedCandidates.map(
           ({ candidate_id, repository, pr_number, head_sha }) => ({
             candidate_id,

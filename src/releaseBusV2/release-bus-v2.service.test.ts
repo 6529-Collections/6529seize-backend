@@ -1881,6 +1881,16 @@ describe('Release Bus v2 authoritative current staging repair', () => {
       attempted: 1,
       succeeded: 1,
       failed: 0,
+      newly_derived: 1,
+      reasserted: 0,
+      failed_candidates: []
+    });
+    expect(second.github_status_updates).toEqual({
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+      newly_derived: 0,
+      reasserted: 1,
       failed_candidates: []
     });
     expect(
@@ -2065,7 +2075,9 @@ describe('Release Bus v2 authoritative current staging repair', () => {
       github_status_updates: {
         attempted: 0,
         succeeded: 0,
-        failed: 0
+        failed: 0,
+        newly_derived: 0,
+        reasserted: 0
       }
     });
     await expect(
@@ -2095,6 +2107,8 @@ describe('Release Bus v2 authoritative current staging repair', () => {
       attempted: 1,
       succeeded: 0,
       failed: 1,
+      newly_derived: 1,
+      reasserted: 0,
       failed_candidates: [
         {
           candidate_id: 'candidate-id',

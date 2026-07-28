@@ -8118,6 +8118,8 @@ paths:
                       - attempted
                       - succeeded
                       - failed
+                      - newly_derived
+                      - reasserted
                       - failed_candidates
                     properties:
                       attempted:
@@ -8129,6 +8131,18 @@ paths:
                       failed:
                         type: integer
                         minimum: 0
+                      newly_derived:
+                        type: integer
+                        minimum: 0
+                        description: >-
+                          Status publications for candidates whose durable
+                          derived status changed in this execution.
+                      reasserted:
+                        type: integer
+                        minimum: 0
+                        description: >-
+                          Status publications for idempotent candidates whose
+                          durable status was already correct.
                       failed_candidates:
                         type: array
                         items:

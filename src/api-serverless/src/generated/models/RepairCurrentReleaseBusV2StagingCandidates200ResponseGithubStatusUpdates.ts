@@ -17,6 +17,14 @@ export class RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUp
     'attempted': number;
     'succeeded': number;
     'failed': number;
+    /**
+    * Status publications for candidates whose durable derived status changed in this execution.
+    */
+    'newly_derived': number;
+    /**
+    * Status publications for idempotent candidates whose durable status was already correct.
+    */
+    'reasserted': number;
     'failed_candidates': Array<RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInner>;
 
     static readonly discriminator: string | undefined = undefined;
@@ -39,6 +47,18 @@ export class RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUp
         {
             "name": "failed",
             "baseName": "failed",
+            "type": "number",
+            "format": ""
+        },
+        {
+            "name": "newly_derived",
+            "baseName": "newly_derived",
+            "type": "number",
+            "format": ""
+        },
+        {
+            "name": "reasserted",
+            "baseName": "reasserted",
             "type": "number",
             "format": ""
         },
