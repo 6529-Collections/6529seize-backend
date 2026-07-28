@@ -1,7 +1,7 @@
 # Simple Release Bus v2
 
 Simple Release Bus v2 is the deployment authority for exact frontend/backend
-candidate SHAs when its live mode enables a lane.
+candidate SHAs when the target environment's effective lane is `ON`.
 
 ## Route every request from live state
 
@@ -11,18 +11,44 @@ Run:
 node ops/scripts/release-bus-status.mjs
 ```
 
-The helper reads `/deploy/release-bus-v2/controls` and fails closed if the
-versioned status is unavailable or malformed.
+The helper reads `/deploy/release-bus-v2/controls`, verifies the hidden safety
+fences, and fails closed if the versioned status is unavailable, malformed, or
+internally inconsistent. Its operator-facing result contains only:
 
-| Mode         | Staging                 | Production                                                                         |
-| ------------ | ----------------------- | ---------------------------------------------------------------------------------- |
-| `OFF`        | Serialized manual route | Serialized manual route with explicit owner authority; no staging evidence gate    |
-| `STAGING`    | V2 readiness            | Manual/disabled by default; exact operator-only production beta may be allowlisted |
-| `PRODUCTION` | V2 readiness            | Separate explicit v2 action for an exact `STAGING_VALIDATED` candidate             |
+| Effective lane | `ON`                                                                                | `OFF`                                                                                                                   |
+| -------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Staging        | Register exact candidates with Release Bus                                          | Serialized manual staging after the staging drain gate                                                                  |
+| Production     | Separately select an exact `STAGING_VALIDATED` candidate for Release Bus production | Serialized manual production after the production drain gate and explicit owner authorization; no staging evidence gate |
 
-For an active mode, `ALL` and the target lane must be running. In `OFF`, v2
-controls are non-authoritative and the manual fallback remains available,
-including owner-authorized production without prior staging evidence.
+The drain gate requires the target environment lock to be free, no target
+mutation/E2E workflow to be active, and every already-dispatched exact
+operation to be terminal. Both lanes `OFF` means full manual fallback after both
+drain gates. Raw `RELEASE_BUS_V2_MODE` and `ALL` remain internal emergency
+fences; they are not normal routing or UI controls and must never be bypassed.
+
+## Dashboard read model
+
+`/deploy/ui/bus` presents Staging and Production as the two operator-facing
+lanes. Each lane shows its effective `ON`/`OFF` state, the exact frontend and
+backend SHAs currently deployed, the last successfully validated exact SHAs,
+and three train views:
+
+- the currently active train, if one has been claimed;
+- the projected next train if the queue does not change; and
+- terminal train history, loaded incrementally.
+
+The projected train is read-only planning output. It is never claim evidence and
+may change until the reconciler persists a train. Train cards split backend and
+frontend candidates and retain exact PR, SHA, status, membership, dependency,
+and backend deployment-DAG data. Locks, manifests, workflow runs, operations,
+errors, and durable events remain available inside the train's expandable
+diagnostics rather than as separate top-level dashboards.
+
+The shared Pull requests view lists every registered exact candidate and can be
+filtered by PR number or status. Public users can inspect this state without a
+GitHub token. Authentication reveals only the lane and candidate actions that
+can mutate state. The UI is a human read model; agents and scripts must continue
+to route and validate mutations from the versioned helper and API response.
 
 ## Candidate contract
 
@@ -220,7 +246,7 @@ explicitly.
 | Ordinary staging preflight    | After already-running workflows drain, fail the affected repository's NEW candidate group once, hold only dependants, and return independent repository candidates to the next train; never dispatch subset-isolation workflows                                                                      |
 | Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                                                                     |
 | Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                                                                |
-| Control plane                 | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                                                                                                                                   |
+| Control plane                 | Fail the train, preserve or requeue exact candidates, turn the affected automation lane off where safe, release its environment lock only after every operation is terminal, and permit manual fallback only after the lane drain gate                                                                 |
 | E2E                           | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates                                                                                                               |
 | Production preflight          | Fail before shared mutation. A later explicit exact-SHA selection may retry only after the unchanged staging evidence is revalidated and the locked failed train contains only terminal compose/preflight operations; audit both selection identities and the failed source train                    |
 | Production base moved         | Before irreversible mutation, transactionally preserve explicit intent and form a new audited replacement from all currently eligible dependency-closed selections; retain every omission reason. After irreversible mutation, freeze the original exact set and pause production for exact recovery |
@@ -304,11 +330,12 @@ already committed.
 
 Deploy additive changes in this order: database migrations, API/UI, then the v2
 reconciler. Run the currently deployed status helper before the migration/API
-mutations. After the API is live, use the new helper, which requires and shows
-the authoritative `staging_state`. Do not deploy the cumulative reconciler
+mutations. After the API is live, use the new helper, which requires both
+effective lane states and the authoritative `staging_state`. Do not deploy the
+cumulative reconciler
 until the migration and API are both live. Keep `RELEASE_BUS_V2_MODE=OFF`
 throughout offline, shadow, staging beta, and production beta validation. The
-status helpers must continue to report `OFF`; manual fallback remains
+status helpers must continue to report both lanes `OFF`; manual fallback remains
 authoritative for everyone except the exact operator beta entries below.
 
 The cumulative-staging migration has an intentionally non-destructive `down`:
@@ -392,9 +419,9 @@ dispatch a workflow.
 
 For each single bounded staging test:
 
-1. Prove both helpers report `OFF`, controls are understood, no lock is owned,
-   and no frontend/backend staging deploy, staging E2E, or shared-ref mutation
-   is active. Never cancel or supersede unrelated work.
+1. Prove both helpers report both lanes `OFF`, hidden fences are understood, no
+   lock is owned, and no frontend/backend staging deploy, staging E2E, or
+   shared-ref mutation is active. Never cancel or supersede unrelated work.
 2. Install only that test's exact allowlist. Deploy the production API first
    and `releaseBus` second, both with v1/v2 modes still `OFF`; use explicit
    release-note opt-out for these internal operations.
@@ -414,7 +441,7 @@ For each single bounded staging test:
    the mixed manifest failed, requeues rather than isolates candidates, pauses
    v2 automation, and releases staging ownership.
 5. Clear the allowlist, deploy API then `releaseBus` with the empty value, and
-   prove helpers still report `OFF`, the train is terminal, all related
+   prove helpers still report both lanes `OFF`, the train is terminal, all related
    workflows are terminal, and the staging lock is free before the next case.
 
 The required staging cases are backend-only, frontend-only, coupled backend
@@ -461,22 +488,24 @@ Run the account-guarded fast path from the backend repository:
 node ops/scripts/release-bus-v2-fast-off.mjs --execute
 ```
 
-It best-effort pauses only v2, disables the reconciler schedule, clears the
+It best-effort turns both automation lanes off, disables the reconciler
+schedule, clears the
 operator beta and sets both repository variables to `OFF`, updates production
 API then reconciler with Lambda revision guards while preserving unrelated
-environment values, and verifies empty `OFF`. Manual workflows remain
-available. Every mutation is idempotent; if a
+environment values, and verifies both effective lanes `OFF`. Manual workflows
+become available only after their drain gates. Every mutation is idempotent; if a
 concurrent deploy or transient failure interrupts the command, run the same
 command again until its final verification succeeds. The GitHub OFF source and
 disabled schedule are intentionally retained after partial failure because
 they are the safe direction, not compensated back to enabled automation.
 
-1. clear the beta allowlist, pause v2 `ALL` if state is uncertain, and keep mode
-   `OFF`;
+1. clear the beta allowlist and use the internal hard stop so both effective
+   lanes report `OFF`;
 2. allow any already-dispatched exact operation to reach a safe terminal state;
 3. verify no v2 train owns staging or production;
-4. use the serialized manual fallback, dispatching backend `Deploy a service`
-   workflows one at a time because shared concurrency can cancel sibling runs;
+4. after each target drain gate, use the serialized manual fallback,
+   dispatching backend `Deploy a service` workflows one at a time because
+   shared concurrency can cancel sibling runs;
 5. preserve v2 rows and immutable manifests for diagnosis.
 
 Never cancel another actor's shared workflow or force-push a shared ref.
