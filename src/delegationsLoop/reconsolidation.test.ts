@@ -91,6 +91,53 @@ describe('getAffectedWallets', () => {
     expect(affected).toEqual(new Set([A, B, D, E]));
   });
 
+  it('falls back to the consolidation key when stored wallets JSON is malformed', async () => {
+    mockedRetrieveConsolidationsForWallets.mockImplementation(async (wallets) =>
+      Object.fromEntries(wallets.map((wallet) => [wallet, wallet]))
+    );
+    const malformedRow = {
+      consolidation_key: `${A}-${C}`,
+      wallets: 'not-json'
+    } as ConsolidatedTDH;
+
+    const affected = await getAffectedWallets(
+      [
+        {
+          block: 6,
+          type: EventType.REVOKE,
+          wallet1: A,
+          wallet2: B
+        }
+      ],
+      [malformedRow]
+    );
+
+    expect(affected).toEqual(new Set([A, B, C]));
+  });
+
+  it('accepts every member from the complete confirmed-cluster key without re-querying members', async () => {
+    const D = '0x000000000000000000000000000000000000000d';
+    mockedRetrieveConsolidationsForWallets.mockResolvedValue({
+      [A]: `${A}-${B}-${C}`,
+      [D]: D
+    });
+
+    const affected = await getAffectedWallets(
+      [
+        {
+          block: 7,
+          type: EventType.REGISTER,
+          wallet1: A,
+          wallet2: D
+        }
+      ],
+      []
+    );
+
+    expect(affected).toEqual(new Set([A, D, B, C]));
+    expect(mockedRetrieveConsolidationsForWallets).toHaveBeenCalledTimes(1);
+  });
+
   it('bounds confirmed-cluster lookups to batches of 100 wallets', async () => {
     mockedRetrieveConsolidationsForWallets.mockImplementation(async (wallets) =>
       Object.fromEntries(wallets.map((wallet) => [wallet, wallet]))

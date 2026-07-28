@@ -285,7 +285,11 @@ export const consolidateAndPersistTDH = async (
     startingWallets,
     consolidationKeysToReplace
   );
-  await updateNftTDH(consolidatedTdh, startingWallets);
+  await updateNftTDH(
+    consolidatedTdh,
+    startingWallets,
+    consolidationKeysToReplace
+  );
   await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
 
   return consolidatedTdh;

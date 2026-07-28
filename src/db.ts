@@ -7,7 +7,8 @@ import {
   MoreThanOrEqual,
   Brackets,
   QueryRunner,
-  Repository
+  Repository,
+  ObjectLiteral
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
 import {
@@ -1139,8 +1140,8 @@ export async function persistConsolidatedTDH(
 
 const CONSOLIDATION_DELETE_BATCH_SIZE = 100;
 
-async function deleteConsolidationsByKeys(
-  repository: Repository<any>,
+async function deleteConsolidationsByKeys<Entity extends ObjectLiteral>(
+  repository: Repository<Entity>,
   consolidationKeys: string[],
   block?: number
 ): Promise<void> {
@@ -1212,26 +1213,24 @@ export async function persistHistoricConsolidatedTDH(
   logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTED BLOCK [${block}]`);
 }
 
-export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
+export async function persistNftTdh(
+  nftTdh: NftTDH[],
+  wallets?: string[],
+  consolidationKeysToReplace?: string[]
+) {
   logger.info(`[NFT TDH] PERSISTING [${nftTdh.length} RESULTS]`);
+  if (wallets && !consolidationKeysToReplace) {
+    throw new Error(
+      'Partial NFT TDH persistence requires exact keys to replace'
+    );
+  }
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
     const nftTdhRepo = manager.getRepository(NftTDH);
     if (wallets) {
       logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
-      await Promise.all(
-        wallets.map(async (wallet) => {
-          const walletPattern = `%${wallet}%`;
-          await nftTdhRepo
-            .createQueryBuilder()
-            .delete()
-            .where('consolidation_key like :walletPattern', {
-              walletPattern
-            })
-            .execute();
-        })
-      );
+      await deleteConsolidationsByKeys(nftTdhRepo, consolidationKeysToReplace!);
       await nftTdhRepo.save(nftTdh);
     } else {
       logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);

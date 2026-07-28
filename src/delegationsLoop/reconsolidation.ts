@@ -9,7 +9,17 @@ function getWallets(consolidation: ConsolidatedTDH): string[] {
     return consolidation.wallets;
   }
   if (typeof consolidation.wallets === 'string') {
-    return JSON.parse(consolidation.wallets);
+    try {
+      const parsedWallets: unknown = JSON.parse(consolidation.wallets);
+      if (
+        Array.isArray(parsedWallets) &&
+        parsedWallets.every((wallet) => typeof wallet === 'string')
+      ) {
+        return parsedWallets;
+      }
+    } catch {
+      // Fall through to the canonical key if the stored JSON is malformed.
+    }
   }
   return consolidation.consolidation_key.split('-');
 }
@@ -34,6 +44,9 @@ export async function getAffectedWallets(
     }
   }
 
+  // retrieveConsolidationsForWallets resolves each seed through the recursive
+  // confirmed graph and returns the complete cluster key. Members discovered
+  // from those keys therefore do not require another graph lookup.
   const clusterSeeds = Array.from(affectedWallets);
   for (
     let offset = 0;
