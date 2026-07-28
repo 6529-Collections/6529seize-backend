@@ -77,6 +77,8 @@ const REQUIRED_MAINTENANCE_LOCKS = [
 ] as const;
 const ENVIRONMENT_BOUND_ARTIFACT_CONTRACT = 'environment-bound-v3';
 const ROLLBACK_ARTIFACT_REVISION = '900001';
+const compareStrings = (left: string, right: string): number =>
+  left.localeCompare(right, 'en');
 
 export type TrainContext = {
   readonly train: ReleaseBusV2TrainRecord;
@@ -522,7 +524,10 @@ export function preparedArtifactDeployBinding(
       value: Readonly<Record<string, unknown>>,
       expected: readonly string[]
     ): boolean =>
-      isDeepStrictEqual(Object.keys(value).sort(), [...expected].sort());
+      isDeepStrictEqual(
+        Object.keys(value).sort(compareStrings),
+        [...expected].sort(compareStrings)
+      );
     const parseUnits = (
       value: string | undefined
     ): readonly string[] | null => {
@@ -568,7 +573,10 @@ export function preparedArtifactDeployBinding(
         if (
           flattened.length !== units.length ||
           new Set(flattened).size !== flattened.length ||
-          !isDeepStrictEqual([...flattened].sort(), [...units].sort())
+          !isDeepStrictEqual(
+            [...flattened].sort(compareStrings),
+            [...units].sort(compareStrings)
+          )
         )
           return null;
         return parsed as readonly (readonly string[])[];
@@ -630,7 +638,7 @@ export function preparedArtifactDeployBinding(
       inputs.reuse_artifact_name === '' &&
       inputs.reuse_artifact_digest === '';
     const oldProducerSummaryShape = isDeepStrictEqual(
-      Object.keys(summary).sort(),
+      Object.keys(summary).sort(compareStrings),
       ['artifact_digest', 'fresh_or_reused']
     );
     const backendUnits = parseUnits(inputs.deploy_units);
@@ -750,8 +758,8 @@ export function preparedArtifactDeployBinding(
       const exactPackages =
         packageDigests !== null &&
         isDeepStrictEqual(
-          Object.keys(packageDigests).sort(),
-          [...backendUnits].sort()
+          Object.keys(packageDigests).sort(compareStrings),
+          [...backendUnits].sort(compareStrings)
         ) &&
         Object.values(packageDigests).every((digest) =>
           /^[a-f0-9]{64}$/.test(digest)
@@ -813,7 +821,10 @@ export function preparedArtifactDeployBinding(
     value: Readonly<Record<string, unknown>>,
     expected: readonly string[]
   ): boolean =>
-    isDeepStrictEqual(Object.keys(value).sort(), [...expected].sort());
+    isDeepStrictEqual(
+      Object.keys(value).sort(compareStrings),
+      [...expected].sort(compareStrings)
+    );
   const exactV3RequestBase =
     contract === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
     request?.ref === 'main' &&
@@ -933,7 +944,10 @@ export function preparedArtifactDeployBinding(
         if (
           flattened.length === parsedUnits.length &&
           new Set(flattened).size === flattened.length &&
-          isDeepStrictEqual([...flattened].sort(), [...parsedUnits].sort())
+          isDeepStrictEqual(
+            [...flattened].sort(compareStrings),
+            [...parsedUnits].sort(compareStrings)
+          )
         ) {
           units = parsedUnits;
           layers = parsedLayers as readonly (readonly string[])[];
@@ -985,8 +999,8 @@ export function preparedArtifactDeployBinding(
       isDeepStrictEqual(summary.layers, layers) &&
       packageDigests !== null &&
       isDeepStrictEqual(
-        Object.keys(packageDigests).sort(),
-        [...units].sort()
+        Object.keys(packageDigests).sort(compareStrings),
+        [...units].sort(compareStrings)
       ) &&
       Object.values(packageDigests).every((digest) =>
         /^[a-f0-9]{64}$/.test(digest)
