@@ -61,5 +61,7 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('setOperator(false);refresh().catch(function(error)');
     expect(app).toContain('Public read-only access remains available');
     expect(app).not.toContain("byId('authenticated')");
+    expect(app).toContain("if(register)register.disabled=data.mode==='OFF'");
+    expect(app).toContain("if(reconcile)reconcile.disabled=data.mode==='OFF'");
   });
 });
