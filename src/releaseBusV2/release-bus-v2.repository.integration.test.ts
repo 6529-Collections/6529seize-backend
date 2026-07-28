@@ -703,6 +703,33 @@ describeWithSeed(
       ).resolves.toBe(true);
     });
 
+    it('serializes the scheduler row lease across autocommit and transaction connections', async () => {
+      const external = await repository.acquireLock(
+        'scheduler',
+        null,
+        'external-selection',
+        60_000,
+        {}
+      );
+      expect(external?.lease_token).toBeTruthy();
+
+      await expect(
+        repository.executeNativeQueriesInTransaction(async (connection) =>
+          repository.acquireLock(
+            'scheduler',
+            null,
+            'transactional-replan',
+            60_000,
+            { connection }
+          )
+        )
+      ).resolves.toBeNull();
+
+      await expect(
+        repository.releaseLock('scheduler', external?.lease_token ?? '', {})
+      ).resolves.toBe(true);
+    });
+
     it('atomically marks every candidate in a multi-candidate admitted set live', async () => {
       const first = await repository.createCandidate(
         {

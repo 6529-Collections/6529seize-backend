@@ -4,6 +4,9 @@ import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
 
+// The helper owns the abort signal so every request has one authoritative
+// timeout classification; callers cannot replace it with an outer signal.
+type GitHubRequestInit = Omit<RequestInit, 'signal'>;
 type InstallationToken = {
   readonly token: string;
   readonly expires_at: string;
@@ -118,11 +121,13 @@ const MAX_WORKFLOW_LABEL_LENGTH = 500;
 const MAX_STAGING_FENCE_PAGES = 10;
 const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const GITHUB_PAGE_SIZE = 100;
+const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
 
 export class ReleaseBusGitHubInfrastructureError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = 'ReleaseBusGitHubInfrastructureError';
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -216,6 +221,10 @@ export class ReleaseBusGitHubApp {
     readonly expiresAt: number;
   } | null = null;
 
+  public constructor(
+    private readonly requestTimeoutMs = GITHUB_REQUEST_TIMEOUT_MS
+  ) {}
+
   private get owner(): string {
     return process.env.RELEASE_BUS_GITHUB_ORG ?? '6529-Collections';
   }
@@ -233,14 +242,15 @@ export class ReleaseBusGitHubApp {
       throw new Error('GitHub App credentials are not configured');
     let response: Response;
     try {
-      response = await fetch(
+      response = await this.fetchWithTimeout(
         `https://api.github.com/app/installations/${installationId}/access_tokens`,
         {
           method: 'POST',
           headers: this.headers(appJwt(appId, privateKey))
         }
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof ReleaseBusGitHubInfrastructureError) throw error;
       throw new ReleaseBusGitHubInfrastructureError(
         'GitHub App token request failed before a response was received'
       );
@@ -264,21 +274,49 @@ export class ReleaseBusGitHubApp {
     };
   }
 
+  private async fetchWithTimeout(
+    url: string,
+    options: GitHubRequestInit = {}
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, this.requestTimeoutMs);
+    timeoutId.unref();
+
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal as RequestInit['signal']
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ReleaseBusGitHubInfrastructureError(
+          `GitHub request timed out after ${this.requestTimeoutMs}ms`
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   private async request(
     repository: ReleaseBusV2Repository,
     path: string,
-    options: RequestInit = {}
+    options: GitHubRequestInit = {}
   ): Promise<Response> {
     const token = await this.token();
     try {
-      return await fetch(
+      return await this.fetchWithTimeout(
         `https://api.github.com/repos/${this.owner}/${REPOSITORIES[repository]}${path}`,
         {
           ...options,
           headers: { ...this.headers(token), ...(options.headers ?? {}) }
         }
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof ReleaseBusGitHubInfrastructureError) throw error;
       throw new ReleaseBusGitHubInfrastructureError(
         `GitHub ${repository} request failed before a response was received`
       );
@@ -287,15 +325,16 @@ export class ReleaseBusGitHubApp {
 
   private async organizationRequest(
     path: string,
-    options: RequestInit = {}
+    options: GitHubRequestInit = {}
   ): Promise<Response> {
     const token = await this.token();
     try {
-      return await fetch(`https://api.github.com${path}`, {
+      return await this.fetchWithTimeout(`https://api.github.com${path}`, {
         ...options,
         headers: { ...this.headers(token), ...(options.headers ?? {}) }
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof ReleaseBusGitHubInfrastructureError) throw error;
       throw new ReleaseBusGitHubInfrastructureError(
         'GitHub organization request failed before a response was received'
       );
