@@ -11,6 +11,7 @@ const mockV2ListDependencies = jest.fn();
 const mockV2AppendEvent = jest.fn();
 const mockV2ListTrains = jest.fn();
 const mockV2FindTrain = jest.fn();
+const mockV2FindManifest = jest.fn();
 const mockV2ListManifests = jest.fn();
 const mockV2ListTrainCandidates = jest.fn();
 const mockV2ListOperations = jest.fn();
@@ -93,6 +94,7 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
     appendEvent: (...args: unknown[]) => mockV2AppendEvent(...args),
     listTrains: (...args: unknown[]) => mockV2ListTrains(...args),
     findTrain: (...args: unknown[]) => mockV2FindTrain(...args),
+    findManifest: (...args: unknown[]) => mockV2FindManifest(...args),
     listManifests: (...args: unknown[]) => mockV2ListManifests(...args),
     listTrainCandidates: (...args: unknown[]) =>
       mockV2ListTrainCandidates(...args),
@@ -434,15 +436,22 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     mockV2ListCandidates.mockResolvedValue([v2Candidate]);
     mockV2ListTrains.mockResolvedValue([]);
     mockV2ListManifests.mockResolvedValue([]);
+    mockV2FindManifest.mockResolvedValue({
+      id: RESET_ID,
+      frontend_sha: SHA,
+      backend_sha: 'b'.repeat(40)
+    });
     mockV2ListControls.mockResolvedValue([
-      { scope: 'ALL', paused: false },
-      { scope: 'STAGING', paused: false },
-      { scope: 'PRODUCTION', paused: false }
+      { scope: 'ALL', paused: false, reason: null },
+      { scope: 'STAGING', paused: false, reason: null },
+      { scope: 'PRODUCTION', paused: false, reason: null }
     ]);
     mockV2ListLocks.mockResolvedValue([]);
     mockV2GetStagingState.mockResolvedValue({
+      id: 'current',
       status: 'CLEAN_MAIN',
       current_manifest_id: null,
+      last_validated_manifest_id: RESET_ID,
       frontend_sha: SHA,
       backend_sha: 'b'.repeat(40),
       frontend_staging_ref_sha: SHA,
@@ -561,9 +570,26 @@ describe('Release Bus v2 route authorization and exact actions', () => {
         expect(response.body.staging_state).toEqual(
           expect.objectContaining({
             status: 'CLEAN_MAIN',
+            last_validated_frontend_sha: SHA,
+            last_validated_backend_sha: 'b'.repeat(40),
             row_version: 1
           })
         );
+        expect(mockV2FindManifest).toHaveBeenCalledWith(RESET_ID, {});
+        expect(response.body.lanes).toEqual([
+          {
+            lane: 'STAGING',
+            status: 'ON',
+            changeable: true,
+            reason: null
+          },
+          {
+            lane: 'PRODUCTION',
+            status: 'ON',
+            changeable: true,
+            reason: null
+          }
+        ]);
       }
       expect(mockGetViewer).not.toHaveBeenCalled();
       expectNoReleaseMutation();

@@ -2,17 +2,19 @@
 
 - Before staging, production, promotion, or release mutation, run
   `node ops/scripts/release-bus-status.mjs` and follow `deploy-6529`.
-- `OFF` uses the serialized manual fallback. `STAGING` routes staging
-  readiness through v2. `PRODUCTION` routes
-  staging through v2 and requires a separate explicit exact-SHA production
-  action after `STAGING_VALIDATED`.
-- While `OFF`, dispatch backend `Deploy a service` workflows one at a time and
-  wait for exact success before starting the next. Its shared concurrency can
-  cancel sibling service runs, including independent DAG-frontier units.
-- Stop an active v2 lane when `ALL` or that lane is paused. In `OFF`, v2
-  controls are non-authoritative and do not block manual staging or production.
-  Explicit owner production authorization is sufficient; prior staging
-  deployment or validation is not required.
+- Route only from the helper's two effective lane states. When the target lane
+  is `ON`, use v2. When it is `OFF`, use serialized manual fallback only after
+  the target environment lock is free, no mutation/E2E workflow is active, and
+  every already-dispatched exact operation is terminal. Both lanes `OFF` means
+  full manual fallback.
+- Staging `ON` accepts exact candidates. Production `ON` requires a separate
+  exact-SHA production action after `STAGING_VALIDATED`.
+- Raw mode and `ALL` are internal emergency fences, not normal routing or UI
+  controls. Never bypass them. Use `release-bus-v2-fast-off.mjs` only for an
+  emergency hard stop.
+- In manual fallback, dispatch backend `Deploy a service` workflows one at a
+  time and wait for exact success before starting the next. Shared concurrency
+  can cancel sibling service runs, including independent DAG-frontier units.
 - For coupled work, declare backend dependencies and preserve backend-before-
   frontend ordering. Within v2, only independent backend DAG frontier units run
   together.
@@ -141,6 +143,7 @@ npm test path/to/test.spec.ts
 ```
 
 The test configuration uses:
+
 - Jest with ts-jest preset
 - Testcontainers for MySQL integration tests
 - Global setup/teardown in `src/tests/_setup/`
@@ -179,6 +182,7 @@ validator/query tests in the same PR.
 The backend consists of independent "loop" services that run as AWS Lambda functions or cron jobs. Each loop is self-contained in `src/*Loop/` directories:
 
 **Key Loops:**
+
 - `nftsLoop` - Discovers and indexes NFTs from blockchain
 - `nftOwnersLoop` - Tracks NFT ownership changes
 - `nftHistoryLoop` - Maintains NFT ownership history
@@ -197,6 +201,7 @@ The backend consists of independent "loop" services that run as AWS Lambda funct
 - `overRatesRevocationLoop` - Handles reputation rate revocations
 
 Each loop follows the pattern:
+
 1. Entry point in `index.ts` with `handler` function
 2. Uses `doInDbContext()` to initialize database and Redis
 3. Wrapped with `sentryContext.wrapLambdaHandler()` for error tracking
@@ -207,11 +212,13 @@ Each loop follows the pattern:
 The API (`src/api-serverless/src/`) is an Express application with:
 
 **Core Files:**
+
 - `app.ts` - Main Express app configuration with routes, middleware, authentication
 - `handler.ts` - AWS Lambda handler wrapper for serverless deployment
 - `async.router.ts` - Async-aware Express router wrapper
 
 **Feature Routes (in subdirectories):**
+
 - `drops/` - Social content drops (posts/content) with voting and reactions
 - `waves/` - Community waves (voting periods/campaigns)
 - `profiles/` - User profiles, reputation, and activity logs
@@ -226,6 +233,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - `xtdh/` - Extended TDH calculations
 
 **Architecture Patterns:**
+
 - **Routes** (`*.routes.ts`) - Define endpoints and validation
 - **API Services** (`*.api.service.ts`) - Business logic for API endpoints
 - **DB Services** (`*.db.ts` in `src/`) - Database access layer extending `LazyDbAccessCompatibleService`
@@ -234,27 +242,32 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Database Layer
 
 **Connection Management:**
+
 - Separate read/write connection pools configured in `src/db-api.ts`
 - `read_pool` for SELECT queries, `write_pool` for INSERT/UPDATE/DELETE
 - Environment variables: `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_PORT` (write) and `DB_HOST_READ`, `DB_USER_READ`, `DB_PASS_READ` (read)
 
 **Query Execution:**
+
 - `SqlExecutor` interface in `src/sql-executor.ts` provides abstraction
 - Services extend `LazyDbAccessCompatibleService` to access `this.db`
 - Use parameterized queries with named parameters: `execute(sql, { param: value })`
 - Transaction support via `executeNativeQueriesInTransaction()`
 
 **ORM:**
+
 - TypeORM for schema synchronization (entities in `src/entities/`)
 - Entities files are prefixed with `I` (e.g., `IIdentity.ts`, `IDrop.ts`) but the entity classes in them don't have this prefix. Instead they have `Entity` suffix (e.g., `IdentityEntiy`, `ProfileEntity`)
 - Schema auto-syncs on startup; migrations are only used for data migrations (and rarely for views).
 - Every time a new Entity is added it also needs to be exported in `entities.ts`.
 
 **Constants:**
+
 - All table names defined in `src/constants.ts` (e.g., `NFTS_TABLE`, `DROPS_TABLE`, `PROFILES_TABLE`)
 - Use constants instead of hardcoded strings
 
 **Important:**
+
 - Never use foreign keys in database schemas
 - Avoid fancy db level constraints (like enum validation for example)
 - Be careful with changing preexisting entity classes as there is a high chance of accidentally deleting data. This includes changing data types.
@@ -262,37 +275,44 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Key Domain Models
 
 **NFTs:**
+
 - Primary contracts: MEMES (`0x33FD426905F149f8376e227d0C9D3340AaD17aF1`), MEME LAB, GRADIENT, NextGen
 - Tables: `nfts`, `nfts_meme_lab`, `nft_owners`, `nfts_history`
 - Extended data: `memes_extended_data`, `lab_extended_data`
 
 **Community Features:**
+
 - **Drops** - Social posts/content with voting, reactions, and metadata
 - **Waves** - Social channels with all kinds of metadata like voting periods with participation requirements and outcomes
 - **Ratings** - Reputation system with categories (CIC, REP)
 - **Identities** - User profiles with proxy support
 
 **TDH (Total Days Held):**
+
 - Scoring system based on eligible NFT ownership duration
 - Per-wallet calculations and consolidated calculations across wallet consolidations
 - Historical tracking in `tdh_history` and `tdh_global_history`
 
 **Delegations:**
+
 - Integration with delegations protocol
 - Allows delegating wallet permissions to other addresses
 
 ### Authentication & Authorization
 
 **Authorization**:
+
 - Uses a sequence of API calls and Ethereum wallet signatures to figure out who the user is. If successful, releases a JWT. (`openapi.yaml` `/auth` endpoints)
 
 **JWT Authentication:**
+
 - Passport.js with JWT strategy in `src/api-serverless/src/app.ts`
 - JWT secret from `getJwtSecret()` in `src/api-serverless/src/auth/auth.ts`
 - Routes can use `passport.authenticate('jwt')` or `passport.authenticate(['jwt', 'anonymous'])`
 - User identity in `request.user`
 
 **Rate Limiting:**
+
 - Redis-based rate limiting middleware in `src/api-serverless/src/rate-limiting/`
 - Two-tier: burst limit (requests/second) and sustained limit (requests over time window)
 - Different limits for authenticated vs unauthenticated users
@@ -302,10 +322,12 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Environment Configuration
 
 **Environment Files:**
+
 - Use `.env.local` to set them
 - Ignore the one in `src/api-serverless/`
 
 **Environment Loading:**
+
 - `loadLocalConfig()` and `loadSecrets()`(works only in prod) in `src/env.ts`
 - `doInDbContext()` wrapper in `src/secrets.ts` handles full initialization
 
@@ -325,6 +347,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Development Notes
 
 **Running Locally:**
+
 1. Set up MySQL database (or use Docker: `docker-compose up -d`)
 2. Create `.env.local` with database credentials
 3. Run migrations: `npm run migrate-local:up`
@@ -332,15 +355,18 @@ The API (`src/api-serverless/src/`) is an Express application with:
 5. Start API: `cd src/api-serverless && npm run dev`
 
 **Database Setup:**
+
 - Create database and user via docker-compose
 - TypeORM creates tables automatically
 - Migrations create views and complex structures
 
 **Video Compression:**
+
 - S3Loop requires ffmpeg installed locally
 - Only runs in `prod` mode by default
 
 **Lambda Deployment:**
+
 - Each loop folder represents a deployable Lambda
 - Serverless Framework configuration in `serverless-config/`
 - Most loops have their own serverless.yaml files in their roots. Those are used to set up lambdas (via Github Actions). All new lambdas should also use serverless.yaml and make sure they are wired in build scripts and `.github/workflows/deploy.yaml`
@@ -350,33 +376,40 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Code Patterns
 
 **Error Handling:**
+
 - Use `ApiCompliantException` or one of its specific subclasses from `src/exceptions` for API errors
 - Sentry integration via `sentryContext.wrapLambdaHandler()`
 
 **Logging:**
+
 - `Logger.get('COMPONENT_NAME')` pattern (in classes use the pattern `private readonly logger = Logger.get(this.constructor.name);`)
 - Request-scoped logging with `loggerContext` in API
 - Each request gets unique `requestId`
 
 **Timing:**
+
 - `Time` utility in `src/time.ts` for time operations
 - `Timer` class for performance measurement
 
 **Validation:**
+
 - Joi schemas for request validation
 - `getValidatedByJoiOrThrow()` in `src/api-serverless/src/validation.ts`
 
 **Caching:**
+
 - Redis-based caching via `src/redis.ts`
 - Request-level caching via `request-cache.ts`
 - `cacheKey()` helper for consistent cache key generation
 
 **WebSockets:**
+
 - WebSocket server in `src/api-serverless/src/ws/`
 - JWT authentication for WebSocket connections
 - Notification system for real-time updates
 
 **API schemas**
+
 - API endpoints are described in `openapi.yaml` file.
 - Any time you change this file run `cd src/api-serverless && npm run restructure-openapi && npm run generate`
 - This will generate response models to `src/api-serverless/src/generated/models`, but only response models and POST/DELETE request bodies, not routes and query param models.
