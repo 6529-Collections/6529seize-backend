@@ -18654,6 +18654,35 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiOwnerBalance"
+    ApiPageAccessMode:
+      type: string
+      description: Runtime visibility and authentication mode for a web section.
+      enum:
+        - HIDDEN
+        - PASSWORD_PROTECTED
+        - PUBLIC
+    ApiPageAccessSectionSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - version
+      properties:
+        mode:
+          $ref: "#/components/schemas/ApiPageAccessMode"
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Increment to invalidate previously issued access grants.
+    ApiPageAccessSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - stream_review
+      properties:
+        stream_review:
+          $ref: "#/components/schemas/ApiPageAccessSectionSettings"
     ApiPageBase:
       type: object
       required:
@@ -20180,6 +20209,7 @@ components:
         - announcements_wave_id
         - quorum_wave_id
         - auth
+        - page_access
       properties:
         rememes_submission_tdh_threshold:
           type: integer
@@ -20209,6 +20239,8 @@ components:
           nullable: true
         auth:
           $ref: "#/components/schemas/ApiAuthSettings"
+        page_access:
+          $ref: "#/components/schemas/ApiPageAccessSettings"
     ApiSessionLoginRequest:
       type: object
       additionalProperties: false

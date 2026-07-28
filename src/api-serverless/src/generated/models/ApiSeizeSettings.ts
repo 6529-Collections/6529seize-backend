@@ -11,6 +11,7 @@
  */
 
 import { ApiAuthSettings } from '../models/ApiAuthSettings';
+import { ApiPageAccessSettings } from '../models/ApiPageAccessSettings';
 import { HttpFile } from '../http/http';
 
 export class ApiSeizeSettings {
@@ -23,6 +24,7 @@ export class ApiSeizeSettings {
     'announcements_wave_id': string | null;
     'quorum_wave_id': string | null;
     'auth': ApiAuthSettings;
+    'page_access': ApiPageAccessSettings;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -81,6 +83,12 @@ export class ApiSeizeSettings {
             "name": "auth",
             "baseName": "auth",
             "type": "ApiAuthSettings",
+            "format": ""
+        },
+        {
+            "name": "page_access",
+            "baseName": "page_access",
+            "type": "ApiPageAccessSettings",
             "format": ""
         }    ];
 
