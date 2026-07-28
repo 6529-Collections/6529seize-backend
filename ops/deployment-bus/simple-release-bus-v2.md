@@ -138,6 +138,34 @@ candidate/repository/PR/head identity and successful production E2E. Omitted
 unrelated candidates keep their staging evidence and separate production
 intent.
 
+If either production base moves before irreversible production mutation, the
+old train is cancelled without changing its immutable membership and its exact
+explicit intents move to `WAITING_FOR_PRODUCTION_REPLAN`. The next scheduler
+transaction creates a new replacement selection and train from every currently
+eligible explicit production intent, including compatible selections committed
+after the old train was claimed. It locks and rechecks exact heads, staging
+train/manifest/E2E evidence, dependencies, ownership, and both current
+production bases. Audit events map every included candidate and source
+selection/train to the replacement and retain every omitted intent with its
+exact reason. Revoked, superseded, moved, stale-evidence, dependency-incomplete,
+or concurrently owned candidates are never inferred from staging and are not
+silently included.
+
+If `PRODUCTION_REPLAN_INTENT_SCAN_FAILED_CLOSED` reports the 500-row scan cap,
+no replacement may claim. Wait for production ownership to drain, inspect every
+explicit ready/held intent, and use the authenticated revoke/cancel actions
+only for owner-authorized stale intents until the bounded scan is complete.
+Otherwise deploy a separately reviewed cap/pagination change. Never edit the
+ledger, discard intent, or split a dependency set merely to unblock the queue.
+
+The replacement boundary closes as soon as any `ADVANCE_MAIN_*` succeeds, a
+production deploy is dispatched, or production E2E exists. After that boundary,
+the original exact set remains frozen and only that train may resume or recover;
+an active train is never broadened in place. A nonterminal dispatched operation
+retains the production-environment lease while it drains. Once all recorded
+work is terminal, the frozen/paused train releases that lease; the active train
+and paused `PRODUCTION` control still block every new claim until exact recovery.
+
 New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`:
 
 - resolve and persist, per selected candidate, candidate ID, repository, PR,
@@ -186,16 +214,17 @@ explicitly.
 
 ## Failure behavior
 
-| Class                         | Behavior                                                                                                                                                                                                                                                                          |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Candidate merge/test          | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable                                                                                                     |
-| Ordinary staging preflight    | After already-running workflows drain, fail the affected repository's NEW candidate group once, hold only dependants, and return independent repository candidates to the next train; never dispatch subset-isolation workflows |
-| Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                                                  |
-| Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                                             |
-| Control plane                 | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                                                                                                                |
-| E2E                           | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates                                                                                            |
-| Production preflight          | Fail before shared mutation. A later explicit exact-SHA selection may retry only after the unchanged staging evidence is revalidated and the locked failed train contains only terminal compose/preflight operations; audit both selection identities and the failed source train |
-| Production after main advance | Fail selected candidates closed, pause `PRODUCTION`, and block later production claims. `main` remains truthful and is never rewritten; an operator must prove the recorded exact main/runtime parity or complete an explicit rollback before resuming                            |
+| Class                         | Behavior                                                                                                                                                                                                                                                                                             |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Candidate merge/test          | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable                                                                                                                        |
+| Ordinary staging preflight    | After already-running workflows drain, fail the affected repository's NEW candidate group once, hold only dependants, and return independent repository candidates to the next train; never dispatch subset-isolation workflows                                                                      |
+| Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                                                                     |
+| Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                                                                |
+| Control plane                 | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                                                                                                                                   |
+| E2E                           | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates                                                                                                               |
+| Production preflight          | Fail before shared mutation. A later explicit exact-SHA selection may retry only after the unchanged staging evidence is revalidated and the locked failed train contains only terminal compose/preflight operations; audit both selection identities and the failed source train                    |
+| Production base moved         | Before irreversible mutation, transactionally preserve explicit intent and form a new audited replacement from all currently eligible dependency-closed selections; retain every omission reason. After irreversible mutation, freeze the original exact set and pause production for exact recovery |
+| Production after main advance | Fail selected candidates closed, pause `PRODUCTION`, and block later production claims. `main` remains truthful and is never rewritten; an operator must prove the recorded exact main/runtime parity or complete an explicit rollback before resuming                                               |
 
 Every pending GitHub status must map to a visible candidate/train/operation state
 and recovery message. Duplicate callbacks and worker invocations reuse immutable

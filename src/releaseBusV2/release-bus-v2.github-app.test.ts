@@ -15,8 +15,8 @@ jest.mock('node-fetch', () => {
   return { ...actual, __esModule: true, default: jest.fn() };
 });
 
-function appWithCachedToken(): ReleaseBusGitHubApp {
-  const app = new ReleaseBusGitHubApp();
+function appWithCachedToken(requestTimeoutMs?: number): ReleaseBusGitHubApp {
+  const app = new ReleaseBusGitHubApp(requestTimeoutMs);
   (
     app as unknown as {
       cachedToken: { value: string; expiresAt: number };
@@ -54,6 +54,32 @@ describe('GitHub immutable release refs', () => {
         })
       })
     );
+  });
+
+  it('aborts a GitHub request at the configured request deadline', async () => {
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockImplementationOnce(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('aborted');
+              error.name = 'AbortError';
+              reject(error);
+            },
+            { once: true }
+          );
+        })
+    );
+
+    await expect(
+      appWithCachedToken(5).resolveRef('frontend', 'main')
+    ).rejects.toMatchObject({
+      name: ReleaseBusGitHubInfrastructureError.name,
+      message: 'GitHub request timed out after 5ms'
+    });
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeDefined();
   });
 
   it('is idempotent only when a racing ref resolves to the exact SHA', async () => {
