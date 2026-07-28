@@ -10,13 +10,22 @@ import {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
+  HistoricConsolidatedTDH,
   NftTDH
 } from '@/entities/ITDH';
 import { identityConsolidationEffects } from '@/identity';
-import { sqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor
+} from '@/sql-executor';
 import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import { aTdhConsolidation } from '@/tests/fixtures/tdh_consolidation.fixture';
 import { recalculateXTdhUseCase } from '@/xtdh/recalculate-xtdh.use-case';
+import { DbQueryOptions } from '@/db-query.options';
+import * as mysql from 'mysql';
+import { DataSource, QueryRunner } from 'typeorm';
 
 const BLOCK = 99;
 const A_C = 'a-c';
@@ -24,6 +33,59 @@ const B = 'b';
 const A_B = 'a-b';
 const C = 'c';
 const CONTRACT = '0x0000000000000000000000000000000000000001';
+
+function prepareStatement(
+  sql: string,
+  params?: Record<string, unknown>
+): string {
+  return sql.replace(/:(\w+)/g, (placeholder, key: string) => {
+    if (!Object.prototype.hasOwnProperty.call(params, key)) {
+      return placeholder;
+    }
+    const value = params![key];
+    return Array.isArray(value)
+      ? value.map((item) => mysql.escape(item)).join(', ')
+      : mysql.escape(value);
+  });
+}
+
+class TypeOrmTestSqlExecutor extends SqlExecutor {
+  constructor(private readonly dataSource: DataSource) {
+    super();
+  }
+
+  async execute<T>(
+    sql: string,
+    params?: Record<string, unknown>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    const statement = prepareStatement(sql, params);
+    const queryRunner = options?.wrappedConnection?.connection as
+      QueryRunner | undefined;
+    const result = queryRunner
+      ? await queryRunner.query(statement)
+      : await this.dataSource.query(statement);
+    return Object.values(JSON.parse(JSON.stringify(result))) as T[];
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>
+  ): Promise<T> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      const result = await executable({ connection: queryRunner });
+      await queryRunner.commitTransaction();
+      return result;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+}
 
 function consolidatedRow(
   wallets: string[],
@@ -145,7 +207,32 @@ async function persistReplacement(replacementKeys: string[]) {
 }
 
 describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
+  const dataSource = new DataSource({
+    type: 'mysql',
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT),
+    username: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME,
+    entities: [
+      ConsolidatedTDH,
+      HistoricConsolidatedTDH,
+      ConsolidatedTDHMemes,
+      ConsolidatedTDHEditions,
+      NftTDH
+    ],
+    synchronize: false,
+    logging: false,
+    charset: 'utf8mb4',
+    timezone: 'Etc/UTC'
+  });
+
+  beforeAll(async () => {
+    await dataSource.initialize();
+  });
+
   beforeEach(() => {
+    setSqlExecutor(new TypeOrmTestSqlExecutor(dataSource));
     jest
       .spyOn(
         identityConsolidationEffects,
@@ -160,6 +247,10 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    await dataSource.destroy();
   });
 
   it('rolls back every TDH store when the unified transaction fails', async () => {
@@ -192,13 +283,13 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     await persistReplacement([A_B, C]);
 
     await expectPersistedKeys([A_B, C]);
-    const [{ total, rows }] = await sqlExecutor.execute<{
+    const [{ total, row_count }] = await sqlExecutor.execute<{
       total: string | number;
-      rows: string | number;
+      row_count: string | number;
     }>(
-      `SELECT SUM(boosted_tdh) AS total, COUNT(*) AS rows FROM ${TDH_NFT_TABLE}`
+      `SELECT SUM(boosted_tdh) AS total, COUNT(*) AS row_count FROM ${TDH_NFT_TABLE}`
     );
     expect(Number(total)).toBe(60);
-    expect(Number(rows)).toBe(2);
+    expect(Number(row_count)).toBe(2);
   });
 });
