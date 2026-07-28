@@ -2605,7 +2605,7 @@ export class ReleaseBusV2Service {
           status: 'PAUSED',
           failureClass: 'INTERACTION',
           failureMessage: input.reason,
-          recoveryMessage: `${reason}. Resume or recover only this train's immutable membership; production environment ownership is ${lockDisposition.toLowerCase().split('_').join(' ')}`
+          recoveryMessage: `${reason}. Resume or recover only this train's immutable membership; production environment ownership is ${lockDisposition.toLowerCase().replace(/_/g, ' ')}`
         },
         ctx
       ))
