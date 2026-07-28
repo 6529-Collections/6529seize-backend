@@ -27,6 +27,10 @@ import {
   HELP_BOT_QUESTION_CREDIT_COST,
   HELP_BOT_SIGNUP_CREDIT_GRANT
 } from './help-bot.config';
+import {
+  frontendStreamKnowledgeSource,
+  HelpBotStreamKnowledgeSource
+} from './help-bot-stream-knowledge';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -49,8 +53,7 @@ export interface HelpBotNoReliableSource {
 }
 
 export type HelpBotAnswerResult =
-  | HelpBotAnswerSuccess
-  | HelpBotNoReliableSource;
+  HelpBotAnswerSuccess | HelpBotNoReliableSource;
 
 export interface HelpBotLlmRenderer {
   renderAnswer(input: {
@@ -260,6 +263,70 @@ function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
 ): string {
+  if (record.kind === 'public_review_knowledge') {
+    const ambiguity = record.facts.find((fact) =>
+      fact.startsWith('AMBIGUITY:')
+    );
+    const summaries = record.facts
+      .filter((fact) => fact.startsWith('{'))
+      .map((fact) => {
+        try {
+          const evidence = JSON.parse(fact) as {
+            readonly title?: string;
+            readonly scope?: string;
+            readonly classification?: string;
+            readonly summary?: string;
+            readonly text?: string;
+            readonly technical?: {
+              readonly declaration?: {
+                readonly canonicalSignature?: string;
+                readonly displaySignature?: string;
+                readonly inputs?: unknown[];
+                readonly outputs?: unknown[];
+                readonly visibility?: string;
+                readonly stateMutability?: string;
+              };
+            };
+          };
+          const declaration = evidence.technical?.declaration;
+          const technicalSummary = declaration
+            ? [
+                declaration.canonicalSignature ??
+                  declaration.displaySignature ??
+                  evidence.title,
+                `inputs ${JSON.stringify(declaration.inputs ?? [])}`,
+                `outputs ${JSON.stringify(declaration.outputs ?? [])}`,
+                declaration.visibility,
+                declaration.stateMutability,
+                evidence.scope,
+                evidence.classification
+              ]
+                .filter(Boolean)
+                .join('; ')
+            : null;
+          return `${evidence.title ?? 'Evidence'}: ${
+            technicalSummary ??
+            evidence.summary ??
+            evidence.text ??
+            'See the pinned review evidence.'
+          }`;
+        } catch {
+          return null;
+        }
+      })
+      .filter((summary): summary is string => !!summary)
+      .slice(0, 3);
+    const body = (
+      ambiguity
+        ? ambiguity.slice('AMBIGUITY:'.length).trim()
+        : summaries.join(' ')
+    ).slice(0, 820);
+    return ensureKnowledgeMarkdownLinks({
+      text: body || 'See the pinned Stream review evidence for this question.',
+      record,
+      baseUrl
+    });
+  }
   return ensureKnowledgeMarkdownLinks({
     text: record.facts.join(' '),
     record,
@@ -693,6 +760,9 @@ const PRODUCT_CONTEXT_PATTERNS = [
   /\bnextgen\b/,
   /\brememe(s)?\b/,
   /\bdrop forge\b/,
+  /\bstream\b/,
+  /\bstream auctions?\b/,
+  /\bstream curation\b/,
   /\bsubscription(s)?\b/,
   /\beligibility\b/,
   /\bprofile(s)?\b/,
@@ -1082,7 +1152,7 @@ function buildGenericHelpAnswer(question: string): string | null {
   if (!isGenericHelpRequest(normalizedQuestion)) {
     return null;
   }
-  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
+  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, the Stream review, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
 }
 
 function buildSocialAnswer(question: string): string | null {
@@ -1110,7 +1180,8 @@ export class HelpBotAnswerer {
     private readonly renderer?: HelpBotLlmRenderer | null,
     private readonly knowledgeSource: HelpBotKnowledgeSource = frontendHelpBotKnowledgeSource,
     private readonly publicDataService?: HelpBotPublicDataService | null,
-    private readonly calendarService?: HelpBotCalendarService | null
+    private readonly calendarService?: HelpBotCalendarService | null,
+    private readonly streamKnowledgeSource: HelpBotStreamKnowledgeSource = frontendStreamKnowledgeSource
   ) {}
 
   public async answer(
@@ -1165,6 +1236,11 @@ export class HelpBotAnswerer {
         answer: socialAnswer,
         record: buildSocialRecord()
       };
+    }
+
+    const streamMatch = await this.findStreamKnowledgeMatch(request);
+    if (streamMatch) {
+      return this.answerFromKnowledgeMatch(request, streamMatch);
     }
 
     const expectsCalendarAnswer = isCalendarTimingQuestion(
@@ -1223,6 +1299,13 @@ export class HelpBotAnswerer {
       };
     }
 
+    return this.answerFromKnowledgeMatch(request, match);
+  }
+
+  private async answerFromKnowledgeMatch(
+    request: HelpBotAnswerRequest,
+    match: HelpBotKnowledgeMatch
+  ): Promise<HelpBotAnswerResult> {
     const exactDefinitionMatch = isExactDefinitionMatch(
       request.question,
       match.record
@@ -1289,6 +1372,20 @@ export class HelpBotAnswerer {
       record: answerRecord,
       escalateToTechTeam
     };
+  }
+
+  private async findStreamKnowledgeMatch(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotKnowledgeMatch | null> {
+    try {
+      return await this.streamKnowledgeSource.findMatch(
+        request.question,
+        request.previousBotAnswer
+      );
+    } catch (error) {
+      this.logger.warn('Help bot Stream knowledge source failed closed', error);
+      return null;
+    }
   }
 
   private async answerFromCalendar(
