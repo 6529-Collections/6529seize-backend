@@ -28,6 +28,7 @@ import {
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
+  ReleaseBusV2CurrentStagingRepairBodySchema,
   ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
@@ -51,6 +52,7 @@ import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
   releaseBusV2Service,
+  type ReleaseBusV2CurrentStagingRepairIdentity,
   ReleaseBusV2ProductionSelectionError,
   ReleaseBusV2StagingTransitionConflictError
 } from '@/releaseBusV2/release-bus-v2.service';
@@ -869,6 +871,39 @@ deployRoutes.post(
         error instanceof Error
           ? error.message
           : 'Stalled production qualification recovery failed'
+      );
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/repair-current-staging-candidates',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    const body = getValidatedByJoiOrThrow<{
+      dry_run: boolean;
+      candidates?: readonly ReleaseBusV2CurrentStagingRepairIdentity[];
+    }>(req.body, ReleaseBusV2CurrentStagingRepairBodySchema);
+    try {
+      const result =
+        await releaseBusV2Service.repairCurrentStagingManifestCandidates(
+          body.candidates ?? null,
+          actor,
+          body.dry_run
+        );
+      setNoStoreHeaders(res);
+      return res.json({
+        ...result,
+        mode: getReleaseBusV2Mode(),
+        repaired_by: actor
+      });
+    } catch (error) {
+      throw new CustomApiCompliantException(
+        409,
+        error instanceof Error
+          ? error.message
+          : 'Current staging manifest candidate repair failed'
       );
     }
   }

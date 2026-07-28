@@ -28,6 +28,7 @@ const mockV2IsBetaTrainAllowed = jest.fn();
 const mockV2Authorize = jest.fn();
 const mockV2ReportProgress = jest.fn();
 const mockRecoverUnsatisfiableProductionQualifications = jest.fn();
+const mockRepairCurrentStagingManifestCandidates = jest.fn();
 
 class MockReleaseBusV2ProductionSelectionError extends Error {
   public constructor(
@@ -102,6 +103,8 @@ jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
     cancel: (...args: unknown[]) => mockV2Cancel(...args),
     setPaused: (...args: unknown[]) => mockV2SetPaused(...args),
     invalidateBranch: (...args: unknown[]) => mockV2InvalidateBranch(...args),
+    repairCurrentStagingManifestCandidates: (...args: unknown[]) =>
+      mockRepairCurrentStagingManifestCandidates(...args),
     isBetaTrainAllowed: (...args: unknown[]) =>
       mockV2IsBetaTrainAllowed(...args)
   }
@@ -465,6 +468,21 @@ describe('Release Bus v2 route authorization and exact actions', () => {
         backend_sha: 'b'.repeat(40)
       },
       has_more: false
+    });
+    mockRepairCurrentStagingManifestCandidates.mockResolvedValue({
+      manifest_id: RESET_ID,
+      train_id: TRAIN_ID,
+      dry_run: false,
+      discovered: false,
+      candidates: [
+        {
+          candidate_id: v2Candidate.id,
+          repository: v2Candidate.repository,
+          pr_number: v2Candidate.pr_number,
+          head_sha: v2Candidate.head_sha,
+          changed: true
+        }
+      ]
     });
   });
 
@@ -959,6 +977,96 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     expect(response.body).toMatchObject({
       error: 'PRODUCTION must remain paused'
     });
+  });
+
+  it('repairs only exact identities derived from the current staging manifest', async () => {
+    const body = {
+      candidates: [
+        {
+          repository: 'frontend',
+          pr_number: v2Candidate.pr_number,
+          head_sha: v2Candidate.head_sha
+        }
+      ]
+    };
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/repair-current-staging-candidates',
+      body
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRepairCurrentStagingManifestCandidates).toHaveBeenCalledWith(
+      body.candidates,
+      'developer',
+      false
+    );
+    expect(response.body).toMatchObject({
+      mode: 'PRODUCTION',
+      repaired_by: 'developer',
+      manifest_id: RESET_ID,
+      train_id: TRAIN_ID
+    });
+  });
+
+  it('discovers exact current-manifest mismatches in dry-run mode without a supplied candidate list', async () => {
+    mockRepairCurrentStagingManifestCandidates.mockResolvedValue({
+      manifest_id: RESET_ID,
+      train_id: TRAIN_ID,
+      dry_run: true,
+      discovered: true,
+      candidates: [
+        {
+          candidate_id: v2Candidate.id,
+          repository: v2Candidate.repository,
+          pr_number: v2Candidate.pr_number,
+          head_sha: v2Candidate.head_sha,
+          previous_status: 'SUPERSEDED',
+          would_change: true,
+          changed: false
+        }
+      ]
+    });
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/repair-current-staging-candidates',
+      { dry_run: true }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRepairCurrentStagingManifestCandidates).toHaveBeenCalledWith(
+      null,
+      'developer',
+      true
+    );
+    expect(response.body).toMatchObject({
+      dry_run: true,
+      discovered: true,
+      candidates: [
+        {
+          repository: 'frontend',
+          pr_number: v2Candidate.pr_number,
+          head_sha: v2Candidate.head_sha,
+          changed: false
+        }
+      ]
+    });
+  });
+
+  it('rejects duplicate exact identities before current staging repair', async () => {
+    const identity = {
+      repository: 'frontend',
+      pr_number: v2Candidate.pr_number,
+      head_sha: v2Candidate.head_sha
+    };
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/repair-current-staging-candidates',
+      { candidates: [identity, identity] }
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockRepairCurrentStagingManifestCandidates).not.toHaveBeenCalled();
   });
 
   it('keeps ordinary candidate registration disabled while global mode is OFF', async () => {

@@ -574,6 +574,8 @@ export * from '../models/ReleaseBusV2Train';
 export * from '../models/ReleaseBusV2TrainDetailResponse';
 export * from '../models/ReleaseBusV2TrainListResponse';
 export * from '../models/ReleaseBusV2VersionedActionRequest';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequest';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner';
 export * from '../models/SubscribeAllEditionsResponse';
 export * from '../models/SubscriptionCountResponse';
 export * from '../models/SubscriptionCounts';
@@ -1165,6 +1167,8 @@ import { ReleaseBusV2Train , ReleaseBusV2TrainLaneEnum  , ReleaseBusV2TrainStatu
 import { ReleaseBusV2TrainDetailResponse } from '../models/ReleaseBusV2TrainDetailResponse';
 import { ReleaseBusV2TrainListResponse   } from '../models/ReleaseBusV2TrainListResponse';
 import { ReleaseBusV2VersionedActionRequest } from '../models/ReleaseBusV2VersionedActionRequest';
+import { RepairCurrentReleaseBusV2StagingCandidatesRequest } from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequest';
+import { RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner, RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInnerRepositoryEnum     } from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner';
 import { SubscribeAllEditionsResponse } from '../models/SubscribeAllEditionsResponse';
 import { SubscriptionCountResponse } from '../models/SubscriptionCountResponse';
 import { SubscriptionCounts } from '../models/SubscriptionCounts';
@@ -1333,6 +1337,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ReleaseBusV2TrainStatusEnum",
     "ReleaseBusV2TrainStagingPolicyEnum",
     "ReleaseBusV2TrainQualificationPolicyEnum",
+    "RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInnerRepositoryEnum",
 ]);
 
 let typeMap: {[index: string]: any} = {
@@ -1840,6 +1845,8 @@ let typeMap: {[index: string]: any} = {
     "ReleaseBusV2TrainDetailResponse": ReleaseBusV2TrainDetailResponse,
     "ReleaseBusV2TrainListResponse": ReleaseBusV2TrainListResponse,
     "ReleaseBusV2VersionedActionRequest": ReleaseBusV2VersionedActionRequest,
+    "RepairCurrentReleaseBusV2StagingCandidatesRequest": RepairCurrentReleaseBusV2StagingCandidatesRequest,
+    "RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner": RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner,
     "SubscribeAllEditionsResponse": SubscribeAllEditionsResponse,
     "SubscriptionCountResponse": SubscriptionCountResponse,
     "SubscriptionCounts": SubscriptionCounts,

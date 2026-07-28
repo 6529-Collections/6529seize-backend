@@ -549,7 +549,16 @@ workflow/ref handshake must be stable. Recovery then owns the scheduler fence,
 re-verifies every lock inside the yield transaction, and processes at most one
 qualification per request so committed progress is always reported. Every
 committed yield requires a follow-up drain check; only an empty recovery
-response proves there are no further live qualifications to yield.
+response proves there are no further live qualifications to yield. A separate
+operator-only maintenance route can idempotently restore a candidate's derived
+staging status only when its exact repository, PR, and head are uniquely
+included in the authoritative current validated staging manifest. The repair
+acquires the scheduler and staging fences, rejects active trains or production
+ownership, and cannot infer validation from candidate rows alone. Its
+mutation-free discovery mode enumerates exact current-manifest mismatches; an
+executing request must repeat the bounded repository/PR/head identities from
+that report, so historical superseded heads outside the manifest stay
+untouched.
 
 GitHub Actions performs exact composition, combined preflight, immutable
 packaging, backend DAG deployment, frontend deployment, and manifest-bound E2E.
@@ -559,6 +568,20 @@ independent backend DAG frontiers run concurrently; only shared environment
 mutation plus E2E ownership is serialized. Operation keys, workflow titles,
 workflow authorization, SHA/artifact checks, row versions, and callback
 identity make retries and duplicate reconciliation idempotent.
+
+Each staging reconcile rechecks every mutable NEW candidate against its open
+PR's current exact head, including candidates already building or deploying.
+Once a newer registered/current head supersedes a candidate, no additional
+operation is dispatched for the obsolete head. Already-dispatched workflows
+are observed to completion without cancellation, then unrelated NEW candidates
+return immediately to the queue for the next train. An ordinary combined
+staging preflight failure likewise fails the affected repository's NEW group
+once and requeues independent repositories after current workflows drain;
+subset-isolation diagnostics are reserved for production qualification and
+never extend the ordinary staging critical path. A grouped failure retries only
+after an explicit unchanged-head registration revalidates the exact green PR
+evidence and immutable dependency/plan identity against the terminal failure's
+candidate row version; reconciliation alone never loops it.
 
 The staging manifest distinguishes deployed from validated state and binds E2E
 to exact frontend/backend tree SHAs, artifact digests, service operations, and
