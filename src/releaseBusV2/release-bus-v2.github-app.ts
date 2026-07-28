@@ -277,18 +277,23 @@ export class ReleaseBusGitHubApp {
   ): Promise<Response> {
     const controller = new AbortController();
     const outerSignal = options.signal;
-    let timedOut = false;
+    let abortSource: 'outer' | 'timeout' | null = null;
     const timeoutId = setTimeout(() => {
-      timedOut = true;
+      if (abortSource !== null) return;
+      abortSource = 'timeout';
       controller.abort();
     }, this.requestTimeoutMs);
     timeoutId.unref();
 
-    const onOuterAbort = () => controller.abort();
+    const onOuterAbort = () => {
+      if (abortSource !== null) return;
+      abortSource = 'outer';
+      controller.abort();
+    };
     if (outerSignal) {
       if (outerSignal.aborted) {
         clearTimeout(timeoutId);
-        controller.abort();
+        onOuterAbort();
       } else {
         outerSignal.addEventListener('abort', onOuterAbort, { once: true });
       }
@@ -302,7 +307,7 @@ export class ReleaseBusGitHubApp {
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new ReleaseBusGitHubInfrastructureError(
-          timedOut
+          abortSource === 'timeout'
             ? `GitHub request timed out after ${this.requestTimeoutMs}ms`
             : 'GitHub request was aborted'
         );

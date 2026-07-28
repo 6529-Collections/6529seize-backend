@@ -149,7 +149,7 @@ function productionReplanOperationMayStillBeRunning(
   operation: ReleaseBusV2OperationRecord
 ): boolean {
   return (
-    ['DISPATCHED', 'RUNNING'].includes(operation.status) ||
+    ['DISPATCHED', 'RUNNING', 'RETRY_WAIT'].includes(operation.status) ||
     (operation.status === 'PENDING' && operation.external_id !== null)
   );
 }
@@ -2813,24 +2813,23 @@ export class ReleaseBusV2Service {
   public async preserveProductionIntentsForSafeReplan(
     input: ProductionReplanRequest
   ): Promise<ReleaseBusV2SafeProductionReplanResult> {
-    return this.repository.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctx: RequestContext = { connection };
-        const scheduler = await this.repository.acquireLock(
-          'scheduler',
-          null,
-          `production-replan:${input.trainId}`,
-          RELEASE_BUS_V2_LOCK_TTL_MS,
-          ctx
-        );
-        if (!scheduler?.lease_token)
-          return {
-            status: 'NOOP',
-            trainId: input.trainId,
-            reason:
-              'The scheduler fence is owned by another transactional actor'
-          };
-        try {
+    const scheduler = await this.repository.acquireLock(
+      'scheduler',
+      null,
+      `production-replan:${input.trainId}`,
+      RELEASE_BUS_V2_LOCK_TTL_MS,
+      {}
+    );
+    if (!scheduler?.lease_token)
+      return {
+        status: 'NOOP',
+        trainId: input.trainId,
+        reason: 'The scheduler fence is owned by another transactional actor'
+      };
+    try {
+      return await this.repository.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx: RequestContext = { connection };
           const train = await this.repository.findTrain(
             input.trainId,
             ctx,
@@ -2911,15 +2910,11 @@ export class ReleaseBusV2Service {
             candidateIds: candidates.map(({ id }) => id),
             sourceSelectionIds: sourceSelections
           };
-        } finally {
-          await this.repository.releaseLock(
-            'scheduler',
-            scheduler.lease_token,
-            ctx
-          );
         }
-      }
-    );
+      );
+    } finally {
+      await this.repository.releaseLock('scheduler', scheduler.lease_token, {});
+    }
   }
 
   private async productionReplanSourceTrainId(
@@ -2952,6 +2947,11 @@ export class ReleaseBusV2Service {
       throw new Error(
         `Production replan omission candidate ${omission.candidate.id} disappeared`
       );
+    const currentReason =
+      this.productionReplanCandidateReason(
+        current,
+        current.production_selection_id ?? null
+      ) ?? omission.reason;
     if (
       current.production_requested_at !== null &&
       current.production_requested_by !== null &&
@@ -2967,7 +2967,7 @@ export class ReleaseBusV2Service {
           {
             status: 'WAITING_FOR_PRODUCTION_REPLAN',
             currentTrainId: null,
-            holdReason: omission.reason
+            holdReason: currentReason
           },
           ctx
         ))
@@ -2987,7 +2987,8 @@ export class ReleaseBusV2Service {
           source_train_id: omission.sourceTrainId,
           source_production_selection_id: omission.sourceSelectionId,
           head_sha: current.head_sha,
-          reason: omission.reason
+          reason: currentReason,
+          qualification_reason: omission.reason
         }
       },
       ctx
@@ -2998,10 +2999,10 @@ export class ReleaseBusV2Service {
     candidate: ReleaseBusV2CandidateRecord,
     sourceSelectionId: string | null
   ): string | null {
-    if (!PRODUCTION_REPLAN_READY_STATUSES.has(candidate.status))
-      return `Candidate status ${candidate.status} no longer carries claimable production intent`;
     if (candidate.current_train_id !== null)
       return `Candidate is owned by train ${candidate.current_train_id}`;
+    if (!PRODUCTION_REPLAN_READY_STATUSES.has(candidate.status))
+      return `Candidate status ${candidate.status} no longer carries claimable production intent`;
     if (
       candidate.production_requested_at === null ||
       candidate.production_requested_by === null ||
@@ -3086,6 +3087,9 @@ export class ReleaseBusV2Service {
       preliminary.map(({ candidate }) => candidate.id),
       ctx
     );
+    const omissionReasonByCandidateId = new Map(
+      omitted.map((omission) => [omission.candidate.id, omission.reason])
+    );
     let changed = true;
     while (changed) {
       changed = false;
@@ -3109,12 +3113,22 @@ export class ReleaseBusV2Service {
           continue;
         eligible.delete(source.candidate.id);
         evidenceByCandidate.delete(source.candidate.id);
-        omitted.push({
+        const prerequisiteReason = omissionReasonByCandidateId.get(
+          dependency.prerequisite_candidate_id
+        );
+        const reason = `Production dependency ${dependency.prerequisite_candidate_id} is neither eligible for this replacement nor exactly deployed${
+          prerequisiteReason
+            ? `; prerequisite omission: ${prerequisiteReason}`
+            : ''
+        }`;
+        const omission = {
           candidate: source.candidate,
           sourceSelectionId: source.sourceSelectionId,
           sourceTrainId: source.sourceTrainId,
-          reason: `Production dependency ${dependency.prerequisite_candidate_id} is neither eligible for this replacement nor exactly deployed`
-        });
+          reason
+        };
+        omitted.push(omission);
+        omissionReasonByCandidateId.set(source.candidate.id, reason);
         changed = true;
       }
     }
@@ -3421,8 +3435,10 @@ export class ReleaseBusV2Service {
                   actor: owner,
                   payload: {
                     reason: `Production replan intent scan reached the fail-closed limit of ${PRODUCTION_REPLAN_INTENT_SCAN_LIMIT}`,
-                    ready_count: readyCandidates.length,
-                    held_count: heldCandidates.length
+                    ready_count: readyCandidateScan.length,
+                    held_count: heldCandidateScan.length,
+                    eligible_ready_count: readyCandidates.length,
+                    eligible_held_count: heldCandidates.length
                   }
                 },
                 ctx

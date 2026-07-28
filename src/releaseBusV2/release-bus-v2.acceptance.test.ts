@@ -36,6 +36,7 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
 }));
 
 import { ReleaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
+import { irreversibleProductionOperationReason } from '@/releaseBusV2/release-bus-v2.service';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
@@ -604,13 +605,7 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
         const irreversible = repository.operations.find(
           (item) =>
             item.train_id === trainId &&
-            ((item.operation_type.startsWith('ADVANCE_MAIN_') &&
-              item.status === 'SUCCEEDED') ||
-              (item.environment === 'prod' &&
-                item.operation_type.startsWith('DEPLOY_') &&
-                item.external_id !== null) ||
-              (item.operation_type === 'E2E_PROD' &&
-                item.status !== 'CANCELLED'))
+            irreversibleProductionOperationReason(item) !== null
         );
         if (irreversible) {
           repository.trains.set(trainId, {

@@ -1748,7 +1748,11 @@ describe('Release Bus v2 explicit production opt-in', () => {
         candidateId === original.id
           ? ([
               {
-                train_id: 'source-train-original',
+                train_id: 'source-train-newest',
+                event_type: 'CANDIDATE_WAITING_FOR_PRODUCTION_REPLAN'
+              },
+              {
+                train_id: 'source-train-older',
                 event_type: 'CANDIDATE_WAITING_FOR_PRODUCTION_REPLAN'
               }
             ] as never)
@@ -1806,12 +1810,12 @@ describe('Release Bus v2 explicit production opt-in', () => {
             'selection-later',
             'selection-original'
           ],
-          source_train_ids: ['source-train-original'],
+          source_train_ids: ['source-train-newest'],
           included_intents: expect.arrayContaining([
             expect.objectContaining({
               candidate_id: original.id,
               source_production_selection_id: 'selection-original',
-              source_train_id: 'source-train-original'
+              source_train_id: 'source-train-newest'
             }),
             expect.objectContaining({
               candidate_id: later.id,
@@ -1823,6 +1827,52 @@ describe('Release Bus v2 explicit production opt-in', () => {
         })
       }),
       expect.anything()
+    );
+  });
+
+  it('rolls a transient production-base lookup failure back for a clean next-tick retry', async () => {
+    const intent = productionIntent(
+      validatedCandidate('candidate-infrastructure-retry', 'backend', 'b', 213),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-infrastructure-retry',
+      10
+    );
+    const state = selectionRepository([intent]);
+    const infrastructureError = new Error('GitHub request timed out');
+    infrastructureError.name = 'ReleaseBusGitHubInfrastructureError';
+    mockResolveRef.mockRejectedValue(infrastructureError);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler-timeout'
+      )
+    ).rejects.toBe(infrastructureError);
+    expect(state.createTrain).not.toHaveBeenCalled();
+    expect(state.candidates.get(intent.id)).toEqual(intent);
+
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '8'.repeat(40)
+            : '9'.repeat(40)
+          : intent.head_sha
+    );
+    mockResolveRefIfExists.mockResolvedValue(intent.head_sha);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler-retry'
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({ id: 'claimed-selection-train' })
     );
   });
 
@@ -1898,6 +1948,54 @@ describe('Release Bus v2 explicit production opt-in', () => {
       }),
       expect.anything()
     );
+  });
+
+  it('fails a truncated replan-intent scan closed and audits pre-filter counts', async () => {
+    const held = productionIntent(
+      validatedCandidate('candidate-scan-cap-held', 'backend', 'c', 216),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-scan-cap-held',
+      1
+    );
+    const ready = Array.from({ length: 500 }, (_, index) =>
+      productionIntent(
+        validatedCandidate(
+          `candidate-scan-cap-ready-${index}`,
+          index % 2 === 0 ? 'backend' : 'frontend',
+          index % 2 === 0 ? 'd' : 'e',
+          10_000 + index
+        ),
+        'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+        `selection-scan-cap-${index}`,
+        2 + index
+      )
+    );
+    const state = selectionRepository([held, ...ready]);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler-scan-cap'
+      )
+    ).resolves.toBeNull();
+
+    expect(state.createTrain).not.toHaveBeenCalled();
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_REPLAN_INTENT_SCAN_FAILED_CLOSED',
+        payload: expect.objectContaining({
+          ready_count: 500,
+          held_count: 1,
+          eligible_ready_count: 500,
+          eligible_held_count: 1
+        })
+      }),
+      expect.anything()
+    );
+    expect(state.candidates.get(held.id)).toEqual(held);
   });
 
   it('keeps replacement intent explicit and dependency-closed when a prerequisite becomes ineligible', async () => {
@@ -1978,6 +2076,9 @@ describe('Release Bus v2 explicit production opt-in', () => {
           `dependency ${prerequisite.id} is neither eligible`
         )
       })
+    );
+    expect(state.candidates.get(dependent.id)?.hold_reason).toContain(
+      `prerequisite omission: Candidate ${prerequisite.id} has no current staging validation evidence`
     );
     expect(state.appendEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2199,6 +2300,96 @@ describe('Release Bus v2 explicit production opt-in', () => {
     );
   });
 
+  it('audits the current locked ownership reason when an omitted intent changes after qualification', async () => {
+    const seed = productionIntent(
+      validatedCandidate('candidate-owned-race-seed', 'backend', '6', 214),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-owned-race-seed',
+      10
+    );
+    const raced = productionIntent(
+      validatedCandidate('candidate-owned-race-omitted', 'frontend', '7', 215),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-owned-race-omitted',
+      20
+    );
+    const state = selectionRepository([seed, raced]);
+    state.candidates.set(raced.id, {
+      ...raced,
+      staging_validated_manifest_id: null
+    });
+    const originalFindCandidateById =
+      state.repository.findCandidateById.getMockImplementation()!;
+    let qualificationReadComplete = false;
+    let ownershipInjected = false;
+    state.repository.findCandidateById.mockImplementation(
+      async (id: string) => {
+        const current = await originalFindCandidateById(id);
+        if (
+          id === raced.id &&
+          qualificationReadComplete &&
+          !ownershipInjected &&
+          current
+        ) {
+          ownershipInjected = true;
+          const owned = {
+            ...current,
+            status: 'PRODUCTION_IN_TRAIN' as const,
+            current_train_id: 'concurrent-production-train',
+            row_version: current.row_version + 1
+          };
+          state.candidates.set(id, owned);
+          return owned;
+        }
+        return current;
+      }
+    );
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '8'.repeat(40)
+            : '9'.repeat(40)
+          : [seed, raced].find((item) => item.branch_name === ref)?.head_sha
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, ref: string) => {
+        const selected = [seed, raced].find((item) => item.branch_name === ref);
+        if (selected?.id === raced.id) qualificationReadComplete = true;
+        return selected?.head_sha ?? null;
+      }
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.claimLane(
+      'PRODUCTION',
+      '8'.repeat(40),
+      '9'.repeat(40),
+      'scheduler'
+    );
+
+    expect(ownershipInjected).toBe(true);
+    expect(state.candidates.get(raced.id)).toEqual(
+      expect.objectContaining({
+        status: 'PRODUCTION_IN_TRAIN',
+        current_train_id: 'concurrent-production-train'
+      })
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: raced.id,
+        eventType: 'PRODUCTION_REPLAN_INTENT_OMITTED',
+        payload: expect.objectContaining({
+          reason: 'Candidate is owned by train concurrent-production-train',
+          qualification_reason: expect.stringContaining(
+            'no current staging validation evidence'
+          )
+        })
+      }),
+      expect.anything()
+    );
+  });
+
   it('preserves exact source selection provenance when a train is safely replanned before mutation', async () => {
     const state = safeReplanRepository(null);
     const service = new ReleaseBusV2Service(state.repository as never);
@@ -2237,6 +2428,54 @@ describe('Release Bus v2 explicit production opt-in', () => {
         })
       }),
       expect.anything()
+    );
+  });
+
+  it('holds the safe-replan scheduler lease through transaction commit with the same external fence semantics as selection', async () => {
+    const state = safeReplanRepository(null);
+    const order: string[] = [];
+    state.repository.acquireLock.mockImplementation(async () => {
+      order.push('scheduler-acquired');
+      return { lease_token: 'scheduler-lease' } as never;
+    });
+    state.repository.executeNativeQueriesInTransaction.mockImplementation(
+      async (callback: (connection: unknown) => Promise<unknown>) => {
+        order.push('transaction-started');
+        const result = await callback({});
+        order.push('transaction-committed');
+        return result;
+      }
+    );
+    state.repository.releaseLock.mockImplementation(async () => {
+      order.push('scheduler-released');
+      return true;
+    });
+
+    await new ReleaseBusV2Service(
+      state.repository as never
+    ).preserveProductionIntentsForSafeReplan({
+      trainId: 'production-replan-source',
+      reason: 'frontend main moved',
+      actor: 'reconciler'
+    });
+
+    expect(order).toEqual([
+      'scheduler-acquired',
+      'transaction-started',
+      'transaction-committed',
+      'scheduler-released'
+    ]);
+    expect(state.repository.acquireLock).toHaveBeenCalledWith(
+      'scheduler',
+      null,
+      'production-replan:production-replan-source',
+      expect.any(Number),
+      {}
+    );
+    expect(state.repository.releaseLock).toHaveBeenCalledWith(
+      'scheduler',
+      'scheduler-lease',
+      {}
     );
   });
 
@@ -2299,6 +2538,14 @@ describe('Release Bus v2 explicit production opt-in', () => {
       'DEPLOY_BACKEND_PROD_api was dispatched'
     ],
     [
+      productionOperation(
+        'DEPLOY_BACKEND_PROD_api',
+        'RETRY_WAIT',
+        'deploy-run'
+      ),
+      'DEPLOY_BACKEND_PROD_api was dispatched'
+    ],
+    [
       productionOperation('E2E_PROD', 'PENDING', null),
       'production E2E was created'
     ]
@@ -2321,6 +2568,15 @@ describe('Release Bus v2 explicit production opt-in', () => {
       productionOperation(
         'DEPLOY_BACKEND_PROD_api',
         'DISPATCHED',
+        'deploy-run'
+      ),
+      'the train entered PRODUCTION_DEPLOYING',
+      false
+    ],
+    [
+      productionOperation(
+        'DEPLOY_BACKEND_PROD_api',
+        'RETRY_WAIT',
         'deploy-run'
       ),
       'the train entered PRODUCTION_DEPLOYING',

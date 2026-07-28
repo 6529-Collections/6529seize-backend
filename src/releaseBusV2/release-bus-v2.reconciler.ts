@@ -811,6 +811,8 @@ export class ReleaseBusV2Reconciler {
           if (production) claimed.push(production.id);
         }
       } catch (error) {
+        // A GitHub infrastructure error rolls the claim transaction back and
+        // leaves every explicit intent unchanged for the next scheduled tick.
         if (!isGitHubInfrastructureError(error)) {
           await this.service.setPaused(
             'ALL',
@@ -5431,12 +5433,18 @@ export class ReleaseBusV2Reconciler {
     });
     if (result.status === 'NOOP') return;
     if (result.status === 'FROZEN') {
-      await this.service.setPaused(
-        'PRODUCTION',
-        true,
-        `${result.reason}; train ${train.id} must recover its original exact set`,
-        'release-bus-v2'
-      );
+      const controls = await this.repository.listControls({});
+      if (
+        !controls.some(
+          ({ scope, paused }) => scope === 'PRODUCTION' && Boolean(paused)
+        )
+      )
+        await this.service.setPaused(
+          'PRODUCTION',
+          true,
+          `${result.reason}; train ${train.id} must recover its original exact set`,
+          'release-bus-v2'
+        );
       return;
     }
     const candidates = (
