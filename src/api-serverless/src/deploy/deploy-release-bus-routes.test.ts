@@ -935,12 +935,95 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     const response = await post('/deploy/release-bus-v2/authorize', body);
 
     expect(response.status).toBe(200);
-    expect(mockV2Authorize).toHaveBeenCalledWith(body);
+    expect(mockV2Authorize).toHaveBeenCalledWith({
+      ...body,
+      source_ref: null,
+      candidate_evidence_mode: null,
+      aggregate_candidate_evidence_digest: null
+    });
     expect(response.body).toMatchObject({
       authorized: true,
       train_id: TRAIN_ID,
       operation_key: body.operation_key
     });
+  });
+
+  it('accepts only a complete strict aggregate for an orchestration authorization', async () => {
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:backend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null,
+      source_ref: 'release-bus-v2/train-id/backend',
+      candidate_evidence_mode: 'strict-aggregate',
+      aggregate_candidate_evidence_digest: 'b'.repeat(64)
+    };
+
+    const response = await post('/deploy/release-bus-v2/authorize', body);
+
+    expect(response.status).toBe(200);
+    expect(mockV2Authorize).toHaveBeenCalledWith(body);
+  });
+
+  it('rejects an incomplete strict aggregate before operation lookup', async () => {
+    const response = await post('/deploy/release-bus-v2/authorize', {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:backend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null,
+      candidate_evidence_mode: 'strict-aggregate'
+    });
+
+    expect(response.status).toBe(400);
+    expect(mockV2Authorize).not.toHaveBeenCalled();
+  });
+
+  it('rejects a strict orchestration authorization without an exact source ref', async () => {
+    const response = await post('/deploy/release-bus-v2/authorize', {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:backend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null,
+      candidate_evidence_mode: 'strict-aggregate',
+      aggregate_candidate_evidence_digest: 'b'.repeat(64)
+    });
+
+    expect(response.status).toBe(400);
+    expect(mockV2Authorize).not.toHaveBeenCalled();
+  });
+
+  it('rejects candidate evidence fields on a deployment authorization', async () => {
+    const response = await post('/deploy/release-bus-v2/authorize', {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:deploy:staging:backend:api:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: '54321',
+      repository: 'backend',
+      environment: 'staging',
+      service: 'api',
+      expected_sha: SHA,
+      artifact_digest: 'c'.repeat(64),
+      candidate_evidence_mode: 'strict-single',
+      aggregate_candidate_evidence_digest: null
+    });
+
+    expect(response.status).toBe(400);
+    expect(mockV2Authorize).not.toHaveBeenCalled();
   });
 
   it('returns readable dependency edges with each candidate', async () => {

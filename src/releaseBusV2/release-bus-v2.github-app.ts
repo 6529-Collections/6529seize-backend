@@ -1,5 +1,6 @@
-import { createSign } from 'node:crypto';
+import { createHash, createSign } from 'node:crypto';
 import fetch, { type RequestInit, type Response } from 'node-fetch';
+import AdmZip from 'adm-zip';
 import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
@@ -12,6 +13,31 @@ type InstallationToken = {
   readonly expires_at: string;
 };
 type GitHubRef = { readonly object?: { readonly sha?: string } };
+type GitHubContentsIdentity = {
+  readonly type?: string;
+  readonly sha?: string;
+  readonly encoding?: string;
+  readonly content?: string;
+  readonly size?: number;
+};
+type GitHubGitCommit = {
+  readonly tree?: { readonly sha?: string };
+};
+type GitHubGitTree = {
+  readonly truncated?: boolean;
+  readonly tree?: readonly {
+    readonly path?: string;
+    readonly type?: string;
+    readonly sha?: string;
+    readonly size?: number;
+  }[];
+};
+type GitHubGitBlob = {
+  readonly sha?: string;
+  readonly encoding?: string;
+  readonly content?: string;
+  readonly size?: number;
+};
 type GitHubMatchingRef = {
   readonly ref: string;
   readonly object?: { readonly sha?: string };
@@ -108,8 +134,795 @@ type GitHubArtifact = {
   readonly name?: string;
   readonly digest?: string | null;
   readonly expired?: boolean;
+  readonly size_in_bytes?: number;
   readonly workflow_run?: { readonly id?: number; readonly head_sha?: string };
 };
+
+const REQUIRED_PR_CI_EVIDENCE = {
+  backend: {
+    workflow: '.github/workflows/on-pull-request.yml',
+    checkName: 'Build backend and API',
+    gates: [
+      'generated-files',
+      'lint',
+      'format',
+      'backend-test-and-typecheck',
+      'api-build',
+      'pr-ci-policy-bundle'
+    ]
+  },
+  frontend: {
+    workflow: '.github/workflows/app-pr-ci.yml',
+    checkName: 'Installed app checks',
+    gates: [
+      'package-manager-discipline',
+      'dependency-analysis',
+      'reviewbot-contract',
+      'generated-agent-files',
+      'release-bus-workflow-contract',
+      'changed-lint',
+      'changed-typecheck',
+      'test-typecheck',
+      'related-jest-selection',
+      'production-build-or-plan-not-required',
+      'pr-ci-policy-bundle'
+    ]
+  }
+} as const;
+
+const MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES = 128 * 1024;
+const MAX_PR_CI_EVIDENCE_ENTRY_BYTES = 64 * 1024;
+
+// Workflow changes cannot attest to their own trustworthiness. A reviewed
+// control-plane PR must first preauthorize one exact old->new Git blob pair;
+// only a later PR may use that new workflow. Remove consumed transitions after
+// every repository's main has advanced past the authorized workflow.
+const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
+  Record<
+    ReleaseBusV2Repository,
+    readonly {
+      readonly from: string;
+      readonly to: string;
+      readonly expiresAt: number;
+    }[]
+  >
+> = {
+  backend: [
+    {
+      from: '0cc8865dbb869b5156b46cc45e8581b259052916',
+      to: '232615ebaccaa9845ae28bb0425e8692e848d42a',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  frontend: [
+    {
+      from: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
+      to: '47fb17c7e4bda412a05b07f470f9f490aee873d4',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: '47fb17c7e4bda412a05b07f470f9f490aee873d4',
+      to: '7a4a25eabdfd43b987ff5792b3f609eda9668c04',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ]
+};
+
+const LEGACY_PR_CI_WORKFLOW_BLOBS: Readonly<
+  Record<ReleaseBusV2Repository, string>
+> = {
+  backend: '0cc8865dbb869b5156b46cc45e8581b259052916',
+  frontend: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c'
+};
+
+const BACKEND_PR_CI_GATE_POLICY_FILES = new Set([
+  '.github/workflows/deploy.yml',
+  '.github/workflows/on-pull-request.yml',
+  '.github/workflows/release-bus-v2-preflight.yml',
+  '.prettierignore',
+  '.prettierrc',
+  'eslint.config.mjs',
+  'jest.config.ts',
+  'scripts/assert-pr-ci-source-clean.mjs',
+  'scripts/check-package-manager.mjs',
+  'scripts/generate-deploy-config.mjs',
+  'scripts/pr-ci-policy-bundle.cjs',
+  'scripts/release-bus-backend-package-strategies.mjs',
+  'scripts/release-bus-package-backend.mjs',
+  'src/.prettierrc',
+  'src/api-serverless/esbuild.config.mjs',
+  'src/api-serverless/generate-openapi-routes.ts',
+  'src/api-serverless/restructure-openapi.ts',
+  'src/api-serverless/tsconfig.json',
+  'src/api-serverless/tsconfig.paths.json',
+  'src/config/deploy-services.json',
+  'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts',
+  'src/tests/_setup/globalSetup.ts',
+  'src/tests/_setup/globalTeardown.ts',
+  'src/tests/_setup/perTestHooks.ts',
+  'tsconfig.json'
+]);
+
+const BACKEND_PR_CI_PACKAGE_POLICY_FILES = new Set([
+  'package.json',
+  'src/api-serverless/package.json'
+]);
+
+const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
+  Record<
+    string,
+    readonly {
+      readonly from: string | null;
+      readonly to: string;
+      readonly expiresAt: number;
+    }[]
+  >
+> = {
+  'scripts/generate-deploy-config.mjs': [
+    {
+      from: '9b3714372af37edd89e4b47df02bff6863a2024d',
+      to: '9999ca8acc5b1c40ed00909de86fbac477e64f1e',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '.github/workflows/release-bus-v2-preflight.yml': [
+    {
+      from: 'f3cbf1ec1f0ca1284dd84289adc6e801b12ef329',
+      to: 'f09e3bca24d4b4882e5aa6e22c6631222187093f',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '.github/workflows/deploy.yml': [
+    {
+      from: '93069abfac648a9906fc8bac9ed2c72df6b93f8f',
+      to: '77a49572be5d1e0887c6f2c63eb91491a75d2731',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'scripts/release-bus-package-backend.mjs': [
+    {
+      from: null,
+      to: 'e0ee1d942a951c6bd2426c8312aaa3113dc799ab',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'scripts/pr-ci-policy-bundle.cjs': [
+    {
+      from: null,
+      to: '04e6a38740e5fc9f966d5c8d9d770984b49b3317',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'scripts/release-bus-backend-package-strategies.mjs': [
+    {
+      from: null,
+      to: 'eb9d405947128c51d84cc824245a96c7d245ea0e',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts': [
+    {
+      from: null,
+      to: '388e95eaca4445b18ceb3dd0dd69be5cec49bc9d',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ]
+};
+
+const BACKEND_PACKAGE_POLICY = {
+  'package.json': {
+    scriptKeys: [
+      'build',
+      'ci:assert-source-clean',
+      'format:check',
+      'generate:deploy-config',
+      'lint:check',
+      'postbuild',
+      'prebuild',
+      'pretest',
+      'test'
+    ],
+    fieldKeys: [
+      'packageManager',
+      'devDependencies.@typescript-eslint/parser',
+      'devDependencies.esbuild',
+      'devDependencies.eslint',
+      'devDependencies.jest',
+      'devDependencies.prettier',
+      'devDependencies.ts-jest',
+      'devDependencies.ts-node',
+      'devDependencies.typescript',
+      'devDependencies.typescript-eslint'
+    ]
+  },
+  'src/api-serverless/package.json': {
+    scriptKeys: [
+      'build',
+      'generate',
+      'generate:openapi',
+      'postbuild',
+      'prebuild',
+      'restructure-openapi'
+    ],
+    fieldKeys: [
+      'packageManager',
+      'dependencies.@openapitools/openapi-generator-cli',
+      'devDependencies.esbuild',
+      'devDependencies.eslint',
+      'devDependencies.ts-node',
+      'devDependencies.typescript'
+    ]
+  }
+} as const;
+
+const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
+  '.github/6529bot.yml',
+  '.github/workflows/app-pr-ci.yml',
+  '.github/workflows/production-e2e.yml',
+  '.github/workflows/release-bus-deploy-production.yml',
+  '.github/workflows/release-bus-deploy-staging.yml',
+  '.github/workflows/release-bus-v2-compose.yml',
+  '.github/workflows/release-bus-v2-preflight.yml',
+  '.github/workflows/staging-e2e.yml',
+  '.prettierignore',
+  '__tests__/scripts/dependency-risk-gate.test.ts',
+  '__tests__/scripts/deployment-bus.test.ts',
+  '__tests__/scripts/e2e-packs.test.ts',
+  '__tests__/scripts/lint-package-json.test.ts',
+  '__tests__/scripts/package-public-review-artifacts.test.ts',
+  '__tests__/scripts/pr-ci-policy-bundle.test.ts',
+  '__tests__/scripts/release-bus-artifact-compatibility.test.ts',
+  '__tests__/scripts/release-bus-install-dependencies.test.ts',
+  '__tests__/scripts/release-bus-performance-contract.test.ts',
+  '__tests__/scripts/release-bus-v2-compose-workflow.test.ts',
+  '__tests__/scripts/sync-agent-files.test.ts',
+  '__tests__/scripts/sync-e2e-manifest.test.ts',
+  '__tests__/scripts/sync-help-index.test.ts',
+  '__tests__/scripts/testing-strategy.test.ts',
+  'bin/6529',
+  'config/env.schema.ts',
+  'config/env.schema.validation.ts',
+  'eslint.config.diff.mjs',
+  'eslint.config.mjs',
+  'eslint.config.single.mjs',
+  'eslint.config.tight.mjs',
+  'jest.config.js',
+  'jest.setup.js',
+  'knip.jsonc',
+  'next-sitemap.build.cjs',
+  'next.config.ts',
+  'ops/deployment-bus/manifest.v1.schema.json',
+  'ops/deployment-bus/release-bus-performance-contract.v1.json',
+  'ops/scripts/deployment-bus.cjs',
+  'ops/scripts/release-bus-status.mjs',
+  'ops/scripts/release-bus-status.test.ts',
+  'ops/scripts/testing-strategy.cjs',
+  'ops/testing-strategy/mutation-endpoint-registry.json',
+  'ops/testing-strategy/mutation-endpoint-registry.v1.schema.json',
+  'ops/testing-strategy/validation-manifest.v1.schema.json',
+  'playwright.config.ts',
+  'prettier.config.mjs',
+  'scripts/assert-no-package-lock.cjs',
+  'scripts/build-env-schema.cjs',
+  'scripts/dependency-risk-gate.cjs',
+  'scripts/e2e-packs.cjs',
+  'scripts/enforce-package-manager.cjs',
+  'scripts/generate-openapi.cjs',
+  'scripts/lint-package-json.cjs',
+  'scripts/package-public-review-artifacts.cjs',
+  'scripts/pr-ci-policy-bundle.cjs',
+  'scripts/release-bus-install-dependencies.cjs',
+  'scripts/require-6529-command.cjs',
+  'scripts/run-secure-pnpm.cjs',
+  'scripts/sync-agent-files.cjs',
+  'scripts/sync-e2e-manifest.cjs',
+  'scripts/sync-help-index.cjs',
+  'scripts/typecheck-changed.cjs',
+  'scripts/typecheck-test-baseline.json',
+  'scripts/typecheck-test-ratchet.cjs',
+  'tests/packs.manifest.cjs',
+  'tsconfig.jest.json',
+  'tsconfig.json',
+  'tsconfig.playwright.json',
+  'tsconfig.typecheck.json'
+]);
+
+const BACKEND_MODERN_ONLY_GATE_POLICY_FILES = new Set([
+  'scripts/pr-ci-policy-bundle.cjs',
+  'scripts/release-bus-backend-package-strategies.mjs',
+  'scripts/release-bus-package-backend.mjs',
+  'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts'
+]);
+
+const FRONTEND_MODERN_ONLY_GATE_POLICY_FILES = new Set([
+  '__tests__/scripts/release-bus-performance-contract.test.ts',
+  'ops/deployment-bus/release-bus-performance-contract.v1.json',
+  'scripts/pr-ci-policy-bundle.cjs'
+]);
+
+const FRONTEND_PACKAGE_POLICY = {
+  'package.json': {
+    scriptKeys: [
+      'agent-files:sync',
+      'base-build',
+      'build',
+      'build:env-schema',
+      'deadcode:knip',
+      'dependency:risk-gate',
+      'dev',
+      'e2e-manifest:check',
+      'e2e:packs',
+      'generate',
+      'guard:no-package-lock',
+      'help-index:sync',
+      'install:secure:frozen',
+      'lint:changed',
+      'lint:package-json',
+      'lint:quiet',
+      'postbuild',
+      'prebuild',
+      'test:e2e:critical-shell',
+      'test:e2e:production:admin-guards-readonly',
+      'test:e2e:production:collections-readonly',
+      'test:e2e:production:delegation-readonly',
+      'test:e2e:production:media-readonly',
+      'test:e2e:production:network-open-data-readonly',
+      'test:e2e:production:profile-deep-links-readonly',
+      'test:e2e:production:public-content-readonly',
+      'test:e2e:production:public-groups-tools-readonly',
+      'test:e2e:production:readonly',
+      'test:e2e:production:search-waves-readonly',
+      'test:e2e:production:social-readonly',
+      'test:e2e:smoke',
+      'test:e2e:staging',
+      'test:e2e:staging:admin-guards-readonly',
+      'test:e2e:staging:collections-readonly',
+      'test:e2e:staging:delegation-readonly',
+      'test:e2e:staging:input-detection-readonly',
+      'test:e2e:staging:media-readonly',
+      'test:e2e:staging:network-open-data-readonly',
+      'test:e2e:staging:profile-deep-links-readonly',
+      'test:e2e:staging:public-content-readonly',
+      'test:e2e:staging:public-groups-tools-readonly',
+      'test:e2e:staging:search-waves-readonly',
+      'test:e2e:staging:smoke',
+      'test:e2e:staging:social-readonly',
+      'test:no-coverage',
+      'testing-strategy',
+      'typecheck:changed',
+      'typecheck:jest',
+      'typecheck:playwright',
+      'typecheck:tests'
+    ],
+    fieldKeys: [
+      'packageManager',
+      'dependencies.cross-env',
+      'dependencies.next',
+      'dependencies.next-sitemap',
+      'devDependencies.@jest/globals',
+      'devDependencies.@playwright/test',
+      'devDependencies.@types/jest',
+      'devDependencies.babel-jest',
+      'devDependencies.eslint',
+      'devDependencies.eslint-config-next',
+      'devDependencies.eslint-config-prettier',
+      'devDependencies.eslint-plugin-diff',
+      'devDependencies.eslint-plugin-import',
+      'devDependencies.eslint-plugin-promise',
+      'devDependencies.eslint-plugin-react-compiler',
+      'devDependencies.eslint-plugin-react-hooks',
+      'devDependencies.eslint-plugin-react-you-might-not-need-an-effect',
+      'devDependencies.eslint-plugin-security',
+      'devDependencies.eslint-plugin-sonarjs',
+      'devDependencies.eslint-plugin-tailwindcss',
+      'devDependencies.eslint-plugin-unused-imports',
+      'devDependencies.jest',
+      'devDependencies.jest-environment-jsdom',
+      'devDependencies.knip',
+      'devDependencies.playwright',
+      'devDependencies.prettier',
+      'devDependencies.ts-jest',
+      'devDependencies.typescript',
+      'devDependencies.typescript-eslint'
+    ]
+  }
+} as const;
+
+const TRUSTED_FRONTEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
+  Record<
+    string,
+    readonly {
+      readonly from: string | null;
+      readonly to: string;
+      readonly expiresAt: number;
+    }[]
+  >
+> = {
+  '.github/workflows/production-e2e.yml': [
+    {
+      from: 'cd95ff1b43692864f1b29e574e37f20fcb46f6b4',
+      to: '4570330931c626edb9f2a38785da6d1dbff17b94',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '.github/workflows/release-bus-deploy-production.yml': [
+    {
+      from: '99006a1d5ffcc8780496b717940a3581635d066c',
+      to: 'e5437e6680294b8b29f96b5d369b0ac6aaa35403',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '.github/workflows/release-bus-deploy-staging.yml': [
+    {
+      from: 'ed7355c9136b9edf12d2479b1ec1a3d9c0c76b21',
+      to: '60f3be0bdeaee9c346e37fde44f02d99bfc5d363',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '.github/workflows/release-bus-v2-compose.yml': [
+    {
+      from: 'd7475c193e99b3f02b54791c2dda470f21f41f83',
+      to: 'e630365d0a7b5305765cdb0683efe55906520373',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '.github/workflows/release-bus-v2-preflight.yml': [
+    {
+      from: 'c4d7c0a7a2e9d10ddb82eec7feff7d8523e25b9f',
+      to: '7961c8de16a23236b56a0d4c7befc187fa414da3',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '.github/workflows/staging-e2e.yml': [
+    {
+      from: '183912f5daf70a502773bb41cebe73613e2b46e2',
+      to: 'a8f9bc720c26920f0d7a1e75ce14afc172f86fdb',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'playwright.config.ts': [
+    {
+      from: '2009c69433c58fb933696ddaf93bd6e484e4457a',
+      to: '151830e075f55c1d7bd497c1913e5adc0856f175',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'scripts/e2e-packs.cjs': [
+    {
+      from: '4d8b9b7c14c853ce55c10267837e525c5ab7a977',
+      to: '06d36759f8e03372ee3baf0ee0fca2c977c3ceb3',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'tests/packs.manifest.cjs': [
+    {
+      from: 'cc5ff179e181b254f3e83ff265b5c83ba902145a',
+      to: 'd9186a12120c8834bc57592e8b4ba12998e022f5',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'ops/deployment-bus/release-bus-performance-contract.v1.json': [
+    {
+      from: null,
+      to: 'a1fe2db01337a791b6ce627ad8b1f17ffc36ec60',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '__tests__/scripts/deployment-bus.test.ts': [
+    {
+      from: '599543dbdd338b8a364f6b46d615f0c3d7088618',
+      to: '6bae52b220152ccdb4b784ba3f79f2f876d5813c',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '__tests__/scripts/e2e-packs.test.ts': [
+    {
+      from: '55c6855d34226477ea51b17c19ef04af9fb23dce',
+      to: '8dcdb807fc652e65bb0a00b43c4573be3ffe16ad',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '__tests__/scripts/release-bus-performance-contract.test.ts': [
+    {
+      from: null,
+      to: '4d91f7fbf90a0c6c8489e9dad0579c350cf14a2c',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  '__tests__/scripts/sync-e2e-manifest.test.ts': [
+    {
+      from: '3952a4b013dab68b476c2bffc4b275b23bdba560',
+      to: 'c29c446d1b654dd900615bc4a41a325c1ed06ea3',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ]
+};
+
+function sha256(value: Buffer | string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function exactStringList(
+  actual: unknown,
+  expected: readonly string[]
+): boolean {
+  return (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  );
+}
+
+function trustedWorkflowTransition(
+  repository: ReleaseBusV2Repository,
+  from: string,
+  to: string
+): boolean {
+  if (from === to)
+    return (
+      from === LEGACY_PR_CI_WORKFLOW_BLOBS[repository] ||
+      TRUSTED_PR_CI_WORKFLOW_TRANSITIONS[repository].some(
+        (transition) => transition.to === from.toLowerCase()
+      )
+    );
+  return TRUSTED_PR_CI_WORKFLOW_TRANSITIONS[repository].some(
+    (transition) =>
+      Date.now() <= transition.expiresAt &&
+      transition.from === from.toLowerCase() &&
+      transition.to === to.toLowerCase()
+  );
+}
+
+const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
+  Record<
+    ReleaseBusV2Repository,
+    readonly {
+      readonly from: string;
+      readonly to: string;
+      readonly expiresAt: number;
+    }[]
+  >
+> = {
+  backend: [
+    {
+      from: '3b6c8b88a0864d15bc4135010722f4dab480f2debc6082778d8585fbddbcbc84',
+      to: 'b340aad2d8aa04fdf348fda9bd37c4000ec2cb610a34241200a1b36cb09452dc',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  frontend: []
+};
+
+function trustedGatePolicyBundleTransition(
+  repository: ReleaseBusV2Repository,
+  from: string,
+  to: string
+): boolean {
+  return (
+    from === to ||
+    TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS[repository].some(
+      (transition) =>
+        Date.now() <= transition.expiresAt &&
+        transition.from === from &&
+        transition.to === to
+    )
+  );
+}
+
+function trustedGatePolicyPathTransition(
+  repository: ReleaseBusV2Repository,
+  path: string,
+  from: string | null,
+  to: string | null
+): boolean {
+  if (from === to) return true;
+  const transitions =
+    repository === 'backend'
+      ? TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS[path]
+      : TRUSTED_FRONTEND_PR_CI_GATE_POLICY_TRANSITIONS[path];
+  return Boolean(
+    transitions?.some(
+      (transition) =>
+        Date.now() <= transition.expiresAt &&
+        transition.from === from &&
+        transition.to === to
+    )
+  );
+}
+
+function readPackageString(
+  manifest: Record<string, unknown>,
+  dottedKey: string
+): string | null {
+  let value: unknown = manifest;
+  for (const segment of dottedKey.split('.')) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      !Object.prototype.hasOwnProperty.call(value, segment)
+    )
+      return null;
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function parsePackageDocument(
+  repository: ReleaseBusV2Repository,
+  path: string,
+  contents: Buffer
+): Record<string, unknown> {
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = JSON.parse(contents.toString('utf8')) as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      `${repository} PR CI gate policy ${path} is not valid JSON`
+    );
+  }
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest))
+    throw new Error(
+      `${repository} PR CI gate policy ${path} is not a JSON object`
+    );
+  return manifest;
+}
+
+function packagePolicyLines(
+  repository: ReleaseBusV2Repository,
+  path: string,
+  contents: Buffer,
+  modern: boolean
+): string[] {
+  const manifest = parsePackageDocument(repository, path, contents);
+  const expectedPackageManager =
+    repository === 'backend' ? 'npm@10.9.8' : 'pnpm@10.33.0';
+  if (readPackageString(manifest, 'packageManager') !== expectedPackageManager)
+    throw new Error(
+      `${repository} PR CI gate policy ${path} must pin ${expectedPackageManager}`
+    );
+  const policy =
+    repository === 'backend'
+      ? BACKEND_PACKAGE_POLICY[path as keyof typeof BACKEND_PACKAGE_POLICY]
+      : FRONTEND_PACKAGE_POLICY['package.json'];
+  if (!policy)
+    throw new Error(`${repository} PR CI package policy path is not trusted`);
+  const scripts =
+    manifest.scripts &&
+    typeof manifest.scripts === 'object' &&
+    !Array.isArray(manifest.scripts)
+      ? (manifest.scripts as Record<string, unknown>)
+      : {};
+  const lines: string[] = [];
+  for (const key of policy.scriptKeys) {
+    const value = scripts[key];
+    if (typeof value !== 'string' || value.length === 0)
+      throw new Error(
+        `${repository} PR CI gate policy ${path} has no required script ${key}`
+      );
+    lines.push(
+      `package-script\t${repository === 'frontend' ? key : `${path}#${key}`}\t${JSON.stringify(value)}\n`
+    );
+  }
+  for (const key of policy.fieldKeys) {
+    const value = readPackageString(manifest, key);
+    if (!value) {
+      if (
+        !modern &&
+        repository === 'backend' &&
+        path === 'package.json' &&
+        key === 'devDependencies.jest'
+      )
+        continue;
+      throw new Error(
+        `${repository} PR CI gate policy ${path} has no required package field ${key}`
+      );
+    }
+    lines.push(
+      `package-field\t${repository === 'frontend' ? key : `${path}#${key}`}\t${JSON.stringify(value)}\n`
+    );
+  }
+  return lines;
+}
+
+function bytewiseSort(values: string[]): string[] {
+  return values.sort((left, right) =>
+    Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+  );
+}
+
+function assertSafePolicyPath(path: string): void {
+  if (
+    path.length === 0 ||
+    path.startsWith('/') ||
+    path.split('/').includes('..') ||
+    /[\t\r\n\0]/.test(path)
+  )
+    throw new Error(`PR CI gate policy has unsafe repository path ${path}`);
+}
+
+export function releaseBusPrCiPolicyInventory(
+  repository: ReleaseBusV2Repository,
+  modern: boolean
+): {
+  readonly paths: readonly string[];
+  readonly packages: readonly {
+    readonly path: string;
+    readonly scriptKeys: readonly string[];
+    readonly fieldKeys: readonly string[];
+  }[];
+} {
+  const allPaths =
+    repository === 'backend'
+      ? new Set([
+          ...Array.from(BACKEND_PR_CI_GATE_POLICY_FILES),
+          ...Array.from(BACKEND_PR_CI_PACKAGE_POLICY_FILES)
+        ])
+      : new Set([
+          ...Array.from(FRONTEND_PR_CI_GATE_POLICY_FILES),
+          'package.json'
+        ]);
+  const modernOnly =
+    repository === 'backend'
+      ? BACKEND_MODERN_ONLY_GATE_POLICY_FILES
+      : FRONTEND_MODERN_ONLY_GATE_POLICY_FILES;
+  const policy =
+    repository === 'backend' ? BACKEND_PACKAGE_POLICY : FRONTEND_PACKAGE_POLICY;
+  return {
+    paths: Array.from(allPaths)
+      .filter((path) => modern || !modernOnly.has(path))
+      .sort((left, right) =>
+        Buffer.compare(Buffer.from(left), Buffer.from(right))
+      ),
+    packages: Object.entries(policy).map(([path, value]) => ({
+      path,
+      scriptKeys: [...value.scriptKeys],
+      fieldKeys: [...value.fieldKeys]
+    }))
+  };
+}
+
+async function boundedResponseBuffer(
+  response: Response,
+  maxBytes: number
+): Promise<Buffer> {
+  const contentLength = response.headers.get('content-length');
+  if (
+    contentLength !== null &&
+    (!/^\d+$/.test(contentLength) || Number(contentLength) > maxBytes)
+  )
+    throw new Error('Pull request CI evidence archive exceeds the size limit');
+  if (!response.body)
+    throw new Error('Pull request CI evidence archive is empty');
+
+  if (Buffer.isBuffer(response.body)) {
+    if (response.body.length > maxBytes)
+      throw new Error(
+        'Pull request CI evidence archive exceeds the size limit'
+      );
+    return Buffer.from(response.body);
+  }
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const value of response.body as unknown as AsyncIterable<
+    Buffer | Uint8Array | string
+  >) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    total += chunk.length;
+    if (total > maxBytes) {
+      (
+        response.body as unknown as {
+          destroy?: () => void;
+        }
+      ).destroy?.();
+      throw new Error(
+        'Pull request CI evidence archive exceeds the size limit'
+      );
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, total);
+}
 
 const REPOSITORIES: Readonly<Record<ReleaseBusV2Repository, string>> = {
   frontend: '6529seize-frontend',
@@ -122,6 +935,11 @@ const MAX_STAGING_FENCE_PAGES = 10;
 const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const GITHUB_PAGE_SIZE = 100;
 const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_PR_CI_GATE_POLICY_FILES = 96;
+const MAX_PR_CI_GATE_POLICY_SOURCE_BYTES = 4 * 1024 * 1024;
+const MAX_PR_CI_GATE_POLICY_CANONICAL_BYTES = 64 * 1024;
+const MAX_PR_CI_GATE_POLICY_PACKAGE_BYTES = 512 * 1024;
+const PR_CI_POLICY_BUNDLE_CONTRACT = 'pr-ci-policy-bundle-v1';
 
 export class ReleaseBusGitHubInfrastructureError extends Error {
   public constructor(message: string) {
@@ -386,6 +1204,12 @@ export class ReleaseBusGitHubApp {
     readonly artifactRunId: string | null;
     readonly artifactName: string | null;
     readonly artifactDigest: string | null;
+    readonly workflowPath: string;
+    readonly baseWorkflowBlobSha: string;
+    readonly mergeWorkflowBlobSha: string;
+    readonly baseGatePolicyDigest: string;
+    readonly mergeGatePolicyDigest: string;
+    readonly trustMode: 'evidence-manifest-v1' | 'legacy-exact-workflow-v0';
     readonly contributorGithubLogins: readonly string[];
   }> {
     if (!Number.isSafeInteger(pullNumber) || pullNumber < 1)
@@ -460,6 +1284,26 @@ export class ReleaseBusGitHubApp {
         .map((url) => /\/actions\/runs\/(\d+)/.exec(url)?.[1])
         .filter((id): id is string => Boolean(id))
     );
+    const evidenceContract = REQUIRED_PR_CI_EVIDENCE[repository];
+    const evidenceCheck = checks.find((check) => {
+      const runId = /\/actions\/runs\/(\d+)/.exec(check.details_url ?? '')?.[1];
+      return (
+        check.name === evidenceContract.checkName &&
+        runId !== undefined &&
+        greenWorkflowRunIds.has(runId)
+      );
+    });
+    if (!evidenceCheck)
+      throw new Error(
+        'Pull request does not include the required exact-head PR CI check'
+      );
+    const evidenceRunId = /\/actions\/runs\/(\d+)/.exec(
+      evidenceCheck.details_url ?? ''
+    )?.[1];
+    if (!evidenceRunId)
+      throw new Error(
+        'Pull request exact-head PR CI check has no workflow run identity'
+      );
 
     const artifactsResponse = await this.request(
       repository,
@@ -479,13 +1323,79 @@ export class ReleaseBusGitHubApp {
           item.name === `release-bus-v2-pr-${mergeSha}` &&
           item.workflow_run?.head_sha?.toLowerCase() ===
             expectedHeadSha.toLowerCase() &&
-          Boolean(
-            item.workflow_run?.id &&
-            greenWorkflowRunIds.has(String(item.workflow_run.id))
-          ) &&
+          String(item.workflow_run?.id ?? '') === evidenceRunId &&
           /^sha256:[a-f0-9]{64}$/.test(item.digest ?? '')
       )
       .sort((left, right) => Number(right.id ?? 0) - Number(left.id ?? 0))[0];
+    const evidenceRunResponse = await this.request(
+      repository,
+      `/actions/runs/${evidenceRunId}`
+    );
+    await this.assertOk(
+      evidenceRunResponse,
+      `read ${repository} pull request CI evidence workflow`
+    );
+    const evidenceRun = (await evidenceRunResponse.json()) as GitHubRun;
+    const expectedWorkflowPath = evidenceContract.workflow;
+    if (
+      evidenceRun.event !== 'pull_request' ||
+      evidenceRun.status !== 'completed' ||
+      evidenceRun.conclusion !== 'success' ||
+      evidenceRun.head_sha.toLowerCase() !== expectedHeadSha.toLowerCase() ||
+      (evidenceRun.path !== expectedWorkflowPath &&
+        !evidenceRun.path?.startsWith(`${expectedWorkflowPath}@`))
+    )
+      throw new Error(
+        'Pull request CI evidence is not from the required exact-head workflow'
+      );
+    const [baseWorkflow, mergeWorkflow] = await Promise.all([
+      this.getContentIdentity(repository, expectedWorkflowPath, baseSha),
+      this.getContentIdentity(repository, expectedWorkflowPath, mergeSha)
+    ]);
+    if (
+      !trustedWorkflowTransition(
+        repository,
+        baseWorkflow.sha,
+        mergeWorkflow.sha
+      )
+    )
+      throw new Error(
+        'Pull request changes its own trusted PR CI evidence workflow without an exact preauthorized blob transition'
+      );
+    const legacyExactWorkflow =
+      baseWorkflow.sha === LEGACY_PR_CI_WORKFLOW_BLOBS[repository] &&
+      mergeWorkflow.sha === LEGACY_PR_CI_WORKFLOW_BLOBS[repository];
+    const trustMode = legacyExactWorkflow
+      ? 'legacy-exact-workflow-v0'
+      : 'evidence-manifest-v1';
+    const gatePolicy = await this.validatePullRequestCiGatePolicyClosure(
+      repository,
+      baseSha,
+      mergeSha,
+      {
+        path: expectedWorkflowPath,
+        baseBlobSha: baseWorkflow.sha,
+        mergeBlobSha: mergeWorkflow.sha
+      }
+    );
+    if (!legacyExactWorkflow) {
+      if (
+        !artifact?.workflow_run?.id ||
+        !Number.isSafeInteger(artifact.size_in_bytes) ||
+        Number(artifact.size_in_bytes) < 1 ||
+        Number(artifact.size_in_bytes) > MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES
+      )
+        throw new Error(
+          'Pull request has no bounded exact green merge-tree CI evidence artifact'
+        );
+      await this.validatePullRequestCiEvidenceArtifact(repository, artifact, {
+        headSha,
+        mergeSha,
+        workflow: expectedWorkflowPath,
+        gates: evidenceContract.gates,
+        policyBundle: gatePolicy.merge
+      });
+    }
     const contributorGithubLogins =
       await this.getPullRequestContributorGithubLogins(
         repository,
@@ -504,8 +1414,372 @@ export class ReleaseBusGitHubApp {
         : null,
       artifactName: artifact?.name ?? null,
       artifactDigest: artifact?.digest?.replace(/^sha256:/, '') ?? null,
+      workflowPath: expectedWorkflowPath,
+      baseWorkflowBlobSha: baseWorkflow.sha,
+      mergeWorkflowBlobSha: mergeWorkflow.sha,
+      baseGatePolicyDigest: gatePolicy.base.digest,
+      mergeGatePolicyDigest: gatePolicy.merge.digest,
+      trustMode,
       contributorGithubLogins
     };
+  }
+
+  private async getContentIdentity(
+    repository: ReleaseBusV2Repository,
+    filePath: string,
+    ref: string
+  ): Promise<{ readonly sha: string }> {
+    const response = await this.request(
+      repository,
+      `/contents/${filePath}?ref=${encodeURIComponent(ref)}`
+    );
+    await this.assertOk(
+      response,
+      `read trusted ${repository} workflow at ${ref}`
+    );
+    const identity = (await response.json()) as GitHubContentsIdentity;
+    if (
+      identity.type !== 'file' ||
+      !identity.sha ||
+      !/^[a-f0-9]{40}$/i.test(identity.sha)
+    )
+      throw new Error('Trusted PR CI workflow has no exact blob identity');
+    return { sha: identity.sha.toLowerCase() };
+  }
+
+  private async validatePullRequestCiGatePolicyClosure(
+    repository: ReleaseBusV2Repository,
+    baseSha: string,
+    mergeSha: string,
+    workflow: {
+      readonly path: string;
+      readonly baseBlobSha: string;
+      readonly mergeBlobSha: string;
+    }
+  ): Promise<{
+    readonly base: {
+      readonly bytes: Buffer;
+      readonly digest: string;
+      readonly lineCount: number;
+    };
+    readonly merge: {
+      readonly bytes: Buffer;
+      readonly digest: string;
+      readonly lineCount: number;
+    };
+  }> {
+    const baseModern =
+      workflow.baseBlobSha !== LEGACY_PR_CI_WORKFLOW_BLOBS[repository];
+    const mergeModern =
+      workflow.mergeBlobSha !== LEGACY_PR_CI_WORKFLOW_BLOBS[repository];
+    const [baseTree, mergeTree] = await Promise.all([
+      this.getBoundedPolicyTree(repository, baseSha),
+      this.getBoundedPolicyTree(repository, mergeSha)
+    ]);
+    const baseInventory = releaseBusPrCiPolicyInventory(repository, baseModern);
+    const mergeInventory = releaseBusPrCiPolicyInventory(
+      repository,
+      mergeModern
+    );
+    const basePaths = [...baseInventory.paths];
+    const mergePaths = [...mergeInventory.paths];
+    for (const [label, paths, tree] of [
+      ['base', basePaths, baseTree] as const,
+      ['merge', mergePaths, mergeTree] as const
+    ]) {
+      if (paths.length > MAX_PR_CI_GATE_POLICY_FILES)
+        throw new Error(
+          `${repository} PR CI gate policy ${label} file inventory is too large`
+        );
+      let totalBytes = 0;
+      for (const path of paths) {
+        assertSafePolicyPath(path);
+        const entry = tree.get(path);
+        if (!entry)
+          throw new Error(
+            `${repository} PR CI gate policy ${label} is missing required path ${path}`
+          );
+        totalBytes += entry.size;
+      }
+      if (totalBytes > MAX_PR_CI_GATE_POLICY_SOURCE_BYTES)
+        throw new Error(
+          `${repository} PR CI gate policy ${label} source is too large`
+        );
+    }
+    const packagePaths = mergeInventory.packages.map(({ path }) => path);
+    const packageBlobShas = new Set<string>();
+    for (const path of packagePaths) {
+      const baseEntry = baseTree.get(path);
+      const mergeEntry = mergeTree.get(path);
+      if (baseEntry) packageBlobShas.add(baseEntry.sha);
+      if (mergeEntry) packageBlobShas.add(mergeEntry.sha);
+    }
+    const packageDocuments = new Map<string, Buffer>();
+    await Promise.all(
+      Array.from(packageBlobShas).map(async (blobSha) => {
+        packageDocuments.set(
+          blobSha,
+          await this.getBoundedGitBlob(repository, blobSha)
+        );
+      })
+    );
+    const buildBundle = (
+      paths: readonly string[],
+      tree: ReadonlyMap<
+        string,
+        { readonly sha: string; readonly size: number }
+      >,
+      modern: boolean
+    ) => {
+      const lines: string[] = [];
+      for (const path of paths) {
+        const entry = tree.get(path);
+        if (!entry)
+          throw new Error(
+            `${repository} PR CI gate policy is missing required path ${path}`
+          );
+        if (packagePaths.includes(path)) {
+          const contents = packageDocuments.get(entry.sha);
+          if (!contents)
+            throw new Error(
+              `${repository} PR CI gate policy package content is unavailable`
+            );
+          lines.push(...packagePolicyLines(repository, path, contents, modern));
+        } else {
+          lines.push(`file\t${path}\t${entry.sha}\n`);
+        }
+      }
+      if (modern)
+        lines.push(`runtime-pin\tnode\t${JSON.stringify('22.17.1')}\n`);
+      const bytes = Buffer.from(bytewiseSort(lines).join(''), 'utf8');
+      if (bytes.length > MAX_PR_CI_GATE_POLICY_CANONICAL_BYTES)
+        throw new Error(
+          `${repository} PR CI gate policy canonical bundle is too large`
+        );
+      return {
+        bytes,
+        digest: sha256(bytes),
+        lineCount: lines.length
+      };
+    };
+    const base = buildBundle(basePaths, baseTree, baseModern);
+    const merge = buildBundle(mergePaths, mergeTree, mergeModern);
+    if (
+      !trustedGatePolicyBundleTransition(repository, base.digest, merge.digest)
+    )
+      throw new Error(
+        `${repository} PR CI gate policy bundle changed without an exact preauthorized transition`
+      );
+    const transitionPaths = new Set([...basePaths, ...mergePaths]);
+    for (const path of Array.from(transitionPaths)) {
+      if (packagePaths.includes(path)) continue;
+      const from = baseTree.get(path)?.sha ?? null;
+      const to = mergeTree.get(path)?.sha ?? null;
+      if (
+        path === workflow.path
+          ? !(from && to && trustedWorkflowTransition(repository, from, to))
+          : !trustedGatePolicyPathTransition(repository, path, from, to)
+      )
+        throw new Error(
+          `${repository} PR CI gate policy ${path} changed without an exact preauthorized blob transition`
+        );
+    }
+    return { base, merge };
+  }
+
+  private async getBoundedPolicyTree(
+    repository: ReleaseBusV2Repository,
+    commitSha: string
+  ): Promise<
+    ReadonlyMap<string, { readonly sha: string; readonly size: number }>
+  > {
+    const commitResponse = await this.request(
+      repository,
+      `/git/commits/${commitSha}`
+    );
+    await this.assertOk(
+      commitResponse,
+      `read ${repository} PR CI gate policy commit`
+    );
+    const treeSha = ((await commitResponse.json()) as GitHubGitCommit).tree
+      ?.sha;
+    if (!treeSha || !/^[a-f0-9]{40}$/i.test(treeSha))
+      throw new Error(
+        `${repository} PR CI gate policy commit has no exact tree`
+      );
+    const treeResponse = await this.request(
+      repository,
+      `/git/trees/${treeSha}?recursive=1`
+    );
+    await this.assertOk(
+      treeResponse,
+      `read ${repository} PR CI gate policy tree`
+    );
+    const payload = (await treeResponse.json()) as GitHubGitTree;
+    if (payload.truncated !== false || !Array.isArray(payload.tree))
+      throw new Error(
+        `${repository} PR CI gate policy tree is truncated or malformed`
+      );
+    const result = new Map<
+      string,
+      { readonly sha: string; readonly size: number }
+    >();
+    for (const entry of payload.tree) {
+      if (entry.type !== 'blob') continue;
+      if (
+        !entry.path ||
+        !entry.sha ||
+        !/^[a-f0-9]{40}$/i.test(entry.sha) ||
+        !Number.isSafeInteger(entry.size) ||
+        Number(entry.size) < 0
+      )
+        throw new Error(
+          `${repository} PR CI gate policy tree has malformed blob identity`
+        );
+      assertSafePolicyPath(entry.path);
+      if (result.has(entry.path))
+        throw new Error(
+          `${repository} PR CI gate policy tree has duplicate path ${entry.path}`
+        );
+      result.set(entry.path, {
+        sha: entry.sha.toLowerCase(),
+        size: Number(entry.size)
+      });
+    }
+    return result;
+  }
+
+  private async getBoundedGitBlob(
+    repository: ReleaseBusV2Repository,
+    blobSha: string
+  ): Promise<Buffer> {
+    const response = await this.request(repository, `/git/blobs/${blobSha}`);
+    await this.assertOk(response, `read ${repository} PR CI package policy`);
+    const blob = (await response.json()) as GitHubGitBlob;
+    if (
+      blob.sha?.toLowerCase() !== blobSha ||
+      blob.encoding !== 'base64' ||
+      typeof blob.content !== 'string' ||
+      !Number.isSafeInteger(blob.size) ||
+      Number(blob.size) < 1 ||
+      Number(blob.size) > MAX_PR_CI_GATE_POLICY_PACKAGE_BYTES
+    )
+      throw new Error(
+        `${repository} PR CI package policy has no bounded exact blob`
+      );
+    const encoded = blob.content.replace(/\s+/g, '');
+    if (
+      encoded.length === 0 ||
+      encoded.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
+    )
+      throw new Error(
+        `${repository} PR CI package policy blob encoding is invalid`
+      );
+    const bytes = Buffer.from(encoded, 'base64');
+    if (
+      bytes.length !== blob.size ||
+      bytes.toString('base64').replace(/=+$/, '') !== encoded.replace(/=+$/, '')
+    )
+      throw new Error(
+        `${repository} PR CI package policy blob content is invalid`
+      );
+    return bytes;
+  }
+
+  private async validatePullRequestCiEvidenceArtifact(
+    repository: ReleaseBusV2Repository,
+    artifact: GitHubArtifact,
+    expected: {
+      readonly headSha: string;
+      readonly mergeSha: string;
+      readonly workflow: string;
+      readonly gates: readonly string[];
+      readonly policyBundle: {
+        readonly bytes: Buffer;
+        readonly digest: string;
+        readonly lineCount: number;
+      };
+    }
+  ): Promise<void> {
+    if (!artifact.id)
+      throw new Error('Pull request CI evidence artifact has no exact id');
+    const response = await this.request(
+      repository,
+      `/actions/artifacts/${artifact.id}/zip`
+    );
+    await this.assertOk(response, `download ${repository} PR CI evidence`);
+    const archive = new AdmZip(
+      await boundedResponseBuffer(response, MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES)
+    );
+    const entries = archive
+      .getEntries()
+      .filter(({ isDirectory }) => !isDirectory);
+    if (
+      entries.length !== 3 ||
+      !exactStringList(
+        entries
+          .map(({ entryName }) => entryName)
+          .sort((left, right) => left.localeCompare(right)),
+        ['manifest.json', 'policy-bundle.txt', 'SHA256SUMS']
+      )
+    )
+      throw new Error('Pull request CI evidence archive has unexpected files');
+    if (
+      entries.some(
+        ({ header }) =>
+          !Number.isSafeInteger(header.size) ||
+          header.size < 0 ||
+          header.size > MAX_PR_CI_EVIDENCE_ENTRY_BYTES
+      ) ||
+      entries.reduce((sum, { header }) => sum + header.size, 0) >
+        MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES
+    )
+      throw new Error(
+        'Pull request CI evidence archive expands beyond the size limit'
+      );
+    const manifestBytes = entries
+      .find(({ entryName }) => entryName === 'manifest.json')
+      ?.getData();
+    const sumsBytes = entries
+      .find(({ entryName }) => entryName === 'SHA256SUMS')
+      ?.getData();
+    const policyBundleBytes = entries
+      .find(({ entryName }) => entryName === 'policy-bundle.txt')
+      ?.getData();
+    if (!manifestBytes || !policyBundleBytes || !sumsBytes)
+      throw new Error('Pull request CI evidence archive is incomplete');
+    const expectedSums = `${sha256(manifestBytes)}  ./manifest.json\n${sha256(policyBundleBytes)}  ./policy-bundle.txt\n`;
+    if (sumsBytes.toString('utf8') !== expectedSums)
+      throw new Error('Pull request CI evidence checksum is invalid');
+    let manifest: Record<string, unknown>;
+    try {
+      manifest = JSON.parse(manifestBytes.toString('utf8')) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      throw new Error('Pull request CI evidence manifest is invalid JSON');
+    }
+    if (
+      manifest.schema_version !== 1 ||
+      manifest.evidence_contract !== 'exact-merge-tree-pr-ci-v1' ||
+      manifest.repository !== repository ||
+      manifest.head_sha !== expected.headSha ||
+      manifest.merge_sha !== expected.mergeSha ||
+      manifest.workflow !== expected.workflow ||
+      manifest.policy_bundle_contract !== PR_CI_POLICY_BUNDLE_CONTRACT ||
+      manifest.policy_bundle_digest !== expected.policyBundle.digest ||
+      manifest.policy_bundle_line_count !== expected.policyBundle.lineCount ||
+      !exactStringList(manifest.required_gates, expected.gates)
+    )
+      throw new Error(
+        'Pull request CI evidence manifest does not bind the exact head, merge tree, workflow, and gates'
+      );
+    if (!policyBundleBytes.equals(expected.policyBundle.bytes))
+      throw new Error(
+        'Pull request CI evidence policy bundle does not match the independently verified merge tree'
+      );
   }
 
   private async getPullRequestContributorGithubLogins(

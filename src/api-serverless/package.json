@@ -19,6 +19,7 @@
     "@types/express": "^4.17.25",
     "@types/swagger-ui-express": "^4.1.8",
     "@wagmi/chains": "^1.8.0",
+    "adm-zip": "^0.5.16",
     "async-express-decorator": "^1.1.0",
     "aws-serverless-express": "^3.4.0",
     "aws4": "^1.13.2",

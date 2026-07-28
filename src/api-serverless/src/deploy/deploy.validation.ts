@@ -274,16 +274,56 @@ export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
     .required(),
   artifact_digest: Joi.alternatives()
     .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
-    .required()
+    .required(),
+  source_ref: Joi.alternatives()
+    .try(
+      Joi.string()
+        .pattern(/^(?!refs\/)(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/)
+        .max(240),
+      Joi.valid(null)
+    )
+    .default(null),
+  candidate_evidence_mode: Joi.alternatives()
+    .try(
+      Joi.string().valid(
+        'legacy-whole-train',
+        'strict-single',
+        'strict-aggregate'
+      ),
+      Joi.valid(null)
+    )
+    .default(null),
+  aggregate_candidate_evidence_digest: Joi.alternatives()
+    .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
+    .default(null)
 })
   .custom((value, helpers) => {
     if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
       return helpers.error('any.invalid');
     if (value.environment === 'orchestration') {
-      return value.artifact_run_id === null && value.artifact_digest === null
+      if (value.artifact_run_id !== null || value.artifact_digest !== null)
+        return helpers.error('any.invalid');
+      if (
+        value.candidate_evidence_mode === 'strict-single' ||
+        value.candidate_evidence_mode === 'strict-aggregate'
+      ) {
+        if (value.source_ref === null) return helpers.error('any.invalid');
+        if (value.candidate_evidence_mode === 'strict-aggregate')
+          return value.aggregate_candidate_evidence_digest !== null
+            ? value
+            : helpers.error('any.invalid');
+      } else if (value.source_ref !== null) {
+        return helpers.error('any.invalid');
+      }
+      return value.aggregate_candidate_evidence_digest === null
         ? value
         : helpers.error('any.invalid');
     }
+    if (
+      value.candidate_evidence_mode !== null ||
+      value.aggregate_candidate_evidence_digest !== null
+    )
+      return helpers.error('any.invalid');
     const keySegments = value.operation_key.split(':');
     const isExactManifestE2E =
       keySegments.length === 5 &&

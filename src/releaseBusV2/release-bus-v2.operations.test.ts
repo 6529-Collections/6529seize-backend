@@ -1,6 +1,7 @@
 const mockGetWorkflowRunIdentity = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
+const mockResolveRef = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
   class ReleaseBusGitHubInfrastructureError extends Error {
@@ -15,7 +16,8 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
       getWorkflowRunIdentity: (...args: unknown[]) =>
         mockGetWorkflowRunIdentity(...args),
       findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args),
-      dispatchWorkflow: (...args: unknown[]) => mockDispatchWorkflow(...args)
+      dispatchWorkflow: (...args: unknown[]) => mockDispatchWorkflow(...args),
+      resolveRef: (...args: unknown[]) => mockResolveRef(...args)
     }
   };
 });
@@ -44,7 +46,11 @@ function operation(
     next_retry_at: null,
     failure_class: null,
     failure_message: null,
-    request_json: { workflow: 'release-bus-v2-preflight.yml' },
+    request_json: {
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      workflow_control_sha: 'c'.repeat(40)
+    },
     result_json: null,
     started_at: 1,
     completed_at: null,
@@ -135,6 +141,8 @@ describe('Release Bus v2 exact operation callbacks', () => {
     mockGetWorkflowRunIdentity.mockReset();
     mockFindWorkflowRun.mockReset();
     mockDispatchWorkflow.mockReset();
+    mockResolveRef.mockReset();
+    mockResolveRef.mockResolvedValue('f'.repeat(40));
   });
 
   it('injects one transparent beta infrastructure retry before dispatch', async () => {
@@ -473,6 +481,482 @@ describe('Release Bus v2 exact operation callbacks', () => {
     });
   });
 
+  it('binds every selected unit and environment for a v3 backend artifact', async () => {
+    const state = repositoryFor(
+      operation({
+        idempotency_key: 'rb2:train-id:prepare:backend',
+        operation_type: 'PREPARE_ARTIFACT_BACKEND',
+        repository: 'backend',
+        request_json: {
+          workflow: 'release-bus-v2-preflight.yml',
+          inputs: {
+            artifact_contract_version: 'environment-bound-v3',
+            artifact_environment: 'production',
+            deploy_units: '["api","releaseBus"]',
+            deploy_layers: '[["api"],["releaseBus"]]',
+            candidate_evidence_mode: 'strict-aggregate',
+            aggregate_candidate_evidence_digest: '9'.repeat(64),
+            reuse_artifact_run_id: '',
+            reuse_artifact_name: '',
+            reuse_artifact_digest: ''
+          }
+        }
+      })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reportProgress({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:backend:a1',
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary: {
+          artifact_digest: 'f'.repeat(64),
+          schema_version: 3,
+          artifact_contract: 'environment-bound-v1',
+          artifact_contract_version: 'environment-bound-v3',
+          repository: 'backend',
+          source_sha: 'a'.repeat(40),
+          environment: 'production',
+          source_evidence_reused: true,
+          artifact_bytes_reused: false,
+          ci_evidence: {
+            mode: 'strict-aggregate',
+            artifact_run_id: null,
+            artifact_name: null,
+            artifact_digest: null,
+            aggregate_candidate_evidence_digest: '9'.repeat(64)
+          },
+          units: ['api', 'releaseBus'],
+          layers: [['api'], ['releaseBus']],
+          package_digests: {
+            api: 'b'.repeat(64),
+            releaseBus: 'c'.repeat(64)
+          }
+        }
+      })
+    ).resolves.toEqual({ accepted: true, reused: false });
+  });
+
+  it.each([
+    {
+      label: 'schema v2',
+      patch: { schema_version: 2 }
+    },
+    {
+      label: 'wrong environment',
+      patch: { environment: 'staging' }
+    },
+    {
+      label: 'reused staging artifact bytes',
+      patch: { artifact_bytes_reused: true }
+    },
+    {
+      label: 'missing selected unit digest',
+      patch: { package_digests: { api: 'b'.repeat(64) } }
+    },
+    {
+      label: 'flattened dependency frontiers',
+      patch: { layers: [['api', 'releaseBus']] }
+    }
+  ])('rejects $label evidence for a v3 backend artifact', async ({ patch }) => {
+    const state = repositoryFor(
+      operation({
+        idempotency_key: 'rb2:train-id:prepare:backend',
+        operation_type: 'PREPARE_ARTIFACT_BACKEND',
+        repository: 'backend',
+        request_json: {
+          workflow: 'release-bus-v2-preflight.yml',
+          inputs: {
+            artifact_contract_version: 'environment-bound-v3',
+            artifact_environment: 'production',
+            deploy_units: '["api","releaseBus"]',
+            deploy_layers: '[["api"],["releaseBus"]]',
+            candidate_evidence_mode: 'strict-aggregate',
+            aggregate_candidate_evidence_digest: '9'.repeat(64),
+            reuse_artifact_run_id: '',
+            reuse_artifact_name: '',
+            reuse_artifact_digest: ''
+          }
+        }
+      })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    await expect(
+      service.reportProgress({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:backend:a1',
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary: {
+          artifact_digest: 'f'.repeat(64),
+          schema_version: 3,
+          artifact_contract: 'environment-bound-v1',
+          artifact_contract_version: 'environment-bound-v3',
+          repository: 'backend',
+          source_sha: 'a'.repeat(40),
+          environment: 'production',
+          source_evidence_reused: true,
+          artifact_bytes_reused: false,
+          ci_evidence: {
+            mode: 'strict-aggregate',
+            artifact_run_id: null,
+            artifact_name: null,
+            artifact_digest: null,
+            aggregate_candidate_evidence_digest: '9'.repeat(64)
+          },
+          units: ['api', 'releaseBus'],
+          layers: [['api'], ['releaseBus']],
+          package_digests: {
+            api: 'b'.repeat(64),
+            releaseBus: 'c'.repeat(64)
+          },
+          ...patch
+        }
+      })
+    ).rejects.toThrow(/environment-bound/i);
+    expect(state.current().status).toBe('RUNNING');
+  });
+
+  it('binds a successful backend deployment report to its exact v3 artifact', async () => {
+    const artifactDigest = 'd'.repeat(64);
+    const operationKey = 'rb2:train-id:deploy:staging:backend:api';
+    const state = repositoryFor(
+      operation({
+        idempotency_key: operationKey,
+        operation_type: 'DEPLOY_BACKEND_STAGING_api',
+        repository: 'backend',
+        service: 'api',
+        environment: 'staging',
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: artifactDigest,
+        request_json: {
+          workflow: 'deploy.yml',
+          inputs: {
+            artifact_contract_version: 'environment-bound-v3',
+            artifact_environment: 'staging',
+            artifact_digest: artifactDigest,
+            artifact_run_id: '54321',
+            artifact_train_id: 'train-id'
+          }
+        }
+      })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reportProgress({
+        train_id: 'train-id',
+        operation_key: `${operationKey}:a1`,
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary: {
+          schema_version: 3,
+          artifact_contract: 'environment-bound-v1',
+          artifact_digest: artifactDigest,
+          artifact_contract_version: 'environment-bound-v3',
+          environment: 'staging',
+          repository: 'backend',
+          source_sha: 'a'.repeat(40),
+          service: 'api',
+          artifact_run_id: '54321',
+          artifact_train_id: 'train-id',
+          package_digest: 'e'.repeat(64),
+          consumed_preflight_artifact: true,
+          rebuilt: false
+        }
+      })
+    ).resolves.toEqual({ accepted: true, reused: false });
+    expect(state.current().status).toBe('SUCCEEDED');
+  });
+
+  it('binds a successful frontend deployment report to the same cross-repository v3 contract', async () => {
+    const artifactDigest = 'd'.repeat(64);
+    const operationKey = 'rb2:train-id:deploy:staging:frontend';
+    const state = repositoryFor(
+      operation({
+        idempotency_key: operationKey,
+        operation_type: 'DEPLOY_FRONTEND_STAGING',
+        repository: 'frontend',
+        service: null,
+        environment: 'staging',
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: artifactDigest,
+        request_json: {
+          workflow: 'release-bus-deploy-staging.yml',
+          inputs: {
+            artifact_contract_version: 'environment-bound-v3',
+            artifact_environment: 'staging',
+            artifact_digest: artifactDigest,
+            artifact_run_id: '54321',
+            artifact_train_id: 'train-id'
+          }
+        }
+      })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reportProgress({
+        train_id: 'train-id',
+        operation_key: `${operationKey}:a1`,
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary: {
+          schema_version: 3,
+          artifact_contract: 'environment-bound-v1',
+          artifact_contract_version: 'environment-bound-v3',
+          repository: 'frontend',
+          source_sha: 'a'.repeat(40),
+          environment: 'staging',
+          service: null,
+          artifact_run_id: '54321',
+          artifact_train_id: 'train-id',
+          artifact_digest: artifactDigest,
+          package_digest: 'e'.repeat(64),
+          consumed_preflight_artifact: true,
+          rebuilt: false
+        }
+      })
+    ).resolves.toEqual({ accepted: true, reused: false });
+  });
+
+  it('accepts only a coherent legacy preflight-to-same-train deploy terminal chain', async () => {
+    const artifactDigest = 'd'.repeat(64);
+    const preflightState = repositoryFor(
+      operation({
+        idempotency_key: 'rb2:train-id:prepare:backend',
+        operation_type: 'PREPARE_ARTIFACT_BACKEND',
+        repository: 'backend',
+        service: null,
+        environment: 'orchestration',
+        artifact_digest: null,
+        request_json: {
+          workflow: 'release-bus-v2-preflight.yml',
+          inputs: {
+            artifact_contract_version: 'legacy-v2'
+          }
+        }
+      })
+    );
+    const preflight = new ReleaseBusV2Operations(
+      preflightState.repository as never
+    );
+    await expect(
+      preflight.reportProgress({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:backend:a1',
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary: {
+          schema_version: 2,
+          artifact_contract: 'legacy-v2',
+          artifact_contract_version: 'legacy-v2',
+          artifact_digest: artifactDigest
+        }
+      })
+    ).resolves.toEqual({ accepted: true, reused: false });
+    expect(preflightState.current().artifact_digest).toBe(artifactDigest);
+
+    const operationKey = 'rb2:train-id:deploy:staging:backend:api';
+    const deployState = repositoryFor(
+      operation({
+        idempotency_key: operationKey,
+        operation_type: 'DEPLOY_BACKEND_STAGING_api',
+        repository: 'backend',
+        service: 'api',
+        environment: 'staging',
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: preflightState.current().artifact_digest,
+        request_json: {
+          workflow: 'deploy.yml',
+          inputs: {
+            artifact_contract_version: 'legacy-v2',
+            artifact_environment: '',
+            artifact_digest: artifactDigest,
+            artifact_run_id: '12345',
+            artifact_train_id: 'train-id'
+          }
+        }
+      })
+    );
+    const deploy = new ReleaseBusV2Operations(deployState.repository as never);
+    const summary = {
+      schema_version: 2,
+      artifact_contract: 'legacy-v2',
+      artifact_contract_version: 'legacy-v2',
+      repository: 'backend',
+      source_sha: 'a'.repeat(40),
+      environment: 'portable',
+      deployment_environment: 'staging',
+      service: 'api',
+      artifact_run_id: '12345',
+      artifact_train_id: 'train-id',
+      artifact_digest: artifactDigest,
+      package_digest: 'e'.repeat(64),
+      consumed_preflight_artifact: true,
+      rebuilt: false
+    };
+    await expect(
+      deploy.reportProgress({
+        train_id: 'train-id',
+        operation_key: `${operationKey}:a1`,
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary
+      })
+    ).resolves.toEqual({ accepted: true, reused: false });
+
+    const hybridState = repositoryFor({
+      ...deployState.current(),
+      id: 'hybrid-operation',
+      status: 'RUNNING',
+      result_json: null,
+      completed_at: null,
+      row_version: 1
+    });
+    const hybrid = new ReleaseBusV2Operations(hybridState.repository as never);
+    await expect(
+      hybrid.reportProgress({
+        train_id: 'train-id',
+        operation_key: `${operationKey}:a1`,
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary: {
+          ...summary,
+          schema_version: 3,
+          artifact_contract: 'environment-bound-v1'
+        }
+      })
+    ).rejects.toThrow(/legacy deployment evidence/i);
+  });
+
+  it.each([
+    ['missing summary', null],
+    [
+      'wrong environment',
+      {
+        schema_version: 3,
+        artifact_contract: 'environment-bound-v1',
+        artifact_digest: 'd'.repeat(64),
+        artifact_contract_version: 'environment-bound-v3',
+        environment: 'production',
+        repository: 'backend',
+        source_sha: 'a'.repeat(40),
+        service: 'api',
+        artifact_run_id: '54321',
+        artifact_train_id: 'train-id',
+        package_digest: 'e'.repeat(64),
+        consumed_preflight_artifact: true,
+        rebuilt: false
+      }
+    ],
+    [
+      'wrong package digest',
+      {
+        schema_version: 3,
+        artifact_contract: 'environment-bound-v1',
+        artifact_digest: 'd'.repeat(64),
+        artifact_contract_version: 'environment-bound-v3',
+        environment: 'staging',
+        repository: 'backend',
+        source_sha: 'a'.repeat(40),
+        service: 'api',
+        artifact_run_id: '54321',
+        artifact_train_id: 'train-id',
+        package_digest: 'not-a-digest',
+        consumed_preflight_artifact: true,
+        rebuilt: false
+      }
+    ]
+  ])(
+    'rejects backend deployment evidence with $label',
+    async (_label, summary) => {
+      const artifactDigest = 'd'.repeat(64);
+      const operationKey = 'rb2:train-id:deploy:staging:backend:api';
+      const state = repositoryFor(
+        operation({
+          idempotency_key: operationKey,
+          operation_type: 'DEPLOY_BACKEND_STAGING_api',
+          repository: 'backend',
+          service: 'api',
+          environment: 'staging',
+          expected_sha: 'a'.repeat(40),
+          artifact_digest: artifactDigest,
+          request_json: {
+            workflow: 'deploy.yml',
+            inputs: {
+              artifact_contract_version: 'environment-bound-v3',
+              artifact_environment: 'staging',
+              artifact_digest: artifactDigest,
+              artifact_run_id: '54321',
+              artifact_train_id: 'train-id'
+            }
+          }
+        })
+      );
+      const service = new ReleaseBusV2Operations(state.repository as never);
+
+      await expect(
+        service.reportProgress({
+          train_id: 'train-id',
+          operation_key: `${operationKey}:a1`,
+          workflow_run_id: '12345',
+          phase: 'complete',
+          status: 'SUCCEEDED',
+          summary
+        })
+      ).rejects.toThrow(/deployment/i);
+      expect(state.current().status).toBe('RUNNING');
+    }
+  );
+
+  it('requires the same immutable terminal evidence for rollback deploys', async () => {
+    const artifactDigest = 'd'.repeat(64);
+    const operationKey = 'rb2:train-id:rollback:deploy:staging:backend:api';
+    const state = repositoryFor(
+      operation({
+        idempotency_key: operationKey,
+        operation_type: 'ROLLBACK_DEPLOY_BACKEND_STAGING_api',
+        repository: 'backend',
+        service: 'api',
+        environment: 'staging',
+        artifact_digest: artifactDigest,
+        request_json: {
+          workflow: 'deploy.yml',
+          inputs: {
+            artifact_contract_version: 'environment-bound-v3',
+            artifact_environment: 'staging',
+            artifact_digest: artifactDigest,
+            artifact_run_id: '54321',
+            artifact_train_id: 'train-id'
+          }
+        }
+      })
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reportProgress({
+        train_id: 'train-id',
+        operation_key: `${operationKey}:a1`,
+        workflow_run_id: '12345',
+        phase: 'complete',
+        status: 'SUCCEEDED',
+        summary: null
+      })
+    ).rejects.toThrow(/deployment/i);
+    expect(state.current().status).toBe('RUNNING');
+  });
+
   it('rejects successful artifact preparation without an exact digest', async () => {
     const state = repositoryFor(operation());
     const service = new ReleaseBusV2Operations(state.repository as never);
@@ -529,7 +1013,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
     const initial = operation({ external_id: null, status: 'DISPATCHED' });
     const state = repositoryFor(initial);
     mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
       event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
       path: '.github/workflows/release-bus-v2-preflight.yml',
       displayTitle: 'Preflight frontend v2 [a different operation]'
     });
@@ -544,7 +1030,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
         environment: 'orchestration',
         service: null,
         expected_sha: 'a'.repeat(40),
-        artifact_digest: null
+        artifact_digest: null,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
       })
     ).rejects.toThrow('identity');
   });
@@ -557,12 +1045,16 @@ describe('Release Bus v2 exact operation callbacks', () => {
       status: 'DISPATCHED',
       request_json: {
         workflow: 'release-bus-deploy-staging.yml',
+        ref: 'main',
+        workflow_control_sha: 'c'.repeat(40),
         inputs: { artifact_run_id: '54321' }
       }
     });
     const state = repositoryFor(initial);
     mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
       event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
       path: '.github/workflows/release-bus-deploy-staging.yml@refs/heads/main',
       displayTitle: 'Deploy frontend staging [rb2:train-id:prepare:frontend:a1]'
     });
@@ -578,7 +1070,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
         environment: 'orchestration',
         service: null,
         expected_sha: 'a'.repeat(40),
-        artifact_digest: digest
+        artifact_digest: digest,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
       })
     ).resolves.toEqual({ authorized: true });
     expect(state.current()).toMatchObject({
@@ -588,12 +1082,148 @@ describe('Release Bus v2 exact operation callbacks', () => {
     });
   });
 
+  it('normalizes an old-producer preflight authorization to legacy evidence', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        workflow_control_sha: 'c'.repeat(40),
+        inputs: {
+          source_ref: 'release-bus-v2/train-id/backend'
+        }
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        source_ref: null,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
+      })
+    ).resolves.toEqual({ authorized: true });
+  });
+
+  it('binds strict preflight authorization to the exact dispatched source ref', async () => {
+    const sourceRef = 'release-bus-v2/train-id/backend';
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        workflow_control_sha: 'c'.repeat(40),
+        inputs: {
+          source_ref: sourceRef,
+          candidate_evidence_mode: 'strict-aggregate',
+          aggregate_candidate_evidence_digest: '9'.repeat(64)
+        }
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    const input = {
+      train_id: 'train-id',
+      operation_key: 'rb2:train-id:prepare:frontend:a1',
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend' as const,
+      environment: 'orchestration',
+      service: null,
+      expected_sha: 'a'.repeat(40),
+      artifact_digest: null,
+      source_ref: sourceRef,
+      candidate_evidence_mode: 'strict-aggregate' as const,
+      aggregate_candidate_evidence_digest: '9'.repeat(64)
+    };
+
+    await expect(
+      service.authorize({ ...input, source_ref: 'main' })
+    ).rejects.toThrow('source ref');
+    await expect(
+      service.authorize({ ...input, source_ref: null })
+    ).rejects.toThrow('requires an exact source ref');
+    await expect(service.authorize(input)).resolves.toEqual({
+      authorized: true
+    });
+  });
+
+  it('rejects a strict aggregate digest that is not the one stored by the control plane', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        workflow_control_sha: 'c'.repeat(40),
+        inputs: {
+          candidate_evidence_mode: 'strict-aggregate',
+          aggregate_candidate_evidence_digest: '9'.repeat(64)
+        }
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        candidate_evidence_mode: 'strict-aggregate',
+        aggregate_candidate_evidence_digest: '8'.repeat(64)
+      })
+    ).rejects.toThrow('candidate evidence');
+    expect(state.current().external_id).toBeNull();
+  });
+
   it('rejects a different workflow file or artifact source', async () => {
     const initial = operation({
       external_id: null,
       status: 'DISPATCHED',
       request_json: {
         workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        workflow_control_sha: 'c'.repeat(40),
         inputs: { artifact_run_id: '54321' }
       }
     });
@@ -608,17 +1238,50 @@ describe('Release Bus v2 exact operation callbacks', () => {
       environment: 'orchestration',
       service: null,
       expected_sha: 'a'.repeat(40),
-      artifact_digest: null
+      artifact_digest: null,
+      candidate_evidence_mode: null,
+      aggregate_candidate_evidence_digest: null
     };
     mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
       event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
       path: '.github/workflows/another-workflow.yml',
       displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
     });
     await expect(service.authorize(input)).rejects.toThrow('identity');
 
     mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: 'human-operator',
       event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    await expect(service.authorize(input)).rejects.toThrow('identity');
+
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml@refs/heads/old-main',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    await expect(service.authorize(input)).rejects.toThrow('identity');
+
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headSha: 'd'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml@refs/heads/main',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    await expect(service.authorize(input)).rejects.toThrow('identity');
+
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
       path: '.github/workflows/release-bus-v2-preflight.yml',
       displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
     });
@@ -739,7 +1402,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
         environment: 'orchestration',
         service: null,
         expected_sha: 'a'.repeat(40),
-        artifact_digest: null
+        artifact_digest: null,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
       })
     ).rejects.toThrow('cannot authorize while FAILED');
     expect(mockGetWorkflowRunIdentity).not.toHaveBeenCalled();

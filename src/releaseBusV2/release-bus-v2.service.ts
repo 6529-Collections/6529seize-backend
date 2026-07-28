@@ -386,6 +386,12 @@ function sameQualificationIdentity(
     readonly artifact_run_id: string | null;
     readonly artifact_name: string | null;
     readonly artifact_digest: string | null;
+    readonly workflow_path: string;
+    readonly base_workflow_blob_sha: string;
+    readonly merge_workflow_blob_sha: string;
+    readonly base_gate_policy_digest: string;
+    readonly merge_gate_policy_digest: string;
+    readonly trust_mode: 'evidence-manifest-v1' | 'legacy-exact-workflow-v0';
   }
 ): boolean {
   const evidence = parseStoredJson<ReleaseBusV2PrEvidence>(stored);
@@ -393,6 +399,12 @@ function sameQualificationIdentity(
   return (
     evidence.base_sha === current.base_sha &&
     evidence.merge_sha === current.merge_sha &&
+    evidence.workflow_path === current.workflow_path &&
+    evidence.base_workflow_blob_sha === current.base_workflow_blob_sha &&
+    evidence.merge_workflow_blob_sha === current.merge_workflow_blob_sha &&
+    evidence.base_gate_policy_digest === current.base_gate_policy_digest &&
+    evidence.merge_gate_policy_digest === current.merge_gate_policy_digest &&
+    evidence.trust_mode === current.trust_mode &&
     (evidence.artifact_run_id === null ||
       (evidence.artifact_run_id === current.artifact_run_id &&
         evidence.artifact_name === current.artifact_name &&
@@ -550,10 +562,29 @@ export class ReleaseBusV2Service {
       throw new Error(
         'Exact candidate is not an unowned grouped staging preflight failure'
       );
+    const storedEvidence = parseStoredJson<ReleaseBusV2PrEvidence>(
+      current.pr_evidence_json
+    );
     if (
+      !storedEvidence ||
+      !sameQualificationIdentity(storedEvidence, {
+        base_sha: evidence.base_sha,
+        merge_sha: evidence.merge_sha,
+        artifact_run_id: evidence.artifact_run_id,
+        artifact_name: evidence.artifact_name,
+        artifact_digest: evidence.artifact_digest,
+        workflow_path: evidence.workflow_path ?? '',
+        base_workflow_blob_sha: evidence.base_workflow_blob_sha ?? '',
+        merge_workflow_blob_sha: evidence.merge_workflow_blob_sha ?? '',
+        base_gate_policy_digest: evidence.base_gate_policy_digest ?? '',
+        merge_gate_policy_digest: evidence.merge_gate_policy_digest ?? '',
+        trust_mode: evidence.trust_mode ?? 'legacy-exact-workflow-v0'
+      }) ||
+      storedEvidence.checks_run_id !== evidence.checks_run_id ||
+      storedEvidence.checks_completed_at !== evidence.checks_completed_at ||
       !isDeepStrictEqual(
-        parseStoredJson<ReleaseBusV2PrEvidence>(current.pr_evidence_json),
-        evidence
+        storedEvidence.contributor_github_logins ?? [],
+        evidence.contributor_github_logins ?? []
       )
     )
       throw new Error(
@@ -761,6 +792,12 @@ export class ReleaseBusV2Service {
       artifact_run_id: qualification.artifactRunId,
       artifact_name: qualification.artifactName,
       artifact_digest: qualification.artifactDigest,
+      workflow_path: qualification.workflowPath,
+      base_workflow_blob_sha: qualification.baseWorkflowBlobSha,
+      merge_workflow_blob_sha: qualification.mergeWorkflowBlobSha,
+      base_gate_policy_digest: qualification.baseGatePolicyDigest,
+      merge_gate_policy_digest: qualification.mergeGatePolicyDigest,
+      trust_mode: qualification.trustMode,
       contributor_github_logins: qualification.contributorGithubLogins
     };
     const registration =

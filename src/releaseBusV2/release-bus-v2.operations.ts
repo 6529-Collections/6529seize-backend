@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import {
   releaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError
@@ -42,6 +43,13 @@ export type ReleaseBusV2Authorization = {
   readonly service: string | null;
   readonly expected_sha: string;
   readonly artifact_digest: string | null;
+  readonly source_ref?: string | null;
+  readonly candidate_evidence_mode:
+    | 'legacy-whole-train'
+    | 'strict-single'
+    | 'strict-aggregate'
+    | null;
+  readonly aggregate_candidate_evidence_digest: string | null;
 };
 
 export type ReleaseBusV2Progress = {
@@ -166,6 +174,198 @@ function progressArtifactDigest(progress: ReleaseBusV2Progress): string | null {
     : null;
 }
 
+function isArtifactPreparationOperation(operationType: string): boolean {
+  return (
+    operationType.includes('PREPARE_ARTIFACT_') ||
+    operationType.startsWith('ISOLATE_PREFLIGHT_')
+  );
+}
+
+function exactStringArray(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string'))
+    return null;
+  return value;
+}
+
+function exactStringLayers(
+  value: unknown
+): readonly (readonly string[])[] | null {
+  if (!Array.isArray(value)) return null;
+  const layers = value.map(exactStringArray);
+  return layers.some((layer) => layer === null)
+    ? null
+    : (layers as readonly (readonly string[])[]);
+}
+
+function validateEnvironmentBoundArtifactSummary(
+  operation: ReleaseBusV2OperationRecord,
+  progress: ReleaseBusV2Progress,
+  inputs: Readonly<Record<string, string>>
+): void {
+  if (inputs.artifact_contract_version !== 'environment-bound-v3') return;
+  if (!progress.summary || typeof progress.summary !== 'object')
+    throw new Error(
+      'Environment-bound artifact preparation requires structured terminal evidence'
+    );
+  const summary = progress.summary as Record<string, unknown>;
+  if (
+    summary.schema_version !== 3 ||
+    summary.artifact_contract !== 'environment-bound-v1' ||
+    summary.artifact_contract_version !== 'environment-bound-v3' ||
+    summary.repository !== operation.repository ||
+    summary.source_sha !== operation.expected_sha ||
+    summary.environment !== inputs.artifact_environment ||
+    summary.source_evidence_reused !== true ||
+    summary.artifact_bytes_reused !== false
+  )
+    throw new Error(
+      'Environment-bound artifact terminal evidence does not match the exact operation'
+    );
+  const evidence =
+    summary.ci_evidence && typeof summary.ci_evidence === 'object'
+      ? (summary.ci_evidence as Record<string, unknown>)
+      : null;
+  const evidenceMode = inputs.candidate_evidence_mode;
+  if (
+    !evidence ||
+    !['strict-single', 'strict-aggregate'].includes(evidenceMode ?? '') ||
+    evidence.mode !== evidenceMode ||
+    evidence.aggregate_candidate_evidence_digest !==
+      (inputs.aggregate_candidate_evidence_digest || null) ||
+    evidence.artifact_run_id !== (inputs.reuse_artifact_run_id || null) ||
+    evidence.artifact_name !== (inputs.reuse_artifact_name || null) ||
+    evidence.artifact_digest !== (inputs.reuse_artifact_digest || null)
+  )
+    throw new Error(
+      'Environment-bound artifact terminal evidence does not bind the exact candidate evidence mode'
+    );
+  if (operation.repository === 'backend') {
+    let expectedUnits: unknown;
+    let expectedLayers: unknown;
+    try {
+      expectedUnits = JSON.parse(inputs.deploy_units ?? 'null');
+      expectedLayers = JSON.parse(inputs.deploy_layers ?? 'null');
+    } catch {
+      expectedUnits = null;
+      expectedLayers = null;
+    }
+    const units = exactStringArray(summary.units);
+    const expected = exactStringArray(expectedUnits);
+    const layers = exactStringLayers(summary.layers);
+    const expectedDAG = exactStringLayers(expectedLayers);
+    const packageDigests =
+      summary.package_digests && typeof summary.package_digests === 'object'
+        ? (summary.package_digests as Record<string, unknown>)
+        : null;
+    if (
+      !units ||
+      !expected ||
+      !layers ||
+      !expectedDAG ||
+      !isDeepStrictEqual(layers, expectedDAG) ||
+      units.length !== expected.length ||
+      units.some((unit, index) => unit !== expected[index]) ||
+      !packageDigests ||
+      Object.keys(packageDigests).length !== expected.length ||
+      expected.some(
+        (unit) =>
+          typeof packageDigests[unit] !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(String(packageDigests[unit]))
+      )
+    )
+      throw new Error(
+        'Environment-bound backend artifact evidence does not bind every selected unit digest'
+      );
+  } else if (
+    typeof summary.package_digest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(summary.package_digest)
+  ) {
+    throw new Error(
+      'Environment-bound frontend artifact evidence requires an exact package digest'
+    );
+  }
+}
+
+function validateEnvironmentBoundDeploySummary(
+  operation: ReleaseBusV2OperationRecord,
+  progress: ReleaseBusV2Progress,
+  inputs: Readonly<Record<string, string>>
+): void {
+  if (
+    inputs.artifact_contract_version !== 'environment-bound-v3' ||
+    !(
+      operation.operation_type.startsWith('DEPLOY_') ||
+      operation.operation_type.startsWith('ROLLBACK_DEPLOY_')
+    )
+  )
+    return;
+  if (!progress.summary || typeof progress.summary !== 'object')
+    throw new Error(
+      'Environment-bound deployment requires structured terminal evidence'
+    );
+  const summary = progress.summary as Record<string, unknown>;
+  if (
+    summary.schema_version !== 3 ||
+    summary.artifact_contract !== 'environment-bound-v1' ||
+    summary.artifact_digest !== operation.artifact_digest ||
+    summary.artifact_digest !== inputs.artifact_digest ||
+    summary.artifact_contract_version !== 'environment-bound-v3' ||
+    summary.environment !== inputs.artifact_environment ||
+    summary.repository !== operation.repository ||
+    summary.source_sha !== operation.expected_sha ||
+    summary.service !== operation.service ||
+    summary.artifact_run_id !== inputs.artifact_run_id ||
+    summary.artifact_train_id !== inputs.artifact_train_id ||
+    summary.consumed_preflight_artifact !== true ||
+    summary.rebuilt !== false ||
+    !/^[a-f0-9]{64}$/.test(String(summary.package_digest ?? ''))
+  )
+    throw new Error(
+      'Environment-bound deployment evidence does not match the exact operation'
+    );
+}
+
+function validateLegacyDeploySummary(
+  operation: ReleaseBusV2OperationRecord,
+  progress: ReleaseBusV2Progress,
+  inputs: Readonly<Record<string, string>>
+): void {
+  if (
+    inputs.artifact_contract_version !== 'legacy-v2' ||
+    !(
+      operation.operation_type.startsWith('DEPLOY_') ||
+      operation.operation_type.startsWith('ROLLBACK_DEPLOY_')
+    )
+  )
+    return;
+  if (!progress.summary || typeof progress.summary !== 'object')
+    throw new Error(
+      'Legacy deployment requires structured terminal consumption evidence'
+    );
+  const summary = progress.summary as Record<string, unknown>;
+  if (
+    summary.schema_version !== 2 ||
+    summary.artifact_contract !== 'legacy-v2' ||
+    summary.artifact_contract_version !== 'legacy-v2' ||
+    summary.repository !== operation.repository ||
+    summary.source_sha !== operation.expected_sha ||
+    summary.environment !== 'portable' ||
+    summary.deployment_environment !== operation.environment ||
+    summary.service !== operation.service ||
+    summary.artifact_run_id !== inputs.artifact_run_id ||
+    summary.artifact_train_id !==
+      (inputs.artifact_train_id || operation.train_id) ||
+    summary.artifact_digest !== operation.artifact_digest ||
+    summary.artifact_digest !== inputs.artifact_digest ||
+    summary.consumed_preflight_artifact !== true ||
+    summary.rebuilt !== false ||
+    !/^[a-f0-9]{64}$/.test(String(summary.package_digest ?? ''))
+  )
+    throw new Error(
+      'Legacy deployment evidence does not match the exact same-train artifact operation'
+    );
+}
+
 function transportRetryState(result: unknown): {
   readonly retry_same_attempt: true;
   readonly transport_failures: number;
@@ -194,7 +394,7 @@ function unreportedWorkflowFailureClass(
     )
   )
     return 'INFRASTRUCTURE';
-  if (operationType.startsWith('PREPARE_ARTIFACT_') && conclusion === 'failure')
+  if (isArtifactPreparationOperation(operationType) && conclusion === 'failure')
     // Artifact preparation cannot mutate shared staging or production state.
     // Its run also concludes failure when otherwise-successful artifact work
     // cannot deliver the terminal callback (for example during an intentional
@@ -234,6 +434,22 @@ export class ReleaseBusV2Operations {
   private async reconcileWorkflowOnce(
     spec: ReleaseBusV2WorkflowSpec
   ): Promise<ReleaseBusV2OperationRecord> {
+    const existing = await this.repository.findOperation(
+      spec.idempotencyKey,
+      {}
+    );
+    const existingRequest = existing
+      ? parseStoredJson<{ workflow_control_sha?: string }>(
+          existing.request_json
+        )
+      : null;
+    const workflowControlSha =
+      existingRequest?.workflow_control_sha ??
+      (await releaseBusGitHubApp.resolveRef(spec.repository, spec.ref));
+    if (!/^[a-f0-9]{40}$/.test(workflowControlSha))
+      throw new Error(
+        'Release Bus v2 workflow control ref did not resolve to an exact SHA'
+      );
     let operation = await this.repository.getOrCreateOperation(
       {
         idempotencyKey: spec.idempotencyKey,
@@ -247,6 +463,7 @@ export class ReleaseBusV2Operations {
         request: {
           workflow: spec.workflow,
           ref: spec.ref,
+          workflow_control_sha: workflowControlSha,
           inputs: spec.inputs,
           beta_infrastructure_failure_injection:
             spec.betaInfrastructureFailureInjection ?? null
@@ -478,25 +695,64 @@ export class ReleaseBusV2Operations {
       );
     const request = parseStoredJson<{
       workflow?: string;
+      ref?: string;
+      workflow_control_sha?: string;
       inputs?: Readonly<Record<string, string>>;
     }>(operation.request_json);
-    if (!request?.workflow)
+    if (
+      !request?.workflow ||
+      !request.ref ||
+      !/^[a-f0-9]{40}$/.test(request.workflow_control_sha ?? '')
+    )
       throw new Error('Release Bus v2 operation has no workflow identity');
     const identity = await releaseBusGitHubApp.getWorkflowRunIdentity(
       input.repository,
       input.workflow_run_id
     );
     const expectedWorkflowPath = `.github/workflows/${request.workflow}`;
+    const expectedWorkflowRefs = new Set([
+      expectedWorkflowPath,
+      `${expectedWorkflowPath}@${request.ref}`,
+      `${expectedWorkflowPath}@refs/heads/${request.ref}`,
+      `${expectedWorkflowPath}@refs/tags/${request.ref}`
+    ]);
     if (
+      !isReleaseBusGitHubAppActor(identity.actor) ||
       identity.event !== 'workflow_dispatch' ||
-      (identity.path !== expectedWorkflowPath &&
-        !identity.path.startsWith(`${expectedWorkflowPath}@`)) ||
+      !expectedWorkflowRefs.has(identity.path) ||
+      identity.headSha !== request.workflow_control_sha ||
       !identity.displayTitle.includes(`[${input.operation_key}]`)
     )
       throw new Error('Workflow run identity does not match the v2 operation');
     if ((request.inputs?.artifact_run_id ?? null) !== input.artifact_run_id)
       throw new Error(
         'Release Bus v2 artifact source does not match the dispatched operation'
+      );
+    const requestedCandidateEvidenceMode =
+      request.inputs?.candidate_evidence_mode ?? 'legacy-whole-train';
+    const authorizedCandidateEvidenceMode =
+      input.candidate_evidence_mode ?? 'legacy-whole-train';
+    if (
+      requestedCandidateEvidenceMode !== authorizedCandidateEvidenceMode ||
+      (request.inputs?.aggregate_candidate_evidence_digest || null) !==
+        input.aggregate_candidate_evidence_digest
+    )
+      throw new Error(
+        'Release Bus v2 candidate evidence does not match the dispatched operation'
+      );
+    if (
+      authorizedCandidateEvidenceMode !== 'legacy-whole-train' &&
+      input.source_ref == null
+    )
+      throw new Error(
+        'Strict Release Bus v2 authorization requires an exact source ref'
+      );
+    if (
+      input.source_ref != null &&
+      request.inputs?.source_ref !== input.source_ref
+    )
+      throw new Error(
+        'Release Bus v2 source ref does not match the dispatched operation'
       );
     if (!operation.external_id || operation.status === 'DISPATCHED') {
       await this.update(operation, {
@@ -544,14 +800,34 @@ export class ReleaseBusV2Operations {
       Boolean(input.retryable) &&
       operation.attempt < operation.max_attempts;
     const artifactDigest = progressArtifactDigest(input);
+    const request = parseStoredJson<{
+      inputs?: Readonly<Record<string, string>>;
+    }>(operation.request_json);
     if (
       input.status === 'SUCCEEDED' &&
-      operation.operation_type.startsWith('PREPARE_ARTIFACT_') &&
+      isArtifactPreparationOperation(operation.operation_type) &&
       !artifactDigest
     )
       throw new Error(
         'A successful artifact preparation report requires an exact SHA-256 digest'
       );
+    if (
+      input.status === 'SUCCEEDED' &&
+      isArtifactPreparationOperation(operation.operation_type)
+    )
+      validateEnvironmentBoundArtifactSummary(
+        operation,
+        input,
+        request?.inputs ?? {}
+      );
+    if (input.status === 'SUCCEEDED')
+      validateEnvironmentBoundDeploySummary(
+        operation,
+        input,
+        request?.inputs ?? {}
+      );
+    if (input.status === 'SUCCEEDED')
+      validateLegacyDeploySummary(operation, input, request?.inputs ?? {});
     await this.update(operation, {
       status: shouldRetry
         ? 'RETRY_WAIT'

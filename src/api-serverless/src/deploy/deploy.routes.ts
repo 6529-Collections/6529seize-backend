@@ -1001,6 +1001,13 @@ deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
     service: string | null;
     expected_sha: string;
     artifact_digest: string | null;
+    source_ref: string | null;
+    candidate_evidence_mode:
+      | 'legacy-whole-train'
+      | 'strict-single'
+      | 'strict-aggregate'
+      | null;
+    aggregate_candidate_evidence_digest: string | null;
   }>(req.body, ReleaseBusV2AuthorizationBodySchema);
   await requireV2TrainAutomationAllowed(authorization.train_id);
   try {

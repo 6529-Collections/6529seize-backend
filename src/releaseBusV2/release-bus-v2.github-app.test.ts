@@ -1,8 +1,11 @@
 import fetch, { Response } from 'node-fetch';
+import { createHash } from 'node:crypto';
+import AdmZip from 'adm-zip';
 import {
   isValidGitHubWorkflowActor,
   ReleaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError,
+  releaseBusPrCiPolicyInventory,
   releaseBusPullRequestMergeStateEligible,
   safeGitHubWorkflowLabel,
   sanitizeGitHubWorkflowJobs,
@@ -23,6 +26,420 @@ function appWithCachedToken(requestTimeoutMs?: number): ReleaseBusGitHubApp {
     }
   ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
   return app;
+}
+
+const EVIDENCE_GATES = {
+  backend: [
+    'generated-files',
+    'lint',
+    'format',
+    'backend-test-and-typecheck',
+    'api-build',
+    'pr-ci-policy-bundle'
+  ],
+  frontend: [
+    'package-manager-discipline',
+    'dependency-analysis',
+    'reviewbot-contract',
+    'generated-agent-files',
+    'release-bus-workflow-contract',
+    'changed-lint',
+    'changed-typecheck',
+    'test-typecheck',
+    'related-jest-selection',
+    'production-build-or-plan-not-required',
+    'pr-ci-policy-bundle'
+  ]
+} as const;
+
+const EVIDENCE_WORKFLOWS = {
+  backend: '.github/workflows/on-pull-request.yml',
+  frontend: '.github/workflows/app-pr-ci.yml'
+} as const;
+
+const EVIDENCE_CHECKS = {
+  backend: 'Build backend and API',
+  frontend: 'Installed app checks'
+} as const;
+
+const TRUSTED_WORKFLOW_BLOBS = {
+  backend: {
+    legacy: '0cc8865dbb869b5156b46cc45e8581b259052916',
+    modern: '20ef8d9efa0db3acb6ad5cda6812eabf14c4d4d8'
+  },
+  frontend: {
+    legacy: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
+    modern: '47fb17c7e4bda412a05b07f470f9f490aee873d4'
+  }
+} as const;
+
+function gitBlobSha(bytes: Buffer): string {
+  return createHash('sha1')
+    .update(Buffer.from(`blob ${bytes.length}\0`))
+    .update(bytes)
+    .digest('hex');
+}
+
+function setDottedString(
+  document: Record<string, unknown>,
+  dottedKey: string,
+  value: string
+): void {
+  const segments = dottedKey.split('.');
+  let current = document;
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      current[segment] = value;
+      return;
+    }
+    const next =
+      current[segment] &&
+      typeof current[segment] === 'object' &&
+      !Array.isArray(current[segment])
+        ? (current[segment] as Record<string, unknown>)
+        : {};
+    current[segment] = next;
+    current = next;
+  });
+}
+
+function policyFixture(
+  repository: 'backend' | 'frontend',
+  modern: boolean,
+  workflowBlob: string,
+  packageScriptOverrides: Readonly<Record<string, string>> = {}
+): {
+  readonly tree: Record<string, unknown>;
+  readonly blobs: ReadonlyMap<string, Buffer>;
+  readonly bundle: Buffer;
+} {
+  const inventory = releaseBusPrCiPolicyInventory(repository, modern);
+  const blobs = new Map<string, Buffer>();
+  const packageEntries = new Map<string, { sha: string; size: number }>();
+  const lines: string[] = [];
+  for (const policy of inventory.packages) {
+    const document: Record<string, unknown> = { scripts: {} };
+    for (const key of policy.scriptKeys)
+      (document.scripts as Record<string, unknown>)[key] =
+        packageScriptOverrides[key] ?? `fixture:${key}`;
+    for (const key of policy.fieldKeys) {
+      if (
+        !modern &&
+        repository === 'backend' &&
+        policy.path === 'package.json' &&
+        key === 'devDependencies.jest'
+      )
+        continue;
+      setDottedString(
+        document,
+        key,
+        key === 'packageManager'
+          ? repository === 'backend'
+            ? 'npm@10.9.8'
+            : 'pnpm@10.33.0'
+          : `fixture:${key}`
+      );
+    }
+    const bytes = Buffer.from(`${JSON.stringify(document)}\n`);
+    const sha = gitBlobSha(bytes);
+    blobs.set(sha, bytes);
+    packageEntries.set(policy.path, { sha, size: bytes.length });
+    for (const key of policy.scriptKeys)
+      lines.push(
+        `package-script\t${repository === 'frontend' ? key : `${policy.path}#${key}`}\t${JSON.stringify((document.scripts as Record<string, string>)[key])}\n`
+      );
+    for (const key of policy.fieldKeys) {
+      const value = key
+        .split('.')
+        .reduce<unknown>(
+          (current, segment) =>
+            current && typeof current === 'object'
+              ? (current as Record<string, unknown>)[segment]
+              : undefined,
+          document
+        );
+      if (typeof value === 'string')
+        lines.push(
+          `package-field\t${repository === 'frontend' ? key : `${policy.path}#${key}`}\t${JSON.stringify(value)}\n`
+        );
+    }
+  }
+  const tree = inventory.paths.map((path) => {
+    const packageEntry = packageEntries.get(path);
+    const sha =
+      packageEntry?.sha ??
+      (path === EVIDENCE_WORKFLOWS[repository]
+        ? workflowBlob
+        : gitBlobSha(Buffer.from(`fixture:${path}`)));
+    if (!packageEntry) lines.push(`file\t${path}\t${sha}\n`);
+    return {
+      path,
+      type: 'blob',
+      sha,
+      size: packageEntry?.size ?? Buffer.byteLength(`fixture:${path}`)
+    };
+  });
+  if (modern) lines.push('runtime-pin\tnode\t"22.17.1"\n');
+  lines.sort((left, right) =>
+    Buffer.compare(Buffer.from(left), Buffer.from(right))
+  );
+  return {
+    tree: { truncated: false, tree },
+    blobs,
+    bundle: Buffer.from(lines.join(''))
+  };
+}
+
+function evidenceArchive(input: {
+  readonly repository: 'backend' | 'frontend';
+  readonly headSha: string;
+  readonly mergeSha: string;
+  readonly workflow?: string;
+  readonly gates?: readonly string[];
+  readonly checksumPath?: string;
+  readonly manifestOverride?: Record<string, unknown>;
+  readonly policyBundle?: Buffer;
+}): Buffer {
+  const policyBundle =
+    input.policyBundle ??
+    Buffer.from(
+      `file\tfixture\t${'f'.repeat(40)}\nruntime-pin\tnode\t"22.17.1"\n`
+    );
+  const manifest = Buffer.from(
+    `${JSON.stringify({
+      schema_version: 1,
+      evidence_contract: 'exact-merge-tree-pr-ci-v1',
+      repository: input.repository,
+      merge_sha: input.mergeSha,
+      head_sha: input.headSha,
+      workflow: input.workflow ?? EVIDENCE_WORKFLOWS[input.repository],
+      policy_bundle_contract: 'pr-ci-policy-bundle-v1',
+      policy_bundle_digest: createHash('sha256')
+        .update(policyBundle)
+        .digest('hex'),
+      policy_bundle_line_count: policyBundle
+        .toString('utf8')
+        .split('\n')
+        .filter(Boolean).length,
+      required_gates: input.gates ?? EVIDENCE_GATES[input.repository],
+      ...(input.manifestOverride ?? {})
+    })}\n`
+  );
+  const archive = new AdmZip();
+  archive.addFile('manifest.json', manifest);
+  archive.addFile('policy-bundle.txt', policyBundle);
+  archive.addFile(
+    'SHA256SUMS',
+    Buffer.from(
+      `${createHash('sha256').update(manifest).digest('hex')}  ${input.checksumPath ?? './manifest.json'}\n${createHash('sha256').update(policyBundle).digest('hex')}  ./policy-bundle.txt\n`
+    )
+  );
+  return archive.toBuffer();
+}
+
+function backendEvidenceArchive(input: {
+  readonly headSha: string;
+  readonly mergeSha: string;
+  readonly workflow?: string;
+  readonly checksumPath?: string;
+  readonly manifestOverride?: Record<string, unknown>;
+}): Buffer {
+  return evidenceArchive({ repository: 'backend', ...input });
+}
+
+function queueQualificationResponses(input: {
+  readonly repository?: 'backend' | 'frontend';
+  readonly headSha: string;
+  readonly baseSha: string;
+  readonly mergeSha: string;
+  readonly runId?: number;
+  readonly baseWorkflowBlob?: string;
+  readonly mergeWorkflowBlob?: string;
+  readonly archive?: Buffer;
+  readonly artifactOverride?: Record<string, unknown>;
+  readonly artifacts?: readonly Record<string, unknown>[];
+  readonly skipArtifactDownload?: boolean;
+  readonly runOverride?: Record<string, unknown>;
+  readonly checkOverride?: Record<string, unknown>;
+  readonly packageScriptOverrides?: Readonly<Record<string, string>>;
+  readonly alternatePolicyPath?: string;
+  readonly changedPolicyPath?: string;
+}): jest.MockedFunction<typeof fetch> {
+  const repository = input.repository ?? 'backend';
+  const runId = input.runId ?? 12345;
+  const workflow = EVIDENCE_WORKFLOWS[repository];
+  const baseWorkflowBlob =
+    input.baseWorkflowBlob ?? TRUSTED_WORKFLOW_BLOBS[repository].modern;
+  const mergeWorkflowBlob =
+    input.mergeWorkflowBlob ?? TRUSTED_WORKFLOW_BLOBS[repository].modern;
+  const baseFixture = policyFixture(
+    repository,
+    baseWorkflowBlob !== TRUSTED_WORKFLOW_BLOBS[repository].legacy,
+    baseWorkflowBlob
+  );
+  const mergeFixture = policyFixture(
+    repository,
+    mergeWorkflowBlob !== TRUSTED_WORKFLOW_BLOBS[repository].legacy,
+    mergeWorkflowBlob,
+    input.packageScriptOverrides
+  );
+  const mergeTree = structuredClone(mergeFixture.tree) as {
+    truncated: boolean;
+    tree: Array<Record<string, unknown>>;
+  };
+  if (input.alternatePolicyPath)
+    mergeTree.tree.push({
+      path: input.alternatePolicyPath,
+      type: 'blob',
+      sha: '7'.repeat(40),
+      size: 1
+    });
+  if (input.changedPolicyPath) {
+    const entry = mergeTree.tree.find(
+      ({ path }) => path === input.changedPolicyPath
+    );
+    if (entry) entry.sha = '7'.repeat(40);
+  }
+  const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          number: 42,
+          state: 'open',
+          mergeable: true,
+          mergeable_state: 'blocked',
+          user: { login: 'PR-Author' },
+          head: { sha: input.headSha, ref: 'agent/test' },
+          base: { sha: input.baseSha, ref: 'main' },
+          merge_commit_sha: input.mergeSha
+        })
+      )
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          check_runs: [
+            {
+              id: 99,
+              name: EVIDENCE_CHECKS[repository],
+              status: 'completed',
+              conclusion: 'success',
+              completed_at: '2026-07-23T04:00:00Z',
+              details_url: `https://github.com/6529-Collections/6529seize-${repository}/actions/runs/${runId}/job/7`,
+              ...(input.checkOverride ?? {})
+            }
+          ]
+        })
+      )
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          artifacts: input.artifacts ?? [
+            {
+              id: 100,
+              name: `release-bus-v2-pr-${input.mergeSha}`,
+              digest: `sha256:${'d'.repeat(64)}`,
+              expired: false,
+              size_in_bytes: 1024,
+              workflow_run: { id: runId, head_sha: input.headSha },
+              ...(input.artifactOverride ?? {})
+            }
+          ]
+        })
+      )
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: runId,
+          name: EVIDENCE_CHECKS[repository],
+          path: workflow,
+          display_title: `${repository} PR CI`,
+          status: 'completed',
+          conclusion: 'success',
+          head_sha: input.headSha,
+          html_url: `https://github.com/example/actions/runs/${runId}`,
+          event: 'pull_request',
+          actor: { login: 'github-actions[bot]' },
+          ...(input.runOverride ?? {})
+        })
+      )
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          type: 'file',
+          sha: baseWorkflowBlob
+        })
+      )
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          type: 'file',
+          sha: mergeWorkflowBlob
+        })
+      )
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ tree: { sha: '1'.repeat(40) } }))
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ tree: { sha: '2'.repeat(40) } }))
+    )
+    .mockResolvedValueOnce(new Response(JSON.stringify(baseFixture.tree)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(mergeTree)));
+  const blobDocuments = new Map([
+    ...Array.from(baseFixture.blobs.entries()),
+    ...Array.from(mergeFixture.blobs.entries())
+  ]);
+  const orderedBlobShas = new Set<string>();
+  for (const { path } of releaseBusPrCiPolicyInventory(repository, true)
+    .packages) {
+    for (const fixture of [baseFixture.tree, mergeTree]) {
+      const entry = (
+        fixture.tree as Array<{ path?: string; sha?: string }>
+      ).find((candidate) => candidate.path === path);
+      if (entry?.sha) orderedBlobShas.add(entry.sha);
+    }
+  }
+  for (const sha of Array.from(orderedBlobShas)) {
+    const bytes = blobDocuments.get(sha);
+    if (!bytes) throw new Error(`Missing test policy blob ${sha}`);
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          sha,
+          encoding: 'base64',
+          content: bytes.toString('base64'),
+          size: bytes.length
+        })
+      )
+    );
+  }
+  if (!input.skipArtifactDownload)
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        input.archive ??
+          evidenceArchive({
+            repository,
+            headSha: input.headSha,
+            mergeSha: input.mergeSha,
+            policyBundle: mergeFixture.bundle
+          })
+      )
+    );
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify([
+        { author: { login: 'Commit-Author' } },
+        { author: { login: '6529-release-bus[bot]' } }
+      ])
+    )
+  );
+  return fetchMock;
 }
 
 describe('GitHub immutable release refs', () => {
@@ -126,78 +543,20 @@ describe('GitHub pull request qualification evidence', () => {
     const baseSha = 'b'.repeat(40);
     const mergeSha = 'c'.repeat(40);
     const runId = 12345;
-    const app = new ReleaseBusGitHubApp();
-    (
-      app as unknown as {
-        cachedToken: { value: string; expiresAt: number };
-      }
-    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
-    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
-    fetchMock
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            number: 42,
-            state: 'open',
-            mergeable: true,
-            mergeable_state: 'blocked',
-            user: { login: 'PR-Author' },
-            head: { sha: headSha, ref: 'agent/test' },
-            base: { sha: baseSha, ref: 'main' },
-            merge_commit_sha: mergeSha
-          })
-        )
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            check_runs: [
-              {
-                id: 99,
-                name: 'Build backend and API',
-                status: 'completed',
-                conclusion: 'success',
-                completed_at: '2026-07-23T04:00:00Z',
-                details_url: `https://github.com/6529-Collections/6529seize-backend/actions/runs/${runId}/job/7`
-              }
-            ]
-          })
-        )
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            artifacts: [
-              {
-                id: 100,
-                name: `release-bus-v2-pr-${mergeSha}`,
-                digest: `sha256:${'d'.repeat(64)}`,
-                expired: false,
-                workflow_run: { id: runId, head_sha: headSha }
-              }
-            ]
-          })
-        )
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify([
-            {
-              author: { login: 'Commit-Author' }
-            },
-            {
-              author: { login: '6529-release-bus[bot]' }
-            }
-          ])
-        )
-      );
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha,
+      mergeSha,
+      runId
+    });
 
     try {
-      const qualification = await app.getPullRequestQualification(
-        'backend',
-        42,
-        headSha
-      );
+      const qualification =
+        await appWithCachedToken().getPullRequestQualification(
+          'backend',
+          42,
+          headSha
+        );
 
       expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
         `/commits/${headSha}/check-runs`
@@ -213,8 +572,323 @@ describe('GitHub pull request qualification evidence', () => {
         contributorGithubLogins: ['PR-Author', 'Commit-Author']
       });
       expect(String(fetchMock.mock.calls[3]?.[0])).toContain(
-        '/pulls/42/commits?per_page=100&page=1'
+        `/actions/runs/${runId}`
       );
+      expect(String(fetchMock.mock.calls[4]?.[0])).toContain(
+        `.github/workflows/on-pull-request.yml?ref=${baseSha}`
+      );
+      expect(String(fetchMock.mock.calls[5]?.[0])).toContain(
+        `.github/workflows/on-pull-request.yml?ref=${mergeSha}`
+      );
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes(`/git/commits/${baseSha}`)
+        )
+      ).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes('/actions/artifacts/100/zip')
+        )
+      ).toBe(true);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it.each([
+    {
+      repository: 'backend' as const,
+      baseWorkflowBlob: TRUSTED_WORKFLOW_BLOBS.backend.modern,
+      mergeWorkflowBlob: TRUSTED_WORKFLOW_BLOBS.backend.modern
+    },
+    {
+      repository: 'frontend' as const,
+      baseWorkflowBlob: TRUSTED_WORKFLOW_BLOBS.frontend.modern,
+      mergeWorkflowBlob: TRUSTED_WORKFLOW_BLOBS.frontend.modern
+    }
+  ])(
+    'accepts the exact trusted modern $repository workflow and canonical evidence fixture',
+    async ({ repository, baseWorkflowBlob, mergeWorkflowBlob }) => {
+      const headSha = 'a'.repeat(40);
+      const baseSha = 'b'.repeat(40);
+      const mergeSha = 'c'.repeat(40);
+      const fetchMock = queueQualificationResponses({
+        repository,
+        headSha,
+        baseSha,
+        mergeSha,
+        baseWorkflowBlob,
+        mergeWorkflowBlob
+      });
+
+      try {
+        await expect(
+          appWithCachedToken().getPullRequestQualification(
+            repository,
+            42,
+            headSha
+          )
+        ).resolves.toMatchObject({
+          baseSha,
+          mergeSha,
+          artifactName: `release-bus-v2-pr-${mergeSha}`
+        });
+      } finally {
+        fetchMock.mockReset();
+      }
+    }
+  );
+
+  it.each([
+    {
+      repository: 'backend' as const,
+      legacyBlob: '0cc8865dbb869b5156b46cc45e8581b259052916',
+      artifacts: undefined,
+      artifactOverride: { size_in_bytes: 50 * 1024 * 1024 }
+    },
+    {
+      repository: 'frontend' as const,
+      legacyBlob: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
+      artifacts: [] as readonly Record<string, unknown>[],
+      artifactOverride: undefined
+    }
+  ])(
+    'accepts only the exact unchanged legacy $repository workflow without parsing old deploy bytes',
+    async ({ repository, legacyBlob, artifacts, artifactOverride }) => {
+      const headSha = 'a'.repeat(40);
+      const baseSha = 'b'.repeat(40);
+      const mergeSha = 'c'.repeat(40);
+      const fetchMock = queueQualificationResponses({
+        repository,
+        headSha,
+        baseSha,
+        mergeSha,
+        baseWorkflowBlob: legacyBlob,
+        mergeWorkflowBlob: legacyBlob,
+        artifacts,
+        artifactOverride,
+        skipArtifactDownload: true
+      });
+
+      try {
+        await expect(
+          appWithCachedToken().getPullRequestQualification(
+            repository,
+            42,
+            headSha
+          )
+        ).resolves.toMatchObject({
+          workflowPath: EVIDENCE_WORKFLOWS[repository],
+          baseWorkflowBlobSha: legacyBlob,
+          mergeWorkflowBlobSha: legacyBlob,
+          trustMode: 'legacy-exact-workflow-v0',
+          ...(repository === 'frontend'
+            ? {
+                artifactRunId: null,
+                artifactName: null,
+                artifactDigest: null
+              }
+            : { artifactRunId: '12345' })
+        });
+        expect(
+          fetchMock.mock.calls.some(([url]) =>
+            String(url).includes('/actions/artifacts/100/zip')
+          )
+        ).toBe(false);
+      } finally {
+        fetchMock.mockReset();
+      }
+    }
+  );
+
+  it('rejects a workflow blob transition that was not exactly preauthorized', async () => {
+    const headSha = 'a'.repeat(40);
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha: 'c'.repeat(40),
+      baseWorkflowBlob: '1'.repeat(40),
+      mergeWorkflowBlob: '2'.repeat(40)
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow('without an exact preauthorized blob transition');
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes('/actions/artifacts/100/zip')
+        )
+      ).toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('rejects a candidate that turns a required backend package gate into a no-op', async () => {
+    const headSha = 'a'.repeat(40);
+    const mergeSha = 'c'.repeat(40);
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha,
+      packageScriptOverrides: { build: 'true' }
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow('gate policy bundle changed');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('rejects protected gate drift but permits unrelated existing config variants', async () => {
+    const headSha = 'a'.repeat(40);
+    const driftFetch = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha: 'c'.repeat(40),
+      changedPolicyPath: 'jest.config.ts'
+    });
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow('gate policy bundle changed');
+    } finally {
+      driftFetch.mockReset();
+    }
+
+    const existingVariantFetch = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha: 'c'.repeat(40),
+      alternatePolicyPath: 'eslint.config.single.mjs'
+    });
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).resolves.toMatchObject({
+        mergeGatePolicyDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+      });
+    } finally {
+      existingVariantFetch.mockReset();
+    }
+  });
+
+  it('persists separate exact base and merge gate-policy bundle digests', async () => {
+    const headSha = 'a'.repeat(40);
+    const mergeSha = 'c'.repeat(40);
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).resolves.toMatchObject({
+        baseGatePolicyDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        mergeGatePolicyDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+      });
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it.each([
+    {
+      name: 'wrong workflow path',
+      options: {
+        runOverride: { path: '.github/workflows/untrusted.yml' }
+      },
+      message: 'not from the required exact-head workflow'
+    },
+    {
+      name: 'oversized artifact metadata',
+      options: {
+        artifactOverride: { size_in_bytes: 128 * 1024 + 1 }
+      },
+      message: 'no bounded exact green merge-tree CI evidence artifact'
+    },
+    {
+      name: 'noncanonical checksum path',
+      options: {
+        archive: backendEvidenceArchive({
+          headSha: 'a'.repeat(40),
+          mergeSha: 'c'.repeat(40),
+          checksumPath: 'manifest.json'
+        })
+      },
+      message: 'checksum is invalid'
+    },
+    {
+      name: 'wrong required gate inventory',
+      options: {
+        archive: backendEvidenceArchive({
+          headSha: 'a'.repeat(40),
+          mergeSha: 'c'.repeat(40),
+          manifestOverride: { required_gates: ['lint'] }
+        })
+      },
+      message: 'does not bind the exact head'
+    }
+  ])('rejects $name', async ({ options, message }) => {
+    const headSha = 'a'.repeat(40);
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha: 'c'.repeat(40),
+      ...options
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow(message);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('caps streamed evidence bytes before ZIP parsing', async () => {
+    const headSha = 'a'.repeat(40);
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha: 'c'.repeat(40),
+      archive: Buffer.alloc(128 * 1024 + 1)
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow('archive exceeds the size limit');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('caps uncompressed evidence entries before reading their data', async () => {
+    const headSha = 'a'.repeat(40);
+    const mergeSha = 'c'.repeat(40);
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha,
+      archive: backendEvidenceArchive({
+        headSha,
+        mergeSha,
+        manifestOverride: { padding: 'x'.repeat(70 * 1024) }
+      })
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow('expands beyond the size limit');
     } finally {
       fetchMock.mockReset();
     }
