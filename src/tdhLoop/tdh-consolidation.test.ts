@@ -423,6 +423,20 @@ describe('assertNoOverlappingConsolidationWallets', () => {
       ])
     ).toThrow('Wallet b appears in multiple TDH consolidations');
   });
+
+  it('fails closed when stored wallet membership is JSON encoded', () => {
+    const ab = {
+      ...currentConsolidatedTdh(['a', 'b']),
+      wallets: JSON.stringify(['a', 'b'])
+    } as unknown as ConsolidatedTDH;
+
+    expect(() =>
+      assertNoOverlappingConsolidationWallets([
+        ab,
+        currentConsolidatedTdh(['b'])
+      ])
+    ).toThrow('Wallet b appears in multiple TDH consolidations');
+  });
 });
 
 function currentConsolidatedTdh(wallets: string[]): ConsolidatedTDH {

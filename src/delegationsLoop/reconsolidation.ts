@@ -1,28 +1,9 @@
 import { retrieveConsolidationsForWallets } from '@/db';
 import { ConsolidationEvent } from '@/entities/IDelegation';
 import { ConsolidatedTDH } from '@/entities/ITDH';
+import { getConsolidationWallets } from '@/tdhLoop/consolidation-wallets';
 
 const CONSOLIDATION_QUERY_BATCH_SIZE = 100;
-
-function getWallets(consolidation: ConsolidatedTDH): string[] {
-  if (Array.isArray(consolidation.wallets)) {
-    return consolidation.wallets;
-  }
-  if (typeof consolidation.wallets === 'string') {
-    try {
-      const parsedWallets: unknown = JSON.parse(consolidation.wallets);
-      if (
-        Array.isArray(parsedWallets) &&
-        parsedWallets.every((wallet) => typeof wallet === 'string')
-      ) {
-        return parsedWallets;
-      }
-    } catch {
-      // Fall through to the canonical key if the stored JSON is malformed.
-    }
-  }
-  return consolidation.consolidation_key.split('-');
-}
 
 export async function getAffectedWallets(
   events: ConsolidationEvent[],
@@ -36,7 +17,7 @@ export async function getAffectedWallets(
 
   const affectedWallets = new Set(directlyAffectedWallets);
   for (const consolidation of currentConsolidations) {
-    const wallets = getWallets(consolidation).map((wallet) =>
+    const wallets = getConsolidationWallets(consolidation).map((wallet) =>
       wallet.toLowerCase()
     );
     if (wallets.some((wallet) => directlyAffectedWallets.has(wallet))) {

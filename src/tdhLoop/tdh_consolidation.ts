@@ -29,6 +29,7 @@ import {
   getGenesisAndNaka
 } from './tdh';
 import { calculateTdhEditions } from './tdh_editions';
+import { getConsolidationWallets } from './consolidation-wallets';
 import { calculateMemesTdh } from './tdh_memes';
 import { updateNftTDH } from './tdh_nft';
 
@@ -392,9 +393,7 @@ export function assertNoOverlappingConsolidationWallets(
 ): void {
   const consolidationByWallet = new Map<string, string>();
   for (const consolidation of consolidations) {
-    const wallets = Array.isArray(consolidation.wallets)
-      ? consolidation.wallets
-      : consolidation.consolidation_key.split('-');
+    const wallets = getConsolidationWallets(consolidation);
     for (const rawWallet of wallets) {
       const wallet = rawWallet.toLowerCase();
       const existingConsolidation = consolidationByWallet.get(wallet);

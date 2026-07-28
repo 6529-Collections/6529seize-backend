@@ -187,11 +187,14 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
       lastTDHCalc,
       walletsArray
     );
+    // Keep the pre-update snapshot for old-membership discovery, but use a
+    // fresh snapshot to choose the exact rows replaced during persistence.
+    const replacementConsolidations = await fetchAllConsolidatedTdh();
     await consolidateAndPersistTDH(
       block,
       blockTimestamp,
       walletsArray,
-      currentConsolidations
+      replacementConsolidations
     );
     await consolidateNftOwners(affectedWallets);
     await consolidateOwnerBalances(affectedWallets);
