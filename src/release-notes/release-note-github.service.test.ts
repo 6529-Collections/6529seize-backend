@@ -174,7 +174,7 @@ describe('ReleaseNoteGitHubService', () => {
           url: 'https://github.com/6529-Collections/6529seize-backend/pull/1749',
           title: 'Link Main Stage winners to Meme cards',
           body: 'Adds the production mapping.',
-          contributors: ['Alice', 'ReleaseTrainUser', 'BOB', 'CAROL', 'Dave'],
+          contributors: ['Alice', 'bob', 'CAROL', 'Dave'],
           commit_messages: ['Link Main Stage winners to Meme cards'],
           changed_files: [
             {
@@ -614,7 +614,7 @@ describe('ReleaseNoteGitHubService', () => {
       expect.objectContaining({
         number: 1749,
         title: 'Keep release notes available',
-        contributors: ['pr-author', 'release-train-contributor'],
+        contributors: ['pr-author'],
         changed_files: [],
         changed_files_incomplete: true,
         commit_contributors_incomplete: true,
