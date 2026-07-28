@@ -22,6 +22,7 @@ const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
 describe('Release Bus v2 backend critical-path contract', () => {
   const preflight = read('.github/workflows/release-bus-v2-preflight.yml');
   const deploy = read('.github/workflows/deploy.yml');
+  const pullRequestCi = read('.github/workflows/on-pull-request.yml');
   const reconciler = read('src/releaseBusV2/release-bus-v2.reconciler.ts');
 
   it('keeps one candidate build runner without repository quality matrices', () => {
@@ -71,6 +72,24 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(preflight).toContain('Install frozen shared dependencies once');
     expect(preflight).toContain('test "$(npm --version)" = "10.9.8"');
     expect(preflight).toContain('release-bus-package-backend.mjs');
+  });
+
+  it('keeps full tests in exact merge-tree PR CI before evidence is emitted', () => {
+    const parsed = yaml.load(pullRequestCi) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const steps = parsed.jobs.build.steps;
+    const test = steps.findIndex(({ name }) => name === 'Test backend');
+    const build = steps.findIndex(({ name }) => name === 'Build backend');
+    const bind = steps.findIndex(
+      ({ name }) => name === 'Bind exact PR merge-tree CI evidence'
+    );
+    expect(test).toBeGreaterThan(0);
+    expect(steps[test].run).toContain('npm test -- --runInBand');
+    expect(steps[test].run).toContain('npm run ci:assert-source-clean');
+    expect(build).toBeGreaterThan(test);
+    expect(bind).toBeGreaterThan(build);
+    expect(steps[bind].run).toContain('"backend-test-and-typecheck"');
   });
 
   it('isolates secret-bearing authorization and reporting from candidate-controlled code', () => {
