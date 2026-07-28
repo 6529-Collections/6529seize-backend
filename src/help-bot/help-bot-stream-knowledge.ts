@@ -34,10 +34,13 @@ const AUDIT_STATES = new Set([
 ]);
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
-const VERSION_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+$/;
+const VERSION_PATTERN = /^\d{4}-\d{2}-\d{2}\.\d+$/;
 const MAX_MANIFEST_CHARACTERS = 256_000;
 const MAX_SEARCH_INDEX_CHARACTERS = 8_000_000;
 const MAX_SHARD_CHARACTERS = 1_000_000;
+const MAX_CATALOG_RECORDS = 12_000;
+const MAX_RECORD_SHARDS = 128;
+const MAX_RECORDS_PER_SHARD = 200;
 const MIN_EVIDENCE_RECORDS = 4;
 const MAX_EVIDENCE_RECORDS = 10;
 const MAX_EVIDENCE_PACKET_CHARACTERS = 10_000;
@@ -49,7 +52,7 @@ const logger = Logger.get('HelpBotStreamKnowledge');
 interface StreamFetchResponse {
   readonly ok: boolean;
   readonly status: number;
-  text(): Promise<string>;
+  readonly text: string;
 }
 
 export type StreamKnowledgeFetcher = (
@@ -183,7 +186,13 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal });
+    const text = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      text
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -222,7 +231,7 @@ function canonicalize(value: unknown): unknown {
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.keys(value as Record<string, unknown>)
-        .sort()
+        .sort((left, right) => left.localeCompare(right))
         .map((key) => [
           key,
           canonicalize((value as Record<string, unknown>)[key])
@@ -355,11 +364,13 @@ function parseManifest(
     !SHA256_PATTERN.test(searchSha256) ||
     recordCount === null ||
     recordCount <= 0 ||
+    recordCount > MAX_CATALOG_RECORDS ||
     total !== recordCount ||
     !knowledgeSha256 ||
     !SHA256_PATTERN.test(knowledgeSha256) ||
     !Array.isArray(raw.recordShards) ||
-    raw.recordShards.length === 0
+    raw.recordShards.length === 0 ||
+    raw.recordShards.length > MAX_RECORD_SHARDS
   ) {
     return null;
   }
@@ -375,7 +386,8 @@ function parseManifest(
       !checksum ||
       !SHA256_PATTERN.test(checksum) ||
       shardRecordCount === null ||
-      shardRecordCount <= 0
+      shardRecordCount <= 0 ||
+      shardRecordCount > MAX_RECORDS_PER_SHARD
     ) {
       return null;
     }
@@ -519,8 +531,7 @@ function parseEvidenceShard(
       !category ||
       !kind ||
       !title ||
-      !canonicalPath ||
-      !canonicalPath.startsWith(`/reviews/${REVIEW_ID}/`)
+      !canonicalPath?.startsWith(`/reviews/${REVIEW_ID}/`)
     ) {
       return null;
     }
@@ -536,21 +547,60 @@ function normalizeExact(value: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ')
-    .replace(/\s*([().,:#/])\s*/g, '$1');
+    .replace(/\s+([().,:#/])/g, '$1')
+    .replace(/([().,:#/])\s+/g, '$1');
+}
+
+function isAsciiAlphaNumeric(character: string | undefined): boolean {
+  if (!character) {
+    return false;
+  }
+  const code = character.charCodeAt(0);
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122)
+  );
 }
 
 function containsNormalizedTerm(haystack: string, needle: string): boolean {
   if (!needle) {
     return false;
   }
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(haystack);
+  let offset = haystack.indexOf(needle);
+  while (offset >= 0) {
+    const before = haystack[offset - 1];
+    const after = haystack[offset + needle.length];
+    if (!isAsciiAlphaNumeric(before) && !isAsciiAlphaNumeric(after)) {
+      return true;
+    }
+    offset = haystack.indexOf(needle, offset + 1);
+  }
+  return false;
+}
+
+function splitAcronymBoundary(value: string): string {
+  let result = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const previous = value[index - 1];
+    const current = value[index];
+    const next = value[index + 1];
+    const previousIsUpper =
+      previous !== undefined && previous >= 'A' && previous <= 'Z';
+    const currentIsUpper =
+      current !== undefined && current >= 'A' && current <= 'Z';
+    const nextIsLower = next !== undefined && next >= 'a' && next <= 'z';
+    if (previousIsUpper && currentIsUpper && nextIsLower) {
+      result += ' ';
+    }
+    result += current;
+  }
+  return result;
 }
 
 function splitSearchText(value: string): string {
-  return value
+  return splitAcronymBoundary(value)
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .replace(/_/g, ' ')
     .toLowerCase();
 }
@@ -611,12 +661,17 @@ function tokens(value: string): Set<string> {
   return result;
 }
 
+function technicalRecordId(record: StreamCatalogRecord): string {
+  for (const prefix of ['declaration:', 'definition:']) {
+    if (record.id.startsWith(prefix)) {
+      return record.id.slice(prefix.length);
+    }
+  }
+  return '';
+}
+
 function exactKeys(record: StreamCatalogRecord): string[] {
-  const technicalId = record.id.startsWith('declaration:')
-    ? record.id.slice('declaration:'.length)
-    : record.id.startsWith('definition:')
-      ? record.id.slice('definition:'.length)
-      : '';
+  const technicalId = technicalRecordId(record);
   const candidates = [
     record.id,
     technicalId,
@@ -669,11 +724,25 @@ function isStructuredTechnicalQuestion(question: string): boolean {
     /\b0x[0-9a-fA-F]{8,64}\b/.test(question) ||
     /\b[A-Za-z_$][A-Za-z0-9_$]*\s*\([^)]*\)/.test(question) ||
     /\b[A-Za-z0-9_./-]+\.sol\b/.test(question) ||
-    /\b[a-z][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*\b/.test(question) ||
+    hasCamelCaseIdentifier(question) ||
     /\b(?:function|event|error|selector|topic|signature|inputs?|outputs?|visibility|mutability|modifier|source path)\b/i.test(
       question
     )
   );
+}
+
+function hasCamelCaseIdentifier(value: string): boolean {
+  for (const word of value.split(/[^A-Za-z0-9_$]+/)) {
+    let hasLowercase = false;
+    for (const character of word) {
+      if (character >= 'a' && character <= 'z') {
+        hasLowercase = true;
+      } else if (hasLowercase && character >= 'A' && character <= 'Z') {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function queryIntent(
@@ -741,10 +810,21 @@ function extractedExactQueryKeys(question: string): string[] {
   return Array.from(keys);
 }
 
+function authorityScore(record: StreamCatalogRecord): number {
+  let score = 0;
+  if (record.scope === 'protocol') {
+    score += 80;
+  } else if (record.scope === 'script') {
+    score += 20;
+  }
+  if (record.classification === 'production_release_contract') {
+    score += 40;
+  }
+  return score;
+}
+
 function exactPriority(record: StreamCatalogRecord, key: string): number {
-  const authority =
-    (record.scope === 'protocol' ? 80 : record.scope === 'script' ? 20 : 0) +
-    (record.classification === 'production_release_contract' ? 40 : 0);
+  const authority = authorityScore(record);
   if (normalizeExact(record.selector ?? '') === key) {
     return 1_600 + authority;
   }
@@ -808,35 +888,87 @@ function exactMatches(
     );
 }
 
-function metadataScore(question: string, record: StreamCatalogRecord): number {
-  let score = 0;
+function callableMetadataScore(
+  question: string,
+  record: StreamCatalogRecord
+): number {
   if (
     /\b(?:function|inputs?|outputs?|visibility|mutability|modifier)\b/.test(
       question
-    )
+    ) &&
+    record.kind === 'function'
   ) {
-    score += record.kind === 'function' ? 20 : 0;
+    return 20;
   }
-  if (/\bevents?\b/.test(question)) {
-    score += record.kind === 'event' ? 24 : 0;
+  if (/\bevents?\b/.test(question) && record.kind === 'event') {
+    return 24;
   }
-  if (/\berrors?\b/.test(question)) {
-    score += record.kind === 'error' ? 24 : 0;
+  if (/\berrors?\b/.test(question) && record.kind === 'error') {
+    return 24;
   }
+  return 0;
+}
+
+function scopeMetadataScore(
+  question: string,
+  record: StreamCatalogRecord
+): number {
   if (/\b(?:script|sepolia|deploy|ceremony)\b/.test(question)) {
-    score += record.scope === 'script' ? 32 : 0;
-    score -= record.scope === 'test' ? 8 : 0;
+    if (record.scope === 'script') {
+      return 32;
+    }
+    return record.scope === 'test' ? -8 : 0;
   }
-  if (/\bprotocol\b/.test(question)) {
-    score += record.scope === 'protocol' ? 24 : 0;
-  }
-  if (
+  return /\bprotocol\b/.test(question) && record.scope === 'protocol' ? 24 : 0;
+}
+
+function metadataScore(question: string, record: StreamCatalogRecord): number {
+  const statusScore =
     /\b(?:audit|blocker|deployment|readiness|release|risk|status)\b/.test(
       question
-    )
-  ) {
-    score += record.category === 'status' ? 30 : 0;
+    ) && record.category === 'status'
+      ? 30
+      : 0;
+  return (
+    callableMetadataScore(question, record) +
+    scopeMetadataScore(question, record) +
+    statusScore
+  );
+}
+
+function broadStreamScore(record: StreamCatalogRecord): number {
+  if (record.id === 'editorial:overview:intro') {
+    return 220;
   }
+  if (record.id.startsWith('editorial:overview:')) {
+    return 160;
+  }
+  return record.kind === 'review_status' ? 100 : 0;
+}
+
+function tokenOverlapScore(
+  queryTokens: ReadonlySet<string>,
+  record: StreamCatalogRecord
+): number {
+  const nameTokens = tokens(
+    `${record.name ?? ''} ${record.definitionName ?? ''}`
+  );
+  const titleTokens = tokens(record.title);
+  const searchTokens = tokens(
+    `${record.searchText ?? ''} ${record.sourcePath ?? ''} ${
+      record.classification ?? ''
+    }`
+  );
+  let score = 0;
+  queryTokens.forEach((token) => {
+    if (nameTokens.has(token)) {
+      score += 16;
+    } else if (titleTokens.has(token)) {
+      score += 8;
+    } else if (searchTokens.has(token)) {
+      score += 3;
+    }
+  });
   return score;
 }
 
@@ -847,14 +979,9 @@ function lexicalScore(
   broadStreamQuestion: boolean
 ): number {
   if (broadStreamQuestion) {
-    if (record.id === 'editorial:overview:intro') {
-      return 220;
-    }
-    if (record.id.startsWith('editorial:overview:')) {
-      return 160;
-    }
-    if (record.kind === 'review_status') {
-      return 100;
+    const broadScore = broadStreamScore(record);
+    if (broadScore > 0) {
+      return broadScore;
     }
   }
   if (!queryTokens.size) {
@@ -879,24 +1006,7 @@ function lexicalScore(
   if (containsNormalizedTerm(normalizedQuestion, name)) {
     score += 35;
   }
-  const nameTokens = tokens(
-    `${record.name ?? ''} ${record.definitionName ?? ''}`
-  );
-  const titleTokens = tokens(record.title);
-  const searchTokens = tokens(
-    `${record.searchText ?? ''} ${record.sourcePath ?? ''} ${
-      record.classification ?? ''
-    }`
-  );
-  queryTokens.forEach((token) => {
-    if (nameTokens.has(token)) {
-      score += 16;
-    } else if (titleTokens.has(token)) {
-      score += 8;
-    } else if (searchTokens.has(token)) {
-      score += 3;
-    }
-  });
+  score += tokenOverlapScore(queryTokens, record);
   if (containsNormalizedTerm(normalizedQuestion, definitionName)) {
     score += 25;
   }
@@ -958,12 +1068,7 @@ function selectInitialCandidates(
   };
   exact.slice(0, 4).forEach(add);
   for (const match of fuzzy) {
-    const cap =
-      match.record.category === 'editorial'
-        ? 4
-        : match.record.category === 'status'
-          ? 2
-          : 4;
+    const cap = match.record.category === 'status' ? 2 : 4;
     if ((categoryCounts.get(match.record.category) ?? 0) >= cap) {
       continue;
     }
@@ -1003,11 +1108,10 @@ function ambiguityMessage(
     return null;
   }
   const normalizedQuestion = normalizeExact(question);
+  const normalizedName = normalizeExact(highest.record.name);
   if (
     /\b0x[0-9a-f]{8,64}\b/i.test(question) ||
-    new RegExp(
-      `\\b${highest.record.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`
-    ).test(question) ||
+    normalizedQuestion.includes(`${normalizedName}(`) ||
     sameName.some(
       (match) =>
         match.record.definitionName &&
@@ -1367,7 +1471,7 @@ export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSour
         `Stream knowledge fetch returned HTTP ${response.status}`
       );
     }
-    const text = await response.text();
+    const text = response.text;
     if (text.length > maxCharacters) {
       throw new Error(
         `Stream knowledge response exceeded ${maxCharacters} characters`
@@ -1504,8 +1608,11 @@ export const frontendStreamKnowledgeSource =
   new FrontendStreamKnowledgeSource();
 
 export const STREAM_KNOWLEDGE_TESTING = {
+  MAX_CATALOG_RECORDS,
   MAX_EVIDENCE_PACKET_CHARACTERS,
   MAX_EVIDENCE_RECORDS,
+  MAX_RECORD_SHARDS,
   MIN_EVIDENCE_RECORDS,
+  fetchWithTimeout,
   queryIntent
 };

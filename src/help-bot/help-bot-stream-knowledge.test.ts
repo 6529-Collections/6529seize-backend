@@ -24,7 +24,7 @@ function canonicalize(value: unknown): unknown {
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.keys(value as Record<string, unknown>)
-        .sort()
+        .sort((left, right) => left.localeCompare(right))
         .map((key) => [
           key,
           canonicalize((value as Record<string, unknown>)[key])
@@ -423,8 +423,8 @@ function buildFixture(version = VERSION): Fixture {
     const pathname = new URL(url).pathname;
     const text = files.get(pathname);
     return text === undefined
-      ? { ok: false, status: 404, text: async () => '' }
-      : { ok: true, status: 200, text: async () => text };
+      ? { ok: false, status: 404, text: '' }
+      : { ok: true, status: 200, text };
   });
   return { files, fetcher };
 }
@@ -557,9 +557,88 @@ describe('FrontendStreamKnowledgeSource', () => {
       STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_RECORDS
     );
     expect(new Set(evidence).size).toBe(evidence.length);
+    expect(
+      new Set(
+        evidence.map(
+          (fact) =>
+            (JSON.parse(fact) as { readonly category?: string }).category
+        )
+      )
+    ).toContain('status');
     expect((match?.record.facts ?? []).join('').length).toBeLessThanOrEqual(
       STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_PACKET_CHARACTERS
     );
+  });
+
+  it('keeps the body read inside the fetch timeout', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock: typeof fetch = async (_input, init) => {
+      const signal = init?.signal;
+      return {
+        ok: true,
+        status: 200,
+        text: () =>
+          new Promise<string>((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new Error('aborted'))
+            );
+          })
+      } as unknown as Response;
+    };
+    global.fetch = fetchMock;
+    try {
+      await expect(
+        STREAM_KNOWLEDGE_TESTING.fetchWithTimeout(
+          'https://frontend.example/slow.json',
+          5
+        )
+      ).rejects.toThrow('aborted');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('rejects manifests above explicit catalog and shard-count caps', async () => {
+    const manifestPath = `/review-data/${REVIEW_ID}/versions/${VERSION}/knowledge/manifest.json`;
+    for (const mutate of [
+      (manifest: Record<string, unknown>) => {
+        const searchIndex = manifest.searchIndex as Record<string, unknown>;
+        const counts = manifest.counts as Record<string, unknown>;
+        searchIndex.recordCount =
+          STREAM_KNOWLEDGE_TESTING.MAX_CATALOG_RECORDS + 1;
+        counts.total = STREAM_KNOWLEDGE_TESTING.MAX_CATALOG_RECORDS + 1;
+      },
+      (manifest: Record<string, unknown>) => {
+        const shards = manifest.recordShards as Array<Record<string, unknown>>;
+        const template = shards[0]!;
+        manifest.recordShards = Array.from(
+          { length: STREAM_KNOWLEDGE_TESTING.MAX_RECORD_SHARDS + 1 },
+          (_value, index) => ({
+            ...template,
+            path: String(template.path).replace(
+              '000.json',
+              `${String(index).padStart(3, '0')}.json`
+            )
+          })
+        );
+      }
+    ]) {
+      const fixture = buildFixture();
+      const manifest = JSON.parse(fixture.files.get(manifestPath)!) as Record<
+        string,
+        unknown
+      >;
+      mutate(manifest);
+      delete manifest.knowledgeSha256;
+      manifest.knowledgeSha256 = sha256(stableJson(manifest));
+      fixture.files.set(manifestPath, JSON.stringify(manifest));
+
+      await expect(
+        new FrontendStreamKnowledgeSource(fixture.fetcher, BASE_URL).findMatch(
+          'what is stream?'
+        )
+      ).resolves.toBeNull();
+    }
   });
 
   it('keeps a contextual follow-up scoped to the exact prior Stream symbol', async () => {
