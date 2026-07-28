@@ -39,6 +39,7 @@ import { setNoStoreHeaders } from '@/api/response-headers';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { releaseBusGitHubApp } from '@/releaseBusV2/release-bus-v2.github-app';
 import {
+  deriveReleaseBusV2LaneStates,
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
   RELEASE_BUS_OPERATOR_TEAM,
@@ -762,13 +763,37 @@ deployRoutes.get('/release-bus-v2/manifests', async (_req, res) => {
   });
 });
 
+async function getReleaseBusV2StagingStateView() {
+  const state = await releaseBusV2Repository.getStagingState({});
+  const lastValidatedManifest = state.last_validated_manifest_id
+    ? await releaseBusV2Repository.findManifest(
+        state.last_validated_manifest_id,
+        {}
+      )
+    : null;
+  const currentIsLastValidated =
+    state.current_manifest_id === state.last_validated_manifest_id;
+  return {
+    ...state,
+    last_validated_frontend_sha:
+      lastValidatedManifest?.frontend_sha ??
+      (currentIsLastValidated ? state.frontend_sha : null),
+    last_validated_backend_sha:
+      lastValidatedManifest?.backend_sha ??
+      (currentIsLastValidated ? state.backend_sha : null)
+  };
+}
+
 deployRoutes.get('/release-bus-v2/controls', async (_req, res) => {
+  const controls = await releaseBusV2Repository.listControls({});
+  const mode = getReleaseBusV2Mode();
   setNoStoreHeaders(res);
   return res.json({
-    controls: await releaseBusV2Repository.listControls({}),
+    controls,
+    lanes: deriveReleaseBusV2LaneStates(mode, controls),
     locks: await releaseBusV2Repository.listLocks({}),
-    staging_state: await releaseBusV2Repository.getStagingState({}),
-    mode: getReleaseBusV2Mode()
+    staging_state: await getReleaseBusV2StagingStateView(),
+    mode
   });
 });
 
@@ -780,9 +805,12 @@ async function updateBusV2Control(req: Request, paused: boolean) {
     reason: string;
   }>(req.body, ReleaseBusV2ControlBodySchema);
   await releaseBusV2Service.setPaused(body.scope, paused, body.reason, actor);
+  const controls = await releaseBusV2Repository.listControls({});
+  const mode = getReleaseBusV2Mode();
   return {
-    controls: await releaseBusV2Repository.listControls({}),
-    mode: getReleaseBusV2Mode()
+    controls,
+    lanes: deriveReleaseBusV2LaneStates(mode, controls),
+    mode
   };
 }
 

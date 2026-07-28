@@ -7,9 +7,9 @@ import path from 'node:path';
 const HELPER_PATH = path.resolve(__dirname, 'release-bus-status.mjs');
 const TOKEN = 'test-token-that-must-never-be-printed';
 const VALID_CONTROLS = [
-  { scope: 'ALL', paused: 0 },
-  { scope: 'STAGING', paused: false },
-  { scope: 'PRODUCTION', paused: 0 }
+  { scope: 'ALL', paused: 0, reason: 'Global recovery complete' },
+  { scope: 'STAGING', paused: false, reason: 'Staging enabled' },
+  { scope: 'PRODUCTION', paused: 0, reason: 'Production enabled' }
 ];
 const VALID_STAGING_STATE = {
   status: 'LIVE',
@@ -34,6 +34,35 @@ type TestServer = {
   readonly url: string;
   readonly server: Server;
 };
+
+function laneStates(
+  mode: 'OFF' | 'STAGING' | 'PRODUCTION',
+  controls: readonly {
+    readonly scope: string;
+    readonly paused: boolean | number;
+    readonly reason: string | null;
+  }[] = VALID_CONTROLS
+) {
+  const byScope = Object.fromEntries(
+    controls.map((control) => [control.scope, control])
+  );
+  return ['STAGING', 'PRODUCTION'].map((lane) => {
+    const allowed =
+      mode === 'PRODUCTION' || (mode === 'STAGING' && lane === 'STAGING');
+    const globalPaused = Boolean(byScope.ALL?.paused);
+    const lanePaused = Boolean(byScope[lane]?.paused);
+    return {
+      lane,
+      status: allowed && !globalPaused && !lanePaused ? 'ON' : 'OFF',
+      changeable: allowed && !globalPaused,
+      reason: !allowed
+        ? 'Internal Release Bus hard stop is active'
+        : globalPaused
+          ? (byScope.ALL?.reason ?? 'Internal Release Bus hard stop is active')
+          : byScope[lane]?.reason
+    };
+  });
+}
 
 let tempRoot: string;
 let mockBin: string;
@@ -151,12 +180,13 @@ async function runWithResponse(
 }
 
 describe('release-bus-status helper', () => {
-  test.each(['OFF', 'STAGING', 'PRODUCTION'])(
+  test.each(['OFF', 'STAGING', 'PRODUCTION'] as const)(
     'prints sanitized status for %s mode',
     async (mode) => {
       const result = await runWithResponse({
         mode,
         controls: VALID_CONTROLS,
+        lanes: laneStates(mode),
         staging_state: VALID_STAGING_STATE
       });
 
@@ -164,11 +194,13 @@ describe('release-bus-status helper', () => {
       expect(result.stderr).toBe('');
       expect(result.authorization).toBe(`Bearer ${TOKEN}`);
       expect(JSON.parse(result.stdout)).toEqual({
-        mode,
-        controls: {
-          ALL: 'RUNNING',
-          STAGING: 'RUNNING',
-          PRODUCTION: 'RUNNING'
+        lanes: {
+          STAGING: expect.objectContaining({
+            status: mode === 'OFF' ? 'OFF' : 'ON'
+          }),
+          PRODUCTION: expect.objectContaining({
+            status: mode === 'PRODUCTION' ? 'ON' : 'OFF'
+          })
         },
         staging: {
           status: 'LIVE',
@@ -186,22 +218,134 @@ describe('release-bus-status helper', () => {
     }
   );
 
-  test.each(['ALL', 'STAGING', 'PRODUCTION'])(
-    'reports a paused %s control',
-    async (pausedScope) => {
+  test.each([
+    ['ALL', 'OFF', 'OFF'],
+    ['STAGING', 'OFF', 'ON'],
+    ['PRODUCTION', 'ON', 'OFF']
+  ] as const)(
+    'derives the two effective lanes when hidden %s is paused',
+    async (pausedScope, expectedStaging, expectedProduction) => {
+      const controls = VALID_CONTROLS.map((control) => ({
+        ...control,
+        paused: control.scope === pausedScope,
+        reason:
+          pausedScope === 'ALL' && control.scope === 'ALL'
+            ? null
+            : control.reason
+      }));
       const result = await runWithResponse({
-        mode: 'STAGING',
-        controls: VALID_CONTROLS.map((control) => ({
-          ...control,
-          paused: control.scope === pausedScope
-        })),
+        mode: 'PRODUCTION',
+        controls,
+        lanes: laneStates('PRODUCTION', controls),
         staging_state: VALID_STAGING_STATE
       });
 
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout).controls[pausedScope]).toBe('PAUSED');
+      expect(JSON.parse(result.stdout).lanes).toMatchObject({
+        STAGING: { status: expectedStaging },
+        PRODUCTION: { status: expectedProduction }
+      });
+      if (pausedScope === 'ALL') {
+        expect(JSON.parse(result.stdout).lanes).toEqual({
+          STAGING: {
+            status: 'OFF',
+            changeable: false,
+            reason: 'Internal Release Bus hard stop is active'
+          },
+          PRODUCTION: {
+            status: 'OFF',
+            changeable: false,
+            reason: 'Internal Release Bus hard stop is active'
+          }
+        });
+      }
     }
   );
+
+  it('fails when derived lane state disagrees with hidden safety controls', async () => {
+    const result = await runWithResponse({
+      mode: 'PRODUCTION',
+      controls: VALID_CONTROLS,
+      lanes: laneStates('OFF'),
+      staging_state: VALID_STAGING_STATE
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('inconsistent lane information');
+  });
+
+  it('fails when a required effective lane is missing or duplicated', async () => {
+    const lanes = laneStates('PRODUCTION');
+    for (const invalidLanes of [
+      lanes.filter(({ lane }) => lane !== 'PRODUCTION'),
+      [...lanes, lanes[0]]
+    ]) {
+      const result = await runWithResponse({
+        mode: 'PRODUCTION',
+        controls: VALID_CONTROLS,
+        lanes: invalidLanes,
+        staging_state: VALID_STAGING_STATE
+      });
+
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('incomplete lane information');
+    }
+  });
+
+  it('fails when an unknown third effective lane is present', async () => {
+    const result = await runWithResponse({
+      mode: 'PRODUCTION',
+      controls: VALID_CONTROLS,
+      lanes: [
+        ...laneStates('PRODUCTION'),
+        {
+          lane: 'ALL',
+          status: 'OFF',
+          changeable: false,
+          reason: null
+        }
+      ],
+      staging_state: VALID_STAGING_STATE
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('incomplete lane information');
+  });
+
+  it('fails when an effective lane omits its reason', async () => {
+    const lanes = laneStates('PRODUCTION').map((lane) =>
+      lane.lane === 'STAGING'
+        ? {
+            lane: lane.lane,
+            status: lane.status,
+            changeable: lane.changeable
+          }
+        : lane
+    );
+    const result = await runWithResponse({
+      mode: 'PRODUCTION',
+      controls: VALID_CONTROLS,
+      lanes,
+      staging_state: VALID_STAGING_STATE
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('invalid lane information');
+  });
+
+  it('fails when an effective lane has an invalid state', async () => {
+    const result = await runWithResponse({
+      mode: 'PRODUCTION',
+      controls: VALID_CONTROLS,
+      lanes: laneStates('PRODUCTION').map((lane) =>
+        lane.lane === 'STAGING' ? { ...lane, changeable: 'yes' } : lane
+      ),
+      staging_state: VALID_STAGING_STATE
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('invalid lane information');
+  });
 
   it('fails closed when the v2 status endpoint is missing', async () => {
     const paths: string[] = [];
@@ -326,7 +470,8 @@ describe('release-bus-status helper', () => {
   it('fails on an unknown mode', async () => {
     const result = await runWithResponse({
       mode: TOKEN,
-      controls: VALID_CONTROLS
+      controls: VALID_CONTROLS,
+      lanes: []
     });
 
     expect(result.code).not.toBe(0);
@@ -334,7 +479,11 @@ describe('release-bus-status helper', () => {
   });
 
   test.each([null, 1, {}])('fails on non-string mode %j', async (mode) => {
-    const result = await runWithResponse({ mode, controls: VALID_CONTROLS });
+    const result = await runWithResponse({
+      mode,
+      controls: VALID_CONTROLS,
+      lanes: []
+    });
 
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('invalid status data');
@@ -345,7 +494,8 @@ describe('release-bus-status helper', () => {
       mode: 'OFF',
       controls: VALID_CONTROLS.filter(
         (control) => control.scope !== 'PRODUCTION'
-      )
+      ),
+      lanes: []
     });
 
     expect(result.code).not.toBe(0);
@@ -355,7 +505,8 @@ describe('release-bus-status helper', () => {
   it('fails when a required control is duplicated', async () => {
     const result = await runWithResponse({
       mode: 'OFF',
-      controls: [...VALID_CONTROLS, VALID_CONTROLS[0]]
+      controls: [...VALID_CONTROLS, VALID_CONTROLS[0]],
+      lanes: []
     });
 
     expect(result.code).not.toBe(0);
@@ -367,7 +518,8 @@ describe('release-bus-status helper', () => {
       mode: 'OFF',
       controls: VALID_CONTROLS.map((control) =>
         control.scope === 'ALL' ? { ...control, paused: 'false' } : control
-      )
+      ),
+      lanes: []
     });
 
     expect(result.code).not.toBe(0);
@@ -377,10 +529,33 @@ describe('release-bus-status helper', () => {
   it('fails closed when authoritative staging state is missing', async () => {
     const result = await runWithResponse({
       mode: 'OFF',
-      controls: VALID_CONTROLS
+      controls: VALID_CONTROLS,
+      lanes: laneStates('OFF')
     });
 
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('invalid staging state');
   });
+
+  test.each([
+    ['row_version', true, 'invalid staging state'],
+    ['clean_main', null, 'invalid staging state'],
+    ['frontend_sha', 123, 'invalid staging identity'],
+    ['current_manifest_id', 123, 'invalid staging identity'],
+    ['last_validated_manifest_id', {}, 'invalid staging identity'],
+    ['last_transition_train_id', false, 'invalid staging identity']
+  ])(
+    'fails closed when staging %s has malformed value %p',
+    async (field, value, message) => {
+      const result = await runWithResponse({
+        mode: 'PRODUCTION',
+        controls: VALID_CONTROLS,
+        lanes: laneStates('PRODUCTION'),
+        staging_state: { ...VALID_STAGING_STATE, [field]: value }
+      });
+
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain(message);
+    }
+  );
 });
