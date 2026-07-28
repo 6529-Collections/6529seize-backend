@@ -1,18 +1,27 @@
 const mockResolveRef = jest.fn();
+const mockResolveRefIfExists = jest.fn();
 const mockQualification = jest.fn();
 const mockEnsureCommitStatus = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
+    resolveRefIfExists: (...args: unknown[]) => mockResolveRefIfExists(...args),
     getPullRequestQualification: (...args: unknown[]) =>
       mockQualification(...args),
     ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args)
   }
 }));
 
-import { ReleaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
-import type { ReleaseBusV2CandidateRecord } from '@/releaseBusV2/release-bus-v2.types';
+import {
+  irreversibleProductionOperationReason,
+  ReleaseBusV2Service
+} from '@/releaseBusV2/release-bus-v2.service';
+import type {
+  ReleaseBusV2CandidateRecord,
+  ReleaseBusV2OperationRecord,
+  ReleaseBusV2TrainRecord
+} from '@/releaseBusV2/release-bus-v2.types';
 
 function candidate(
   status: ReleaseBusV2CandidateRecord['status']
@@ -91,6 +100,8 @@ function repositoryFor(initial: ReleaseBusV2CandidateRecord) {
       ]),
       listDependencies: jest.fn(async () => []),
       listProductionManifestsForCandidate: jest.fn(async () => []),
+      acquireLock: jest.fn(async () => ({ lease_token: 'scheduler-lease' })),
+      releaseLock: jest.fn(async () => true),
       executeNativeQueriesInTransaction: jest.fn(
         async (callback: (connection: unknown) => Promise<unknown>) =>
           callback({})
@@ -333,6 +344,25 @@ function currentStagingRepairRepository(options?: {
   };
 }
 
+function productionIntent(
+  item: ReleaseBusV2CandidateRecord,
+  status:
+    | 'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION'
+    | 'WAITING_FOR_PRODUCTION_REPLAN',
+  selectionId: string,
+  requestedAt: number
+): ReleaseBusV2CandidateRecord {
+  return {
+    ...item,
+    status,
+    production_requested_at: requestedAt,
+    production_requested_by: `operator-${selectionId}`,
+    production_selection_id: selectionId,
+    current_train_id: null,
+    row_version: item.row_version + 1
+  };
+}
+
 function selectionRepository(
   initial: readonly ReleaseBusV2CandidateRecord[],
   dependencies: readonly {
@@ -456,6 +486,9 @@ function selectionRepository(
       Array.from(productionManifests.get(id) ?? [])
     ),
     listEvents: jest.fn(async (): Promise<unknown[]> => []),
+    listCandidateEvents: jest.fn(
+      async (..._args: unknown[]): Promise<unknown[]> => []
+    ),
     createTrain,
     executeNativeQueriesInTransaction: jest.fn(
       async (callback: (connection: unknown) => Promise<unknown>) =>
@@ -480,11 +513,17 @@ function selectionRepository(
           ...item,
           status: fields.status ?? item.status,
           production_requested_at:
-            fields.productionRequestedAt ?? item.production_requested_at,
+            fields.productionRequestedAt === undefined
+              ? item.production_requested_at
+              : fields.productionRequestedAt,
           production_requested_by:
-            fields.productionRequestedBy ?? item.production_requested_by,
+            fields.productionRequestedBy === undefined
+              ? item.production_requested_by
+              : fields.productionRequestedBy,
           production_selection_id:
-            fields.productionSelectionId ?? item.production_selection_id,
+            fields.productionSelectionId === undefined
+              ? item.production_selection_id
+              : fields.productionSelectionId,
           current_train_id:
             fields.currentTrainId === undefined
               ? item.current_train_id
@@ -1004,6 +1043,169 @@ describe('Release Bus v2 explicit grouped staging preflight retry', () => {
     );
   });
 });
+
+function productionOperation(
+  operationType: string,
+  status: ReleaseBusV2OperationRecord['status'],
+  externalId: string | null,
+  environment = 'prod'
+): ReleaseBusV2OperationRecord {
+  return {
+    id: `operation-${operationType}`,
+    idempotency_key: `operation-key-${operationType}`,
+    train_id: 'production-replan-source',
+    operation_type: operationType,
+    repository: 'backend',
+    service: operationType.startsWith('DEPLOY_') ? 'api' : null,
+    environment,
+    expected_sha: 'a'.repeat(40),
+    artifact_digest: null,
+    external_id: externalId,
+    status,
+    attempt: 1,
+    max_attempts: 3,
+    next_retry_at: null,
+    failure_class: null,
+    failure_message: null,
+    request_json: null,
+    result_json: null,
+    started_at: status === 'PENDING' ? null : 1,
+    completed_at: status === 'SUCCEEDED' ? 2 : null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  };
+}
+
+function safeReplanRepository(operation: ReleaseBusV2OperationRecord | null) {
+  let train: ReleaseBusV2TrainRecord = {
+    id: 'production-replan-source',
+    lane: 'PRODUCTION',
+    status: operation?.operation_type.startsWith('DEPLOY_')
+      ? 'PRODUCTION_DEPLOYING'
+      : 'MERGING_PRODUCTION',
+    frontend_base_sha: '1'.repeat(40),
+    backend_base_sha: '2'.repeat(40),
+    frontend_composed_sha: '3'.repeat(40),
+    backend_composed_sha: '4'.repeat(40),
+    frontend_artifact_digest: null,
+    backend_artifact_digest: '5'.repeat(64),
+    manifest_id: null,
+    parent_train_id: null,
+    qualification_identity_sha256: null,
+    qualification_train_id: null,
+    qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+    qualification_evidence_json: null,
+    failure_class: null,
+    failure_message: null,
+    recovery_message: null,
+    phase_started_at: 1,
+    completed_at: null,
+    created_at: 1,
+    updated_at: 1,
+    row_version: 1
+  };
+  let intent: ReleaseBusV2CandidateRecord = {
+    ...productionIntent(
+      validatedCandidate('candidate-replan-source', 'backend', 'a', 301),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-replan-source',
+      1
+    ),
+    status: 'PRODUCTION_BUILDING_OR_QUALIFYING',
+    current_train_id: train.id
+  };
+  const operations = operation ? [operation] : [];
+  const appendEvent = jest.fn(async () => undefined);
+  const repository = {
+    executeNativeQueriesInTransaction: jest.fn(
+      async (callback: (connection: unknown) => Promise<unknown>) =>
+        callback({})
+    ),
+    acquireLock: jest.fn(async () => ({ lease_token: 'scheduler-lease' })),
+    releaseLock: jest.fn(async () => true),
+    findTrain: jest.fn(async () => train),
+    listOperations: jest.fn(async () => operations),
+    updateOperation: jest.fn(async () => true),
+    listTrainCandidates: jest.fn(async () => [
+      {
+        candidate_id: intent.id,
+        disposition: 'INCLUDED',
+        sequence: 1
+      }
+    ]),
+    findCandidateById: jest.fn(async () => intent),
+    updateCandidate: jest.fn(
+      async (
+        _id: string,
+        rowVersion: number,
+        fields: {
+          status: ReleaseBusV2CandidateRecord['status'];
+          currentTrainId?: string | null;
+          holdReason?: string | null;
+        }
+      ) => {
+        if (rowVersion !== intent.row_version) return false;
+        intent = {
+          ...intent,
+          status: fields.status,
+          current_train_id:
+            fields.currentTrainId === undefined
+              ? intent.current_train_id
+              : fields.currentTrainId,
+          hold_reason:
+            fields.holdReason === undefined
+              ? intent.hold_reason
+              : fields.holdReason,
+          row_version: intent.row_version + 1
+        };
+        return true;
+      }
+    ),
+    updateTrain: jest.fn(
+      async (
+        _id: string,
+        rowVersion: number,
+        fields: {
+          status: ReleaseBusV2TrainRecord['status'];
+          failureClass?: ReleaseBusV2TrainRecord['failure_class'];
+          failureMessage?: string | null;
+          recoveryMessage?: string | null;
+          completedAt?: number | null;
+        }
+      ) => {
+        if (rowVersion !== train.row_version) return false;
+        train = {
+          ...train,
+          status: fields.status,
+          failure_class: fields.failureClass ?? train.failure_class,
+          failure_message:
+            fields.failureMessage === undefined
+              ? train.failure_message
+              : fields.failureMessage,
+          recovery_message:
+            fields.recoveryMessage === undefined
+              ? train.recovery_message
+              : fields.recoveryMessage,
+          completed_at:
+            fields.completedAt === undefined
+              ? train.completed_at
+              : fields.completedAt,
+          row_version: train.row_version + 1
+        };
+        return true;
+      }
+    ),
+    appendEvent,
+    listLocks: jest.fn(async () => [])
+  };
+  return {
+    repository,
+    train: () => train,
+    intent: () => intent,
+    appendEvent
+  };
+}
 
 describe('Release Bus v2 explicit production opt-in', () => {
   const previousMode = process.env.RELEASE_BUS_V2_MODE;
@@ -1525,6 +1727,1027 @@ describe('Release Bus v2 explicit production opt-in', () => {
       expect.anything()
     );
     expect(state.candidates.get(b.id)).toEqual(b);
+  });
+
+  it('coalesces a later compatible explicit selection into a new pre-mutation replacement across repositories', async () => {
+    const original = productionIntent(
+      validatedCandidate('candidate-original', 'backend', 'a', 201),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-original',
+      10
+    );
+    const later = productionIntent(
+      validatedCandidate('candidate-later', 'frontend', 'b', 202),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-later',
+      20
+    );
+    const state = selectionRepository([original, later]);
+    state.repository.listCandidateEvents.mockImplementation(
+      async (candidateId: unknown) =>
+        candidateId === original.id
+          ? ([
+              {
+                train_id: 'source-train-newest',
+                event_type: 'CANDIDATE_WAITING_FOR_PRODUCTION_REPLAN'
+              },
+              {
+                train_id: 'source-train-older',
+                event_type: 'CANDIDATE_WAITING_FOR_PRODUCTION_REPLAN'
+              }
+            ] as never)
+          : []
+    );
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) => {
+        if (ref === 'main')
+          return repository === 'frontend' ? '8'.repeat(40) : '9'.repeat(40);
+        return [original, later].find((item) => item.branch_name === ref)
+          ?.head_sha;
+      }
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, ref: string) =>
+        [original, later].find((item) => item.branch_name === ref)?.head_sha ??
+        null
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const claimed = await service.claimLane(
+      'PRODUCTION',
+      '8'.repeat(40),
+      '9'.repeat(40),
+      'scheduler'
+    );
+
+    expect(claimed?.id).toBe('claimed-selection-train');
+    expect(state.createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateIds: expect.arrayContaining([original.id, later.id]),
+        qualificationPolicy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+        qualificationEvidence: expect.arrayContaining([
+          expect.objectContaining({ candidate_id: original.id }),
+          expect.objectContaining({ candidate_id: later.id })
+        ])
+      }),
+      expect.anything()
+    );
+    const replacementSelectionId = state.candidates.get(
+      original.id
+    )?.production_selection_id;
+    expect(replacementSelectionId).toEqual(expect.any(String));
+    expect(replacementSelectionId).not.toBe('selection-original');
+    expect(replacementSelectionId).not.toBe('selection-later');
+    expect(state.candidates.get(later.id)?.production_selection_id).toBe(
+      replacementSelectionId
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_REPLAN_REPLACEMENT_CLAIMED',
+        payload: expect.objectContaining({
+          replacement_production_selection_id: replacementSelectionId,
+          source_production_selection_ids: [
+            'selection-later',
+            'selection-original'
+          ],
+          source_train_ids: ['source-train-newest'],
+          included_intents: expect.arrayContaining([
+            expect.objectContaining({
+              candidate_id: original.id,
+              source_production_selection_id: 'selection-original',
+              source_train_id: 'source-train-newest'
+            }),
+            expect.objectContaining({
+              candidate_id: later.id,
+              source_production_selection_id: 'selection-later',
+              source_train_id: null
+            })
+          ]),
+          omitted_intents: []
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('rolls a transient production-base lookup failure back for a clean next-tick retry', async () => {
+    const intent = productionIntent(
+      validatedCandidate('candidate-infrastructure-retry', 'backend', 'b', 213),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-infrastructure-retry',
+      10
+    );
+    const state = selectionRepository([intent]);
+    const infrastructureError = new Error('GitHub request timed out');
+    infrastructureError.name = 'ReleaseBusGitHubInfrastructureError';
+    mockResolveRef.mockRejectedValue(infrastructureError);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler-timeout'
+      )
+    ).rejects.toBe(infrastructureError);
+    expect(state.createTrain).not.toHaveBeenCalled();
+    expect(state.candidates.get(intent.id)).toEqual(intent);
+
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '8'.repeat(40)
+            : '9'.repeat(40)
+          : intent.head_sha
+    );
+    mockResolveRefIfExists.mockResolvedValue(intent.head_sha);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler-retry'
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({ id: 'claimed-selection-train' })
+    );
+  });
+
+  it('fails the complete replacement closed when either current production base moved', async () => {
+    const original = productionIntent(
+      validatedCandidate('candidate-stale-base-original', 'backend', '6', 209),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-stale-base-original',
+      10
+    );
+    const later = productionIntent(
+      validatedCandidate('candidate-stale-base-later', 'frontend', '7', 210),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-stale-base-later',
+      20
+    );
+    const state = selectionRepository([original, later]);
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '7'.repeat(40)
+            : '9'.repeat(40)
+          : [original, later].find((item) => item.branch_name === ref)?.head_sha
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const claimed = await service.claimLane(
+      'PRODUCTION',
+      '8'.repeat(40),
+      '9'.repeat(40),
+      'scheduler'
+    );
+
+    expect(claimed).toBeNull();
+    expect(state.createTrain).not.toHaveBeenCalled();
+    for (const candidate of [original, later])
+      expect(state.candidates.get(candidate.id)).toEqual(
+        expect.objectContaining({
+          status: 'WAITING_FOR_PRODUCTION_REPLAN',
+          production_selection_id: candidate.production_selection_id,
+          hold_reason: expect.stringContaining(
+            'Production base fence changed for frontend'
+          )
+        })
+      );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_REPLAN_REPLACEMENT_NOT_CLAIMED',
+        payload: expect.objectContaining({
+          source_production_selection_ids: [
+            'selection-stale-base-later',
+            'selection-stale-base-original'
+          ],
+          source_train_ids: [],
+          omitted_intents: expect.arrayContaining([
+            expect.objectContaining({
+              candidate_id: original.id,
+              source_production_selection_id: original.production_selection_id,
+              reason: expect.stringContaining(
+                'Production base fence changed for frontend'
+              )
+            }),
+            expect.objectContaining({
+              candidate_id: later.id,
+              source_production_selection_id: later.production_selection_id,
+              reason: expect.stringContaining(
+                'Production base fence changed for frontend'
+              )
+            })
+          ])
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('fails a truncated replan-intent scan closed and audits pre-filter counts', async () => {
+    const held = productionIntent(
+      validatedCandidate('candidate-scan-cap-held', 'backend', 'c', 216),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-scan-cap-held',
+      1
+    );
+    const ready = Array.from({ length: 500 }, (_, index) =>
+      productionIntent(
+        validatedCandidate(
+          `candidate-scan-cap-ready-${index}`,
+          index % 2 === 0 ? 'backend' : 'frontend',
+          index % 2 === 0 ? 'd' : 'e',
+          10_000 + index
+        ),
+        'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+        `selection-scan-cap-${index}`,
+        2 + index
+      )
+    );
+    const state = selectionRepository([held, ...ready]);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler-scan-cap'
+      )
+    ).resolves.toBeNull();
+
+    expect(state.createTrain).not.toHaveBeenCalled();
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_REPLAN_INTENT_SCAN_FAILED_CLOSED',
+        payload: expect.objectContaining({
+          ready_count: 500,
+          held_count: 1,
+          eligible_ready_count: 500,
+          eligible_held_count: 1
+        })
+      }),
+      expect.anything()
+    );
+    expect(state.candidates.get(held.id)).toEqual(held);
+  });
+
+  it('keeps replacement intent explicit and dependency-closed when a prerequisite becomes ineligible', async () => {
+    const seed = productionIntent(
+      validatedCandidate('candidate-seed', 'backend', 'c', 203),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-seed',
+      10
+    );
+    const prerequisite = productionIntent(
+      validatedCandidate('candidate-prerequisite', 'backend', 'd', 204),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-dependent-set',
+      20
+    );
+    const dependent = productionIntent(
+      validatedCandidate('candidate-dependent', 'frontend', 'e', 205),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-dependent-set',
+      20
+    );
+    const state = selectionRepository(
+      [seed, prerequisite, dependent],
+      [
+        {
+          candidate_id: dependent.id,
+          prerequisite_candidate_id: prerequisite.id,
+          environment: 'PRODUCTION'
+        }
+      ]
+    );
+    state.candidates.set(prerequisite.id, {
+      ...prerequisite,
+      staging_validated_manifest_id: null
+    });
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '8'.repeat(40)
+            : '9'.repeat(40)
+          : [seed, prerequisite, dependent].find(
+              (item) => item.branch_name === ref
+            )?.head_sha
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, ref: string) =>
+        [seed, prerequisite, dependent].find((item) => item.branch_name === ref)
+          ?.head_sha ?? null
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.claimLane(
+      'PRODUCTION',
+      '8'.repeat(40),
+      '9'.repeat(40),
+      'scheduler'
+    );
+
+    expect(state.createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({ candidateIds: [seed.id] }),
+      expect.anything()
+    );
+    expect(state.candidates.get(prerequisite.id)).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_PRODUCTION_REPLAN',
+        production_selection_id: 'selection-dependent-set',
+        hold_reason: expect.stringContaining(
+          'no current staging validation evidence'
+        )
+      })
+    );
+    expect(state.candidates.get(dependent.id)).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_PRODUCTION_REPLAN',
+        production_selection_id: 'selection-dependent-set',
+        hold_reason: expect.stringContaining(
+          `dependency ${prerequisite.id} is neither eligible`
+        )
+      })
+    );
+    expect(state.candidates.get(dependent.id)?.hold_reason).toContain(
+      `prerequisite omission: Candidate ${prerequisite.id} has no current staging validation evidence`
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_REPLAN_REPLACEMENT_CLAIMED',
+        payload: expect.objectContaining({
+          source_production_selection_ids: ['selection-seed'],
+          omitted_intents: expect.arrayContaining([
+            expect.objectContaining({
+              candidate_id: prerequisite.id,
+              source_production_selection_id: 'selection-dependent-set',
+              reason: expect.stringContaining(
+                'no current staging validation evidence'
+              )
+            }),
+            expect.objectContaining({
+              candidate_id: dependent.id,
+              source_production_selection_id: 'selection-dependent-set',
+              reason: expect.stringContaining(
+                `dependency ${prerequisite.id} is neither eligible`
+              )
+            })
+          ])
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('excludes a concurrently revoked or moved intent without losing its audit reason', async () => {
+    const seed = productionIntent(
+      validatedCandidate('candidate-replan-seed', 'backend', 'f', 206),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-seed',
+      10
+    );
+    const revokedSnapshot = productionIntent(
+      validatedCandidate('candidate-revoked', 'frontend', '1', 207),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-revoked',
+      20
+    );
+    const moved = productionIntent(
+      validatedCandidate('candidate-moved', 'backend', '2', 208),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-moved',
+      30
+    );
+    const state = selectionRepository([seed, revokedSnapshot, moved]);
+    const originalListCandidates =
+      state.repository.listCandidates.getMockImplementation()!;
+    let revokedDuringReadyScan = false;
+    state.repository.listCandidates.mockImplementation(
+      async (statuses: readonly string[]) => {
+        const result = await originalListCandidates(statuses);
+        if (
+          !revokedDuringReadyScan &&
+          statuses.includes('READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION')
+        ) {
+          revokedDuringReadyScan = true;
+          state.candidates.set(revokedSnapshot.id, {
+            ...revokedSnapshot,
+            status: 'STAGING_VALIDATED',
+            production_requested_at: null,
+            production_requested_by: null,
+            production_selection_id: null,
+            row_version: revokedSnapshot.row_version + 1
+          });
+        }
+        return result;
+      }
+    );
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '8'.repeat(40)
+            : '9'.repeat(40)
+          : [seed, revokedSnapshot, moved].find(
+              (item) => item.branch_name === ref
+            )?.head_sha
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, ref: string) => {
+        if (ref === moved.branch_name) return '3'.repeat(40);
+        return [seed, revokedSnapshot].find((item) => item.branch_name === ref)
+          ?.head_sha;
+      }
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.claimLane(
+      'PRODUCTION',
+      '8'.repeat(40),
+      '9'.repeat(40),
+      'scheduler'
+    );
+
+    expect(state.createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({ candidateIds: [seed.id] }),
+      expect.anything()
+    );
+    expect(state.candidates.get(revokedSnapshot.id)).toEqual(
+      expect.objectContaining({
+        status: 'STAGING_VALIDATED',
+        production_requested_at: null,
+        production_selection_id: null
+      })
+    );
+    expect(state.candidates.get(moved.id)).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_PRODUCTION_REPLAN',
+        production_selection_id: 'selection-moved',
+        hold_reason: expect.stringContaining('branch head changed')
+      })
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: revokedSnapshot.id,
+        eventType: 'PRODUCTION_REPLAN_INTENT_OMITTED',
+        payload: expect.objectContaining({
+          reason:
+            'Candidate status STAGING_VALIDATED no longer carries claimable production intent'
+        })
+      }),
+      expect.anything()
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: moved.id,
+        eventType: 'PRODUCTION_REPLAN_INTENT_OMITTED',
+        payload: expect.objectContaining({
+          reason: expect.stringContaining('branch head changed')
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('re-locks an omitted intent before preserving it after a concurrent row-version change', async () => {
+    const seed = productionIntent(
+      validatedCandidate('candidate-row-race-seed', 'backend', '4', 211),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-row-race-seed',
+      10
+    );
+    const raced = productionIntent(
+      validatedCandidate('candidate-row-race-omitted', 'frontend', '5', 212),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-row-race-omitted',
+      20
+    );
+    const state = selectionRepository([seed, raced]);
+    state.candidates.set(raced.id, {
+      ...raced,
+      staging_validated_manifest_id: null
+    });
+    const originalFindCandidateById =
+      state.repository.findCandidateById.getMockImplementation()!;
+    let qualificationReadComplete = false;
+    let rowVersionBumped = false;
+    state.repository.findCandidateById.mockImplementation(
+      async (id: string) => {
+        const current = await originalFindCandidateById(id);
+        if (
+          id === raced.id &&
+          qualificationReadComplete &&
+          !rowVersionBumped &&
+          current
+        ) {
+          rowVersionBumped = true;
+          const bumped = {
+            ...current,
+            row_version: current.row_version + 1
+          };
+          state.candidates.set(id, bumped);
+          return bumped;
+        }
+        return current;
+      }
+    );
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '8'.repeat(40)
+            : '9'.repeat(40)
+          : [seed, raced].find((item) => item.branch_name === ref)?.head_sha
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, ref: string) => {
+        const selected = [seed, raced].find((item) => item.branch_name === ref);
+        if (selected?.id === raced.id) qualificationReadComplete = true;
+        return selected?.head_sha ?? null;
+      }
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler'
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({ id: 'claimed-selection-train' })
+    );
+
+    expect(rowVersionBumped).toBe(true);
+    expect(state.candidates.get(raced.id)).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_PRODUCTION_REPLAN',
+        production_selection_id: 'selection-row-race-omitted',
+        hold_reason: expect.stringContaining(
+          'no current staging validation evidence'
+        ),
+        row_version: raced.row_version + 2
+      })
+    );
+  });
+
+  it('audits the current locked ownership reason when an omitted intent changes after qualification', async () => {
+    const seed = productionIntent(
+      validatedCandidate('candidate-owned-race-seed', 'backend', '6', 214),
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'selection-owned-race-seed',
+      10
+    );
+    const raced = productionIntent(
+      validatedCandidate('candidate-owned-race-omitted', 'frontend', '7', 215),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-owned-race-omitted',
+      20
+    );
+    const state = selectionRepository([seed, raced]);
+    state.candidates.set(raced.id, {
+      ...raced,
+      staging_validated_manifest_id: null
+    });
+    const originalFindCandidateById =
+      state.repository.findCandidateById.getMockImplementation()!;
+    let qualificationReadComplete = false;
+    let ownershipInjected = false;
+    state.repository.findCandidateById.mockImplementation(
+      async (id: string) => {
+        const current = await originalFindCandidateById(id);
+        if (
+          id === raced.id &&
+          qualificationReadComplete &&
+          !ownershipInjected &&
+          current
+        ) {
+          ownershipInjected = true;
+          const owned = {
+            ...current,
+            status: 'PRODUCTION_IN_TRAIN' as const,
+            current_train_id: 'concurrent-production-train',
+            row_version: current.row_version + 1
+          };
+          state.candidates.set(id, owned);
+          return owned;
+        }
+        return current;
+      }
+    );
+    mockResolveRef.mockImplementation(
+      async (repository: string, ref: string) =>
+        ref === 'main'
+          ? repository === 'frontend'
+            ? '8'.repeat(40)
+            : '9'.repeat(40)
+          : [seed, raced].find((item) => item.branch_name === ref)?.head_sha
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, ref: string) => {
+        const selected = [seed, raced].find((item) => item.branch_name === ref);
+        if (selected?.id === raced.id) qualificationReadComplete = true;
+        return selected?.head_sha ?? null;
+      }
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.claimLane(
+      'PRODUCTION',
+      '8'.repeat(40),
+      '9'.repeat(40),
+      'scheduler'
+    );
+
+    expect(ownershipInjected).toBe(true);
+    expect(state.candidates.get(raced.id)).toEqual(
+      expect.objectContaining({
+        status: 'PRODUCTION_IN_TRAIN',
+        current_train_id: 'concurrent-production-train'
+      })
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: raced.id,
+        eventType: 'PRODUCTION_REPLAN_INTENT_OMITTED',
+        payload: expect.objectContaining({
+          reason: 'Candidate is owned by train concurrent-production-train',
+          qualification_reason: expect.stringContaining(
+            'no current staging validation evidence'
+          )
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('preserves exact source selection provenance when a train is safely replanned before mutation', async () => {
+    const state = safeReplanRepository(null);
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const result = await service.preserveProductionIntentsForSafeReplan({
+      trainId: 'production-replan-source',
+      reason: 'frontend main moved',
+      actor: 'reconciler'
+    });
+
+    expect(result).toEqual({
+      status: 'REPLANNED',
+      trainId: 'production-replan-source',
+      candidateIds: ['candidate-replan-source'],
+      sourceSelectionIds: ['selection-replan-source']
+    });
+    expect(state.train()).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        completed_at: expect.any(Number)
+      })
+    );
+    expect(state.intent()).toEqual(
+      expect.objectContaining({
+        status: 'WAITING_FOR_PRODUCTION_REPLAN',
+        current_train_id: null,
+        production_selection_id: 'selection-replan-source'
+      })
+    );
+    expect(state.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PRODUCTION_TRAIN_INTENTS_PRESERVED_FOR_SAFE_REPLAN',
+        payload: expect.objectContaining({
+          source_production_selection_ids: ['selection-replan-source'],
+          candidate_ids: ['candidate-replan-source']
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('holds the safe-replan scheduler lease through transaction commit with the same external fence semantics as selection', async () => {
+    const state = safeReplanRepository(null);
+    const order: string[] = [];
+    state.repository.acquireLock.mockImplementation(async () => {
+      order.push('scheduler-acquired');
+      return { lease_token: 'scheduler-lease' } as never;
+    });
+    state.repository.executeNativeQueriesInTransaction.mockImplementation(
+      async (callback: (connection: unknown) => Promise<unknown>) => {
+        order.push('transaction-started');
+        const result = await callback({});
+        order.push('transaction-committed');
+        return result;
+      }
+    );
+    state.repository.releaseLock.mockImplementation(async () => {
+      order.push('scheduler-released');
+      return true;
+    });
+
+    await new ReleaseBusV2Service(
+      state.repository as never
+    ).preserveProductionIntentsForSafeReplan({
+      trainId: 'production-replan-source',
+      reason: 'frontend main moved',
+      actor: 'reconciler'
+    });
+
+    expect(order).toEqual([
+      'scheduler-acquired',
+      'transaction-started',
+      'transaction-committed',
+      'scheduler-released'
+    ]);
+    expect(state.repository.acquireLock).toHaveBeenCalledWith(
+      'scheduler',
+      null,
+      'production-replan:production-replan-source',
+      expect.any(Number),
+      {}
+    );
+    expect(state.repository.releaseLock).toHaveBeenCalledWith(
+      'scheduler',
+      'scheduler-lease',
+      {}
+    );
+  });
+
+  it('defers the service-level replan while dispatched composition may still be running', async () => {
+    const state = safeReplanRepository(
+      productionOperation(
+        'COMPOSE_BACKEND',
+        'RUNNING',
+        'compose-run',
+        'orchestration'
+      )
+    );
+    state.repository.listLocks.mockResolvedValue([
+      {
+        name: 'production-environment',
+        owner_train_id: 'production-replan-source',
+        lease_token: 'production-lease'
+      }
+    ] as never);
+    const beforeTrain = state.train();
+    const beforeIntent = state.intent();
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const result = await service.preserveProductionIntentsForSafeReplan({
+      trainId: 'production-replan-source',
+      reason: 'frontend main moved',
+      actor: 'reconciler'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'NOOP',
+        reason: expect.stringContaining(
+          'operation operation-COMPOSE_BACKEND (COMPOSE_BACKEND)'
+        )
+      })
+    );
+    expect(state.train()).toEqual(beforeTrain);
+    expect(state.intent()).toEqual(beforeIntent);
+    expect(state.repository.updateOperation).not.toHaveBeenCalled();
+    expect(state.appendEvent).not.toHaveBeenCalled();
+    expect(state.repository.releaseLock).not.toHaveBeenCalledWith(
+      'production-environment',
+      'production-lease',
+      expect.anything()
+    );
+  });
+
+  it.each([
+    [
+      productionOperation('ADVANCE_MAIN_BACKEND', 'SUCCEEDED', 'a'.repeat(40)),
+      'ADVANCE_MAIN_BACKEND succeeded'
+    ],
+    [
+      productionOperation(
+        'DEPLOY_BACKEND_PROD_api',
+        'DISPATCHED',
+        'deploy-run'
+      ),
+      'DEPLOY_BACKEND_PROD_api was dispatched'
+    ],
+    [
+      productionOperation(
+        'DEPLOY_BACKEND_PROD_api',
+        'RETRY_WAIT',
+        'deploy-run'
+      ),
+      'DEPLOY_BACKEND_PROD_api was dispatched'
+    ],
+    [
+      productionOperation('E2E_PROD', 'PENDING', null),
+      'production E2E was created'
+    ]
+  ])(
+    'recognizes irreversible production work and never makes it replan-eligible',
+    (operation, expectedReason) => {
+      expect(irreversibleProductionOperationReason(operation)).toBe(
+        expectedReason
+      );
+    }
+  );
+
+  it.each([
+    [
+      productionOperation('ADVANCE_MAIN_BACKEND', 'SUCCEEDED', 'a'.repeat(40)),
+      'ADVANCE_MAIN_BACKEND succeeded',
+      true
+    ],
+    [
+      productionOperation(
+        'DEPLOY_BACKEND_PROD_api',
+        'DISPATCHED',
+        'deploy-run'
+      ),
+      'the train entered PRODUCTION_DEPLOYING',
+      false
+    ],
+    [
+      productionOperation(
+        'DEPLOY_BACKEND_PROD_api',
+        'RETRY_WAIT',
+        'deploy-run'
+      ),
+      'the train entered PRODUCTION_DEPLOYING',
+      false
+    ],
+    [
+      productionOperation('E2E_PROD', 'PENDING', null),
+      'production E2E was created',
+      true
+    ]
+  ])(
+    'freezes the original exact train after irreversible work instead of broadening it',
+    async (operation, expectedReason, releasesTerminalLock) => {
+      const state = safeReplanRepository(operation);
+      state.repository.listLocks.mockResolvedValue([
+        {
+          name: 'production-environment',
+          owner_train_id: 'production-replan-source',
+          lease_token: 'production-lease'
+        }
+      ] as never);
+      const before = state.intent();
+      const service = new ReleaseBusV2Service(state.repository as never);
+
+      const result = await service.preserveProductionIntentsForSafeReplan({
+        trainId: 'production-replan-source',
+        reason: 'frontend main moved',
+        actor: 'reconciler'
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          status: 'FROZEN',
+          reason: expect.stringContaining(expectedReason)
+        })
+      );
+      expect(state.train()).toEqual(
+        expect.objectContaining({
+          status: 'PAUSED',
+          recovery_message: expect.stringContaining(
+            "Resume or recover only this train's immutable membership"
+          )
+        })
+      );
+      expect(state.intent()).toEqual(before);
+      expect(state.appendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'PRODUCTION_REPLAN_REJECTED_AFTER_IRREVERSIBLE_MUTATION',
+          payload: expect.objectContaining({
+            production_environment_lock: releasesTerminalLock
+              ? 'RELEASED_OR_ALREADY_FREE_AFTER_TERMINAL_WORK'
+              : 'RETAINED_WHILE_DISPATCHED_WORK_DRAINS'
+          })
+        }),
+        expect.anything()
+      );
+      if (releasesTerminalLock)
+        expect(state.repository.releaseLock).toHaveBeenCalledWith(
+          'production-environment',
+          'production-lease',
+          expect.anything()
+        );
+      else
+        expect(state.repository.releaseLock).not.toHaveBeenCalledWith(
+          'production-environment',
+          'production-lease',
+          expect.anything()
+        );
+    }
+  );
+
+  it('fails a concurrent explicit selection closed while the scheduler transaction owns the race', async () => {
+    const state = repositoryFor(candidate('STAGING_VALIDATED'));
+    state.repository.acquireLock.mockImplementation(async () => null as never);
+    mockResolveRef.mockResolvedValue('a'.repeat(40));
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction('candidate-id', 'a'.repeat(40), 3, 'owner')
+    ).rejects.toThrow(
+      'Production selection raced another scheduler transaction'
+    );
+    expect(state.current().production_requested_at).toBeNull();
+    expect(state.repository.updateCandidate).not.toHaveBeenCalled();
+  });
+
+  it('holds the scheduler lease until the authoritative selection transaction commits', async () => {
+    const state = repositoryFor(candidate('STAGING_VALIDATED'));
+    const order: string[] = [];
+    state.repository.acquireLock.mockImplementation(async () => {
+      order.push('scheduler-acquired');
+      return { lease_token: 'scheduler-lease' } as never;
+    });
+    state.repository.executeNativeQueriesInTransaction.mockImplementation(
+      async (callback: (connection: unknown) => Promise<unknown>) => {
+        order.push('transaction-started');
+        const result = await callback({});
+        order.push('transaction-committed');
+        return result;
+      }
+    );
+    state.repository.releaseLock.mockImplementation(async () => {
+      order.push('scheduler-released');
+      return true;
+    });
+    mockResolveRef.mockResolvedValue('a'.repeat(40));
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.markReadyForProduction(
+      'candidate-id',
+      'a'.repeat(40),
+      3,
+      'owner'
+    );
+
+    expect(order).toEqual([
+      'scheduler-acquired',
+      'transaction-started',
+      'transaction-committed',
+      'scheduler-released'
+    ]);
+    expect(state.repository.acquireLock).toHaveBeenCalledWith(
+      'scheduler',
+      null,
+      expect.stringMatching(/^production-selection:/),
+      expect.any(Number),
+      {}
+    );
+    expect(state.repository.releaseLock).toHaveBeenCalledWith(
+      'scheduler',
+      'scheduler-lease',
+      {}
+    );
+  });
+
+  it('releases the scheduler lease only after an authoritative selection rollback', async () => {
+    const state = repositoryFor(candidate('STAGING_VALIDATED'));
+    const order: string[] = [];
+    state.repository.acquireLock.mockImplementation(async () => {
+      order.push('scheduler-acquired');
+      return { lease_token: 'scheduler-lease' } as never;
+    });
+    state.repository.executeNativeQueriesInTransaction.mockImplementation(
+      async (callback: (connection: unknown) => Promise<unknown>) => {
+        order.push('transaction-started');
+        try {
+          return await callback({});
+        } catch (error) {
+          order.push('transaction-rolled-back');
+          throw error;
+        }
+      }
+    );
+    state.repository.updateCandidate.mockImplementation(async () => false);
+    state.repository.releaseLock.mockImplementation(async () => {
+      order.push('scheduler-released');
+      return true;
+    });
+    mockResolveRef.mockResolvedValue('a'.repeat(40));
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.markReadyForProduction('candidate-id', 'a'.repeat(40), 3, 'owner')
+    ).rejects.toThrow('Candidate changed concurrently');
+
+    expect(order).toEqual([
+      'scheduler-acquired',
+      'transaction-started',
+      'transaction-rolled-back',
+      'scheduler-released'
+    ]);
   });
 
   it('rejects an omitted production dependency without exact deployed identity', async () => {

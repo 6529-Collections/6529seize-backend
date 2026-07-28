@@ -36,6 +36,7 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
 }));
 
 import { ReleaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
+import { irreversibleProductionOperationReason } from '@/releaseBusV2/release-bus-v2.service';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
@@ -590,6 +591,69 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
   );
   const service = {
     claimLane: jest.fn(async () => null),
+    preserveProductionIntentsForSafeReplan: jest.fn(
+      async ({
+        trainId,
+        reason
+      }: {
+        readonly trainId: string;
+        readonly reason: string;
+      }) => {
+        const currentTrain = repository.trains.get(trainId);
+        if (!currentTrain)
+          return { status: 'NOOP', trainId, reason: 'missing train' } as const;
+        const irreversible = repository.operations.find(
+          (item) =>
+            item.train_id === trainId &&
+            irreversibleProductionOperationReason(item) !== null
+        );
+        if (irreversible) {
+          repository.trains.set(trainId, {
+            ...currentTrain,
+            status: 'PAUSED',
+            recovery_message: 'Original exact membership remains frozen',
+            row_version: currentTrain.row_version + 1
+          });
+          return {
+            status: 'FROZEN',
+            trainId,
+            reason: `irreversible ${irreversible.operation_type}`
+          } as const;
+        }
+        const candidateIds = repository.memberships
+          .filter(
+            (membership) =>
+              membership.train_id === trainId &&
+              membership.disposition === 'INCLUDED'
+          )
+          .map(({ candidate_id }) => candidate_id);
+        for (const candidateId of candidateIds) {
+          const current = repository.candidates.get(candidateId);
+          if (!current) continue;
+          repository.candidates.set(candidateId, {
+            ...current,
+            status: 'WAITING_FOR_PRODUCTION_REPLAN',
+            current_train_id: null,
+            hold_reason: reason,
+            row_version: current.row_version + 1
+          });
+        }
+        repository.trains.set(trainId, {
+          ...currentTrain,
+          status: 'CANCELLED',
+          failure_class: 'INTERACTION',
+          failure_message: reason,
+          completed_at: Date.now(),
+          row_version: currentTrain.row_version + 1
+        });
+        return {
+          status: 'REPLANNED',
+          trainId,
+          candidateIds,
+          sourceSelectionIds: []
+        } as const;
+      }
+    ),
     repairTerminalCumulativeCarryForwardStatuses: jest.fn(async () => []),
     setPaused: jest.fn(
       async (
@@ -2411,8 +2475,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
         ({ status, current_train_id }) => ({ status, current_train_id })
       )
     ).toEqual([
-      { status: 'READY_FOR_PRODUCTION', current_train_id: null },
-      { status: 'READY_FOR_PRODUCTION', current_train_id: null }
+      { status: 'WAITING_FOR_PRODUCTION_REPLAN', current_train_id: null },
+      { status: 'WAITING_FOR_PRODUCTION_REPLAN', current_train_id: null }
     ]);
     expect(mockReconcileWorkflow).not.toHaveBeenCalled();
     expect(state.repository.lock.owner_train_id).toBeNull();
@@ -2459,7 +2523,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
     expect(state.repository.candidates.get('backend-candidate')).toEqual(
       expect.objectContaining({
-        status: 'READY_FOR_PRODUCTION',
+        status: 'WAITING_FOR_PRODUCTION_REPLAN',
         current_train_id: null
       })
     );
@@ -2608,7 +2672,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(
       Array.from(state.repository.candidates.values()).every(
         ({ status, current_train_id }) =>
-          status === 'READY_FOR_PRODUCTION' && current_train_id === null
+          status === 'WAITING_FOR_PRODUCTION_REPLAN' &&
+          current_train_id === null
       )
     ).toBe(true);
     expect(mockReconcileWorkflow).toHaveBeenCalledTimes(4);
