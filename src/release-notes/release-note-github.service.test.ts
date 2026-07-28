@@ -174,7 +174,7 @@ describe('ReleaseNoteGitHubService', () => {
           url: 'https://github.com/6529-Collections/6529seize-backend/pull/1749',
           title: 'Link Main Stage winners to Meme cards',
           body: 'Adds the production mapping.',
-          contributors: ['Alice', 'ReleaseTrainUser', 'BOB', 'CAROL', 'Dave'],
+          contributors: ['Alice', 'bob', 'CAROL', 'Dave'],
           commit_messages: ['Link Main Stage winners to Meme cards'],
           changed_files: [
             {
@@ -413,6 +413,79 @@ describe('ReleaseNoteGitHubService', () => {
     );
   });
 
+  it('does not add train-wide contributors to commit-range PR contexts', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          id: 123,
+          name: 'Deploy api to prod',
+          display_title: 'Deploy api to prod',
+          head_sha: 'current-sha',
+          run_number: 45,
+          workflow_id: 82013288
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Deploy api to prod',
+              display_title: 'Deploy api to prod',
+              head_sha: 'previous-sha',
+              run_number: 44,
+              workflow_id: 82013288
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          commits: [
+            {
+              sha: 'api-commit',
+              commit: { message: 'Improve API validation' }
+            }
+          ],
+          total_commits: 1
+        })
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            number: 101,
+            html_url: 'https://github.com/example/pull/101',
+            title: 'Improve API validation',
+            body: null,
+            merged_at: '2026-07-13T10:00:00Z',
+            user: { login: 'pr-author', type: 'User' },
+            base: { ref: 'main' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response([]));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      run_number: '45',
+      sha: 'current-sha',
+      branch: 'main',
+      release_group_id: 'backend-release',
+      release_group_services: ['api'],
+      contributor_github_logins: ['release-train-contributor']
+    });
+
+    expect(context?.pull_requests).toEqual([
+      expect.objectContaining({
+        number: 101,
+        contributors: ['pr-author']
+      })
+    ]);
+  });
+
   it('keeps every PR when one changed-file list exceeds the enrichment cap', async () => {
     (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
       if (url.endsWith('/actions/runs/123')) {
@@ -614,7 +687,7 @@ describe('ReleaseNoteGitHubService', () => {
       expect.objectContaining({
         number: 1749,
         title: 'Keep release notes available',
-        contributors: ['pr-author', 'release-train-contributor'],
+        contributors: ['pr-author'],
         changed_files: [],
         changed_files_incomplete: true,
         commit_contributors_incomplete: true,
