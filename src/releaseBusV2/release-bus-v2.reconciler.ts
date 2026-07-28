@@ -622,17 +622,13 @@ export function candidateUnavailableForTrainUpdate(
   current: ReleaseBusV2CandidateRecord,
   claimed: ReleaseBusV2CandidateRecord
 ): boolean {
-  if (current.status === 'CANCELLED') return true;
+  if (['CANCELLED', 'SUPERSEDED'].includes(current.status)) return true;
   if (
     claimed.current_train_id &&
     current.current_train_id !== claimed.current_train_id
   )
     return true;
-  return (
-    current.status === 'SUPERSEDED' &&
-    (!claimed.current_train_id ||
-      current.current_train_id !== claimed.current_train_id)
-  );
+  return false;
 }
 
 export function deletedProductionCandidateCanRetainReadiness(
@@ -911,6 +907,11 @@ export class ReleaseBusV2Reconciler {
         [
           'READY_FOR_STAGING',
           'WAITING_FOR_DEPENDENCY',
+          'STAGING_IN_TRAIN',
+          'STAGING_BUILDING',
+          'STAGING_DEPLOYING',
+          'STAGING_DEPLOYED',
+          'STAGING_VALIDATING',
           'READY_FOR_PRODUCTION',
           CANDIDATE_EVIDENCE_READY_STATUS,
           'WAITING_FOR_PRODUCTION_REPLAN',
@@ -926,6 +927,17 @@ export class ReleaseBusV2Reconciler {
           (candidate.current_train_id === null &&
             candidate.production_requested_at !== null &&
             candidate.staging_validated_manifest_id !== null)
+      )
+      .filter(
+        (candidate) =>
+          ![
+            'STAGING_IN_TRAIN',
+            'STAGING_BUILDING',
+            'STAGING_DEPLOYING',
+            'STAGING_DEPLOYED',
+            'STAGING_VALIDATING'
+          ].includes(candidate.status) ||
+          candidate.staging_live_state !== 'LIVE'
       )
       .filter((candidate) => {
         const lane =
@@ -977,7 +989,8 @@ export class ReleaseBusV2Reconciler {
         candidate.repository,
         candidate.branch_name,
         currentHead ?? 'deleted',
-        'release-bus-v2-reconciler'
+        'release-bus-v2-reconciler',
+        candidate.current_train_id ?? undefined
       );
     }
   }
@@ -1004,6 +1017,7 @@ export class ReleaseBusV2Reconciler {
       await this.advanceCumulativeStagingRollback(context);
       return;
     }
+    if (await this.deferSupersededStagingPlan(context)) return;
     if (['CLAIMED', 'COMPOSING', 'PREFLIGHTING'].includes(train.status)) {
       await this.advancePreparation(context);
       return;
@@ -1074,6 +1088,20 @@ export class ReleaseBusV2Reconciler {
         ? train.frontend_base_sha
         : train.backend_base_sha;
     const message = `${moved.repository} main moved from ${base} to ${moved.sha}; production composition must be rebuilt and requalified`;
+    const stillRunningIds = await this.observeAlreadyDispatchedWorkflows(train);
+    if (stillRunningIds.length === 0) throw new MainMovedError(message);
+    const recoveryMessage = `${message}; waiting for already-dispatched orchestration to report terminal before the safe replan; observing operations: ${stillRunningIds.join(',')}`;
+    if (train.recovery_message !== recoveryMessage)
+      await this.transitionTrain(train, {
+        status: train.status,
+        recoveryMessage
+      });
+    return true;
+  }
+
+  private async observeAlreadyDispatchedWorkflows(
+    train: ReleaseBusV2TrainRecord
+  ): Promise<readonly string[]> {
     const operations = await this.repository.listOperations(train.id, {});
     const carriedOperationIds = new Set(
       /; observing operations: ([^;]+)$/
@@ -1087,7 +1115,7 @@ export class ReleaseBusV2Reconciler {
         operationMayStillBeRunning(operation) ||
         carriedOperationIds.has(operation.id)
     );
-    if (observed.length === 0) throw new MainMovedError(message);
+    if (observed.length === 0) return [];
     const results = await Promise.all(
       observed.map(async (operation) => {
         const request = parseStoredJson<{
@@ -1143,17 +1171,203 @@ export class ReleaseBusV2Reconciler {
         };
       })
     );
-    const stillRunningIds = results
+    return results
       .filter(({ stillRunning }) => stillRunning)
       .map(({ id }) => id);
-    if (stillRunningIds.length === 0) throw new MainMovedError(message);
-    const recoveryMessage = `${message}; waiting for already-dispatched orchestration to report terminal before the safe replan; observing operations: ${stillRunningIds.join(',')}`;
-    if (train.recovery_message !== recoveryMessage)
-      await this.transitionTrain(train, {
-        status: train.status,
-        recoveryMessage
+  }
+
+  private async deferSupersededStagingPlan(
+    context: TrainContext
+  ): Promise<boolean> {
+    const train = context.train;
+    if (train.lane !== 'STAGING') return false;
+    const newCandidates = stagingStatusCandidates(context);
+    const currentHeads = await Promise.all(
+      newCandidates
+        .filter(({ status }) => status !== 'SUPERSEDED')
+        .map(async (candidate) => ({
+          candidate,
+          currentHead: await releaseBusGitHubApp.resolveRefIfExists(
+            candidate.repository,
+            candidate.branch_name
+          )
+        }))
+    );
+    const moved = currentHeads.filter(
+      ({ candidate, currentHead }) => currentHead !== candidate.head_sha
+    );
+    for (const { candidate, currentHead } of moved)
+      await this.service.invalidateBranch(
+        candidate.repository,
+        candidate.branch_name,
+        currentHead ?? 'deleted',
+        'release-bus-v2-reconciler',
+        train.id
+      );
+    const currentTrain = await this.repository.findTrain(train.id, {});
+    if (!currentTrain || TERMINAL_TRAINS.has(currentTrain.status)) return true;
+    const refreshed = await this.loadContext(currentTrain);
+    const superseded = stagingStatusCandidates(refreshed).filter(
+      (candidate) =>
+        candidate.status === 'SUPERSEDED' &&
+        candidate.current_train_id === train.id
+    );
+    if (superseded.length === 0) {
+      if (moved.length > 0)
+        throw new Error(
+          `Active staging train ${train.id} did not durably supersede its moved candidate head`
+        );
+      return false;
+    }
+    const supersededSummary = superseded
+      .map(
+        ({ repository, pr_number, head_sha }) =>
+          `${repository}#${pr_number}@${head_sha}`
+      )
+      .join(',');
+    const message = `Active staging train contains superseded candidate head(s): ${supersededSummary}`;
+    const stillRunningIds =
+      await this.observeAlreadyDispatchedWorkflows(currentTrain);
+    if (stillRunningIds.length > 0) {
+      const recoveryMessage = `${message}; no further operations will be dispatched while already-dispatched workflows drain; observing operations: ${stillRunningIds.join(',')}`;
+      if (currentTrain.recovery_message !== recoveryMessage)
+        await this.transitionTrain(currentTrain, {
+          status: currentTrain.status,
+          recoveryMessage
+        });
+      return true;
+    }
+    const operations = await this.repository.listOperations(train.id, {});
+    for (const operation of operations) {
+      if (TERMINAL_OPERATIONS.has(operation.status)) continue;
+      if (
+        !(await this.repository.updateOperation(
+          operation.id,
+          operation.row_version,
+          {
+            status: 'CANCELLED',
+            failureClass: 'INTERACTION',
+            failureMessage: message,
+            completedAt: Date.now()
+          },
+          {}
+        ))
+      )
+        throw new Error('Release Bus v2 operation changed concurrently');
+    }
+    const stagingMutationStarted = operations.some(
+      (operation) =>
+        operation.environment === 'staging' && operation.external_id !== null
+    );
+    if (
+      stagingMutationStarted &&
+      currentTrain.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
+    ) {
+      await this.beginCumulativeStagingRollback(
+        currentTrain,
+        'INTERACTION',
+        message
+      );
+      return true;
+    }
+    await this.replanSupersededStagingCandidates(refreshed, message);
+    const latest = await this.repository.findTrain(train.id, {});
+    if (latest && !TERMINAL_TRAINS.has(latest.status))
+      await this.transitionTrain(latest, {
+        status: 'CANCELLED',
+        failureClass: 'INTERACTION',
+        failureMessage: message,
+        recoveryMessage:
+          'Obsolete exact heads were superseded and unrelated NEW candidates were returned immediately to the next staging train',
+        completedAt: Date.now()
       });
+    await this.releaseTerminalEnvironmentLocks();
     return true;
+  }
+
+  private async replanSupersededStagingCandidates(
+    context: TrainContext,
+    reason: string
+  ): Promise<void> {
+    const mutable = stagingStatusCandidates(context);
+    const supersededIds = new Set(
+      mutable
+        .filter(({ status }) => status === 'SUPERSEDED')
+        .map(({ id }) => id)
+    );
+    if (supersededIds.size === 0) return;
+    const blockedIds = candidateExclusionClosure(
+      Array.from(supersededIds),
+      context.dependencies
+    );
+    const returned: ReleaseBusV2CandidateRecord[] = [];
+    const blocked: ReleaseBusV2CandidateRecord[] = [];
+    for (const candidate of mutable) {
+      const current = await this.repository.findCandidateById(candidate.id, {});
+      if (!current || current.status === 'CANCELLED') continue;
+      const superseded = supersededIds.has(candidate.id);
+      const dependencyBlocked = !superseded && blockedIds.has(candidate.id);
+      const status: ReleaseBusV2CandidateStatus = superseded
+        ? 'SUPERSEDED'
+        : dependencyBlocked
+          ? 'WAITING_FOR_DEPENDENCY'
+          : 'READY_FOR_STAGING';
+      const holdReason = superseded
+        ? reason
+        : dependencyBlocked
+          ? 'A required exact staging candidate was superseded'
+          : null;
+      if (
+        !(await this.repository.updateCandidate(
+          current.id,
+          current.row_version,
+          {
+            status,
+            currentTrainId: null,
+            holdReason
+          },
+          {}
+        ))
+      )
+        throw new Error('Candidate changed concurrently');
+      await this.repository.updateTrainCandidateDisposition(
+        context.train.id,
+        current.id,
+        superseded
+          ? 'SUPERSEDED_HEAD'
+          : dependencyBlocked
+            ? 'DEPENDENCY_EXCLUDED'
+            : 'RETURNED_TO_QUEUE',
+        {}
+      );
+      if (dependencyBlocked) blocked.push(current);
+      else if (!superseded) returned.push(current);
+    }
+    await Promise.all([
+      this.publishCandidateStatuses(
+        blocked,
+        'pending',
+        'Waiting because an exact staging dependency was superseded'
+      ),
+      this.publishCandidateStatuses(
+        returned,
+        'pending',
+        'Independent candidate returned to the next exact v2 staging train'
+      )
+    ]);
+    await this.repository.appendEvent(
+      {
+        trainId: context.train.id,
+        eventType: 'ACTIVE_STAGING_HEADS_SUPERSEDED_AND_REPLANNED',
+        actor: 'release-bus-v2',
+        payload: {
+          superseded_candidate_ids: Array.from(supersededIds),
+          dependency_blocked_candidate_ids: blocked.map(({ id }) => id),
+          returned_candidate_ids: returned.map(({ id }) => id)
+        }
+      },
+      {}
+    );
   }
 
   private async advancePreparation(context: TrainContext): Promise<void> {
@@ -1230,10 +1444,35 @@ export class ReleaseBusV2Reconciler {
       TERMINAL_TRAINS.has(currentAfterPreparation.status)
     )
       return;
-    const failed = frontend.failedOperation ?? backend.failedOperation;
-    if (failed) {
+    const failedOperations = [
+      frontend.failedOperation,
+      backend.failedOperation
+    ].filter(
+      (operation): operation is ReleaseBusV2OperationRecord =>
+        operation !== null
+    );
+    if (failedOperations.length > 0) {
+      const nonCandidateFailure = failedOperations.find(
+        ({ failure_class }) => failure_class !== 'CANDIDATE'
+      );
+      if (nonCandidateFailure) {
+        await this.failTrain(
+          train,
+          nonCandidateFailure.failure_class ?? 'CONTROL_PLANE',
+          nonCandidateFailure.failure_message ??
+            `${nonCandidateFailure.operation_type} failed`
+        );
+        return;
+      }
+      if (train.lane === 'STAGING') {
+        await this.failStagingRepositoryCandidateGroups(
+          context,
+          failedOperations
+        );
+        return;
+      }
+      const failed = failedOperations[0];
       if (
-        failed.failure_class === 'CANDIDATE' &&
         failed.repository &&
         relevantCandidates(context, failed.repository).length > 1
       ) {
@@ -1566,6 +1805,10 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext,
     repository: ReleaseBusV2Repository
   ): Promise<void> {
+    if (context.train.lane === 'STAGING')
+      throw new Error(
+        'Ordinary staging never runs deterministic candidate subset isolation'
+      );
     const candidates = relevantCandidates(context, repository);
     const diagnosis = await this.diagnoseKnownFailedGroup(
       context,
@@ -1604,12 +1847,9 @@ export class ReleaseBusV2Reconciler {
       context.dependencies
     );
     const retryStatus: ReleaseBusV2CandidateStatus =
-      context.train.lane === 'STAGING'
-        ? 'READY_FOR_STAGING'
-        : context.train.qualification_policy ===
-            CANDIDATE_STAGING_EVIDENCE_POLICY
-          ? CANDIDATE_EVIDENCE_READY_STATUS
-          : 'READY_FOR_PRODUCTION';
+      context.train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+        ? CANDIDATE_EVIDENCE_READY_STATUS
+        : 'READY_FOR_PRODUCTION';
     const failedCandidates: ReleaseBusV2CandidateRecord[] = [];
     const blockedCandidates: ReleaseBusV2CandidateRecord[] = [];
     const returnedCandidates: ReleaseBusV2CandidateRecord[] = [];
@@ -1692,6 +1932,147 @@ export class ReleaseBusV2Reconciler {
         'Failed candidates are quarantined; dependency-blocked candidates are held and independent candidates were returned to the next train',
       completedAt: Date.now()
     });
+  }
+
+  private async failStagingRepositoryCandidateGroups(
+    context: TrainContext,
+    failedOperations: readonly ReleaseBusV2OperationRecord[]
+  ): Promise<void> {
+    const failedRepositories = new Set(
+      failedOperations
+        .map(({ repository }) => repository)
+        .filter(
+          (repository): repository is ReleaseBusV2Repository =>
+            repository === 'frontend' || repository === 'backend'
+        )
+    );
+    if (failedRepositories.size === 0)
+      throw new Error(
+        'Staging candidate preflight failure has no repository identity'
+      );
+    const stillRunningIds = await this.observeAlreadyDispatchedWorkflows(
+      context.train
+    );
+    if (stillRunningIds.length > 0) {
+      const recoveryMessage = `Combined ${Array.from(failedRepositories).join('+')} preflight failed; subset isolation is disabled and unrelated candidates will be replanned after already-dispatched workflows drain; observing operations: ${stillRunningIds.join(',')}`;
+      if (context.train.recovery_message !== recoveryMessage)
+        await this.transitionTrain(context.train, {
+          status: 'PREFLIGHTING',
+          recoveryMessage
+        });
+      return;
+    }
+    const mutable = stagingStatusCandidates(context);
+    const failedIds = new Set(
+      mutable
+        .filter(({ repository }) => failedRepositories.has(repository))
+        .map(({ id }) => id)
+    );
+    const blockedIds = candidateExclusionClosure(
+      Array.from(failedIds),
+      context.dependencies
+    );
+    const failed: ReleaseBusV2CandidateRecord[] = [];
+    const blocked: ReleaseBusV2CandidateRecord[] = [];
+    const returned: ReleaseBusV2CandidateRecord[] = [];
+    for (const candidate of mutable) {
+      const current = await this.repository.findCandidateById(candidate.id, {});
+      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+        continue;
+      const repositoryFailed = failedIds.has(candidate.id);
+      const dependencyBlocked =
+        !repositoryFailed && blockedIds.has(candidate.id);
+      const status: ReleaseBusV2CandidateStatus = repositoryFailed
+        ? 'FAILED'
+        : dependencyBlocked
+          ? 'WAITING_FOR_DEPENDENCY'
+          : 'READY_FOR_STAGING';
+      const holdReason = repositoryFailed
+        ? `Combined ${candidate.repository} preflight failed for this train's NEW candidate group`
+        : dependencyBlocked
+          ? 'A required repository candidate group failed combined preflight'
+          : null;
+      if (
+        !(await this.repository.updateCandidate(
+          current.id,
+          current.row_version,
+          { status, currentTrainId: null, holdReason },
+          {}
+        ))
+      )
+        throw new Error('Candidate changed concurrently');
+      if (repositoryFailed)
+        await this.repository.appendEvent(
+          {
+            trainId: context.train.id,
+            candidateId: current.id,
+            eventType: 'STAGING_REPOSITORY_PREFLIGHT_GROUP_FAILED',
+            actor: 'release-bus-v2',
+            payload: {
+              repository: current.repository,
+              pr_number: current.pr_number,
+              head_sha: current.head_sha,
+              failed_candidate_row_version: current.row_version + 1,
+              failed_group_candidate_ids: mutable
+                .filter(
+                  (item) =>
+                    item.repository === current.repository &&
+                    failedIds.has(item.id)
+                )
+                .map(({ id }) => id),
+              failed_operation_ids: failedOperations
+                .filter(
+                  (operation) =>
+                    operation.repository === current.repository &&
+                    operation.failure_class === 'CANDIDATE'
+                )
+                .map(({ id }) => id)
+            }
+          },
+          {}
+        );
+      await this.repository.updateTrainCandidateDisposition(
+        context.train.id,
+        current.id,
+        repositoryFailed
+          ? 'REPOSITORY_PREFLIGHT_FAILED'
+          : dependencyBlocked
+            ? 'DEPENDENCY_EXCLUDED'
+            : 'RETURNED_TO_QUEUE',
+        {}
+      );
+      if (repositoryFailed) failed.push(current);
+      else if (dependencyBlocked) blocked.push(current);
+      else returned.push(current);
+    }
+    await Promise.all([
+      this.publishCandidateStatuses(
+        failed,
+        'failure',
+        'Combined repository preflight failed for this NEW candidate group'
+      ),
+      this.publishCandidateStatuses(
+        blocked,
+        'pending',
+        'Waiting because a required repository candidate group failed'
+      ),
+      this.publishCandidateStatuses(
+        returned,
+        'pending',
+        'Independent repository candidate returned to the next staging train'
+      )
+    ]);
+    const current = await this.repository.findTrain(context.train.id, {});
+    if (current && !TERMINAL_TRAINS.has(current.status))
+      await this.transitionTrain(current, {
+        status: 'FAILED',
+        failureClass: 'CANDIDATE',
+        failureMessage: `Combined preflight failed for NEW ${Array.from(failedRepositories).join('+')} candidate group(s)`,
+        recoveryMessage:
+          'Failing repository NEW groups are terminal; dependency-blocked candidates are held and independent repository NEW candidates are immediately eligible for a new train',
+        completedAt: Date.now()
+      });
+    await this.releaseTerminalEnvironmentLocks();
   }
 
   private async diagnoseKnownFailedGroup(
@@ -2521,6 +2902,9 @@ export class ReleaseBusV2Reconciler {
     );
     const baseline = await this.cumulativeRollbackBaseline(context);
     const statusCandidates = stagingStatusCandidates(context);
+    const supersededHeadRollback = statusCandidates.some(
+      ({ status }) => status === 'SUPERSEDED'
+    );
     const terminalCandidateStatus: ReleaseBusV2CandidateStatus = [
       'INFRASTRUCTURE',
       'CONTROL_PLANE'
@@ -2565,12 +2949,19 @@ export class ReleaseBusV2Reconciler {
         }
       );
     if (commitResult === 'SUPERSEDED') {
-      await this.updateCandidateStatuses(
-        statusCandidates,
-        terminalCandidateStatus,
-        null,
-        false
-      );
+      if (supersededHeadRollback)
+        await this.replanSupersededStagingCandidates(
+          context,
+          train.failure_message ??
+            'Active staging candidate head was superseded'
+        );
+      else
+        await this.updateCandidateStatuses(
+          statusCandidates,
+          terminalCandidateStatus,
+          null,
+          false
+        );
       const current = await this.repository.findTrain(train.id, {});
       if (current && !TERMINAL_TRAINS.has(current.status))
         await this.transitionTrain(current, {
@@ -2596,12 +2987,18 @@ export class ReleaseBusV2Reconciler {
       await this.releaseTerminalEnvironmentLocks();
       return;
     }
-    await this.updateCandidateStatuses(
-      statusCandidates,
-      terminalCandidateStatus,
-      null,
-      false
-    );
+    if (supersededHeadRollback)
+      await this.replanSupersededStagingCandidates(
+        context,
+        train.failure_message ?? 'Active staging candidate head was superseded'
+      );
+    else
+      await this.updateCandidateStatuses(
+        statusCandidates,
+        terminalCandidateStatus,
+        null,
+        false
+      );
     const current = await this.repository.findTrain(train.id, {});
     if (!current) throw new Error('Rollback train disappeared');
     if (TERMINAL_TRAINS.has(current.status)) {
@@ -2612,8 +3009,9 @@ export class ReleaseBusV2Reconciler {
       status: 'FAILED',
       failureClass: train.failure_class,
       failureMessage: train.failure_message,
-      recoveryMessage:
-        'The exact last validated admitted manifest was restored and passed rollback E2E; new candidate intent/evidence was retained appropriately',
+      recoveryMessage: supersededHeadRollback
+        ? 'The exact last validated manifest was restored; obsolete heads were superseded and unrelated NEW candidates were returned to the queue'
+        : 'The exact last validated admitted manifest was restored and passed rollback E2E; new candidate intent/evidence was retained appropriately',
       completedAt: Date.now()
     });
     await this.repository.appendEvent(
@@ -4475,7 +4873,16 @@ export class ReleaseBusV2Reconciler {
     const admittedCandidateIds = relevantCandidates(context).map(
       ({ id }) => id
     );
+    const newCandidateIds = transition.new_candidate_ids ?? [];
     const replacedCandidateIds = transition.replaced_candidate_ids ?? [];
+    const newCandidateIdSet = new Set(newCandidateIds);
+    if (
+      newCandidateIdSet.size !== newCandidateIds.length ||
+      replacedCandidateIds.some((id) => newCandidateIdSet.has(id))
+    )
+      throw new Error(
+        'Cumulative staging NEW and REPLACED candidate sets overlap'
+      );
     const lifecycleRemovedCandidateIds = [
       ...(transition.removed_candidate_ids ?? []),
       ...(transition.absorbed_candidate_ids ?? [])
@@ -4497,11 +4904,11 @@ export class ReleaseBusV2Reconciler {
             backendStagingRefSha: handshake.backend_staging_sha!,
             admittedCandidateIds,
             removedCandidateIds,
-            newCandidateIds: transition.new_candidate_ids ?? []
+            newCandidateIds
           },
           { connection }
         );
-        for (const candidateId of transition.new_candidate_ids ?? []) {
+        for (const candidateId of newCandidateIds) {
           const candidate = await this.repository.findCandidateById(
             candidateId,
             { connection },

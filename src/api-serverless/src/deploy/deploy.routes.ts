@@ -28,6 +28,7 @@ import {
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
+  ReleaseBusV2CurrentStagingRepairBodySchema,
   ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
@@ -51,6 +52,8 @@ import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
   releaseBusV2Service,
+  ReleaseBusV2CurrentStagingRepairError,
+  type ReleaseBusV2CurrentStagingRepairIdentity,
   ReleaseBusV2ProductionSelectionError,
   ReleaseBusV2StagingTransitionConflictError
 } from '@/releaseBusV2/release-bus-v2.service';
@@ -127,6 +130,24 @@ function isProductionSelectionError(
   );
 }
 
+function isCurrentStagingRepairError(
+  error: unknown
+): error is ReleaseBusV2CurrentStagingRepairError {
+  if (error instanceof ReleaseBusV2CurrentStagingRepairError) return true;
+  if (
+    !(error instanceof Error) ||
+    error.name !== 'ReleaseBusV2CurrentStagingRepairError'
+  )
+    return false;
+  return [
+    'BAD_REQUEST',
+    'CONFLICT',
+    'DISABLED',
+    'NOT_FOUND',
+    'UNPROCESSABLE'
+  ].includes(String((error as { code?: unknown }).code));
+}
+
 async function requireOperator(token: string): Promise<string> {
   const viewer = await gitHubDeployService.getViewer(token);
   await requireOperatorLogin(viewer.login);
@@ -143,11 +164,6 @@ async function requireOperatorLogin(login: string): Promise<void> {
       403,
       'Release-bus operator permission is required'
     );
-}
-
-async function requireAuthenticatedViewer(req: Request): Promise<string> {
-  const token = getGitHubTokenOrThrow(req);
-  return (await gitHubDeployService.getViewer(token)).login;
 }
 
 async function requireV2CandidateWriteAccess(
@@ -293,6 +309,7 @@ deployRoutes.get('/ui/refs', async (req, res) => {
 deployRoutes.post('/ui/dispatch', async (req, res) => {
   const token = getGitHubTokenOrThrow(req);
   const body = getValidatedByJoiOrThrow(req.body, DeployDispatchBodySchema);
+  await gitHubDeployService.assertRepositoryWriteAccess(token, body.target);
   if (['STAGING', 'PRODUCTION'].includes(getReleaseBusV2Mode())) {
     throw new CustomApiCompliantException(
       409,
@@ -398,7 +415,6 @@ deployRoutes.post('/release-bus-v2/candidates', async (req, res) => {
 });
 
 deployRoutes.get('/release-bus-v2/candidates', async (req, res) => {
-  await requireAuthenticatedViewer(req);
   const query = getValidatedByJoiOrThrow<{
     status?: ReleaseBusV2CandidateStatus;
     limit: number;
@@ -655,8 +671,7 @@ deployRoutes.post(
   }
 );
 
-deployRoutes.get('/release-bus-v2/trains', async (req, res) => {
-  await requireAuthenticatedViewer(req);
+deployRoutes.get('/release-bus-v2/trains', async (_req, res) => {
   setNoStoreHeaders(res);
   return res.json({
     trains: await releaseBusV2Repository.listTrains(100, {}),
@@ -665,7 +680,6 @@ deployRoutes.get('/release-bus-v2/trains', async (req, res) => {
 });
 
 deployRoutes.get('/release-bus-v2/trains/:id', async (req, res) => {
-  await requireAuthenticatedViewer(req);
   const train = await releaseBusV2Repository.findTrain(req.params.id, {});
   if (!train)
     throw new CustomApiCompliantException(
@@ -741,16 +755,14 @@ deployRoutes.get('/release-bus-v2/trains/:id', async (req, res) => {
   });
 });
 
-deployRoutes.get('/release-bus-v2/manifests', async (req, res) => {
-  await requireAuthenticatedViewer(req);
+deployRoutes.get('/release-bus-v2/manifests', async (_req, res) => {
   setNoStoreHeaders(res);
   return res.json({
     manifests: await releaseBusV2Repository.listManifests(100, {})
   });
 });
 
-deployRoutes.get('/release-bus-v2/controls', async (req, res) => {
-  await requireAuthenticatedViewer(req);
+deployRoutes.get('/release-bus-v2/controls', async (_req, res) => {
   setNoStoreHeaders(res);
   return res.json({
     controls: await releaseBusV2Repository.listControls({}),
@@ -878,6 +890,53 @@ deployRoutes.post(
         error instanceof Error
           ? error.message
           : 'Stalled production qualification recovery failed'
+      );
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/repair-current-staging-candidates',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    const body = getValidatedByJoiOrThrow<{
+      dry_run: boolean;
+      candidates?: readonly ReleaseBusV2CurrentStagingRepairIdentity[];
+    }>(req.body, ReleaseBusV2CurrentStagingRepairBodySchema);
+    try {
+      const result =
+        await releaseBusV2Service.repairCurrentStagingManifestCandidates(
+          body.candidates ?? null,
+          actor,
+          body.dry_run
+        );
+      setNoStoreHeaders(res);
+      return res.json({
+        ...result,
+        mode: getReleaseBusV2Mode(),
+        repaired_by: actor
+      });
+    } catch (error) {
+      if (isCurrentStagingRepairError(error)) {
+        const status =
+          error.code === 'BAD_REQUEST'
+            ? 400
+            : error.code === 'DISABLED'
+              ? 403
+              : error.code === 'NOT_FOUND'
+                ? 404
+                : error.code === 'UNPROCESSABLE'
+                  ? 422
+                  : 409;
+        throw new CustomApiCompliantException(status, error.message);
+      }
+      logger.error('Unexpected current staging manifest repair failure', {
+        error
+      });
+      throw new CustomApiCompliantException(
+        500,
+        'Current staging manifest candidate repair failed'
       );
     }
   }

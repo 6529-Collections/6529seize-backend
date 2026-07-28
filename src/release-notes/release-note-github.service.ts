@@ -145,7 +145,6 @@ function isHumanGithubUser(user: GitHubUser | null | undefined): boolean {
 
 function collectPullRequestContributors(
   pullRequest: GitHubPullRequest,
-  canonicalContributors: readonly string[],
   commits: readonly GitHubCommit[]
 ): string[] {
   const contributors: string[] = [];
@@ -169,7 +168,6 @@ function collectPullRequestContributors(
   if (isHumanGithubUser(pullRequest.user)) {
     addLogin(pullRequest.user?.login);
   }
-  canonicalContributors.forEach(addLogin);
   for (const commit of commits) {
     if (isHumanGithubUser(commit.author)) {
       addLogin(commit.author?.login);
@@ -388,8 +386,7 @@ export class ReleaseNoteGitHubService {
       repository,
       normalizeBranch(request.branch),
       commits,
-      request.release_group_services,
-      request.contributor_github_logins ?? []
+      request.release_group_services
     );
 
     return {
@@ -445,7 +442,6 @@ export class ReleaseNoteGitHubService {
           body: pullRequest.body,
           contributors: collectPullRequestContributors(
             pullRequest,
-            request.contributor_github_logins ?? [],
             commitResult.items
           ),
           commit_messages: [pullRequest.title],
@@ -559,8 +555,7 @@ export class ReleaseNoteGitHubService {
     repository: string,
     branch: string,
     commits: GitHubCommit[],
-    deployedServices: string[],
-    canonicalContributors: readonly string[]
+    deployedServices: string[]
   ): Promise<ReleasePullRequestContext[]> {
     const pullRequests = await this.collectPullRequests(
       repository,
@@ -570,8 +565,7 @@ export class ReleaseNoteGitHubService {
     const contexts = await this.buildPullRequestContexts(
       repository,
       Array.from(pullRequests.values()),
-      deployedServices,
-      canonicalContributors
+      deployedServices
     );
     return contexts.sort((a, b) => a.number - b.number);
   }
@@ -612,8 +606,7 @@ export class ReleaseNoteGitHubService {
   private async buildPullRequestContexts(
     repository: string,
     pullRequests: AggregatedPullRequest[],
-    deployedServices: string[],
-    canonicalContributors: readonly string[]
+    deployedServices: string[]
   ): Promise<ReleasePullRequestContext[]> {
     const contexts: ReleasePullRequestContext[] = [];
     for (
@@ -628,8 +621,7 @@ export class ReleaseNoteGitHubService {
             this.buildPullRequestContext(
               repository,
               pullRequest,
-              deployedServices,
-              canonicalContributors
+              deployedServices
             )
           )
       );
@@ -641,8 +633,7 @@ export class ReleaseNoteGitHubService {
   private async buildPullRequestContext(
     repository: string,
     aggregate: AggregatedPullRequest,
-    deployedServices: string[],
-    canonicalContributors: readonly string[]
+    deployedServices: string[]
   ): Promise<ReleasePullRequestContext> {
     const { pullRequest, commitMessages } = aggregate;
     const [fileResult, commitResult] = await Promise.all([
@@ -656,7 +647,6 @@ export class ReleaseNoteGitHubService {
       body: pullRequest.body,
       contributors: collectPullRequestContributors(
         pullRequest,
-        canonicalContributors,
         commitResult.items
       ),
       commit_messages: Array.from(commitMessages),

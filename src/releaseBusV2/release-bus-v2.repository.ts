@@ -200,8 +200,10 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     const superseded = await this.db.execute<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
-         and current_train_id is null and staging_live_state = 'NOT_LIVE'
-         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
+         and current_train_id is null
+         and staging_live_state = 'NOT_LIVE'
+         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')
+       for update`,
       { repository, prNumber, headSha },
       dbOptions(ctx)
     );
@@ -210,7 +212,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
        set status = 'SUPERSEDED', superseded_at = :now, updated_at = :now,
            row_version = row_version + 1
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
-         and current_train_id is null and staging_live_state = 'NOT_LIVE'
+         and current_train_id is null
+         and staging_live_state = 'NOT_LIVE'
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
       { repository, prNumber, headSha, now },
       dbOptions(ctx)
@@ -222,15 +225,24 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     repository: ReleaseBusV2RepositoryName,
     branchName: string,
     currentHeadSha: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    expectedCurrentTrainId?: string
   ): Promise<ReleaseBusV2CandidateRecord[]> {
+    const ownershipPredicate = expectedCurrentTrainId
+      ? '(current_train_id is null or current_train_id = :expectedCurrentTrainId)'
+      : 'current_train_id is null';
+    const params = expectedCurrentTrainId
+      ? { repository, branchName, currentHeadSha, expectedCurrentTrainId }
+      : { repository, branchName, currentHeadSha };
     const superseded = await this.db.execute<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
-         and current_train_id is null and staging_live_state = 'NOT_LIVE'
-         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
-      { repository, branchName, currentHeadSha },
+         and ${ownershipPredicate}
+         and staging_live_state = 'NOT_LIVE'
+         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')
+       for update`,
+      params,
       dbOptions(ctx)
     );
     if (superseded.length === 0) return [];
@@ -241,9 +253,10 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            row_version = row_version + 1
        where repository = :repository and branch_name = :branchName
          and head_sha <> :currentHeadSha
-         and current_train_id is null and staging_live_state = 'NOT_LIVE'
+         and ${ownershipPredicate}
+         and staging_live_state = 'NOT_LIVE'
          and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
-      { repository, branchName, currentHeadSha, now },
+      { ...params, now },
       dbOptions(ctx)
     );
     return superseded;
@@ -455,6 +468,21 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async listActiveTrains(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2TrainRecord[]> {
+    return this.db.execute<ReleaseBusV2TrainRecord>(
+      `select * from ${RELEASE_BUS_V2_TRAINS_TABLE}
+       where status not in
+         ('STAGING_VALIDATED', 'STAGING_ROLLBACK_FAILED',
+          'PRODUCTION_DEPLOYED', 'FAILED', 'CANCELLED')
+       order by created_at asc, id asc${forUpdate ? ' for update' : ''}`,
+      {},
+      dbOptions(ctx)
+    );
+  }
+
   public async createTrain(
     input: {
       readonly lane: ReleaseBusV2Lane;
@@ -591,6 +619,15 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     const now = Date.now();
     const admitted = Array.from(new Set(input.admittedCandidateIds));
+    const newCandidates = new Set(input.newCandidateIds);
+    if (
+      newCandidates.size !== input.newCandidateIds.length ||
+      input.newCandidateIds.some((id) => !admitted.includes(id)) ||
+      input.removedCandidateIds.some((id) => newCandidates.has(id))
+    )
+      throw new Error(
+        'Validated staging NEW and removed candidate sets must be disjoint'
+      );
     const removed = Array.from(new Set(input.removedCandidateIds)).filter(
       (id) => !admitted.includes(id)
     );

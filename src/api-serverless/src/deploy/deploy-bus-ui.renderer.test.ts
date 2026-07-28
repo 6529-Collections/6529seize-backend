@@ -12,6 +12,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('id="production-candidates"');
     expect(html).toContain('successful staging E2E evidence');
     expect(html).toContain('STAGING_DEPLOYED is distinct');
+    expect(html).toContain('retry the unchanged SHA only after it is terminal');
+    expect(html).toContain('never push a dummy commit');
     expect(html).toContain('Mark selected for production');
     expect(html).toContain('Operator controls');
     expect(html).toContain('Pause all');
@@ -20,6 +22,10 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('id="active-trains"');
     expect(html).toContain('Exact manifests');
     expect(html).toContain('Runtime and environment ownership');
+    expect(html).toContain('dashboard below is public');
+    expect(html).toContain('Connect as operator (optional)');
+    expect(html).toContain('id="dashboard" class="stack"');
+    expect(html).toContain('id="dashboard-status"');
   });
 
   it('resolves a branch head before submitting and escapes server values', () => {
@@ -27,6 +33,10 @@ describe('deploy-bus-ui.renderer', () => {
 
     expect(app).toContain("request('/deploy/ui/branch-head?");
     expect(app).toContain("request('/deploy/release-bus-v2/candidates'");
+    expect(app).toContain('data-retry-same-head');
+    expect(app).toContain('Explicit same-head retry accepted');
+    expect(app).toContain('deploy_plan:parseJson(item.deploy_plan_json)');
+    expect(app).toContain('candidate_id:dependency.prerequisite_candidate_id');
     expect(app).toContain('replace(/[&<>"\']/g');
     expect(app).toContain('expected_head_sha:');
     expect(app).toContain('pr_number:');
@@ -37,6 +47,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('item.reason');
     expect(app).toContain('function renderRuntime');
     expect(app).toContain('function renderTrainDetail');
+    expect(app).toContain('Exact candidate set');
+    expect(app).toContain('membership.disposition');
     expect(app).toContain('function renderOperation');
     expect(app).toContain('function renderManifests');
     expect(app).toContain("request('/deploy/release-bus-v2/trains/'");
@@ -50,5 +62,14 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('current-live manifest');
     expect(app).toContain('Authoritative shared staging');
     expect(app).toContain('CURRENT STAGING PRESENCE UNKNOWN');
+    expect(app).toContain(
+      "if(state.token)result.Authorization='Bearer '+state.token"
+    );
+    expect(app).toContain('var actions=state.operator?');
+    expect(app).toContain('setOperator(false);refresh().catch(function(error)');
+    expect(app).toContain('Public read-only access remains available');
+    expect(app).not.toContain("byId('authenticated')");
+    expect(app).toContain("if(register)register.disabled=data.mode==='OFF'");
+    expect(app).toContain("if(reconcile)reconcile.disabled=data.mode==='OFF'");
   });
 });
