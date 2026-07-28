@@ -2152,6 +2152,39 @@ describe('Release Bus v2 explicit production opt-in', () => {
     );
   });
 
+  it('defers the service-level replan while dispatched composition may still be running', async () => {
+    const state = safeReplanRepository(
+      productionOperation(
+        'COMPOSE_BACKEND',
+        'RUNNING',
+        'compose-run',
+        'orchestration'
+      )
+    );
+    const beforeTrain = state.train();
+    const beforeIntent = state.intent();
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const result = await service.preserveProductionIntentsForSafeReplan({
+      trainId: 'production-replan-source',
+      reason: 'frontend main moved',
+      actor: 'reconciler'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'NOOP',
+        reason: expect.stringContaining(
+          'operation operation-COMPOSE_BACKEND (COMPOSE_BACKEND)'
+        )
+      })
+    );
+    expect(state.train()).toEqual(beforeTrain);
+    expect(state.intent()).toEqual(beforeIntent);
+    expect(state.repository.updateOperation).not.toHaveBeenCalled();
+    expect(state.appendEvent).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       productionOperation('ADVANCE_MAIN_BACKEND', 'SUCCEEDED', 'a'.repeat(40)),
@@ -2245,6 +2278,55 @@ describe('Release Bus v2 explicit production opt-in', () => {
     );
     expect(state.current().production_requested_at).toBeNull();
     expect(state.repository.updateCandidate).not.toHaveBeenCalled();
+  });
+
+  it('holds the scheduler lease until the authoritative selection transaction commits', async () => {
+    const state = repositoryFor(candidate('STAGING_VALIDATED'));
+    const order: string[] = [];
+    state.repository.acquireLock.mockImplementation(async () => {
+      order.push('scheduler-acquired');
+      return { lease_token: 'scheduler-lease' } as never;
+    });
+    state.repository.executeNativeQueriesInTransaction.mockImplementation(
+      async (callback: (connection: unknown) => Promise<unknown>) => {
+        order.push('transaction-started');
+        const result = await callback({});
+        order.push('transaction-committed');
+        return result;
+      }
+    );
+    state.repository.releaseLock.mockImplementation(async () => {
+      order.push('scheduler-released');
+      return true;
+    });
+    mockResolveRef.mockResolvedValue('a'.repeat(40));
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.markReadyForProduction(
+      'candidate-id',
+      'a'.repeat(40),
+      3,
+      'owner'
+    );
+
+    expect(order).toEqual([
+      'scheduler-acquired',
+      'transaction-started',
+      'transaction-committed',
+      'scheduler-released'
+    ]);
+    expect(state.repository.acquireLock).toHaveBeenCalledWith(
+      'scheduler',
+      null,
+      expect.stringMatching(/^production-selection:/),
+      expect.any(Number),
+      {}
+    );
+    expect(state.repository.releaseLock).toHaveBeenCalledWith(
+      'scheduler',
+      'scheduler-lease',
+      {}
+    );
   });
 
   it('rejects an omitted production dependency without exact deployed identity', async () => {

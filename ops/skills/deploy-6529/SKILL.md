@@ -50,6 +50,10 @@ through the documented fallback.
    infer candidates from staging. After any successful main advance, production
    deploy dispatch, or production E2E, the original exact set is frozen and may
    only resume or recover unchanged.
+   If `PRODUCTION_REPLAN_INTENT_SCAN_FAILED_CLOSED` reaches its bounded cap,
+   stop claiming; after ownership drains, revoke/cancel only owner-authorized
+   stale intents or deploy a separately reviewed pagination/cap change. Never
+   edit the ledger or silently drop intent.
    During an API-before-reconciler rolling upgrade, the selection parks at
    `READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION`; never rewrite it to the legacy
    ready status to make an older worker claim it.

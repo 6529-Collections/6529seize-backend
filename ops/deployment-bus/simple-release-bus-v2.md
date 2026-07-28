@@ -151,6 +151,13 @@ exact reason. Revoked, superseded, moved, stale-evidence, dependency-incomplete,
 or concurrently owned candidates are never inferred from staging and are not
 silently included.
 
+If `PRODUCTION_REPLAN_INTENT_SCAN_FAILED_CLOSED` reports the 500-row scan cap,
+no replacement may claim. Wait for production ownership to drain, inspect every
+explicit ready/held intent, and use the authenticated revoke/cancel actions
+only for owner-authorized stale intents until the bounded scan is complete.
+Otherwise deploy a separately reviewed cap/pagination change. Never edit the
+ledger, discard intent, or split a dependency set merely to unblock the queue.
+
 The replacement boundary closes as soon as any `ADVANCE_MAIN_*` succeeds, a
 production deploy is dispatched, or production E2E exists. After that boundary,
 the original exact set remains frozen and only that train may resume or recover;
