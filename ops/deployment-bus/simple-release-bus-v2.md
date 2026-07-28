@@ -255,13 +255,18 @@ action repairs candidate ledger corruption only by deriving
 `STAGING_VALIDATED`/`LIVE` from the singleton's exact current
 `STAGING_VALIDATED` manifest, successful manifest-bound E2E, immutable
 repository/PR/head membership, and terminal train. It acquires the scheduler
-and staging fences, rejects active trains or ambiguous evidence, is idempotent,
-and emits an audit event for every derived change. Send `{"dry_run":true}`
+and both environment fences, rejects active trains or ambiguous evidence, is
+idempotent, and emits an audit event for every derived change. Send
+`{"dry_run":true}`
 without a candidate list to discover every repairable mismatch in the exact
 current manifest without mutating candidates, locks, or audit rows. Execution
 must send the explicit repository/PR/head tuples copied from that report, so a
 superseded older head that is absent from the current manifest is never
-restored.
+restored. Dry-run discovery is allowed while v2 is `OFF`, but execution is
+rejected until v2 is enabled. The execution response reports attempted,
+succeeded, and failed GitHub status publications with every failed exact
+candidate identity; a nonzero failure count requires operator follow-up even
+though the durable ledger repair already committed.
 
 ## Operator rollout and rollback
 

@@ -83,6 +83,23 @@ export class ReleaseBusV2ProductionSelectionError extends Error {
   }
 }
 
+export type ReleaseBusV2CurrentStagingRepairErrorCode =
+  | 'BAD_REQUEST'
+  | 'CONFLICT'
+  | 'DISABLED'
+  | 'NOT_FOUND'
+  | 'UNPROCESSABLE';
+
+export class ReleaseBusV2CurrentStagingRepairError extends Error {
+  public constructor(
+    public readonly code: ReleaseBusV2CurrentStagingRepairErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2CurrentStagingRepairError';
+  }
+}
+
 type ReleaseBusV2ManifestCandidateIdentity = {
   readonly candidate_id?: string;
   readonly repository?: string;
@@ -147,6 +164,17 @@ export type ReleaseBusV2CurrentStagingRepairResult = {
     readonly would_change: boolean;
     readonly changed: boolean;
   }[];
+  readonly github_status_updates: {
+    readonly attempted: number;
+    readonly succeeded: number;
+    readonly failed: number;
+    readonly failed_candidates: readonly {
+      readonly candidate_id: string;
+      readonly repository: ReleaseBusV2Repository;
+      readonly pr_number: number;
+      readonly head_sha: string;
+    }[];
+  };
 };
 
 export function normalizeDeployPlan(
@@ -1444,11 +1472,13 @@ export class ReleaseBusV2Service {
     dryRun = false
   ): Promise<ReleaseBusV2CurrentStagingRepairResult> {
     if ((!dryRun && !identities) || (identities?.length ?? 0) > 100)
-      throw new Error(
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'BAD_REQUEST',
         'Current staging repair execution requires between 1 and 100 exact candidates'
       );
     if (identities && identities.length === 0)
-      throw new Error(
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'BAD_REQUEST',
         'Current staging repair candidate selection may not be empty'
       );
     const identityKeys = (identities ?? []).map(
@@ -1465,8 +1495,14 @@ export class ReleaseBusV2Service {
           !/^[a-f0-9]{40}$/.test(head_sha)
       )
     )
-      throw new Error(
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'BAD_REQUEST',
         'Current staging repair identities must be unique exact repository/PR/head tuples'
+      );
+    if (!dryRun && getReleaseBusV2Mode() === 'OFF')
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'DISABLED',
+        'Current staging repair execution is disabled while Release Bus v2 is OFF'
       );
     const leaseOwner = `current-staging-repair:${actor}:${randomUUID()}`;
     const result = await this.repository.executeNativeQueriesInTransaction(
@@ -1474,6 +1510,7 @@ export class ReleaseBusV2Service {
         const ctx: RequestContext = { connection };
         let schedulerLeaseToken: string | null = null;
         let stagingLeaseToken: string | null = null;
+        let productionLeaseToken: string | null = null;
         try {
           if (dryRun) {
             const activeLocks = (await this.repository.listLocks(ctx, true))
@@ -1489,7 +1526,8 @@ export class ReleaseBusV2Service {
                   lease_token && Number(expires_at) >= Date.now()
               );
             if (activeLocks.length > 0)
-              throw new Error(
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
                 `Current staging repair dry-run requires idle release locks: ${activeLocks.map(({ name }) => name).join(',')}`
               );
           } else {
@@ -1501,7 +1539,8 @@ export class ReleaseBusV2Service {
               ctx
             );
             if (!scheduler?.lease_token)
-              throw new Error(
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
                 'Current staging repair requires an idle scheduler lock'
               );
             schedulerLeaseToken = scheduler.lease_token;
@@ -1513,24 +1552,29 @@ export class ReleaseBusV2Service {
               ctx
             );
             if (!stagingLease?.lease_token)
-              throw new Error(
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
                 'Current staging repair requires a free staging environment lock'
               );
             stagingLeaseToken = stagingLease.lease_token;
-            const productionLock = (
-              await this.repository.listLocks(ctx, true)
-            ).find(({ name }) => name === 'production-environment');
-            if (
-              productionLock?.lease_token &&
-              Number(productionLock.expires_at) >= Date.now()
-            )
-              throw new Error(
+            const productionLease = await this.repository.acquireLock(
+              'production-environment',
+              null,
+              leaseOwner,
+              RELEASE_BUS_V2_LOCK_TTL_MS,
+              ctx
+            );
+            if (!productionLease?.lease_token)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
                 'Current staging repair requires a free production environment lock'
               );
+            productionLeaseToken = productionLease.lease_token;
           }
           const active = await this.repository.listActiveTrains(ctx, true);
           if (active.length > 0)
-            throw new Error(
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'CONFLICT',
               'Current staging repair requires every release train to be terminal'
             );
           const state = await this.repository.getStagingState(ctx, true);
@@ -1540,7 +1584,8 @@ export class ReleaseBusV2Service {
             state.current_manifest_id !== state.last_validated_manifest_id ||
             !state.last_transition_train_id
           )
-            throw new Error(
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
               'Authoritative current staging state is not one unambiguous validated live manifest'
             );
           const manifest = await this.repository.findManifest(
@@ -1566,7 +1611,8 @@ export class ReleaseBusV2Service {
             train.status !== 'STAGING_VALIDATED' ||
             train.manifest_id !== manifest.id
           )
-            throw new Error(
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
               'Authoritative current staging manifest has incomplete validation evidence'
             );
           const operations = await this.repository.listOperations(
@@ -1580,7 +1626,8 @@ export class ReleaseBusV2Service {
               operation.external_id === manifest.e2e_run_id
           );
           if (matchingE2e.length !== 1)
-            throw new Error(
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
               'Authoritative current staging manifest has ambiguous E2E evidence'
             );
           const body = parseStoredJson<{
@@ -1601,7 +1648,8 @@ export class ReleaseBusV2Service {
                     candidate_id.length === 0))
             )
           )
-            throw new Error(
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
               'Authoritative current staging manifest candidate identities are malformed'
             );
           const manifestIdentityKeys = manifestCandidates.map(
@@ -1616,7 +1664,8 @@ export class ReleaseBusV2Service {
               manifestIdentityKeys.length ||
             new Set(manifestCandidateIds).size !== manifestCandidateIds.length
           )
-            throw new Error(
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
               'Authoritative current staging manifest candidate identities are ambiguous'
             );
           const selectedIdentities =
@@ -1649,6 +1698,11 @@ export class ReleaseBusV2Service {
               identity.head_sha,
               ctx
             );
+            if (!found)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'NOT_FOUND',
+                `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} was not found`
+              );
             const candidate = found
               ? await this.repository.findCandidateById(found.id, ctx, true)
               : null;
@@ -1672,7 +1726,8 @@ export class ReleaseBusV2Service {
                 : manifest.backend_artifact_digest)
             );
             if (!hasExactEvidence || !candidate)
-              throw new Error(
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'UNPROCESSABLE',
                 `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} is not one exact member of the authoritative current staging manifest`
               );
             const hasProductionLifecycle =
@@ -1695,7 +1750,8 @@ export class ReleaseBusV2Service {
             )
               continue;
             if (hasProductionLifecycle)
-              throw new Error(
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'UNPROCESSABLE',
                 `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} has production lifecycle state that current staging repair may not rewrite`
               );
             const repairableStatus = [
@@ -1716,7 +1772,8 @@ export class ReleaseBusV2Service {
                 candidate.staging_live_manifest_id !== manifest.id) ||
               (!wouldChange && identities === null)
             )
-              throw new Error(
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'UNPROCESSABLE',
                 `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} is not one exact repairable member of the authoritative current staging manifest`
               );
             const changed = !dryRun && wouldChange;
@@ -1741,7 +1798,10 @@ export class ReleaseBusV2Service {
                   ctx
                 ))
               )
-                throw new Error('Candidate changed concurrently');
+                throw new ReleaseBusV2CurrentStagingRepairError(
+                  'CONFLICT',
+                  'Candidate changed concurrently'
+                );
               await this.repository.appendEvent(
                 {
                   trainId: train.id,
@@ -1808,6 +1868,12 @@ export class ReleaseBusV2Service {
             candidates: repaired
           };
         } finally {
+          if (productionLeaseToken)
+            await this.repository.releaseLock(
+              'production-environment',
+              productionLeaseToken,
+              ctx
+            );
           if (stagingLeaseToken)
             await this.repository.releaseLock(
               'staging-environment',
@@ -1823,19 +1889,38 @@ export class ReleaseBusV2Service {
         }
       }
     );
-    if (!dryRun)
-      await Promise.allSettled(
-        result.candidates.map((candidate) =>
-          releaseBusGitHubApp.ensureCommitStatus(
-            candidate.repository,
-            candidate.head_sha,
-            'success',
-            'Exact current staging manifest validated; production is explicit',
-            'Release Bus v2'
+    const statusResults = dryRun
+      ? []
+      : await Promise.allSettled(
+          result.candidates.map((candidate) =>
+            releaseBusGitHubApp.ensureCommitStatus(
+              candidate.repository,
+              candidate.head_sha,
+              'success',
+              'Exact current staging manifest validated; production is explicit',
+              'Release Bus v2'
+            )
           )
+        );
+    const failedCandidates = result.candidates.filter(
+      (_candidate, index) => statusResults[index]?.status === 'rejected'
+    );
+    return {
+      ...result,
+      github_status_updates: {
+        attempted: statusResults.length,
+        succeeded: statusResults.length - failedCandidates.length,
+        failed: failedCandidates.length,
+        failed_candidates: failedCandidates.map(
+          ({ candidate_id, repository, pr_number, head_sha }) => ({
+            candidate_id,
+            repository,
+            pr_number,
+            head_sha
+          })
         )
-      );
-    return result;
+      }
+    };
   }
 
   public async revokeProductionReadiness(
@@ -1966,7 +2051,8 @@ export class ReleaseBusV2Service {
     repository: ReleaseBusV2Repository,
     branchName: string,
     currentHeadSha: string,
-    actor: string
+    actor: string,
+    expectedCurrentTrainId?: string
   ): Promise<void> {
     const superseded = await this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -1975,7 +2061,8 @@ export class ReleaseBusV2Service {
           repository,
           branchName,
           currentHeadSha,
-          ctx
+          ctx,
+          expectedCurrentTrainId
         );
         for (const candidate of changed)
           await this.repository.appendEvent(

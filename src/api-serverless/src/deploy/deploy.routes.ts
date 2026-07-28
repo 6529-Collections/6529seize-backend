@@ -52,6 +52,7 @@ import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
   releaseBusV2Service,
+  ReleaseBusV2CurrentStagingRepairError,
   type ReleaseBusV2CurrentStagingRepairIdentity,
   ReleaseBusV2ProductionSelectionError,
   ReleaseBusV2StagingTransitionConflictError
@@ -127,6 +128,24 @@ function isProductionSelectionError(
   return ['CONFLICT', 'DISABLED', 'NOT_FOUND'].includes(
     String((error as { code?: unknown }).code)
   );
+}
+
+function isCurrentStagingRepairError(
+  error: unknown
+): error is ReleaseBusV2CurrentStagingRepairError {
+  if (error instanceof ReleaseBusV2CurrentStagingRepairError) return true;
+  if (
+    !(error instanceof Error) ||
+    error.name !== 'ReleaseBusV2CurrentStagingRepairError'
+  )
+    return false;
+  return [
+    'BAD_REQUEST',
+    'CONFLICT',
+    'DISABLED',
+    'NOT_FOUND',
+    'UNPROCESSABLE'
+  ].includes(String((error as { code?: unknown }).code));
 }
 
 async function requireOperator(token: string): Promise<string> {
@@ -899,11 +918,25 @@ deployRoutes.post(
         repaired_by: actor
       });
     } catch (error) {
+      if (isCurrentStagingRepairError(error)) {
+        const status =
+          error.code === 'BAD_REQUEST'
+            ? 400
+            : error.code === 'DISABLED'
+              ? 403
+              : error.code === 'NOT_FOUND'
+                ? 404
+                : error.code === 'UNPROCESSABLE'
+                  ? 422
+                  : 409;
+        throw new CustomApiCompliantException(status, error.message);
+      }
+      logger.error('Unexpected current staging manifest repair failure', {
+        error
+      });
       throw new CustomApiCompliantException(
-        409,
-        error instanceof Error
-          ? error.message
-          : 'Current staging manifest candidate repair failed'
+        500,
+        'Current staging manifest candidate repair failed'
       );
     }
   }

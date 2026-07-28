@@ -787,6 +787,20 @@ describe('Release Bus v2 offline acceptance harness', () => {
     const backendOperationIndex = state.repository.operations.findIndex(
       ({ operation_type }) => operation_type === 'PREPARE_ARTIFACT_BACKEND'
     );
+    const frontendOperationIndex = state.repository.operations.findIndex(
+      ({ operation_type }) => operation_type === 'PREPARE_ARTIFACT_FRONTEND'
+    );
+    const pending = {
+      ...state.repository.operations[frontendOperationIndex]!,
+      external_id: null,
+      status: 'PENDING' as const,
+      started_at: null,
+      completed_at: null
+    };
+    state.repository.operations[frontendOperationIndex] = pending;
+    const operationIdsBeforeDrain = state.repository.operations.map(
+      ({ id }) => id
+    );
     const running = {
       ...state.repository.operations[backendOperationIndex]!,
       status: 'RUNNING' as const,
@@ -836,6 +850,14 @@ describe('Release Bus v2 offline acceptance harness', () => {
         String(input.operationType).startsWith('ISOLATE_')
       )
     ).toBe(false);
+    expect(state.repository.operations[frontendOperationIndex]).toMatchObject({
+      id: pending.id,
+      external_id: null,
+      status: 'PENDING'
+    });
+    expect(state.repository.operations.map(({ id }) => id)).toEqual(
+      operationIdsBeforeDrain
+    );
 
     state.repository.operations[backendOperationIndex] = {
       ...running,
@@ -862,6 +884,11 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.trains.get(active.id)).toMatchObject({
       status: 'CANCELLED',
       completed_at: expect.any(Number)
+    });
+    expect(state.repository.operations[frontendOperationIndex]).toMatchObject({
+      id: pending.id,
+      external_id: null,
+      status: 'CANCELLED'
     });
     expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
   });
@@ -1269,7 +1296,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'frontend',
       ready.branch_name,
       movedHead,
-      'release-bus-v2-reconciler'
+      'release-bus-v2-reconciler',
+      undefined
     );
   });
 

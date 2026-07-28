@@ -622,17 +622,13 @@ export function candidateUnavailableForTrainUpdate(
   current: ReleaseBusV2CandidateRecord,
   claimed: ReleaseBusV2CandidateRecord
 ): boolean {
-  if (current.status === 'CANCELLED') return true;
+  if (['CANCELLED', 'SUPERSEDED'].includes(current.status)) return true;
   if (
     claimed.current_train_id &&
     current.current_train_id !== claimed.current_train_id
   )
     return true;
-  return (
-    current.status === 'SUPERSEDED' &&
-    (!claimed.current_train_id ||
-      current.current_train_id !== claimed.current_train_id)
-  );
+  return false;
 }
 
 export function deletedProductionCandidateCanRetainReadiness(
@@ -993,7 +989,8 @@ export class ReleaseBusV2Reconciler {
         candidate.repository,
         candidate.branch_name,
         currentHead ?? 'deleted',
-        'release-bus-v2-reconciler'
+        'release-bus-v2-reconciler',
+        candidate.current_train_id ?? undefined
       );
     }
   }
@@ -1204,7 +1201,8 @@ export class ReleaseBusV2Reconciler {
         candidate.repository,
         candidate.branch_name,
         currentHead ?? 'deleted',
-        'release-bus-v2-reconciler'
+        'release-bus-v2-reconciler',
+        train.id
       );
     const currentTrain = await this.repository.findTrain(train.id, {});
     if (!currentTrain || TERMINAL_TRAINS.has(currentTrain.status)) return true;

@@ -1,12 +1,13 @@
 const mockResolveRef = jest.fn();
 const mockQualification = jest.fn();
+const mockEnsureCommitStatus = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     getPullRequestQualification: (...args: unknown[]) =>
       mockQualification(...args),
-    ensureCommitStatus: jest.fn()
+    ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args)
   }
 }));
 
@@ -245,7 +246,7 @@ function currentStagingRepairRepository(options?: {
     acquireLock: jest.fn(async (name: string) => ({
       lease_token: `${name}-lease`
     })),
-    releaseLock: jest.fn(async () => true),
+    releaseLock: jest.fn(async (_name: string, _leaseToken: string) => true),
     listActiveTrains: jest.fn(async () =>
       options?.activeTrain ? [train] : []
     ),
@@ -1822,11 +1823,25 @@ describe('Release Bus v2 explicit production opt-in', () => {
 });
 
 describe('Release Bus v2 authoritative current staging repair', () => {
+  const previousMode = process.env.RELEASE_BUS_V2_MODE;
   const identity = {
     repository: 'frontend' as const,
     pr_number: 42,
     head_sha: 'a'.repeat(40)
   };
+
+  beforeEach(() => {
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    mockEnsureCommitStatus.mockReset();
+    mockEnsureCommitStatus.mockResolvedValue(undefined);
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+    else process.env.RELEASE_BUS_V2_MODE = previousMode;
+    mockEnsureCommitStatus.mockReset();
+    mockEnsureCommitStatus.mockResolvedValue(undefined);
+  });
 
   it('derives exact current-manifest status once and is idempotent', async () => {
     const state = currentStagingRepairRepository();
@@ -1862,6 +1877,12 @@ describe('Release Bus v2 authoritative current staging repair', () => {
     });
     expect(second.candidates[0]?.changed).toBe(false);
     expect(state.updateCandidate).toHaveBeenCalledTimes(1);
+    expect(first.github_status_updates).toEqual({
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+      failed_candidates: []
+    });
     expect(
       state.appendEvent.mock.calls.filter(
         ([event]) =>
@@ -2013,6 +2034,76 @@ describe('Release Bus v2 authoritative current staging repair', () => {
     ).rejects.toThrow('requires every release train to be terminal');
 
     expect(state.updateCandidate).not.toHaveBeenCalled();
+  });
+
+  it('acquires and releases all execution fences in a fixed order', async () => {
+    const state = currentStagingRepairRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.repairCurrentStagingManifestCandidates(
+      [identity],
+      'operator'
+    );
+
+    expect(
+      state.repository.acquireLock.mock.calls.map(([name]) => name)
+    ).toEqual(['scheduler', 'staging-environment', 'production-environment']);
+    expect(
+      state.repository.releaseLock.mock.calls.map(([name]) => name)
+    ).toEqual(['production-environment', 'staging-environment', 'scheduler']);
+  });
+
+  it('allows OFF-mode discovery but rejects OFF-mode execution', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const state = currentStagingRepairRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.repairCurrentStagingManifestCandidates(null, 'operator', true)
+    ).resolves.toMatchObject({
+      dry_run: true,
+      github_status_updates: {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0
+      }
+    });
+    await expect(
+      service.repairCurrentStagingManifestCandidates([identity], 'operator')
+    ).rejects.toMatchObject({
+      name: 'ReleaseBusV2CurrentStagingRepairError',
+      code: 'DISABLED'
+    });
+    expect(state.updateCandidate).not.toHaveBeenCalled();
+  });
+
+  it('reports exact GitHub status publication failures after durable repair', async () => {
+    const state = currentStagingRepairRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+    mockEnsureCommitStatus.mockRejectedValue(new Error('GitHub unavailable'));
+
+    const result = await service.repairCurrentStagingManifestCandidates(
+      [identity],
+      'operator'
+    );
+
+    expect(state.current()).toMatchObject({
+      status: 'STAGING_VALIDATED',
+      staging_live_state: 'LIVE'
+    });
+    expect(result.github_status_updates).toEqual({
+      attempted: 1,
+      succeeded: 0,
+      failed: 1,
+      failed_candidates: [
+        {
+          candidate_id: 'candidate-id',
+          repository: 'frontend',
+          pr_number: 42,
+          head_sha: 'a'.repeat(40)
+        }
+      ]
+    });
   });
 });
 

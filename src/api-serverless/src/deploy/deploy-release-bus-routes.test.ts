@@ -40,6 +40,21 @@ class MockReleaseBusV2ProductionSelectionError extends Error {
   }
 }
 
+class MockReleaseBusV2CurrentStagingRepairError extends Error {
+  public constructor(
+    public readonly code:
+      | 'BAD_REQUEST'
+      | 'CONFLICT'
+      | 'DISABLED'
+      | 'NOT_FOUND'
+      | 'UNPROCESSABLE',
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2CurrentStagingRepairError';
+  }
+}
+
 jest.mock('@aws-sdk/client-lambda', () => ({
   InvokeCommand: class InvokeCommand {
     public constructor(public readonly input: unknown) {}
@@ -87,6 +102,8 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
 }));
 
 jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
+  ReleaseBusV2CurrentStagingRepairError:
+    MockReleaseBusV2CurrentStagingRepairError,
   ReleaseBusV2ProductionSelectionError:
     MockReleaseBusV2ProductionSelectionError,
   ReleaseBusV2StagingTransitionConflictError: class extends Error {},
@@ -1068,6 +1085,56 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     expect(response.status).toBe(400);
     expect(mockRepairCurrentStagingManifestCandidates).not.toHaveBeenCalled();
   });
+
+  it('rejects repair execution without an explicit exact candidate list', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/repair-current-staging-candidates',
+      {}
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockRepairCurrentStagingManifestCandidates).not.toHaveBeenCalled();
+  });
+
+  it('requires operator authorization before current staging repair', async () => {
+    mockIsOrganizationOperator.mockResolvedValue(false);
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/repair-current-staging-candidates',
+      { dry_run: true }
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockRepairCurrentStagingManifestCandidates).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['BAD_REQUEST', 400],
+    ['CONFLICT', 409],
+    ['DISABLED', 403],
+    ['NOT_FOUND', 404],
+    ['UNPROCESSABLE', 422]
+  ] as const)(
+    'maps current staging repair %s failures to %i',
+    async (code, status) => {
+      mockRepairCurrentStagingManifestCandidates.mockRejectedValue(
+        new MockReleaseBusV2CurrentStagingRepairError(
+          code,
+          `repair ${code.toLowerCase()}`
+        )
+      );
+
+      const response = await post(
+        '/deploy/release-bus-v2/maintenance/repair-current-staging-candidates',
+        { dry_run: true }
+      );
+
+      expect(response.status).toBe(status);
+      expect(response.body).toMatchObject({
+        error: `repair ${code.toLowerCase()}`
+      });
+    }
+  );
 
   it('keeps ordinary candidate registration disabled while global mode is OFF', async () => {
     process.env.RELEASE_BUS_V2_MODE = 'OFF';

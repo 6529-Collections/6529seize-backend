@@ -8038,7 +8038,120 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required:
+                  - manifest_id
+                  - train_id
+                  - dry_run
+                  - discovered
+                  - candidates
+                  - github_status_updates
+                  - mode
+                  - repaired_by
+                properties:
+                  manifest_id:
+                    type: string
+                    format: uuid
+                  train_id:
+                    type: string
+                    format: uuid
+                  dry_run:
+                    type: boolean
+                  discovered:
+                    type: boolean
+                  mode:
+                    type: string
+                    enum:
+                      - "OFF"
+                      - STAGING
+                      - PRODUCTION
+                  repaired_by:
+                    type: string
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - candidate_id
+                        - repository
+                        - pr_number
+                        - head_sha
+                        - previous_status
+                        - previous_staging_live_state
+                        - derived_status
+                        - derived_staging_live_state
+                        - would_change
+                        - changed
+                      properties:
+                        candidate_id:
+                          type: string
+                          format: uuid
+                        repository:
+                          type: string
+                          enum:
+                            - frontend
+                            - backend
+                        pr_number:
+                          type: integer
+                        head_sha:
+                          type: string
+                          pattern: ^[a-f0-9]{40}$
+                        previous_status:
+                          type: string
+                        previous_staging_live_state:
+                          type: string
+                          nullable: true
+                        derived_status:
+                          type: string
+                          enum:
+                            - STAGING_VALIDATED
+                        derived_staging_live_state:
+                          type: string
+                          enum:
+                            - LIVE
+                        would_change:
+                          type: boolean
+                        changed:
+                          type: boolean
+                  github_status_updates:
+                    type: object
+                    required:
+                      - attempted
+                      - succeeded
+                      - failed
+                      - failed_candidates
+                    properties:
+                      attempted:
+                        type: integer
+                        minimum: 0
+                      succeeded:
+                        type: integer
+                        minimum: 0
+                      failed:
+                        type: integer
+                        minimum: 0
+                      failed_candidates:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - candidate_id
+                            - repository
+                            - pr_number
+                            - head_sha
+                          properties:
+                            candidate_id:
+                              type: string
+                              format: uuid
+                            repository:
+                              type: string
+                              enum:
+                                - frontend
+                                - backend
+                            pr_number:
+                              type: integer
+                            head_sha:
+                              type: string
+                              pattern: ^[a-f0-9]{40}$
   /subscriptions/consolidation/coverage/{consolidation_key}:
     get:
       tags:

@@ -188,6 +188,10 @@ export const ReleaseBusV2CurrentStagingRepairBodySchema = Joi.object({
         left.pr_number === right.pr_number &&
         left.head_sha === right.head_sha
     )
+    .when('dry_run', {
+      is: false,
+      then: Joi.required()
+    })
 }).required();
 
 export const ReleaseBusV2CandidateCancelBodySchema = Joi.object({

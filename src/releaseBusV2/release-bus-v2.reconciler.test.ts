@@ -468,7 +468,7 @@ describe('Release Bus v2 deterministic orchestration', () => {
     expect(e2eWorkflowInputs('prod', fields)).not.toHaveProperty('pack');
   });
 
-  it('keeps an immutable active membership authoritative over stale superseded bookkeeping', () => {
+  it('never overwrites a candidate once superseded, including by its owning train', () => {
     const claimed = {
       ...candidate('claimed', 'a'.repeat(40)),
       status: 'PRODUCTION_DEPLOYING' as const,
@@ -479,7 +479,7 @@ describe('Release Bus v2 deterministic orchestration', () => {
         { ...claimed, status: 'SUPERSEDED', superseded_at: 2 },
         claimed
       )
-    ).toBe(false);
+    ).toBe(true);
     expect(
       candidateUnavailableForTrainUpdate(
         {
