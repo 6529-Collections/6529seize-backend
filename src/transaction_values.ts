@@ -447,6 +447,8 @@ export const findTransactionValues = async (
   if (options.reconcileTokenCounts) {
     // resolveValue reads the same per-invocation cache below, so this
     // validation does not add transaction or receipt RPC requests.
+    // Any rejection intentionally fails the batch so its checkpoint cannot
+    // advance past a transfer that was not verified against its receipt.
     const corrections = await Promise.all(
       Array.from(context.rowsByHash.values()).map((rows) =>
         limiter(async () => {
@@ -1135,13 +1137,15 @@ function extractNftTransferEdgesFromLog(log: ReceiptLog): NftTransferEdge[] {
         log.topics
       );
       const ids = decoded.ids as bigint[];
-      const values = decoded[4] as bigint[];
+      // Ethers Result.values is an iterator method, so use the event's
+      // positional values argument rather than decoded.values.
+      const batchAmounts = decoded[4] as bigint[];
       return ids.map((id, index) => ({
         from: decoded.from as string,
         to: decoded.to as string,
         contract: log.address,
         tokenId: BigInt(id).toString(),
-        amount: BigInt(values[index] ?? 0)
+        amount: BigInt(batchAmounts[index] ?? 0)
       }));
     }
   } catch (error) {

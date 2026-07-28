@@ -7,6 +7,7 @@ import {
   reconcileTransactionTokenCounts
 } from '@/transaction_values';
 import { ethers } from 'ethers';
+import fc from 'fast-check';
 
 jest.mock('@/ethPriceLoop/db.eth_price', () => ({
   getClosestEthUsdPrice: jest.fn()
@@ -123,6 +124,48 @@ describe('reconcileTransactionTokenCounts', () => {
     expect(erc1155Row.token_count).toBe(4);
     expect(secondErc1155Row.token_count).toBe(5);
     expect(erc721Row.token_count).toBe(1);
+  });
+
+  it('reconciles arbitrary ERC1155 batch token amounts', () => {
+    const batchEntriesArb = fc
+      .uniqueArray(fc.integer({ min: 1, max: 1_000_000 }), {
+        minLength: 1,
+        maxLength: 20
+      })
+      .chain((tokenIds) =>
+        fc.tuple(
+          fc.constant(tokenIds),
+          fc.array(fc.integer({ min: 1, max: 1_000 }), {
+            minLength: tokenIds.length,
+            maxLength: tokenIds.length
+          })
+        )
+      );
+
+    fc.assert(
+      fc.property(batchEntriesArb, ([tokenIds, amounts]) => {
+        const rows = tokenIds.map((tokenId, index) =>
+          makeTransaction(tokenId, amounts[index] + 1)
+        );
+        const receipt: ReceiptLike = {
+          logs: [
+            makeLog('TransferBatch', [
+              FROM,
+              FROM,
+              TO,
+              tokenIds.map(BigInt),
+              amounts.map(BigInt)
+            ])
+          ]
+        };
+
+        expect(reconcileTransactionTokenCounts(rows, receipt)).toBe(
+          rows.length
+        );
+        expect(rows.map((row) => row.token_count)).toEqual(amounts);
+      }),
+      { numRuns: 100 }
+    );
   });
 
   it('fails closed when the receipt has no matching transfer', () => {

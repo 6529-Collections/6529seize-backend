@@ -204,18 +204,18 @@ describe('TransactionsDiscoveryService', () => {
     ]);
     const { service, batchUpsertTransactions, enhanceTransactionValues } =
       createService([[firstCandidate, secondCandidate]]);
-    enhanceTransactionValues.mockImplementationOnce(async (transactions) => {
-      expect(transactions).toEqual([
-        expect.objectContaining({ token_id: 135, token_count: 2 })
-      ]);
-      return transactions.map((transaction) => ({
+    enhanceTransactionValues.mockImplementationOnce(async (transactions) =>
+      transactions.map((transaction) => ({
         ...transaction,
         token_count: 1
-      }));
-    });
+      }))
+    );
 
     await service.getAndSaveTransactionsForContract(CONTRACT, 1, 1);
 
+    expect(enhanceTransactionValues.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ token_id: 135, token_count: 2 })
+    ]);
     expect(batchUpsertTransactions.mock.calls[0][0]).toEqual([
       expect.objectContaining({ token_id: 135, token_count: 1 })
     ]);

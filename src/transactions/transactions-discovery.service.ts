@@ -56,6 +56,8 @@ export class TransactionsDiscoveryService {
         const mergedTransactions = this.mergeTransactions(
           transactionsFullBlock
         );
+        // Receipt reconciliation must run after this semantic merge so each
+        // row represents the complete transfer amount for its ownership key.
         const transactions =
           await this.enhanceTransactionsWithDetails(mergedTransactions);
         await this.transactionsDb.batchUpsertTransactions(
@@ -148,7 +150,14 @@ export class TransactionsDiscoveryService {
       if (!mappedTransactions.length) {
         return;
       }
-      if (!this.isNewAlchemyTransfer(transfer, seenTransferIds)) {
+      const transferId = this.getRequiredAlchemyTransferId(transfer);
+      if (
+        !this.isNewAlchemyTransfer(
+          transferId,
+          transfer.blockNum,
+          seenTransferIds
+        )
+      ) {
         duplicateCount++;
         return;
       }
@@ -158,22 +167,28 @@ export class TransactionsDiscoveryService {
     return { transactions, duplicateCount };
   }
 
-  private isNewAlchemyTransfer(
-    transfer: AssetTransfersWithMetadataResult,
-    seenTransferIds: Map<string, number>
-  ): boolean {
+  private getRequiredAlchemyTransferId(
+    transfer: AssetTransfersWithMetadataResult
+  ): string {
     const transferId = transfer.uniqueId?.trim().toLowerCase();
     if (!transferId) {
       throw new Error(
-        `Alchemy returned a mappable transfer without uniqueId for transaction ${transfer.hash}; deferring ingestion`
+        `Alchemy returned a mappable transfer without uniqueId for transaction ${transfer.hash}; refusing to advance the contract checkpoint`
       );
     }
+    return transferId;
+  }
 
+  private isNewAlchemyTransfer(
+    transferId: string,
+    blockNum: string,
+    seenTransferIds: Map<string, number>
+  ): boolean {
     if (seenTransferIds.has(transferId)) {
       return false;
     }
 
-    const block = fromHex(transfer.blockNum);
+    const block = fromHex(blockNum);
     if (Number.isFinite(block)) {
       seenTransferIds.set(transferId, block);
     }
