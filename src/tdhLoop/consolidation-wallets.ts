@@ -3,7 +3,10 @@ import { ConsolidatedTDH } from '@/entities/ITDH';
 export function getConsolidationWallets(
   consolidation: Pick<ConsolidatedTDH, 'consolidation_key' | 'wallets'>
 ): string[] {
-  if (Array.isArray(consolidation.wallets)) {
+  if (
+    Array.isArray(consolidation.wallets) &&
+    consolidation.wallets.every((wallet) => typeof wallet === 'string')
+  ) {
     return consolidation.wallets;
   }
   if (typeof consolidation.wallets === 'string') {
