@@ -57,6 +57,7 @@ const PACKAGE_POLICIES = Object.freeze({
     fieldKeys: Object.freeze([
       'packageManager',
       'dependencies.adm-zip',
+      'devDependencies.@types/jest',
       'devDependencies.@typescript-eslint/parser',
       'devDependencies.esbuild',
       'devDependencies.eslint',
