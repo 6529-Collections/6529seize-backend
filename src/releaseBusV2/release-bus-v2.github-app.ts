@@ -4,6 +4,9 @@ import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
 
+// The helper owns the abort signal so every request has one authoritative
+// timeout classification; callers cannot replace it with an outer signal.
+type GitHubRequestInit = Omit<RequestInit, 'signal'>;
 type InstallationToken = {
   readonly token: string;
   readonly expires_at: string;
@@ -273,7 +276,7 @@ export class ReleaseBusGitHubApp {
 
   private async fetchWithTimeout(
     url: string,
-    options: RequestInit = {}
+    options: GitHubRequestInit = {}
   ): Promise<Response> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
@@ -301,7 +304,7 @@ export class ReleaseBusGitHubApp {
   private async request(
     repository: ReleaseBusV2Repository,
     path: string,
-    options: RequestInit = {}
+    options: GitHubRequestInit = {}
   ): Promise<Response> {
     const token = await this.token();
     try {
@@ -322,7 +325,7 @@ export class ReleaseBusGitHubApp {
 
   private async organizationRequest(
     path: string,
-    options: RequestInit = {}
+    options: GitHubRequestInit = {}
   ): Promise<Response> {
     const token = await this.token();
     try {
