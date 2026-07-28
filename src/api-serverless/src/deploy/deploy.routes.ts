@@ -1002,6 +1002,9 @@ deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
     expected_sha: string;
     artifact_digest: string | null;
     source_ref: string | null;
+    reuse_artifact_run_id: string | null;
+    reuse_artifact_name: string | null;
+    reuse_artifact_digest: string | null;
     candidate_evidence_mode:
       | 'legacy-whole-train'
       | 'strict-single'

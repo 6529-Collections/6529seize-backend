@@ -266,6 +266,52 @@ const releaseBusAuthorizationFields = () => ({
 const RELEASE_BUS_V2_OPERATION_KEY_PATTERN =
   /^rb2:[a-f0-9-]{36}:[A-Za-z0-9._:-]+:a[1-9]\d{0,8}$/;
 
+function hasCompleteReuseEvidenceIdentity(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  return (
+    typeof value.reuse_artifact_run_id === 'string' &&
+    typeof value.reuse_artifact_name === 'string' &&
+    typeof value.reuse_artifact_digest === 'string' &&
+    value.reuse_artifact_name ===
+      `release-bus-v2-pr-${String(value.expected_sha)}`
+  );
+}
+
+function hasEmptyReuseEvidenceIdentity(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  return [
+    value.reuse_artifact_run_id,
+    value.reuse_artifact_name,
+    value.reuse_artifact_digest
+  ].every((entry) => entry === null);
+}
+
+function isValidOrchestrationEvidenceAuthorization(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  if (value.artifact_run_id !== null || value.artifact_digest !== null)
+    return false;
+  if (value.candidate_evidence_mode === 'strict-single')
+    return (
+      value.source_ref !== null &&
+      value.aggregate_candidate_evidence_digest === null &&
+      hasCompleteReuseEvidenceIdentity(value)
+    );
+  if (value.candidate_evidence_mode === 'strict-aggregate')
+    return (
+      value.source_ref !== null &&
+      value.aggregate_candidate_evidence_digest !== null &&
+      hasEmptyReuseEvidenceIdentity(value)
+    );
+  return (
+    value.source_ref === null &&
+    value.aggregate_candidate_evidence_digest === null &&
+    hasEmptyReuseEvidenceIdentity(value)
+  );
+}
+
 export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
   ...releaseBusAuthorizationFields(),
   operation_key: Joi.string()
@@ -295,33 +341,32 @@ export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
     .default(null),
   aggregate_candidate_evidence_digest: Joi.alternatives()
     .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
+    .default(null),
+  reuse_artifact_run_id: Joi.alternatives()
+    .try(Joi.string().pattern(/^[1-9]\d{0,19}$/), Joi.valid(null))
+    .default(null),
+  reuse_artifact_name: Joi.alternatives()
+    .try(
+      Joi.string().pattern(/^release-bus-v2-pr-[a-f0-9]{40}$/),
+      Joi.valid(null)
+    )
+    .default(null),
+  reuse_artifact_digest: Joi.alternatives()
+    .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
     .default(null)
 })
   .custom((value, helpers) => {
     if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
       return helpers.error('any.invalid');
-    if (value.environment === 'orchestration') {
-      if (value.artifact_run_id !== null || value.artifact_digest !== null)
-        return helpers.error('any.invalid');
-      if (
-        value.candidate_evidence_mode === 'strict-single' ||
-        value.candidate_evidence_mode === 'strict-aggregate'
-      ) {
-        if (value.source_ref === null) return helpers.error('any.invalid');
-        if (value.candidate_evidence_mode === 'strict-aggregate')
-          return value.aggregate_candidate_evidence_digest !== null
-            ? value
-            : helpers.error('any.invalid');
-      } else if (value.source_ref !== null) {
-        return helpers.error('any.invalid');
-      }
-      return value.aggregate_candidate_evidence_digest === null
+    if (value.environment === 'orchestration')
+      return isValidOrchestrationEvidenceAuthorization(value)
         ? value
         : helpers.error('any.invalid');
-    }
     if (
+      value.source_ref !== null ||
       value.candidate_evidence_mode !== null ||
-      value.aggregate_candidate_evidence_digest !== null
+      value.aggregate_candidate_evidence_digest !== null ||
+      !hasEmptyReuseEvidenceIdentity(value)
     )
       return helpers.error('any.invalid');
     const keySegments = value.operation_key.split(':');

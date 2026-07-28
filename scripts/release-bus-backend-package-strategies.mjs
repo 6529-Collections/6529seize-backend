@@ -76,6 +76,8 @@ export function validateReleaseBusBackendInstallStrategyCoverage(serviceNames) {
 
 export function validateReleaseBusBackendLayers(units, layers) {
   const flattenedLayers = Array.isArray(layers) ? layers.flat() : [];
+  const compareBytes = (left, right) =>
+    Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
   if (
     !Array.isArray(units) ||
     units.length === 0 ||
@@ -92,7 +94,8 @@ export function validateReleaseBusBackendLayers(units, layers) {
     ) ||
     flattenedLayers.length !== units.length ||
     new Set(flattenedLayers).size !== units.length ||
-    [...flattenedLayers].sort().join('\n') !== [...units].sort().join('\n')
+    [...flattenedLayers].sort(compareBytes).join('\n') !==
+      [...units].sort(compareBytes).join('\n')
   )
     throw new Error(
       'layers-json must partition the selected units into dependency frontiers'

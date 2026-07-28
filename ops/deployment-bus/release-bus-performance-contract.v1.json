@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repository": "backend",
   "critical_path": {
-    "normal_preflight_jobs": ["preflight"],
+    "normal_preflight_jobs": ["authorize", "preflight", "report"],
     "normal_preflight_steps": [
       "Validate dispatch syntax without candidate checkout",
       "Authorize exact v2 operation",
@@ -14,6 +14,8 @@
       "Install frozen shared dependencies once",
       "Build and package only selected deploy units",
       "Upload one exact backend artifact",
+      "Return credential-free preflight result",
+      "Download exact backend artifact for trusted reporting",
       "Report structured terminal result",
       "Return authoritative preflight result"
     ],
@@ -54,6 +56,19 @@
     "healthy_mixed_staging_minutes_excluding_runner_queue": {
       "minimum": 15,
       "maximum": 20
+    }
+  },
+  "rollout": {
+    "phases": [
+      "api-trust-compatibility",
+      "legacy-consumer-compatibility",
+      "v3-evidence-producer-and-performance"
+    ],
+    "producer_cutover": {
+      "backend_only": true,
+      "dag": [["api"], ["releaseBus"]],
+      "release_bus_last": true,
+      "require_old_trust_drain": true
     }
   }
 }

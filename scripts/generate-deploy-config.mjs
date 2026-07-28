@@ -452,11 +452,12 @@ jobs:
           test "$artifact_digest" = "$INPUT_ARTIFACT_DIGEST"
           package_digest="$(sha256sum "packages/$INPUT_SERVICE/index.zip" | cut -d' ' -f1)"
           if [ "$INPUT_ARTIFACT_CONTRACT_VERSION" = environment-bound-v3 ]; then
+            expected_artifact_environment="\${INPUT_ENVIRONMENT/prod/production}"
             jq -e \
               --arg train_id "$artifact_train_id" \
               --arg source_sha "$INPUT_EXPECTED_SHA" \
               --arg service "$INPUT_SERVICE" \
-              --arg environment "$INPUT_ARTIFACT_ENVIRONMENT" \
+              --arg environment "$expected_artifact_environment" \
               --arg package_digest "$package_digest" \
               '.schema_version == 3 and
                .artifact_contract == "environment-bound-v1" and
@@ -815,6 +816,7 @@ jobs:
           DOWNLOAD_OUTCOME: \${{ steps.artifact_download.outcome }}
           ARTIFACT_OUTCOME: \${{ steps.release_bus_artifact.outcome }}
           AWS_OUTCOME: \${{ steps.aws_credentials.outcome }}
+          PACKAGE_DIGEST: \${{ steps.release_bus_artifact.outputs.package_digest }}
         run: |
           set -euo pipefail
           status=SUCCEEDED
@@ -853,7 +855,7 @@ jobs:
             --arg repository backend \
             --arg source_sha "$INPUT_EXPECTED_SHA" \
             --arg service "$INPUT_SERVICE" \
-            --arg package_digest "\${{ steps.release_bus_artifact.outputs.package_digest }}" \
+            --arg package_digest "$PACKAGE_DIGEST" \
             '{
               train_id:$train_id,
               operation_key:$operation_key,

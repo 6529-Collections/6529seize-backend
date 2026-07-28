@@ -75,7 +75,8 @@
     "tsconfig-paths": "^4.2.0",
     "typeorm": "^0.3.28",
     "typescript": "^5.0.4",
-    "typescript-eslint": "^8.32.1"
+    "typescript-eslint": "^8.32.1",
+    "yaml": "2.9.0"
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.980.0",
@@ -96,7 +97,7 @@
     "@smithy/node-http-handler": "^4.0.4",
     "@types/multer": "^2.0.0",
     "@wagmi/chains": "^1.8.0",
-    "adm-zip": "^0.5.16",
+    "adm-zip": "0.6.0",
     "arweave": "^1.11.6",
     "axios": "^1.13.5",
     "axios-retry": "^4.5.0",

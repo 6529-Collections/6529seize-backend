@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -23,7 +24,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
   const deploy = read('.github/workflows/deploy.yml');
   const reconciler = read('src/releaseBusV2/release-bus-v2.reconciler.ts');
 
-  it('keeps normal preflight on one runner without repository quality matrices', () => {
+  it('keeps one candidate build runner without repository quality matrices', () => {
     const contract = JSON.parse(
       read('ops/deployment-bus/release-bus-performance-contract.v1.json')
     ) as {
@@ -38,7 +39,9 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(Object.keys(parsed.jobs)).toEqual(
       contract.critical_path.normal_preflight_jobs
     );
-    const steps = parsed.jobs.preflight.steps;
+    const steps = contract.critical_path.normal_preflight_jobs.flatMap(
+      (job) => parsed.jobs[job].steps
+    );
     expect(steps.map(({ name }) => name)).toEqual(
       contract.critical_path.normal_preflight_steps
     );
@@ -70,6 +73,40 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(preflight).toContain('release-bus-package-backend.mjs');
   });
 
+  it('isolates secret-bearing authorization and reporting from candidate-controlled code', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<
+        string,
+        {
+          needs?: string | string[];
+          steps: Array<{ name?: string; run?: string; uses?: string }>;
+        }
+      >;
+    };
+    expect(Object.keys(parsed.jobs)).toEqual([
+      'authorize',
+      'preflight',
+      'report'
+    ]);
+    expect(parsed.jobs.preflight.needs).toBe('authorize');
+    expect(parsed.jobs.report.needs).toEqual(['authorize', 'preflight']);
+    const candidateJob = JSON.stringify(parsed.jobs.preflight);
+    expect(candidateJob).not.toContain('RELEASE_BUS_WORKFLOW_AUTH_TOKEN');
+    expect(candidateJob).toContain('actions/checkout@');
+    expect(candidateJob).toContain('release-bus-package-backend.mjs');
+    for (const trustedJob of ['authorize', 'report']) {
+      const serialized = JSON.stringify(parsed.jobs[trustedJob]);
+      expect(serialized).toContain('RELEASE_BUS_WORKFLOW_AUTH_TOKEN');
+      expect(serialized).not.toContain('actions/checkout@');
+      expect(serialized).not.toContain('release-bus-package-backend.mjs');
+      expect(serialized).not.toMatch(/\bnpm\s+(?:ci|run)\b/);
+    }
+    const buildJobs = Object.values(parsed.jobs).filter((job) =>
+      JSON.stringify(job).includes('Install frozen shared dependencies once')
+    );
+    expect(buildJobs).toHaveLength(1);
+  });
+
   it('authorizes before candidate checkout or cache and verifies the exact live source tip', () => {
     const parsed = yaml.load(preflight) as {
       jobs: Record<
@@ -84,7 +121,11 @@ describe('Release Bus v2 backend critical-path contract', () => {
         }
       >;
     };
-    const steps = parsed.jobs.preflight.steps;
+    const steps = [
+      ...parsed.jobs.authorize.steps,
+      ...parsed.jobs.preflight.steps,
+      ...parsed.jobs.report.steps
+    ];
     const index = (name: string) =>
       steps.findIndex((step) => step.name === name);
     const syntax = index('Validate dispatch syntax without candidate checkout');
@@ -107,9 +148,12 @@ describe('Release Bus v2 backend critical-path contract', () => {
       );
     }
     expect(steps[checkout]).toMatchObject({
-      if: "steps.evidence.outcome == 'success'",
       uses: expect.stringMatching(/^actions\/checkout@[a-f0-9]{40}$/)
     });
+    expect(steps[checkout].if).toContain("steps.evidence.outcome == 'success'");
+    expect(steps[checkout].if).toContain(
+      "steps.evidence.outputs.artifact_bytes_reused != 'true'"
+    );
     expect(steps[composition].run).toContain(
       'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
     );
@@ -124,7 +168,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     const parsed = yaml.load(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
-    const authorize = parsed.jobs.preflight.steps.find(
+    const authorize = parsed.jobs.authorize.steps.find(
       ({ name }) => name === 'Authorize exact v2 operation'
     );
     expect(authorize?.run).toBeTruthy();
@@ -161,6 +205,14 @@ exit 1
           PATH: `${fixture}:${process.env.PATH ?? ''}`,
           RELEASE_BUS_API_URL: 'https://release-bus.invalid',
           RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'test-token',
+          REUSE_ARTIFACT_DIGEST:
+            candidateEvidenceMode === 'strict-single' ? '9'.repeat(64) : '',
+          REUSE_ARTIFACT_NAME:
+            candidateEvidenceMode === 'strict-single'
+              ? `release-bus-v2-pr-${'a'.repeat(40)}`
+              : '',
+          REUSE_ARTIFACT_RUN_ID:
+            candidateEvidenceMode === 'strict-single' ? '54321' : '',
           SOURCE_REF: 'release-bus-v2/train-id/backend',
           TRAIN_ID: 'train-id'
         }
@@ -187,6 +239,16 @@ exit 1
           source_ref: 'release-bus-v2/train-id/backend',
           candidate_evidence_mode: 'strict-aggregate',
           aggregate_candidate_evidence_digest: 'b'.repeat(64)
+        })
+      );
+      expect(execute('strict-single')).toEqual(
+        expect.objectContaining({
+          source_ref: 'release-bus-v2/train-id/backend',
+          candidate_evidence_mode: 'strict-single',
+          aggregate_candidate_evidence_digest: null,
+          reuse_artifact_run_id: '54321',
+          reuse_artifact_name: `release-bus-v2-pr-${'a'.repeat(40)}`,
+          reuse_artifact_digest: '9'.repeat(64)
         })
       );
     } finally {
@@ -236,10 +298,17 @@ exit 1
     }
   });
 
-  it('uses PR CI artifacts as evidence and never as train deploy bytes', () => {
+  it('uses strict PR CI artifacts only as evidence and bounds old deploy-byte reuse to the legacy bridge', () => {
     expect(preflight).toContain('Verify exact green PR CI evidence');
     expect(preflight).not.toContain('Download exact green PR artifact');
-    expect(preflight).not.toContain('reused_exact_pr_artifact:true');
+    expect(preflight).toContain('is_exact_evidence_archive=false');
+    expect(preflight).toContain('reused_exact_pr_artifact:true');
+    expect(preflight).toContain(
+      '# whose bytes are reusable. An old producer can also name the new'
+    );
+    expect(preflight).toContain(
+      "steps.evidence.outputs.artifact_bytes_reused == 'true'"
+    );
     const pullRequest = read('.github/workflows/on-pull-request.yml');
     expect(pullRequest).toContain('exact-merge-tree-pr-ci-v1');
     expect(pullRequest).not.toContain(
@@ -247,6 +316,219 @@ exit 1
     );
     expect(pullRequest).toContain('--expected-git-ref "$EXPECTED_MERGE_SHA"');
     expect(pullRequest).toContain('policy-bundle.txt');
+  });
+
+  it('treats an old-producer schema-v1 PR artifact as evidence and still builds fresh bytes', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const evidence = parsed.jobs.preflight.steps.find(
+      ({ name }) => name === 'Verify exact green PR CI evidence'
+    );
+    const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-old-new-evidence-'));
+    const artifactDirectory = path.join(fixture, 'artifact');
+    const artifactZip = path.join(fixture, 'artifact.zip');
+    const output = path.join(fixture, 'github-output');
+    const fakeGh = path.join(fixture, 'gh');
+    const expectedSha = 'a'.repeat(40);
+    mkdirSync(artifactDirectory);
+    writeFileSync(
+      path.join(artifactDirectory, 'policy-bundle.txt'),
+      'policy\n'
+    );
+    const policyDigest = execFileSync(
+      'sha256sum',
+      [path.join(artifactDirectory, 'policy-bundle.txt')],
+      { encoding: 'utf8' }
+    ).split(' ')[0];
+    writeFileSync(
+      path.join(artifactDirectory, 'manifest.json'),
+      JSON.stringify({
+        schema_version: 1,
+        evidence_contract: 'exact-merge-tree-pr-ci-v1',
+        repository: 'backend',
+        merge_sha: expectedSha,
+        workflow: '.github/workflows/on-pull-request.yml',
+        policy_bundle_contract: 'pr-ci-policy-bundle-v1',
+        policy_bundle_digest: policyDigest,
+        policy_bundle_line_count: 1
+      })
+    );
+    const sums = execFileSync(
+      'sha256sum',
+      ['manifest.json', 'policy-bundle.txt'],
+      { cwd: artifactDirectory, encoding: 'utf8' }
+    );
+    writeFileSync(path.join(artifactDirectory, 'SHA256SUMS'), sums);
+    execFileSync(
+      'zip',
+      ['-q', artifactZip, 'SHA256SUMS', 'manifest.json', 'policy-bundle.txt'],
+      { cwd: artifactDirectory }
+    );
+    writeFileSync(
+      fakeGh,
+      `#!/bin/sh
+case "$*" in
+  *actions/runs/54321/artifacts*)
+    printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
+    ;;
+  *actions/runs/54321)
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","path":".github/workflows/on-pull-request.yml"}\\n'
+    ;;
+  *actions/artifacts/777/zip)
+    cat "$ARTIFACT_ZIP"
+    ;;
+  *) exit 1 ;;
+esac
+`
+    );
+    chmodSync(fakeGh, 0o755);
+    writeFileSync(output, '');
+    try {
+      execFileSync('bash', ['-c', evidence?.run ?? 'exit 1'], {
+        cwd: fixture,
+        env: {
+          ...process.env,
+          ARTIFACT_ZIP: artifactZip,
+          CANDIDATE_EVIDENCE_MODE: 'legacy-whole-train',
+          DEPLOY_LAYERS: '[]',
+          DEPLOY_UNITS: '["api"]',
+          EXPECTED_SHA: expectedSha,
+          GITHUB_OUTPUT: output,
+          GITHUB_REPOSITORY: '6529/backend',
+          PATH: `${fixture}:${process.env.PATH ?? ''}`,
+          REUSE_ARTIFACT_DIGEST: '9'.repeat(64),
+          REUSE_ARTIFACT_NAME: `release-bus-v2-pr-${expectedSha}`,
+          REUSE_ARTIFACT_RUN_ID: '54321',
+          TRAIN_ID: 'train-id'
+        },
+        stdio: 'pipe'
+      });
+      expect(readFileSync(output, 'utf8')).toContain(
+        'legacy_artifact_kind=evidence'
+      );
+      expect(readFileSync(output, 'utf8')).not.toContain(
+        'artifact_bytes_reused=true'
+      );
+      expect(existsSync(path.join(fixture, 'release-bus-artifact'))).toBe(
+        false
+      );
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses old schema-v2 bytes only for an exact selected-unit inventory', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const evidence = parsed.jobs.preflight.steps.find(
+      ({ name }) => name === 'Verify exact green PR CI evidence'
+    );
+    const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-old-deploy-bytes-'));
+    const artifactDirectory = path.join(fixture, 'artifact');
+    const artifactZip = path.join(fixture, 'artifact.zip');
+    const output = path.join(fixture, 'github-output');
+    const fakeGh = path.join(fixture, 'gh');
+    const expectedSha = 'a'.repeat(40);
+    mkdirSync(path.join(artifactDirectory, 'packages/api'), {
+      recursive: true
+    });
+    writeFileSync(
+      path.join(artifactDirectory, 'packages/api/index.zip'),
+      'immutable-api-package'
+    );
+    writeFileSync(
+      path.join(artifactDirectory, 'manifest.json'),
+      JSON.stringify({
+        schema_version: 2,
+        repository: 'backend',
+        source_sha: expectedSha,
+        units: ['api'],
+        reused_exact_pr_artifact: false
+      })
+    );
+    const sums = execFileSync(
+      'sha256sum',
+      ['packages/api/index.zip', 'manifest.json'],
+      { cwd: artifactDirectory, encoding: 'utf8' }
+    );
+    writeFileSync(path.join(artifactDirectory, 'SHA256SUMS'), sums);
+    execFileSync(
+      'zip',
+      [
+        '-q',
+        artifactZip,
+        'SHA256SUMS',
+        'manifest.json',
+        'packages/api/index.zip'
+      ],
+      { cwd: artifactDirectory }
+    );
+    writeFileSync(
+      fakeGh,
+      `#!/bin/sh
+case "$*" in
+  *actions/runs/54321/artifacts*)
+    printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
+    ;;
+  *actions/runs/54321)
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","path":".github/workflows/on-pull-request.yml"}\\n'
+    ;;
+  *actions/artifacts/777/zip)
+    cat "$ARTIFACT_ZIP"
+    ;;
+  *) exit 1 ;;
+esac
+`
+    );
+    chmodSync(fakeGh, 0o755);
+    const execute = (deployUnits: string[]) => {
+      writeFileSync(output, '');
+      rmSync(path.join(fixture, 'release-bus-artifact'), {
+        recursive: true,
+        force: true
+      });
+      execFileSync('bash', ['-c', evidence?.run ?? 'exit 1'], {
+        cwd: fixture,
+        env: {
+          ...process.env,
+          ARTIFACT_ZIP: artifactZip,
+          CANDIDATE_EVIDENCE_MODE: 'legacy-whole-train',
+          DEPLOY_LAYERS: '[]',
+          DEPLOY_UNITS: JSON.stringify(deployUnits),
+          EXPECTED_SHA: expectedSha,
+          GITHUB_OUTPUT: output,
+          GITHUB_REPOSITORY: '6529/backend',
+          PATH: `${fixture}:${process.env.PATH ?? ''}`,
+          REUSE_ARTIFACT_DIGEST: '9'.repeat(64),
+          REUSE_ARTIFACT_NAME: `release-bus-v2-pr-${expectedSha}`,
+          REUSE_ARTIFACT_RUN_ID: '54321',
+          TRAIN_ID: 'train-id'
+        },
+        stdio: 'pipe'
+      });
+      return readFileSync(output, 'utf8');
+    };
+    try {
+      const incomplete = execute(['api', 'releaseBus']);
+      expect(incomplete).toContain('legacy_artifact_kind=deploy-evidence');
+      expect(incomplete).not.toContain('artifact_bytes_reused=true');
+      expect(existsSync(path.join(fixture, 'release-bus-artifact'))).toBe(
+        false
+      );
+
+      const exact = execute(['api']);
+      expect(exact).toContain('legacy_artifact_kind=deploy');
+      expect(exact).toContain('artifact_bytes_reused=true');
+      expect(
+        existsSync(
+          path.join(fixture, 'release-bus-artifact/packages/api/index.zip')
+        )
+      ).toBe(true);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it('records exact Node and npm provenance in immutable PR CI evidence', () => {
@@ -260,6 +542,15 @@ exit 1
     );
     expect(canonical).toContain(
       'package-field\tsrc/api-serverless/package.json#packageManager\t"npm@10.9.8"\n'
+    );
+    expect(canonical).toContain(
+      'package-field\tpackage.json#dependencies.adm-zip\t"0.6.0"\n'
+    );
+    expect(canonical).toContain(
+      'package-field\tsrc/api-serverless/package.json#dependencies.adm-zip\t"0.6.0"\n'
+    );
+    expect(canonical).toContain(
+      'package-field\tpackage.json#devDependencies.yaml\t"2.9.0"\n'
     );
     const pullRequest = read('.github/workflows/on-pull-request.yml');
     expect(pullRequest).toContain('corepack install');
@@ -305,13 +596,15 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
             ...process.env,
             DEPLOY_LAYERS: '[["notAService"]]',
             DEPLOY_UNITS: '["notAService"]',
+            CANDIDATE_EVIDENCE_MODE: 'strict-aggregate',
             EXPECTED_SHA: expectedSha,
             GH_MODE: mode,
             GH_RESPONSE_SHA: mode === 'moved' ? '0'.repeat(40) : expectedSha,
             GITHUB_OUTPUT: output,
             GITHUB_REPOSITORY: '6529/backend',
             PATH: `${fixture}:${process.env.PATH ?? ''}`,
-            SOURCE_REF: 'release-bus-v2/train-id/backend'
+            SOURCE_REF: 'release-bus-v2/train-id/backend',
+            TRAIN_ID: 'train-id'
           },
           stdio: 'pipe'
         });
@@ -364,6 +657,219 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
     }
   });
 
+  it('accepts old-producer empty portable identity and requires v3 environment binding', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const validation = parsed.jobs.authorize.steps.find(
+      ({ name }) =>
+        name === 'Validate dispatch syntax without candidate checkout'
+    );
+    const execute = (
+      candidateEvidenceMode: string,
+      artifactContractVersion: string,
+      artifactEnvironment: string
+    ) =>
+      execFileSync('bash', ['-c', validation?.run ?? 'exit 1'], {
+        cwd: root,
+        env: {
+          ...process.env,
+          AGGREGATE_CANDIDATE_EVIDENCE_DIGEST:
+            candidateEvidenceMode === 'strict-aggregate' ? 'b'.repeat(64) : '',
+          ARTIFACT_CONTRACT_VERSION: artifactContractVersion,
+          ARTIFACT_ENVIRONMENT: artifactEnvironment,
+          CANDIDATE_EVIDENCE_MODE: candidateEvidenceMode,
+          DEPLOY_LAYERS: '[]',
+          DEPLOY_UNITS: '["api"]',
+          EXPECTED_SHA: 'a'.repeat(40),
+          OPERATION_KEY: 'rb2:train-id:prepare:backend:a1',
+          RELEASE_TRAIN_REVISION: '1',
+          REUSE_ARTIFACT_DIGEST: '',
+          REUSE_ARTIFACT_NAME: '',
+          REUSE_ARTIFACT_RUN_ID: '',
+          SOURCE_REF: 'feature/old-producer',
+          TRAIN_ID: 'train-id'
+        },
+        stdio: 'pipe'
+      });
+
+    expect(() => execute('legacy-whole-train', 'legacy-v2', '')).not.toThrow();
+    expect(() =>
+      execute('legacy-whole-train', 'legacy-v2', 'portable')
+    ).not.toThrow();
+    expect(() =>
+      execute('strict-aggregate', 'environment-bound-v3', '')
+    ).toThrow();
+    expect(() =>
+      execute('strict-aggregate', 'environment-bound-v3', 'production')
+    ).not.toThrow();
+  });
+
+  it('binds an old fast-path producer branch to one exact immutable train ref', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const composition = parsed.jobs.preflight.steps.find(
+      ({ name }) => name === 'Verify exact composition and deployment graph'
+    );
+    const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-legacy-source-ref-'));
+    const output = path.join(fixture, 'github-output');
+    const fakeGh = path.join(fixture, 'gh');
+    writeFileSync(
+      fakeGh,
+      `#!/bin/sh
+case "$*" in
+  *git/ref/heads/feature/old-producer)
+    printf '{"ref":"refs/heads/feature/old-producer","object":{"type":"commit","sha":"%s"}}\\n' "${'0'.repeat(40)}"
+    ;;
+  *git/ref/heads/release-bus-v2/staging-train-train-id-backend)
+    printf '{"ref":"refs/heads/release-bus-v2/staging-train-train-id-backend","object":{"type":"commit","sha":"%s"}}\\n' "$EXPECTED_SHA"
+    ;;
+  *)
+    printf '{"status":"404"}\\n'
+    exit 1
+    ;;
+esac
+`
+    );
+    chmodSync(fakeGh, 0o755);
+    const expectedSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8'
+    }).trim();
+    writeFileSync(output, '');
+    try {
+      execFileSync('bash', ['-c', composition?.run ?? 'exit 1'], {
+        cwd: root,
+        env: {
+          ...process.env,
+          CANDIDATE_EVIDENCE_MODE: 'legacy-whole-train',
+          DEPLOY_LAYERS: '[]',
+          DEPLOY_UNITS: '["api"]',
+          EXPECTED_SHA: expectedSha,
+          GITHUB_OUTPUT: output,
+          GITHUB_REPOSITORY: '6529/backend',
+          PATH: `${fixture}:${process.env.PATH ?? ''}`,
+          SOURCE_REF: 'feature/old-producer',
+          TRAIN_ID: 'train-id'
+        },
+        stdio: 'pipe'
+      });
+      expect(readFileSync(output, 'utf8')).toContain(
+        'legacy_source_ref_bridge=true'
+      );
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('bridges legacy missing refs only through one exact lane ref and classifies ambiguity and transport', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const composition = parsed.jobs.preflight.steps.find(
+      ({ name }) => name === 'Verify exact composition and deployment graph'
+    );
+    const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-missing-source-ref-'));
+    const output = path.join(fixture, 'github-output');
+    const fakeGh = path.join(fixture, 'gh');
+    writeFileSync(
+      fakeGh,
+      `#!/bin/sh
+case "$*" in
+  *git/ref/heads/feature/missing)
+    printf '{"status":"404"}\\n'
+    exit 1
+    ;;
+  *git/ref/heads/release-bus-v2/staging-train-train-id-backend)
+    if [ "$GH_CASE" = missing-success ] || [ "$GH_CASE" = ambiguous ]; then
+      printf '{"ref":"refs/heads/release-bus-v2/staging-train-train-id-backend","object":{"type":"commit","sha":"%s"}}\\n' "$EXPECTED_SHA"
+    else
+      printf '{"status":"404"}\\n'
+      exit 1
+    fi
+    ;;
+  *git/ref/heads/release-bus-v2/production-train-train-id-backend)
+    if [ "$GH_CASE" = ambiguous ]; then
+      printf '{"ref":"refs/heads/release-bus-v2/production-train-train-id-backend","object":{"type":"commit","sha":"%s"}}\\n' "$EXPECTED_SHA"
+    else
+      printf '{"status":"404"}\\n'
+      exit 1
+    fi
+    ;;
+  *git/ref/heads/release-bus-v2/qualification-train-train-id-backend)
+    if [ "$GH_CASE" = transport ]; then
+      printf 'upstream gateway unavailable\\n' >&2
+      exit 1
+    fi
+    printf '{"status":"404"}\\n'
+    exit 1
+    ;;
+  *) exit 1 ;;
+esac
+`
+    );
+    chmodSync(fakeGh, 0o755);
+    const expectedSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8'
+    }).trim();
+    const execute = (
+      scenario: 'missing-success' | 'ambiguous' | 'transport'
+    ) => {
+      writeFileSync(output, '');
+      let succeeded = true;
+      try {
+        execFileSync('bash', ['-c', composition?.run ?? 'exit 1'], {
+          cwd: root,
+          env: {
+            ...process.env,
+            CANDIDATE_EVIDENCE_MODE: 'legacy-whole-train',
+            DEPLOY_LAYERS: '[]',
+            DEPLOY_UNITS: '["api"]',
+            EXPECTED_SHA: expectedSha,
+            GH_CASE: scenario,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: '6529/backend',
+            PATH: `${fixture}:${process.env.PATH ?? ''}`,
+            SOURCE_REF: 'feature/missing',
+            TRAIN_ID: 'train-id'
+          },
+          stdio: 'pipe'
+        });
+      } catch {
+        succeeded = false;
+      }
+      return {
+        succeeded,
+        output: readFileSync(output, 'utf8')
+      };
+    };
+    try {
+      expect(execute('missing-success')).toMatchObject({
+        succeeded: true,
+        output: expect.stringContaining('legacy_source_ref_bridge=true')
+      });
+      expect(execute('ambiguous')).toMatchObject({
+        succeeded: false,
+        output: expect.stringContaining(
+          'failure_phase=legacy_source_ref_unbound'
+        )
+      });
+      const transport = execute('transport');
+      expect(transport).toMatchObject({
+        succeeded: false,
+        output: expect.stringContaining(
+          'failure_phase=legacy_source_ref_transport'
+        )
+      });
+      expect(transport.output).toContain('failure_class=INFRASTRUCTURE');
+      expect(transport.output).toContain('retryable=true');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('separates retryable transport faults from immutable candidate evidence mismatches', () => {
     expect(preflight).toContain(
       'echo "failure_class=INFRASTRUCTURE" >> "$GITHUB_OUTPUT"'
@@ -388,13 +894,228 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
     );
   });
 
+  it('reports a missing or cancelled candidate runner as retryable infrastructure', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const terminal = parsed.jobs.report.steps.find(
+      ({ name }) => name === 'Report structured terminal result'
+    );
+    const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-terminal-report-'));
+    const capture = path.join(fixture, 'payload.json');
+    const output = path.join(fixture, 'github-output');
+    const fakeCurl = path.join(fixture, 'curl');
+    writeFileSync(
+      fakeCurl,
+      `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--data" ]; then
+    printf '%s' "$2" > "$CAPTURE_PAYLOAD"
+    exit 0
+  fi
+  shift
+done
+exit 1
+`
+    );
+    chmodSync(fakeCurl, 0o755);
+    const execute = (
+      preflightResult: 'failure' | 'cancelled',
+      evidenceOutcome: '' | 'failure'
+    ) => {
+      rmSync(capture, { force: true });
+      writeFileSync(output, '');
+      execFileSync('bash', ['-c', terminal?.run ?? 'exit 1'], {
+        cwd: fixture,
+        env: {
+          ...process.env,
+          ARTIFACT_BYTES_REUSED: '',
+          CAPTURE_PAYLOAD: capture,
+          COMPOSITION_FAILURE_CLASS: '',
+          COMPOSITION_FAILURE_PHASE: '',
+          COMPOSITION_OUTCOME: '',
+          COMPOSITION_RETRYABLE: '',
+          DOWNLOAD_OUTCOME: 'skipped',
+          EVIDENCE_FAILURE_CLASS:
+            evidenceOutcome === 'failure' ? 'CANDIDATE' : '',
+          EVIDENCE_OUTCOME: evidenceOutcome,
+          GITHUB_RUN_ID: '12345',
+          GITHUB_OUTPUT: output,
+          OPERATION_KEY: 'rb2:train-id:prepare:backend:a1',
+          PACKAGE_FAILURE_CLASS: '',
+          PACKAGE_OUTCOME: '',
+          PATH: `${fixture}:${process.env.PATH ?? ''}`,
+          PREFLIGHT_RESULT: preflightResult,
+          RELEASE_BUS_API_URL: 'https://release-bus.invalid',
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'test-token',
+          ROOT_INSTALL_FAILURE_CLASS: '',
+          ROOT_INSTALL_OUTCOME: '',
+          SOURCE_OUTCOME: '',
+          TRAIN_ID: 'train-id',
+          UPLOAD_OUTCOME: ''
+        }
+      });
+      return JSON.parse(readFileSync(capture, 'utf8')) as {
+        failure_class: string;
+        failure_phase: string;
+        retryable: boolean;
+      };
+    };
+    try {
+      expect(execute('cancelled', '')).toMatchObject({
+        failure_class: 'INFRASTRUCTURE',
+        failure_phase: 'preflight_runner',
+        retryable: true
+      });
+      expect(execute('failure', 'failure')).toMatchObject({
+        failure_class: 'CANDIDATE',
+        failure_phase: 'ci_evidence',
+        retryable: false
+      });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('reports trusted artifact corruption instead of losing the terminal callback', () => {
+    const parsed = yaml.load(preflight) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const terminal = parsed.jobs.report.steps.find(
+      ({ name }) => name === 'Report structured terminal result'
+    );
+    const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-corrupt-report-'));
+    const capture = path.join(fixture, 'payload.json');
+    const output = path.join(fixture, 'github-output');
+    const fakeCurl = path.join(fixture, 'curl');
+    mkdirSync(path.join(fixture, 'release-bus-artifact'));
+    writeFileSync(
+      path.join(fixture, 'release-bus-artifact/manifest.json'),
+      '{not-valid-json'
+    );
+    writeFileSync(
+      path.join(fixture, 'release-bus-artifact/SHA256SUMS'),
+      `${'0'.repeat(64)}  manifest.json\n`
+    );
+    writeFileSync(
+      fakeCurl,
+      `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--data" ]; then
+    printf '%s' "$2" > "$CAPTURE_PAYLOAD"
+    exit 0
+  fi
+  shift
+done
+exit 1
+`
+    );
+    chmodSync(fakeCurl, 0o755);
+    writeFileSync(output, '');
+    try {
+      execFileSync('bash', ['-c', terminal?.run ?? 'exit 1'], {
+        cwd: fixture,
+        env: {
+          ...process.env,
+          ARTIFACT_BYTES_REUSED: 'false',
+          CAPTURE_PAYLOAD: capture,
+          COMPOSITION_FAILURE_CLASS: 'CANDIDATE',
+          COMPOSITION_FAILURE_PHASE: 'source_composition',
+          COMPOSITION_OUTCOME: 'success',
+          COMPOSITION_RETRYABLE: 'false',
+          DOWNLOAD_OUTCOME: 'success',
+          EVIDENCE_FAILURE_CLASS: 'CANDIDATE',
+          EVIDENCE_OUTCOME: 'success',
+          GITHUB_RUN_ID: '12345',
+          GITHUB_OUTPUT: output,
+          OPERATION_KEY: 'rb2:train-id:prepare:backend:a1',
+          PACKAGE_FAILURE_CLASS: 'CANDIDATE',
+          PACKAGE_OUTCOME: 'success',
+          PATH: `${fixture}:${process.env.PATH ?? ''}`,
+          PREFLIGHT_RESULT: 'success',
+          RELEASE_BUS_API_URL: 'https://release-bus.invalid',
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'test-token',
+          ROOT_INSTALL_FAILURE_CLASS: 'CANDIDATE',
+          ROOT_INSTALL_OUTCOME: 'success',
+          SOURCE_OUTCOME: 'success',
+          TRAIN_ID: 'train-id',
+          UPLOAD_OUTCOME: 'success'
+        },
+        stdio: 'pipe'
+      });
+      expect(JSON.parse(readFileSync(capture, 'utf8'))).toMatchObject({
+        status: 'FAILED',
+        failure_class: 'INFRASTRUCTURE',
+        failure_phase: 'artifact_integrity',
+        retryable: true,
+        summary: null
+      });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('self-clears the package marker and gives concurrent infrastructure evidence deterministic precedence', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-package-marker-'));
+    const marker = path.join(fixture, 'failure-class');
+    const result = execFileSync(
+      'node',
+      [
+        '--input-type=module',
+        '--eval',
+        `
+          import fs from 'node:fs/promises';
+          import {
+            clearInfrastructureFailureMarker as clear,
+            hasUnmistakableTransportFailure as transport,
+            markInfrastructureFailure as mark
+          } from './scripts/release-bus-package-backend.mjs';
+          const marker = process.argv[1];
+          await fs.writeFile(marker, 'CANDIDATE\\n');
+          await clear(marker);
+          const cleared = await fs.access(marker).then(() => false, () => true);
+          await Promise.all(Array.from({length: 8}, () => mark(marker)));
+          const value = await fs.readFile(marker, 'utf8');
+          process.stdout.write(JSON.stringify({
+            cleared,
+            value,
+            transportCode: transport('npm error ETIMEDOUT'),
+            transportStatus: transport('npm ERR! 503 Service Unavailable'),
+            candidateNumber: transport('package status 503 is invalid'),
+            hardHttp: transport('npm error 404 Not Found')
+          }));
+        `,
+        marker
+      ],
+      { cwd: root, encoding: 'utf8' }
+    );
+    try {
+      expect(JSON.parse(result)).toEqual({
+        cleared: true,
+        value: 'INFRASTRUCTURE\n',
+        transportCode: true,
+        transportStatus: true,
+        candidateNumber: false,
+        hardHttp: false
+      });
+      expect(read('scripts/release-bus-package-backend.mjs')).toContain(
+        "child.once('close'"
+      );
+      expect(read('scripts/release-bus-package-backend.mjs')).not.toContain(
+        "child.once('exit'"
+      );
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('binds policy bytes to the exact commit and rejects mutable action tags', () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'rb2-policy-'));
     try {
       mkdirSync(path.join(fixture, '.github/workflows'), { recursive: true });
       writeFileSync(
         path.join(fixture, '.github/workflows/ci.yml'),
-        'steps:\n  - uses: actions/checkout@v6\n'
+        'steps:\n  - { uses: actions/checkout@v6 }\n'
       );
       execFileSync('git', ['init', '-q'], { cwd: fixture });
       execFileSync('git', ['add', '.'], { cwd: fixture });
@@ -438,6 +1159,34 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
           pinnedActionWorkflows: ['.github/workflows/ci.yml']
         })
       ).toThrow('external action is not pinned to a 40-hex SHA');
+      writeFileSync(
+        path.join(fixture, '.github/workflows/ci.yml'),
+        'steps:\n  - { uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 }\n'
+      );
+      expect(() =>
+        policy.buildPolicyBundle({
+          root: fixture,
+          filePaths: ['.github/workflows/ci.yml'],
+          packagePolicies: {},
+          runtimePins: {},
+          nodePinWorkflows: [],
+          pinnedActionWorkflows: ['.github/workflows/ci.yml']
+        })
+      ).not.toThrow();
+      writeFileSync(
+        path.join(fixture, '.github/workflows/ci.yml'),
+        'steps:\n  - { uses: 42 }\n'
+      );
+      expect(() =>
+        policy.buildPolicyBundle({
+          root: fixture,
+          filePaths: ['.github/workflows/ci.yml'],
+          packagePolicies: {},
+          runtimePins: {},
+          nodePinWorkflows: [],
+          pinnedActionWorkflows: ['.github/workflows/ci.yml']
+        })
+      ).toThrow('malformed uses');
       writeFileSync(
         path.join(fixture, '.github/workflows/ci.yml'),
         'steps:\n  - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10\n'
@@ -631,7 +1380,7 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
   });
 
   it('executes the exact terminal summary projection from preflight', () => {
-    const marker = `summary="$(jq -c --arg digest "$digest" '`;
+    const marker = `summary="$(jq -ce --arg digest "$digest" '`;
     const start = preflight.indexOf(marker);
     const end = preflight.indexOf(`' <<< "$manifest")"`, start);
     expect(start).toBeGreaterThan(0);
@@ -686,6 +1435,13 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
     );
     expect(deploy).toContain('consumed_preflight_artifact:true');
     expect(deploy).toContain('rebuilt:false');
+    expect(deploy).toContain(
+      'PACKAGE_DIGEST: ${{ steps.release_bus_artifact.outputs.package_digest }}'
+    );
+    expect(deploy).toContain('--arg package_digest "$PACKAGE_DIGEST"');
+    expect(deploy).not.toContain(
+      '--arg package_digest "${{ steps.release_bus_artifact.outputs.package_digest }}"'
+    );
   });
 
   it('passes environment-bound v3 inputs on every prepare and deploy path', () => {
@@ -699,12 +1455,22 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
       for (const dispatch of dispatches) {
         const inputs = dispatch.slice(0, 1800);
         expect(inputs).toMatch(
-          /artifact_contract_version|\.\.\.artifactBinding/
+          /artifact_contract_version|\.\.\.(?:artifactBinding|artifactSource\.binding)/
         );
-        expect(inputs).toMatch(/artifact_environment|\.\.\.artifactBinding/);
+        expect(inputs).toMatch(
+          /artifact_environment|\.\.\.(?:artifactBinding|artifactSource\.binding)/
+        );
       }
     }
-    expect(reconciler).toContain('function candidateArtifactDeployBinding(');
+    expect(reconciler).toContain(
+      'export function preparedArtifactDeployBinding('
+    );
+    expect(reconciler).toContain(
+      'Production deployment requires a freshly prepared same-train artifact'
+    );
+    expect(reconciler).toContain(
+      "train.lane === 'PRODUCTION' ? 'prod' : 'staging'"
+    );
     expect(reconciler).toContain("artifact_contract_version: 'legacy-v2'");
     expect(reconciler).toContain(
       'artifact_contract_version: ENVIRONMENT_BOUND_ARTIFACT_CONTRACT'
@@ -734,6 +1500,15 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
         normal_preflight_steps: string[];
       };
       targets: Record<string, { minimum: number; maximum: number }>;
+      rollout: {
+        phases: string[];
+        producer_cutover: {
+          backend_only: boolean;
+          dag: string[][];
+          release_bus_last: boolean;
+          require_old_trust_drain: boolean;
+        };
+      };
     };
     expect(contract.baselines).toEqual(
       expect.arrayContaining([
@@ -744,11 +1519,26 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
       ])
     );
     expect(contract.critical_path.excluded_train_gates).toHaveLength(7);
-    expect(contract.critical_path.normal_preflight_jobs).toEqual(['preflight']);
-    expect(contract.critical_path.normal_preflight_steps).toHaveLength(12);
+    expect(contract.critical_path.normal_preflight_jobs).toEqual([
+      'authorize',
+      'preflight',
+      'report'
+    ]);
+    expect(contract.critical_path.normal_preflight_steps).toHaveLength(14);
     expect(
       contract.targets
         .healthy_one_unit_backend_production_minutes_excluding_runner_queue
     ).toEqual({ minimum: 6, maximum: 10 });
+    expect(contract.rollout.phases).toEqual([
+      'api-trust-compatibility',
+      'legacy-consumer-compatibility',
+      'v3-evidence-producer-and-performance'
+    ]);
+    expect(contract.rollout.producer_cutover).toEqual({
+      backend_only: true,
+      dag: [['api'], ['releaseBus']],
+      release_bus_last: true,
+      require_old_trust_drain: true
+    });
   });
 });

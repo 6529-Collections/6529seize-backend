@@ -939,7 +939,10 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       ...body,
       source_ref: null,
       candidate_evidence_mode: null,
-      aggregate_candidate_evidence_digest: null
+      aggregate_candidate_evidence_digest: null,
+      reuse_artifact_run_id: null,
+      reuse_artifact_name: null,
+      reuse_artifact_digest: null
     });
     expect(response.body).toMatchObject({
       authorized: true,
@@ -967,7 +970,59 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     const response = await post('/deploy/release-bus-v2/authorize', body);
 
     expect(response.status).toBe(200);
+    expect(mockV2Authorize).toHaveBeenCalledWith({
+      ...body,
+      reuse_artifact_run_id: null,
+      reuse_artifact_name: null,
+      reuse_artifact_digest: null
+    });
+  });
+
+  it('accepts only a complete strict-single evidence identity for orchestration', async () => {
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:backend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null,
+      source_ref: 'release-bus-v2/staging-train-train-id-backend',
+      candidate_evidence_mode: 'strict-single',
+      aggregate_candidate_evidence_digest: null,
+      reuse_artifact_run_id: '54321',
+      reuse_artifact_name: `release-bus-v2-pr-${SHA}`,
+      reuse_artifact_digest: 'c'.repeat(64)
+    };
+
+    const response = await post('/deploy/release-bus-v2/authorize', body);
+
+    expect(response.status).toBe(200);
     expect(mockV2Authorize).toHaveBeenCalledWith(body);
+  });
+
+  it('rejects a partial strict-single evidence identity before operation lookup', async () => {
+    const response = await post('/deploy/release-bus-v2/authorize', {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:prepare:backend:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'orchestration',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null,
+      source_ref: 'release-bus-v2/staging-train-train-id-backend',
+      candidate_evidence_mode: 'strict-single',
+      aggregate_candidate_evidence_digest: null,
+      reuse_artifact_run_id: '54321',
+      reuse_artifact_name: `release-bus-v2-pr-${SHA}`
+    });
+
+    expect(response.status).toBe(400);
+    expect(mockV2Authorize).not.toHaveBeenCalled();
   });
 
   it('rejects an incomplete strict aggregate before operation lookup', async () => {
@@ -981,6 +1036,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       service: null,
       expected_sha: SHA,
       artifact_digest: null,
+      source_ref: 'release-bus-v2/train-id/backend',
       candidate_evidence_mode: 'strict-aggregate'
     });
 

@@ -95,8 +95,22 @@ type PreparedRepository = {
 
 type ArtifactSource = {
   readonly trainId: string;
-  readonly frontendRunId: string | null;
-  readonly backendRunId: string | null;
+  readonly frontend: PreparedArtifactSource | null;
+  readonly backend: PreparedArtifactSource | null;
+};
+
+type ArtifactDeployBinding = {
+  readonly artifact_environment: '' | 'staging' | 'production';
+  readonly artifact_contract_version:
+    | 'legacy-v2'
+    | typeof ENVIRONMENT_BOUND_ARTIFACT_CONTRACT;
+};
+
+type PreparedArtifactSource = {
+  readonly runId: string;
+  readonly digest: string;
+  readonly expectedSha: string;
+  readonly binding: ArtifactDeployBinding;
 };
 
 type DeployResult = {
@@ -462,25 +476,543 @@ function artifactEnvironmentForTrain(
   return train.lane === 'PRODUCTION' ? 'production' : 'staging';
 }
 
-function candidateArtifactDeployBinding(
-  candidates: readonly ReleaseBusV2CandidateRecord[],
+export function preparedArtifactDeployBinding(
+  operation: ReleaseBusV2OperationRecord,
   environment: 'staging' | 'prod'
-): {
-  readonly artifact_environment: '' | 'staging' | 'production';
-  readonly artifact_contract_version:
-    | 'legacy-v2'
-    | typeof ENVIRONMENT_BOUND_ARTIFACT_CONTRACT;
-} {
-  const selection = candidateEvidenceSelection(candidates, null);
-  return selection.mode === 'legacy-whole-train'
-    ? {
+): ArtifactDeployBinding {
+  const request = parseStoredJson<{
+    workflow?: unknown;
+    ref?: unknown;
+    workflow_control_sha?: unknown;
+    inputs?: unknown;
+  }>(operation.request_json);
+  const inputs = stringRecord(request?.inputs);
+  const result = parseStoredJson<{ summary?: unknown }>(operation.result_json);
+  const summary =
+    result?.summary &&
+    typeof result.summary === 'object' &&
+    !Array.isArray(result.summary)
+      ? (result.summary as Readonly<Record<string, unknown>>)
+      : null;
+  if (
+    operation.status !== 'SUCCEEDED' ||
+    request?.workflow !== 'release-bus-v2-preflight.yml' ||
+    !inputs ||
+    !summary ||
+    !operation.external_id ||
+    !/^[1-9][0-9]{0,19}$/.test(operation.external_id) ||
+    !operation.expected_sha ||
+    !/^[a-f0-9]{40}$/.test(operation.expected_sha) ||
+    !operation.artifact_digest ||
+    !/^[a-f0-9]{64}$/.test(operation.artifact_digest) ||
+    inputs.release_train_id !== operation.train_id ||
+    inputs.expected_sha !== operation.expected_sha ||
+    summary.artifact_digest !== operation.artifact_digest ||
+    (summary.repository !== undefined &&
+      summary.repository !== operation.repository) ||
+    (summary.source_sha !== undefined &&
+      summary.source_sha !== operation.expected_sha)
+  )
+    throw new Error(
+      'Successful artifact preparation has no exact immutable deploy binding'
+    );
+  const contract = inputs.artifact_contract_version ?? 'legacy-v2';
+  if (contract === 'legacy-v2') {
+    const exactKeys = (
+      value: Readonly<Record<string, unknown>>,
+      expected: readonly string[]
+    ): boolean =>
+      isDeepStrictEqual(Object.keys(value).sort(), [...expected].sort());
+    const parseUnits = (
+      value: string | undefined
+    ): readonly string[] | null => {
+      try {
+        const parsed = JSON.parse(value ?? 'null') as unknown;
+        if (
+          !Array.isArray(parsed) ||
+          parsed.length === 0 ||
+          parsed.some(
+            (unit) =>
+              typeof unit !== 'string' ||
+              !/^[A-Za-z][A-Za-z0-9]{0,99}$/.test(unit)
+          ) ||
+          new Set(parsed).size !== parsed.length
+        )
+          return null;
+        return parsed;
+      } catch {
+        return null;
+      }
+    };
+    const parseLayers = (
+      value: string | undefined,
+      units: readonly string[],
+      deriveWhenAbsent: boolean
+    ): readonly (readonly string[])[] | null => {
+      if (deriveWhenAbsent && value === undefined)
+        return units.map((unit) => [unit]);
+      try {
+        const parsed = JSON.parse(value ?? 'null') as unknown;
+        if (
+          !Array.isArray(parsed) ||
+          parsed.length === 0 ||
+          parsed.some(
+            (layer) =>
+              !Array.isArray(layer) ||
+              layer.length === 0 ||
+              layer.some((unit) => typeof unit !== 'string')
+          )
+        )
+          return null;
+        const flattened = parsed.flat() as string[];
+        if (
+          flattened.length !== units.length ||
+          new Set(flattened).size !== flattened.length ||
+          !isDeepStrictEqual([...flattened].sort(), [...units].sort())
+        )
+          return null;
+        return parsed as readonly (readonly string[])[];
+      } catch {
+        return null;
+      }
+    };
+    const reuseEvidence = (
+      allowComplete: boolean
+    ): {
+      readonly runId: string | null;
+      readonly name: string | null;
+      readonly digest: string | null;
+    } | null => {
+      const runId = inputs.reuse_artifact_run_id ?? '';
+      const name = inputs.reuse_artifact_name ?? '';
+      const digest = inputs.reuse_artifact_digest ?? '';
+      if (!runId && !name && !digest)
+        return { runId: null, name: null, digest: null };
+      if (
+        !allowComplete ||
+        !/^[1-9][0-9]{0,19}$/.test(runId) ||
+        !/^release-bus-v2-pr-[a-f0-9]{40}$/.test(name) ||
+        !/^[a-f0-9]{64}$/.test(digest)
+      )
+        return null;
+      return { runId, name, digest };
+    };
+    const targetEnvironment = environment === 'prod' ? 'production' : 'staging';
+    const oldProducerBaseRequest =
+      !Object.prototype.hasOwnProperty.call(
+        inputs,
+        'artifact_contract_version'
+      ) &&
+      !Object.prototype.hasOwnProperty.call(
+        inputs,
+        'candidate_evidence_mode'
+      ) &&
+      !Object.prototype.hasOwnProperty.call(
+        inputs,
+        'aggregate_candidate_evidence_digest'
+      ) &&
+      !Object.prototype.hasOwnProperty.call(inputs, 'deploy_layers') &&
+      inputs.operation_key === 'replaced-by-reconciler' &&
+      /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+      typeof inputs.source_ref === 'string' &&
+      inputs.source_ref.length > 0;
+    const newProducerBaseRequest =
+      request?.ref === 'main' &&
+      typeof request.workflow_control_sha === 'string' &&
+      /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
+      inputs.operation_key === 'replaced-by-reconciler' &&
+      /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+      typeof inputs.source_ref === 'string' &&
+      inputs.source_ref.length > 0 &&
+      inputs.candidate_evidence_mode === 'legacy-whole-train' &&
+      inputs.aggregate_candidate_evidence_digest === '' &&
+      inputs.reuse_artifact_run_id === '' &&
+      inputs.reuse_artifact_name === '' &&
+      inputs.reuse_artifact_digest === '';
+    const oldProducerSummaryShape = isDeepStrictEqual(
+      Object.keys(summary).sort(),
+      ['artifact_digest', 'fresh_or_reused']
+    );
+    const backendUnits = parseUnits(inputs.deploy_units);
+    const oldBackendProducer =
+      operation.repository === 'backend' &&
+      oldProducerBaseRequest &&
+      !Object.prototype.hasOwnProperty.call(inputs, 'artifact_environment') &&
+      backendUnits !== null &&
+      oldProducerSummaryShape &&
+      ['fresh', 'reused'].includes(String(summary.fresh_or_reused));
+    const oldFrontendProducer =
+      operation.repository === 'frontend' &&
+      oldProducerBaseRequest &&
+      inputs.artifact_environment === targetEnvironment &&
+      inputs.deploy_units === '[]' &&
+      oldProducerSummaryShape &&
+      ['fresh-dual-profile', 'reused'].includes(
+        String(summary.fresh_or_reused)
+      );
+    if (oldBackendProducer || oldFrontendProducer)
+      return {
         artifact_environment: '',
         artifact_contract_version: 'legacy-v2'
-      }
-    : {
-        artifact_environment: environment === 'prod' ? 'production' : 'staging',
-        artifact_contract_version: ENVIRONMENT_BOUND_ARTIFACT_CONTRACT
       };
+    if (operation.repository === 'frontend') {
+      const newFrontendRequest =
+        newProducerBaseRequest &&
+        exactKeys(inputs, [
+          'aggregate_candidate_evidence_digest',
+          'artifact_contract_version',
+          'artifact_environment',
+          'candidate_evidence_mode',
+          'deploy_units',
+          'expected_sha',
+          'operation_key',
+          'release_train_id',
+          'release_train_revision',
+          'reuse_artifact_digest',
+          'reuse_artifact_name',
+          'reuse_artifact_run_id',
+          'source_ref'
+        ]) &&
+        inputs.artifact_contract_version === 'legacy-v2' &&
+        inputs.artifact_environment === targetEnvironment &&
+        inputs.deploy_units === '[]';
+      const oldFrontendStructuredRequest =
+        oldProducerBaseRequest &&
+        inputs.artifact_environment === targetEnvironment &&
+        inputs.deploy_units === '[]';
+      const exactFrontendSummary =
+        exactKeys(summary, [
+          'artifact_bytes_reused',
+          'artifact_contract',
+          'artifact_contract_version',
+          'artifact_digest',
+          'ci_evidence',
+          'environment',
+          'fresh_or_reused',
+          'package_digest',
+          'repository',
+          'schema_version',
+          'source_evidence_reused',
+          'source_sha'
+        ]) &&
+        summary.schema_version === 2 &&
+        summary.artifact_contract === null &&
+        summary.artifact_contract_version === 'legacy-v2' &&
+        summary.repository === 'frontend' &&
+        summary.source_sha === operation.expected_sha &&
+        summary.environment === 'dual' &&
+        summary.fresh_or_reused === 'fresh-legacy-dual-profile' &&
+        summary.source_evidence_reused === false &&
+        summary.artifact_bytes_reused === false &&
+        summary.ci_evidence === null &&
+        typeof summary.package_digest === 'string' &&
+        /^[a-f0-9]{64}$/.test(summary.package_digest);
+      if (
+        exactFrontendSummary &&
+        (newFrontendRequest || oldFrontendStructuredRequest)
+      )
+        return {
+          artifact_environment: '',
+          artifact_contract_version: 'legacy-v2'
+        };
+    }
+    if (operation.repository === 'backend' && backendUnits) {
+      const newBackendRequest =
+        newProducerBaseRequest &&
+        exactKeys(inputs, [
+          'aggregate_candidate_evidence_digest',
+          'artifact_contract_version',
+          'artifact_environment',
+          'candidate_evidence_mode',
+          'deploy_layers',
+          'deploy_units',
+          'expected_sha',
+          'operation_key',
+          'release_train_id',
+          'release_train_revision',
+          'reuse_artifact_digest',
+          'reuse_artifact_name',
+          'reuse_artifact_run_id',
+          'source_ref'
+        ]) &&
+        inputs.artifact_contract_version === 'legacy-v2' &&
+        inputs.artifact_environment === '';
+      const oldBackendStructuredRequest =
+        oldProducerBaseRequest &&
+        !Object.prototype.hasOwnProperty.call(inputs, 'artifact_environment');
+      const layers = parseLayers(
+        inputs.deploy_layers,
+        backendUnits,
+        oldBackendStructuredRequest
+      );
+      const evidence = reuseEvidence(oldBackendStructuredRequest);
+      const packageDigests = stringRecord(summary.package_digests);
+      const exactPackages =
+        packageDigests !== null &&
+        isDeepStrictEqual(
+          Object.keys(packageDigests).sort(),
+          [...backendUnits].sort()
+        ) &&
+        Object.values(packageDigests).every((digest) =>
+          /^[a-f0-9]{64}$/.test(digest)
+        );
+      const exactBackendSummary =
+        layers !== null &&
+        evidence !== null &&
+        exactKeys(summary, [
+          'artifact_bytes_reused',
+          'artifact_contract',
+          'artifact_contract_version',
+          'artifact_digest',
+          'ci_evidence',
+          'environment',
+          'fresh_or_reused',
+          'layers',
+          'package_digests',
+          'repository',
+          'schema_version',
+          'source_evidence_reused',
+          'source_sha',
+          'units'
+        ]) &&
+        summary.schema_version === 2 &&
+        summary.artifact_contract === 'legacy-v2' &&
+        summary.artifact_contract_version === 'legacy-v2' &&
+        summary.repository === 'backend' &&
+        summary.source_sha === operation.expected_sha &&
+        summary.environment === 'portable' &&
+        summary.source_evidence_reused === true &&
+        typeof summary.artifact_bytes_reused === 'boolean' &&
+        summary.fresh_or_reused ===
+          (summary.artifact_bytes_reused ? 'reused' : 'fresh') &&
+        isDeepStrictEqual(summary.units, backendUnits) &&
+        isDeepStrictEqual(summary.layers, layers) &&
+        exactPackages &&
+        isDeepStrictEqual(summary.ci_evidence, {
+          mode: 'legacy-whole-train',
+          artifact_run_id: evidence.runId,
+          artifact_name: evidence.name,
+          artifact_digest: evidence.digest,
+          aggregate_candidate_evidence_digest: null
+        });
+      if (
+        exactBackendSummary &&
+        (newBackendRequest || oldBackendStructuredRequest)
+      )
+        return {
+          artifact_environment: '',
+          artifact_contract_version: 'legacy-v2'
+        };
+    }
+    throw new Error(
+      'Legacy artifact preparation does not prove an immutable portable artifact'
+    );
+  }
+  const targetEnvironment = environment === 'prod' ? 'production' : 'staging';
+  const exactKeys = (
+    value: Readonly<Record<string, unknown>>,
+    expected: readonly string[]
+  ): boolean =>
+    isDeepStrictEqual(Object.keys(value).sort(), [...expected].sort());
+  const exactV3RequestBase =
+    contract === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
+    request?.ref === 'main' &&
+    typeof request.workflow_control_sha === 'string' &&
+    /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.operation_key === 'replaced-by-reconciler' &&
+    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+    typeof inputs.source_ref === 'string' &&
+    inputs.source_ref.length > 0;
+  let expectedCiEvidence: Readonly<Record<string, unknown>> | null = null;
+  if (
+    inputs.candidate_evidence_mode === 'strict-single' &&
+    inputs.aggregate_candidate_evidence_digest === '' &&
+    /^[1-9][0-9]{0,19}$/.test(inputs.reuse_artifact_run_id ?? '') &&
+    inputs.reuse_artifact_name ===
+      `release-bus-v2-pr-${operation.expected_sha}` &&
+    /^[a-f0-9]{64}$/.test(inputs.reuse_artifact_digest ?? '')
+  )
+    expectedCiEvidence = {
+      mode: 'strict-single',
+      artifact_run_id: inputs.reuse_artifact_run_id,
+      artifact_name: inputs.reuse_artifact_name,
+      artifact_digest: inputs.reuse_artifact_digest,
+      aggregate_candidate_evidence_digest: null
+    };
+  else if (
+    inputs.candidate_evidence_mode === 'strict-aggregate' &&
+    /^[a-f0-9]{64}$/.test(inputs.aggregate_candidate_evidence_digest ?? '') &&
+    inputs.reuse_artifact_run_id === '' &&
+    inputs.reuse_artifact_name === '' &&
+    inputs.reuse_artifact_digest === ''
+  )
+    expectedCiEvidence = {
+      mode: 'strict-aggregate',
+      artifact_run_id: null,
+      artifact_name: null,
+      artifact_digest: null,
+      aggregate_candidate_evidence_digest:
+        inputs.aggregate_candidate_evidence_digest
+    };
+  const exactV3SummaryBase =
+    summary.schema_version === 3 &&
+    summary.artifact_contract === 'environment-bound-v1' &&
+    summary.artifact_contract_version === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
+    summary.environment === targetEnvironment &&
+    summary.repository === operation.repository &&
+    summary.source_sha === operation.expected_sha &&
+    summary.source_evidence_reused === true &&
+    summary.artifact_bytes_reused === false &&
+    expectedCiEvidence !== null &&
+    isDeepStrictEqual(summary.ci_evidence, expectedCiEvidence);
+  let exactRepositoryBinding = false;
+  if (operation.repository === 'frontend') {
+    exactRepositoryBinding =
+      exactV3RequestBase &&
+      exactKeys(inputs, [
+        'aggregate_candidate_evidence_digest',
+        'artifact_contract_version',
+        'artifact_environment',
+        'candidate_evidence_mode',
+        'deploy_units',
+        'expected_sha',
+        'operation_key',
+        'release_train_id',
+        'release_train_revision',
+        'reuse_artifact_digest',
+        'reuse_artifact_name',
+        'reuse_artifact_run_id',
+        'source_ref'
+      ]) &&
+      inputs.deploy_units === '[]' &&
+      exactV3SummaryBase &&
+      exactKeys(summary, [
+        'artifact_bytes_reused',
+        'artifact_contract',
+        'artifact_contract_version',
+        'artifact_digest',
+        'ci_evidence',
+        'environment',
+        'fresh_or_reused',
+        'package_digest',
+        'repository',
+        'schema_version',
+        'source_evidence_reused',
+        'source_sha'
+      ]) &&
+      summary.fresh_or_reused === 'fresh-environment-bound' &&
+      typeof summary.package_digest === 'string' &&
+      /^[a-f0-9]{64}$/.test(summary.package_digest);
+  } else {
+    let units: readonly string[] | null = null;
+    let layers: readonly (readonly string[])[] | null = null;
+    try {
+      const parsedUnits = JSON.parse(inputs.deploy_units ?? 'null') as unknown;
+      const parsedLayers = JSON.parse(
+        inputs.deploy_layers ?? 'null'
+      ) as unknown;
+      if (
+        Array.isArray(parsedUnits) &&
+        parsedUnits.length > 0 &&
+        parsedUnits.every(
+          (unit) =>
+            typeof unit === 'string' && /^[A-Za-z][A-Za-z0-9]{0,99}$/.test(unit)
+        ) &&
+        new Set(parsedUnits).size === parsedUnits.length &&
+        Array.isArray(parsedLayers) &&
+        parsedLayers.length > 0 &&
+        parsedLayers.every(
+          (layer) =>
+            Array.isArray(layer) &&
+            layer.length > 0 &&
+            layer.every((unit) => typeof unit === 'string')
+        )
+      ) {
+        const flattened = parsedLayers.flat() as string[];
+        if (
+          flattened.length === parsedUnits.length &&
+          new Set(flattened).size === flattened.length &&
+          isDeepStrictEqual([...flattened].sort(), [...parsedUnits].sort())
+        ) {
+          units = parsedUnits;
+          layers = parsedLayers as readonly (readonly string[])[];
+        }
+      }
+    } catch {
+      units = null;
+      layers = null;
+    }
+    const packageDigests = stringRecord(summary.package_digests);
+    exactRepositoryBinding =
+      exactV3RequestBase &&
+      exactKeys(inputs, [
+        'aggregate_candidate_evidence_digest',
+        'artifact_contract_version',
+        'artifact_environment',
+        'candidate_evidence_mode',
+        'deploy_layers',
+        'deploy_units',
+        'expected_sha',
+        'operation_key',
+        'release_train_id',
+        'release_train_revision',
+        'reuse_artifact_digest',
+        'reuse_artifact_name',
+        'reuse_artifact_run_id',
+        'source_ref'
+      ]) &&
+      exactV3SummaryBase &&
+      exactKeys(summary, [
+        'artifact_bytes_reused',
+        'artifact_contract',
+        'artifact_contract_version',
+        'artifact_digest',
+        'ci_evidence',
+        'environment',
+        'fresh_or_reused',
+        'layers',
+        'package_digests',
+        'repository',
+        'schema_version',
+        'source_evidence_reused',
+        'source_sha',
+        'units'
+      ]) &&
+      units !== null &&
+      layers !== null &&
+      isDeepStrictEqual(summary.units, units) &&
+      isDeepStrictEqual(summary.layers, layers) &&
+      packageDigests !== null &&
+      isDeepStrictEqual(
+        Object.keys(packageDigests).sort(),
+        [...units].sort()
+      ) &&
+      Object.values(packageDigests).every((digest) =>
+        /^[a-f0-9]{64}$/.test(digest)
+      ) &&
+      summary.fresh_or_reused === 'fresh';
+  }
+  if (!exactRepositoryBinding)
+    throw new Error(
+      'Environment-bound preparation does not match the exact deploy environment'
+    );
+  return {
+    artifact_environment: targetEnvironment,
+    artifact_contract_version: ENVIRONMENT_BOUND_ARTIFACT_CONTRACT
+  };
+}
+
+function frontendDeployBinding(
+  binding: ArtifactDeployBinding,
+  environment: 'staging' | 'prod'
+): ArtifactDeployBinding {
+  return binding.artifact_contract_version === 'legacy-v2'
+    ? {
+        artifact_contract_version: 'legacy-v2',
+        artifact_environment: environment === 'prod' ? 'production' : 'staging'
+      }
+    : binding;
 }
 
 function operationKey(trainId: string, suffix: string): string {
@@ -1834,7 +2366,12 @@ export class ReleaseBusV2Reconciler {
         failedOperation: null
       };
     const graph =
-      repository === 'backend' ? backendGraph(deployCandidates) : null;
+      repository === 'backend'
+        ? backendGraph(
+            deployCandidates,
+            train.lane === 'PRODUCTION' ? 'prod' : 'staging'
+          )
+        : null;
     const evidence = evidenceSelection.singular;
     const artifactEnvironment = artifactEnvironmentForTrain(train);
     const artifactContract =
@@ -1878,7 +2415,10 @@ export class ReleaseBusV2Reconciler {
         candidate_evidence_mode: evidenceSelection.mode,
         aggregate_candidate_evidence_digest:
           evidenceSelection.aggregateDigest ?? '',
-        artifact_environment: artifactEnvironment,
+        artifact_environment:
+          artifactContract === 'legacy-v2' && repository === 'backend'
+            ? ''
+            : artifactEnvironment,
         artifact_contract_version: artifactContract
       },
       maxAttempts: 3,
@@ -2316,7 +2856,13 @@ export class ReleaseBusV2Reconciler {
         failureClass: 'CANDIDATE',
         message: 'Isolation subset conflicted with its exact base'
       };
-    const graph = repository === 'backend' ? backendGraph(candidates) : null;
+    const graph =
+      repository === 'backend'
+        ? backendGraph(
+            candidates,
+            train.lane === 'PRODUCTION' ? 'prod' : 'staging'
+          )
+        : null;
     const evidenceSelection = candidateEvidenceSelection(candidates, null);
     const preflight = await releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(
@@ -2348,7 +2894,11 @@ export class ReleaseBusV2Reconciler {
         candidate_evidence_mode: evidenceSelection.mode,
         aggregate_candidate_evidence_digest:
           evidenceSelection.aggregateDigest ?? '',
-        artifact_environment: artifactEnvironmentForTrain(train),
+        artifact_environment:
+          evidenceSelection.mode === 'legacy-whole-train' &&
+          repository === 'backend'
+            ? ''
+            : artifactEnvironmentForTrain(train),
         artifact_contract_version:
           evidenceSelection.mode === 'legacy-whole-train'
             ? 'legacy-v2'
@@ -2682,7 +3232,11 @@ export class ReleaseBusV2Reconciler {
         candidate_evidence_mode: evidenceSelection.mode,
         aggregate_candidate_evidence_digest:
           evidenceSelection.aggregateDigest ?? '',
-        artifact_environment: 'staging',
+        artifact_environment:
+          evidenceSelection.mode === 'legacy-whole-train' &&
+          repository === 'backend'
+            ? ''
+            : 'staging',
         artifact_contract_version:
           evidenceSelection.mode === 'legacy-whole-train'
             ? 'legacy-v2'
@@ -2716,12 +3270,12 @@ export class ReleaseBusV2Reconciler {
       ({ repository }) => repository === 'frontend'
     );
     const backendArtifactBinding =
-      backendCandidates.length > 0
-        ? candidateArtifactDeployBinding(backendCandidates, 'staging')
+      backendCandidates.length > 0 && backendArtifact
+        ? preparedArtifactDeployBinding(backendArtifact, 'staging')
         : null;
     const frontendArtifactBinding =
-      frontendCandidates.length > 0
-        ? candidateArtifactDeployBinding(frontendCandidates, 'staging')
+      frontendCandidates.length > 0 && frontendArtifact
+        ? preparedArtifactDeployBinding(frontendArtifact, 'staging')
         : null;
     const operations: ReleaseBusV2OperationRecord[] = [];
     const existing = await this.repository.listOperations(train.id, {});
@@ -2819,10 +3373,13 @@ export class ReleaseBusV2Reconciler {
           artifact_run_id: frontendArtifact.external_id,
           artifact_train_id: train.id,
           artifact_digest: frontendArtifact.artifact_digest,
-          artifact_environment:
-            frontendArtifactBinding?.artifact_environment ?? '',
-          artifact_contract_version:
-            frontendArtifactBinding?.artifact_contract_version ?? 'legacy-v2',
+          ...frontendDeployBinding(
+            frontendArtifactBinding ?? {
+              artifact_environment: '',
+              artifact_contract_version: 'legacy-v2'
+            },
+            'staging'
+          ),
           release_contributors: '[]'
         }
       });
@@ -4543,12 +5100,18 @@ export class ReleaseBusV2Reconciler {
     artifactSourceTrainId: string
   ): Promise<DeployResult> {
     const train = context.train;
-    const source = await this.artifactSource(artifactSourceTrainId);
+    if (environment === 'prod' && artifactSourceTrainId !== train.id)
+      throw new Error(
+        'Production deployment requires a freshly prepared same-train artifact'
+      );
+    const source = await this.artifactSource(
+      artifactSourceTrainId,
+      environment
+    );
     const releaseContributors = JSON.stringify(
       releaseTrainContributorGithubLogins(relevantCandidates(context))
     );
     const backendCandidates = stagingDeploymentCandidates(context, 'backend');
-    const backendArtifactCandidates = relevantCandidates(context, 'backend');
     const graph = backendGraph(backendCandidates, environment);
     const operations: ReleaseBusV2OperationRecord[] = [];
     let backendComplete = graph.units.length === 0;
@@ -4575,10 +5138,9 @@ export class ReleaseBusV2Reconciler {
             train,
             environment,
             artifactSourceTrainId,
-            source.backendRunId,
+            source.backend,
             unit,
             backendCandidates,
-            backendArtifactCandidates,
             releaseContributors
           )
         )
@@ -4592,7 +5154,6 @@ export class ReleaseBusV2Reconciler {
     }
 
     const frontendCandidates = stagingDeploymentCandidates(context, 'frontend');
-    const frontendArtifactCandidates = relevantCandidates(context, 'frontend');
     let frontendComplete = frontendCandidates.length === 0;
     if (
       frontendCandidates.length > 0 &&
@@ -4602,8 +5163,7 @@ export class ReleaseBusV2Reconciler {
         train,
         environment,
         artifactSourceTrainId,
-        source.frontendRunId,
-        frontendArtifactCandidates,
+        source.frontend,
         releaseContributors
       );
       operations.push(frontend);
@@ -4622,23 +5182,25 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
-    artifactRunId: string | null,
+    artifactSource: PreparedArtifactSource | null,
     service: string,
     candidates: readonly ReleaseBusV2CandidateRecord[],
-    artifactCandidates: readonly ReleaseBusV2CandidateRecord[],
     releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
-    if (!artifactRunId)
+    if (!artifactSource)
       throw new Error('Missing backend artifact workflow run');
     const expectedSha = train.backend_composed_sha;
     if (!expectedSha) throw new Error('Missing backend composed SHA');
+    if (
+      artifactSource.expectedSha !== expectedSha ||
+      artifactSource.digest !== train.backend_artifact_digest
+    )
+      throw new Error(
+        'Backend deploy artifact does not match the exact prepared train identity'
+      );
     const releaseNoteInputs = backendReleaseNoteInputs(
       candidates,
       service,
-      environment
-    );
-    const artifactBinding = candidateArtifactDeployBinding(
-      artifactCandidates,
       environment
     );
     return releaseBusV2Operations.reconcileWorkflow({
@@ -4662,10 +5224,10 @@ export class ReleaseBusV2Reconciler {
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
         expected_sha: expectedSha,
-        artifact_run_id: artifactRunId,
+        artifact_run_id: artifactSource.runId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.backend_artifact_digest ?? '',
-        ...artifactBinding,
+        ...artifactSource.binding,
         release_contributors: releaseContributors,
         ...releaseNoteInputs
       }
@@ -4676,22 +5238,24 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
-    artifactRunId: string | null,
-    candidates: readonly ReleaseBusV2CandidateRecord[],
+    artifactSource: PreparedArtifactSource | null,
     releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
-    if (!artifactRunId)
+    if (!artifactSource)
       throw new Error('Missing frontend artifact workflow run');
     const expectedSha = train.frontend_composed_sha;
     if (!expectedSha) throw new Error('Missing frontend composed SHA');
+    if (
+      artifactSource.expectedSha !== expectedSha ||
+      artifactSource.digest !== train.frontend_artifact_digest
+    )
+      throw new Error(
+        'Frontend deploy artifact does not match the exact prepared train identity'
+      );
     const workflow =
       environment === 'staging'
         ? 'release-bus-deploy-staging.yml'
         : 'release-bus-deploy-production.yml';
-    const artifactBinding = candidateArtifactDeployBinding(
-      candidates,
-      environment
-    );
     return releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(train.id, `deploy:${environment}:frontend`),
       trainId: train.id,
@@ -4712,10 +5276,10 @@ export class ReleaseBusV2Reconciler {
             ? 'main'
             : releaseBusV2Branch(train, 'frontend'),
         expected_sha: expectedSha,
-        artifact_run_id: artifactRunId,
+        artifact_run_id: artifactSource.runId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.frontend_artifact_digest ?? '',
-        ...artifactBinding,
+        ...frontendDeployBinding(artifactSource.binding, environment),
         release_contributors: releaseContributors
       }
     });
@@ -4792,20 +5356,43 @@ export class ReleaseBusV2Reconciler {
     return releaseBusV2Operations.reconcileWorkflow(spec);
   }
 
-  private async artifactSource(trainId: string): Promise<ArtifactSource> {
+  private async artifactSource(
+    trainId: string,
+    environment: 'staging' | 'prod'
+  ): Promise<ArtifactSource> {
     const operations = await this.repository.listOperations(trainId, {});
-    const frontend = operations.find(
+    const frontendOperations = operations.filter(
       ({ operation_type, status }) =>
         operation_type === 'PREPARE_ARTIFACT_FRONTEND' && status === 'SUCCEEDED'
     );
-    const backend = operations.find(
+    const backendOperations = operations.filter(
       ({ operation_type, status }) =>
         operation_type === 'PREPARE_ARTIFACT_BACKEND' && status === 'SUCCEEDED'
     );
+    if (frontendOperations.length > 1 || backendOperations.length > 1)
+      throw new Error(
+        'Artifact source train has ambiguous successful preparation operations'
+      );
+    const preparedSource = (
+      operation: ReleaseBusV2OperationRecord | undefined
+    ): PreparedArtifactSource | null => {
+      if (!operation) return null;
+      if (operation.train_id !== trainId)
+        throw new Error(
+          'Artifact preparation operation belongs to a different train'
+        );
+      const binding = preparedArtifactDeployBinding(operation, environment);
+      return {
+        runId: operation.external_id!,
+        digest: operation.artifact_digest!,
+        expectedSha: operation.expected_sha!,
+        binding
+      };
+    };
     return {
       trainId,
-      frontendRunId: frontend?.external_id ?? null,
-      backendRunId: backend?.external_id ?? null
+      frontend: preparedSource(frontendOperations[0]),
+      backend: preparedSource(backendOperations[0])
     };
   }
 

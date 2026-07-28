@@ -126,8 +126,14 @@ function policyFixture(
       if (
         !modern &&
         repository === 'backend' &&
-        policy.path === 'package.json' &&
-        key === 'devDependencies.jest'
+        ((policy.path === 'package.json' &&
+          [
+            'dependencies.adm-zip',
+            'devDependencies.jest',
+            'devDependencies.yaml'
+          ].includes(key)) ||
+          (policy.path === 'src/api-serverless/package.json' &&
+            key === 'dependencies.adm-zip'))
       )
         continue;
       setDottedString(
@@ -245,6 +251,36 @@ function backendEvidenceArchive(input: {
   readonly manifestOverride?: Record<string, unknown>;
 }): Buffer {
   return evidenceArchive({ repository: 'backend', ...input });
+}
+
+function withZeroDeclaredEntrySize(
+  archiveBytes: Buffer,
+  entryName: string
+): Buffer {
+  const mutated = Buffer.from(archiveBytes);
+  for (let offset = 0; offset <= mutated.length - 46; offset += 1) {
+    if (mutated.readUInt32LE(offset) !== 0x02014b50) continue;
+    const fileNameLength = mutated.readUInt16LE(offset + 28);
+    const extraLength = mutated.readUInt16LE(offset + 30);
+    const commentLength = mutated.readUInt16LE(offset + 32);
+    const nameStart = offset + 46;
+    const nameEnd = nameStart + fileNameLength;
+    if (nameEnd > mutated.length)
+      throw new Error('Invalid ZIP central directory fixture');
+    if (mutated.subarray(nameStart, nameEnd).toString('utf8') === entryName) {
+      const localHeaderOffset = mutated.readUInt32LE(offset + 42);
+      if (
+        localHeaderOffset + 30 > mutated.length ||
+        mutated.readUInt32LE(localHeaderOffset) !== 0x04034b50
+      )
+        throw new Error('Invalid ZIP local header fixture');
+      mutated.writeUInt32LE(0, offset + 24);
+      mutated.writeUInt32LE(0, localHeaderOffset + 22);
+      return mutated;
+    }
+    offset = nameEnd + extraLength + commentLength - 1;
+  }
+  throw new Error(`ZIP fixture entry ${entryName} was not found`);
 }
 
 function queueQualificationResponses(input: {
@@ -894,6 +930,47 @@ describe('GitHub pull request qualification evidence', () => {
     }
   });
 
+  it('rejects a nonempty compressed entry that declares zero output bytes', async () => {
+    const headSha = 'a'.repeat(40);
+    const mergeSha = 'c'.repeat(40);
+    const archive = backendEvidenceArchive({ headSha, mergeSha });
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha,
+      archive: withZeroDeclaredEntrySize(archive, 'policy-bundle.txt')
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow('expands beyond the size limit');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('rejects extra ZIP directory entries instead of ignoring them', async () => {
+    const headSha = 'a'.repeat(40);
+    const mergeSha = 'c'.repeat(40);
+    const archive = new AdmZip(backendEvidenceArchive({ headSha, mergeSha }));
+    archive.addFile('unexpected/', Buffer.alloc(0));
+    const fetchMock = queueQualificationResponses({
+      headSha,
+      baseSha: 'b'.repeat(40),
+      mergeSha,
+      archive: archive.toBuffer()
+    });
+
+    try {
+      await expect(
+        appWithCachedToken().getPullRequestQualification('backend', 42, headSha)
+      ).rejects.toThrow('archive has unexpected files');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
   it('keeps qualification available when commit contributor enrichment fails', async () => {
     const app = new ReleaseBusGitHubApp();
     (
@@ -973,6 +1050,7 @@ describe('GitHub workflow operation identity', () => {
           display_title: 'Compose backend v2 train beta [rb2:beta:a1]',
           status: 'in_progress',
           conclusion: null,
+          head_branch: 'main',
           head_sha: 'a'.repeat(40),
           html_url: 'https://github.com/example/actions/runs/12345',
           event: 'workflow_dispatch',
@@ -987,6 +1065,7 @@ describe('GitHub workflow operation identity', () => {
       ).resolves.toMatchObject({
         actor: '6529-release-bus[bot]',
         event: 'workflow_dispatch',
+        headBranch: 'main',
         headSha: 'a'.repeat(40)
       });
     } finally {

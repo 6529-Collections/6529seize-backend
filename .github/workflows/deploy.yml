@@ -410,7 +410,8 @@ jobs:
           test "$artifact_digest" = "$INPUT_ARTIFACT_DIGEST"
           package_digest="$(sha256sum "packages/$INPUT_SERVICE/index.zip" | cut -d' ' -f1)"
           if [ "$INPUT_ARTIFACT_CONTRACT_VERSION" = environment-bound-v3 ]; then
-            jq -e               --arg train_id "$artifact_train_id"               --arg source_sha "$INPUT_EXPECTED_SHA"               --arg service "$INPUT_SERVICE"               --arg environment "$INPUT_ARTIFACT_ENVIRONMENT"               --arg package_digest "$package_digest"               '.schema_version == 3 and
+            expected_artifact_environment="${INPUT_ENVIRONMENT/prod/production}"
+            jq -e               --arg train_id "$artifact_train_id"               --arg source_sha "$INPUT_EXPECTED_SHA"               --arg service "$INPUT_SERVICE"               --arg environment "$expected_artifact_environment"               --arg package_digest "$package_digest"               '.schema_version == 3 and
                .artifact_contract == "environment-bound-v1" and
                .artifact_contract_version == "environment-bound-v3" and
                .repository == "backend" and
@@ -731,6 +732,7 @@ jobs:
           DOWNLOAD_OUTCOME: ${{ steps.artifact_download.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.release_bus_artifact.outcome }}
           AWS_OUTCOME: ${{ steps.aws_credentials.outcome }}
+          PACKAGE_DIGEST: ${{ steps.release_bus_artifact.outputs.package_digest }}
         run: |
           set -euo pipefail
           status=SUCCEEDED
@@ -752,7 +754,7 @@ jobs:
             fi
           fi
           artifact_train_id="${INPUT_ARTIFACT_TRAIN_ID:-$INPUT_TRAIN_ID}"
-          payload="$(jq -n             --arg train_id "$INPUT_TRAIN_ID"             --arg operation_key "$INPUT_OPERATION_KEY"             --arg workflow_run_id "$GITHUB_RUN_ID"             --arg status "$status"             --arg failure_class "$failure_class"             --arg failure_phase "$failure_phase"             --argjson retryable "$retryable"             --arg artifact_digest "$INPUT_ARTIFACT_DIGEST"             --arg artifact_contract_version "$INPUT_ARTIFACT_CONTRACT_VERSION"             --arg artifact_environment "$INPUT_ARTIFACT_ENVIRONMENT"             --arg deployment_environment "$INPUT_ENVIRONMENT"             --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID"             --arg artifact_train_id "$artifact_train_id"             --arg repository backend             --arg source_sha "$INPUT_EXPECTED_SHA"             --arg service "$INPUT_SERVICE"             --arg package_digest "${{ steps.release_bus_artifact.outputs.package_digest }}"             '{
+          payload="$(jq -n             --arg train_id "$INPUT_TRAIN_ID"             --arg operation_key "$INPUT_OPERATION_KEY"             --arg workflow_run_id "$GITHUB_RUN_ID"             --arg status "$status"             --arg failure_class "$failure_class"             --arg failure_phase "$failure_phase"             --argjson retryable "$retryable"             --arg artifact_digest "$INPUT_ARTIFACT_DIGEST"             --arg artifact_contract_version "$INPUT_ARTIFACT_CONTRACT_VERSION"             --arg artifact_environment "$INPUT_ARTIFACT_ENVIRONMENT"             --arg deployment_environment "$INPUT_ENVIRONMENT"             --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID"             --arg artifact_train_id "$artifact_train_id"             --arg repository backend             --arg source_sha "$INPUT_EXPECTED_SHA"             --arg service "$INPUT_SERVICE"             --arg package_digest "$PACKAGE_DIGEST"             '{
               train_id:$train_id,
               operation_key:$operation_key,
               workflow_run_id:$workflow_run_id,

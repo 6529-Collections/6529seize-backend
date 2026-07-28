@@ -5,11 +5,13 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const YAML = require('yaml');
 
 const CONTRACT = 'pr-ci-policy-bundle-v1';
 const MAX_FILE_COUNT = 96;
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_CANONICAL_BYTES = 64 * 1024;
+const GIT_BINARY = '/usr/bin/git';
 
 const FILE_PATHS = Object.freeze([
   '.github/workflows/deploy.yml',
@@ -54,6 +56,7 @@ const PACKAGE_POLICIES = Object.freeze({
     ]),
     fieldKeys: Object.freeze([
       'packageManager',
+      'dependencies.adm-zip',
       'devDependencies.@typescript-eslint/parser',
       'devDependencies.esbuild',
       'devDependencies.eslint',
@@ -62,7 +65,8 @@ const PACKAGE_POLICIES = Object.freeze({
       'devDependencies.ts-jest',
       'devDependencies.ts-node',
       'devDependencies.typescript',
-      'devDependencies.typescript-eslint'
+      'devDependencies.typescript-eslint',
+      'devDependencies.yaml'
     ])
   }),
   'src/api-serverless/package.json': Object.freeze({
@@ -76,6 +80,7 @@ const PACKAGE_POLICIES = Object.freeze({
     ]),
     fieldKeys: Object.freeze([
       'packageManager',
+      'dependencies.adm-zip',
       'dependencies.@openapitools/openapi-generator-cli',
       'devDependencies.esbuild',
       'devDependencies.eslint',
@@ -98,11 +103,12 @@ function sha256(value) {
 
 function gitBlobSha(value) {
   const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
-  return crypto
-    .createHash('sha1')
-    .update(Buffer.from(`blob ${bytes.length}\0`, 'utf8'))
-    .update(bytes)
-    .digest('hex');
+  return childProcess
+    .execFileSync(GIT_BINARY, ['hash-object', '--stdin'], {
+      encoding: 'utf8',
+      input: bytes
+    })
+    .trim();
 }
 
 function bytewiseCompare(left, right) {
@@ -135,7 +141,7 @@ function assertUnique(values, label) {
 function readRegularFileNoFollow(absolutePath, label) {
   const noFollow = fs.constants.O_NOFOLLOW;
   if (!Number.isInteger(noFollow)) {
-    throw new Error(
+    throw new TypeError(
       'pr-ci-policy-bundle: this platform cannot reject symbolic-link inputs'
     );
   }
@@ -144,10 +150,10 @@ function readRegularFileNoFollow(absolutePath, label) {
   try {
     descriptor = fs.openSync(absolutePath, fs.constants.O_RDONLY | noFollow);
   } catch (error) {
-    if (error && error.code === 'ENOENT') {
+    if (error?.code === 'ENOENT') {
       throw new Error(`pr-ci-policy-bundle: ${label} is missing`);
     }
-    if (error && error.code === 'ELOOP') {
+    if (error?.code === 'ELOOP') {
       throw new Error(`pr-ci-policy-bundle: ${label} is not a regular file`);
     }
     throw error;
@@ -212,23 +218,47 @@ function assertPinnedWorkflowActions(root, workflows) {
       path.join(root, relativePath),
       `protected path ${relativePath}`
     ).toString('utf8');
-    for (const [index, line] of source.split(/\r?\n/u).entries()) {
-      if (!/^\s*(?:-\s*)?uses:/u.test(line)) continue;
-      const match = line.match(
-        /^\s*(?:-\s*)?uses:\s*["']?([^"'#\s]+)["']?(?:\s+#.*)?$/u
+    let workflow;
+    try {
+      workflow = YAML.parse(source, { maxAliasCount: 0 });
+    } catch (error) {
+      throw new Error(
+        `pr-ci-policy-bundle: malformed workflow YAML at ${relativePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
-      if (!match) {
-        throw new Error(
-          `pr-ci-policy-bundle: malformed uses at ${relativePath}:${index + 1}`
-        );
-      }
-      const action = match[1];
-      if (!action.startsWith('./') && !/^[^@\s]+@[a-f0-9]{40}$/u.test(action)) {
-        throw new Error(
-          `pr-ci-policy-bundle: external action is not pinned to a 40-hex SHA at ${relativePath}:${index + 1}`
-        );
-      }
     }
+
+    const visit = (value) => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      if (Object.prototype.hasOwnProperty.call(value, 'uses')) {
+        const action = value.uses;
+        if (typeof action !== 'string' || action.length === 0) {
+          throw new Error(
+            `pr-ci-policy-bundle: malformed uses at ${relativePath}`
+          );
+        }
+        if (
+          !action.startsWith('./') &&
+          !/^[^@\s]+@[a-f0-9]{40}$/u.test(action)
+        ) {
+          throw new Error(
+            `pr-ci-policy-bundle: external action is not pinned to a 40-hex SHA at ${relativePath}`
+          );
+        }
+      }
+      for (const child of Object.values(value)) visit(child);
+    };
+    if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow)) {
+      throw new Error(
+        `pr-ci-policy-bundle: malformed workflow YAML at ${relativePath}: expected an object`
+      );
+    }
+    visit(workflow);
   }
 }
 
@@ -242,7 +272,7 @@ function assertExactGitRef(root, expectedGitRef, filePaths) {
   try {
     resolved = childProcess
       .execFileSync(
-        'git',
+        GIT_BINARY,
         ['rev-parse', '--verify', `${expectedGitRef}^{commit}`],
         { cwd: root, encoding: 'utf8' }
       )
@@ -258,7 +288,7 @@ function assertExactGitRef(root, expectedGitRef, filePaths) {
     try {
       expectedBlob = childProcess
         .execFileSync(
-          'git',
+          GIT_BINARY,
           ['rev-parse', `${expectedGitRef}:${relativePath}`],
           {
             cwd: root,

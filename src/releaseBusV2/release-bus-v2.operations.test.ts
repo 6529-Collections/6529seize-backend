@@ -213,6 +213,283 @@ describe('Release Bus v2 exact operation callbacks', () => {
     expect(state.repository.appendEvent).toHaveBeenCalledTimes(1);
   });
 
+  it('continues an old-producer preflight with its immutable stored request after the reconciler upgrade', async () => {
+    const oldInputs = {
+      release_train_id: 'train-id',
+      release_train_revision: '1',
+      operation_key: 'replaced-by-reconciler',
+      source_ref: 'feature/old-producer-candidate',
+      expected_sha: 'a'.repeat(40),
+      deploy_units: '["api"]',
+      reuse_artifact_run_id: '456',
+      reuse_artifact_name: `release-bus-v2-pr-${'a'.repeat(40)}`,
+      reuse_artifact_digest: 'd'.repeat(64)
+    };
+    const oldRequest = {
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      inputs: oldInputs,
+      beta_infrastructure_failure_injection: null
+    };
+    const state = repositoryFor(
+      operation({
+        external_id: null,
+        status: 'PENDING',
+        idempotency_key: 'rb2:train-id:prepare:backend',
+        operation_type: 'PREPARE_ARTIFACT_BACKEND',
+        repository: 'backend',
+        request_json: oldRequest
+      })
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await service.reconcileWorkflow({
+      idempotencyKey: 'rb2:train-id:prepare:backend',
+      trainId: 'train-id',
+      operationType: 'PREPARE_ARTIFACT_BACKEND',
+      repository: 'backend',
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: 'a'.repeat(40),
+      artifactDigest: null,
+      inputs: {
+        ...oldInputs,
+        source_ref: 'release-bus-v2/staging-train-train-id-backend',
+        deploy_layers: '[["api"]]',
+        artifact_environment: 'staging',
+        artifact_contract_version: 'environment-bound-v3',
+        candidate_evidence_mode: 'strict-single',
+        aggregate_candidate_evidence_digest: ''
+      }
+    });
+
+    expect(mockResolveRef).not.toHaveBeenCalled();
+    expect(state.repository.getOrCreateOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ request: oldRequest }),
+      {}
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'backend',
+      'release-bus-v2-preflight.yml',
+      'main',
+      {
+        ...oldInputs,
+        operation_key: 'rb2:train-id:prepare:backend:a1'
+      }
+    );
+  });
+
+  it.each([
+    {
+      operationType: 'DEPLOY_BACKEND_STAGING_releaseBus',
+      workflow: 'deploy.yml',
+      environment: 'staging',
+      service: 'releaseBus',
+      oldInputs: {
+        environment: 'staging',
+        service: 'releaseBus',
+        operation_key: 'replaced-by-reconciler',
+        artifact_run_id: '456',
+        artifact_digest: 'd'.repeat(64)
+      },
+      addedInputs: {
+        artifact_environment: '',
+        artifact_contract_version: 'legacy-v2'
+      }
+    },
+    {
+      operationType: 'E2E_STAGING',
+      workflow: 'staging-e2e.yml',
+      environment: 'staging',
+      service: null,
+      oldInputs: {
+        operation_key: 'replaced-by-reconciler',
+        release_manifest_id: 'manifest-id',
+        expected_sha: 'a'.repeat(40)
+      },
+      addedInputs: {}
+    }
+  ])(
+    'continues an old-producer $operationType operation without rewriting its dispatch',
+    async ({
+      operationType,
+      workflow,
+      environment,
+      service: operationService,
+      oldInputs,
+      addedInputs
+    }) => {
+      const oldRequest = {
+        workflow,
+        ref: 'main',
+        inputs: oldInputs,
+        beta_infrastructure_failure_injection: null
+      };
+      const state = repositoryFor(
+        operation({
+          external_id: null,
+          status: 'PENDING',
+          idempotency_key: `rb2:train-id:${operationType}`,
+          operation_type: operationType,
+          repository: 'backend',
+          environment,
+          service: operationService,
+          artifact_digest: 'd'.repeat(64),
+          request_json: oldRequest
+        })
+      );
+      mockFindWorkflowRun.mockResolvedValue(null);
+      const service = new ReleaseBusV2Operations(state.repository as never);
+
+      await service.reconcileWorkflow({
+        idempotencyKey: `rb2:train-id:${operationType}`,
+        trainId: 'train-id',
+        operationType,
+        repository: 'backend',
+        workflow,
+        ref: 'main',
+        environment,
+        service: operationService,
+        expectedSha: 'a'.repeat(40),
+        artifactDigest: 'd'.repeat(64),
+        inputs: {
+          ...oldInputs,
+          ...addedInputs
+        } as unknown as Readonly<Record<string, string>>
+      });
+
+      expect(state.repository.getOrCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ request: oldRequest }),
+        {}
+      );
+      expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+        'backend',
+        workflow,
+        'main',
+        {
+          ...oldInputs,
+          operation_key: `rb2:train-id:${operationType}:a1`
+        }
+      );
+    }
+  );
+
+  it('rejects unrelated input drift instead of treating it as an old-producer migration', async () => {
+    const state = repositoryFor(
+      operation({
+        external_id: null,
+        status: 'PENDING',
+        request_json: {
+          workflow: 'deploy.yml',
+          ref: 'main',
+          inputs: {
+            environment: 'staging',
+            service: 'api',
+            operation_key: 'replaced-by-reconciler'
+          },
+          beta_infrastructure_failure_injection: null
+        }
+      })
+    );
+    state.repository.getOrCreateOperation.mockRejectedValueOnce(
+      new Error(
+        'Release Bus v2 idempotency key was reused with a different immutable operation identity'
+      )
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reconcileWorkflow({
+        idempotencyKey: 'rb2:train-id:prepare:frontend',
+        trainId: 'train-id',
+        operationType: 'PREPARE_ARTIFACT_FRONTEND',
+        repository: 'frontend',
+        workflow: 'deploy.yml',
+        ref: 'main',
+        environment: 'orchestration',
+        service: null,
+        expectedSha: 'a'.repeat(40),
+        artifactDigest: null,
+        inputs: {
+          environment: 'prod',
+          service: 'api',
+          operation_key: 'replaced-by-reconciler'
+        }
+      })
+    ).rejects.toThrow('different immutable operation identity');
+
+    expect(mockResolveRef).toHaveBeenCalledWith('frontend', 'main');
+    expect(state.repository.getOrCreateOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          workflow_control_sha: 'f'.repeat(40),
+          inputs: expect.objectContaining({ environment: 'prod' })
+        })
+      }),
+      {}
+    );
+  });
+
+  it.each([
+    ['artifact_contract_version', 'legacy-v2', 'environment-bound-v3'],
+    ['artifact_environment', 'staging', 'production']
+  ])(
+    'does not ignore a present-but-different migrated %s',
+    async (field, storedValue, requestedValue) => {
+      const state = repositoryFor(
+        operation({
+          external_id: null,
+          status: 'PENDING',
+          request_json: {
+            workflow: 'deploy.yml',
+            ref: 'main',
+            inputs: {
+              operation_key: 'replaced-by-reconciler',
+              [field]: storedValue
+            },
+            beta_infrastructure_failure_injection: null
+          }
+        })
+      );
+      state.repository.getOrCreateOperation.mockRejectedValueOnce(
+        new Error('different immutable operation identity')
+      );
+      const service = new ReleaseBusV2Operations(state.repository as never);
+
+      await expect(
+        service.reconcileWorkflow({
+          idempotencyKey: 'rb2:train-id:prepare:frontend',
+          trainId: 'train-id',
+          operationType: 'PREPARE_ARTIFACT_FRONTEND',
+          repository: 'frontend',
+          workflow: 'deploy.yml',
+          ref: 'main',
+          environment: 'orchestration',
+          service: null,
+          expectedSha: 'a'.repeat(40),
+          artifactDigest: null,
+          inputs: {
+            operation_key: 'replaced-by-reconciler',
+            [field]: requestedValue
+          }
+        })
+      ).rejects.toThrow('different immutable operation identity');
+      expect(mockResolveRef).toHaveBeenCalledWith('frontend', 'main');
+      expect(state.repository.getOrCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          request: expect.objectContaining({
+            workflow_control_sha: 'f'.repeat(40),
+            inputs: expect.objectContaining({ [field]: requestedValue })
+          })
+        }),
+        {}
+      );
+    }
+  );
+
   it('observes the winning workflow callback when reconciles overlap', async () => {
     const state = repositoryFor(
       operation({ external_id: null, status: 'PENDING' })
@@ -1089,7 +1366,6 @@ describe('Release Bus v2 exact operation callbacks', () => {
       request_json: {
         workflow: 'release-bus-v2-preflight.yml',
         ref: 'main',
-        workflow_control_sha: 'c'.repeat(40),
         inputs: {
           source_ref: 'release-bus-v2/train-id/backend'
         }
@@ -1099,6 +1375,7 @@ describe('Release Bus v2 exact operation callbacks', () => {
     mockGetWorkflowRunIdentity.mockResolvedValue({
       actor: '6529-release-bus[bot]',
       event: 'workflow_dispatch',
+      headBranch: 'main',
       headSha: 'c'.repeat(40),
       path: '.github/workflows/release-bus-v2-preflight.yml',
       displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
@@ -1121,6 +1398,131 @@ describe('Release Bus v2 exact operation callbacks', () => {
         aggregate_candidate_evidence_digest: null
       })
     ).resolves.toEqual({ authorized: true });
+    expect(mockResolveRef).not.toHaveBeenCalled();
+  });
+
+  it('binds an old-producer authorization to its exact run after main moves', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {}
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headBranch: 'main',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    mockResolveRef.mockResolvedValue('d'.repeat(40));
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
+      })
+    ).resolves.toEqual({ authorized: true });
+    expect(mockResolveRef).not.toHaveBeenCalled();
+    expect(state.current().external_id).toBe('12345');
+  });
+
+  it('fails closed when an old-producer run does not prove its stored dispatch ref', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {}
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headBranch: 'another-ref',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
+      })
+    ).rejects.toThrow('workflow control identity');
+    expect(state.current().external_id).toBeNull();
+  });
+
+  it('does not extend the missing-control-SHA bridge to strict operations', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {
+          source_ref: 'release-bus-v2/staging-train-train-id-frontend',
+          candidate_evidence_mode: 'strict-aggregate',
+          aggregate_candidate_evidence_digest: '9'.repeat(64)
+        }
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headBranch: 'main',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        source_ref: 'release-bus-v2/staging-train-train-id-frontend',
+        candidate_evidence_mode: 'strict-aggregate',
+        aggregate_candidate_evidence_digest: '9'.repeat(64)
+      })
+    ).rejects.toThrow('workflow control identity');
+    expect(mockResolveRef).not.toHaveBeenCalled();
   });
 
   it('binds strict preflight authorization to the exact dispatched source ref', async () => {
@@ -1215,6 +1617,125 @@ describe('Release Bus v2 exact operation callbacks', () => {
     ).rejects.toThrow('candidate evidence');
     expect(state.current().external_id).toBeNull();
   });
+
+  it('binds strict-single authorization to the exact stored evidence artifact identity', async () => {
+    const sourceRef = 'release-bus-v2/train-id/backend';
+    const reuseArtifact = {
+      runId: '54321',
+      name: `release-bus-v2-pr-${'a'.repeat(40)}`,
+      digest: '9'.repeat(64)
+    };
+    const state = repositoryFor(
+      operation({
+        external_id: null,
+        status: 'DISPATCHED',
+        request_json: {
+          workflow: 'release-bus-v2-preflight.yml',
+          ref: 'main',
+          workflow_control_sha: 'c'.repeat(40),
+          inputs: {
+            source_ref: sourceRef,
+            candidate_evidence_mode: 'strict-single',
+            reuse_artifact_run_id: reuseArtifact.runId,
+            reuse_artifact_name: reuseArtifact.name,
+            reuse_artifact_digest: reuseArtifact.digest
+          }
+        }
+      })
+    );
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        source_ref: sourceRef,
+        reuse_artifact_run_id: reuseArtifact.runId,
+        reuse_artifact_name: reuseArtifact.name,
+        reuse_artifact_digest: reuseArtifact.digest,
+        candidate_evidence_mode: 'strict-single',
+        aggregate_candidate_evidence_digest: null
+      })
+    ).resolves.toEqual({ authorized: true });
+  });
+
+  it.each([
+    ['run ID', { reuse_artifact_run_id: '54322' }],
+    ['name', { reuse_artifact_name: `release-bus-v2-pr-${'b'.repeat(40)}` }],
+    ['digest', { reuse_artifact_digest: '8'.repeat(64) }]
+  ])(
+    'rejects a strict-single evidence artifact with a mismatched %s',
+    async (_label, mismatch) => {
+      const sourceRef = 'release-bus-v2/train-id/backend';
+      const reuseArtifact = {
+        runId: '54321',
+        name: `release-bus-v2-pr-${'a'.repeat(40)}`,
+        digest: '9'.repeat(64)
+      };
+      const state = repositoryFor(
+        operation({
+          external_id: null,
+          status: 'DISPATCHED',
+          request_json: {
+            workflow: 'release-bus-v2-preflight.yml',
+            ref: 'main',
+            workflow_control_sha: 'c'.repeat(40),
+            inputs: {
+              source_ref: sourceRef,
+              candidate_evidence_mode: 'strict-single',
+              reuse_artifact_run_id: reuseArtifact.runId,
+              reuse_artifact_name: reuseArtifact.name,
+              reuse_artifact_digest: reuseArtifact.digest
+            }
+          }
+        })
+      );
+      mockGetWorkflowRunIdentity.mockResolvedValue({
+        actor: '6529-release-bus[bot]',
+        event: 'workflow_dispatch',
+        headSha: 'c'.repeat(40),
+        path: '.github/workflows/release-bus-v2-preflight.yml',
+        displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+      });
+      const service = new ReleaseBusV2Operations(state.repository as never);
+
+      await expect(
+        service.authorize({
+          train_id: 'train-id',
+          operation_key: 'rb2:train-id:prepare:frontend:a1',
+          workflow_run_id: '12345',
+          artifact_run_id: null,
+          repository: 'frontend',
+          environment: 'orchestration',
+          service: null,
+          expected_sha: 'a'.repeat(40),
+          artifact_digest: null,
+          source_ref: sourceRef,
+          reuse_artifact_run_id: reuseArtifact.runId,
+          reuse_artifact_name: reuseArtifact.name,
+          reuse_artifact_digest: reuseArtifact.digest,
+          candidate_evidence_mode: 'strict-single',
+          aggregate_candidate_evidence_digest: null,
+          ...mismatch
+        })
+      ).rejects.toThrow(/strict single authorization/i);
+      expect(state.current().external_id).toBeNull();
+    }
+  );
 
   it('rejects a different workflow file or artifact source', async () => {
     const initial = operation({
@@ -1415,7 +1936,14 @@ describe('Release Bus v2 exact operation callbacks', () => {
       operation({
         external_id: null,
         status: 'PENDING',
-        result_json: null
+        result_json: null,
+        request_json: {
+          workflow: 'release-bus-v2-preflight.yml',
+          ref: 'release-bus-v2/staging-train-train-id-frontend',
+          workflow_control_sha: 'c'.repeat(40),
+          inputs: { train_id: 'train-id' },
+          beta_infrastructure_failure_injection: null
+        }
       })
     );
     const service = new ReleaseBusV2Operations(state.repository as never);

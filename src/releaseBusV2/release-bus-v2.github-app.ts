@@ -83,6 +83,7 @@ export type GitHubRun = {
   readonly status: string;
   readonly conclusion: string | null;
   readonly head_sha: string;
+  readonly head_branch?: string;
   readonly html_url: string;
   readonly created_at?: string;
   readonly updated_at?: string;
@@ -94,6 +95,7 @@ export type GitHubRun = {
 export type ReleaseBusWorkflowRunIdentity = {
   readonly actor: string;
   readonly event: string;
+  readonly headBranch: string;
   readonly headSha: string;
   readonly name: string;
   readonly path: string;
@@ -248,65 +250,67 @@ const BACKEND_PR_CI_PACKAGE_POLICY_FILES = new Set([
   'src/api-serverless/package.json'
 ]);
 
+type TrustedGatePolicyTransition = {
+  readonly from: string | null;
+  readonly to: string;
+  readonly expiresAt: number;
+};
+
+const TRUSTED_GATE_POLICY_TRANSITION_EXPIRES_AT = Date.UTC(
+  2026,
+  7,
+  31,
+  23,
+  59,
+  59
+);
+
+function trustedGatePolicyTransition(
+  from: string | null,
+  to: string
+): readonly TrustedGatePolicyTransition[] {
+  return [
+    {
+      from,
+      to,
+      expiresAt: TRUSTED_GATE_POLICY_TRANSITION_EXPIRES_AT
+    }
+  ];
+}
+
 const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
-  Record<
-    string,
-    readonly {
-      readonly from: string | null;
-      readonly to: string;
-      readonly expiresAt: number;
-    }[]
-  >
+  Record<string, readonly TrustedGatePolicyTransition[]>
 > = {
-  'scripts/generate-deploy-config.mjs': [
-    {
-      from: '9b3714372af37edd89e4b47df02bff6863a2024d',
-      to: '9999ca8acc5b1c40ed00909de86fbac477e64f1e',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '.github/workflows/release-bus-v2-preflight.yml': [
-    {
-      from: 'f3cbf1ec1f0ca1284dd84289adc6e801b12ef329',
-      to: 'f09e3bca24d4b4882e5aa6e22c6631222187093f',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '.github/workflows/deploy.yml': [
-    {
-      from: '93069abfac648a9906fc8bac9ed2c72df6b93f8f',
-      to: '77a49572be5d1e0887c6f2c63eb91491a75d2731',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'scripts/release-bus-package-backend.mjs': [
-    {
-      from: null,
-      to: 'e0ee1d942a951c6bd2426c8312aaa3113dc799ab',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'scripts/pr-ci-policy-bundle.cjs': [
-    {
-      from: null,
-      to: '04e6a38740e5fc9f966d5c8d9d770984b49b3317',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'scripts/release-bus-backend-package-strategies.mjs': [
-    {
-      from: null,
-      to: 'eb9d405947128c51d84cc824245a96c7d245ea0e',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts': [
-    {
-      from: null,
-      to: '388e95eaca4445b18ceb3dd0dd69be5cec49bc9d',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ]
+  'scripts/generate-deploy-config.mjs': trustedGatePolicyTransition(
+    '9b3714372af37edd89e4b47df02bff6863a2024d',
+    '4f057c14dbe9a2664747ac5f56d7c1cec3f4664b'
+  ),
+  '.github/workflows/release-bus-v2-preflight.yml': trustedGatePolicyTransition(
+    'f3cbf1ec1f0ca1284dd84289adc6e801b12ef329',
+    'e1f3508d917cb20cc5211c7ed7cdceaf87ff2116'
+  ),
+  '.github/workflows/deploy.yml': trustedGatePolicyTransition(
+    '93069abfac648a9906fc8bac9ed2c72df6b93f8f',
+    '113ea261377d5e6fd2c81ecf7ef9272ab0c8b587'
+  ),
+  'scripts/release-bus-package-backend.mjs': trustedGatePolicyTransition(
+    null,
+    'e5f40518bc63ba1c21f240dad5a7da5152781dba'
+  ),
+  'scripts/pr-ci-policy-bundle.cjs': trustedGatePolicyTransition(
+    null,
+    '243d7f7c02989343a2dedf62a58cbaf301d9b9f9'
+  ),
+  'scripts/release-bus-backend-package-strategies.mjs':
+    trustedGatePolicyTransition(
+      null,
+      '6123157a351d03d6e78c9c0ad18ce7fe4d7dc296'
+    ),
+  'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts':
+    trustedGatePolicyTransition(
+      null,
+      '797aaf3bb5e0043d70603b051f1ec0725c0e210b'
+    )
 };
 
 const BACKEND_PACKAGE_POLICY = {
@@ -324,6 +328,7 @@ const BACKEND_PACKAGE_POLICY = {
     ],
     fieldKeys: [
       'packageManager',
+      'dependencies.adm-zip',
       'devDependencies.@typescript-eslint/parser',
       'devDependencies.esbuild',
       'devDependencies.eslint',
@@ -332,7 +337,8 @@ const BACKEND_PACKAGE_POLICY = {
       'devDependencies.ts-jest',
       'devDependencies.ts-node',
       'devDependencies.typescript',
-      'devDependencies.typescript-eslint'
+      'devDependencies.typescript-eslint',
+      'devDependencies.yaml'
     ]
   },
   'src/api-serverless/package.json': {
@@ -346,6 +352,7 @@ const BACKEND_PACKAGE_POLICY = {
     ],
     fieldKeys: [
       'packageManager',
+      'dependencies.adm-zip',
       'dependencies.@openapitools/openapi-generator-cli',
       'devDependencies.esbuild',
       'devDependencies.eslint',
@@ -529,113 +536,68 @@ const FRONTEND_PACKAGE_POLICY = {
 } as const;
 
 const TRUSTED_FRONTEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
-  Record<
-    string,
-    readonly {
-      readonly from: string | null;
-      readonly to: string;
-      readonly expiresAt: number;
-    }[]
-  >
+  Record<string, readonly TrustedGatePolicyTransition[]>
 > = {
-  '.github/workflows/production-e2e.yml': [
-    {
-      from: 'cd95ff1b43692864f1b29e574e37f20fcb46f6b4',
-      to: '4570330931c626edb9f2a38785da6d1dbff17b94',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '.github/workflows/release-bus-deploy-production.yml': [
-    {
-      from: '99006a1d5ffcc8780496b717940a3581635d066c',
-      to: 'e5437e6680294b8b29f96b5d369b0ac6aaa35403',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '.github/workflows/release-bus-deploy-staging.yml': [
-    {
-      from: 'ed7355c9136b9edf12d2479b1ec1a3d9c0c76b21',
-      to: '60f3be0bdeaee9c346e37fde44f02d99bfc5d363',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '.github/workflows/release-bus-v2-compose.yml': [
-    {
-      from: 'd7475c193e99b3f02b54791c2dda470f21f41f83',
-      to: 'e630365d0a7b5305765cdb0683efe55906520373',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '.github/workflows/release-bus-v2-preflight.yml': [
-    {
-      from: 'c4d7c0a7a2e9d10ddb82eec7feff7d8523e25b9f',
-      to: '7961c8de16a23236b56a0d4c7befc187fa414da3',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '.github/workflows/staging-e2e.yml': [
-    {
-      from: '183912f5daf70a502773bb41cebe73613e2b46e2',
-      to: 'a8f9bc720c26920f0d7a1e75ce14afc172f86fdb',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'playwright.config.ts': [
-    {
-      from: '2009c69433c58fb933696ddaf93bd6e484e4457a',
-      to: '151830e075f55c1d7bd497c1913e5adc0856f175',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'scripts/e2e-packs.cjs': [
-    {
-      from: '4d8b9b7c14c853ce55c10267837e525c5ab7a977',
-      to: '06d36759f8e03372ee3baf0ee0fca2c977c3ceb3',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'tests/packs.manifest.cjs': [
-    {
-      from: 'cc5ff179e181b254f3e83ff265b5c83ba902145a',
-      to: 'd9186a12120c8834bc57592e8b4ba12998e022f5',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  'ops/deployment-bus/release-bus-performance-contract.v1.json': [
-    {
-      from: null,
-      to: 'a1fe2db01337a791b6ce627ad8b1f17ffc36ec60',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '__tests__/scripts/deployment-bus.test.ts': [
-    {
-      from: '599543dbdd338b8a364f6b46d615f0c3d7088618',
-      to: '6bae52b220152ccdb4b784ba3f79f2f876d5813c',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '__tests__/scripts/e2e-packs.test.ts': [
-    {
-      from: '55c6855d34226477ea51b17c19ef04af9fb23dce',
-      to: '8dcdb807fc652e65bb0a00b43c4573be3ffe16ad',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '__tests__/scripts/release-bus-performance-contract.test.ts': [
-    {
-      from: null,
-      to: '4d91f7fbf90a0c6c8489e9dad0579c350cf14a2c',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ],
-  '__tests__/scripts/sync-e2e-manifest.test.ts': [
-    {
-      from: '3952a4b013dab68b476c2bffc4b275b23bdba560',
-      to: 'c29c446d1b654dd900615bc4a41a325c1ed06ea3',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
-  ]
+  '.github/workflows/production-e2e.yml': trustedGatePolicyTransition(
+    'cd95ff1b43692864f1b29e574e37f20fcb46f6b4',
+    '4570330931c626edb9f2a38785da6d1dbff17b94'
+  ),
+  '.github/workflows/release-bus-deploy-production.yml':
+    trustedGatePolicyTransition(
+      '99006a1d5ffcc8780496b717940a3581635d066c',
+      'e5437e6680294b8b29f96b5d369b0ac6aaa35403'
+    ),
+  '.github/workflows/release-bus-deploy-staging.yml':
+    trustedGatePolicyTransition(
+      'ed7355c9136b9edf12d2479b1ec1a3d9c0c76b21',
+      '60f3be0bdeaee9c346e37fde44f02d99bfc5d363'
+    ),
+  '.github/workflows/release-bus-v2-compose.yml': trustedGatePolicyTransition(
+    'd7475c193e99b3f02b54791c2dda470f21f41f83',
+    'e630365d0a7b5305765cdb0683efe55906520373'
+  ),
+  '.github/workflows/release-bus-v2-preflight.yml': trustedGatePolicyTransition(
+    'c4d7c0a7a2e9d10ddb82eec7feff7d8523e25b9f',
+    '7961c8de16a23236b56a0d4c7befc187fa414da3'
+  ),
+  '.github/workflows/staging-e2e.yml': trustedGatePolicyTransition(
+    '183912f5daf70a502773bb41cebe73613e2b46e2',
+    'a8f9bc720c26920f0d7a1e75ce14afc172f86fdb'
+  ),
+  'playwright.config.ts': trustedGatePolicyTransition(
+    '2009c69433c58fb933696ddaf93bd6e484e4457a',
+    '151830e075f55c1d7bd497c1913e5adc0856f175'
+  ),
+  'scripts/e2e-packs.cjs': trustedGatePolicyTransition(
+    '4d8b9b7c14c853ce55c10267837e525c5ab7a977',
+    '06d36759f8e03372ee3baf0ee0fca2c977c3ceb3'
+  ),
+  'tests/packs.manifest.cjs': trustedGatePolicyTransition(
+    'cc5ff179e181b254f3e83ff265b5c83ba902145a',
+    'd9186a12120c8834bc57592e8b4ba12998e022f5'
+  ),
+  'ops/deployment-bus/release-bus-performance-contract.v1.json':
+    trustedGatePolicyTransition(
+      null,
+      'a1fe2db01337a791b6ce627ad8b1f17ffc36ec60'
+    ),
+  '__tests__/scripts/deployment-bus.test.ts': trustedGatePolicyTransition(
+    '599543dbdd338b8a364f6b46d615f0c3d7088618',
+    '6bae52b220152ccdb4b784ba3f79f2f876d5813c'
+  ),
+  '__tests__/scripts/e2e-packs.test.ts': trustedGatePolicyTransition(
+    '55c6855d34226477ea51b17c19ef04af9fb23dce',
+    '8dcdb807fc652e65bb0a00b43c4573be3ffe16ad'
+  ),
+  '__tests__/scripts/release-bus-performance-contract.test.ts':
+    trustedGatePolicyTransition(
+      null,
+      '4d91f7fbf90a0c6c8489e9dad0579c350cf14a2c'
+    ),
+  '__tests__/scripts/sync-e2e-manifest.test.ts': trustedGatePolicyTransition(
+    '3952a4b013dab68b476c2bffc4b275b23bdba560',
+    'c29c446d1b654dd900615bc4a41a325c1ed06ea3'
+  )
 };
 
 function sha256(value: Buffer | string): string {
@@ -686,7 +648,7 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   backend: [
     {
       from: '3b6c8b88a0864d15bc4135010722f4dab480f2debc6082778d8585fbddbcbc84',
-      to: 'b340aad2d8aa04fdf348fda9bd37c4000ec2cb610a34241200a1b36cb09452dc',
+      to: '0cd5614722ccc00f272297a6142c48bf01422a135b19093717bcd116f5c7606c',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
@@ -809,8 +771,14 @@ function packagePolicyLines(
       if (
         !modern &&
         repository === 'backend' &&
-        path === 'package.json' &&
-        key === 'devDependencies.jest'
+        ((path === 'package.json' &&
+          [
+            'dependencies.adm-zip',
+            'devDependencies.jest',
+            'devDependencies.yaml'
+          ].includes(key)) ||
+          (path === 'src/api-serverless/package.json' &&
+            key === 'dependencies.adm-zip'))
       )
         continue;
       throw new Error(
@@ -1712,11 +1680,10 @@ export class ReleaseBusGitHubApp {
     const archive = new AdmZip(
       await boundedResponseBuffer(response, MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES)
     );
-    const entries = archive
-      .getEntries()
-      .filter(({ isDirectory }) => !isDirectory);
+    const entries = archive.getEntries();
     if (
       entries.length !== 3 ||
+      entries.some(({ isDirectory }) => isDirectory) ||
       !exactStringList(
         entries
           .map(({ entryName }) => entryName)
@@ -1729,24 +1696,33 @@ export class ReleaseBusGitHubApp {
       entries.some(
         ({ header }) =>
           !Number.isSafeInteger(header.size) ||
-          header.size < 0 ||
-          header.size > MAX_PR_CI_EVIDENCE_ENTRY_BYTES
+          header.size <= 0 ||
+          header.size > MAX_PR_CI_EVIDENCE_ENTRY_BYTES ||
+          !Number.isSafeInteger(header.compressedSize) ||
+          header.compressedSize <= 0 ||
+          header.compressedSize > MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES
       ) ||
       entries.reduce((sum, { header }) => sum + header.size, 0) >
+        MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES ||
+      entries.reduce((sum, { header }) => sum + header.compressedSize, 0) >
         MAX_PR_CI_EVIDENCE_ARCHIVE_BYTES
     )
       throw new Error(
         'Pull request CI evidence archive expands beyond the size limit'
       );
-    const manifestBytes = entries
-      .find(({ entryName }) => entryName === 'manifest.json')
-      ?.getData();
-    const sumsBytes = entries
-      .find(({ entryName }) => entryName === 'SHA256SUMS')
-      ?.getData();
-    const policyBundleBytes = entries
-      .find(({ entryName }) => entryName === 'policy-bundle.txt')
-      ?.getData();
+    const extractedEntries = new Map(
+      entries.map((entry) => {
+        const bytes = entry.getData();
+        if (bytes.length !== entry.header.size)
+          throw new Error(
+            'Pull request CI evidence archive entry size is invalid'
+          );
+        return [entry.entryName, bytes] as const;
+      })
+    );
+    const manifestBytes = extractedEntries.get('manifest.json');
+    const sumsBytes = extractedEntries.get('SHA256SUMS');
+    const policyBundleBytes = extractedEntries.get('policy-bundle.txt');
     if (!manifestBytes || !policyBundleBytes || !sumsBytes)
       throw new Error('Pull request CI evidence archive is incomplete');
     const expectedSums = `${sha256(manifestBytes)}  ./manifest.json\n${sha256(policyBundleBytes)}  ./policy-bundle.txt\n`;
@@ -2029,9 +2005,15 @@ export class ReleaseBusGitHubApp {
       throw new Error('GitHub workflow run has no valid actor');
     if (!/^[a-f0-9]{40}$/i.test(run.head_sha))
       throw new Error('GitHub workflow run has no valid head SHA');
+    if (
+      typeof run.head_branch !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(run.head_branch)
+    )
+      throw new Error('GitHub workflow run has no valid head branch');
     return {
       actor,
       event: run.event ?? '',
+      headBranch: run.head_branch,
       headSha: run.head_sha.toLowerCase(),
       name: run.name,
       path: run.path ?? '',

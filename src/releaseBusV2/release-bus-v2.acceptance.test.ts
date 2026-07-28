@@ -36,7 +36,9 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
 }));
 
 import {
+  backendGraph,
   candidateEvidenceSelection,
+  preparedArtifactDeployBinding,
   ReleaseBusV2Reconciler
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import { irreversibleProductionOperationReason } from '@/releaseBusV2/release-bus-v2.service';
@@ -260,6 +262,591 @@ describe('whole-repository candidate evidence modes', () => {
   });
 });
 
+describe('environment-specific backend preparation graph', () => {
+  const environmentCandidate = candidate('environment-graph', 'backend', {
+    units: ['api', 'releaseBus', 'dropMediaIngestStorage'],
+    edges: [
+      ['dropMediaIngestStorage', 'api'],
+      ['api', 'releaseBus']
+    ]
+  });
+
+  it('packages only staging deploy units for a staging preparation', () => {
+    expect(backendGraph([environmentCandidate], 'staging')).toMatchObject({
+      units: ['api', 'dropMediaIngestStorage']
+    });
+  });
+
+  it('packages only production deploy units for a production preparation', () => {
+    expect(backendGraph([environmentCandidate], 'prod')).toMatchObject({
+      units: ['api', 'releaseBus']
+    });
+  });
+});
+
+describe('immutable prepared artifact deploy binding', () => {
+  const prepared = (
+    inputs: Record<string, string>,
+    summary: Record<string, unknown>,
+    repository: 'frontend' | 'backend' = 'backend'
+  ): ReleaseBusV2OperationRecord => {
+    const operationRecord = operation(
+      'artifact-binding-train',
+      `PREPARE_ARTIFACT_${repository.toUpperCase()}`,
+      repository,
+      '12345'
+    );
+    return {
+      ...operationRecord,
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {
+          release_train_id: 'artifact-binding-train',
+          release_train_revision: '1',
+          operation_key: 'replaced-by-reconciler',
+          source_ref: `release-bus-v2/artifact-binding-train/${repository}`,
+          expected_sha: operationRecord.expected_sha!,
+          deploy_units: repository === 'backend' ? '["api"]' : '[]',
+          ...inputs
+        }
+      },
+      result_json: { summary }
+    };
+  };
+
+  it.each([
+    ['staging', 'staging'],
+    ['production', 'prod']
+  ] as const)(
+    'accepts exact old-frontend %s dual-profile preparation only as legacy portable bytes',
+    (artifactEnvironment, deploymentEnvironment) => {
+      expect(
+        preparedArtifactDeployBinding(
+          prepared(
+            { artifact_environment: artifactEnvironment },
+            {
+              artifact_digest: FRONTEND_DIGEST,
+              fresh_or_reused: 'fresh-dual-profile'
+            },
+            'frontend'
+          ),
+          deploymentEnvironment
+        )
+      ).toEqual({
+        artifact_environment: '',
+        artifact_contract_version: 'legacy-v2'
+      });
+    }
+  );
+
+  it.each([
+    [
+      'frontend environment mismatch',
+      { artifact_environment: 'staging' },
+      'fresh-dual-profile',
+      'prod'
+    ],
+    [
+      'frontend historical label mismatch',
+      { artifact_environment: 'production' },
+      'fresh',
+      'prod'
+    ],
+    [
+      'frontend deploy-unit shape mismatch',
+      {
+        artifact_environment: 'production',
+        deploy_units: '["web"]'
+      },
+      'fresh-dual-profile',
+      'prod'
+    ]
+  ] as const)(
+    'rejects old %s',
+    (_label, inputs, freshOrReused, deploymentEnvironment) => {
+      expect(() =>
+        preparedArtifactDeployBinding(
+          prepared(
+            inputs,
+            {
+              artifact_digest: FRONTEND_DIGEST,
+              fresh_or_reused: freshOrReused
+            },
+            'frontend'
+          ),
+          deploymentEnvironment
+        )
+      ).toThrow(/legacy artifact preparation/i);
+    }
+  );
+
+  it.each([
+    ['dual environment', { environment: 'production' }],
+    ['freshness label', { fresh_or_reused: 'fresh-dual-profile' }],
+    ['evidence reuse flag', { source_evidence_reused: true }]
+  ])(
+    'rejects new legacy frontend summary drift in %s',
+    (_label, summaryOverride) => {
+      const exact = newLegacyFrontendPreparedArtifactOperation(
+        'artifact-binding-train',
+        '12345',
+        'staging'
+      );
+      const result = exact.result_json as {
+        summary: Record<string, unknown>;
+      };
+      expect(() =>
+        preparedArtifactDeployBinding(
+          {
+            ...exact,
+            result_json: {
+              summary: { ...result.summary, ...summaryOverride }
+            }
+          },
+          'staging'
+        )
+      ).toThrow(/legacy artifact preparation/i);
+    }
+  );
+
+  it('accepts only the exact new legacy backend request and graph-bound package summary', () => {
+    expect(
+      preparedArtifactDeployBinding(
+        newLegacyBackendPreparedArtifactOperation(
+          'artifact-binding-train',
+          '12345'
+        ),
+        'staging'
+      )
+    ).toEqual({
+      artifact_environment: '',
+      artifact_contract_version: 'legacy-v2'
+    });
+  });
+
+  it.each(['backend', 'frontend'] as const)(
+    'accepts an old %s request completed by the new structured workflow',
+    (repository) => {
+      const exact =
+        repository === 'backend'
+          ? newLegacyBackendPreparedArtifactOperation(
+              'artifact-binding-train',
+              '12345'
+            )
+          : newLegacyFrontendPreparedArtifactOperation(
+              'artifact-binding-train',
+              '12345',
+              'staging'
+            );
+      const request = exact.request_json as {
+        workflow: string;
+        ref: string;
+        inputs: Record<string, string>;
+      };
+      const oldInputs = { ...request.inputs };
+      for (const key of [
+        'aggregate_candidate_evidence_digest',
+        'artifact_contract_version',
+        'candidate_evidence_mode',
+        'deploy_layers',
+        'reuse_artifact_digest',
+        'reuse_artifact_name',
+        'reuse_artifact_run_id'
+      ])
+        delete oldInputs[key];
+      if (repository === 'backend') delete oldInputs.artifact_environment;
+      expect(
+        preparedArtifactDeployBinding(
+          {
+            ...exact,
+            request_json: {
+              workflow: request.workflow,
+              ref: request.ref,
+              inputs: oldInputs
+            }
+          },
+          'staging'
+        )
+      ).toEqual({
+        artifact_environment: '',
+        artifact_contract_version: 'legacy-v2'
+      });
+    }
+  );
+
+  it.each([
+    ['candidate evidence mode', { candidate_evidence_mode: 'strict-single' }],
+    ['selected units', { deploy_units: '["releaseBus"]' }],
+    ['DAG layers', { deploy_layers: '[["api"],["releaseBus"]]' }],
+    ['reuse evidence', { reuse_artifact_run_id: '12345' }]
+  ])('rejects new legacy backend request drift in %s', (_label, override) => {
+    const exact = newLegacyBackendPreparedArtifactOperation(
+      'artifact-binding-train',
+      '12345'
+    );
+    const request = exact.request_json as {
+      workflow: string;
+      ref: string;
+      workflow_control_sha: string;
+      inputs: Record<string, string>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          request_json: {
+            ...request,
+            inputs: { ...request.inputs, ...override }
+          }
+        },
+        'staging'
+      )
+    ).toThrow(/legacy artifact preparation/i);
+  });
+
+  it.each([
+    ['selected units', { units: ['releaseBus'] }],
+    ['DAG layers', { layers: [['releaseBus']] }],
+    ['package keys', { package_digests: { releaseBus: 'd'.repeat(64) } }],
+    ['package digest', { package_digests: { api: 'not-a-digest' } }]
+  ])('rejects new legacy backend summary drift in %s', (_label, override) => {
+    const exact = newLegacyBackendPreparedArtifactOperation(
+      'artifact-binding-train',
+      '12345'
+    );
+    const result = exact.result_json as {
+      summary: Record<string, unknown>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          result_json: {
+            summary: { ...result.summary, ...override }
+          }
+        },
+        'staging'
+      )
+    ).toThrow(/legacy artifact preparation/i);
+  });
+
+  it.each([
+    ['frontend deploy units', { deploy_units: '["web"]' }],
+    ['frontend evidence mode', { candidate_evidence_mode: 'strict-single' }],
+    [
+      'frontend aggregate evidence',
+      { aggregate_candidate_evidence_digest: 'a' }
+    ]
+  ])('rejects new legacy %s request drift', (_label, override) => {
+    const exact = newLegacyFrontendPreparedArtifactOperation(
+      'artifact-binding-train',
+      '12345',
+      'staging'
+    );
+    const request = exact.request_json as {
+      workflow: string;
+      ref: string;
+      workflow_control_sha: string;
+      inputs: Record<string, string>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          request_json: {
+            ...request,
+            inputs: { ...request.inputs, ...override }
+          }
+        },
+        'staging'
+      )
+    ).toThrow(/legacy artifact preparation/i);
+  });
+
+  it('rejects a new legacy producer without an exact workflow control SHA', () => {
+    const exact = newLegacyFrontendPreparedArtifactOperation(
+      'artifact-binding-train',
+      '12345',
+      'staging'
+    );
+    const request = exact.request_json as {
+      workflow: string;
+      ref: string;
+      inputs: Record<string, string>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          request_json: {
+            workflow: request.workflow,
+            ref: request.ref,
+            inputs: request.inputs
+          }
+        },
+        'staging'
+      )
+    ).toThrow(/legacy artifact preparation/i);
+  });
+
+  it('accepts the exact old-producer terminal payload only as legacy portable bytes', () => {
+    expect(
+      preparedArtifactDeployBinding(
+        prepared(
+          {},
+          {
+            artifact_digest: BACKEND_DIGEST,
+            fresh_or_reused: 'fresh'
+          }
+        ),
+        'prod'
+      )
+    ).toEqual({
+      artifact_environment: '',
+      artifact_contract_version: 'legacy-v2'
+    });
+  });
+
+  it.each([
+    [
+      'a new explicit legacy request with the unstructured old summary',
+      {
+        artifact_contract_version: 'legacy-v2',
+        artifact_environment: ''
+      },
+      {
+        artifact_digest: BACKEND_DIGEST,
+        fresh_or_reused: 'fresh'
+      }
+    ],
+    [
+      'schema drift',
+      {
+        artifact_contract_version: 'legacy-v2',
+        artifact_environment: ''
+      },
+      {
+        schema_version: 3,
+        environment: 'portable',
+        artifact_digest: BACKEND_DIGEST
+      }
+    ],
+    [
+      'environment drift',
+      {
+        artifact_contract_version: 'legacy-v2',
+        artifact_environment: ''
+      },
+      {
+        schema_version: 2,
+        environment: 'production',
+        artifact_digest: BACKEND_DIGEST
+      }
+    ]
+  ])('rejects %s', (_label, inputs, summary) => {
+    expect(() =>
+      preparedArtifactDeployBinding(prepared(inputs, summary), 'prod')
+    ).toThrow(/legacy artifact preparation/i);
+  });
+
+  it('derives v3 only from the exact immutable environment-bound preparation', () => {
+    expect(
+      preparedArtifactDeployBinding(
+        preparedArtifactOperation(
+          'artifact-binding-train',
+          'backend',
+          '12345',
+          'environment-bound-v3',
+          'production'
+        ),
+        'prod'
+      )
+    ).toEqual({
+      artifact_environment: 'production',
+      artifact_contract_version: 'environment-bound-v3'
+    });
+  });
+
+  it('binds a v3 strict-single request to its exact immutable PR evidence', () => {
+    const exact = preparedArtifactOperation(
+      'artifact-binding-train',
+      'backend',
+      '12345',
+      'environment-bound-v3',
+      'production'
+    );
+    const request = exact.request_json as {
+      workflow: string;
+      ref: string;
+      workflow_control_sha: string;
+      inputs: Record<string, string>;
+    };
+    const result = exact.result_json as {
+      summary: Record<string, unknown>;
+    };
+    const evidence = {
+      mode: 'strict-single',
+      artifact_run_id: '54321',
+      artifact_name: `release-bus-v2-pr-${BACKEND_SHA}`,
+      artifact_digest: 'e'.repeat(64),
+      aggregate_candidate_evidence_digest: null
+    };
+    expect(
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          request_json: {
+            ...request,
+            inputs: {
+              ...request.inputs,
+              candidate_evidence_mode: 'strict-single',
+              aggregate_candidate_evidence_digest: '',
+              reuse_artifact_run_id: '54321',
+              reuse_artifact_name: evidence.artifact_name,
+              reuse_artifact_digest: evidence.artifact_digest
+            }
+          },
+          result_json: {
+            summary: { ...result.summary, ci_evidence: evidence }
+          }
+        },
+        'prod'
+      )
+    ).toEqual({
+      artifact_environment: 'production',
+      artifact_contract_version: 'environment-bound-v3'
+    });
+  });
+
+  it.each([
+    [
+      'candidate evidence mode',
+      { candidate_evidence_mode: 'legacy-whole-train' }
+    ],
+    ['aggregate evidence digest', { aggregate_candidate_evidence_digest: '' }],
+    ['selected backend units', { deploy_units: '["releaseBus"]' }],
+    ['backend DAG layers', { deploy_layers: '[["releaseBus"]]' }]
+  ])('rejects v3 backend request drift in %s', (_label, override) => {
+    const exact = preparedArtifactOperation(
+      'artifact-binding-train',
+      'backend',
+      '12345',
+      'environment-bound-v3',
+      'production'
+    );
+    const request = exact.request_json as {
+      workflow: string;
+      ref: string;
+      workflow_control_sha: string;
+      inputs: Record<string, string>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          request_json: {
+            ...request,
+            inputs: { ...request.inputs, ...override }
+          }
+        },
+        'prod'
+      )
+    ).toThrow(/environment-bound preparation/i);
+  });
+
+  it.each([
+    ['selected backend units', { units: ['releaseBus'] }],
+    ['backend DAG layers', { layers: [['releaseBus']] }],
+    [
+      'backend package keys',
+      { package_digests: { releaseBus: 'd'.repeat(64) } }
+    ],
+    ['backend CI evidence', { ci_evidence: null }]
+  ])('rejects v3 backend summary drift in %s', (_label, override) => {
+    const exact = preparedArtifactOperation(
+      'artifact-binding-train',
+      'backend',
+      '12345',
+      'environment-bound-v3',
+      'production'
+    );
+    const result = exact.result_json as {
+      summary: Record<string, unknown>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          result_json: {
+            summary: { ...result.summary, ...override }
+          }
+        },
+        'prod'
+      )
+    ).toThrow(/environment-bound preparation/i);
+  });
+
+  it.each([
+    ['frontend deploy units', { deploy_units: '["web"]' }],
+    ['frontend evidence mode', { candidate_evidence_mode: 'strict-single' }]
+  ])('rejects v3 %s request drift', (_label, override) => {
+    const exact = preparedArtifactOperation(
+      'artifact-binding-train',
+      'frontend',
+      '12345',
+      'environment-bound-v3',
+      'staging'
+    );
+    const request = exact.request_json as {
+      workflow: string;
+      ref: string;
+      workflow_control_sha: string;
+      inputs: Record<string, string>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          request_json: {
+            ...request,
+            inputs: { ...request.inputs, ...override }
+          }
+        },
+        'staging'
+      )
+    ).toThrow(/environment-bound preparation/i);
+  });
+
+  it.each([
+    ['frontend package digest', { package_digest: 'not-a-digest' }],
+    ['frontend CI evidence', { ci_evidence: null }],
+    ['frontend freshness', { fresh_or_reused: 'fresh' }]
+  ])('rejects v3 %s summary drift', (_label, override) => {
+    const exact = preparedArtifactOperation(
+      'artifact-binding-train',
+      'frontend',
+      '12345',
+      'environment-bound-v3',
+      'staging'
+    );
+    const result = exact.result_json as {
+      summary: Record<string, unknown>;
+    };
+    expect(() =>
+      preparedArtifactDeployBinding(
+        {
+          ...exact,
+          result_json: {
+            summary: { ...result.summary, ...override }
+          }
+        },
+        'staging'
+      )
+    ).toThrow(/environment-bound preparation/i);
+  });
+});
+
 function operation(
   trainId: string,
   type: string,
@@ -292,6 +879,244 @@ function operation(
     created_at: 2,
     updated_at: 3,
     row_version: 1
+  };
+}
+
+function preparedArtifactOperation(
+  trainId: string,
+  repository: 'frontend' | 'backend',
+  runId: string,
+  contract: 'legacy-v2' | 'environment-bound-v3' = 'environment-bound-v3',
+  artifactEnvironment: '' | 'staging' | 'production' = 'staging'
+): ReleaseBusV2OperationRecord {
+  const prepared = operation(
+    trainId,
+    `PREPARE_ARTIFACT_${repository.toUpperCase()}`,
+    repository,
+    runId
+  );
+  const legacy = contract === 'legacy-v2';
+  if (legacy)
+    return repository === 'backend'
+      ? newLegacyBackendPreparedArtifactOperation(trainId, runId)
+      : newLegacyFrontendPreparedArtifactOperation(
+          trainId,
+          runId,
+          artifactEnvironment === 'production' ? 'production' : 'staging'
+        );
+  const aggregateEvidenceDigest = 'a'.repeat(64);
+  const inputs = {
+    release_train_id: trainId,
+    release_train_revision: '1',
+    operation_key: 'replaced-by-reconciler',
+    source_ref: `release-bus-v2/${artifactEnvironment}-train-${trainId}-${repository}`,
+    expected_sha: prepared.expected_sha!,
+    deploy_units: repository === 'backend' ? '["api"]' : '[]',
+    ...(repository === 'backend' ? { deploy_layers: '[["api"]]' } : {}),
+    candidate_evidence_mode: 'strict-aggregate',
+    aggregate_candidate_evidence_digest: aggregateEvidenceDigest,
+    reuse_artifact_run_id: '',
+    reuse_artifact_name: '',
+    reuse_artifact_digest: '',
+    artifact_contract_version: contract,
+    artifact_environment: artifactEnvironment
+  };
+  const ciEvidence = {
+    mode: 'strict-aggregate',
+    artifact_run_id: null,
+    artifact_name: null,
+    artifact_digest: null,
+    aggregate_candidate_evidence_digest: aggregateEvidenceDigest
+  };
+  return {
+    ...prepared,
+    request_json: {
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      workflow_control_sha: 'f'.repeat(40),
+      inputs
+    },
+    result_json: {
+      summary:
+        repository === 'backend'
+          ? {
+              schema_version: 3,
+              artifact_contract: 'environment-bound-v1',
+              artifact_contract_version: 'environment-bound-v3',
+              repository,
+              source_sha: prepared.expected_sha,
+              environment: artifactEnvironment,
+              artifact_digest: prepared.artifact_digest,
+              units: ['api'],
+              layers: [['api']],
+              source_evidence_reused: true,
+              artifact_bytes_reused: false,
+              ci_evidence: ciEvidence,
+              package_digests: { api: 'd'.repeat(64) },
+              fresh_or_reused: 'fresh'
+            }
+          : {
+              schema_version: 3,
+              artifact_contract: 'environment-bound-v1',
+              artifact_contract_version: 'environment-bound-v3',
+              repository,
+              source_sha: prepared.expected_sha,
+              environment: artifactEnvironment,
+              artifact_digest: prepared.artifact_digest,
+              package_digest: 'd'.repeat(64),
+              source_evidence_reused: true,
+              artifact_bytes_reused: false,
+              ci_evidence: ciEvidence,
+              fresh_or_reused: 'fresh-environment-bound'
+            }
+    }
+  };
+}
+
+function oldFrontendPreparedArtifactOperation(
+  trainId: string,
+  runId: string,
+  artifactEnvironment: 'staging' | 'production'
+): ReleaseBusV2OperationRecord {
+  const prepared = operation(
+    trainId,
+    'PREPARE_ARTIFACT_FRONTEND',
+    'frontend',
+    runId
+  );
+  return {
+    ...prepared,
+    request_json: {
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      inputs: {
+        release_train_id: trainId,
+        release_train_revision: '1',
+        operation_key: 'replaced-by-reconciler',
+        source_ref: `release-bus-v2/${artifactEnvironment}-train-${trainId}-frontend`,
+        expected_sha: prepared.expected_sha!,
+        deploy_units: '[]',
+        artifact_environment: artifactEnvironment
+      }
+    },
+    result_json: {
+      summary: {
+        artifact_digest: prepared.artifact_digest,
+        fresh_or_reused: 'fresh-dual-profile'
+      }
+    }
+  };
+}
+
+function newLegacyBackendPreparedArtifactOperation(
+  trainId: string,
+  runId: string
+): ReleaseBusV2OperationRecord {
+  const prepared = operation(
+    trainId,
+    'PREPARE_ARTIFACT_BACKEND',
+    'backend',
+    runId
+  );
+  return {
+    ...prepared,
+    request_json: {
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      workflow_control_sha: 'f'.repeat(40),
+      inputs: {
+        release_train_id: trainId,
+        release_train_revision: '1',
+        operation_key: 'replaced-by-reconciler',
+        source_ref: `release-bus-v2/staging-train-${trainId}-backend`,
+        expected_sha: prepared.expected_sha!,
+        deploy_units: '["api"]',
+        deploy_layers: '[["api"]]',
+        candidate_evidence_mode: 'legacy-whole-train',
+        aggregate_candidate_evidence_digest: '',
+        reuse_artifact_run_id: '',
+        reuse_artifact_name: '',
+        reuse_artifact_digest: '',
+        artifact_contract_version: 'legacy-v2',
+        artifact_environment: ''
+      }
+    },
+    result_json: {
+      summary: {
+        artifact_digest: prepared.artifact_digest,
+        schema_version: 2,
+        artifact_contract: 'legacy-v2',
+        artifact_contract_version: 'legacy-v2',
+        repository: 'backend',
+        source_sha: prepared.expected_sha,
+        environment: 'portable',
+        units: ['api'],
+        layers: [['api']],
+        source_evidence_reused: true,
+        artifact_bytes_reused: false,
+        ci_evidence: {
+          mode: 'legacy-whole-train',
+          artifact_run_id: null,
+          artifact_name: null,
+          artifact_digest: null,
+          aggregate_candidate_evidence_digest: null
+        },
+        package_digests: { api: 'd'.repeat(64) },
+        fresh_or_reused: 'fresh'
+      }
+    }
+  };
+}
+
+function newLegacyFrontendPreparedArtifactOperation(
+  trainId: string,
+  runId: string,
+  artifactEnvironment: 'staging' | 'production'
+): ReleaseBusV2OperationRecord {
+  const prepared = operation(
+    trainId,
+    'PREPARE_ARTIFACT_FRONTEND',
+    'frontend',
+    runId
+  );
+  return {
+    ...prepared,
+    request_json: {
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      workflow_control_sha: 'f'.repeat(40),
+      inputs: {
+        release_train_id: trainId,
+        release_train_revision: '1',
+        operation_key: 'replaced-by-reconciler',
+        source_ref: `release-bus-v2/${artifactEnvironment}-train-${trainId}-frontend`,
+        expected_sha: prepared.expected_sha!,
+        deploy_units: '[]',
+        candidate_evidence_mode: 'legacy-whole-train',
+        aggregate_candidate_evidence_digest: '',
+        reuse_artifact_run_id: '',
+        reuse_artifact_name: '',
+        reuse_artifact_digest: '',
+        artifact_contract_version: 'legacy-v2',
+        artifact_environment: artifactEnvironment
+      }
+    },
+    result_json: {
+      summary: {
+        artifact_digest: prepared.artifact_digest,
+        package_digest: 'e'.repeat(64),
+        schema_version: 2,
+        artifact_contract: null,
+        artifact_contract_version: 'legacy-v2',
+        repository: 'frontend',
+        source_sha: prepared.expected_sha,
+        environment: 'dual',
+        fresh_or_reused: 'fresh-legacy-dual-profile',
+        source_evidence_reused: false,
+        artifact_bytes_reused: false,
+        ci_evidence: null
+      }
+    }
   };
 }
 
@@ -728,8 +1553,8 @@ function harness(e2eStatus: 'RUNNING' | 'SUCCEEDED' | 'FAILED') {
     created_at: 1
   });
   repository.operations.push(
-    operation('train-1', 'PREPARE_ARTIFACT_FRONTEND', 'frontend', '101'),
-    operation('train-1', 'PREPARE_ARTIFACT_BACKEND', 'backend', '102')
+    preparedArtifactOperation('train-1', 'frontend', '101'),
+    preparedArtifactOperation('train-1', 'backend', '102')
   );
   const service = {
     claimLane: jest.fn(async () => null),
@@ -3918,13 +4743,13 @@ describe('Release Bus v2 offline acceptance harness', () => {
   it.each([
     {
       trustMode: 'legacy-exact-workflow-v0' as const,
-      contract: 'legacy-v2',
-      artifactEnvironment: ''
+      contract: 'legacy-v2' as const,
+      artifactEnvironment: '' as const
     },
     {
       trustMode: 'evidence-manifest-v1' as const,
-      contract: 'environment-bound-v3',
-      artifactEnvironment: 'staging'
+      contract: 'environment-bound-v3' as const,
+      artifactEnvironment: 'staging' as const
     }
   ])(
     'propagates $trustMode preparation compatibility into same-train deploy consumers',
@@ -3947,6 +4772,28 @@ describe('Release Bus v2 offline acceptance harness', () => {
       );
       state.repository.candidates.set(backend.id, backend);
       state.repository.candidates.set(frontend.id, frontend);
+      state.repository.operations.splice(
+        0,
+        state.repository.operations.length,
+        contract === 'legacy-v2'
+          ? oldFrontendPreparedArtifactOperation(staging.id, '101', 'staging')
+          : preparedArtifactOperation(
+              staging.id,
+              'frontend',
+              '101',
+              contract,
+              artifactEnvironment
+            ),
+        contract === 'legacy-v2'
+          ? newLegacyBackendPreparedArtifactOperation(staging.id, '102')
+          : preparedArtifactOperation(
+              staging.id,
+              'backend',
+              '102',
+              contract,
+              artifactEnvironment
+            )
+      );
       mockReconcileWorkflow.mockImplementation(async (spec) => {
         const typed = spec as {
           operationType: string;
@@ -3989,11 +4836,153 @@ describe('Release Bus v2 offline acceptance harness', () => {
         'DEPLOY_BACKEND_STAGING_api',
         'DEPLOY_FRONTEND_STAGING'
       ]);
-      for (const { inputs } of deploySpecs) {
+      for (const { operationType, inputs } of deploySpecs) {
         expect(inputs.artifact_contract_version).toBe(contract);
-        expect(inputs.artifact_environment).toBe(artifactEnvironment);
+        expect(inputs.artifact_environment).toBe(
+          contract === 'legacy-v2' &&
+            operationType === 'DEPLOY_FRONTEND_STAGING'
+            ? 'staging'
+            : artifactEnvironment
+        );
         expect(inputs.artifact_train_id).toBe(staging.id);
       }
+    }
+  );
+
+  it('maps an immutable old frontend production preparation to the new legacy deploy input contract', async () => {
+    const state = harness('SUCCEEDED');
+    const production = train('train-1', {
+      lane: 'PRODUCTION',
+      status: 'PRODUCTION_DEPLOYING'
+    });
+    state.repository.trains.set(production.id, production);
+    const frontend = state.repository.candidates.get('frontend-candidate')!;
+    state.repository.operations.splice(
+      0,
+      state.repository.operations.length,
+      oldFrontendPreparedArtifactOperation(production.id, '101', 'production')
+    );
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as {
+        operationType: string;
+        repository: 'frontend';
+        service: null;
+      };
+      return operation(
+        production.id,
+        typed.operationType,
+        typed.repository,
+        'production-frontend-deploy',
+        typed.service
+      );
+    });
+    const context = {
+      train: production,
+      memberships: state.repository.memberships.filter(
+        ({ candidate_id }) => candidate_id === frontend.id
+      ),
+      candidates: [frontend],
+      dependencies: []
+    };
+
+    await (
+      state.reconciler as unknown as {
+        reconcileDeployments(
+          input: typeof context,
+          environment: 'prod',
+          artifactSourceTrainId: string
+        ): Promise<unknown>;
+      }
+    ).reconcileDeployments(context, 'prod', production.id);
+
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockReconcileWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationType: 'DEPLOY_FRONTEND_PROD',
+        workflow: 'release-bus-deploy-production.yml',
+        inputs: expect.objectContaining({
+          artifact_contract_version: 'legacy-v2',
+          artifact_environment: 'production',
+          artifact_run_id: '101',
+          artifact_train_id: production.id
+        })
+      })
+    );
+  });
+
+  it.each([
+    ['staging', 'STAGING', 'DEPLOY_FRONTEND_STAGING'],
+    ['prod', 'PRODUCTION', 'DEPLOY_FRONTEND_PROD']
+  ] as const)(
+    'consumes a new legacy frontend %s preparation without losing target-environment binding',
+    async (environment, lane, operationType) => {
+      const state = harness('SUCCEEDED');
+      const artifactEnvironment =
+        environment === 'prod' ? 'production' : 'staging';
+      const targetTrain = train('train-1', {
+        lane,
+        status: lane === 'PRODUCTION' ? 'PRODUCTION_DEPLOYING' : 'DEPLOYING'
+      });
+      state.repository.trains.set(targetTrain.id, targetTrain);
+      const frontend = withEvidence(
+        state.repository.candidates.get('frontend-candidate')!,
+        'legacy-exact-workflow-v0',
+        false
+      );
+      state.repository.candidates.set(frontend.id, frontend);
+      state.repository.operations.splice(
+        0,
+        state.repository.operations.length,
+        newLegacyFrontendPreparedArtifactOperation(
+          targetTrain.id,
+          '101',
+          artifactEnvironment
+        )
+      );
+      mockReconcileWorkflow.mockImplementation(async (spec) => {
+        const typed = spec as {
+          operationType: string;
+          repository: 'frontend';
+          service: null;
+        };
+        return operation(
+          targetTrain.id,
+          typed.operationType,
+          typed.repository,
+          `${environment}-new-legacy-frontend-deploy`,
+          typed.service
+        );
+      });
+      const context = {
+        train: targetTrain,
+        memberships: state.repository.memberships.filter(
+          ({ candidate_id }) => candidate_id === frontend.id
+        ),
+        candidates: [frontend],
+        dependencies: []
+      };
+
+      await (
+        state.reconciler as unknown as {
+          reconcileDeployments(
+            input: typeof context,
+            targetEnvironment: 'staging' | 'prod',
+            artifactSourceTrainId: string
+          ): Promise<unknown>;
+        }
+      ).reconcileDeployments(context, environment, targetTrain.id);
+
+      expect(mockReconcileWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operationType,
+          inputs: expect.objectContaining({
+            artifact_contract_version: 'legacy-v2',
+            artifact_environment: artifactEnvironment,
+            artifact_run_id: '101',
+            artifact_train_id: targetTrain.id
+          })
+        })
+      );
     }
   );
 
@@ -4559,6 +5548,325 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.lock.owner_train_id).toBeNull();
   });
 
+  it('finishes an isolated old-producer API to releaseBus-last self-upgrade before new-runtime E2E and finalization', async () => {
+    const state = harness('SUCCEEDED');
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    const productionId = 'producer-cutover-production';
+    const selected = withEvidence(
+      {
+        ...state.repository.candidates.get('backend-candidate')!,
+        status: 'PRODUCTION_BUILDING_OR_QUALIFYING',
+        current_train_id: productionId,
+        deploy_plan_json: {
+          units: ['api', 'releaseBus'],
+          edges: [['api', 'releaseBus']]
+        }
+      },
+      'evidence-manifest-v1'
+    );
+    state.repository.candidates.clear();
+    state.repository.candidates.set(selected.id, selected);
+    const membership = {
+      ...state.repository.memberships.find(
+        ({ candidate_id }) => candidate_id === 'backend-candidate'
+      )!,
+      train_id: productionId
+    };
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      membership
+    );
+    state.repository.dependencies.splice(
+      0,
+      state.repository.dependencies.length
+    );
+    const evidence = [
+      {
+        candidate_id: selected.id,
+        repository: selected.repository,
+        pr_number: selected.pr_number,
+        head_sha: selected.head_sha,
+        staging_train_id: 'cutover-staging-train',
+        staging_manifest_id: 'cutover-staging-manifest',
+        staging_manifest_identity_sha256: '7'.repeat(64),
+        staging_e2e_operation_id: 'cutover-staging-e2e-operation',
+        staging_e2e_run_id: 'cutover-staging-e2e-run'
+      }
+    ];
+    (
+      state.service.resolveCandidateStagingEvidence as jest.Mock<
+        Promise<typeof evidence>
+      >
+    ).mockResolvedValue(evidence);
+    const production = train(productionId, {
+      lane: 'PRODUCTION',
+      status: 'MERGING_PRODUCTION',
+      frontend_composed_sha: '1'.repeat(40),
+      frontend_artifact_digest: null,
+      manifest_id: 'cutover-qualified-manifest',
+      qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+      qualification_evidence_json: evidence
+    });
+    state.repository.trains.set(production.id, production);
+    state.repository.manifests.set('cutover-qualified-manifest', {
+      id: 'cutover-qualified-manifest',
+      train_id: production.id,
+      lane: 'PRODUCTION',
+      identity_sha256: 'e'.repeat(64),
+      status: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED',
+      frontend_sha: production.frontend_composed_sha,
+      backend_sha: production.backend_composed_sha,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: production.backend_artifact_digest,
+      e2e_run_id: null,
+      manifest_json: {
+        qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+        candidate_staging_evidence: evidence,
+        candidates: [{ candidate_id: selected.id }]
+      },
+      deployed_at: null,
+      validated_at: null,
+      created_at: 1,
+      updated_at: 1
+    });
+    state.repository.operations.splice(0, state.repository.operations.length, {
+      ...operation(production.id, 'PREPARE_ARTIFACT_BACKEND', 'backend', '201'),
+      idempotency_key: `rb2:${production.id}:prepare:backend`,
+      expected_sha: production.backend_composed_sha,
+      artifact_digest: production.backend_artifact_digest,
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {
+          release_train_id: production.id,
+          release_train_revision: '1',
+          operation_key: 'replaced-by-reconciler',
+          source_ref: selected.branch_name,
+          expected_sha: production.backend_composed_sha!,
+          deploy_units: '["api","releaseBus"]',
+          reuse_artifact_run_id: '202',
+          reuse_artifact_name: `release-bus-v2-pr-${selected.pr_evidence_json!.merge_sha}`,
+          reuse_artifact_digest: '9'.repeat(64)
+        },
+        beta_infrastructure_failure_injection: null
+      },
+      result_json: {
+        summary: {
+          artifact_digest: production.backend_artifact_digest,
+          fresh_or_reused: 'reused'
+        }
+      }
+    });
+    state.repository.lock = {
+      ...state.repository.lock,
+      name: 'production-environment'
+    };
+    const sequence: string[] = [];
+    let backendMain = production.backend_base_sha!;
+    mockResolveRef.mockImplementation(async (repository: string) =>
+      repository === 'backend' ? backendMain : production.frontend_base_sha
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (_repository: string, ref: string) =>
+        ref === selected.branch_name ? selected.head_sha : null
+    );
+    mockUpdateRef.mockImplementation(
+      async (
+        repository: string,
+        ref: string,
+        expectedOldSha: string,
+        nextSha: string
+      ) => {
+        expect([repository, ref, expectedOldSha, nextSha]).toEqual([
+          'backend',
+          'main',
+          production.backend_base_sha,
+          production.backend_composed_sha
+        ]);
+        sequence.push('main-cas');
+        backendMain = nextSha;
+      }
+    );
+    const firstContext = {
+      train: production,
+      memberships: [...state.repository.memberships],
+      candidates: [selected],
+      dependencies: []
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceProduction(input: typeof firstContext): Promise<void>;
+      }
+    ).advanceProduction(firstContext);
+
+    expect(state.repository.trains.get(production.id)?.status).toBe(
+      'PRODUCTION_DEPLOYING'
+    );
+    let newRuntimeActive = false;
+    const releaseNoteSignals: Array<{
+      readonly service: string;
+      readonly groups: string;
+      readonly publish: string;
+      readonly optOut: string;
+    }> = [];
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as {
+        operationType: string;
+        repository: 'frontend' | 'backend';
+        service: string | null;
+        inputs: Record<string, string>;
+      };
+      if (typed.operationType.startsWith('DEPLOY_BACKEND_PROD_')) {
+        if (newRuntimeActive)
+          throw new Error(
+            'No deploy unit may remain after the releaseBus runtime cutover'
+          );
+        expect(typed.inputs.artifact_contract_version).toBe('legacy-v2');
+        expect(typed.inputs.artifact_environment).toBe('');
+        expect(typed.inputs.artifact_train_id).toBe(production.id);
+        expect(typed.inputs.artifact_run_id).toBe('201');
+        releaseNoteSignals.push({
+          service: String(typed.service),
+          groups: typed.inputs.release_note_groups,
+          publish: typed.inputs.release_note_publish,
+          optOut: typed.inputs.release_note_opt_out
+        });
+        sequence.push(String(typed.service));
+        const completed = {
+          ...operation(
+            production.id,
+            typed.operationType,
+            'backend',
+            `cutover-${typed.service}`,
+            typed.service
+          ),
+          idempotency_key: `rb2:${production.id}:deploy:prod:backend:${typed.service}`,
+          environment: 'prod',
+          expected_sha: production.backend_composed_sha,
+          artifact_digest: production.backend_artifact_digest,
+          request_json: {
+            workflow: 'deploy.yml',
+            ref: 'main',
+            inputs: {
+              environment: 'prod',
+              service: String(typed.service),
+              operation_key: 'replaced-by-reconciler',
+              expected_sha: production.backend_composed_sha!,
+              artifact_run_id: '201',
+              artifact_digest: production.backend_artifact_digest!
+            },
+            beta_infrastructure_failure_injection: null
+          }
+        };
+        state.repository.operations.push(completed);
+        if (typed.service === 'releaseBus') newRuntimeActive = true;
+        return completed;
+      }
+      expect(typed.operationType).toBe('E2E_PROD');
+      expect(newRuntimeActive).toBe(true);
+      sequence.push('e2e');
+      const completed = {
+        ...operation(
+          production.id,
+          'E2E_PROD',
+          'frontend',
+          'cutover-production-e2e'
+        ),
+        environment: 'prod',
+        expected_sha: production.frontend_composed_sha,
+        artifact_digest: 'e'.repeat(64)
+      };
+      state.repository.operations.push(completed);
+      return completed;
+    });
+    const deploying = state.repository.trains.get(production.id)!;
+    const secondContext = {
+      ...firstContext,
+      train: deploying,
+      candidates: [state.repository.candidates.get(selected.id)!]
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceProduction(input: typeof secondContext): Promise<void>;
+      }
+    ).advanceProduction(secondContext);
+
+    expect(sequence).toEqual(['main-cas', 'api', 'releaseBus', 'e2e']);
+    expect(releaseNoteSignals).toEqual([
+      {
+        service: 'api',
+        groups: JSON.stringify([
+          {
+            release_group_id: `pr-${selected.pr_number}`,
+            release_group_services: ['api', 'releaseBus'],
+            pull_request_number: selected.pr_number,
+            publish_release_note: true
+          }
+        ]),
+        publish: 'true',
+        optOut: 'false'
+      },
+      {
+        service: 'releaseBus',
+        groups: JSON.stringify([
+          {
+            release_group_id: `pr-${selected.pr_number}`,
+            release_group_services: ['api', 'releaseBus'],
+            pull_request_number: selected.pr_number,
+            publish_release_note: true
+          }
+        ]),
+        publish: 'true',
+        optOut: 'false'
+      }
+    ]);
+    expect(
+      new Set(
+        releaseNoteSignals.flatMap(({ groups }) =>
+          (JSON.parse(groups) as Array<{ release_group_id: string }>).map(
+            ({ release_group_id }) => release_group_id
+          )
+        )
+      )
+    ).toEqual(new Set([`pr-${selected.pr_number}`]));
+    expect(
+      mockReconcileWorkflow.mock.calls.some(
+        ([spec]) =>
+          String((spec as { operationType: string }).operationType) ===
+          'DEPLOY_FRONTEND_PROD'
+      )
+    ).toBe(false);
+    expect(state.repository.trains.get(production.id)).toEqual(
+      expect.objectContaining({
+        status: 'PRODUCTION_DEPLOYED',
+        completed_at: expect.any(Number),
+        manifest_id: expect.any(String)
+      })
+    );
+    expect(state.repository.candidates.get(selected.id)).toEqual(
+      expect.objectContaining({
+        status: 'PRODUCTION_DEPLOYED',
+        current_train_id: null
+      })
+    );
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    const workflowCountAfterFinalization =
+      mockReconcileWorkflow.mock.calls.length;
+    await state.reconciler.runOnce('producer-cutover-duplicate-finalize');
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(
+      workflowCountAfterFinalization
+    );
+    expect(
+      Array.from(state.repository.manifests.values()).filter(
+        ({ train_id, status }) =>
+          train_id === production.id && status === 'PRODUCTION_DEPLOYED'
+      )
+    ).toHaveLength(1);
+  });
+
   it('runs staging E2E from the immutable exact-composition release ref', async () => {
     const state = harness('SUCCEEDED');
     const manifestId = 'exact-workflow-manifest';
@@ -4701,6 +6009,73 @@ describe('Release Bus v2 offline acceptance harness', () => {
       mockImmutableRefs.get(`frontend:${dispatched.inputs.source_ref}`)
     ).toBe(dispatched.expectedSha);
   });
+
+  it.each([
+    ['STAGING', 'staging'],
+    ['PRODUCTION', 'production']
+  ] as const)(
+    'dispatches a new legacy frontend %s preparation with its required target environment',
+    async (lane, artifactEnvironment) => {
+      const state = harness('SUCCEEDED');
+      const exactTrain = train(`legacy-frontend-${artifactEnvironment}`, {
+        lane,
+        frontend_composed_sha: null,
+        backend_composed_sha: null,
+        frontend_artifact_digest: null,
+        backend_artifact_digest: null
+      });
+      const base = withEvidence(
+        state.repository.candidates.get('frontend-candidate')!,
+        'legacy-exact-workflow-v0',
+        false
+      );
+      const frontendCandidate = {
+        ...base,
+        current_train_id: exactTrain.id,
+        pr_evidence_json: {
+          ...base.pr_evidence_json!,
+          base_sha: exactTrain.frontend_base_sha!,
+          merge_sha: FRONTEND_SHA
+        }
+      };
+      const context = {
+        train: exactTrain,
+        memberships: [
+          {
+            ...state.repository.memberships.find(
+              ({ candidate_id }) => candidate_id === 'frontend-candidate'
+            )!,
+            train_id: exactTrain.id
+          }
+        ],
+        candidates: [frontendCandidate],
+        dependencies: []
+      };
+      mockReconcileWorkflow.mockResolvedValueOnce(
+        operation(exactTrain.id, 'PREPARE_ARTIFACT_FRONTEND', 'frontend', '101')
+      );
+
+      await (
+        state.reconciler as unknown as {
+          prepareRepository(
+            input: typeof context,
+            repository: 'frontend'
+          ): Promise<unknown>;
+        }
+      ).prepareRepository(context, 'frontend');
+
+      expect(mockReconcileWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operationType: 'PREPARE_ARTIFACT_FRONTEND',
+          inputs: expect.objectContaining({
+            artifact_contract_version: 'legacy-v2',
+            artifact_environment: artifactEnvironment,
+            candidate_evidence_mode: 'legacy-whole-train'
+          })
+        })
+      );
+    }
+  );
 
   it('fails closed before preflight when a fast-path immutable ref conflicts', async () => {
     const state = harness('SUCCEEDED');

@@ -27,8 +27,24 @@ const INFRASTRUCTURE_FAILURE_MARKER = path.join(
   repoRoot,
   '.release-bus-package-failure-class'
 );
-const TRANSIENT_TRANSPORT_PATTERN =
-  /EAI_AGAIN|ECONN(?:REFUSED|RESET|ABORTED)?|ENET(?:UNREACH|DOWN)|ENOTFOUND|ETIMEDOUT|HTTP (?:408|429|5\d\d)|status(?:code)? (?:408|429|5\d\d)/i;
+const TRANSPORT_ERROR_CODES = Object.freeze([
+  'EAI_AGAIN',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'ETIMEDOUT'
+]);
+const RETRYABLE_HTTP_STATUS_CODES = new Set([
+  '408',
+  '429',
+  '500',
+  '502',
+  '503',
+  '504'
+]);
 
 function parseArguments(values) {
   const parsed = new Map();
@@ -69,6 +85,34 @@ function run(command, args, options = {}) {
   });
 }
 
+export function hasUnmistakableTransportFailure(output) {
+  if (TRANSPORT_ERROR_CODES.some((code) => output.includes(code))) return true;
+  return output.split(/\r?\n/u).some((line) => {
+    if (!/^npm (?:error|ERR!)/iu.test(line)) return false;
+    return line
+      .split(/[^0-9]+/u)
+      .some((token) => RETRYABLE_HTTP_STATUS_CODES.has(token));
+  });
+}
+
+export async function clearInfrastructureFailureMarker(
+  marker = INFRASTRUCTURE_FAILURE_MARKER
+) {
+  await fs.rm(marker, { force: true });
+}
+
+export async function markInfrastructureFailure(
+  marker = INFRASTRUCTURE_FAILURE_MARKER
+) {
+  try {
+    await fs.writeFile(marker, 'INFRASTRUCTURE\n', {
+      flag: 'wx'
+    });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+  }
+}
+
 async function runAsync(command, args, cwd) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -83,17 +127,20 @@ async function runAsync(command, args, cwd) {
     child.stdout.on('data', (chunk) => observe(chunk, process.stdout));
     child.stderr.on('data', (chunk) => observe(chunk, process.stderr));
     child.once('error', reject);
-    child.once('exit', async (code, signal) => {
+    child.once('close', async (code, signal) => {
       if (code === 0) resolve();
       else {
-        if (TRANSIENT_TRANSPORT_PATTERN.test(output))
-          await fs
-            .writeFile(INFRASTRUCTURE_FAILURE_MARKER, 'INFRASTRUCTURE\n')
-            .catch(() => undefined);
+        if (hasUnmistakableTransportFailure(output)) {
+          try {
+            await markInfrastructureFailure();
+          } catch (error) {
+            reject(error);
+            return;
+          }
+        }
+        const outcome = signal ?? `exit ${code}`;
         reject(
-          new Error(
-            `${command} ${args.join(' ')} failed with ${signal ?? `exit ${code}`}`
-          )
+          new Error(`${command} ${args.join(' ')} failed with ${outcome}`)
         );
       }
     });
@@ -150,12 +197,16 @@ function validateIdentity({
   if (contractVersion === V3_CONTRACT) {
     if (!['staging', 'production'].includes(environment))
       throw new Error('v3 artifacts require staging or production');
-  } else if (environment && !['staging', 'production'].includes(environment)) {
+  } else if (
+    environment &&
+    !['portable', 'staging', 'production'].includes(environment)
+  ) {
     throw new Error('legacy artifact environment is invalid');
   }
 }
 
 async function main() {
+  await clearInfrastructureFailureMarker();
   const argumentsByName = parseArguments(process.argv.slice(2));
   const contractVersion = required(argumentsByName, 'contract-version');
   const candidateEvidenceMode = required(
@@ -243,7 +294,7 @@ async function main() {
       throw new Error(`${unit} has no package contract`);
   }
 
-  const actualSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+  const actualSha = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], {
     cwd: repoRoot,
     encoding: 'utf8'
   }).trim();
@@ -320,6 +371,15 @@ async function main() {
           environment: 'portable',
           units,
           layers,
+          packages: Object.fromEntries(
+            units.map((unit) => [
+              unit,
+              {
+                path: `packages/${unit}/index.zip`,
+                sha256: packageDigests[unit]
+              }
+            ])
+          ),
           ci_evidence: {
             mode: candidateEvidenceMode,
             artifact_run_id: reuseArtifactRunId || null,
@@ -343,4 +403,8 @@ async function main() {
   );
 }
 
-await main();
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+  await main();
