@@ -180,6 +180,64 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
   }
 
+  it('does not increment inserted-drop metrics when editing a drop', async () => {
+    const dropsDb = {
+      findDropById: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        wave_id: 'wave-1',
+        author_id: 'author-profile',
+        drop_type: DropType.CHAT,
+        created_at: Date.now() - 1000,
+        updated_at: Date.now(),
+        serial_no: 1
+      }),
+      getDropGroupMentions: jest.fn().mockResolvedValue([]),
+      applyInsertedDropMetricsDelta: jest.fn().mockResolvedValue(undefined)
+    };
+    const wavesApiDb = {
+      findById: jest.fn().mockResolvedValue({
+        ...createSlowModeWave(),
+        type: WaveType.CHAT
+      })
+    };
+    const deleteDropUseCase = {
+      execute: jest.fn().mockResolvedValue(undefined)
+    };
+    const artCurationTokenWatchService = {
+      registerDrop: jest.fn().mockResolvedValue(undefined)
+    };
+    const useCase = createUseCaseWithMocks({
+      dropsDb,
+      wavesApiDb,
+      deleteDropUseCase,
+      artCurationTokenWatchService
+    });
+    jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+      validatedModel: createChatDropModel({ drop_id: 'drop-1' }),
+      groupIdsUserIsEligibleFor: []
+    });
+    jest
+      .spyOn(useCase as any, 'verifyChatLinksAreAllowed')
+      .mockReturnValue(undefined);
+    jest.spyOn(useCase as any, 'insertAllDropComponents').mockResolvedValue([]);
+    jest.spyOn(env, 'getIntOrNull').mockReturnValue(60_000);
+
+    await (useCase as any).createOrUpdateDrop(
+      createChatDropModel({ drop_id: 'drop-1' }),
+      false,
+      { connection: {} as any }
+    );
+
+    expect(deleteDropUseCase.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        drop_id: 'drop-1',
+        deletion_purpose: 'UPDATE'
+      }),
+      expect.any(Object)
+    );
+    expect(dropsDb.applyInsertedDropMetricsDelta).not.toHaveBeenCalled();
+  });
+
   it('sanitizes structured drop fields without touching part content', () => {
     const model = {
       ...createChatDropModel(),

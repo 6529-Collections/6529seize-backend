@@ -28,6 +28,7 @@ import {
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
+  ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
   ReleaseBusV2ProgressBodySchema,
@@ -50,6 +51,7 @@ import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
   releaseBusV2Service,
+  ReleaseBusV2ProductionSelectionError,
   ReleaseBusV2StagingTransitionConflictError
 } from '@/releaseBusV2/release-bus-v2.service';
 import {
@@ -109,6 +111,20 @@ function parseReleaseBusV2WorkflowRequest(
 
 function targetForRepository(repository: ReleaseBusV2Repository) {
   return repository === 'frontend' ? 'frontend' : 'backend';
+}
+
+function isProductionSelectionError(
+  error: unknown
+): error is ReleaseBusV2ProductionSelectionError {
+  if (error instanceof ReleaseBusV2ProductionSelectionError) return true;
+  if (
+    !(error instanceof Error) ||
+    error.name !== 'ReleaseBusV2ProductionSelectionError'
+  )
+    return false;
+  return ['CONFLICT', 'DISABLED', 'NOT_FOUND'].includes(
+    String((error as { code?: unknown }).code)
+  );
 }
 
 async function requireOperator(token: string): Promise<string> {
@@ -406,6 +422,87 @@ deployRoutes.get('/release-bus-v2/candidates', async (req, res) => {
     })),
     mode: getReleaseBusV2Mode()
   });
+});
+
+deployRoutes.post('/release-bus-v2/production-selections', async (req, res) => {
+  const body = getValidatedByJoiOrThrow<{
+    candidates: {
+      candidate_id: string;
+      expected_head_sha: string;
+      expected_row_version: number;
+    }[];
+  }>(req.body, ReleaseBusV2ProductionSelectionBodySchema);
+  const actors = await Promise.all(
+    body.candidates.map(({ candidate_id }) =>
+      requireV2CandidateWriteAccess(req, candidate_id)
+    )
+  );
+  const normalizedActors = actors.map((candidateActor) =>
+    candidateActor.trim().toLowerCase()
+  );
+  const actor = normalizedActors[0];
+  if (
+    !actor ||
+    normalizedActors.some(
+      (candidateActor) => !candidateActor || candidateActor !== actor
+    )
+  )
+    throw new CustomApiCompliantException(
+      403,
+      'One authenticated actor must authorize the full production selection'
+    );
+  const mode = getReleaseBusV2Mode();
+  try {
+    const candidates =
+      await releaseBusV2Service.markSelectionReadyForProduction(
+        body.candidates.map(
+          ({ candidate_id, expected_head_sha, expected_row_version }) => ({
+            candidateId: candidate_id,
+            expectedHeadSha: expected_head_sha,
+            expectedRowVersion: expected_row_version
+          })
+        ),
+        actor
+      );
+    const productionSelectionId = candidates[0]?.production_selection_id;
+    if (!productionSelectionId)
+      throw new Error(
+        'Release Bus v2 did not persist the production selection identity'
+      );
+    if (
+      candidates.some(
+        ({ production_selection_id }) =>
+          production_selection_id !== productionSelectionId
+      )
+    )
+      throw new Error(
+        'Release Bus v2 returned inconsistent production selection identities'
+      );
+    setNoStoreHeaders(res);
+    return res.json({
+      production_selection_id: productionSelectionId,
+      qualification_policy: 'CANDIDATE_STAGING_EVIDENCE_V1',
+      candidates,
+      mode
+    });
+  } catch (error) {
+    if (isProductionSelectionError(error)) {
+      const status =
+        error.code === 'DISABLED'
+          ? 403
+          : error.code === 'NOT_FOUND'
+            ? 404
+            : 409;
+      throw new CustomApiCompliantException(status, error.message);
+    }
+    logger.error('Unexpected Release Bus v2 production selection failure', {
+      error
+    });
+    throw new CustomApiCompliantException(
+      500,
+      'Release Bus v2 production selection failed'
+    );
+  }
 });
 
 deployRoutes.post(

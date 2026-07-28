@@ -4,6 +4,7 @@ import {
   backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
   candidateUnavailableForTrainUpdate,
+  candidateStatusMutationCandidates,
   deletedProductionCandidateCanRetainReadiness,
   candidateExclusionClosure,
   dagLayers,
@@ -45,6 +46,7 @@ function candidate(
     staging_validated_manifest_id: null,
     production_requested_at: null,
     production_requested_by: null,
+    production_selection_id: null,
     hold_reason: null,
     superseded_at: null,
     created_at: 1,
@@ -117,6 +119,64 @@ describe('Release Bus v2 deterministic orchestration', () => {
       carried,
       removed
     ]);
+  });
+
+  it('mutates only new candidate statuses during cumulative staging preparation', () => {
+    const carried = candidate('carried', 'a'.repeat(40));
+    const added = candidate('added', 'b'.repeat(40));
+    const stagingTrain: ReleaseBusV2TrainRecord = {
+      id: 'train-cumulative-statuses',
+      lane: 'STAGING',
+      status: 'CLAIMED',
+      frontend_base_sha: 'c'.repeat(40),
+      backend_base_sha: 'd'.repeat(40),
+      frontend_composed_sha: null,
+      backend_composed_sha: null,
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null,
+      manifest_id: null,
+      parent_train_id: null,
+      qualification_identity_sha256: null,
+      qualification_train_id: null,
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'manifest-before',
+      staging_transition_json: null,
+      failure_class: null,
+      failure_message: null,
+      recovery_message: null,
+      phase_started_at: 1,
+      completed_at: null,
+      created_at: 1,
+      updated_at: 1,
+      row_version: 1
+    };
+    const context = {
+      train: stagingTrain,
+      memberships: [
+        {
+          id: 'membership-carried',
+          train_id: stagingTrain.id,
+          candidate_id: carried.id,
+          sequence: 1,
+          disposition: 'INCLUDED',
+          candidate_role: 'CARRY_FORWARD',
+          created_at: 1
+        },
+        {
+          id: 'membership-added',
+          train_id: stagingTrain.id,
+          candidate_id: added.id,
+          sequence: 2,
+          disposition: 'INCLUDED',
+          candidate_role: 'NEW',
+          created_at: 1
+        }
+      ],
+      candidates: [carried, added],
+      dependencies: []
+    };
+
+    expect(candidateStatusMutationCandidates(context)).toEqual([added]);
   });
 
   it('keeps the admitted state unchanged while a failed cumulative train enters rollback', async () => {

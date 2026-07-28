@@ -29,6 +29,8 @@ import type {
   ReleaseBusV2OperationRecord,
   ReleaseBusV2OperationStatus,
   ReleaseBusV2PrEvidence,
+  ReleaseBusV2CandidateStagingEvidence,
+  ReleaseBusV2ProductionQualificationPolicy,
   ReleaseBusV2Repository as ReleaseBusV2RepositoryName,
   ReleaseBusV2StagingLiveState,
   ReleaseBusV2StagingPolicy,
@@ -346,6 +348,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly stagingTransitionReason?: string | null;
       readonly productionRequestedAt?: number | null;
       readonly productionRequestedBy?: string | null;
+      readonly productionSelectionId?: string | null;
       readonly holdReason?: string | null;
       readonly supersededAt?: number | null;
     },
@@ -367,6 +370,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            staging_transition_reason = case when :setStagingTransitionReason = 1 then :stagingTransitionReason else staging_transition_reason end,
            production_requested_at = case when :setProductionRequestedAt = 1 then :productionRequestedAt else production_requested_at end,
            production_requested_by = case when :setProductionRequestedBy = 1 then :productionRequestedBy else production_requested_by end,
+           production_selection_id = case when :setProductionSelectionId = 1 then :productionSelectionId else production_selection_id end,
            hold_reason = case when :setHoldReason = 1 then :holdReason else hold_reason end,
            superseded_at = case when :setSupersededAt = 1 then :supersededAt else superseded_at end,
            updated_at = :now, row_version = row_version + 1
@@ -413,6 +417,9 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         setProductionRequestedBy:
           fields.productionRequestedBy === undefined ? 0 : 1,
         productionRequestedBy: fields.productionRequestedBy ?? null,
+        setProductionSelectionId:
+          fields.productionSelectionId === undefined ? 0 : 1,
+        productionSelectionId: fields.productionSelectionId ?? null,
         setHoldReason: fields.holdReason === undefined ? 0 : 1,
         holdReason: fields.holdReason ?? null,
         setSupersededAt: fields.supersededAt === undefined ? 0 : 1,
@@ -460,6 +467,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly candidateRoles?: Readonly<Record<string, string>>;
       readonly candidateDispositions?: Readonly<Record<string, string>>;
       readonly initialStatus?: ReleaseBusV2TrainStatus;
+      readonly qualificationPolicy?: ReleaseBusV2ProductionQualificationPolicy;
+      readonly qualificationEvidence?: readonly ReleaseBusV2CandidateStagingEvidence[];
     },
     ctx: RequestContext
   ): Promise<ReleaseBusV2TrainRecord> {
@@ -469,9 +478,11 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `insert into ${RELEASE_BUS_V2_TRAINS_TABLE}
        (id, lane, status, frontend_base_sha, backend_base_sha, phase_started_at,
         staging_policy, staging_baseline_manifest_id, staging_transition_json,
+        qualification_policy, qualification_evidence_json,
         created_at, updated_at, row_version)
        values (:id, :lane, :initialStatus, :frontendBaseSha, :backendBaseSha, :now,
         :stagingPolicy, :stagingBaselineManifestId, :stagingTransition,
+        :qualificationPolicy, :qualificationEvidence,
         :now, :now, 1)`,
       {
         id,
@@ -482,6 +493,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         stagingBaselineManifestId: input.stagingBaselineManifestId ?? null,
         stagingTransition: json(input.stagingTransition ?? null),
         initialStatus: input.initialStatus ?? 'CLAIMED',
+        qualificationPolicy: input.qualificationPolicy ?? null,
+        qualificationEvidence: json(input.qualificationEvidence ?? null),
         now
       },
       dbOptions(ctx)
@@ -928,11 +941,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listOperations(
     trainId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2OperationRecord[]> {
     return this.db.execute<ReleaseBusV2OperationRecord>(
       `select * from ${RELEASE_BUS_V2_OPERATIONS_TABLE}
-       where train_id = :trainId order by created_at asc, id asc`,
+       where train_id = :trainId order by created_at asc, id asc${
+         forUpdate ? ' for update' : ''
+       }`,
       { trainId },
       dbOptions(ctx)
     );
@@ -1200,6 +1216,47 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     return this.db.execute<ReleaseBusV2ManifestRecord>(
       `select * from ${RELEASE_BUS_V2_MANIFESTS_TABLE} order by created_at desc limit ${boundedLimit}`,
       {},
+      dbOptions(ctx)
+    );
+  }
+
+  public async listProductionManifestsForCandidate(
+    candidateId: string,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2ManifestRecord[]> {
+    return this.db.execute<ReleaseBusV2ManifestRecord>(
+      `select manifest.* from ${RELEASE_BUS_V2_MANIFESTS_TABLE} manifest
+       inner join ${RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE} membership
+         on membership.train_id = manifest.train_id
+       inner join ${RELEASE_BUS_V2_TRAINS_TABLE} train
+         on train.id = membership.train_id
+       where membership.candidate_id = :candidateId
+         and membership.disposition = 'INCLUDED'
+         and train.lane = 'PRODUCTION'
+         and train.status = 'PRODUCTION_DEPLOYED'
+         and manifest.status = 'PRODUCTION_DEPLOYED'
+       order by manifest.created_at desc
+       limit 200`,
+      { candidateId },
+      dbOptions(ctx)
+    );
+  }
+
+  public async findLatestProductionTrainForCandidate(
+    candidateId: string,
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2TrainRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2TrainRecord>(
+      `select train.* from ${RELEASE_BUS_V2_TRAINS_TABLE} train
+       inner join ${RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE} membership
+         on membership.train_id = train.id
+       where membership.candidate_id = :candidateId
+         and membership.disposition = 'INCLUDED'
+         and train.lane = 'PRODUCTION'
+       order by train.created_at desc, train.id desc
+       limit 1${forUpdate ? ' for update' : ''}`,
+      { candidateId },
       dbOptions(ctx)
     );
   }

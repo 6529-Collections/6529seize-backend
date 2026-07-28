@@ -389,7 +389,8 @@ async function postNftRest<T>(
 function toAlchemyError(e: unknown, context: string): Error {
   if (e instanceof AxiosError) {
     const data = e.response?.data as
-      { message?: string; error?: string | { message?: string } } | undefined;
+      | { message?: string; error?: string | { message?: string } }
+      | undefined;
     const nestedMessage =
       typeof data?.error === 'string' ? data.error : data?.error?.message;
     const message =

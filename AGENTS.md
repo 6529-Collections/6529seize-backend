@@ -18,6 +18,15 @@
   together.
 - `STAGING_DEPLOYED` is not validation. Do not mutate staging during manifest-
   bound E2E, and never infer production readiness from staging validation.
+- Production readiness is an explicit dependency-closed selection. Every
+  selected unchanged SHA must carry successful staging manifest/E2E evidence;
+  unrelated staging candidates and the current shared-staging combination are
+  not production gates.
+- New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`: compose and build
+  freshly from both current production bases, do not create a
+  `PRODUCTION_QUALIFICATION` child, and require terminal read-only production
+  E2E before `PRODUCTION_DEPLOYED`. Null-policy legacy trains retain their
+  immutable claimed behavior.
 - Never cancel another actor's workflow, force-push a shared ref, or bypass exact
   SHA/artifact checks. Never author or post release notes manually; preserve the
   autonomous bot's complete grouping metadata and finalize signal.

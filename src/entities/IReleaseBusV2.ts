@@ -19,6 +19,7 @@ import type {
   ReleaseBusV2Lane,
   ReleaseBusV2ManifestStatus,
   ReleaseBusV2OperationStatus,
+  ReleaseBusV2ProductionQualificationPolicy,
   ReleaseBusV2Repository,
   ReleaseBusV2StagingLiveState,
   ReleaseBusV2StagingPolicy,
@@ -43,6 +44,10 @@ import type {
   'repository',
   'pr_number',
   'updated_at'
+])
+@Index('idx_release_bus_v2_candidate_selection', [
+  'production_selection_id',
+  'status'
 ])
 export class ReleaseBusV2CandidateEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 }) readonly id!: string;
@@ -82,6 +87,8 @@ export class ReleaseBusV2CandidateEntity {
   readonly production_requested_at!: number | null;
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly production_requested_by!: string | null;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly production_selection_id!: string | null;
   @Column({ type: 'varchar', length: 1000, nullable: true, default: null })
   readonly hold_reason!: string | null;
   @Column({ type: 'bigint', nullable: true, default: null })
@@ -144,6 +151,10 @@ export class ReleaseBusV2TrainEntity {
   readonly staging_baseline_manifest_id!: string | null;
   @Column({ type: 'json', nullable: true })
   readonly staging_transition_json!: unknown;
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  readonly qualification_policy!: ReleaseBusV2ProductionQualificationPolicy | null;
+  @Column({ type: 'json', nullable: true })
+  readonly qualification_evidence_json!: unknown;
   @Column({ type: 'varchar', length: 32, nullable: true, default: null })
   readonly failure_class!: ReleaseBusV2FailureClass | null;
   @Column({ type: 'varchar', length: 2000, nullable: true, default: null })
@@ -243,7 +254,7 @@ export class ReleaseBusV2ManifestEntity {
   @Column({ type: 'varchar', length: 36 }) readonly train_id!: string;
   @Column({ type: 'varchar', length: 32 }) readonly lane!: ReleaseBusV2Lane;
   @Column({ type: 'char', length: 64 }) readonly identity_sha256!: string;
-  @Column({ type: 'varchar', length: 32 })
+  @Column({ type: 'varchar', length: 48 })
   readonly status!: ReleaseBusV2ManifestStatus;
   @Column({ type: 'char', length: 40, nullable: true, default: null })
   readonly frontend_sha!: string | null;

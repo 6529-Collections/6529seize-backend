@@ -274,6 +274,94 @@ describe('DropsDb', () => {
     });
   });
 
+  it('defers inserted drop metrics only when requested', async () => {
+    const connection = {};
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+    const newDropEntity = {
+      id: 'drop-1',
+      author_id: 'author-1',
+      title: null,
+      parts_count: 1,
+      wave_id: 'wave-1',
+      reply_to_drop_id: null,
+      reply_to_part_id: null,
+      created_at: 123,
+      updated_at: null,
+      serial_no: null,
+      drop_type: DropType.CHAT,
+      signature: null,
+      is_additional_action_promised: null
+    };
+
+    await repo.insertDrop(newDropEntity, { connection } as any, {
+      deferMetrics: true
+    });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toContain(`insert into ${DROPS_TABLE}`);
+    expect(execute.mock.calls[0]?.[0]).not.toContain(WAVE_METRICS_TABLE);
+
+    await repo.applyInsertedDropMetricsDelta(
+      {
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        drop_type: DropType.CHAT
+      },
+      {
+        connection: { connection } as any,
+        timer: undefined
+      }
+    );
+
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute.mock.calls[1]?.[0]).toContain(
+      `insert into ${WAVE_METRICS_TABLE}`
+    );
+    expect(execute.mock.calls[1]?.[1]).toMatchObject({
+      waveId: 'wave-1',
+      chatDropsDelta: 1,
+      participatoryDropsDelta: 0
+    });
+    expect(execute.mock.calls[1]?.[2]).toEqual({
+      wrappedConnection: { connection }
+    });
+    expect(execute.mock.calls[2]?.[0]).toContain(
+      `insert into ${WAVE_DROPPER_METRICS_TABLE}`
+    );
+    expect(execute.mock.calls[2]?.[1]).toMatchObject({
+      waveId: 'wave-1',
+      dropperId: 'author-1',
+      chatDropsDelta: 1,
+      participatoryDropsDelta: 0
+    });
+    expect(execute.mock.calls[2]?.[2]).toEqual({
+      wrappedConnection: { connection }
+    });
+
+    const directExecute = jest.fn().mockResolvedValue([]);
+    const directRepo = new DropsDb(
+      () =>
+        ({
+          execute: directExecute
+        }) as any
+    );
+    await directRepo.insertDrop(newDropEntity, { connection } as any);
+
+    expect(directExecute).toHaveBeenCalledTimes(3);
+    expect(directExecute.mock.calls[1]?.[0]).toContain(
+      `insert into ${WAVE_METRICS_TABLE}`
+    );
+    expect(directExecute.mock.calls[2]?.[0]).toContain(
+      `insert into ${WAVE_DROPPER_METRICS_TABLE}`
+    );
+  });
+
   it('can force full drop metrics resyncs onto the write pool', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new DropsDb(
