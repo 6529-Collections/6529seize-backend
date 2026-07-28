@@ -24653,6 +24653,8 @@ components:
         - id
         - status
         - clean_main
+        - last_validated_frontend_sha
+        - last_validated_backend_sha
         - updated_at
         - row_version
       properties:
@@ -24680,6 +24682,14 @@ components:
           pattern: ^[a-f0-9]{40}$
           nullable: true
         backend_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+          nullable: true
+        last_validated_frontend_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+          nullable: true
+        last_validated_backend_sha:
           type: string
           pattern: ^[a-f0-9]{40}$
           nullable: true

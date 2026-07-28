@@ -8,7 +8,10 @@ import type {
   ReleaseBusV2RegisterInput,
   ReleaseBusV2Repository
 } from '@/releaseBusV2/release-bus-v2.types';
-import { RELEASE_BUS_V2_AUTOMATION_LANES } from '@/releaseBusV2/release-bus-v2.types';
+import {
+  RELEASE_BUS_V2_AUTOMATION_LANES,
+  RELEASE_BUS_V2_CONTROL_SCOPES
+} from '@/releaseBusV2/release-bus-v2.types';
 
 export const RELEASE_BUS_OPERATOR_TEAM =
   process.env.RELEASE_BUS_OPERATOR_TEAM ?? 'release-bus-operators';
@@ -277,19 +280,41 @@ export function releaseBusV2AllowsLane(
 }
 
 type ReleaseBusV2ControlState = {
+  readonly scope: unknown;
+  readonly paused: unknown;
+  readonly reason?: unknown;
+};
+
+type ValidatedReleaseBusV2ControlState = {
   readonly scope: ReleaseBusV2ControlScope;
-  readonly paused: boolean | number;
-  readonly reason?: string | null;
+  readonly paused: boolean;
+  readonly reason: string | null;
 };
 
 function requireControl(
   controls: readonly ReleaseBusV2ControlState[],
   scope: ReleaseBusV2ControlScope
-): ReleaseBusV2ControlState {
-  const matches = controls.filter((control) => control.scope === scope);
-  if (matches.length !== 1)
+): ValidatedReleaseBusV2ControlState {
+  if (controls.length !== RELEASE_BUS_V2_CONTROL_SCOPES.length) {
     throw new Error(`Release Bus v2 ${scope} control is unavailable`);
-  return matches[0];
+  }
+  const matches = controls.filter((control) => control.scope === scope);
+  if (matches.length !== 1) {
+    throw new Error(`Release Bus v2 ${scope} control is unavailable`);
+  }
+  const match = matches[0];
+  let paused: boolean;
+  if (match.paused === true || match.paused === 1) {
+    paused = true;
+  } else if (match.paused === false || match.paused === 0) {
+    paused = false;
+  } else {
+    throw new Error(`Release Bus v2 ${scope} control is invalid`);
+  }
+  if (match.reason !== null && typeof match.reason !== 'string') {
+    throw new Error(`Release Bus v2 ${scope} control is invalid`);
+  }
+  return { scope, paused, reason: match.reason };
 }
 
 function deriveReleaseBusV2LaneState(
@@ -300,14 +325,15 @@ function deriveReleaseBusV2LaneState(
   const globalControl = requireControl(controls, 'ALL');
   const laneControl = requireControl(controls, lane);
   const modeAllowsLane = releaseBusV2AllowsLane(mode, lane);
-  const globalPaused = Boolean(globalControl.paused);
-  const lanePaused = Boolean(laneControl.paused);
+  const globalPaused = globalControl.paused;
+  const lanePaused = laneControl.paused;
   const enabled = modeAllowsLane && !globalPaused && !lanePaused;
-  const reason = !modeAllowsLane
-    ? 'Internal Release Bus hard stop is active'
-    : globalPaused
-      ? (globalControl.reason ?? 'Internal Release Bus hard stop is active')
-      : (laneControl.reason ?? null);
+  let reason = laneControl.reason;
+  if (!modeAllowsLane) {
+    reason = 'Internal Release Bus hard stop is active';
+  } else if (globalPaused) {
+    reason = globalControl.reason ?? 'Internal Release Bus hard stop is active';
+  }
   return {
     lane,
     status: enabled ? 'ON' : 'OFF',

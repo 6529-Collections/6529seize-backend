@@ -763,6 +763,27 @@ deployRoutes.get('/release-bus-v2/manifests', async (_req, res) => {
   });
 });
 
+async function getReleaseBusV2StagingStateView() {
+  const state = await releaseBusV2Repository.getStagingState({});
+  const lastValidatedManifest = state.last_validated_manifest_id
+    ? await releaseBusV2Repository.findManifest(
+        state.last_validated_manifest_id,
+        {}
+      )
+    : null;
+  const currentIsLastValidated =
+    state.current_manifest_id === state.last_validated_manifest_id;
+  return {
+    ...state,
+    last_validated_frontend_sha:
+      lastValidatedManifest?.frontend_sha ??
+      (currentIsLastValidated ? state.frontend_sha : null),
+    last_validated_backend_sha:
+      lastValidatedManifest?.backend_sha ??
+      (currentIsLastValidated ? state.backend_sha : null)
+  };
+}
+
 deployRoutes.get('/release-bus-v2/controls', async (_req, res) => {
   const controls = await releaseBusV2Repository.listControls({});
   const mode = getReleaseBusV2Mode();
@@ -771,7 +792,7 @@ deployRoutes.get('/release-bus-v2/controls', async (_req, res) => {
     controls,
     lanes: deriveReleaseBusV2LaneStates(mode, controls),
     locks: await releaseBusV2Repository.listLocks({}),
-    staging_state: await releaseBusV2Repository.getStagingState({}),
+    staging_state: await getReleaseBusV2StagingStateView(),
     mode
   });
 });

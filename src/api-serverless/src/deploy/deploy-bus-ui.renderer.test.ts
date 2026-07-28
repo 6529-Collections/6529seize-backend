@@ -83,10 +83,15 @@ describe('deploy-bus-ui.renderer', () => {
       '<details class="diagnostics"><summary>Diagnostics and immutable evidence</summary>'
     );
     expect(app).toContain('Open workflow');
+    expect(app).toContain('function safeHttpsUrl(value)');
+    expect(app).toContain('safeHttpsUrl(workflow&&workflow.html_url)||runUrl');
     expect(app).toContain('Durable events');
     expect(app).toContain('This mutable projection is not claim evidence');
     expect(app).toContain("candidate.status==='WAITING_FOR_PRODUCTION_REPLAN'");
     expect(app).toContain('if(replanning)');
+    expect(app).toContain('(!activeId||candidate.current_train_id!==activeId)');
+    expect(app).toContain('Production selection provenance is unavailable');
+    expect(app).toContain('queued=ordered.slice(0,1)');
   });
 
   it('derives deployed and validated heads and keeps mutations authenticated', () => {
@@ -95,6 +100,11 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain("headPair('Currently deployed'");
     expect(app).toContain("headPair('Last successfully validated'");
     expect(app).toContain('staging.last_validated_manifest_id');
+    expect(app).toContain('staging.last_validated_frontend_sha');
+    expect(app).toContain('staging.last_validated_backend_sha');
+    expect(app).toContain(
+      "headPair('Last successfully validated (production E2E)'"
+    );
     expect(app).toContain('latestProductionManifest()');
     expect(app).toContain('data-lane-control');
     expect(app).toContain(
@@ -123,9 +133,23 @@ describe('deploy-bus-ui.renderer', () => {
     );
     expect(app).toContain('new Intl.DateTimeFormat');
     expect(app).not.toContain('aria-pressed');
-    expect(app).toContain('setInterval(function(){refresh()');
+    expect(app).toContain(
+      "state.lanes[lane]||{status:'OFF',changeable:false,reason:'Lane state is unavailable'}"
+    );
+    expect(app).toContain('disabled title="Internal emergency stop is active"');
+    expect(app).toContain('function interactionActive()');
+    expect(app).toContain("document.querySelector('details[open]')");
+    expect(app).toContain('if(!interactionActive())refresh()');
     expect(app).toContain(
       "byId('dashboard').setAttribute('aria-busy','false')"
+    );
+    expect(app).toContain('new AbortController()');
+    expect(app).toContain('controller.abort()},20000');
+    expect(app).toContain('delete state.trainDetails[id];throw error');
+    expect(app).toContain('await trainDetailSlot(current.id)');
+    expect(app).toContain('return result.detail?trainCard');
+    expect(app).toContain(
+      "if(state.token){connect()}else{showDisconnected('',false);refresh()"
     );
   });
 });

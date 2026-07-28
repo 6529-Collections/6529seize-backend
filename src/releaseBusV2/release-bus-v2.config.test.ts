@@ -355,4 +355,38 @@ describe('deriveReleaseBusV2LaneStates', () => {
       ])
     ).toThrow('ALL control is unavailable');
   });
+
+  it.each([
+    ['ALL', 'paused', '1', 'ALL'],
+    ['STAGING', 'reason', undefined, 'STAGING'],
+    ['PRODUCTION', 'reason', false, 'PRODUCTION']
+  ])(
+    'fails closed when %s has malformed %s data',
+    (scope, field, malformedValue, expectedScope) => {
+      const controls = runningControls.map((control) =>
+        control.scope === scope
+          ? { ...control, [field]: malformedValue }
+          : control
+      );
+      expect(() =>
+        deriveReleaseBusV2LaneStates(
+          'PRODUCTION',
+          controls as unknown as typeof runningControls
+        )
+      ).toThrow(`Release Bus v2 ${expectedScope} control is invalid`);
+    }
+  );
+
+  it('fails closed when an unknown extra control is present', () => {
+    expect(() =>
+      deriveReleaseBusV2LaneStates('PRODUCTION', [
+        ...runningControls,
+        {
+          scope: 'UNKNOWN' as 'ALL',
+          paused: false,
+          reason: null
+        }
+      ])
+    ).toThrow('ALL control is unavailable');
+  });
 });

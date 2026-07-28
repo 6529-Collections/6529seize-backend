@@ -224,7 +224,7 @@ export function renderDeployBusUI(): string {
 }
 
 export function renderDeployBusUiApp(): string {
-  return `'use strict';
+  return String.raw`'use strict';
 (function(){
   var key='deploy-ui-token';
   var terminal=['STAGING_VALIDATED','STAGING_ROLLBACK_FAILED','PRODUCTION_DEPLOYED','FAILED','CANCELLED'];
@@ -239,6 +239,7 @@ export function renderDeployBusUiApp(): string {
     trains:[],
     manifests:[],
     trainDetails:{},
+    queueWarnings:{STAGING:'',PRODUCTION:''},
     previousVisible:{STAGING:1,PRODUCTION:1},
     prVisible:10,
     refreshing:false
@@ -249,10 +250,13 @@ export function renderDeployBusUiApp(): string {
   function status(node,message,error){if(!node)return;node.textContent=message||'';node.className='status '+(error?'error':'success-text')}
   function headers(){var result={'Content-Type':'application/json'};if(state.token)result.Authorization='Bearer '+state.token;return result}
   async function request(url,options){
-    var response=await fetch(url,Object.assign({},options||{},{headers:Object.assign({},headers(),options&&options.headers||{})}));
-    var payload=await response.json().catch(function(){return{}});
-    if(!response.ok)throw new Error(payload.error||payload.message||('Request failed ('+response.status+')'));
-    return payload
+    var controller=new AbortController(),timer=setTimeout(function(){controller.abort()},20000);
+    try{
+      var response=await fetch(url,Object.assign({},options||{},{signal:controller.signal,headers:Object.assign({},headers(),options&&options.headers||{})}));
+      var payload=await response.json().catch(function(){return{}});
+      if(!response.ok)throw new Error(payload.error||payload.message||('Request failed ('+response.status+')'));
+      return payload
+    }finally{clearTimeout(timer)}
   }
   function setOperator(connected){
     state.operator=connected;
@@ -272,7 +276,8 @@ export function renderDeployBusUiApp(): string {
   function laneLabel(lane){return laneKey(lane)==='STAGING'?'Staging':'Production'}
   function repositoryLabel(repository){return repository==='backend'?'Backend':'Frontend'}
   function prUrl(item){return 'https://github.com/6529-Collections/6529seize-'+encodeURIComponent(item.repository)+'/pull/'+encodeURIComponent(item.pr_number)}
-  function runUrl(repository,id){return repository&&/^\\d+$/.test(String(id||''))?'https://github.com/6529-Collections/6529seize-'+encodeURIComponent(repository)+'/actions/runs/'+encodeURIComponent(id):''}
+  function runUrl(repository,id){return repository&&/^\d+$/.test(String(id||''))?'https://github.com/6529-Collections/6529seize-'+encodeURIComponent(repository)+'/actions/runs/'+encodeURIComponent(id):''}
+  function safeHttpsUrl(value){try{var parsed=new URL(String(value||''));return parsed.protocol==='https:'?parsed.href:''}catch(_error){return ''}}
   function badge(value,extra){return '<span class="badge '+esc(extra||'')+'">'+esc(value)+'</span>'}
   function empty(message){return '<div class="empty">'+esc(message)+'</div>'}
   function statusTone(value){
@@ -339,7 +344,7 @@ export function renderDeployBusUiApp(): string {
     }).join('')
   }
   function operationCard(item){
-    var workflow=item.workflow_run,workflowUrl=workflow&&workflow.html_url||runUrl(item.repository,item.external_id);
+    var workflow=item.workflow_run,workflowUrl=safeHttpsUrl(workflow&&workflow.html_url)||runUrl(item.repository,item.external_id);
     return '<article class="operation">'+
       '<div class="row"><strong>'+esc(item.operation_type)+(item.service?' · '+esc(item.service):'')+'</strong>'+badge(item.status,statusTone(item.status))+'</div>'+
       '<div class="muted small">'+esc(item.repository||'control')+' / '+esc(item.environment||'orchestration')+' · attempt '+esc(item.attempt)+'/'+esc(item.max_attempts)+'</div>'+
@@ -392,8 +397,14 @@ export function renderDeployBusUiApp(): string {
       '</article>'
   }
   async function trainDetail(id){
-    if(!state.trainDetails[id])state.trainDetails[id]=request('/deploy/release-bus-v2/trains/'+encodeURIComponent(id));
+    if(!state.trainDetails[id])state.trainDetails[id]=request('/deploy/release-bus-v2/trains/'+encodeURIComponent(id)).catch(function(error){delete state.trainDetails[id];throw error});
     return state.trainDetails[id]
+  }
+  async function trainDetailSlot(id){
+    try{return{detail:await trainDetail(id),error:null}}catch(error){return{detail:null,error:error}}
+  }
+  function trainDetailError(label,error){
+    return '<article class="train-card"><h4>'+esc(label)+'</h4><p class="error">Train details are temporarily unavailable: '+esc(error&&error.message||'Request failed')+'</p></article>'
   }
   function laneTrains(lane){
     return state.trains.filter(function(train){return train.lane===lane}).sort(function(left,right){return Number(right.created_at)-Number(left.created_at)})
@@ -404,15 +415,23 @@ export function renderDeployBusUiApp(): string {
   function queuedCandidates(lane){
     var statuses=lane==='STAGING'?['READY_FOR_STAGING','WAITING_FOR_DEPENDENCY']:['READY_FOR_PRODUCTION','READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION','WAITING_FOR_PRODUCTION_REPLAN'];
     var active=activeTrain(lane),activeId=active&&active.id;
-    var queued=state.candidates.filter(function(candidate){return statuses.includes(candidate.status)&&candidate.current_train_id!==activeId});
+    var queued=state.candidates.filter(function(candidate){return statuses.includes(candidate.status)&&(!activeId||candidate.current_train_id!==activeId)});
+    state.queueWarnings[lane]='';
     if(lane==='PRODUCTION'&&queued.length){
       var ordered=queued.slice().sort(function(left,right){return Number(left.production_requested_at||left.created_at)-Number(right.production_requested_at||right.created_at)});
       var replanning=ordered.some(function(candidate){return candidate.status==='WAITING_FOR_PRODUCTION_REPLAN'});
+      var missingSelection=ordered.some(function(candidate){return !candidate.production_selection_id});
       if(replanning){
-        queued=ordered
+        queued=ordered;
+        if(missingSelection)state.queueWarnings.PRODUCTION='At least one explicit intent has no selection provenance. The scheduler will fail closed or omit it after exact revalidation.'
       }else{
         var selection=ordered[0].production_selection_id||null;
-        queued=ordered.filter(function(candidate){return (candidate.production_selection_id||null)===selection})
+        if(selection){
+          queued=ordered.filter(function(candidate){return candidate.production_selection_id===selection})
+        }else{
+          queued=ordered.slice(0,1);
+          state.queueWarnings.PRODUCTION='Production selection provenance is unavailable. Only the earliest intent is shown and the claimed set cannot be projected safely.'
+        }
       }
     }
     if(lane==='STAGING'&&queued.length){
@@ -426,7 +445,8 @@ export function renderDeployBusUiApp(): string {
     }
     return queued
   }
-  function queueBlocker(candidates){
+  function queueBlocker(lane,candidates){
+    if(state.queueWarnings[lane])return state.queueWarnings[lane];
     var held=candidates.find(function(candidate){return candidate.status==='WAITING_FOR_DEPENDENCY'});
     return held?'At least one queued PR is waiting for a dependency. The final claimed set may be smaller or may wait.':''
   }
@@ -448,13 +468,13 @@ export function renderDeployBusUiApp(): string {
       validated=manifestById(staging.last_validated_manifest_id);
       byId('staging-heads').innerHTML=
         headPair('Currently deployed',current&&current.frontend_sha||staging.frontend_sha,current&&current.backend_sha||staging.backend_sha,staging.current_manifest_id)+
-        headPair('Last successfully validated',validated&&validated.frontend_sha,validated&&validated.backend_sha,staging.last_validated_manifest_id)
+        headPair('Last successfully validated',validated&&validated.frontend_sha||staging.last_validated_frontend_sha,validated&&validated.backend_sha||staging.last_validated_backend_sha,staging.last_validated_manifest_id)
     }else{
       current=latestProductionManifest();
       validated=current;
       byId('production-heads').innerHTML=
         headPair('Currently deployed',current&&current.frontend_sha,current&&current.backend_sha,current&&current.id)+
-        headPair('Last successfully validated',validated&&validated.frontend_sha,validated&&validated.backend_sha,validated&&validated.id)
+        headPair('Last successfully validated (production E2E)',validated&&validated.frontend_sha,validated&&validated.backend_sha,validated&&validated.id)
     }
   }
   function laneHeader(lane){
@@ -481,13 +501,16 @@ export function renderDeployBusUiApp(): string {
     renderHeads(lane);
     var current=activeTrain(lane),currentNode=byId(lane.toLowerCase()+'-current'),nextNode=byId(lane.toLowerCase()+'-next'),previousNode=byId(lane.toLowerCase()+'-previous');
     currentNode.innerHTML='<h3>Current train</h3>'+(current?empty('Loading current train details…'):empty('No active '+laneLabel(lane).toLowerCase()+' train.'));
-    if(current)currentNode.innerHTML='<h3>Current train</h3>'+trainCard(await trainDetail(current.id),{label:'Current '+laneLabel(lane).toLowerCase()+' train'});
+    if(current){
+      var currentResult=await trainDetailSlot(current.id),currentLabel='Current '+laneLabel(lane).toLowerCase()+' train';
+      currentNode.innerHTML='<h3>Current train</h3>'+(currentResult.detail?trainCard(currentResult.detail,{label:currentLabel}):trainDetailError(currentLabel,currentResult.error))
+    }
     var queued=queuedCandidates(lane);
-    nextNode.innerHTML='<h3>Next train if nothing changes</h3>'+(queued.length?projectedTrainCard(lane,queued,queueBlocker(queued)):empty('Nothing is currently queued for the next '+laneLabel(lane).toLowerCase()+' train.'));
+    nextNode.innerHTML='<h3>Next train if nothing changes</h3>'+(queued.length?projectedTrainCard(lane,queued,queueBlocker(lane,queued)):empty('Nothing is currently queued for the next '+laneLabel(lane).toLowerCase()+' train.'));
     var previous=laneTrains(lane).filter(function(train){return terminal.includes(train.status)});
     var visible=previous.slice(0,state.previousVisible[lane]);
-    var details=await Promise.all(visible.map(function(train){return trainDetail(train.id)}));
-    previousNode.innerHTML='<h3>Previous trains</h3>'+(details.length?'<div class="train-list">'+details.map(function(detail,index){return trainCard(detail,{label:'Previous train '+(index+1)})}).join('')+'</div>':empty('No previous '+laneLabel(lane).toLowerCase()+' trains recorded.'))+(previous.length>visible.length?'<div class="actions"><button class="compact" data-load-trains="'+esc(lane)+'">Load 5 more</button></div>':'');
+    var details=await Promise.all(visible.map(function(train){return trainDetailSlot(train.id)}));
+    previousNode.innerHTML='<h3>Previous trains</h3>'+(details.length?'<div class="train-list">'+details.map(function(result,index){var label='Previous train '+(index+1);return result.detail?trainCard(result.detail,{label:label}):trainDetailError(label,result.error)}).join('')+'</div>':empty('No previous '+laneLabel(lane).toLowerCase()+' trains recorded.'))+(previous.length>visible.length?'<div class="actions"><button class="compact" data-load-trains="'+esc(lane)+'">Load 5 more</button></div>':'');
     var loadButton=previousNode.querySelector('[data-load-trains]');
     if(loadButton)loadButton.onclick=function(){state.previousVisible[lane]+=5;renderLane(lane).catch(function(error){status(byId('dashboard-status'),error.message,true)})};
     bindLaneControls()
@@ -516,7 +539,7 @@ export function renderDeployBusUiApp(): string {
     select.value=selected
   }
   function parseDependencies(){
-    return byId('dependencies').value.split(/\\n/).map(function(value){return value.trim()}).filter(Boolean).map(function(line){
+    return byId('dependencies').value.split(/\n/).map(function(value){return value.trim()}).filter(Boolean).map(function(line){
       var parts=line.split(':');
       if(parts.length!==2)throw new Error('Dependency must be candidate-uuid:ENVIRONMENT');
       return{candidate_id:parts[0],environment:parts[1].toUpperCase()}
@@ -524,10 +547,10 @@ export function renderDeployBusUiApp(): string {
   }
   function parsePlan(){
     if(byId('repository').value!=='backend')return null;
-    var units=byId('units').value.split(/\\n|,/).map(function(value){return value.trim()}).filter(Boolean);
+    var units=byId('units').value.split(/\n|,/).map(function(value){return value.trim()}).filter(Boolean);
     if(!units.length)throw new Error('At least one backend deploy unit is required');
-    var edges=byId('edges').value.split(/\\n/).map(function(value){return value.trim()}).filter(Boolean).map(function(line){
-      var values=line.split(/\\s*->\\s*/);
+    var edges=byId('edges').value.split(/\n/).map(function(value){return value.trim()}).filter(Boolean).map(function(line){
+      var values=line.split(/\s*->\s*/);
       if(values.length!==2)throw new Error('DAG edge must use A -> B');
       return values
     });
@@ -626,8 +649,11 @@ export function renderDeployBusUiApp(): string {
     }catch(error){status(byId('register-status'),error.message,true)}
   };
   setOperator(false);
-  refresh().catch(function(error){status(byId('dashboard-status'),error.message,true)});
-  if(state.token)connect();else showDisconnected('',false);
-  setInterval(function(){refresh().catch(function(error){status(byId('dashboard-status'),error.message,true)})},30000)
+  if(state.token){connect()}else{showDisconnected('',false);refresh().catch(function(error){status(byId('dashboard-status'),error.message,true)})}
+  function interactionActive(){
+    var active=document.activeElement;
+    return Boolean(document.querySelector('details[open]'))||Boolean(active&&['INPUT','SELECT','TEXTAREA'].includes(active.tagName))
+  }
+  setInterval(function(){if(!interactionActive())refresh().catch(function(error){status(byId('dashboard-status'),error.message,true)})},30000)
 })();`;
 }
