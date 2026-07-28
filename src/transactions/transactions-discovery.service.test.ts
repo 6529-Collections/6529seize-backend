@@ -19,7 +19,7 @@ function makeErc1155Transfer(
 ): AssetTransfersWithMetadataResult {
   return {
     blockNum,
-    uniqueId,
+    uniqueId: uniqueId as string,
     hash: HASH,
     from: FROM,
     to: TO,
@@ -85,7 +85,13 @@ describe('TransactionsDiscoveryService', () => {
     await service.getAndSaveTransactionsForContract(CONTRACT, 1, 1);
 
     expect(enhanceTransactionValues).toHaveBeenCalledTimes(1);
-    expect(enhanceTransactionValues.mock.calls[0][0]).toHaveLength(3);
+    expect(enhanceTransactionValues.mock.calls[0][0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ token_id: 135, token_count: 3 }),
+        expect.objectContaining({ token_id: 254, token_count: 1 })
+      ])
+    );
+    expect(enhanceTransactionValues.mock.calls[0][0]).toHaveLength(2);
     expect(batchUpsertTransactions).toHaveBeenCalledTimes(1);
 
     const savedTransactions = batchUpsertTransactions.mock.calls[0][0];
@@ -98,7 +104,7 @@ describe('TransactionsDiscoveryService', () => {
     expect(savedTransactions).toHaveLength(2);
   });
 
-  it('does not collapse transfers when Alchemy omits event identity', async () => {
+  it('defers ingestion when Alchemy omits required event identity', async () => {
     const transferWithoutIdentity = makeErc1155Transfer(undefined, [
       { tokenId: '0x87', value: '0x1' }
     ]);
@@ -107,12 +113,12 @@ describe('TransactionsDiscoveryService', () => {
         [transferWithoutIdentity, { ...transferWithoutIdentity }]
       ]);
 
-    await service.getAndSaveTransactionsForContract(CONTRACT, 1, 1);
+    await expect(
+      service.getAndSaveTransactionsForContract(CONTRACT, 1, 1)
+    ).rejects.toThrow('without uniqueId');
 
-    expect(enhanceTransactionValues.mock.calls[0][0]).toHaveLength(2);
-    expect(batchUpsertTransactions.mock.calls[0][0]).toEqual([
-      expect.objectContaining({ token_id: 135, token_count: 2 })
-    ]);
+    expect(enhanceTransactionValues).not.toHaveBeenCalled();
+    expect(batchUpsertTransactions).not.toHaveBeenCalled();
   });
 
   it('retains boundary-block identities while pruning committed blocks', async () => {
@@ -161,7 +167,44 @@ describe('TransactionsDiscoveryService', () => {
     expect(batchUpsertTransactions).toHaveBeenCalledTimes(3);
     getAssetTransfers.mock.calls.forEach(([params]) => {
       expect(params.order).toBe('asc');
+      expect(params.toBlock).toBe('0x3');
     });
+  });
+
+  it('uses Alchemy indexed state when tailing the chain', async () => {
+    const { service, getAssetTransfers } = createService([[]]);
+
+    await service.getAndSaveTransactionsForContract(CONTRACT, 1, null);
+
+    expect(getAssetTransfers).toHaveBeenCalledWith(
+      expect.objectContaining({ fromBlock: '0x1', toBlock: 'indexed' })
+    );
+  });
+
+  it('saves the receipt-reconciled token count returned by enhancement', async () => {
+    const firstCandidate = makeErc1155Transfer('event-1', [
+      { tokenId: '0x87', value: '0x1' }
+    ]);
+    const secondCandidate = makeErc1155Transfer('event-2', [
+      { tokenId: '0x87', value: '0x1' }
+    ]);
+    const { service, batchUpsertTransactions, enhanceTransactionValues } =
+      createService([[firstCandidate, secondCandidate]]);
+    enhanceTransactionValues.mockImplementationOnce(async (transactions) => {
+      expect(transactions).toEqual([
+        expect.objectContaining({ token_id: 135, token_count: 2 })
+      ]);
+      return transactions.map((transaction) => ({
+        ...transaction,
+        token_count: 1
+      }));
+    });
+
+    await service.getAndSaveTransactionsForContract(CONTRACT, 1, 1);
+
+    expect(batchUpsertTransactions.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ token_id: 135, token_count: 1 })
+    ]);
   });
 
   it('does not reserve an identity for a transfer that maps to no rows', async () => {
