@@ -12,6 +12,7 @@ import {
   RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE,
   RELEASE_BUS_V2_TRAINS_TABLE
 } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import type { RequestContext } from '@/request.context';
 import {
   dbSupplier,
@@ -1064,7 +1065,9 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<ReleaseBusV2LockRecord>(
       `select * from ${RELEASE_BUS_V2_LOCKS_TABLE} where name = :name`,
       { name },
-      dbOptions(ctx)
+      ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : { forcePool: DbPoolName.WRITE }
     );
   }
 
