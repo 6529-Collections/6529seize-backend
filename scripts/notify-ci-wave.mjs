@@ -217,21 +217,26 @@ async function deriveManualPullRequestContributors({
   repository,
   pullRequestNumber,
   deployedSha,
-  service
+  service,
+  branch
 }) {
   const pull = await githubApi(repository, `/pulls/${pullRequestNumber}`);
-  if (pull.number !== pullRequestNumber) {
+  if (Number(pull.number) !== pullRequestNumber) {
     throw new Error(`PR #${pullRequestNumber} identity did not match`);
   }
+  const merged = pull.merged === true || Boolean(pull.merged_at);
   const evidenceSha = (
-    pull.merge_commit_sha ||
-    pull.head?.sha ||
-    ''
-  ).toLowerCase();
+    merged ? pull.merge_commit_sha : pull.head?.sha
+  )?.toLowerCase();
   if (!/^[a-f0-9]{40}$/.test(evidenceSha)) {
     throw new Error(`PR #${pullRequestNumber} has no immutable SHA evidence`);
   }
-  if (evidenceSha !== deployedSha) {
+  if (!merged && (evidenceSha !== deployedSha || pull.head?.ref !== branch)) {
+    throw new Error(
+      `Open PR #${pullRequestNumber} does not exactly match deployed branch ${branch}`
+    );
+  }
+  if (merged && evidenceSha !== deployedSha) {
     const comparison = await githubApi(
       repository,
       `/compare/${encodeURIComponent(evidenceSha)}...${encodeURIComponent(deployedSha)}`
@@ -248,6 +253,9 @@ async function deriveManualPullRequestContributors({
       repository,
       `/pulls/${pullRequestNumber}/files?per_page=100&page=${page}`
     );
+    if (!Array.isArray(pageFiles)) {
+      throw new Error(`PR #${pullRequestNumber} file evidence is malformed`);
+    }
     files.push(...pageFiles);
     if (pageFiles.length < 100) break;
     if (page === 3) {
@@ -267,6 +275,9 @@ async function deriveManualPullRequestContributors({
       repository,
       `/pulls/${pullRequestNumber}/commits?per_page=100&page=${page}`
     );
+    if (!Array.isArray(commits)) {
+      throw new Error(`PR #${pullRequestNumber} commit evidence is malformed`);
+    }
     for (const commit of commits) {
       users.push(commit.author, commit.committer);
     }
@@ -443,7 +454,8 @@ if (
       repository,
       pullRequestNumber,
       deployedSha,
-      service: CI_PIPELINES_SERVICE
+      service: CI_PIPELINES_SERVICE,
+      branch: GITHUB_REF_NAME
     });
     contributorEvidence = releaseContributors.length ? 'manual-pr' : null;
   } catch (error) {

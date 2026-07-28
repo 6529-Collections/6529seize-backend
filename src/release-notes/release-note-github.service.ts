@@ -502,7 +502,7 @@ export class ReleaseNoteGitHubService {
         currentRun.conclusion !== 'success' ||
         !currentRun.created_at ||
         Number.isNaN(Date.parse(currentRun.created_at)) ||
-        (runWorkflowFile !== null && runWorkflowFile !== workflowFile)
+        runWorkflowFile !== workflowFile
       ) {
         throw new Error(
           `GitHub release run ${request.run_id} is not an approved successful frontend production workflow`
@@ -540,7 +540,7 @@ export class ReleaseNoteGitHubService {
           (run.head_branch !== undefined &&
             run.head_branch !== null &&
             run.head_branch !== normalizeBranch(request.branch)) ||
-          (runWorkflowFile !== null && runWorkflowFile !== workflowFile) ||
+          runWorkflowFile !== workflowFile ||
           !Number.isFinite(createdAt) ||
           createdAt >= currentCreatedAt
         )

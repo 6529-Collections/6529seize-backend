@@ -13,7 +13,16 @@ jest.mock('@/redis', () => ({
 jest.mock('./ci-pipeline-alert.service', () => ({
   ciPipelineAlertService: {
     postAlert: jest.fn()
-  }
+  },
+  verifiedContributorGithubLogins: jest.fn(
+    (request: {
+      contributor_evidence?: string;
+      contributor_github_logins?: string[];
+    }) =>
+      request.contributor_evidence
+        ? (request.contributor_github_logins ?? [])
+        : []
+  )
 }));
 
 import fc from 'fast-check';
@@ -278,6 +287,32 @@ describe('ci pipeline alert routes', () => {
         run_url:
           'https://github.com/6529-Collections/6529-core/actions/runs/99/attempts/2',
         description: 'retry failure'
+      })
+    );
+  });
+
+  it('does not let ignored legacy contributors bypass notification dedupe', () => {
+    const common = {
+      repo: '6529seize-frontend',
+      workflow: 'Release Bus - Deploy Frontend Production',
+      status: 'success' as const,
+      run_id: '99',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/99',
+      title: 'Deploy complete',
+      triggered_by_github_login: '6529-release-bus[bot]',
+      environment: 'prod'
+    };
+
+    expect(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        contributor_github_logins: ['first-user']
+      })
+    ).toBe(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        contributor_github_logins: ['second-user']
       })
     );
   });

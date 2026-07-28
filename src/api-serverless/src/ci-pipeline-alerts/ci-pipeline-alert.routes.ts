@@ -14,7 +14,8 @@ import { GITHUB_CONTRIBUTOR_LOGIN_PATTERN } from '@/release-notes/release-note-c
 import {
   CiPipelineAlertOutcome,
   CiPipelineAlertRequest,
-  ciPipelineAlertService
+  ciPipelineAlertService,
+  verifiedContributorGithubLogins
 } from './ci-pipeline-alert.service';
 
 const router = asyncRouter();
@@ -294,6 +295,7 @@ export function verifyCiPipelineAlertSignature(
 export function buildCiPipelineAlertDedupeKey(
   request: CiPipelineAlertRequest
 ): string {
+  const verifiedContributors = verifiedContributorGithubLogins(request);
   const hash = crypto
     .createHash('sha256')
     .update(
@@ -312,8 +314,8 @@ export function buildCiPipelineAlertDedupeKey(
         request.service ?? '',
         request.release_train_id ?? '',
         request.release_operation_key ?? '',
-        request.contributor_evidence ?? '',
-        request.contributor_github_logins ?? []
+        verifiedContributors.length ? request.contributor_evidence : '',
+        verifiedContributors
       ])
     )
     .digest('hex');

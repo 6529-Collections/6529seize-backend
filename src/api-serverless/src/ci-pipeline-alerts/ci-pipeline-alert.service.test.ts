@@ -14,6 +14,7 @@ import fc from 'fast-check';
 import {
   CiPipelineAlertService,
   formatMarkdownLink,
+  isVerifiedReleaseBusAlert,
   normalizeConfiguredHandle,
   normalizeContributorGithubLogins,
   normalizeTargetEnvironment,
@@ -202,6 +203,30 @@ describe('CiPipelineAlertService', () => {
       ])
     ).toEqual(['GelatoGenesis', 'ragnep']);
   });
+
+  it.each(['staging', 'prod'] as const)(
+    'verifies exact backend %s Release Bus operation identity',
+    (environment) => {
+      const request = {
+        ...baseRequest,
+        repo: '6529seize-backend',
+        workflow: 'Deploy a service',
+        environment,
+        service: 'api',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key: `rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:${environment}:backend:api:a1`
+      };
+
+      expect(isVerifiedReleaseBusAlert(request)).toBe(true);
+      expect(
+        isVerifiedReleaseBusAlert({
+          ...request,
+          release_operation_key: `${request.release_operation_key}:spoofed`
+        })
+      ).toBe(false);
+    }
+  );
 
   it('posts failures with configured profile mentions', async () => {
     const service = new CiPipelineAlertService(
@@ -545,6 +570,34 @@ describe('CiPipelineAlertService', () => {
         handle_in_content: 'GelatoGenesis'
       }
     ]);
+  });
+
+  it('does not add a manual initiator to the contributor list', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      prxt0: 'profile-initiator',
+      GelatoGenesis: 'profile-gelato'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        contributor_evidence: 'manual-pr',
+        contributor_github_logins: ['GelatoGenesis']
+      },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    expect(content).toContain('Initiated by: @[prxt0]');
+    expect(content).toContain('Contributors: @[GelatoGenesis]');
+    expect(content).not.toContain('Contributors: @[prxt0]');
   });
 
   it('posts with an unknown initiator when the 6529 mapping is missing', async () => {

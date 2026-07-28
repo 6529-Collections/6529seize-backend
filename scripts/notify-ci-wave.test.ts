@@ -65,69 +65,97 @@ async function runNotifier(
 }
 
 describe('notify-ci-wave release-note metadata', () => {
-  it('derives manual backend contributors from exact PR and service evidence', async () => {
-    const githubServer = createServer((request, response) => {
-      const pathName = request.url ?? '';
-      let body: unknown;
-      if (pathName.endsWith('/pulls/42')) {
-        body = {
-          number: 42,
-          merge_commit_sha: 'a'.repeat(40),
-          user: { login: 'PR-Author', type: 'User' }
-        };
-      } else if (pathName.includes('/pulls/42/files')) {
-        body = [{ filename: 'src/api-serverless/src/example.ts' }];
-      } else if (pathName.includes('/pulls/42/commits')) {
-        body = [
-          {
-            author: { login: 'Commit-Author', type: 'User' },
-            committer: { login: 'Commit-Committer', type: 'User' }
-          },
-          {
-            author: { login: 'dependabot[bot]', type: 'Bot' }
-          }
-        ];
-      } else {
-        response.writeHead(404);
-        response.end();
-        return;
+  it.each([
+    {
+      environment: 'prod',
+      branch: 'main',
+      deployedSha: 'a'.repeat(40),
+      pull: {
+        number: 42,
+        merged_at: '2026-07-28T12:00:00Z',
+        merge_commit_sha: 'a'.repeat(40),
+        user: { login: 'PR-Author', type: 'User' }
       }
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify(body));
-    });
-    await new Promise<void>((resolve) =>
-      githubServer.listen(0, '127.0.0.1', resolve)
-    );
-    const address = githubServer.address();
-    if (!address || typeof address === 'string')
-      throw new Error('missing port');
-
-    try {
-      const result = await runNotifier({
-        CI_RELEASE_PULL_REQUEST: '42',
-        GITHUB_TOKEN: 'test-token',
-        GITHUB_API_URL: `http://127.0.0.1:${address.port}`
-      });
-
-      expect(result).toMatchObject({
-        code: 0,
-        stderr: '',
-        payload: {
-          contributor_evidence: 'manual-pr',
-          contributor_github_logins: [
-            'PR-Author',
-            'Commit-Author',
-            'Commit-Committer'
-          ]
-        }
-      });
-      expect(result.payload).not.toHaveProperty('release_train_id');
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        githubServer.close((error) => (error ? reject(error) : resolve()))
-      );
+    },
+    {
+      environment: 'staging',
+      branch: 'feature/manual-staging',
+      deployedSha: 'b'.repeat(40),
+      pull: {
+        number: 42,
+        merged_at: null,
+        head: {
+          ref: 'feature/manual-staging',
+          sha: 'b'.repeat(40)
+        },
+        user: { login: 'PR-Author', type: 'User' }
+      }
     }
-  });
+  ])(
+    'derives manual backend contributors for $environment from exact PR and service evidence',
+    async ({ environment, branch, deployedSha, pull }) => {
+      const githubServer = createServer((request, response) => {
+        const pathName = request.url ?? '';
+        let body: unknown;
+        if (pathName.endsWith('/pulls/42')) {
+          body = pull;
+        } else if (pathName.includes('/pulls/42/files')) {
+          body = [{ filename: 'src/api-serverless/src/example.ts' }];
+        } else if (pathName.includes('/pulls/42/commits')) {
+          body = [
+            {
+              author: { login: 'Commit-Author', type: 'User' },
+              committer: { login: 'Commit-Committer', type: 'User' }
+            },
+            {
+              author: { login: 'dependabot[bot]', type: 'Bot' }
+            }
+          ];
+        } else {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(body));
+      });
+      await new Promise<void>((resolve) =>
+        githubServer.listen(0, '127.0.0.1', resolve)
+      );
+      const address = githubServer.address();
+      if (!address || typeof address === 'string')
+        throw new Error('missing port');
+
+      try {
+        const result = await runNotifier({
+          CI_RELEASE_PULL_REQUEST: '42',
+          CI_PIPELINES_TARGET_ENV: environment,
+          GITHUB_REF_NAME: branch,
+          GITHUB_SHA: deployedSha,
+          GITHUB_TOKEN: 'test-token',
+          GITHUB_API_URL: `http://127.0.0.1:${address.port}`
+        });
+
+        expect(result).toMatchObject({
+          code: 0,
+          stderr: '',
+          payload: {
+            contributor_evidence: 'manual-pr',
+            contributor_github_logins: [
+              'PR-Author',
+              'Commit-Author',
+              'Commit-Committer'
+            ]
+          }
+        });
+        expect(result.payload).not.toHaveProperty('release_train_id');
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          githubServer.close((error) => (error ? reject(error) : resolve()))
+        );
+      }
+    }
+  );
 
   it('sends canonical release train contributors and the deployed SHA', async () => {
     const expectedSha = 'b'.repeat(40);

@@ -47,7 +47,10 @@ export interface CiPipelineAlertRequest {
   readonly release_operation_key?: string | null;
   readonly contributor_github_logins?: string[];
   readonly contributor_evidence?:
-    'release-bus-operation' | 'manual-pr' | 'manual-range' | null;
+    | 'release-bus-operation'
+    | 'manual-pr'
+    | 'manual-range'
+    | null;
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
@@ -237,21 +240,35 @@ export function isVerifiedReleaseBusAlert(
       : repo === '6529seize-backend'
         ? 'Deploy a service'
         : null;
-  const target =
-    repo === '6529seize-frontend'
-      ? 'frontend'
-      : repo === '6529seize-backend' && normalizeOptionalValue(request.service)
-        ? `backend:${normalizeOptionalValue(request.service)}`
-        : null;
-  if (!target || request.workflow !== expectedWorkflow) return false;
+  if (request.workflow !== expectedWorkflow) return false;
+  const parts = operationKey.split(':');
+  const attempt = parts.at(-1);
+  if (!attempt || !/^a[1-9]\d{0,8}$/.test(attempt)) return false;
+  if (repo === '6529seize-frontend') {
+    return (
+      parts.length === 6 &&
+      parts[0] === 'rb2' &&
+      parts[1] === trainId &&
+      parts[2] === 'deploy' &&
+      parts[3] === environment &&
+      parts[4] === 'frontend'
+    );
+  }
+  const service = normalizeOptionalValue(request.service);
   return (
-    operationKey ===
-      `rb2:${trainId}:deploy:${environment}:${target}:${operationKey.split(':').at(-1)}` &&
-    /:a[1-9]\d{0,8}$/.test(operationKey)
+    repo === '6529seize-backend' &&
+    !!service &&
+    parts.length === 7 &&
+    parts[0] === 'rb2' &&
+    parts[1] === trainId &&
+    parts[2] === 'deploy' &&
+    parts[3] === environment &&
+    parts[4] === 'backend' &&
+    parts[5] === service
   );
 }
 
-function verifiedContributorGithubLogins(
+export function verifiedContributorGithubLogins(
   request: CiPipelineAlertRequest
 ): string[] {
   const evidence = request.contributor_evidence;
