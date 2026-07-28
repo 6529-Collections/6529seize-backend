@@ -161,7 +161,10 @@ ledger, discard intent, or split a dependency set merely to unblock the queue.
 The replacement boundary closes as soon as any `ADVANCE_MAIN_*` succeeds, a
 production deploy is dispatched, or production E2E exists. After that boundary,
 the original exact set remains frozen and only that train may resume or recover;
-an active train is never broadened in place.
+an active train is never broadened in place. A nonterminal dispatched operation
+retains the production-environment lease while it drains. Once all recorded
+work is terminal, the frozen/paused train releases that lease; the active train
+and paused `PRODUCTION` control still block every new claim until exact recovery.
 
 New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`:
 

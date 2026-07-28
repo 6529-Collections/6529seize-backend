@@ -2590,6 +2590,13 @@ export class ReleaseBusV2Service {
     ctx: RequestContext
   ): Promise<ReleaseBusV2SafeProductionReplanResult> {
     const reason = `Safe production replan refused because ${irreversibleReason}; the original exact candidate set remains frozen`;
+    const runningOperationIds = operations
+      .filter(productionReplanOperationMayStillBeRunning)
+      .map(({ id }) => id);
+    const lockDisposition =
+      runningOperationIds.length > 0
+        ? 'RETAINED_WHILE_DISPATCHED_WORK_DRAINS'
+        : 'RELEASED_OR_ALREADY_FREE_AFTER_TERMINAL_WORK';
     if (
       !(await this.repository.updateTrain(
         train.id,
@@ -2598,7 +2605,7 @@ export class ReleaseBusV2Service {
           status: 'PAUSED',
           failureClass: 'INTERACTION',
           failureMessage: input.reason,
-          recoveryMessage: `${reason}. Resume or recover only this train's immutable membership`
+          recoveryMessage: `${reason}. Resume or recover only this train's immutable membership; production environment ownership is ${lockDisposition.toLowerCase().replace(/_/g, ' ')}`
         },
         ctx
       ))
@@ -2606,6 +2613,8 @@ export class ReleaseBusV2Service {
       throw new Error(
         'Release Bus v2 train changed during irreversible replan fence'
       );
+    if (runningOperationIds.length === 0)
+      await this.releaseProductionReplanEnvironmentLock(train.id, ctx);
     await this.repository.appendEvent(
       {
         trainId: train.id,
@@ -2614,7 +2623,9 @@ export class ReleaseBusV2Service {
         payload: {
           reason,
           source_train_id: train.id,
-          operation_ids: operations.map(({ id }) => id)
+          operation_ids: operations.map(({ id }) => id),
+          running_operation_ids: runningOperationIds,
+          production_environment_lock: lockDisposition
         }
       },
       ctx
@@ -2916,6 +2927,7 @@ export class ReleaseBusV2Service {
     ctx: RequestContext
   ): Promise<string | null> {
     if (candidate.status !== 'WAITING_FOR_PRODUCTION_REPLAN') return null;
+    // listCandidateEvents is explicitly newest-first by created_at and id.
     const event = (
       await this.repository.listCandidateEvents(
         candidate.id,
@@ -2931,7 +2943,15 @@ export class ReleaseBusV2Service {
     omission: ProductionReplanOmission,
     ctx: RequestContext
   ): Promise<void> {
-    const current = omission.candidate;
+    const current = await this.repository.findCandidateById(
+      omission.candidate.id,
+      ctx,
+      true
+    );
+    if (!current)
+      throw new Error(
+        `Production replan omission candidate ${omission.candidate.id} disappeared`
+      );
     if (
       current.production_requested_at !== null &&
       current.production_requested_by !== null &&
@@ -3079,7 +3099,8 @@ export class ReleaseBusV2Service {
           continue;
         const prerequisite = await this.repository.findCandidateById(
           dependency.prerequisite_candidate_id,
-          ctx
+          ctx,
+          true
         );
         if (
           prerequisite &&
@@ -3450,6 +3471,26 @@ export class ReleaseBusV2Service {
                   actor: owner,
                   payload: {
                     replacement_production_selection_id: selectionId,
+                    source_production_selection_ids: Array.from(
+                      new Set(
+                        productionReplanOmissions
+                          .map(({ sourceSelectionId }) => sourceSelectionId)
+                          .filter(
+                            (sourceSelectionId): sourceSelectionId is string =>
+                              sourceSelectionId !== null
+                          )
+                      )
+                    ).sort((left, right) => left.localeCompare(right)),
+                    source_train_ids: Array.from(
+                      new Set(
+                        productionReplanOmissions
+                          .map(({ sourceTrainId }) => sourceTrainId)
+                          .filter(
+                            (sourceTrainId): sourceTrainId is string =>
+                              sourceTrainId !== null
+                          )
+                      )
+                    ).sort((left, right) => left.localeCompare(right)),
                     omitted_intents: productionReplanOmissions.map(
                       ({
                         candidate,
