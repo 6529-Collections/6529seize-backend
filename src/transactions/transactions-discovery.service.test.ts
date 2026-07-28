@@ -168,6 +168,7 @@ describe('TransactionsDiscoveryService', () => {
     getAssetTransfers.mock.calls.forEach(([params]) => {
       expect(params.order).toBe('asc');
       expect(params.toBlock).toBe('0x3');
+      expect(params.excludeZeroValue).toBe(true);
     });
   });
 
@@ -219,6 +220,23 @@ describe('TransactionsDiscoveryService', () => {
     expect(batchUpsertTransactions.mock.calls[0][0]).toEqual([
       expect.objectContaining({ token_id: 135, token_count: 1 })
     ]);
+  });
+
+  it('does not upsert when bidirectional receipt reconciliation fails', async () => {
+    const transfer = makeErc1155Transfer('event-1', [
+      { tokenId: '0x87', value: '0x1' }
+    ]);
+    const { service, batchUpsertTransactions, enhanceTransactionValues } =
+      createService([[transfer]]);
+    enhanceTransactionValues.mockRejectedValueOnce(
+      new Error('No Alchemy transaction row for receipt transfer')
+    );
+
+    await expect(
+      service.getAndSaveTransactionsForContract(CONTRACT, 1, 1)
+    ).rejects.toThrow('No Alchemy transaction row for receipt transfer');
+
+    expect(batchUpsertTransactions).not.toHaveBeenCalled();
   });
 
   it('does not reserve an identity for a transfer that maps to no rows', async () => {

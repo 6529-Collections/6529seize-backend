@@ -22,6 +22,7 @@ const CONTRACT = '0x1111111111111111111111111111111111111111';
 const OTHER_CONTRACT = '0x4444444444444444444444444444444444444444';
 const FROM = '0x2222222222222222222222222222222222222222';
 const TO = '0x3333333333333333333333333333333333333333';
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const HASH = `0x${'a'.repeat(64)}`;
 
 const NFT_IFACE = new ethers.Interface([
@@ -197,8 +198,8 @@ describe('reconcileTransactionTokenCounts', () => {
     expect(missingRow.token_count).toBe(1);
   });
 
-  it('ignores unrelated receipt transfers that have no Alchemy row', () => {
-    const row = makeTransaction(473, 1);
+  it('fails closed without partial mutation when Alchemy omits an eligible same-contract edge', () => {
+    const row = makeTransaction(473, 2);
     const receipt: ReceiptLike = {
       logs: [
         makeLog('TransferSingle', [FROM, FROM, TO, BigInt(473), BigInt(1)]),
@@ -206,8 +207,59 @@ describe('reconcileTransactionTokenCounts', () => {
       ]
     };
 
+    expect(() => reconcileTransactionTokenCounts([row], receipt)).toThrow(
+      'No Alchemy transaction row for receipt transfer'
+    );
+    expect(row.token_count).toBe(2);
+  });
+
+  it('ignores receipt transfers outside the discovered contract scope', () => {
+    const row = makeTransaction(473, 2);
+    const receipt: ReceiptLike = {
+      logs: [
+        makeLog('TransferSingle', [FROM, FROM, TO, BigInt(473), BigInt(1)]),
+        makeLog(
+          'TransferSingle',
+          [FROM, FROM, TO, BigInt(474), BigInt(1)],
+          OTHER_CONTRACT
+        )
+      ]
+    };
+
+    expect(reconcileTransactionTokenCounts([row], receipt)).toBe(1);
+    expect(row.token_count).toBe(1);
+  });
+
+  it('ignores zero-value receipt edges excluded by the Alchemy query', () => {
+    const row = makeTransaction(473, 1);
+    const receipt: ReceiptLike = {
+      logs: [
+        makeLog('TransferSingle', [FROM, FROM, TO, BigInt(473), BigInt(1)]),
+        makeLog('TransferSingle', [FROM, FROM, TO, BigInt(474), BigInt(0)])
+      ]
+    };
+
     expect(reconcileTransactionTokenCounts([row], receipt)).toBe(0);
     expect(row.token_count).toBe(1);
+  });
+
+  it('reconciles mint and burn edges', () => {
+    const mintRow = makeTransaction(473, 1);
+    mintRow.from_address = ZERO_ADDRESS;
+    const burnRow = makeTransaction(474, 1);
+    burnRow.to_address = ZERO_ADDRESS;
+    const receipt: ReceiptLike = {
+      logs: [
+        makeLog('Transfer', [ZERO_ADDRESS, TO, BigInt(473)]),
+        makeLog('Transfer', [FROM, ZERO_ADDRESS, BigInt(474)])
+      ]
+    };
+
+    expect(reconcileTransactionTokenCounts([mintRow, burnRow], receipt)).toBe(
+      0
+    );
+    expect(mintRow.token_count).toBe(1);
+    expect(burnRow.token_count).toBe(1);
   });
 
   it('ignores malformed unrelated transfer logs', () => {

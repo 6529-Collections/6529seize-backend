@@ -1187,8 +1187,14 @@ export function reconcileTransactionTokenCounts(
 ): number {
   const contracts = new Set(rows.map((row) => row.contract.toLowerCase()));
   const receiptCounts = new Map<string, bigint>();
+  const receiptEdgesByKey = new Map<string, NftTransferEdge>();
   extractNftTransferEdges(receipt)
-    .filter((edge) => contracts.has(edge.contract.toLowerCase()))
+    .filter(
+      (edge) =>
+        contracts.has(edge.contract.toLowerCase()) &&
+        // Asset Transfers excludes zero-value transfers for this query.
+        edge.amount > BigInt(0)
+    )
     .forEach((edge) => {
       const key = getNftTransferKey(
         edge.from,
@@ -1196,11 +1202,22 @@ export function reconcileTransactionTokenCounts(
         edge.contract,
         edge.tokenId
       );
+      receiptEdgesByKey.set(key, edge);
       receiptCounts.set(
         key,
         (receiptCounts.get(key) ?? BigInt(0)) + edge.amount
       );
     });
+  const rowKeys = new Set(
+    rows.map((row) =>
+      getNftTransferKey(
+        row.from_address,
+        row.to_address,
+        row.contract,
+        row.token_id
+      )
+    )
+  );
   const reconciledCounts = rows.map((row) => {
     const key = getNftTransferKey(
       row.from_address,
@@ -1223,6 +1240,14 @@ export function reconcileTransactionTokenCounts(
 
     return { row, tokenCount: Number(tokenCount) };
   });
+
+  for (const [key, edge] of Array.from(receiptEdgesByKey.entries())) {
+    if (!rowKeys.has(key)) {
+      throw new Error(
+        `No Alchemy transaction row for receipt transfer ${rows[0]?.transaction ?? 'unknown'} ${edge.contract} token ${edge.tokenId}`
+      );
+    }
+  }
 
   let correctionCount = 0;
   for (const { row, tokenCount } of reconciledCounts) {
