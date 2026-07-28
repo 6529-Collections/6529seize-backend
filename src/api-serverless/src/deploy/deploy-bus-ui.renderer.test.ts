@@ -20,6 +20,10 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('id="active-trains"');
     expect(html).toContain('Exact manifests');
     expect(html).toContain('Runtime and environment ownership');
+    expect(html).toContain('dashboard below is public');
+    expect(html).toContain('Connect as operator (optional)');
+    expect(html).toContain('id="dashboard" class="stack"');
+    expect(html).toContain('id="dashboard-status"');
   });
 
   it('resolves a branch head before submitting and escapes server values', () => {
@@ -50,5 +54,14 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('current-live manifest');
     expect(app).toContain('Authoritative shared staging');
     expect(app).toContain('CURRENT STAGING PRESENCE UNKNOWN');
+    expect(app).toContain(
+      "if(state.token)result.Authorization='Bearer '+state.token"
+    );
+    expect(app).toContain('var actions=state.operator?');
+    expect(app).toContain('setOperator(false);refresh().catch(function(error)');
+    expect(app).toContain('Public read-only access remains available');
+    expect(app).not.toContain("byId('authenticated')");
+    expect(app).toContain("if(register)register.disabled=data.mode==='OFF'");
+    expect(app).toContain("if(reconcile)reconcile.disabled=data.mode==='OFF'");
   });
 });

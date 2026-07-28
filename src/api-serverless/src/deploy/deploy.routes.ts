@@ -145,11 +145,6 @@ async function requireOperatorLogin(login: string): Promise<void> {
     );
 }
 
-async function requireAuthenticatedViewer(req: Request): Promise<string> {
-  const token = getGitHubTokenOrThrow(req);
-  return (await gitHubDeployService.getViewer(token)).login;
-}
-
 async function requireV2CandidateWriteAccess(
   req: Request,
   candidateId: string
@@ -293,6 +288,7 @@ deployRoutes.get('/ui/refs', async (req, res) => {
 deployRoutes.post('/ui/dispatch', async (req, res) => {
   const token = getGitHubTokenOrThrow(req);
   const body = getValidatedByJoiOrThrow(req.body, DeployDispatchBodySchema);
+  await gitHubDeployService.assertRepositoryWriteAccess(token, body.target);
   if (['STAGING', 'PRODUCTION'].includes(getReleaseBusV2Mode())) {
     throw new CustomApiCompliantException(
       409,
@@ -398,7 +394,6 @@ deployRoutes.post('/release-bus-v2/candidates', async (req, res) => {
 });
 
 deployRoutes.get('/release-bus-v2/candidates', async (req, res) => {
-  await requireAuthenticatedViewer(req);
   const query = getValidatedByJoiOrThrow<{
     status?: ReleaseBusV2CandidateStatus;
     limit: number;
@@ -655,8 +650,7 @@ deployRoutes.post(
   }
 );
 
-deployRoutes.get('/release-bus-v2/trains', async (req, res) => {
-  await requireAuthenticatedViewer(req);
+deployRoutes.get('/release-bus-v2/trains', async (_req, res) => {
   setNoStoreHeaders(res);
   return res.json({
     trains: await releaseBusV2Repository.listTrains(100, {}),
@@ -665,7 +659,6 @@ deployRoutes.get('/release-bus-v2/trains', async (req, res) => {
 });
 
 deployRoutes.get('/release-bus-v2/trains/:id', async (req, res) => {
-  await requireAuthenticatedViewer(req);
   const train = await releaseBusV2Repository.findTrain(req.params.id, {});
   if (!train)
     throw new CustomApiCompliantException(
@@ -741,16 +734,14 @@ deployRoutes.get('/release-bus-v2/trains/:id', async (req, res) => {
   });
 });
 
-deployRoutes.get('/release-bus-v2/manifests', async (req, res) => {
-  await requireAuthenticatedViewer(req);
+deployRoutes.get('/release-bus-v2/manifests', async (_req, res) => {
   setNoStoreHeaders(res);
   return res.json({
     manifests: await releaseBusV2Repository.listManifests(100, {})
   });
 });
 
-deployRoutes.get('/release-bus-v2/controls', async (req, res) => {
-  await requireAuthenticatedViewer(req);
+deployRoutes.get('/release-bus-v2/controls', async (_req, res) => {
   setNoStoreHeaders(res);
   return res.json({
     controls: await releaseBusV2Repository.listControls({}),

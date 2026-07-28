@@ -529,8 +529,16 @@ manifests, controls, and events. The reconciler has reserved concurrency one
 and an EventBridge one-minute fallback, but it advances several internal row
 transitions per invocation and exits at an actual external wait.
 
-The v2 API exposes authenticated candidate, train, manifest, and control routes
-under `/deploy/release-bus-v2`; `/deploy/ui/bus` is the operator/developer UI.
+The v2 API exposes candidate, train, train-detail, manifest, control, lock, and
+authoritative staging-state GET routes publicly under
+`/deploy/release-bus-v2`. These read-only responses are uncached and expose the
+same raw operational state used by `/deploy/ui/bus`, which loads as a public
+read-only dashboard. They remain covered by the API's existing anonymous/IP
+rate-limiting middleware. GitHub authentication is optional in the dashboard
+and is used only to request operator actions. Every mutation retains its
+route-specific GitHub repository-write, organization-operator,
+workflow-credential, or webhook signature authorization before state can
+change.
 `RELEASE_BUS_V2_MODE` supports `OFF`, `STAGING`, and `PRODUCTION`, with separate
 staging and production queues. Staging validation never schedules production:
 an unchanged exact candidate SHA must be explicitly marked ready. An
