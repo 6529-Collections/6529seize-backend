@@ -1,22 +1,29 @@
 const mockGetViewer = jest.fn();
 const mockAssertRepositoryWriteAccess = jest.fn();
+const mockDispatchDeploy = jest.fn();
 const mockIsOrganizationOperator = jest.fn();
 const mockV2FindCandidateById = jest.fn();
 const mockV2ListCandidates = jest.fn();
 const mockV2ListControls = jest.fn();
 const mockV2ListLocks = jest.fn();
+const mockV2GetStagingState = jest.fn();
 const mockV2ListDependencies = jest.fn();
 const mockV2AppendEvent = jest.fn();
+const mockV2ListTrains = jest.fn();
 const mockV2FindTrain = jest.fn();
+const mockV2ListManifests = jest.fn();
 const mockV2ListTrainCandidates = jest.fn();
 const mockV2ListOperations = jest.fn();
 const mockV2ListEvents = jest.fn();
 const mockLambdaSend = jest.fn();
 const mockV2MarkReadyForProduction = jest.fn();
 const mockV2MarkSelectionReadyForProduction = jest.fn();
+const mockV2RevokeProductionReadiness = jest.fn();
 const mockV2Cancel = jest.fn();
 const mockV2Register = jest.fn();
 const mockV2RequestStagingTransition = jest.fn();
+const mockV2SetPaused = jest.fn();
+const mockV2InvalidateBranch = jest.fn();
 const mockV2IsBetaTrainAllowed = jest.fn();
 const mockV2Authorize = jest.fn();
 const mockV2ReportProgress = jest.fn();
@@ -47,7 +54,8 @@ jest.mock('@/api/deploy/deploy.github.service', () => ({
   gitHubDeployService: {
     getViewer: (...args: unknown[]) => mockGetViewer(...args),
     assertRepositoryWriteAccess: (...args: unknown[]) =>
-      mockAssertRepositoryWriteAccess(...args)
+      mockAssertRepositoryWriteAccess(...args),
+    dispatchDeploy: (...args: unknown[]) => mockDispatchDeploy(...args)
   }
 }));
 
@@ -64,11 +72,12 @@ jest.mock('@/releaseBusV2/release-bus-v2.repository', () => ({
     listCandidates: (...args: unknown[]) => mockV2ListCandidates(...args),
     listControls: (...args: unknown[]) => mockV2ListControls(...args),
     listLocks: (...args: unknown[]) => mockV2ListLocks(...args),
+    getStagingState: (...args: unknown[]) => mockV2GetStagingState(...args),
     listDependencies: (...args: unknown[]) => mockV2ListDependencies(...args),
     appendEvent: (...args: unknown[]) => mockV2AppendEvent(...args),
-    listTrains: jest.fn(async () => []),
+    listTrains: (...args: unknown[]) => mockV2ListTrains(...args),
     findTrain: (...args: unknown[]) => mockV2FindTrain(...args),
-    listManifests: jest.fn(async () => []),
+    listManifests: (...args: unknown[]) => mockV2ListManifests(...args),
     listTrainCandidates: (...args: unknown[]) =>
       mockV2ListTrainCandidates(...args),
     listOperations: (...args: unknown[]) => mockV2ListOperations(...args),
@@ -88,10 +97,11 @@ jest.mock('@/releaseBusV2/release-bus-v2.service', () => ({
       mockV2MarkReadyForProduction(...args),
     markSelectionReadyForProduction: (...args: unknown[]) =>
       mockV2MarkSelectionReadyForProduction(...args),
-    revokeProductionReadiness: jest.fn(),
+    revokeProductionReadiness: (...args: unknown[]) =>
+      mockV2RevokeProductionReadiness(...args),
     cancel: (...args: unknown[]) => mockV2Cancel(...args),
-    setPaused: jest.fn(),
-    invalidateBranch: jest.fn(),
+    setPaused: (...args: unknown[]) => mockV2SetPaused(...args),
+    invalidateBranch: (...args: unknown[]) => mockV2InvalidateBranch(...args),
     isBetaTrainAllowed: (...args: unknown[]) =>
       mockV2IsBetaTrainAllowed(...args)
   }
@@ -113,7 +123,10 @@ jest.mock('@/releaseBusV2/release-bus-v2.reconciler', () => ({
 
 import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'node:http';
-import { ApiCompliantException } from '@/exceptions';
+import {
+  ApiCompliantException,
+  CustomApiCompliantException
+} from '@/exceptions';
 import deployRoutes from '@/api/deploy/deploy.routes';
 
 const WORKFLOW_TOKEN = 'release-bus-workflow-token';
@@ -156,18 +169,24 @@ async function withServer<T>(
   }
 }
 
-async function post(path: string, body: unknown) {
+async function requestJson(
+  method: 'GET' | 'POST',
+  path: string,
+  body?: unknown,
+  token?: string
+) {
   return withServer(async (baseUrl) => {
+    const headers: Record<string, string> = {};
+    if (token) headers.authorization = `Bearer ${token}`;
+    if (body !== undefined) headers['content-type'] = 'application/json';
     const response = await fetch(`${baseUrl}${path}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${WORKFLOW_TOKEN}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify(body)
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body)
     });
     return {
       status: response.status,
+      cacheControl: response.headers.get('cache-control'),
       body: (await response.json()) as Record<string, unknown> & {
         error?: string;
       }
@@ -175,16 +194,33 @@ async function post(path: string, body: unknown) {
   });
 }
 
+async function post(path: string, body: unknown) {
+  return requestJson('POST', path, body, WORKFLOW_TOKEN);
+}
+
 async function get(path: string) {
-  return withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}${path}`, {
-      headers: { authorization: `Bearer ${WORKFLOW_TOKEN}` }
-    });
-    return {
-      status: response.status,
-      body: (await response.json()) as Record<string, unknown>
-    };
-  });
+  return requestJson('GET', path, undefined, WORKFLOW_TOKEN);
+}
+
+function expectNoReleaseMutation(): void {
+  for (const mutation of [
+    mockDispatchDeploy,
+    mockV2Register,
+    mockV2MarkReadyForProduction,
+    mockV2MarkSelectionReadyForProduction,
+    mockV2RevokeProductionReadiness,
+    mockV2Cancel,
+    mockV2RequestStagingTransition,
+    mockV2SetPaused,
+    mockV2AppendEvent,
+    mockRecoverUnsatisfiableProductionQualifications,
+    mockV2Authorize,
+    mockV2ReportProgress,
+    mockV2InvalidateBranch,
+    mockLambdaSend
+  ]) {
+    expect(mutation).not.toHaveBeenCalled();
+  }
 }
 
 describe('Release Bus v2 route authorization and exact actions', () => {
@@ -211,6 +247,133 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     updated_at: 1,
     row_version: 4
   } as const;
+  const releaseMutationAttempts = [
+    {
+      name: 'manual deployment dispatch',
+      path: '/deploy/ui/dispatch',
+      body: {
+        target: 'backend',
+        ref: 'main',
+        environment: 'prod',
+        services: ['api']
+      },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'candidate registration',
+      path: '/deploy/release-bus-v2/candidates',
+      body: {
+        repository: 'frontend',
+        pr_number: 321,
+        branch_name: 'agent/public-read-test',
+        expected_head_sha: SHA,
+        deploy_plan: null,
+        dependencies: []
+      },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'production selection',
+      path: '/deploy/release-bus-v2/production-selections',
+      body: {
+        candidates: [
+          {
+            candidate_id: candidateId,
+            expected_head_sha: SHA,
+            expected_row_version: 4
+          }
+        ]
+      },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'production readiness',
+      path: `/deploy/release-bus-v2/candidates/${candidateId}/mark-ready-for-production`,
+      body: { expected_head_sha: SHA, expected_row_version: 4 },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'production readiness revocation',
+      path: `/deploy/release-bus-v2/candidates/${candidateId}/revoke-production-readiness`,
+      body: { expected_row_version: 4 },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'candidate cancellation',
+      path: `/deploy/release-bus-v2/candidates/${candidateId}/cancel`,
+      body: { expected_row_version: 4 },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'staging transition',
+      path: `/deploy/release-bus-v2/candidates/${candidateId}/staging-transition`,
+      body: {
+        expected_head_sha: SHA,
+        expected_row_version: 4,
+        transition: 'REMOVE',
+        reason: 'Adversarial authorization test'
+      },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'global pause',
+      path: '/deploy/release-bus-v2/pause',
+      body: { scope: 'ALL', reason: 'Adversarial authorization test' },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'global resume',
+      path: '/deploy/release-bus-v2/resume',
+      body: { scope: 'ALL', reason: 'Adversarial authorization test' },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'manual reconciliation',
+      path: '/deploy/release-bus-v2/reconcile',
+      body: {},
+      unrelatedStatus: 403
+    },
+    {
+      name: 'stalled-qualification recovery',
+      path: '/deploy/release-bus-v2/maintenance/recover-stalled-qualifications',
+      body: {},
+      unrelatedStatus: 403
+    },
+    {
+      name: 'workflow authorization',
+      path: '/deploy/release-bus-v2/authorize',
+      body: {
+        train_id: TRAIN_ID,
+        operation_key: `rb2:${TRAIN_ID}:prepare:frontend:a1`,
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: SHA,
+        artifact_digest: null
+      },
+      unrelatedStatus: 401
+    },
+    {
+      name: 'workflow progress report',
+      path: '/deploy/release-bus-v2/report-progress',
+      body: {
+        train_id: TRAIN_ID,
+        operation_key: `rb2:${TRAIN_ID}:prepare:frontend:a1`,
+        workflow_run_id: '12345',
+        phase: 'prepare',
+        status: 'RUNNING'
+      },
+      unrelatedStatus: 401
+    },
+    {
+      name: 'GitHub webhook',
+      path: '/deploy/github/webhook',
+      body: {},
+      unrelatedStatus: 401
+    }
+  ] as const;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -219,6 +382,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     process.env.RELEASE_BUS_WORKFLOW_AUTH_TOKEN = WORKFLOW_TOKEN;
     mockGetViewer.mockResolvedValue({ login: 'developer' });
     mockAssertRepositoryWriteAccess.mockResolvedValue(undefined);
+    mockDispatchDeploy.mockResolvedValue(undefined);
     mockV2FindCandidateById.mockResolvedValue(v2Candidate);
     mockV2MarkReadyForProduction.mockResolvedValue({
       ...v2Candidate,
@@ -238,8 +402,34 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       status: 'CANCELLED',
       row_version: 5
     });
+    mockV2RevokeProductionReadiness.mockResolvedValue({
+      ...v2Candidate,
+      status: 'STAGING_VALIDATED',
+      row_version: 5
+    });
+    mockV2SetPaused.mockResolvedValue(undefined);
+    mockV2InvalidateBranch.mockResolvedValue(undefined);
     mockV2Authorize.mockResolvedValue({ authorized: true, reused: false });
+    mockV2ReportProgress.mockResolvedValue({ accepted: true });
     mockV2ListCandidates.mockResolvedValue([v2Candidate]);
+    mockV2ListTrains.mockResolvedValue([]);
+    mockV2ListManifests.mockResolvedValue([]);
+    mockV2ListControls.mockResolvedValue([
+      { scope: 'ALL', paused: false },
+      { scope: 'STAGING', paused: false },
+      { scope: 'PRODUCTION', paused: false }
+    ]);
+    mockV2ListLocks.mockResolvedValue([]);
+    mockV2GetStagingState.mockResolvedValue({
+      status: 'CLEAN_MAIN',
+      current_manifest_id: null,
+      frontend_sha: SHA,
+      backend_sha: 'b'.repeat(40),
+      frontend_staging_ref_sha: SHA,
+      backend_staging_ref_sha: 'b'.repeat(40),
+      clean_main: true,
+      row_version: 1
+    });
     mockV2ListDependencies.mockResolvedValue([
       {
         id: 'dependency-id',
@@ -312,6 +502,60 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       }
     });
   });
+
+  it.each([
+    '/deploy/release-bus-v2/candidates',
+    '/deploy/release-bus-v2/trains',
+    `/deploy/release-bus-v2/trains/${TRAIN_ID}`,
+    '/deploy/release-bus-v2/manifests',
+    '/deploy/release-bus-v2/controls'
+  ])('serves public no-store read-only state from %s', async (path) => {
+    mockV2FindTrain.mockResolvedValue({
+      id: TRAIN_ID,
+      status: 'STAGING_VALIDATED'
+    });
+
+    const response = await requestJson('GET', path);
+
+    expect(response.status).toBe(200);
+    expect(response.cacheControl).toContain('no-store');
+    expect(mockGetViewer).not.toHaveBeenCalled();
+    expectNoReleaseMutation();
+  });
+
+  it.each(releaseMutationAttempts)(
+    'rejects anonymous $name without executing a mutation',
+    async ({ path, body }) => {
+      const response = await requestJson('POST', path, body);
+
+      expect(response.status).toBe(401);
+      expectNoReleaseMutation();
+    }
+  );
+
+  it.each(releaseMutationAttempts)(
+    'rejects unrelated authenticated GitHub user for $name',
+    async ({ path, body, unrelatedStatus }) => {
+      mockGetViewer.mockResolvedValue({ login: 'unrelated-user' });
+      mockIsOrganizationOperator.mockResolvedValue(false);
+      mockAssertRepositoryWriteAccess.mockRejectedValue(
+        new CustomApiCompliantException(
+          403,
+          'Repository write permission is required'
+        )
+      );
+
+      const response = await requestJson(
+        'POST',
+        path,
+        body,
+        'unrelated-github-token'
+      );
+
+      expect(response.status).toBe(unrelatedStatus);
+      expectNoReleaseMutation();
+    }
+  );
 
   it('requires repository write access before explicit production readiness', async () => {
     const response = await post(
