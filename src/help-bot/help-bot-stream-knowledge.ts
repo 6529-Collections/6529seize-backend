@@ -45,9 +45,11 @@ const MIN_EVIDENCE_RECORDS = 4;
 const MAX_EVIDENCE_RECORDS = 10;
 const MAX_EVIDENCE_PACKET_CHARACTERS = 10_000;
 const MAX_EVIDENCE_RECORD_CHARACTERS = 2_300;
+const MAX_EVIDENCE_METADATA_CHARACTERS =
+  MAX_EVIDENCE_PACKET_CHARACTERS -
+  MIN_EVIDENCE_RECORDS * MAX_EVIDENCE_RECORD_CHARACTERS;
 const MAX_INITIAL_CANDIDATES = 8;
 const UNAVAILABLE_RETRY_TTL_MS = 30_000;
-const logger = Logger.get('HelpBotStreamKnowledge');
 
 interface StreamFetchResponse {
   readonly ok: boolean;
@@ -158,6 +160,12 @@ interface RankedCatalogRecord {
   readonly exact: boolean;
 }
 
+interface QueryContext {
+  readonly normalizedQuestion: string;
+  readonly splitQuestion: string;
+  readonly queryTokens: ReadonlySet<string>;
+}
+
 interface QueryIntent {
   readonly shouldTry: boolean;
   readonly explicitlyStreamScoped: boolean;
@@ -224,6 +232,13 @@ function sha256(value: string): string {
   return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(canonicalize);
@@ -231,7 +246,7 @@ function canonicalize(value: unknown): unknown {
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.keys(value as Record<string, unknown>)
-        .sort((left, right) => left.localeCompare(right))
+        .sort(compareCodeUnits)
         .map((key) => [
           key,
           canonicalize((value as Record<string, unknown>)[key])
@@ -547,8 +562,7 @@ function normalizeExact(value: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ')
-    .replace(/\s+([().,:#/])/g, '$1')
-    .replace(/([().,:#/])\s+/g, '$1');
+    .replace(/ ?([().,:#/]) ?/g, '$1');
 }
 
 function isAsciiAlphaNumeric(character: string | undefined): boolean {
@@ -973,8 +987,7 @@ function tokenOverlapScore(
 }
 
 function lexicalScore(
-  question: string,
-  queryTokens: ReadonlySet<string>,
+  context: QueryContext,
   record: StreamCatalogRecord,
   broadStreamQuestion: boolean
 ): number {
@@ -984,30 +997,29 @@ function lexicalScore(
       return broadScore;
     }
   }
-  if (!queryTokens.size) {
+  if (!context.queryTokens.size) {
     return 0;
   }
-  const normalizedQuestion = normalizeExact(question);
   const title = normalizeExact(record.title);
   const name = normalizeExact(record.name ?? '');
   const signature = normalizeExact(record.signature ?? '');
   const definitionName = normalizeExact(record.definitionName ?? '');
-  let score = metadataScore(splitSearchText(question), record);
-  if (title && normalizedQuestion.includes(title)) {
+  let score = metadataScore(context.splitQuestion, record);
+  if (title && context.normalizedQuestion.includes(title)) {
     score += 45;
   }
   if (
     signature &&
     ['function', 'event', 'error'].includes(record.kind) &&
-    normalizedQuestion.includes(signature)
+    context.normalizedQuestion.includes(signature)
   ) {
     score += 55;
   }
-  if (containsNormalizedTerm(normalizedQuestion, name)) {
+  if (containsNormalizedTerm(context.normalizedQuestion, name)) {
     score += 35;
   }
-  score += tokenOverlapScore(queryTokens, record);
-  if (containsNormalizedTerm(normalizedQuestion, definitionName)) {
+  score += tokenOverlapScore(context.queryTokens, record);
+  if (containsNormalizedTerm(context.normalizedQuestion, definitionName)) {
     score += 25;
   }
   if (record.category === 'technical' && record.scope === 'protocol') {
@@ -1021,19 +1033,18 @@ function fuzzyMatches(
   corpus: LoadedCorpus,
   intent: QueryIntent
 ): RankedCatalogRecord[] {
-  const queryTokens = tokens(question);
+  const context: QueryContext = {
+    normalizedQuestion: normalizeExact(question),
+    splitQuestion: splitSearchText(question),
+    queryTokens: tokens(question)
+  };
   const conceptualStreamQuestion =
     intent.explicitlyStreamScoped && !isStructuredTechnicalQuestion(question);
   return corpus.catalog
     .map((record) => ({
       record,
       score:
-        lexicalScore(
-          question,
-          queryTokens,
-          record,
-          intent.broadStreamQuestion
-        ) +
+        lexicalScore(context, record, intent.broadStreamQuestion) +
         (conceptualStreamQuestion && record.category === 'editorial' ? 18 : 0),
       exact: false
     }))
@@ -1251,27 +1262,41 @@ function formatEvidenceRecord(
   );
 }
 
+function selectBoundedEvidenceRecords(
+  records: readonly string[],
+  prefixCharacters: number
+): string[] {
+  const selected: string[] = [];
+  let characters = prefixCharacters;
+  for (const record of records.slice(0, MAX_EVIDENCE_RECORDS)) {
+    if (characters + record.length > MAX_EVIDENCE_PACKET_CHARACTERS) {
+      break;
+    }
+    selected.push(record);
+    characters += record.length;
+  }
+  return selected;
+}
+
 function evidencePacketRecord(
   selection: EvidenceSelection,
   manifest: StreamKnowledgeManifest
 ): HelpBotKnowledgeRecord {
   const corpusIdentity = `Corpus identity: review ${REVIEW_ID}, version ${manifest.reviewVersion}, pinned ${manifest.source.repository}@${manifest.source.commit}; lifecycle ${manifest.publication.lifecycleState}, audit ${manifest.publication.auditStatus}, deployment ${manifest.publication.deploymentStatus}.`;
-  const ambiguity = selection.ambiguity
-    ? `AMBIGUITY: ${selection.ambiguity}`
-    : '';
-  const formattedRecords: string[] = [];
-  let characters = corpusIdentity.length + ambiguity.length;
-  for (const record of selection.records.slice(0, MAX_EVIDENCE_RECORDS)) {
-    const formatted = formatEvidenceRecord(record, formattedRecords.length + 1);
-    if (
-      formattedRecords.length >= MIN_EVIDENCE_RECORDS &&
-      characters + formatted.length > MAX_EVIDENCE_PACKET_CHARACTERS
-    ) {
-      break;
-    }
-    formattedRecords.push(formatted);
-    characters += formatted.length;
-  }
+  const ambiguityBudget = Math.max(
+    0,
+    MAX_EVIDENCE_METADATA_CHARACTERS - corpusIdentity.length
+  );
+  const ambiguity =
+    selection.ambiguity && ambiguityBudget > 0
+      ? bounded(`AMBIGUITY: ${selection.ambiguity}`, ambiguityBudget)
+      : '';
+  const formattedRecords = selectBoundedEvidenceRecords(
+    selection.records.map((record, index) =>
+      formatEvidenceRecord(record, index + 1)
+    ),
+    corpusIdentity.length + ambiguity.length
+  );
   const primaryPath = selection.primary.canonicalPath;
   const relatedPaths = uniqueById(
     selection.records.map((record) => ({
@@ -1309,6 +1334,7 @@ function evidencePacketRecord(
 }
 
 export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSource {
+  private readonly logger = Logger.get(this.constructor.name);
   private corpus: LoadedCorpus | null = null;
   private cacheExpiresAt = 0;
   private refreshPromise: Promise<LoadedCorpus | null> | null = null;
@@ -1438,7 +1464,7 @@ export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSour
       this.shardCache.clear();
       return corpus;
     } catch (error) {
-      logger.warn(
+      this.logger.warn(
         'Could not refresh the published Stream knowledge pack',
         error
       );
@@ -1598,7 +1624,7 @@ export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSour
         ambiguity: ambiguityMessage(question, exact)
       };
     } catch (error) {
-      logger.warn('Could not load selected Stream evidence shards', error);
+      this.logger.warn('Could not load selected Stream evidence shards', error);
       return null;
     }
   }
@@ -1609,10 +1635,14 @@ export const frontendStreamKnowledgeSource =
 
 export const STREAM_KNOWLEDGE_TESTING = {
   MAX_CATALOG_RECORDS,
+  MAX_EVIDENCE_METADATA_CHARACTERS,
   MAX_EVIDENCE_PACKET_CHARACTERS,
+  MAX_EVIDENCE_RECORD_CHARACTERS,
   MAX_EVIDENCE_RECORDS,
   MAX_RECORD_SHARDS,
   MIN_EVIDENCE_RECORDS,
   fetchWithTimeout,
-  queryIntent
+  queryIntent,
+  selectBoundedEvidenceRecords,
+  stableJson
 };

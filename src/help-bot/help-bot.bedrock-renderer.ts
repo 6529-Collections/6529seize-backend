@@ -28,6 +28,15 @@ const HELP_BOT_MENTION = `@${HELP_BOT_HANDLE}`;
 const NO_SELF_INTRO_GUIDANCE = `Start directly with the answer. Do not begin with ${HELP_BOT_MENTION}, ${HELP_BOT_HANDLE}:, ${HELP_BOT_HANDLE} here, a greeting, or any self-introduction.`;
 const MARKDOWN_LINK_GUIDANCE =
   'When including the source URL, use a named Markdown link like [More info](https://example.com). Do not print a bare URL or raw app path such as /delegation/example in prose.';
+const STREAM_GROUNDING_GUIDANCE = [
+  'This is version-sensitive 6529 Stream public-review evidence.',
+  'Treat structured technical fields as more authoritative than prose summaries.',
+  'Distinguish protocol code from scripts, tests, dependencies, and supporting code using the supplied scope and classification.',
+  'Distinguish implemented behavior, proposals, audit/readiness state, blockers, and deployment state. Do not collapse them into one status.',
+  'Do not infer exact inputs, outputs, caller authorization, selectors, topics, events, errors, deployment facts, or behavior unless the evidence states them.',
+  'If an AMBIGUITY fact is present, clearly ask for the contract or complete signature instead of choosing a declaration.',
+  'Mention the review version when the answer depends on implementation or status.'
+];
 
 function buildPrompt({
   question,
@@ -42,17 +51,7 @@ function buildPrompt({
 }): string {
   const factLines = record.facts.map((fact) => `- ${fact}`).join('\n');
   const streamGrounding =
-    record.kind === 'public_review_knowledge'
-      ? [
-          'This is version-sensitive 6529 Stream public-review evidence.',
-          'Treat structured technical fields as more authoritative than prose summaries.',
-          'Distinguish protocol code from scripts, tests, dependencies, and supporting code using the supplied scope and classification.',
-          'Distinguish implemented behavior, proposals, audit/readiness state, blockers, and deployment state. Do not collapse them into one status.',
-          'Do not infer exact inputs, outputs, caller authorization, selectors, topics, events, errors, deployment facts, or behavior unless the evidence states them.',
-          'If an AMBIGUITY fact is present, clearly ask for the contract or complete signature instead of choosing a declaration.',
-          'Mention the review version when the answer depends on implementation or status.'
-        ]
-      : [];
+    record.kind === 'public_review_knowledge' ? STREAM_GROUNDING_GUIDANCE : [];
   const linkGuidance = record.suppressSourceLinks
     ? [
         'Do not include source links unless the provided facts explicitly require one.'

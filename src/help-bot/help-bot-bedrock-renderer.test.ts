@@ -204,6 +204,30 @@ describe('HelpBotBedrockRenderer', () => {
     expect(prompt).toContain('Mention the review version');
   });
 
+  it('omits Stream grounding rules for non-Stream records', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({ content: [{ type: 'text', text: 'TDH is TDH.' }] })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await renderer.renderAnswer({
+      question: 'what is TDH?',
+      record: RECORD,
+      canonicalUrl: 'https://6529.io/network/tdh'
+    });
+
+    expect(readPrompt(send)).not.toContain('Mention the review version');
+    expect(readPrompt(send)).not.toContain(
+      'Distinguish protocol code from scripts'
+    );
+  });
+
   it('aborts a slow Bedrock response', async () => {
     const send = jest.fn(
       (

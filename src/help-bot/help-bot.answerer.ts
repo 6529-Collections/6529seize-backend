@@ -53,7 +53,8 @@ export interface HelpBotNoReliableSource {
 }
 
 export type HelpBotAnswerResult =
-  HelpBotAnswerSuccess | HelpBotNoReliableSource;
+  | HelpBotAnswerSuccess
+  | HelpBotNoReliableSource;
 
 export interface HelpBotLlmRenderer {
   renderAnswer(input: {
@@ -259,73 +260,98 @@ function ensureKnowledgeMarkdownLinks({
     : replaceMoreInfoLine(withCanonicalLink, links);
 }
 
+interface StreamEvidenceSummary {
+  readonly title?: string;
+  readonly scope?: string;
+  readonly classification?: string;
+  readonly summary?: string;
+  readonly text?: string;
+  readonly technical?: {
+    readonly declaration?: {
+      readonly canonicalSignature?: string;
+      readonly displaySignature?: string;
+      readonly inputs?: unknown[];
+      readonly outputs?: unknown[];
+      readonly visibility?: string;
+      readonly stateMutability?: string;
+    };
+  };
+}
+
+function streamEvidenceSummary(fact: string): string | null {
+  try {
+    const evidence = JSON.parse(fact) as StreamEvidenceSummary;
+    const declaration = evidence.technical?.declaration;
+    const technicalSummary = declaration
+      ? [
+          declaration.canonicalSignature ??
+            declaration.displaySignature ??
+            evidence.title,
+          `inputs ${JSON.stringify(declaration.inputs ?? [])}`,
+          `outputs ${JSON.stringify(declaration.outputs ?? [])}`,
+          declaration.visibility,
+          declaration.stateMutability,
+          evidence.scope,
+          evidence.classification
+        ]
+          .filter(Boolean)
+          .join('; ')
+      : null;
+    return `${evidence.title ?? 'Evidence'}: ${
+      technicalSummary ??
+      evidence.summary ??
+      evidence.text ??
+      'See the pinned review evidence.'
+    }`;
+  } catch {
+    return null;
+  }
+}
+
+function truncateAtNaturalBoundary(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const prefix = value.slice(0, maxLength + 1);
+  const sentenceEnd = Math.max(
+    prefix.lastIndexOf('. '),
+    prefix.lastIndexOf('? '),
+    prefix.lastIndexOf('! ')
+  );
+  const boundary =
+    sentenceEnd >= Math.floor(maxLength * 0.6)
+      ? sentenceEnd + 1
+      : prefix.lastIndexOf(' ');
+  return prefix.slice(0, boundary > 0 ? boundary : maxLength).trimEnd();
+}
+
+function buildStreamEvidenceAnswer(
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string {
+  const ambiguity = record.facts.find((fact) => fact.startsWith('AMBIGUITY:'));
+  const summaries = record.facts
+    .filter((fact) => fact.startsWith('{'))
+    .map(streamEvidenceSummary)
+    .filter((summary): summary is string => !!summary)
+    .slice(0, 3);
+  const answer = ambiguity
+    ? ambiguity.slice('AMBIGUITY:'.length).trim()
+    : summaries.join(' ');
+  const body = truncateAtNaturalBoundary(answer, 820);
+  return ensureKnowledgeMarkdownLinks({
+    text: body || 'See the pinned Stream review evidence for this question.',
+    record,
+    baseUrl
+  });
+}
+
 function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
 ): string {
   if (record.kind === 'public_review_knowledge') {
-    const ambiguity = record.facts.find((fact) =>
-      fact.startsWith('AMBIGUITY:')
-    );
-    const summaries = record.facts
-      .filter((fact) => fact.startsWith('{'))
-      .map((fact) => {
-        try {
-          const evidence = JSON.parse(fact) as {
-            readonly title?: string;
-            readonly scope?: string;
-            readonly classification?: string;
-            readonly summary?: string;
-            readonly text?: string;
-            readonly technical?: {
-              readonly declaration?: {
-                readonly canonicalSignature?: string;
-                readonly displaySignature?: string;
-                readonly inputs?: unknown[];
-                readonly outputs?: unknown[];
-                readonly visibility?: string;
-                readonly stateMutability?: string;
-              };
-            };
-          };
-          const declaration = evidence.technical?.declaration;
-          const technicalSummary = declaration
-            ? [
-                declaration.canonicalSignature ??
-                  declaration.displaySignature ??
-                  evidence.title,
-                `inputs ${JSON.stringify(declaration.inputs ?? [])}`,
-                `outputs ${JSON.stringify(declaration.outputs ?? [])}`,
-                declaration.visibility,
-                declaration.stateMutability,
-                evidence.scope,
-                evidence.classification
-              ]
-                .filter(Boolean)
-                .join('; ')
-            : null;
-          return `${evidence.title ?? 'Evidence'}: ${
-            technicalSummary ??
-            evidence.summary ??
-            evidence.text ??
-            'See the pinned review evidence.'
-          }`;
-        } catch {
-          return null;
-        }
-      })
-      .filter((summary): summary is string => !!summary)
-      .slice(0, 3);
-    const body = (
-      ambiguity
-        ? ambiguity.slice('AMBIGUITY:'.length).trim()
-        : summaries.join(' ')
-    ).slice(0, 820);
-    return ensureKnowledgeMarkdownLinks({
-      text: body || 'See the pinned Stream review evidence for this question.',
-      record,
-      baseUrl
-    });
+    return buildStreamEvidenceAnswer(record, baseUrl);
   }
   return ensureKnowledgeMarkdownLinks({
     text: record.facts.join(' '),
@@ -761,8 +787,6 @@ const PRODUCT_CONTEXT_PATTERNS = [
   /\brememe(s)?\b/,
   /\bdrop forge\b/,
   /\bstream\b/,
-  /\bstream auctions?\b/,
-  /\bstream curation\b/,
   /\bsubscription(s)?\b/,
   /\beligibility\b/,
   /\bprofile(s)?\b/,

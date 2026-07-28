@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import fc from 'fast-check';
 import {
   FrontendStreamKnowledgeSource,
   StreamKnowledgeFetcher,
@@ -17,6 +18,13 @@ function sha256(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(canonicalize);
@@ -24,7 +32,7 @@ function canonicalize(value: unknown): unknown {
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.keys(value as Record<string, unknown>)
-        .sort((left, right) => left.localeCompare(right))
+        .sort(compareCodeUnits)
         .map((key) => [
           key,
           canonicalize((value as Record<string, unknown>)[key])
@@ -430,6 +438,54 @@ function buildFixture(version = VERSION): Fixture {
 }
 
 describe('FrontendStreamKnowledgeSource', () => {
+  it('canonicalizes object keys with frontend-compatible code-unit ordering', () => {
+    expect(
+      STREAM_KNOWLEDGE_TESTING.stableJson({
+        _supporting: true,
+        Zebra: true,
+        alpha: true
+      })
+    ).toBe('{\n  "Zebra": true,\n  "_supporting": true,\n  "alpha": true\n}\n');
+  });
+
+  it('keeps boundary-sized evidence packets within the hard budget', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({
+          min: 0,
+          max: STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_METADATA_CHARACTERS
+        }),
+        fc.array(
+          fc.stringOf(fc.constantFrom('a', ' '), {
+            minLength: 0,
+            maxLength: STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_RECORD_CHARACTERS
+          }),
+          {
+            minLength: STREAM_KNOWLEDGE_TESTING.MIN_EVIDENCE_RECORDS,
+            maxLength: STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_RECORDS
+          }
+        ),
+        (prefixCharacters, records) => {
+          const selected =
+            STREAM_KNOWLEDGE_TESTING.selectBoundedEvidenceRecords(
+              records,
+              prefixCharacters
+            );
+          const characters =
+            prefixCharacters +
+            selected.reduce((total, record) => total + record.length, 0);
+
+          expect(characters).toBeLessThanOrEqual(
+            STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_PACKET_CHARACTERS
+          );
+          expect(selected.length).toBeGreaterThanOrEqual(
+            STREAM_KNOWLEDGE_TESTING.MIN_EVIDENCE_RECORDS
+          );
+        }
+      )
+    );
+  });
+
   it.each([
     ['what is stream?', 'editorial:overview:intro'],
     [
@@ -477,12 +533,13 @@ describe('FrontendStreamKnowledgeSource', () => {
 
       const match = await source.findMatch(question);
       const evidence = match?.record.facts.join('\n') ?? '';
+      const signatureIndex = evidence.indexOf(signature);
+      const saleModesIndex = evidence.indexOf('sale-modes');
 
-      expect(evidence).toContain(signature);
+      expect(signatureIndex).toBeGreaterThanOrEqual(0);
       expect(evidence).toContain(discriminator);
-      expect(evidence.indexOf(signature)).toBeLessThan(
-        evidence.indexOf('sale-modes')
-      );
+      expect(saleModesIndex).toBeGreaterThanOrEqual(0);
+      expect(signatureIndex).toBeLessThan(saleModesIndex);
     }
   );
 
@@ -528,15 +585,17 @@ describe('FrontendStreamKnowledgeSource', () => {
 
     const match = await source.findMatch('withdrawBidderCredit');
     const evidence = match?.record.facts.join('\n') ?? '';
+    const protocolIndex = evidence.indexOf(
+      'StreamAuctions.withdrawBidderCredit()'
+    );
+    const testHarnessIndex = evidence.indexOf(
+      'AuctionConsistencyInvariantHandler.withdrawBidderCredit(uint256)'
+    );
 
     expect(evidence).not.toContain('AMBIGUITY:');
-    expect(
-      evidence.indexOf('StreamAuctions.withdrawBidderCredit()')
-    ).toBeLessThan(
-      evidence.indexOf(
-        'AuctionConsistencyInvariantHandler.withdrawBidderCredit(uint256)'
-      )
-    );
+    expect(protocolIndex).toBeGreaterThanOrEqual(0);
+    expect(testHarnessIndex).toBeGreaterThanOrEqual(0);
+    expect(protocolIndex).toBeLessThan(testHarnessIndex);
   });
 
   it('builds a deduplicated bounded packet with four to ten evidence records', async () => {
@@ -675,10 +734,6 @@ describe('FrontendStreamKnowledgeSource', () => {
     for (const [path, value] of Array.from(second.files.entries())) {
       first.files.set(path, value);
     }
-    first.files.set(
-      `/review-data/${REVIEW_ID}/index.json`,
-      second.files.get(`/review-data/${REVIEW_ID}/index.json`)!
-    );
     now.mockReturnValue(1_002);
 
     expect((await source.findMatch('what is stream?'))?.record.id).toContain(
