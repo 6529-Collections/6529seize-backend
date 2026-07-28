@@ -83,6 +83,23 @@ export class ReleaseBusV2ProductionSelectionError extends Error {
   }
 }
 
+export type ReleaseBusV2CurrentStagingRepairErrorCode =
+  | 'BAD_REQUEST'
+  | 'CONFLICT'
+  | 'DISABLED'
+  | 'NOT_FOUND'
+  | 'UNPROCESSABLE';
+
+export class ReleaseBusV2CurrentStagingRepairError extends Error {
+  public constructor(
+    public readonly code: ReleaseBusV2CurrentStagingRepairErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2CurrentStagingRepairError';
+  }
+}
+
 type ReleaseBusV2ManifestCandidateIdentity = {
   readonly candidate_id?: string;
   readonly repository?: string;
@@ -122,6 +139,44 @@ export type ReleaseBusV2QualificationYieldResult = {
   readonly parentTrainId: string;
   readonly qualificationTrainId: string;
   readonly candidateIds: readonly string[];
+};
+
+export type ReleaseBusV2CurrentStagingRepairIdentity = {
+  readonly repository: ReleaseBusV2Repository;
+  readonly pr_number: number;
+  readonly head_sha: string;
+};
+
+export type ReleaseBusV2CurrentStagingRepairResult = {
+  readonly manifest_id: string;
+  readonly train_id: string;
+  readonly dry_run: boolean;
+  readonly discovered: boolean;
+  readonly candidates: readonly {
+    readonly candidate_id: string;
+    readonly repository: ReleaseBusV2Repository;
+    readonly pr_number: number;
+    readonly head_sha: string;
+    readonly previous_status: ReleaseBusV2CandidateStatus;
+    readonly previous_staging_live_state: string | null;
+    readonly derived_status: 'STAGING_VALIDATED';
+    readonly derived_staging_live_state: 'LIVE';
+    readonly would_change: boolean;
+    readonly changed: boolean;
+  }[];
+  readonly github_status_updates: {
+    readonly attempted: number;
+    readonly succeeded: number;
+    readonly failed: number;
+    readonly newly_derived: number;
+    readonly reasserted: number;
+    readonly failed_candidates: readonly {
+      readonly candidate_id: string;
+      readonly repository: ReleaseBusV2Repository;
+      readonly pr_number: number;
+      readonly head_sha: string;
+    }[];
+  };
 };
 
 export function normalizeDeployPlan(
@@ -379,6 +434,179 @@ export class ReleaseBusV2Service {
     return train.id;
   }
 
+  private async retryGroupedStagingPreflightCandidate(
+    candidate: ReleaseBusV2CandidateRecord,
+    evidence: ReleaseBusV2PrEvidence,
+    actor: string,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2CandidateRecord> {
+    const current = await this.repository.findCandidateById(
+      candidate.id,
+      ctx,
+      true
+    );
+    if (
+      !current ||
+      current.status !== 'FAILED' ||
+      current.current_train_id !== null ||
+      current.staging_live_state === 'LIVE' ||
+      current.superseded_at !== null ||
+      current.production_requested_at !== null ||
+      current.production_selection_id !== null
+    )
+      throw new Error(
+        'Exact candidate is not an unowned grouped staging preflight failure'
+      );
+    if (
+      !isDeepStrictEqual(
+        parseStoredJson<ReleaseBusV2PrEvidence>(current.pr_evidence_json),
+        evidence
+      )
+    )
+      throw new Error(
+        'Grouped staging preflight retry requires unchanged exact PR evidence'
+      );
+    const failureEvents = await this.repository.listCandidateEvents(
+      current.id,
+      'STAGING_REPOSITORY_PREFLIGHT_GROUP_FAILED',
+      100,
+      ctx
+    );
+    const matchingFailures = failureEvents
+      .map((event) => ({
+        event,
+        payload: parseStoredJson<{
+          readonly repository?: unknown;
+          readonly pr_number?: unknown;
+          readonly head_sha?: unknown;
+          readonly failed_candidate_row_version?: unknown;
+          readonly failed_group_candidate_ids?: unknown;
+          readonly failed_operation_ids?: unknown;
+        }>(event.payload_json)
+      }))
+      .filter(
+        ({ event, payload }) =>
+          event.train_id !== null &&
+          payload?.repository === current.repository &&
+          payload.pr_number === current.pr_number &&
+          payload.head_sha === current.head_sha &&
+          payload.failed_candidate_row_version === current.row_version &&
+          Array.isArray(payload.failed_group_candidate_ids) &&
+          payload.failed_group_candidate_ids.every(
+            (id): id is string => typeof id === 'string'
+          ) &&
+          payload.failed_group_candidate_ids.includes(current.id) &&
+          Array.isArray(payload.failed_operation_ids) &&
+          payload.failed_operation_ids.length === 1 &&
+          payload.failed_operation_ids.every(
+            (id): id is string => typeof id === 'string'
+          )
+      );
+    if (matchingFailures.length !== 1)
+      throw new Error(
+        'Exact candidate has no unambiguous latest grouped staging preflight failure'
+      );
+    const sourceFailure = matchingFailures[0];
+    const sourceTrainId = sourceFailure.event.train_id;
+    if (!sourceTrainId)
+      throw new Error('Grouped staging preflight failure has no source train');
+    const [sourceTrain, memberships, operations, priorRetries] =
+      await Promise.all([
+        this.repository.findTrain(sourceTrainId, ctx),
+        this.repository.listTrainCandidates(sourceTrainId, ctx),
+        this.repository.listOperations(sourceTrainId, ctx, true),
+        this.repository.listCandidateEvents(
+          current.id,
+          'STAGING_REPOSITORY_PREFLIGHT_GROUP_EXPLICIT_RETRY',
+          500,
+          ctx
+        )
+      ]);
+    const membership = memberships.filter(
+      (item) =>
+        item.candidate_id === current.id &&
+        item.candidate_role === 'NEW' &&
+        item.disposition === 'REPOSITORY_PREFLIGHT_FAILED'
+    );
+    const failedOperationIds = new Set(
+      sourceFailure.payload?.failed_operation_ids as readonly string[]
+    );
+    const exactFailedOperations = operations.filter(
+      (operation) =>
+        failedOperationIds.has(operation.id) &&
+        operation.operation_type ===
+          `PREPARE_ARTIFACT_${current.repository.toUpperCase()}` &&
+        operation.repository === current.repository &&
+        operation.status === 'FAILED' &&
+        operation.failure_class === 'CANDIDATE'
+    );
+    if (
+      !sourceTrain ||
+      sourceTrain.lane !== 'STAGING' ||
+      sourceTrain.status !== 'FAILED' ||
+      sourceTrain.failure_class !== 'CANDIDATE' ||
+      sourceTrain.completed_at === null ||
+      membership.length !== 1 ||
+      exactFailedOperations.length !== failedOperationIds.size
+    )
+      throw new Error(
+        'Grouped staging preflight retry source is not one exact terminal failed train'
+      );
+    const retryId = randomUUID();
+    const retryAttempt =
+      priorRetries.reduce((maximum, event) => {
+        const attempt = parseStoredJson<{ readonly retry_attempt?: unknown }>(
+          event.payload_json
+        )?.retry_attempt;
+        return typeof attempt === 'number' &&
+          Number.isSafeInteger(attempt) &&
+          attempt > maximum
+          ? attempt
+          : maximum;
+      }, 0) + 1;
+    if (
+      !(await this.repository.updateCandidate(
+        current.id,
+        current.row_version,
+        {
+          status: 'READY_FOR_STAGING',
+          currentTrainId: null,
+          holdReason: null
+        },
+        ctx
+      ))
+    )
+      throw new Error('Candidate changed concurrently');
+    await this.repository.appendEvent(
+      {
+        trainId: sourceTrain.id,
+        candidateId: current.id,
+        eventType: 'STAGING_REPOSITORY_PREFLIGHT_GROUP_EXPLICIT_RETRY',
+        actor,
+        payload: {
+          retry_id: retryId,
+          retry_attempt: retryAttempt,
+          source_failure_event_id: sourceFailure.event.id,
+          source_train_id: sourceTrain.id,
+          repository: current.repository,
+          pr_number: current.pr_number,
+          head_sha: current.head_sha,
+          source_failed_candidate_row_version: current.row_version,
+          requeued_candidate_row_version: current.row_version + 1,
+          checks_run_id: evidence.checks_run_id,
+          checks_completed_at: evidence.checks_completed_at
+        }
+      },
+      ctx
+    );
+    const retried = await this.repository.findCandidateById(current.id, ctx);
+    if (!retried || retried.status !== 'READY_FOR_STAGING')
+      throw new Error(
+        'Explicit grouped staging preflight retry did not persist'
+      );
+    return retried;
+  }
+
   public async register(
     input: ReleaseBusV2RegisterInput,
     actor: string
@@ -532,6 +760,17 @@ export class ReleaseBusV2Service {
             )
               throw new Error(
                 'The exact candidate identity was reused with different immutable registration data'
+              );
+            if (candidate.status === 'SUPERSEDED')
+              throw new Error(
+                'A superseded exact candidate head cannot be registered again'
+              );
+            if (candidate.status === 'FAILED')
+              candidate = await this.retryGroupedStagingPreflightCandidate(
+                candidate,
+                evidence,
+                actor,
+                ctx
               );
           }
           for (const dependency of input.dependencies) {
@@ -1229,6 +1468,469 @@ export class ReleaseBusV2Service {
     return repaired;
   }
 
+  public async repairCurrentStagingManifestCandidates(
+    identities: readonly ReleaseBusV2CurrentStagingRepairIdentity[] | null,
+    actor: string,
+    dryRun = false
+  ): Promise<ReleaseBusV2CurrentStagingRepairResult> {
+    if ((!dryRun && !identities) || (identities?.length ?? 0) > 100)
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'BAD_REQUEST',
+        'Current staging repair execution requires between 1 and 100 exact candidates'
+      );
+    if (identities && identities.length === 0)
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'BAD_REQUEST',
+        'Current staging repair candidate selection may not be empty'
+      );
+    const identityKeys = (identities ?? []).map(
+      ({ repository, pr_number, head_sha }) =>
+        `${repository}:${pr_number}:${head_sha}`
+    );
+    if (
+      new Set(identityKeys).size !== (identities?.length ?? 0) ||
+      (identities ?? []).some(
+        ({ repository, pr_number, head_sha }) =>
+          !['frontend', 'backend'].includes(repository) ||
+          !Number.isSafeInteger(pr_number) ||
+          pr_number < 1 ||
+          !/^[a-f0-9]{40}$/.test(head_sha)
+      )
+    )
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'BAD_REQUEST',
+        'Current staging repair identities must be unique exact repository/PR/head tuples'
+      );
+    if (!dryRun && getReleaseBusV2Mode() === 'OFF')
+      throw new ReleaseBusV2CurrentStagingRepairError(
+        'DISABLED',
+        'Current staging repair execution is disabled while Release Bus v2 is OFF'
+      );
+    const leaseOwner = `current-staging-repair:${actor}:${randomUUID()}`;
+    const result = await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx: RequestContext = { connection };
+        let schedulerLeaseToken: string | null = null;
+        let stagingLeaseToken: string | null = null;
+        let productionLeaseToken: string | null = null;
+        try {
+          if (dryRun) {
+            const activeLocks = (await this.repository.listLocks(ctx, true))
+              .filter(({ name }) =>
+                [
+                  'scheduler',
+                  'staging-environment',
+                  'production-environment'
+                ].includes(name)
+              )
+              .filter(
+                ({ lease_token, expires_at }) =>
+                  lease_token && Number(expires_at) >= Date.now()
+              );
+            if (activeLocks.length > 0)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
+                `Current staging repair dry-run requires idle release locks: ${activeLocks.map(({ name }) => name).join(',')}`
+              );
+          } else {
+            const scheduler = await this.repository.acquireLock(
+              'scheduler',
+              null,
+              leaseOwner,
+              RELEASE_BUS_V2_LOCK_TTL_MS,
+              ctx
+            );
+            if (!scheduler?.lease_token)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
+                'Current staging repair requires an idle scheduler lock'
+              );
+            schedulerLeaseToken = scheduler.lease_token;
+            const stagingLease = await this.repository.acquireLock(
+              'staging-environment',
+              null,
+              leaseOwner,
+              RELEASE_BUS_V2_LOCK_TTL_MS,
+              ctx
+            );
+            if (!stagingLease?.lease_token)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
+                'Current staging repair requires a free staging environment lock'
+              );
+            stagingLeaseToken = stagingLease.lease_token;
+            const productionLease = await this.repository.acquireLock(
+              'production-environment',
+              null,
+              leaseOwner,
+              RELEASE_BUS_V2_LOCK_TTL_MS,
+              ctx
+            );
+            if (!productionLease?.lease_token)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'CONFLICT',
+                'Current staging repair requires a free production environment lock'
+              );
+            productionLeaseToken = productionLease.lease_token;
+          }
+          const active = await this.repository.listActiveTrains(ctx, true);
+          if (active.length > 0)
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'CONFLICT',
+              'Current staging repair requires every release train to be terminal'
+            );
+          const state = await this.repository.getStagingState(ctx, true);
+          if (
+            state.status !== 'LIVE' ||
+            !state.current_manifest_id ||
+            state.current_manifest_id !== state.last_validated_manifest_id ||
+            !state.last_transition_train_id
+          )
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
+              'Authoritative current staging state is not one unambiguous validated live manifest'
+            );
+          const manifest = await this.repository.findManifest(
+            state.current_manifest_id,
+            ctx
+          );
+          const train = await this.repository.findTrain(
+            state.last_transition_train_id,
+            ctx
+          );
+          if (
+            !manifest ||
+            manifest.id !== state.current_manifest_id ||
+            manifest.train_id !== state.last_transition_train_id ||
+            manifest.lane !== 'STAGING' ||
+            manifest.status !== 'STAGING_VALIDATED' ||
+            manifest.validated_at === null ||
+            !manifest.e2e_run_id ||
+            manifest.frontend_sha !== state.frontend_sha ||
+            manifest.backend_sha !== state.backend_sha ||
+            !train ||
+            train.lane !== 'STAGING' ||
+            train.status !== 'STAGING_VALIDATED' ||
+            train.manifest_id !== manifest.id
+          )
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
+              'Authoritative current staging manifest has incomplete validation evidence'
+            );
+          const operations = await this.repository.listOperations(
+            train.id,
+            ctx
+          );
+          const matchingE2e = operations.filter(
+            (operation) =>
+              operation.operation_type === 'E2E_STAGING' &&
+              operation.status === 'SUCCEEDED' &&
+              operation.external_id === manifest.e2e_run_id
+          );
+          if (matchingE2e.length !== 1)
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
+              'Authoritative current staging manifest has ambiguous E2E evidence'
+            );
+          const body = parseStoredJson<{
+            readonly candidates?: readonly ReleaseBusV2ManifestCandidateIdentity[];
+          }>(manifest.manifest_json);
+          const manifestCandidates = body?.candidates;
+          if (
+            !Array.isArray(manifestCandidates) ||
+            manifestCandidates.length === 0 ||
+            manifestCandidates.some(
+              ({ repository, pr_number, head_sha, candidate_id }) =>
+                !['frontend', 'backend'].includes(repository ?? '') ||
+                !Number.isSafeInteger(pr_number) ||
+                Number(pr_number) < 1 ||
+                !/^[a-f0-9]{40}$/.test(head_sha ?? '') ||
+                (candidate_id !== undefined &&
+                  (typeof candidate_id !== 'string' ||
+                    candidate_id.length === 0))
+            )
+          )
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
+              'Authoritative current staging manifest candidate identities are malformed'
+            );
+          const manifestIdentityKeys = manifestCandidates.map(
+            ({ repository, pr_number, head_sha }) =>
+              `${repository}:${pr_number}:${head_sha}`
+          );
+          const manifestCandidateIds = manifestCandidates
+            .map(({ candidate_id }) => candidate_id)
+            .filter((id): id is string => id !== undefined);
+          if (
+            new Set(manifestIdentityKeys).size !==
+              manifestIdentityKeys.length ||
+            new Set(manifestCandidateIds).size !== manifestCandidateIds.length
+          )
+            throw new ReleaseBusV2CurrentStagingRepairError(
+              'UNPROCESSABLE',
+              'Authoritative current staging manifest candidate identities are ambiguous'
+            );
+          const selectedIdentities =
+            identities ??
+            manifestCandidates.map(({ repository, pr_number, head_sha }) => ({
+              repository: repository as ReleaseBusV2Repository,
+              pr_number: pr_number as number,
+              head_sha: head_sha as string
+            }));
+          const memberships = await this.repository.listTrainCandidates(
+            train.id,
+            ctx
+          );
+          const repaired: Array<{
+            readonly candidate_id: string;
+            readonly repository: ReleaseBusV2Repository;
+            readonly pr_number: number;
+            readonly head_sha: string;
+            readonly previous_status: ReleaseBusV2CandidateStatus;
+            readonly previous_staging_live_state: string | null;
+            readonly derived_status: 'STAGING_VALIDATED';
+            readonly derived_staging_live_state: 'LIVE';
+            readonly would_change: boolean;
+            readonly changed: boolean;
+          }> = [];
+          for (const identity of selectedIdentities) {
+            const found = await this.repository.findCandidateByIdentity(
+              identity.repository,
+              identity.pr_number,
+              identity.head_sha,
+              ctx
+            );
+            if (!found)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'NOT_FOUND',
+                `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} was not found`
+              );
+            const candidate = found
+              ? await this.repository.findCandidateById(found.id, ctx, true)
+              : null;
+            const exactMemberships = candidate
+              ? memberships.filter(
+                  (membership) =>
+                    membership.candidate_id === candidate.id &&
+                    membership.disposition === 'INCLUDED'
+                )
+              : [];
+            const hasExactEvidence = Boolean(
+              candidate &&
+              candidate.repository === identity.repository &&
+              candidate.pr_number === identity.pr_number &&
+              candidate.head_sha === identity.head_sha &&
+              manifestContainsExactCandidate(manifestCandidates, candidate) &&
+              exactMemberships.length === 1 &&
+              candidate.current_train_id === null &&
+              (candidate.repository === 'frontend'
+                ? manifest.frontend_artifact_digest
+                : manifest.backend_artifact_digest)
+            );
+            if (!hasExactEvidence || !candidate)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'UNPROCESSABLE',
+                `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} is not one exact member of the authoritative current staging manifest`
+              );
+            const hasProductionLifecycle =
+              candidate.production_requested_at !== null ||
+              candidate.production_selection_id !== null ||
+              [
+                'READY_FOR_PRODUCTION',
+                CANDIDATE_EVIDENCE_READY_STATUS,
+                'WAITING_FOR_PRODUCTION_REPLAN',
+                'PRODUCTION_IN_TRAIN',
+                'PRODUCTION_BUILDING_OR_QUALIFYING',
+                'PRODUCTION_DEPLOYING',
+                'PRODUCTION_DEPLOYED'
+              ].includes(candidate.status);
+            if (
+              identities === null &&
+              hasProductionLifecycle &&
+              candidate.staging_live_state === 'LIVE' &&
+              candidate.staging_live_manifest_id === manifest.id
+            )
+              continue;
+            if (hasProductionLifecycle)
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'UNPROCESSABLE',
+                `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} has production lifecycle state that current staging repair may not rewrite`
+              );
+            const repairableStatus = [
+              'FAILED',
+              'SUPERSEDED',
+              'STAGING_VALIDATED'
+            ].includes(candidate.status);
+            const wouldChange =
+              candidate.status !== 'STAGING_VALIDATED' ||
+              candidate.staging_live_state !== 'LIVE' ||
+              candidate.staging_live_manifest_id !== manifest.id ||
+              candidate.superseded_at !== null ||
+              candidate.hold_reason !== null;
+            if (identities === null && !wouldChange) continue;
+            if (
+              !repairableStatus ||
+              (candidate.staging_live_state === 'LIVE' &&
+                candidate.staging_live_manifest_id !== manifest.id) ||
+              (!wouldChange && identities === null)
+            )
+              throw new ReleaseBusV2CurrentStagingRepairError(
+                'UNPROCESSABLE',
+                `Candidate ${identity.repository}#${identity.pr_number}@${identity.head_sha} is not one exact repairable member of the authoritative current staging manifest`
+              );
+            const changed = !dryRun && wouldChange;
+            if (changed) {
+              if (
+                !(await this.repository.updateCandidate(
+                  candidate.id,
+                  candidate.row_version,
+                  {
+                    status: 'STAGING_VALIDATED',
+                    currentTrainId: null,
+                    stagingValidatedTrainId: train.id,
+                    stagingValidatedManifestId: manifest.id,
+                    stagingLiveState: 'LIVE',
+                    stagingLiveManifestId: manifest.id,
+                    stagingAdmittedAt:
+                      candidate.staging_admitted_at ?? manifest.validated_at,
+                    stagingLiveUpdatedAt: Date.now(),
+                    holdReason: null,
+                    supersededAt: null
+                  },
+                  ctx
+                ))
+              )
+                throw new ReleaseBusV2CurrentStagingRepairError(
+                  'CONFLICT',
+                  'Candidate changed concurrently'
+                );
+              await this.repository.appendEvent(
+                {
+                  trainId: train.id,
+                  candidateId: candidate.id,
+                  eventType:
+                    'CURRENT_STAGING_MANIFEST_CANDIDATE_STATUS_DERIVED',
+                  actor,
+                  payload: {
+                    manifest_id: manifest.id,
+                    manifest_identity_sha256: manifest.identity_sha256,
+                    e2e_run_id: manifest.e2e_run_id,
+                    repository: candidate.repository,
+                    pr_number: candidate.pr_number,
+                    head_sha: candidate.head_sha,
+                    previous_status: candidate.status,
+                    previous_staging_live_state:
+                      candidate.staging_live_state ?? null,
+                    derived_status: 'STAGING_VALIDATED',
+                    derived_staging_live_state: 'LIVE',
+                    dry_run: false
+                  }
+                },
+                ctx
+              );
+            }
+            repaired.push({
+              candidate_id: candidate.id,
+              repository: candidate.repository,
+              pr_number: candidate.pr_number,
+              head_sha: candidate.head_sha,
+              previous_status: candidate.status,
+              previous_staging_live_state: candidate.staging_live_state ?? null,
+              derived_status: 'STAGING_VALIDATED',
+              derived_staging_live_state: 'LIVE',
+              would_change: wouldChange,
+              changed
+            });
+          }
+          if (!dryRun)
+            await this.repository.appendEvent(
+              {
+                trainId: train.id,
+                eventType: 'CURRENT_STAGING_MANIFEST_REPAIR_VERIFIED',
+                actor,
+                payload: {
+                  manifest_id: manifest.id,
+                  manifest_identity_sha256: manifest.identity_sha256,
+                  e2e_run_id: manifest.e2e_run_id,
+                  candidate_ids: repaired.map(
+                    ({ candidate_id }) => candidate_id
+                  ),
+                  changed_candidate_ids: repaired
+                    .filter(({ changed }) => changed)
+                    .map(({ candidate_id }) => candidate_id)
+                }
+              },
+              ctx
+            );
+          return {
+            manifest_id: manifest.id,
+            train_id: train.id,
+            dry_run: dryRun,
+            discovered: identities === null,
+            candidates: repaired
+          };
+        } finally {
+          if (productionLeaseToken)
+            await this.repository.releaseLock(
+              'production-environment',
+              productionLeaseToken,
+              ctx
+            );
+          if (stagingLeaseToken)
+            await this.repository.releaseLock(
+              'staging-environment',
+              stagingLeaseToken,
+              ctx
+            );
+          if (schedulerLeaseToken)
+            await this.repository.releaseLock(
+              'scheduler',
+              schedulerLeaseToken,
+              ctx
+            );
+        }
+      }
+    );
+    const statusResults = dryRun
+      ? []
+      : await Promise.allSettled(
+          result.candidates.map((candidate) =>
+            releaseBusGitHubApp.ensureCommitStatus(
+              candidate.repository,
+              candidate.head_sha,
+              'success',
+              'Exact current staging manifest validated; production is explicit',
+              'Release Bus v2'
+            )
+          )
+        );
+    const failedCandidates = result.candidates.filter(
+      (_candidate, index) => statusResults[index]?.status === 'rejected'
+    );
+    return {
+      ...result,
+      github_status_updates: {
+        attempted: statusResults.length,
+        succeeded: statusResults.length - failedCandidates.length,
+        failed: failedCandidates.length,
+        newly_derived: dryRun
+          ? 0
+          : result.candidates.filter(({ changed }) => changed).length,
+        reasserted: dryRun
+          ? 0
+          : result.candidates.filter(({ changed }) => !changed).length,
+        failed_candidates: failedCandidates.map(
+          ({ candidate_id, repository, pr_number, head_sha }) => ({
+            candidate_id,
+            repository,
+            pr_number,
+            head_sha
+          })
+        )
+      }
+    };
+  }
+
   public async revokeProductionReadiness(
     candidateId: string,
     expectedRowVersion: number,
@@ -1357,7 +2059,8 @@ export class ReleaseBusV2Service {
     repository: ReleaseBusV2Repository,
     branchName: string,
     currentHeadSha: string,
-    actor: string
+    actor: string,
+    expectedCurrentTrainId?: string
   ): Promise<void> {
     const superseded = await this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -1366,7 +2069,8 @@ export class ReleaseBusV2Service {
           repository,
           branchName,
           currentHeadSha,
-          ctx
+          ctx,
+          expectedCurrentTrainId
         );
         for (const candidate of changed)
           await this.repository.appendEvent(
@@ -1873,6 +2577,9 @@ export class ReleaseBusV2Service {
           let selectionId: string | null = null;
           if (lane === 'STAGING') {
             candidates = readyCandidates;
+            const newCandidateIds = new Set(
+              readyCandidates.map(({ id }) => id)
+            );
             const live = stagingState
               ? await this.repository.listLiveStagingCandidates(ctx, true)
               : [];
@@ -1881,10 +2588,18 @@ export class ReleaseBusV2Service {
                 ({ repository, pr_number }) => `${repository}:${pr_number}`
               )
             );
-            replacedCandidates = live.filter((candidate) =>
-              replacements.has(`${candidate.repository}:${candidate.pr_number}`)
+            replacedCandidates = live.filter(
+              (candidate) =>
+                !newCandidateIds.has(candidate.id) &&
+                replacements.has(
+                  `${candidate.repository}:${candidate.pr_number}`
+                )
             );
             const replacedIds = new Set(replacedCandidates.map(({ id }) => id));
+            if (replacedCandidates.some(({ id }) => newCandidateIds.has(id)))
+              throw new Error(
+                'Staging claim NEW and REPLACED candidate sets overlap'
+              );
             const requestedIds = new Set(
               stagingTransitionRequests.map(({ id }) => id)
             );
@@ -1937,6 +2652,7 @@ export class ReleaseBusV2Service {
             }
             carriedCandidates = live.filter(
               (candidate) =>
+                !newCandidateIds.has(candidate.id) &&
                 !replacedIds.has(candidate.id) &&
                 !requestedIds.has(candidate.id)
             );

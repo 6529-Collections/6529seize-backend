@@ -168,6 +168,32 @@ export const ReleaseBusV2ProductionSelectionBodySchema = Joi.object({
     .required()
 }).required();
 
+export const ReleaseBusV2CurrentStagingRepairBodySchema = Joi.object({
+  dry_run: Joi.boolean().default(false),
+  candidates: Joi.array()
+    .items(
+      Joi.object({
+        repository: Joi.string()
+          .valid(...RELEASE_BUS_V2_REPOSITORIES)
+          .required(),
+        pr_number: Joi.number().integer().positive().required(),
+        head_sha: ReleaseShaSchema.required()
+      })
+    )
+    .min(1)
+    .max(100)
+    .unique(
+      (left, right) =>
+        left.repository === right.repository &&
+        left.pr_number === right.pr_number &&
+        left.head_sha === right.head_sha
+    )
+    .when('dry_run', {
+      is: false,
+      then: Joi.required()
+    })
+}).required();
+
 export const ReleaseBusV2CandidateCancelBodySchema = Joi.object({
   expected_row_version: Joi.number().integer().positive().required()
 }).required();

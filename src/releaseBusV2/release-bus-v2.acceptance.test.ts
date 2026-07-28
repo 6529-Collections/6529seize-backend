@@ -717,8 +717,11 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockHasActiveProductionRun.mockResolvedValue(false);
     mockFindWorkflowRun.mockResolvedValue(null);
     mockResolveRefIfExists.mockImplementation(
-      async (repository: 'frontend' | 'backend') =>
-        repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
+      async (repository: 'frontend' | 'backend', ref: string) => {
+        if (ref.startsWith('feature/'))
+          return repository === 'frontend' ? '3'.repeat(40) : '4'.repeat(40);
+        return repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA;
+      }
     );
     mockResolveRef.mockImplementation(async (repository: string) =>
       repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA
@@ -738,6 +741,156 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.service.claimLane).not.toHaveBeenCalled();
     expect(mockReconcileWorkflow).not.toHaveBeenCalled();
     expect(state.repository.trains.get('train-1')?.status).toBe('PREPARED');
+  });
+
+  it('supersedes a moved active staging head, drains only dispatched work, and replans on the next tick', async () => {
+    const state = harness('SUCCEEDED');
+    const active = train('train-1', {
+      status: 'PREFLIGHTING',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest'
+    });
+    state.repository.trains.set(active.id, active);
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      ...state.repository.memberships.map((membership) => ({
+        ...membership,
+        candidate_role: 'NEW'
+      }))
+    );
+    const frontend = state.repository.candidates.get('frontend-candidate')!;
+    const backend = state.repository.candidates.get('backend-candidate')!;
+    const newerHead = '9'.repeat(40);
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend', ref: string) => {
+        if (ref === frontend.branch_name) return newerHead;
+        if (ref === backend.branch_name) return backend.head_sha;
+        return repository === 'frontend' ? FRONTEND_SHA : BACKEND_SHA;
+      }
+    );
+    state.service.invalidateBranch.mockImplementation(
+      async (...args: unknown[]) => {
+        const branchName = String(args[1]);
+        const stale = Array.from(state.repository.candidates.values()).find(
+          ({ branch_name }) => branch_name === branchName
+        );
+        if (!stale) return;
+        state.repository.candidates.set(stale.id, {
+          ...stale,
+          status: 'SUPERSEDED',
+          superseded_at: Date.now(),
+          row_version: stale.row_version + 1
+        });
+      }
+    );
+    const backendOperationIndex = state.repository.operations.findIndex(
+      ({ operation_type }) => operation_type === 'PREPARE_ARTIFACT_BACKEND'
+    );
+    const frontendOperationIndex = state.repository.operations.findIndex(
+      ({ operation_type }) => operation_type === 'PREPARE_ARTIFACT_FRONTEND'
+    );
+    const pending = {
+      ...state.repository.operations[frontendOperationIndex]!,
+      external_id: null,
+      status: 'PENDING' as const,
+      started_at: null,
+      completed_at: null
+    };
+    state.repository.operations[frontendOperationIndex] = pending;
+    const operationIdsBeforeDrain = state.repository.operations.map(
+      ({ id }) => id
+    );
+    const running = {
+      ...state.repository.operations[backendOperationIndex]!,
+      status: 'RUNNING' as const,
+      completed_at: null,
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {
+          release_train_id: active.id,
+          expected_sha: BACKEND_SHA
+        }
+      }
+    };
+    state.repository.operations[backendOperationIndex] = running;
+    mockReconcileWorkflow.mockResolvedValue(running);
+    mockFindWorkflowRun.mockResolvedValue({
+      id: running.external_id,
+      status: 'in_progress',
+      conclusion: null
+    });
+
+    await state.reconciler.runOnce('active-head-moved-wait');
+
+    expect(state.repository.candidates.get(frontend.id)).toMatchObject({
+      status: 'SUPERSEDED',
+      current_train_id: active.id
+    });
+    expect(state.repository.candidates.get(backend.id)?.status).toBe(
+      'STAGING_BUILDING'
+    );
+    expect(state.repository.trains.get(active.id)).toMatchObject({
+      status: 'PREFLIGHTING',
+      recovery_message: expect.stringContaining(
+        'no further operations will be dispatched'
+      )
+    });
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
+    expect(
+      new Set(
+        mockReconcileWorkflow.mock.calls.map(([input]) =>
+          String(input.idempotencyKey)
+        )
+      )
+    ).toEqual(new Set([running.idempotency_key]));
+    expect(
+      mockReconcileWorkflow.mock.calls.some(([input]) =>
+        String(input.operationType).startsWith('ISOLATE_')
+      )
+    ).toBe(false);
+    expect(state.repository.operations[frontendOperationIndex]).toMatchObject({
+      id: pending.id,
+      external_id: null,
+      status: 'PENDING'
+    });
+    expect(state.repository.operations.map(({ id }) => id)).toEqual(
+      operationIdsBeforeDrain
+    );
+
+    state.repository.operations[backendOperationIndex] = {
+      ...running,
+      status: 'SUCCEEDED',
+      completed_at: Date.now(),
+      row_version: running.row_version + 1
+    };
+    mockFindWorkflowRun.mockResolvedValue({
+      id: running.external_id,
+      status: 'completed',
+      conclusion: 'success'
+    });
+
+    await state.reconciler.runOnce('active-head-moved-replan');
+
+    expect(state.repository.candidates.get(frontend.id)).toMatchObject({
+      status: 'SUPERSEDED',
+      current_train_id: null
+    });
+    expect(state.repository.candidates.get(backend.id)).toMatchObject({
+      status: 'READY_FOR_STAGING',
+      current_train_id: null
+    });
+    expect(state.repository.trains.get(active.id)).toMatchObject({
+      status: 'CANCELLED',
+      completed_at: expect.any(Number)
+    });
+    expect(state.repository.operations[frontendOperationIndex]).toMatchObject({
+      id: pending.id,
+      external_id: null,
+      status: 'CANCELLED'
+    });
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
   });
 
   it('releases a terminal train lock in OFF mode only after all operations are terminal', async () => {
@@ -1143,7 +1296,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'frontend',
       ready.branch_name,
       movedHead,
-      'release-bus-v2-reconciler'
+      'release-bus-v2-reconciler',
+      undefined
     );
   });
 
@@ -2890,13 +3044,213 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
-  it('bisects a real composed-code failure and quarantines only an interaction set', async () => {
+  it('fails one staging repository group without subset work and immediately requeues the independent repository', async () => {
+    const state = harness('SUCCEEDED');
+    const staging = train('train-1', {
+      status: 'PREFLIGHTING',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest',
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    state.repository.trains.set(staging.id, staging);
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      ...state.repository.memberships.map((membership) => ({
+        ...membership,
+        candidate_role: 'NEW'
+      }))
+    );
+    const carried = {
+      ...candidate('carried-frontend', 'frontend', null),
+      pr_number: 88,
+      head_sha: '8'.repeat(40),
+      status: 'STAGING_VALIDATED' as const,
+      current_train_id: null,
+      staging_validated_train_id: 'baseline-train',
+      staging_validated_manifest_id: 'baseline-manifest',
+      staging_live_state: 'LIVE' as const,
+      staging_live_manifest_id: 'baseline-manifest'
+    };
+    state.repository.candidates.set(carried.id, carried);
+    state.repository.memberships.push({
+      id: 'membership-carried-frontend',
+      train_id: staging.id,
+      candidate_id: carried.id,
+      sequence: 3,
+      disposition: 'INCLUDED',
+      candidate_role: 'CARRY_FORWARD',
+      created_at: 1
+    });
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as {
+        operationType: string;
+        repository: 'frontend' | 'backend';
+      };
+      return {
+        ...operation(
+          staging.id,
+          typed.operationType,
+          typed.repository,
+          typed.repository === 'frontend'
+            ? 'failed-frontend-preflight'
+            : 'successful-backend-preflight'
+        ),
+        status:
+          typed.repository === 'frontend'
+            ? ('FAILED' as const)
+            : ('SUCCEEDED' as const),
+        failure_class:
+          typed.repository === 'frontend' ? ('CANDIDATE' as const) : null,
+        failure_message:
+          typed.repository === 'frontend'
+            ? 'combined frontend checks failed'
+            : null
+      };
+    });
+    const context = {
+      train: staging,
+      memberships: state.repository.memberships,
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advancePreparation(input: typeof context): Promise<void>;
+      }
+    ).advancePreparation(context);
+
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
+    expect(
+      mockReconcileWorkflow.mock.calls.some(([input]) =>
+        String((input as { operationType?: string }).operationType).startsWith(
+          'ISOLATE_'
+        )
+      )
+    ).toBe(false);
+    expect(state.repository.candidates.get('frontend-candidate')).toMatchObject(
+      {
+        status: 'FAILED',
+        current_train_id: null
+      }
+    );
+    expect(state.repository.candidates.get('backend-candidate')).toMatchObject({
+      status: 'READY_FOR_STAGING',
+      current_train_id: null
+    });
+    expect(state.repository.candidates.get(carried.id)).toEqual(carried);
+    expect(state.repository.trains.get(staging.id)).toMatchObject({
+      status: 'FAILED',
+      completed_at: expect.any(Number),
+      recovery_message: expect.stringContaining('immediately eligible')
+    });
+  });
+
+  it('fails A+B+C once as one same-repository staging group and never auto-retries it', async () => {
+    const state = harness('SUCCEEDED');
+    const staging = train('train-1', {
+      status: 'PREFLIGHTING',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest',
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null
+    });
+    state.repository.trains.set(staging.id, staging);
+    state.repository.candidates.clear();
+    state.repository.memberships.length = 0;
+    state.repository.dependencies.length = 0;
+    const grouped = ['a', 'b', 'c'].map((id, index) => ({
+      ...candidate(`backend-${id}`, 'backend', {
+        units: ['api'],
+        edges: []
+      }),
+      pr_number: 3001 + index,
+      head_sha: String(index + 5).repeat(40),
+      current_train_id: staging.id
+    }));
+    grouped.forEach((item, index) => {
+      state.repository.candidates.set(item.id, item);
+      state.repository.memberships.push({
+        id: `membership-${item.id}`,
+        train_id: staging.id,
+        candidate_id: item.id,
+        sequence: index + 1,
+        disposition: 'INCLUDED',
+        candidate_role: 'NEW',
+        created_at: 1
+      });
+    });
+    state.repository.operations.length = 0;
+    mockReconcileWorkflow.mockImplementation(async (spec) => {
+      const typed = spec as {
+        operationType: string;
+        repository: 'frontend' | 'backend';
+      };
+      return {
+        ...operation(
+          staging.id,
+          typed.operationType,
+          typed.repository,
+          'failed-grouped-backend-preflight'
+        ),
+        status: 'FAILED' as const,
+        failure_class: 'CANDIDATE' as const,
+        failure_message: 'combined backend checks failed'
+      };
+    });
+    const context = {
+      train: staging,
+      memberships: state.repository.memberships,
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advancePreparation(input: typeof context): Promise<void>;
+      }
+    ).advancePreparation(context);
+
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
+    expect(
+      mockReconcileWorkflow.mock.calls.some(([input]) =>
+        String((input as { operationType?: string }).operationType).startsWith(
+          'ISOLATE_'
+        )
+      )
+    ).toBe(false);
+    expect(
+      grouped.map(({ id }) => state.repository.candidates.get(id)?.status)
+    ).toEqual(['FAILED', 'FAILED', 'FAILED']);
+    expect(
+      state.repository.events.filter(
+        ({ eventType }) =>
+          eventType === 'STAGING_REPOSITORY_PREFLIGHT_GROUP_FAILED'
+      )
+    ).toHaveLength(3);
+    expect(state.repository.trains.get(staging.id)).toMatchObject({
+      status: 'FAILED',
+      completed_at: expect.any(Number)
+    });
+
+    await state.reconciler.runOnce('no-implicit-group-retry');
+
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
+    expect(
+      grouped.map(({ id }) => state.repository.candidates.get(id)?.status)
+    ).toEqual(['FAILED', 'FAILED', 'FAILED']);
+  });
+
+  it('retains deterministic isolation only for a production preflight diagnosis', async () => {
     const state = harness('SUCCEEDED');
     state.repository.candidates.clear();
     state.repository.memberships.length = 0;
     state.repository.trains.set(
       'train-1',
       train('train-1', {
+        lane: 'PRODUCTION',
         status: 'PREFLIGHTING',
         frontend_composed_sha: FRONTEND_SHA,
         backend_composed_sha: null,
@@ -2993,10 +3347,10 @@ describe('Release Bus v2 offline acceptance harness', () => {
     });
     expect(state.repository.candidates.get('b')?.status).toBe('FAILED');
     expect(state.repository.candidates.get('c')?.status).toBe(
-      'READY_FOR_STAGING'
+      'READY_FOR_PRODUCTION'
     );
     expect(state.repository.candidates.get('d')?.status).toBe(
-      'READY_FOR_STAGING'
+      'READY_FOR_PRODUCTION'
     );
     expect(
       state.repository.memberships.find((item) => item.candidate_id === 'a')

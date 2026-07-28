@@ -1,12 +1,13 @@
 const mockResolveRef = jest.fn();
 const mockQualification = jest.fn();
+const mockEnsureCommitStatus = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
     resolveRef: (...args: unknown[]) => mockResolveRef(...args),
     getPullRequestQualification: (...args: unknown[]) =>
       mockQualification(...args),
-    ensureCommitStatus: jest.fn()
+    ensureCommitStatus: (...args: unknown[]) => mockEnsureCommitStatus(...args)
   }
 }));
 
@@ -147,6 +148,188 @@ function validatedCandidate(
     staging_validated_train_id: `staging-train-${id}`,
     staging_validated_manifest_id: `staging-manifest-${id}`,
     row_version: 1
+  };
+}
+
+function currentStagingRepairRepository(options?: {
+  readonly duplicateManifestIdentity?: boolean;
+  readonly activeTrain?: boolean;
+  readonly initialStatus?: 'FAILED' | 'SUPERSEDED';
+  readonly historicalValidationPointers?: boolean;
+}) {
+  let current: ReleaseBusV2CandidateRecord = {
+    ...candidate(options?.initialStatus ?? 'SUPERSEDED'),
+    staging_validated_train_id: options?.historicalValidationPointers
+      ? 'historical-staging-train'
+      : 'current-staging-train',
+    staging_validated_manifest_id: options?.historicalValidationPointers
+      ? 'historical-staging-manifest'
+      : 'current-staging-manifest',
+    staging_live_state: 'NOT_LIVE',
+    staging_live_manifest_id: null,
+    staging_admitted_at: 10,
+    staging_live_updated_at: 11,
+    superseded_at: 12
+  };
+  const manifestIdentity = {
+    candidate_id: current.id,
+    repository: current.repository,
+    pr_number: current.pr_number,
+    head_sha: current.head_sha
+  };
+  const appendEvent = jest.fn(
+    async (_event: { readonly eventType: string }, _ctx?: unknown) => undefined
+  );
+  const updateCandidate = jest.fn(
+    async (
+      _id: string,
+      rowVersion: number,
+      fields: Record<string, unknown>
+    ) => {
+      if (rowVersion !== current.row_version) return false;
+      current = {
+        ...current,
+        status:
+          (fields.status as ReleaseBusV2CandidateRecord['status']) ??
+          current.status,
+        current_train_id:
+          fields.currentTrainId === undefined
+            ? current.current_train_id
+            : (fields.currentTrainId as string | null),
+        staging_validated_train_id:
+          fields.stagingValidatedTrainId === undefined
+            ? current.staging_validated_train_id
+            : (fields.stagingValidatedTrainId as string | null),
+        staging_validated_manifest_id:
+          fields.stagingValidatedManifestId === undefined
+            ? current.staging_validated_manifest_id
+            : (fields.stagingValidatedManifestId as string | null),
+        staging_live_state:
+          (fields.stagingLiveState as 'LIVE' | 'NOT_LIVE' | undefined) ??
+          current.staging_live_state,
+        staging_live_manifest_id:
+          fields.stagingLiveManifestId === undefined
+            ? current.staging_live_manifest_id
+            : (fields.stagingLiveManifestId as string | null),
+        staging_admitted_at:
+          fields.stagingAdmittedAt === undefined
+            ? current.staging_admitted_at
+            : (fields.stagingAdmittedAt as number | null),
+        staging_live_updated_at:
+          fields.stagingLiveUpdatedAt === undefined
+            ? current.staging_live_updated_at
+            : (fields.stagingLiveUpdatedAt as number | null),
+        hold_reason:
+          fields.holdReason === undefined
+            ? current.hold_reason
+            : (fields.holdReason as string | null),
+        superseded_at:
+          fields.supersededAt === undefined
+            ? current.superseded_at
+            : (fields.supersededAt as number | null),
+        row_version: current.row_version + 1
+      };
+      return true;
+    }
+  );
+  const train = {
+    id: 'current-staging-train',
+    lane: 'STAGING',
+    status: options?.activeTrain ? 'PREFLIGHTING' : 'STAGING_VALIDATED',
+    manifest_id: 'current-staging-manifest'
+  };
+  const repository = {
+    executeNativeQueriesInTransaction: jest.fn(
+      async (callback: (connection: unknown) => Promise<unknown>) =>
+        callback({})
+    ),
+    acquireLock: jest.fn(async (name: string) => ({
+      lease_token: `${name}-lease`
+    })),
+    releaseLock: jest.fn(async (_name: string, _leaseToken: string) => true),
+    listActiveTrains: jest.fn(async () =>
+      options?.activeTrain ? [train] : []
+    ),
+    listLocks: jest.fn(async () => [
+      {
+        name: 'scheduler',
+        lease_token: null,
+        expires_at: null
+      },
+      {
+        name: 'staging-environment',
+        lease_token: null,
+        expires_at: null
+      },
+      {
+        name: 'production-environment',
+        lease_token: null,
+        expires_at: null
+      }
+    ]),
+    getStagingState: jest.fn(async () => ({
+      id: 'current',
+      status: 'LIVE',
+      current_manifest_id: 'current-staging-manifest',
+      last_validated_manifest_id: 'current-staging-manifest',
+      frontend_sha: '1'.repeat(40),
+      backend_sha: '2'.repeat(40),
+      frontend_staging_ref_sha: '3'.repeat(40),
+      backend_staging_ref_sha: '4'.repeat(40),
+      clean_main: false,
+      last_transition_train_id: 'current-staging-train',
+      updated_at: 20,
+      row_version: 5
+    })),
+    findManifest: jest.fn(async () => ({
+      id: 'current-staging-manifest',
+      train_id: 'current-staging-train',
+      lane: 'STAGING',
+      status: 'STAGING_VALIDATED',
+      identity_sha256: '5'.repeat(64),
+      frontend_sha: '1'.repeat(40),
+      backend_sha: '2'.repeat(40),
+      frontend_artifact_digest: '6'.repeat(64),
+      backend_artifact_digest: '7'.repeat(64),
+      e2e_run_id: '12345',
+      manifest_json: {
+        candidates: options?.duplicateManifestIdentity
+          ? [manifestIdentity, manifestIdentity]
+          : [manifestIdentity]
+      },
+      deployed_at: 19,
+      validated_at: 20,
+      created_at: 18,
+      updated_at: 20
+    })),
+    findTrain: jest.fn(async () => train),
+    listOperations: jest.fn(async () => [
+      {
+        id: 'current-staging-e2e',
+        operation_type: 'E2E_STAGING',
+        status: 'SUCCEEDED',
+        external_id: '12345'
+      }
+    ]),
+    listTrainCandidates: jest.fn(async () => [
+      {
+        candidate_id: current.id,
+        disposition: 'INCLUDED'
+      }
+    ]),
+    findCandidateByIdentity: jest.fn(
+      async (_repository?: string, _prNumber?: number, _headSha?: string) =>
+        current
+    ),
+    findCandidateById: jest.fn(async (_id?: string) => current),
+    updateCandidate,
+    appendEvent
+  };
+  return {
+    current: () => current,
+    repository,
+    updateCandidate,
+    appendEvent
   };
 }
 
@@ -371,6 +554,456 @@ function configureRetrySource(
   );
   return train;
 }
+
+function groupedStagingRetryRepository() {
+  const sourceTrainId = 'grouped-staging-failure';
+  const failedOperationId = 'grouped-backend-preflight';
+  const plan = { units: ['api'], edges: [] };
+  const candidates = new Map<string, ReleaseBusV2CandidateRecord>();
+  const events: Array<{
+    id: string;
+    train_id: string | null;
+    candidate_id: string | null;
+    event_type: string;
+    github_actor: string | null;
+    payload_json: unknown;
+    created_at: number;
+  }> = [];
+  const identity = (
+    id: string,
+    prNumber: number,
+    headCharacter: string
+  ): ReleaseBusV2CandidateRecord => ({
+    ...candidate('FAILED'),
+    id,
+    repository: 'backend',
+    pr_number: prNumber,
+    branch_name: `feature/${id}`,
+    head_sha: headCharacter.repeat(40),
+    deploy_plan_json: plan,
+    pr_evidence_json: {
+      base_sha: '1'.repeat(40),
+      merge_sha: headCharacter.repeat(40),
+      checks_run_id: `checks-${id}`,
+      checks_completed_at: 10,
+      artifact_run_id: null,
+      artifact_name: null,
+      artifact_digest: null,
+      contributor_github_logins: ['developer']
+    },
+    staging_live_state: 'NOT_LIVE',
+    current_train_id: null,
+    hold_reason:
+      "Combined backend preflight failed for this train's NEW candidate group",
+    row_version: 2
+  });
+  const initial = [
+    identity('candidate-a', 2001, 'a'),
+    identity('candidate-b', 2002, 'b'),
+    identity('candidate-c', 2003, 'c')
+  ];
+  for (const item of initial) {
+    candidates.set(item.id, item);
+    events.push({
+      id: `grouped-failure-${item.id}`,
+      train_id: sourceTrainId,
+      candidate_id: item.id,
+      event_type: 'STAGING_REPOSITORY_PREFLIGHT_GROUP_FAILED',
+      github_actor: 'release-bus-v2',
+      payload_json: {
+        repository: item.repository,
+        pr_number: item.pr_number,
+        head_sha: item.head_sha,
+        failed_candidate_row_version: item.row_version,
+        failed_group_candidate_ids: initial.map(({ id }) => id),
+        failed_operation_ids: [failedOperationId]
+      },
+      created_at: 20
+    });
+  }
+  const memberships = initial.map((item, index) => ({
+    id: `membership-${item.id}`,
+    train_id: sourceTrainId,
+    candidate_id: item.id,
+    sequence: index + 1,
+    disposition: 'REPOSITORY_PREFLIGHT_FAILED',
+    candidate_role: 'NEW',
+    created_at: 1
+  }));
+  const appendEvent = jest.fn(
+    async (event: {
+      trainId?: string;
+      candidateId?: string;
+      eventType: string;
+      actor?: string;
+      payload: unknown;
+    }) => {
+      events.push({
+        id: `event-${events.length + 1}`,
+        train_id: event.trainId ?? null,
+        candidate_id: event.candidateId ?? null,
+        event_type: event.eventType,
+        github_actor: event.actor ?? null,
+        payload_json: event.payload,
+        created_at: 30 + events.length
+      });
+    }
+  );
+  const repository = {
+    listControls: jest.fn(async () => []),
+    executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+      callback({})
+    ),
+    supersedeOtherPrHeads: jest.fn(
+      async (repositoryName: string, prNumber: number, headSha: string) => {
+        const superseded: ReleaseBusV2CandidateRecord[] = [];
+        for (const [id, item] of Array.from(candidates.entries())) {
+          if (
+            item.repository !== repositoryName ||
+            item.pr_number !== prNumber ||
+            item.head_sha === headSha ||
+            item.status === 'SUPERSEDED'
+          )
+            continue;
+          superseded.push(item);
+          candidates.set(id, {
+            ...item,
+            status: 'SUPERSEDED',
+            superseded_at: Date.now(),
+            row_version: item.row_version + 1
+          });
+        }
+        return superseded;
+      }
+    ),
+    findCandidateByIdentity: jest.fn(
+      async (repositoryName: string, prNumber: number, headSha: string) =>
+        Array.from(candidates.values()).find(
+          (item) =>
+            item.repository === repositoryName &&
+            item.pr_number === prNumber &&
+            item.head_sha === headSha
+        ) ?? null
+    ),
+    findCandidateById: jest.fn(
+      async (id: string) => candidates.get(id) ?? null
+    ),
+    createCandidate: jest.fn(
+      async (input: {
+        repository: 'frontend' | 'backend';
+        prNumber: number;
+        branchName: string;
+        headSha: string;
+        requestedBy: string;
+        deployPlan: ReleaseBusV2CandidateRecord['deploy_plan_json'];
+        prEvidence: ReleaseBusV2CandidateRecord['pr_evidence_json'];
+      }) => {
+        const created: ReleaseBusV2CandidateRecord = {
+          ...candidate('READY_FOR_STAGING'),
+          id: `created-${input.prNumber}`,
+          repository: input.repository,
+          pr_number: input.prNumber,
+          branch_name: input.branchName,
+          head_sha: input.headSha,
+          requested_by: input.requestedBy,
+          deploy_plan_json: input.deployPlan,
+          pr_evidence_json: input.prEvidence,
+          staging_live_state: 'NOT_LIVE',
+          row_version: 1
+        };
+        candidates.set(created.id, created);
+        return created;
+      }
+    ),
+    listDependencies: jest.fn(async () => []),
+    addDependency: jest.fn(async () => undefined),
+    listCandidates: jest.fn(async (statuses: readonly string[]) =>
+      Array.from(candidates.values()).filter(({ status }) =>
+        statuses.includes(status)
+      )
+    ),
+    listCandidateEvents: jest.fn(
+      async (candidateId: string, eventType: string) =>
+        events
+          .filter(
+            (event) =>
+              event.candidate_id === candidateId &&
+              event.event_type === eventType
+          )
+          .reverse()
+    ),
+    findTrain: jest.fn(async (id: string) =>
+      id === sourceTrainId
+        ? {
+            id,
+            lane: 'STAGING',
+            status: 'FAILED',
+            failure_class: 'CANDIDATE',
+            completed_at: 21
+          }
+        : null
+    ),
+    listTrainCandidates: jest.fn(async (id: string) =>
+      id === sourceTrainId ? memberships : []
+    ),
+    listOperations: jest.fn(async (id: string) =>
+      id === sourceTrainId
+        ? [
+            {
+              id: failedOperationId,
+              train_id: sourceTrainId,
+              operation_type: 'PREPARE_ARTIFACT_BACKEND',
+              repository: 'backend',
+              status: 'FAILED',
+              failure_class: 'CANDIDATE'
+            }
+          ]
+        : []
+    ),
+    updateCandidate: jest.fn(
+      async (
+        id: string,
+        rowVersion: number,
+        fields: {
+          status?: ReleaseBusV2CandidateRecord['status'];
+          currentTrainId?: string | null;
+          holdReason?: string | null;
+        }
+      ) => {
+        const item = candidates.get(id);
+        if (!item || item.row_version !== rowVersion) return false;
+        candidates.set(id, {
+          ...item,
+          status: fields.status ?? item.status,
+          current_train_id:
+            fields.currentTrainId === undefined
+              ? item.current_train_id
+              : fields.currentTrainId,
+          hold_reason:
+            fields.holdReason === undefined
+              ? item.hold_reason
+              : fields.holdReason,
+          row_version: item.row_version + 1
+        });
+        return true;
+      }
+    ),
+    appendEvent
+  };
+  return {
+    candidates,
+    events,
+    initial,
+    repository,
+    sourceTrainId
+  };
+}
+
+describe('Release Bus v2 explicit grouped staging preflight retry', () => {
+  const previousMode = process.env.RELEASE_BUS_V2_MODE;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_V2_MODE = 'STAGING';
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+    else process.env.RELEASE_BUS_V2_MODE = previousMode;
+  });
+
+  it('requeues only explicitly registered unchanged A and B, preserves C failure, and supersedes C only when C2 is registered', async () => {
+    const state = groupedStagingRetryRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+    const qualify = (item: ReleaseBusV2CandidateRecord) => ({
+      baseSha: '1'.repeat(40),
+      mergeSha: item.head_sha,
+      checksRunId: `checks-${item.id}`,
+      checksCompletedAt: 10,
+      artifactRunId: null,
+      artifactName: null,
+      artifactDigest: null,
+      contributorGithubLogins: ['developer']
+    });
+    mockResolveRef.mockImplementation(
+      async (_repository: string, branch: string) =>
+        Array.from(state.candidates.values()).find(
+          ({ branch_name }) => branch_name === branch
+        )?.head_sha ?? 'd'.repeat(40)
+    );
+    mockQualification.mockImplementation(
+      async (_repository: string, prNumber: number, headSha: string) => {
+        const item = Array.from(state.candidates.values()).find(
+          (candidate) =>
+            candidate.pr_number === prNumber && candidate.head_sha === headSha
+        );
+        return item
+          ? qualify(item)
+          : {
+              baseSha: '1'.repeat(40),
+              mergeSha: headSha,
+              checksRunId: 'checks-c2',
+              checksCompletedAt: 30,
+              artifactRunId: null,
+              artifactName: null,
+              artifactDigest: null,
+              contributorGithubLogins: ['developer']
+            };
+      }
+    );
+    const register = (item: ReleaseBusV2CandidateRecord) =>
+      service.register(
+        {
+          repository: item.repository,
+          pr_number: item.pr_number,
+          branch_name: item.branch_name,
+          expected_head_sha: item.head_sha,
+          deploy_plan: item.deploy_plan_json as {
+            units: string[];
+            edges: readonly (readonly [string, string])[];
+          },
+          dependencies: []
+        },
+        'developer'
+      );
+
+    expect(
+      state.initial.map(({ id }) => state.candidates.get(id)?.status)
+    ).toEqual(['FAILED', 'FAILED', 'FAILED']);
+    await expect(register(state.initial[0])).resolves.toMatchObject({
+      id: state.initial[0].id,
+      status: 'READY_FOR_STAGING',
+      row_version: 3
+    });
+    await expect(register(state.initial[1])).resolves.toMatchObject({
+      id: state.initial[1].id,
+      status: 'READY_FOR_STAGING',
+      row_version: 3
+    });
+    expect(state.candidates.get(state.initial[2].id)?.status).toBe('FAILED');
+    expect(
+      state.events.filter(
+        ({ event_type }) =>
+          event_type === 'STAGING_REPOSITORY_PREFLIGHT_GROUP_EXPLICIT_RETRY'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        candidate_id: state.initial[0].id,
+        train_id: state.sourceTrainId,
+        payload_json: expect.objectContaining({
+          retry_id: expect.any(String),
+          retry_attempt: 1,
+          source_failure_event_id: `grouped-failure-${state.initial[0].id}`
+        })
+      }),
+      expect.objectContaining({
+        candidate_id: state.initial[1].id,
+        train_id: state.sourceTrainId,
+        payload_json: expect.objectContaining({
+          retry_id: expect.any(String),
+          retry_attempt: 1,
+          source_failure_event_id: `grouped-failure-${state.initial[1].id}`
+        })
+      })
+    ]);
+
+    const c2 = {
+      ...state.initial[2],
+      id: 'candidate-c2',
+      head_sha: 'd'.repeat(40)
+    };
+    mockResolveRef.mockImplementation(async (_repository: string, branch) =>
+      branch === c2.branch_name ? c2.head_sha : '0'.repeat(40)
+    );
+    await expect(register(c2)).resolves.toMatchObject({
+      id: `created-${c2.pr_number}`,
+      head_sha: c2.head_sha,
+      status: 'READY_FOR_STAGING'
+    });
+    expect(state.candidates.get(state.initial[2].id)).toMatchObject({
+      status: 'SUPERSEDED',
+      superseded_at: expect.any(Number)
+    });
+  });
+
+  it('rejects ambiguous grouped failures, active ownership, and changed evidence', async () => {
+    const state = groupedStagingRetryRepository();
+    const target = state.initial[0];
+    const service = new ReleaseBusV2Service(state.repository as never);
+    mockResolveRef.mockResolvedValue(target.head_sha);
+    mockQualification.mockResolvedValue({
+      baseSha: '1'.repeat(40),
+      mergeSha: target.head_sha,
+      checksRunId: `checks-${target.id}`,
+      checksCompletedAt: 10,
+      artifactRunId: null,
+      artifactName: null,
+      artifactDigest: null,
+      contributorGithubLogins: ['developer']
+    });
+    const input = {
+      repository: target.repository,
+      pr_number: target.pr_number,
+      branch_name: target.branch_name,
+      expected_head_sha: target.head_sha,
+      deploy_plan: target.deploy_plan_json as {
+        units: string[];
+        edges: readonly (readonly [string, string])[];
+      },
+      dependencies: []
+    };
+
+    const active = state.candidates.get(target.id)!;
+    state.candidates.set(target.id, {
+      ...active,
+      current_train_id: state.sourceTrainId
+    });
+    await expect(service.register(input, 'developer')).rejects.toThrow(
+      'not an unowned grouped'
+    );
+    state.candidates.set(target.id, active);
+    state.events.push({
+      ...state.events.find(({ candidate_id }) => candidate_id === target.id)!,
+      id: 'ambiguous-duplicate-failure'
+    });
+    await expect(service.register(input, 'developer')).rejects.toThrow(
+      'no unambiguous latest'
+    );
+    state.events.pop();
+    mockQualification.mockResolvedValue({
+      baseSha: '2'.repeat(40),
+      mergeSha: target.head_sha,
+      checksRunId: `checks-${target.id}`,
+      checksCompletedAt: 10,
+      artifactRunId: null,
+      artifactName: null,
+      artifactDigest: null,
+      contributorGithubLogins: ['developer']
+    });
+    await expect(service.register(input, 'developer')).rejects.toThrow(
+      'different immutable registration data'
+    );
+    expect(state.candidates.get(target.id)?.status).toBe('FAILED');
+    state.candidates.set(target.id, {
+      ...state.candidates.get(target.id)!,
+      status: 'SUPERSEDED',
+      superseded_at: 40
+    });
+    mockQualification.mockResolvedValue({
+      baseSha: '1'.repeat(40),
+      mergeSha: target.head_sha,
+      checksRunId: `checks-${target.id}`,
+      checksCompletedAt: 10,
+      artifactRunId: null,
+      artifactName: null,
+      artifactDigest: null,
+      contributorGithubLogins: ['developer']
+    });
+    await expect(service.register(input, 'developer')).rejects.toThrow(
+      'superseded exact candidate head'
+    );
+  });
+});
 
 describe('Release Bus v2 explicit production opt-in', () => {
   const previousMode = process.env.RELEASE_BUS_V2_MODE;
@@ -1186,6 +1819,305 @@ describe('Release Bus v2 explicit production opt-in', () => {
     await expect(
       service.resolveCandidateStagingEvidence([exact], {})
     ).rejects.toThrow('missing exact E2E or artifact identity');
+  });
+});
+
+describe('Release Bus v2 authoritative current staging repair', () => {
+  const previousMode = process.env.RELEASE_BUS_V2_MODE;
+  const identity = {
+    repository: 'frontend' as const,
+    pr_number: 42,
+    head_sha: 'a'.repeat(40)
+  };
+
+  beforeEach(() => {
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    mockEnsureCommitStatus.mockReset();
+    mockEnsureCommitStatus.mockResolvedValue(undefined);
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+    else process.env.RELEASE_BUS_V2_MODE = previousMode;
+    mockEnsureCommitStatus.mockReset();
+    mockEnsureCommitStatus.mockResolvedValue(undefined);
+  });
+
+  it('derives exact current-manifest status once and is idempotent', async () => {
+    const state = currentStagingRepairRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const first = await service.repairCurrentStagingManifestCandidates(
+      [identity],
+      'operator'
+    );
+    const second = await service.repairCurrentStagingManifestCandidates(
+      [identity],
+      'operator'
+    );
+
+    expect(first).toMatchObject({
+      manifest_id: 'current-staging-manifest',
+      train_id: 'current-staging-train',
+      dry_run: false,
+      discovered: false,
+      candidates: [
+        {
+          candidate_id: 'candidate-id',
+          repository: 'frontend',
+          pr_number: 42,
+          head_sha: 'a'.repeat(40),
+          previous_status: 'SUPERSEDED',
+          derived_status: 'STAGING_VALIDATED',
+          derived_staging_live_state: 'LIVE',
+          would_change: true,
+          changed: true
+        }
+      ]
+    });
+    expect(second.candidates[0]?.changed).toBe(false);
+    expect(state.updateCandidate).toHaveBeenCalledTimes(1);
+    expect(first.github_status_updates).toEqual({
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+      newly_derived: 1,
+      reasserted: 0,
+      failed_candidates: []
+    });
+    expect(second.github_status_updates).toEqual({
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+      newly_derived: 0,
+      reasserted: 1,
+      failed_candidates: []
+    });
+    expect(
+      state.appendEvent.mock.calls.filter(
+        ([event]) =>
+          event.eventType ===
+          'CURRENT_STAGING_MANIFEST_CANDIDATE_STATUS_DERIVED'
+      )
+    ).toHaveLength(1);
+  });
+
+  it('discovers a FAILED exact current-manifest mismatch in a mutation-free dry-run', async () => {
+    const state = currentStagingRepairRepository({
+      initialStatus: 'FAILED',
+      historicalValidationPointers: true
+    });
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    const result = await service.repairCurrentStagingManifestCandidates(
+      null,
+      'operator',
+      true
+    );
+
+    expect(result).toMatchObject({
+      manifest_id: 'current-staging-manifest',
+      train_id: 'current-staging-train',
+      dry_run: true,
+      discovered: true,
+      candidates: [
+        {
+          candidate_id: 'candidate-id',
+          repository: 'frontend',
+          pr_number: 42,
+          head_sha: 'a'.repeat(40),
+          previous_status: 'FAILED',
+          would_change: true,
+          changed: false
+        }
+      ]
+    });
+    expect(state.updateCandidate).not.toHaveBeenCalled();
+    expect(state.appendEvent).not.toHaveBeenCalled();
+    expect(state.repository.acquireLock).not.toHaveBeenCalled();
+    expect(state.repository.releaseLock).not.toHaveBeenCalled();
+
+    await service.repairCurrentStagingManifestCandidates(
+      result.candidates.map(({ repository, pr_number, head_sha }) => ({
+        repository,
+        pr_number,
+        head_sha
+      })),
+      'operator'
+    );
+    expect(state.current()).toMatchObject({
+      status: 'STAGING_VALIDATED',
+      staging_validated_train_id: 'current-staging-train',
+      staging_validated_manifest_id: 'current-staging-manifest',
+      staging_live_state: 'LIVE',
+      staging_live_manifest_id: 'current-staging-manifest'
+    });
+  });
+
+  it('never discovers or restores a correctly superseded older head that is absent from the current manifest', async () => {
+    const state = currentStagingRepairRepository({ initialStatus: 'FAILED' });
+    const service = new ReleaseBusV2Service(state.repository as never);
+    const oldHead = 'b'.repeat(40);
+    const oldCandidate = {
+      ...state.current(),
+      id: 'historical-superseded-candidate',
+      head_sha: oldHead,
+      status: 'SUPERSEDED' as const,
+      staging_live_state: 'NOT_LIVE' as const,
+      staging_live_manifest_id: null,
+      superseded_at: 30
+    };
+    const currentFindByIdentity =
+      state.repository.findCandidateByIdentity.getMockImplementation()!;
+    const currentFindById =
+      state.repository.findCandidateById.getMockImplementation()!;
+    state.repository.findCandidateByIdentity.mockImplementation(
+      async (repository?: string, prNumber?: number, headSha?: string) =>
+        headSha === oldHead
+          ? oldCandidate
+          : currentFindByIdentity(repository, prNumber, headSha)
+    );
+    state.repository.findCandidateById.mockImplementation(
+      async (id?: string) =>
+        id === oldCandidate.id ? oldCandidate : currentFindById(id)
+    );
+
+    const dryRun = await service.repairCurrentStagingManifestCandidates(
+      null,
+      'operator',
+      true
+    );
+    await service.repairCurrentStagingManifestCandidates(
+      dryRun.candidates.map(({ repository, pr_number, head_sha }) => ({
+        repository,
+        pr_number,
+        head_sha
+      })),
+      'operator'
+    );
+
+    expect(dryRun.candidates).toEqual([
+      expect.objectContaining({
+        candidate_id: 'candidate-id',
+        head_sha: identity.head_sha
+      })
+    ]);
+    expect(state.repository.findCandidateByIdentity).not.toHaveBeenCalledWith(
+      oldCandidate.repository,
+      oldCandidate.pr_number,
+      oldHead,
+      expect.anything()
+    );
+    expect(state.updateCandidate).not.toHaveBeenCalledWith(
+      oldCandidate.id,
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
+    expect(oldCandidate).toMatchObject({
+      status: 'SUPERSEDED',
+      staging_live_state: 'NOT_LIVE',
+      superseded_at: 30
+    });
+  });
+
+  it('rejects ambiguous manifest membership without mutating a candidate', async () => {
+    const state = currentStagingRepairRepository({
+      duplicateManifestIdentity: true
+    });
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.repairCurrentStagingManifestCandidates([identity], 'operator')
+    ).rejects.toThrow('candidate identities are ambiguous');
+
+    expect(state.updateCandidate).not.toHaveBeenCalled();
+    expect(state.current().status).toBe('SUPERSEDED');
+  });
+
+  it('rejects repair while any release train remains active', async () => {
+    const state = currentStagingRepairRepository({ activeTrain: true });
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.repairCurrentStagingManifestCandidates([identity], 'operator')
+    ).rejects.toThrow('requires every release train to be terminal');
+
+    expect(state.updateCandidate).not.toHaveBeenCalled();
+  });
+
+  it('acquires and releases all execution fences in a fixed order', async () => {
+    const state = currentStagingRepairRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await service.repairCurrentStagingManifestCandidates(
+      [identity],
+      'operator'
+    );
+
+    expect(
+      state.repository.acquireLock.mock.calls.map(([name]) => name)
+    ).toEqual(['scheduler', 'staging-environment', 'production-environment']);
+    expect(
+      state.repository.releaseLock.mock.calls.map(([name]) => name)
+    ).toEqual(['production-environment', 'staging-environment', 'scheduler']);
+  });
+
+  it('allows OFF-mode discovery but rejects OFF-mode execution', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    const state = currentStagingRepairRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.repairCurrentStagingManifestCandidates(null, 'operator', true)
+    ).resolves.toMatchObject({
+      dry_run: true,
+      github_status_updates: {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        newly_derived: 0,
+        reasserted: 0
+      }
+    });
+    await expect(
+      service.repairCurrentStagingManifestCandidates([identity], 'operator')
+    ).rejects.toMatchObject({
+      name: 'ReleaseBusV2CurrentStagingRepairError',
+      code: 'DISABLED'
+    });
+    expect(state.updateCandidate).not.toHaveBeenCalled();
+  });
+
+  it('reports exact GitHub status publication failures after durable repair', async () => {
+    const state = currentStagingRepairRepository();
+    const service = new ReleaseBusV2Service(state.repository as never);
+    mockEnsureCommitStatus.mockRejectedValue(new Error('GitHub unavailable'));
+
+    const result = await service.repairCurrentStagingManifestCandidates(
+      [identity],
+      'operator'
+    );
+
+    expect(state.current()).toMatchObject({
+      status: 'STAGING_VALIDATED',
+      staging_live_state: 'LIVE'
+    });
+    expect(result.github_status_updates).toEqual({
+      attempted: 1,
+      succeeded: 0,
+      failed: 1,
+      newly_derived: 1,
+      reasserted: 0,
+      failed_candidates: [
+        {
+          candidate_id: 'candidate-id',
+          repository: 'frontend',
+          pr_number: 42,
+          head_sha: 'a'.repeat(40)
+        }
+      ]
+    });
   });
 });
 
