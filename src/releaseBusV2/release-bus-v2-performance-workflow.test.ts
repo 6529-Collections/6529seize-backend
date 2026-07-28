@@ -85,7 +85,11 @@ describe('Release Bus v2 backend critical-path contract', () => {
       ({ name }) => name === 'Bind exact PR merge-tree CI evidence'
     );
     expect(test).toBeGreaterThan(0);
-    expect(steps[test].run).toContain('npm test -- --runInBand');
+    expect(steps[test]).toMatchObject({ 'timeout-minutes': 30 });
+    expect(steps[test].run).toContain('jest --listTests');
+    expect(steps[test].run).toContain('--shard="$shard/4"');
+    expect(steps[test].run).toContain('jest --maxWorkers=2');
+    expect(steps[test].run).toContain('diff -u complete.sorted shards.sorted');
     expect(steps[test].run).toContain('npm run ci:assert-source-clean');
     expect(build).toBeGreaterThan(test);
     expect(bind).toBeGreaterThan(build);

@@ -67,8 +67,27 @@ jobs:
           npm run format:check
           npm run ci:assert-source-clean
       - name: Test backend
+        timeout-minutes: 30
         run: |
-          npm test -- --runInBand
+          set -euo pipefail
+          rm -rf pr-ci-jest-inventory
+          mkdir -p pr-ci-jest-inventory
+          NODE_ENV=test ./node_modules/.bin/jest --listTests \
+            | sort -u > pr-ci-jest-inventory/complete.txt
+          test -s pr-ci-jest-inventory/complete.txt
+          for shard in 1 2 3 4; do
+            NODE_ENV=test ./node_modules/.bin/jest --listTests \
+              --shard="$shard/4" \
+              | sort -u > "pr-ci-jest-inventory/shard-$shard.txt"
+            test -s "pr-ci-jest-inventory/shard-$shard.txt"
+            NODE_ENV=test NODE_OPTIONS=--max-old-space-size=3072 \
+              ./node_modules/.bin/jest --maxWorkers=2 --shard="$shard/4"
+          done
+          sort pr-ci-jest-inventory/complete.txt > complete.sorted
+          cat pr-ci-jest-inventory/shard-*.txt | sort > shards.sorted
+          test -z "$(uniq -d shards.sorted)"
+          test "$(wc -l < shards.sorted)" -eq "$(wc -l < complete.sorted)"
+          diff -u complete.sorted shards.sorted
           npm run ci:assert-source-clean
       - name: Build backend
         run: npm run build
