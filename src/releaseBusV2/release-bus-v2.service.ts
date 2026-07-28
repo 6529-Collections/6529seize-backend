@@ -38,6 +38,7 @@ export const CANDIDATE_STAGING_EVIDENCE_POLICY =
   'CANDIDATE_STAGING_EVIDENCE_V1' as const;
 export const CANDIDATE_EVIDENCE_READY_STATUS =
   'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION' as const;
+const PRODUCTION_REPLAN_INTENT_SCAN_LIMIT = 500;
 
 const TERMINAL_TRAIN_STATUSES = new Set([
   'STAGING_VALIDATED',
@@ -55,11 +56,103 @@ const PRE_MAIN_PRODUCTION_OPERATION_TYPES = new Set([
   'PREPARE_ARTIFACT_BACKEND',
   'PREPARE_ARTIFACT_FRONTEND'
 ]);
+const PRODUCTION_REPLAN_READY_STATUSES = new Set<
+  ReleaseBusV2CandidateRecord['status']
+>([
+  CANDIDATE_EVIDENCE_READY_STATUS,
+  'READY_FOR_PRODUCTION',
+  'WAITING_FOR_PRODUCTION_REPLAN'
+]);
+const PRODUCTION_REPLAN_BOUND_STATUSES = new Set<
+  ReleaseBusV2CandidateRecord['status']
+>(['PRODUCTION_IN_TRAIN', 'PRODUCTION_BUILDING_OR_QUALIFYING']);
 const REQUIRED_MAINTENANCE_LOCKS = new Set([
   'scheduler',
   'staging-environment',
   'production-environment'
 ]);
+
+export type ReleaseBusV2SafeProductionReplanResult =
+  | {
+      readonly status: 'REPLANNED';
+      readonly trainId: string;
+      readonly candidateIds: readonly string[];
+      readonly sourceSelectionIds: readonly string[];
+    }
+  | {
+      readonly status: 'FROZEN';
+      readonly trainId: string;
+      readonly reason: string;
+    }
+  | {
+      readonly status: 'NOOP';
+      readonly trainId: string;
+      readonly reason: string;
+    };
+
+type ProductionReplanRequest = {
+  readonly trainId: string;
+  readonly reason: string;
+  readonly actor: string;
+};
+
+type ProductionReplanCandidateSource = {
+  readonly candidate: ReleaseBusV2CandidateRecord;
+  readonly sourceSelectionId: string;
+  readonly sourceTrainId: string | null;
+};
+
+type ProductionReplanOmission = {
+  readonly candidate: ReleaseBusV2CandidateRecord;
+  readonly sourceSelectionId: string | null;
+  readonly sourceTrainId: string | null;
+  readonly reason: string;
+};
+
+type ProductionReplanCandidateQualification =
+  | {
+      readonly eligible: true;
+      readonly source: ProductionReplanCandidateSource;
+      readonly evidence: ReleaseBusV2CandidateStagingEvidence;
+    }
+  | {
+      readonly eligible: false;
+      readonly omission: ProductionReplanOmission;
+    };
+
+export function irreversibleProductionOperationReason(
+  operation: ReleaseBusV2OperationRecord
+): string | null {
+  if (
+    operation.operation_type.startsWith('ADVANCE_MAIN_') &&
+    operation.status === 'SUCCEEDED'
+  )
+    return `${operation.operation_type} succeeded`;
+  if (
+    operation.environment === 'prod' &&
+    operation.operation_type.startsWith('DEPLOY_') &&
+    (operation.external_id !== null ||
+      ['DISPATCHED', 'RUNNING', 'RETRY_WAIT', 'SUCCEEDED'].includes(
+        operation.status
+      ))
+  )
+    return `${operation.operation_type} was dispatched`;
+  if (
+    operation.operation_type === 'E2E_PROD' &&
+    operation.status !== 'CANCELLED'
+  )
+    return 'production E2E was created';
+  return null;
+}
+
+function productionReplanOperationMayStillBeRunning(
+  operation: ReleaseBusV2OperationRecord
+): boolean {
+  return (
+    ['DISPATCHED', 'RUNNING'].includes(operation.status) ||
+    (operation.status === 'PENDING' && operation.external_id !== null)
+  );
+}
 
 export class ReleaseBusV2StagingTransitionConflictError extends Error {
   public constructor(message: string) {
@@ -964,195 +1057,213 @@ export class ReleaseBusV2Service {
           'Candidate branch moved after staging validation'
         );
     }
-    return this.repository.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctx: RequestContext = { connection };
-        const locked: ReleaseBusV2CandidateRecord[] = [];
-        const retrySourceByCandidateId = new Map<string, string>();
-        const orderedIds = Array.from(selectedIds).sort((left, right) =>
-          left.localeCompare(right)
-        );
-        const dependencies = await this.repository.listDependencies(
-          orderedIds,
-          ctx
-        );
-        const lockIds = Array.from(
-          new Set([
-            ...orderedIds,
-            ...dependencies
-              .filter(({ environment }) => environment !== 'STAGING')
-              .map(({ prerequisite_candidate_id }) => prerequisite_candidate_id)
-          ])
-        ).sort((left, right) => left.localeCompare(right));
-        const lockedById = new Map<
-          string,
-          ReleaseBusV2CandidateRecord | null
-        >();
-        for (const candidateId of lockIds)
-          lockedById.set(
-            candidateId,
-            await this.repository.findCandidateById(candidateId, ctx, true)
+    const scheduler = await this.repository.acquireLock(
+      'scheduler',
+      null,
+      `production-selection:${randomUUID()}`,
+      RELEASE_BUS_V2_LOCK_TTL_MS,
+      {}
+    );
+    if (!scheduler?.lease_token)
+      throw new ReleaseBusV2ProductionSelectionError(
+        'CONFLICT',
+        'Production selection raced another scheduler transaction; refresh and retry'
+      );
+    try {
+      return await this.repository.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx: RequestContext = { connection };
+          const locked: ReleaseBusV2CandidateRecord[] = [];
+          const retrySourceByCandidateId = new Map<string, string>();
+          const orderedIds = Array.from(selectedIds).sort((left, right) =>
+            left.localeCompare(right)
           );
-        // The exact candidate rows remain locked until the new selection is
-        // committed. A production claim must change one of those rows from a
-        // ready state while holding the scheduler lease, so no newer train can
-        // include a FAILED retry candidate between this lookup and its update.
-        for (const selectedId of orderedIds) {
-          const candidate = lockedById.get(selectedId) ?? null;
-          if (!candidate)
-            throw new ReleaseBusV2ProductionSelectionError(
-              'NOT_FOUND',
-              'Candidate not found'
-            );
-          const expected = selectionById.get(candidate.id);
-          if (
-            !expected ||
-            candidate.row_version !== expected.expectedRowVersion
-          )
-            throw new ReleaseBusV2ProductionSelectionError(
-              'CONFLICT',
-              'Candidate changed; refresh before marking production ready'
-            );
-          if (
-            !candidate.staging_validated_manifest_id ||
-            candidate.superseded_at !== null
-          )
-            throw new ReleaseBusV2ProductionSelectionError(
-              'CONFLICT',
-              'The exact candidate SHA is not staging validated'
-            );
-          const retrySource = await this.resolvePreMainProductionRetrySource(
-            candidate,
+          const dependencies = await this.repository.listDependencies(
+            orderedIds,
             ctx
           );
-          if (retrySource)
-            retrySourceByCandidateId.set(candidate.id, retrySource);
-          if (candidate.head_sha !== expected.expectedHeadSha.toLowerCase())
-            throw new ReleaseBusV2ProductionSelectionError(
-              'CONFLICT',
-              'Candidate changed after branch verification'
+          const lockIds = Array.from(
+            new Set([
+              ...orderedIds,
+              ...dependencies
+                .filter(({ environment }) => environment !== 'STAGING')
+                .map(
+                  ({ prerequisite_candidate_id }) => prerequisite_candidate_id
+                )
+            ])
+          ).sort((left, right) => left.localeCompare(right));
+          const lockedById = new Map<
+            string,
+            ReleaseBusV2CandidateRecord | null
+          >();
+          for (const candidateId of lockIds)
+            lockedById.set(
+              candidateId,
+              await this.repository.findCandidateById(candidateId, ctx, true)
             );
-          locked.push(candidate);
-        }
-        // Re-resolve while every selected candidate row is locked. The earlier
-        // resolution is a fast rejection; this is the authoritative
-        // selection-write fence.
-        const lockedHeads = await Promise.all(
-          locked.map((candidate) =>
-            releaseBusGitHubApp.resolveRef(
-              candidate.repository,
-              candidate.branch_name
+          // The exact candidate rows remain locked until the new selection is
+          // committed. A production claim must change one of those rows from a
+          // ready state while holding the scheduler lease, so no newer train can
+          // include a FAILED retry candidate between this lookup and its update.
+          for (const selectedId of orderedIds) {
+            const candidate = lockedById.get(selectedId) ?? null;
+            if (!candidate)
+              throw new ReleaseBusV2ProductionSelectionError(
+                'NOT_FOUND',
+                'Candidate not found'
+              );
+            const expected = selectionById.get(candidate.id);
+            if (
+              !expected ||
+              candidate.row_version !== expected.expectedRowVersion
             )
-          )
-        );
-        for (let index = 0; index < locked.length; index += 1) {
-          if (lockedHeads[index] !== locked[index]?.head_sha)
-            throw new ReleaseBusV2ProductionSelectionError(
-              'CONFLICT',
-              'Candidate changed after branch verification'
+              throw new ReleaseBusV2ProductionSelectionError(
+                'CONFLICT',
+                'Candidate changed; refresh before marking production ready'
+              );
+            if (
+              !candidate.staging_validated_manifest_id ||
+              candidate.superseded_at !== null
+            )
+              throw new ReleaseBusV2ProductionSelectionError(
+                'CONFLICT',
+                'The exact candidate SHA is not staging validated'
+              );
+            const retrySource = await this.resolvePreMainProductionRetrySource(
+              candidate,
+              ctx
             );
-        }
-        const evidence = await this.resolveCandidateStagingEvidence(
-          locked,
-          ctx
-        );
-        await this.assertProductionDependencyClosure(locked, ctx, lockedById);
-        const now = Date.now();
-        const selectionId = randomUUID();
-        for (const candidate of locked) {
-          if (
-            !(await this.repository.updateCandidate(
-              candidate.id,
-              candidate.row_version,
+            if (retrySource)
+              retrySourceByCandidateId.set(candidate.id, retrySource);
+            if (candidate.head_sha !== expected.expectedHeadSha.toLowerCase())
+              throw new ReleaseBusV2ProductionSelectionError(
+                'CONFLICT',
+                'Candidate changed after branch verification'
+              );
+            locked.push(candidate);
+          }
+          // Re-resolve while every selected candidate row is locked. The earlier
+          // resolution is a fast rejection; this is the authoritative
+          // selection-write fence.
+          const lockedHeads = await Promise.all(
+            locked.map((candidate) =>
+              releaseBusGitHubApp.resolveRef(
+                candidate.repository,
+                candidate.branch_name
+              )
+            )
+          );
+          for (let index = 0; index < locked.length; index += 1) {
+            if (lockedHeads[index] !== locked[index]?.head_sha)
+              throw new ReleaseBusV2ProductionSelectionError(
+                'CONFLICT',
+                'Candidate changed after branch verification'
+              );
+          }
+          const evidence = await this.resolveCandidateStagingEvidence(
+            locked,
+            ctx
+          );
+          await this.assertProductionDependencyClosure(locked, ctx, lockedById);
+          const now = Date.now();
+          const selectionId = randomUUID();
+          for (const candidate of locked) {
+            if (
+              !(await this.repository.updateCandidate(
+                candidate.id,
+                candidate.row_version,
+                {
+                  status: CANDIDATE_EVIDENCE_READY_STATUS,
+                  productionRequestedAt: now,
+                  productionRequestedBy: actor,
+                  productionSelectionId: selectionId
+                },
+                ctx
+              ))
+            )
+              throw new ReleaseBusV2ProductionSelectionError(
+                'CONFLICT',
+                'Candidate changed concurrently'
+              );
+          }
+          await this.repository.appendEvent(
+            {
+              eventType: 'PRODUCTION_SELECTION_READY',
+              actor,
+              payload: {
+                production_selection_id: selectionId,
+                qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
+                candidate_ids: locked.map(({ id }) => id),
+                candidate_evidence: evidence,
+                retry_sources: locked.flatMap(({ id }) => {
+                  const failedTrainId = retrySourceByCandidateId.get(id);
+                  return failedTrainId
+                    ? [{ candidate_id: id, failed_train_id: failedTrainId }]
+                    : [];
+                })
+              }
+            },
+            ctx
+          );
+          for (const candidate of locked)
+            await this.repository.appendEvent(
               {
-                status: CANDIDATE_EVIDENCE_READY_STATUS,
-                productionRequestedAt: now,
-                productionRequestedBy: actor,
-                productionSelectionId: selectionId
+                candidateId: candidate.id,
+                eventType: 'CANDIDATE_READY_FOR_PRODUCTION',
+                actor,
+                payload: {
+                  head_sha: candidate.head_sha,
+                  production_selection_id: selectionId,
+                  qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
+                  retry_source_train_id:
+                    retrySourceByCandidateId.get(candidate.id) ?? null,
+                  staging_evidence: evidence.find(
+                    ({ candidate_id }) => candidate_id === candidate.id
+                  )
+                }
               },
               ctx
-            ))
-          )
-            throw new ReleaseBusV2ProductionSelectionError(
-              'CONFLICT',
-              'Candidate changed concurrently'
             );
-        }
-        await this.repository.appendEvent(
-          {
-            eventType: 'PRODUCTION_SELECTION_READY',
-            actor,
-            payload: {
-              production_selection_id: selectionId,
-              qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
-              candidate_ids: locked.map(({ id }) => id),
-              candidate_evidence: evidence,
-              retry_sources: locked.flatMap(({ id }) => {
-                const failedTrainId = retrySourceByCandidateId.get(id);
-                return failedTrainId
-                  ? [{ candidate_id: id, failed_train_id: failedTrainId }]
-                  : [];
-              })
-            }
-          },
-          ctx
-        );
-        for (const candidate of locked)
-          await this.repository.appendEvent(
-            {
-              candidateId: candidate.id,
-              eventType: 'CANDIDATE_READY_FOR_PRODUCTION',
-              actor,
-              payload: {
-                head_sha: candidate.head_sha,
-                production_selection_id: selectionId,
-                qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
-                retry_source_train_id:
-                  retrySourceByCandidateId.get(candidate.id) ?? null,
-                staging_evidence: evidence.find(
-                  ({ candidate_id }) => candidate_id === candidate.id
-                )
-              }
-            },
-            ctx
-          );
-        for (const candidate of locked) {
-          const failedTrainId = retrySourceByCandidateId.get(candidate.id);
-          if (!failedTrainId) continue;
-          await this.repository.appendEvent(
-            {
-              candidateId: candidate.id,
-              eventType: 'CANDIDATE_PRE_MAIN_PRODUCTION_RETRY_READY',
-              actor,
-              payload: {
-                failed_train_id: failedTrainId,
-                head_sha: candidate.head_sha,
-                production_selection_id: selectionId,
-                qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
-                staging_evidence: evidence.find(
-                  ({ candidate_id }) => candidate_id === candidate.id
-                )
-              }
-            },
-            ctx
-          );
-        }
-        const updated: ReleaseBusV2CandidateRecord[] = [];
-        for (const candidate of locked) {
-          const current = await this.repository.findCandidateById(
-            candidate.id,
-            ctx
-          );
-          if (!current)
-            throw new ReleaseBusV2ProductionSelectionError(
-              'CONFLICT',
-              'Candidate disappeared after production readiness'
+          for (const candidate of locked) {
+            const failedTrainId = retrySourceByCandidateId.get(candidate.id);
+            if (!failedTrainId) continue;
+            await this.repository.appendEvent(
+              {
+                candidateId: candidate.id,
+                eventType: 'CANDIDATE_PRE_MAIN_PRODUCTION_RETRY_READY',
+                actor,
+                payload: {
+                  failed_train_id: failedTrainId,
+                  head_sha: candidate.head_sha,
+                  production_selection_id: selectionId,
+                  qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
+                  staging_evidence: evidence.find(
+                    ({ candidate_id }) => candidate_id === candidate.id
+                  )
+                }
+              },
+              ctx
             );
-          updated.push(current);
+          }
+          const updated: ReleaseBusV2CandidateRecord[] = [];
+          for (const candidate of locked) {
+            const current = await this.repository.findCandidateById(
+              candidate.id,
+              ctx
+            );
+            if (!current)
+              throw new ReleaseBusV2ProductionSelectionError(
+                'CONFLICT',
+                'Candidate disappeared after production readiness'
+              );
+            updated.push(current);
+          }
+          return updated;
         }
-        return updated;
-      }
-    );
+      );
+    } finally {
+      await this.repository.releaseLock('scheduler', scheduler.lease_token, {});
+    }
   }
 
   public async resolveCandidateStagingEvidence(
@@ -2458,6 +2569,644 @@ export class ReleaseBusV2Service {
     return this.repository.getStagingState(ctx, true);
   }
 
+  private productionReplanIrreversibleReason(
+    train: ReleaseBusV2TrainRecord,
+    operations: readonly ReleaseBusV2OperationRecord[]
+  ): string | null {
+    if (train.status === 'PRODUCTION_DEPLOYING')
+      return 'the train entered PRODUCTION_DEPLOYING';
+    return (
+      operations
+        .map(irreversibleProductionOperationReason)
+        .find((reason): reason is string => reason !== null) ?? null
+    );
+  }
+
+  private async freezeProductionReplan(
+    train: ReleaseBusV2TrainRecord,
+    operations: readonly ReleaseBusV2OperationRecord[],
+    irreversibleReason: string,
+    input: ProductionReplanRequest,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2SafeProductionReplanResult> {
+    const reason = `Safe production replan refused because ${irreversibleReason}; the original exact candidate set remains frozen`;
+    const runningOperationIds = operations
+      .filter(productionReplanOperationMayStillBeRunning)
+      .map(({ id }) => id);
+    const lockDisposition =
+      runningOperationIds.length > 0
+        ? 'RETAINED_WHILE_DISPATCHED_WORK_DRAINS'
+        : 'RELEASED_OR_ALREADY_FREE_AFTER_TERMINAL_WORK';
+    if (
+      !(await this.repository.updateTrain(
+        train.id,
+        train.row_version,
+        {
+          status: 'PAUSED',
+          failureClass: 'INTERACTION',
+          failureMessage: input.reason,
+          recoveryMessage: `${reason}. Resume or recover only this train's immutable membership; production environment ownership is ${lockDisposition.toLowerCase().split('_').join(' ')}`
+        },
+        ctx
+      ))
+    )
+      throw new Error(
+        'Release Bus v2 train changed during irreversible replan fence'
+      );
+    if (runningOperationIds.length === 0)
+      await this.releaseProductionReplanEnvironmentLock(train.id, ctx);
+    await this.repository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'PRODUCTION_REPLAN_REJECTED_AFTER_IRREVERSIBLE_MUTATION',
+        actor: input.actor,
+        payload: {
+          reason,
+          source_train_id: train.id,
+          operation_ids: operations.map(({ id }) => id),
+          running_operation_ids: runningOperationIds,
+          production_environment_lock: lockDisposition
+        }
+      },
+      ctx
+    );
+    return {
+      status: 'FROZEN',
+      trainId: train.id,
+      reason
+    };
+  }
+
+  private async cancelPendingProductionReplanOperations(
+    operations: readonly ReleaseBusV2OperationRecord[],
+    reason: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    for (const operation of operations) {
+      if (TERMINAL_OPERATION_STATUSES.has(operation.status)) continue;
+      if (
+        !(await this.repository.updateOperation(
+          operation.id,
+          operation.row_version,
+          {
+            status: 'CANCELLED',
+            failureClass: 'INTERACTION',
+            failureMessage: reason,
+            completedAt: Date.now()
+          },
+          ctx
+        ))
+      )
+        throw new Error(
+          'Release Bus v2 operation changed during safe production replan'
+        );
+    }
+  }
+
+  private async lockBoundProductionReplanCandidates(
+    train: ReleaseBusV2TrainRecord,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2CandidateRecord[]> {
+    const memberships = (
+      await this.repository.listTrainCandidates(train.id, ctx)
+    )
+      .filter(({ disposition }) => disposition === 'INCLUDED')
+      .sort(
+        (left, right) =>
+          left.sequence - right.sequence ||
+          left.candidate_id.localeCompare(right.candidate_id)
+      );
+    if (memberships.length === 0)
+      throw new Error(
+        `Production replan source train ${train.id} has no included candidates`
+      );
+    const candidates: ReleaseBusV2CandidateRecord[] = [];
+    for (const membership of memberships) {
+      const candidate = await this.repository.findCandidateById(
+        membership.candidate_id,
+        ctx,
+        true
+      );
+      if (!candidate)
+        throw new Error(
+          `Production replan lost candidate ${membership.candidate_id}`
+        );
+      if (
+        candidate.current_train_id !== train.id ||
+        !PRODUCTION_REPLAN_BOUND_STATUSES.has(candidate.status) ||
+        candidate.production_requested_at === null ||
+        candidate.production_requested_by === null ||
+        candidate.production_selection_id === null ||
+        candidate.superseded_at !== null
+      )
+        throw new Error(
+          `Candidate ${candidate.id} is not safely bound to the exact production intent being replanned`
+        );
+      candidates.push(candidate);
+    }
+    return candidates;
+  }
+
+  private async holdProductionReplanCandidates(
+    train: ReleaseBusV2TrainRecord,
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    input: ProductionReplanRequest,
+    ctx: RequestContext
+  ): Promise<void> {
+    const holdReason = `Production train ${train.id} was safely cancelled before irreversible mutation; explicit intent is preserved for a current-base replacement`;
+    for (const candidate of candidates) {
+      if (
+        !(await this.repository.updateCandidate(
+          candidate.id,
+          candidate.row_version,
+          {
+            status: 'WAITING_FOR_PRODUCTION_REPLAN',
+            currentTrainId: null,
+            holdReason
+          },
+          ctx
+        ))
+      )
+        throw new Error(
+          `Candidate ${candidate.id} changed during safe production replan`
+        );
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          candidateId: candidate.id,
+          eventType: 'CANDIDATE_WAITING_FOR_PRODUCTION_REPLAN',
+          actor: input.actor,
+          payload: {
+            source_train_id: train.id,
+            source_production_selection_id: candidate.production_selection_id,
+            head_sha: candidate.head_sha,
+            reason: input.reason
+          }
+        },
+        ctx
+      );
+    }
+  }
+
+  private async cancelProductionReplanSourceTrain(
+    train: ReleaseBusV2TrainRecord,
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    sourceSelections: readonly string[],
+    input: ProductionReplanRequest,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      !(await this.repository.updateTrain(
+        train.id,
+        train.row_version,
+        {
+          status: 'CANCELLED',
+          failureClass: 'INTERACTION',
+          failureMessage: input.reason,
+          recoveryMessage:
+            'Main moved before irreversible production mutation; every exact explicit intent is preserved for a new audited current-base replacement',
+          completedAt: Date.now()
+        },
+        ctx
+      ))
+    )
+      throw new Error(
+        'Release Bus v2 train changed during transactional production replan'
+      );
+    await this.repository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'PRODUCTION_TRAIN_INTENTS_PRESERVED_FOR_SAFE_REPLAN',
+        actor: input.actor,
+        payload: {
+          source_train_id: train.id,
+          source_production_selection_ids: sourceSelections,
+          candidate_ids: candidates.map(({ id }) => id),
+          reason: input.reason
+        }
+      },
+      ctx
+    );
+  }
+
+  private async releaseProductionReplanEnvironmentLock(
+    trainId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const productionLock = (await this.repository.listLocks(ctx, true)).find(
+      ({ name, owner_train_id }) =>
+        name === 'production-environment' && owner_train_id === trainId
+    );
+    if (
+      productionLock?.lease_token &&
+      !(await this.repository.releaseLock(
+        'production-environment',
+        productionLock.lease_token,
+        ctx
+      ))
+    )
+      throw new Error(
+        'Production environment ownership changed during safe replan'
+      );
+  }
+
+  public async preserveProductionIntentsForSafeReplan(
+    input: ProductionReplanRequest
+  ): Promise<ReleaseBusV2SafeProductionReplanResult> {
+    return this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx: RequestContext = { connection };
+        const scheduler = await this.repository.acquireLock(
+          'scheduler',
+          null,
+          `production-replan:${input.trainId}`,
+          RELEASE_BUS_V2_LOCK_TTL_MS,
+          ctx
+        );
+        if (!scheduler?.lease_token)
+          return {
+            status: 'NOOP',
+            trainId: input.trainId,
+            reason:
+              'The scheduler fence is owned by another transactional actor'
+          };
+        try {
+          const train = await this.repository.findTrain(
+            input.trainId,
+            ctx,
+            true
+          );
+          if (!train || TERMINAL_TRAIN_STATUSES.has(train.status))
+            return {
+              status: 'NOOP',
+              trainId: input.trainId,
+              reason: 'The production train is already terminal or missing'
+            };
+          if (train.lane !== 'PRODUCTION')
+            throw new Error(`Train ${input.trainId} is not a production train`);
+          const operations = await this.repository.listOperations(
+            train.id,
+            ctx,
+            true
+          );
+          const irreversibleReason = this.productionReplanIrreversibleReason(
+            train,
+            operations
+          );
+          if (irreversibleReason)
+            return this.freezeProductionReplan(
+              train,
+              operations,
+              irreversibleReason,
+              input,
+              ctx
+            );
+          const runningOperation = operations.find(
+            productionReplanOperationMayStillBeRunning
+          );
+          if (runningOperation)
+            return {
+              status: 'NOOP',
+              trainId: train.id,
+              reason: `Safe production replan is waiting for operation ${runningOperation.id} (${runningOperation.operation_type}) to become terminal`
+            };
+          await this.cancelPendingProductionReplanOperations(
+            operations,
+            input.reason,
+            ctx
+          );
+          const candidates = await this.lockBoundProductionReplanCandidates(
+            train,
+            ctx
+          );
+          const sourceSelections = Array.from(
+            new Set(
+              candidates.map((candidate) => {
+                const selectionId = candidate.production_selection_id;
+                if (!selectionId)
+                  throw new Error(
+                    `Production replan candidate ${candidate.id} lost its explicit selection identity`
+                  );
+                return selectionId;
+              })
+            )
+          ).sort((left, right) => left.localeCompare(right));
+          await this.holdProductionReplanCandidates(
+            train,
+            candidates,
+            input,
+            ctx
+          );
+          await this.cancelProductionReplanSourceTrain(
+            train,
+            candidates,
+            sourceSelections,
+            input,
+            ctx
+          );
+          await this.releaseProductionReplanEnvironmentLock(train.id, ctx);
+          return {
+            status: 'REPLANNED',
+            trainId: train.id,
+            candidateIds: candidates.map(({ id }) => id),
+            sourceSelectionIds: sourceSelections
+          };
+        } finally {
+          await this.repository.releaseLock(
+            'scheduler',
+            scheduler.lease_token,
+            ctx
+          );
+        }
+      }
+    );
+  }
+
+  private async productionReplanSourceTrainId(
+    candidate: ReleaseBusV2CandidateRecord,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    if (candidate.status !== 'WAITING_FOR_PRODUCTION_REPLAN') return null;
+    // listCandidateEvents is explicitly newest-first by created_at and id.
+    const event = (
+      await this.repository.listCandidateEvents(
+        candidate.id,
+        'CANDIDATE_WAITING_FOR_PRODUCTION_REPLAN',
+        1,
+        ctx
+      )
+    )[0];
+    return event?.train_id ?? null;
+  }
+
+  private async recordProductionReplanOmission(
+    omission: ProductionReplanOmission,
+    ctx: RequestContext
+  ): Promise<void> {
+    const current = await this.repository.findCandidateById(
+      omission.candidate.id,
+      ctx,
+      true
+    );
+    if (!current)
+      throw new Error(
+        `Production replan omission candidate ${omission.candidate.id} disappeared`
+      );
+    if (
+      current.production_requested_at !== null &&
+      current.production_requested_by !== null &&
+      current.production_selection_id !== null &&
+      current.current_train_id === null &&
+      current.superseded_at === null &&
+      PRODUCTION_REPLAN_READY_STATUSES.has(current.status)
+    ) {
+      if (
+        !(await this.repository.updateCandidate(
+          current.id,
+          current.row_version,
+          {
+            status: 'WAITING_FOR_PRODUCTION_REPLAN',
+            currentTrainId: null,
+            holdReason: omission.reason
+          },
+          ctx
+        ))
+      )
+        throw new Error(
+          `Candidate ${current.id} changed while preserving omitted production intent`
+        );
+    }
+    await this.repository.appendEvent(
+      {
+        trainId: omission.sourceTrainId,
+        candidateId: current.id,
+        eventType: 'PRODUCTION_REPLAN_INTENT_OMITTED',
+        actor: 'release-bus-v2',
+        payload: {
+          candidate_id: current.id,
+          source_train_id: omission.sourceTrainId,
+          source_production_selection_id: omission.sourceSelectionId,
+          head_sha: current.head_sha,
+          reason: omission.reason
+        }
+      },
+      ctx
+    );
+  }
+
+  private productionReplanCandidateReason(
+    candidate: ReleaseBusV2CandidateRecord,
+    sourceSelectionId: string | null
+  ): string | null {
+    if (!PRODUCTION_REPLAN_READY_STATUSES.has(candidate.status))
+      return `Candidate status ${candidate.status} no longer carries claimable production intent`;
+    if (candidate.current_train_id !== null)
+      return `Candidate is owned by train ${candidate.current_train_id}`;
+    if (
+      candidate.production_requested_at === null ||
+      candidate.production_requested_by === null ||
+      sourceSelectionId === null
+    )
+      return 'Explicit production selection was revoked or is incomplete';
+    if (candidate.superseded_at !== null)
+      return 'Exact candidate SHA was superseded';
+    return null;
+  }
+
+  private async qualifyProductionReplanCandidate(
+    candidate: ReleaseBusV2CandidateRecord,
+    ctx: RequestContext
+  ): Promise<ProductionReplanCandidateQualification> {
+    const sourceTrainId = await this.productionReplanSourceTrainId(
+      candidate,
+      ctx
+    );
+    const sourceSelectionId = candidate.production_selection_id ?? null;
+    let reason = this.productionReplanCandidateReason(
+      candidate,
+      sourceSelectionId
+    );
+    if (!reason) {
+      const currentHead = await releaseBusGitHubApp.resolveRefIfExists(
+        candidate.repository,
+        candidate.branch_name
+      );
+      if (currentHead !== candidate.head_sha)
+        reason = `Candidate branch head changed from ${candidate.head_sha} to ${currentHead ?? 'deleted'}`;
+    }
+    let evidence: ReleaseBusV2CandidateStagingEvidence | null = null;
+    if (!reason)
+      try {
+        evidence =
+          (await this.resolveCandidateStagingEvidence([candidate], ctx))[0] ??
+          null;
+        if (!evidence)
+          reason = 'Exact staging evidence resolution returned no candidate';
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.name !== 'ReleaseBusV2ProductionSelectionError'
+        )
+          throw error;
+        reason = error.message;
+      }
+    if (reason || sourceSelectionId === null || evidence === null)
+      return {
+        eligible: false,
+        omission: {
+          candidate,
+          sourceSelectionId,
+          sourceTrainId,
+          reason:
+            reason ??
+            'Explicit production selection or exact staging evidence is missing'
+        }
+      };
+    return {
+      eligible: true,
+      source: {
+        candidate,
+        sourceSelectionId,
+        sourceTrainId
+      },
+      evidence
+    };
+  }
+
+  private async omitProductionReplanDependencyGaps(
+    preliminary: readonly ProductionReplanCandidateSource[],
+    evidenceByCandidate: Map<string, ReleaseBusV2CandidateStagingEvidence>,
+    omitted: ProductionReplanOmission[],
+    ctx: RequestContext
+  ): Promise<Map<string, ProductionReplanCandidateSource>> {
+    const eligible = new Map(
+      preliminary.map((source) => [source.candidate.id, source])
+    );
+    const dependencies = await this.repository.listDependencies(
+      preliminary.map(({ candidate }) => candidate.id),
+      ctx
+    );
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const dependency of dependencies) {
+        const source = eligible.get(dependency.candidate_id);
+        if (
+          !source ||
+          dependency.environment === 'STAGING' ||
+          eligible.has(dependency.prerequisite_candidate_id)
+        )
+          continue;
+        const prerequisite = await this.repository.findCandidateById(
+          dependency.prerequisite_candidate_id,
+          ctx,
+          true
+        );
+        if (
+          prerequisite &&
+          (await this.hasExactProductionDeploymentEvidence(prerequisite, ctx))
+        )
+          continue;
+        eligible.delete(source.candidate.id);
+        evidenceByCandidate.delete(source.candidate.id);
+        omitted.push({
+          candidate: source.candidate,
+          sourceSelectionId: source.sourceSelectionId,
+          sourceTrainId: source.sourceTrainId,
+          reason: `Production dependency ${dependency.prerequisite_candidate_id} is neither eligible for this replacement nor exactly deployed`
+        });
+        changed = true;
+      }
+    }
+    return eligible;
+  }
+
+  private async qualifyProductionReplanIntents(
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    frontendBaseSha: string,
+    backendBaseSha: string,
+    ctx: RequestContext
+  ): Promise<{
+    readonly eligible: readonly ProductionReplanCandidateSource[];
+    readonly omitted: readonly ProductionReplanOmission[];
+    readonly evidence: readonly ReleaseBusV2CandidateStagingEvidence[];
+  }> {
+    const currentBases = await Promise.all(
+      (['frontend', 'backend'] as const).map(async (repository) => ({
+        repository,
+        sha: await releaseBusGitHubApp.resolveRef(repository, 'main')
+      }))
+    );
+    const expectedBase = {
+      frontend: frontendBaseSha,
+      backend: backendBaseSha
+    } as const;
+    const staleBase = currentBases.find(
+      ({ repository, sha }) =>
+        !/^[a-f0-9]{40}$/.test(sha) || sha !== expectedBase[repository]
+    );
+    if (staleBase) {
+      const omitted: ProductionReplanOmission[] = [];
+      for (const candidate of candidates)
+        omitted.push({
+          candidate,
+          sourceSelectionId: candidate.production_selection_id ?? null,
+          sourceTrainId: await this.productionReplanSourceTrainId(
+            candidate,
+            ctx
+          ),
+          reason: `Production base fence changed for ${staleBase.repository}: expected ${expectedBase[staleBase.repository]}, observed ${staleBase.sha}`
+        });
+      return {
+        eligible: [],
+        omitted,
+        evidence: []
+      };
+    }
+
+    const preliminary: ProductionReplanCandidateSource[] = [];
+    const omitted: ProductionReplanOmission[] = [];
+    const evidenceByCandidate = new Map<
+      string,
+      ReleaseBusV2CandidateStagingEvidence
+    >();
+    for (const candidate of candidates) {
+      const qualification = await this.qualifyProductionReplanCandidate(
+        candidate,
+        ctx
+      );
+      if (!qualification.eligible) {
+        omitted.push(qualification.omission);
+        continue;
+      }
+      preliminary.push(qualification.source);
+      evidenceByCandidate.set(candidate.id, qualification.evidence);
+    }
+
+    const eligible = await this.omitProductionReplanDependencyGaps(
+      preliminary,
+      evidenceByCandidate,
+      omitted,
+      ctx
+    );
+    const ordered = preliminary.filter(({ candidate }) =>
+      eligible.has(candidate.id)
+    );
+    return {
+      eligible: ordered,
+      omitted,
+      evidence: ordered
+        .map(({ candidate }) => evidenceByCandidate.get(candidate.id))
+        .filter(
+          (evidence): evidence is ReleaseBusV2CandidateStagingEvidence =>
+            evidence !== undefined
+        )
+        .sort((left, right) =>
+          left.candidate_id.localeCompare(right.candidate_id)
+        )
+    };
+  }
+
   public async claimLane(
     lane: ReleaseBusV2Lane,
     frontendBaseSha: string,
@@ -2523,37 +3272,33 @@ export class ReleaseBusV2Service {
           )
             return null;
           await this.refreshDependencyHolds(lane, ctx, betaAllowlist);
-          const readyCandidates = (
-            await this.repository.listCandidates(
-              lane === 'PRODUCTION'
-                ? [CANDIDATE_EVIDENCE_READY_STATUS, 'READY_FOR_PRODUCTION']
-                : [readyStatus(lane)],
-              RELEASE_BUS_V2_MAX_CANDIDATES,
-              ctx
-            )
-          ).filter(
+          const readyCandidateScan = await this.repository.listCandidates(
+            lane === 'PRODUCTION'
+              ? [CANDIDATE_EVIDENCE_READY_STATUS, 'READY_FOR_PRODUCTION']
+              : [readyStatus(lane)],
+            lane === 'PRODUCTION'
+              ? PRODUCTION_REPLAN_INTENT_SCAN_LIMIT
+              : RELEASE_BUS_V2_MAX_CANDIDATES,
+            ctx
+          );
+          const readyCandidates = readyCandidateScan.filter(
             (candidate) =>
               !betaLaneEnabled ||
               releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
           );
-          const heldCandidates =
+          const heldCandidateScan =
             lane === 'PRODUCTION'
-              ? (
-                  await this.repository.listCandidates(
-                    ['WAITING_FOR_PRODUCTION_REPLAN'],
-                    RELEASE_BUS_V2_MAX_CANDIDATES,
-                    ctx
-                  )
-                ).filter(
-                  (candidate) =>
-                    !betaLaneEnabled ||
-                    releaseBusV2BetaAllowsCandidate(
-                      betaAllowlist,
-                      candidate,
-                      lane
-                    )
+              ? await this.repository.listCandidates(
+                  ['WAITING_FOR_PRODUCTION_REPLAN'],
+                  PRODUCTION_REPLAN_INTENT_SCAN_LIMIT,
+                  ctx
                 )
               : [];
+          const heldCandidates = heldCandidateScan.filter(
+            (candidate) =>
+              !betaLaneEnabled ||
+              releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
+          );
           const stagingTransitionRequests =
             lane === 'STAGING' && stagingState
               ? await this.repository.listStagingTransitionRequests(ctx, true)
@@ -2574,6 +3319,13 @@ export class ReleaseBusV2Service {
           let carriedCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
           let replacedCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
           let removalCandidates: readonly ReleaseBusV2CandidateRecord[] = [];
+          let productionReplanSources: readonly ProductionReplanCandidateSource[] =
+            [];
+          let productionReplanOmissions: readonly ProductionReplanOmission[] =
+            [];
+          let qualificationEvidence:
+            | readonly ReleaseBusV2CandidateStagingEvidence[]
+            | undefined;
           let selectionId: string | null = null;
           if (lane === 'STAGING') {
             candidates = readyCandidates;
@@ -2657,6 +3409,107 @@ export class ReleaseBusV2Service {
                 !requestedIds.has(candidate.id)
             );
             candidates = [...carriedCandidates, ...candidates];
+          } else if (heldCandidates.length > 0) {
+            if (
+              readyCandidateScan.length ===
+                PRODUCTION_REPLAN_INTENT_SCAN_LIMIT ||
+              heldCandidateScan.length === PRODUCTION_REPLAN_INTENT_SCAN_LIMIT
+            ) {
+              await this.repository.appendEvent(
+                {
+                  eventType: 'PRODUCTION_REPLAN_INTENT_SCAN_FAILED_CLOSED',
+                  actor: owner,
+                  payload: {
+                    reason: `Production replan intent scan reached the fail-closed limit of ${PRODUCTION_REPLAN_INTENT_SCAN_LIMIT}`,
+                    ready_count: readyCandidates.length,
+                    held_count: heldCandidates.length
+                  }
+                },
+                ctx
+              );
+              return null;
+            }
+            const lockedCandidates: ReleaseBusV2CandidateRecord[] = [];
+            const queuedById = [...queued].sort((left, right) =>
+              left.id.localeCompare(right.id)
+            );
+            for (const queuedCandidate of queuedById) {
+              const locked = await this.repository.findCandidateById(
+                queuedCandidate.id,
+                ctx,
+                true
+              );
+              if (!locked)
+                throw new Error(
+                  `Production replan candidate ${queuedCandidate.id} disappeared during the scheduler fence`
+                );
+              lockedCandidates.push(locked);
+            }
+            lockedCandidates.sort(
+              (left, right) =>
+                Number(left.production_requested_at ?? left.created_at) -
+                  Number(right.production_requested_at ?? right.created_at) ||
+                left.id.localeCompare(right.id)
+            );
+            const replan = await this.qualifyProductionReplanIntents(
+              lockedCandidates,
+              frontendBaseSha,
+              backendBaseSha,
+              ctx
+            );
+            productionReplanSources = replan.eligible;
+            productionReplanOmissions = replan.omitted;
+            qualificationEvidence = replan.evidence;
+            candidates = replan.eligible.map(({ candidate }) => candidate);
+            selectionId = randomUUID();
+            for (const omission of productionReplanOmissions)
+              await this.recordProductionReplanOmission(omission, ctx);
+            if (candidates.length === 0) {
+              await this.repository.appendEvent(
+                {
+                  eventType: 'PRODUCTION_REPLAN_REPLACEMENT_NOT_CLAIMED',
+                  actor: owner,
+                  payload: {
+                    replacement_production_selection_id: selectionId,
+                    source_production_selection_ids: Array.from(
+                      new Set(
+                        productionReplanOmissions
+                          .map(({ sourceSelectionId }) => sourceSelectionId)
+                          .filter(
+                            (sourceSelectionId): sourceSelectionId is string =>
+                              sourceSelectionId !== null
+                          )
+                      )
+                    ).sort((left, right) => left.localeCompare(right)),
+                    source_train_ids: Array.from(
+                      new Set(
+                        productionReplanOmissions
+                          .map(({ sourceTrainId }) => sourceTrainId)
+                          .filter(
+                            (sourceTrainId): sourceTrainId is string =>
+                              sourceTrainId !== null
+                          )
+                      )
+                    ).sort((left, right) => left.localeCompare(right)),
+                    omitted_intents: productionReplanOmissions.map(
+                      ({
+                        candidate,
+                        sourceSelectionId,
+                        sourceTrainId,
+                        reason
+                      }) => ({
+                        candidate_id: candidate.id,
+                        source_production_selection_id: sourceSelectionId,
+                        source_train_id: sourceTrainId,
+                        reason
+                      })
+                    )
+                  }
+                },
+                ctx
+              );
+              return null;
+            }
           } else {
             const first = queued[0];
             selectionId = first?.production_selection_id ?? null;
@@ -2672,14 +3525,17 @@ export class ReleaseBusV2Service {
             candidates.map((candidate) => candidate.id),
             ctx
           );
-          const eligible = await this.selectDependencyClosedCandidates(
-            candidates,
-            dependencies,
-            lane,
-            ctx,
-            betaAllowlist,
-            lane !== 'STAGING'
-          );
+          const eligible =
+            lane === 'PRODUCTION' && productionReplanSources.length > 0
+              ? candidates
+              : await this.selectDependencyClosedCandidates(
+                  candidates,
+                  dependencies,
+                  lane,
+                  ctx,
+                  betaAllowlist,
+                  lane !== 'STAGING'
+                );
           if (lane === 'STAGING' && eligible.length !== candidates.length) {
             const eligibleIds = new Set(eligible.map(({ id }) => id));
             for (const candidate of readyCandidates) {
@@ -2705,7 +3561,7 @@ export class ReleaseBusV2Service {
             eligible.length !== candidates.length
           )
             return null;
-          const qualificationEvidence =
+          qualificationEvidence ??=
             lane === 'PRODUCTION'
               ? await this.resolveCandidateStagingEvidence(eligible, ctx)
               : undefined;
@@ -2827,12 +3683,84 @@ export class ReleaseBusV2Service {
                 {
                   status: claimedStatus(lane),
                   currentTrainId: train.id,
+                  productionSelectionId:
+                    productionReplanSources.length > 0
+                      ? selectionId
+                      : undefined,
                   holdReason: null
                 },
                 ctx
               ))
             )
               throw new Error(`Candidate ${candidate.id} changed during claim`);
+          }
+          if (productionReplanSources.length > 0) {
+            const sourceMapping = productionReplanSources.map(
+              ({ candidate, sourceSelectionId, sourceTrainId }) => ({
+                candidate_id: candidate.id,
+                source_production_selection_id: sourceSelectionId,
+                source_train_id: sourceTrainId
+              })
+            );
+            await this.repository.appendEvent(
+              {
+                trainId: train.id,
+                eventType: 'PRODUCTION_REPLAN_REPLACEMENT_CLAIMED',
+                actor: owner,
+                payload: {
+                  replacement_train_id: train.id,
+                  replacement_production_selection_id: selectionId,
+                  source_production_selection_ids: Array.from(
+                    new Set(
+                      productionReplanSources.map(
+                        ({ sourceSelectionId }) => sourceSelectionId
+                      )
+                    )
+                  ).sort((left, right) => left.localeCompare(right)),
+                  source_train_ids: Array.from(
+                    new Set(
+                      productionReplanSources
+                        .map(({ sourceTrainId }) => sourceTrainId)
+                        .filter(
+                          (sourceTrainId): sourceTrainId is string =>
+                            sourceTrainId !== null
+                        )
+                    )
+                  ).sort((left, right) => left.localeCompare(right)),
+                  included_intents: sourceMapping,
+                  omitted_intents: productionReplanOmissions.map(
+                    ({
+                      candidate,
+                      sourceSelectionId,
+                      sourceTrainId,
+                      reason
+                    }) => ({
+                      candidate_id: candidate.id,
+                      source_production_selection_id: sourceSelectionId,
+                      source_train_id: sourceTrainId,
+                      reason
+                    })
+                  )
+                }
+              },
+              ctx
+            );
+            for (const source of productionReplanSources)
+              await this.repository.appendEvent(
+                {
+                  trainId: train.id,
+                  candidateId: source.candidate.id,
+                  eventType: 'CANDIDATE_COALESCED_IN_PRODUCTION_REPLAN',
+                  actor: owner,
+                  payload: {
+                    replacement_train_id: train.id,
+                    replacement_production_selection_id: selectionId,
+                    source_train_id: source.sourceTrainId,
+                    source_production_selection_id: source.sourceSelectionId
+                  }
+                },
+                ctx
+              );
           }
           await this.repository.appendEvent(
             {
@@ -2881,6 +3809,30 @@ export class ReleaseBusV2Service {
                         .map(({ id }) => id)
                     : null,
                 production_selection_id: selectionId,
+                production_replan_replacement:
+                  productionReplanSources.length > 0,
+                production_replan_source_selections:
+                  productionReplanSources.map(
+                    ({ candidate, sourceSelectionId, sourceTrainId }) => ({
+                      candidate_id: candidate.id,
+                      source_production_selection_id: sourceSelectionId,
+                      source_train_id: sourceTrainId
+                    })
+                  ),
+                production_replan_omitted_intents:
+                  productionReplanOmissions.map(
+                    ({
+                      candidate,
+                      sourceSelectionId,
+                      sourceTrainId,
+                      reason
+                    }) => ({
+                      candidate_id: candidate.id,
+                      source_production_selection_id: sourceSelectionId,
+                      source_train_id: sourceTrainId,
+                      reason
+                    })
+                  ),
                 qualification_policy:
                   lane === 'PRODUCTION'
                     ? CANDIDATE_STAGING_EVIDENCE_POLICY
