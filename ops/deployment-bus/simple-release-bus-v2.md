@@ -52,13 +52,16 @@ register backend first and declare it as the frontend prerequisite.
 
 ## Staging lifecycle
 
-1. The scheduler starts from the authoritative cumulative admitted-staging set,
-   carries every unchanged exact live candidate forward, and adds a
-   dependency-closed set of newly ready candidates with zero fixed batch
-   delay. A later ordinary train cannot omit or evict an admitted candidate.
+1. Registration records one open PR at its exact current head. The scheduler
+   selects only the newest registered exact SHA for each repository/PR and
+   combines that dependency-closed NEW set with the exact current
+   `1a-staging` state. Unchanged live candidates are immutable input evidence,
+   not new work to diagnose or mutate.
 2. Frontend/backend composition and preparation run concurrently.
 3. A single exact PR merge-tree artifact is reused when eligible. Otherwise,
    each application runs one combined sharded preflight and one immutable build.
+   Ordinary staging never bisects a failed repository or builds diagnostic
+   subsets.
 4. Preparation may finish while another train owns staging.
 5. The train acquires the staging lock only for deployment plus E2E.
    Under that lock it binds every unchanged repository to the exact current
@@ -71,6 +74,14 @@ register backend first and declare it as the frontend prerequisite.
 8. E2E receives and authorizes against that manifest identity. Staging remains
    locked until E2E is terminal.
 9. Only E2E success produces `STAGING_VALIDATED`.
+
+Before every further preparation or environment operation, an active staging
+train rechecks every NEW PR head. If a head moved or a newer exact registration
+exists, the old candidate is superseded immediately. No more operations are
+dispatched for that train. Already-dispatched workflows are observed until
+terminal without cancellation; then unrelated NEW candidates return to the
+very next train. If shared staging mutation already began, the exact last
+validated manifest is restored and E2E-validated before ownership is released.
 
 `STAGING_DEPLOYED` and `STAGING_VALIDATED` are separate milestones.
 `STAGING_VALIDATED` is historical certification. It does not mean the
@@ -178,6 +189,7 @@ explicitly.
 | Class                         | Behavior                                                                                                                                                                                                                                                                          |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Candidate merge/test          | Before shared mutation, fail the cumulative train closed and leave the last validated admitted manifest live; mark only the new direct candidate `NEEDS_REBASE` as applicable                                                                                                     |
+| Ordinary staging preflight    | After already-running workflows drain, fail the affected repository's NEW candidate group once, hold only dependants, and return independent repository candidates to the next train; never dispatch subset-isolation workflows |
 | Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                                                  |
 | Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                                             |
 | Control plane                 | Fail the train, requeue candidates, pause automated claiming, release an environment lock once every operation is terminal, retain manual fallback                                                                                                                                |
@@ -188,6 +200,76 @@ explicitly.
 Every pending GitHub status must map to a visible candidate/train/operation state
 and recovery message. Duplicate callbacks and worker invocations reuse immutable
 operation identities and never repeat completed mutations.
+
+Grouped staging preflight failures never auto-retry. A developer may explicitly
+register the unchanged exact head again. The API rechecks the current branch,
+green PR evidence, immutable deploy plan, and dependencies, then requeues only
+an unowned `FAILED` candidate whose current row version is tied to one audited
+`STAGING_REPOSITORY_PREFLIGHT_GROUP_FAILED` event and one terminal source train.
+The failed train remains immutable, and every retry receives a distinct
+auditable retry id and attempt number. Ambiguous evidence, moved/superseded
+heads, changed registration evidence, and active ownership fail closed.
+
+### Deterministic failed-train recovery
+
+Start from the failed train detail in `/deploy/ui/bus`, not from an assumption
+about which PR caused it. Record the exact candidate ID, repository/PR/head SHA,
+complete candidate set and membership dispositions, failed operation and
+attempt, workflow/run and log URL, and the exact failed command, test, or job
+step. Membership in a failed train is only composition evidence; it does not
+attribute the failure to every member or to any one member.
+
+If the logs directly identify one exact candidate/head or a test changed by
+that head, fix that branch, push a real new head, wait for current green PR
+evidence, and register that exact new SHA. Do not retry the obsolete head.
+
+If the result is grouped, `COMBINATION_FAILED`, or otherwise cannot attribute
+the repository preflight to one candidate, do not push a dummy commit. Wait
+until the failed candidate is terminal and unowned, then use **Retry audited
+grouped failure at same SHA** in the Deploy UI or submit the same immutable
+registration again to `POST /deploy/release-bus-v2/candidates`. The service
+accepts only the single audited grouped repository-preflight failure contract
+described above and creates a new retry/attempt identity; ambiguous history,
+active ownership, moved/superseded heads, or changed evidence is rejected.
+There is no automatic retry loop.
+
+Do not cancel another actor or start a parallel manual deployment after the bus
+accepted a candidate. Report the exact failed command/test, candidate set, and
+log URL once, then rely on the durable candidate/train/operation events and
+GitHub status for follow-up rather than keeping an interactive task polling.
+
+The backend recovery contract does not close a separate frontend App PR CI
+coverage defect. **Mandatory frontend successor task:** create a focused
+frontend PR that updates `.github/workflows/app-pr-ci.yml` so a change to
+`tests/packs.manifest.cjs`, `scripts/sync-e2e-manifest.cjs`, or either generated
+consumer always runs `./bin/6529 run e2e-manifest:check`, and add a workflow
+contract regression proving those paths trigger the check. The current related
+Jest changed-file selector admits only `*.js`, `*.jsx`, `*.ts`, and `*.tsx`;
+therefore `tests/packs.manifest.cjs` can bypass that contract today. This
+successor must land before App PR CI can be treated as evidence that manifest
+edits cannot poison a staging train.
+
+The operator-only
+`POST /deploy/release-bus-v2/maintenance/repair-current-staging-candidates`
+action repairs candidate ledger corruption only by deriving
+`STAGING_VALIDATED`/`LIVE` from the singleton's exact current
+`STAGING_VALIDATED` manifest, successful manifest-bound E2E, immutable
+repository/PR/head membership, and terminal train. It acquires the scheduler
+and both environment fences, rejects active trains or ambiguous evidence, is
+idempotent, and emits an audit event for every derived change. Send
+`{"dry_run":true}`
+without a candidate list to discover every repairable mismatch in the exact
+current manifest without mutating candidates, locks, or audit rows. Execution
+must send the explicit repository/PR/head tuples copied from that report, so a
+superseded older head that is absent from the current manifest is never
+restored. Dry-run discovery is allowed while v2 is `OFF`, but execution is
+rejected until v2 is enabled. The execution response reports attempted,
+succeeded, and failed GitHub status publications with every failed exact
+candidate identity. `newly_derived` counts rows changed by this execution;
+`reasserted` counts already-correct rows whose status is intentionally
+republished so an idempotent retry can recover a prior GitHub outage. A nonzero
+failure count requires operator follow-up even though the durable ledger repair
+already committed.
 
 ## Operator rollout and rollback
 

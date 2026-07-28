@@ -393,7 +393,7 @@ describe('CiPipelineAlertService', () => {
     }
   );
 
-  it('adds mapped train contributors as real mentions and links unmapped contributors', async () => {
+  it('does not render or notify train-wide contributors on each deployment', async () => {
     identitiesRepository.getIdsByHandles.mockResolvedValue({
       GelatoGenesis: 'profile-gelato',
       ragne: 'profile-ragne'
@@ -420,28 +420,14 @@ describe('CiPipelineAlertService', () => {
       {}
     );
 
-    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
-      'GelatoGenesis',
-      'ragne'
-    ]);
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
     const createDropRequest =
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
-    expect(createDropRequest.mentioned_users).toEqual([
-      {
-        mentioned_profile_id: 'profile-gelato',
-        handle_in_content: 'GelatoGenesis'
-      },
-      {
-        mentioned_profile_id: 'profile-ragne',
-        handle_in_content: 'ragne'
-      }
-    ]);
+    expect(createDropRequest.mentioned_users).toEqual([]);
     expect(createDropRequest.parts[0].content).toContain(
-      [
-        'Initiated by: Release Train',
-        'Contributors: @[GelatoGenesis], @[ragne], [@external-user](https://github.com/external-user)'
-      ].join('\n')
+      'Initiated by: Release Train'
     );
+    expect(createDropRequest.parts[0].content).not.toContain('Contributors:');
   });
 
   it('ignores contributor metadata for a manually initiated deployment', async () => {
