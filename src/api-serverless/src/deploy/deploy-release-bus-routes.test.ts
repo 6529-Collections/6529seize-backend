@@ -504,24 +504,36 @@ describe('Release Bus v2 route authorization and exact actions', () => {
   });
 
   it.each([
-    '/deploy/release-bus-v2/candidates',
-    '/deploy/release-bus-v2/trains',
-    `/deploy/release-bus-v2/trains/${TRAIN_ID}`,
-    '/deploy/release-bus-v2/manifests',
-    '/deploy/release-bus-v2/controls'
-  ])('serves public no-store read-only state from %s', async (path) => {
-    mockV2FindTrain.mockResolvedValue({
-      id: TRAIN_ID,
-      status: 'STAGING_VALIDATED'
-    });
+    ['/deploy/release-bus-v2/candidates', 'candidates'],
+    ['/deploy/release-bus-v2/trains', 'trains'],
+    [`/deploy/release-bus-v2/trains/${TRAIN_ID}`, 'train'],
+    ['/deploy/release-bus-v2/manifests', 'manifests'],
+    ['/deploy/release-bus-v2/controls', 'controls']
+  ] as const)(
+    'serves public no-store read-only state from %s',
+    async (path, responseKey) => {
+      mockV2FindTrain.mockResolvedValue({
+        id: TRAIN_ID,
+        status: 'STAGING_VALIDATED'
+      });
 
-    const response = await requestJson('GET', path);
+      const response = await requestJson('GET', path);
 
-    expect(response.status).toBe(200);
-    expect(response.cacheControl).toContain('no-store');
-    expect(mockGetViewer).not.toHaveBeenCalled();
-    expectNoReleaseMutation();
-  });
+      expect(response.status).toBe(200);
+      expect(response.cacheControl).toContain('no-store');
+      expect(response.body).toHaveProperty(responseKey);
+      if (responseKey === 'controls') {
+        expect(response.body.staging_state).toEqual(
+          expect.objectContaining({
+            status: 'CLEAN_MAIN',
+            row_version: 1
+          })
+        );
+      }
+      expect(mockGetViewer).not.toHaveBeenCalled();
+      expectNoReleaseMutation();
+    }
+  );
 
   it.each(releaseMutationAttempts)(
     'rejects anonymous $name without executing a mutation',
