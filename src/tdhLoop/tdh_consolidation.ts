@@ -31,7 +31,7 @@ import {
 import { calculateTdhEditions } from './tdh_editions';
 import { getConsolidationWallets } from './consolidation-wallets';
 import { calculateMemesTdh } from './tdh_memes';
-import { updateNftTDH } from './tdh_nft';
+import { calculateNftTDH } from './tdh_nft';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -276,6 +276,7 @@ export const consolidateAndPersistTDH = async (
   )) as ConsolidatedTDHMemes[];
 
   const tdhEditions = await calculateTdhEditions(consolidatedTdh, true);
+  const nftTdh = calculateNftTDH(consolidatedTdh);
 
   assertNoOverlappingConsolidationWallets(consolidatedTdh);
   await persistConsolidatedTDH(
@@ -283,11 +284,7 @@ export const consolidateAndPersistTDH = async (
     consolidatedTdh,
     memesTdh,
     tdhEditions,
-    startingWallets,
-    consolidationKeysToReplace
-  );
-  await updateNftTDH(
-    consolidatedTdh,
+    nftTdh,
     startingWallets,
     consolidationKeysToReplace
   );

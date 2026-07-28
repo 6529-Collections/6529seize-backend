@@ -1061,6 +1061,7 @@ export async function persistConsolidatedTDH(
   tdh: ConsolidatedTDH[],
   memesTdh: ConsolidatedTDHMemes[],
   tdhEditions: ConsolidatedTDHEditions[],
+  nftTdh: NftTDH[],
   wallets?: string[],
   consolidationKeysToReplace?: string[]
 ) {
@@ -1111,13 +1112,6 @@ export async function persistConsolidatedTDH(
     }
 
     await updateBoostedTdhRates(qrHolder);
-    unreadCacheInvalidations =
-      await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
-        qrHolder
-      );
-    await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
-    await revokeTdhBasedDropWavesOverVotes(qrHolder);
-
     await persistHistoricConsolidatedTDH(
       manager,
       block,
@@ -1125,6 +1119,19 @@ export async function persistConsolidatedTDH(
       wallets,
       consolidationKeysToReplace
     );
+    await persistNftTdhWithManager(
+      manager,
+      nftTdh,
+      wallets,
+      consolidationKeysToReplace
+    );
+
+    unreadCacheInvalidations =
+      await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
+        qrHolder
+      );
+    await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
+    await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });
 
   await invalidateWaveUnreadCache(unreadCacheInvalidations);
@@ -1226,21 +1233,34 @@ export async function persistNftTdh(
   }
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
-    const manager = queryRunner.manager;
-    const nftTdhRepo = manager.getRepository(NftTDH);
-    if (wallets) {
-      logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
-      await deleteConsolidationsByKeys(nftTdhRepo, consolidationKeysToReplace!);
-      await nftTdhRepo.save(nftTdh);
-    } else {
-      logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
-      await deleteAll(nftTdhRepo);
-      logger.info(`[NFT TDH] [TDH AND TDH_MEMES CLEARED]`);
-      await insertWithoutUpdate(nftTdhRepo, nftTdh);
-    }
+    await persistNftTdhWithManager(
+      queryRunner.manager,
+      nftTdh,
+      wallets,
+      consolidationKeysToReplace
+    );
   });
 
   logger.info(`[NFT TDH] PERSISTED ALL NFT TDH [${nftTdh.length}]`);
+}
+
+async function persistNftTdhWithManager(
+  manager: EntityManager,
+  nftTdh: NftTDH[],
+  wallets?: string[],
+  consolidationKeysToReplace?: string[]
+) {
+  const nftTdhRepo = manager.getRepository(NftTDH);
+  if (wallets) {
+    logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
+    await deleteConsolidationsByKeys(nftTdhRepo, consolidationKeysToReplace!);
+    await nftTdhRepo.save(nftTdh);
+  } else {
+    logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
+    await deleteAll(nftTdhRepo);
+    logger.info(`[NFT TDH] [TDH AND TDH_MEMES CLEARED]`);
+    await insertWithoutUpdate(nftTdhRepo, nftTdh);
+  }
 }
 
 export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {

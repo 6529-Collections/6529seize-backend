@@ -19,6 +19,11 @@ export const updateNftTDH = async (
   startingWallets?: string[],
   consolidationKeysToReplace?: string[]
 ) => {
+  const nftTdh = calculateNftTDH(tdh);
+  await persistNftTdh(nftTdh, startingWallets, consolidationKeysToReplace);
+};
+
+export const calculateNftTDH = (tdh: ConsolidatedTDH[]): NftTDH[] => {
   logger.info(`[FINDING NFT TDH...]`);
   const tokenTdhs = tdh.map((t) => {
     const memesTdh = findContractTDH(
@@ -45,11 +50,7 @@ export const updateNftTDH = async (
     return [...memesTdh, ...gradientsTdh, ...nextgenTdh];
   });
   logger.info(`[FOUND ${tokenTdhs.length}]`);
-  await persistNftTdh(
-    tokenTdhs.flat(),
-    startingWallets,
-    consolidationKeysToReplace
-  );
+  return tokenTdhs.flat();
 };
 
 const findContractTDH = (
