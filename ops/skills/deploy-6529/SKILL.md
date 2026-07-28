@@ -14,11 +14,11 @@ description: Route and execute 6529 backend, frontend, or coupled staging and pr
    mode, or incomplete controls. Never infer mode from files or old output.
 3. Route by the fresh v2 result:
 
-| Mode | Staging | Production |
-| --- | --- | --- |
-| `OFF` | Serialized manual fallback | Serialized manual fallback with explicit owner authorization; staging evidence is not required |
-| `STAGING` | Register the exact candidate with v2 | Manual fallback only; production automation is disabled |
-| `PRODUCTION` | Register the exact candidate with v2 | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for v2 production |
+| Mode         | Staging                              | Production                                                                                     |
+| ------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `OFF`        | Serialized manual fallback           | Serialized manual fallback with explicit owner authorization; staging evidence is not required |
+| `STAGING`    | Register the exact candidate with v2 | Manual fallback only; production automation is disabled                                        |
+| `PRODUCTION` | Register the exact candidate with v2 | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for v2 production                 |
 
 When mode is active, stop if `ALL` or the target lane is paused. In `OFF`, v2
 controls are non-authoritative and do not prohibit manual staging or production
@@ -43,6 +43,13 @@ through the documented fallback.
    branch still equals its exact staging-validated SHA. Staging validation never
    schedules production automatically. Omitted candidates retain their
    validation evidence and any separate production intent.
+   A pre-mutation production replan may create a new audited replacement from
+   all currently eligible explicit selections, including a compatible selection
+   recorded after the source train was claimed. Verify the replacement event's
+   source selection/train mapping and every omitted intent reason. It must never
+   infer candidates from staging. After any successful main advance, production
+   deploy dispatch, or production E2E, the original exact set is frozen and may
+   only resume or recover unchanged.
    During an API-before-reconciler rolling upgrade, the selection parks at
    `READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION`; never rewrite it to the legacy
    ready status to make an older worker claim it.

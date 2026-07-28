@@ -5424,60 +5424,35 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     message: string
   ): Promise<void> {
-    const current = await this.repository.findTrain(train.id, {});
-    if (!current || TERMINAL_TRAINS.has(current.status)) return;
-    const operations = await this.repository.listOperations(current.id, {});
-    if (operations.some(operationMayStillBeRunning)) return;
-    for (const operation of operations) {
-      if (TERMINAL_OPERATIONS.has(operation.status)) continue;
-      if (
-        !(await this.repository.updateOperation(
-          operation.id,
-          operation.row_version,
-          {
-            status: 'CANCELLED',
-            failureClass: 'INTERACTION',
-            failureMessage: message,
-            completedAt: Date.now()
-          },
-          {}
-        ))
-      )
-        throw new Error('Release Bus v2 operation changed concurrently');
-    }
-    const context = await this.loadContext(current);
-    await this.updateCandidateStatuses(
-      relevantCandidates(context),
-      current.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
-        ? CANDIDATE_EVIDENCE_READY_STATUS
-        : 'READY_FOR_PRODUCTION',
-      null,
-      false
-    );
-    const lease = (await this.repository.listLocks({})).find(
-      (lock) =>
-        lock.name === 'production-environment' &&
-        lock.owner_train_id === current.id
-    );
-    if (lease?.lease_token)
-      await this.repository.releaseLock(
-        'production-environment',
-        lease.lease_token,
-        {}
-      );
-    await this.publishCandidateStatuses(
-      relevantCandidates(context),
-      'pending',
-      'Main moved; v2 will recompute and requalify this exact production subset'
-    );
-    await this.transitionTrain(current, {
-      status: 'CANCELLED',
-      failureClass: 'INTERACTION',
-      failureMessage: message,
-      recoveryMessage:
-        'Main moved before production mutation; the explicit candidate subset was safely requeued for fresh composition and qualification',
-      completedAt: Date.now()
+    const result = await this.service.preserveProductionIntentsForSafeReplan({
+      trainId: train.id,
+      reason: message,
+      actor: 'release-bus-v2'
     });
+    if (result.status === 'NOOP') return;
+    if (result.status === 'FROZEN') {
+      await this.service.setPaused(
+        'PRODUCTION',
+        true,
+        `${result.reason}; train ${train.id} must recover its original exact set`,
+        'release-bus-v2'
+      );
+      return;
+    }
+    const candidates = (
+      await Promise.all(
+        result.candidateIds.map((candidateId) =>
+          this.repository.findCandidateById(candidateId, {})
+        )
+      )
+    ).filter((candidate): candidate is ReleaseBusV2CandidateRecord =>
+      Boolean(candidate)
+    );
+    await this.publishCandidateStatuses(
+      candidates,
+      'pending',
+      'Main moved before mutation; explicit intent is preserved for a new audited replacement'
+    );
   }
 
   private async publishCandidateStatuses(
