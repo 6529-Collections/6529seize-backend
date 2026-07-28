@@ -868,10 +868,12 @@ const parseSeaportLog = async (
     const offer = seaResult.args.offer[0];
 
     // validate token
-    if (!(
-      equalIgnoreCase(offer.token, t.contract) &&
-      Number(offer.identifier) === Number(t.token_id)
-    )) {
+    if (
+      !(
+        equalIgnoreCase(offer.token, t.contract) &&
+        Number(offer.identifier) === Number(t.token_id)
+      )
+    ) {
       return {
         contract: t.contract,
         tokenId: t.token_id,
@@ -1092,22 +1094,21 @@ type NftTransferEdge = {
   amount: bigint;
 };
 
-function extractNftTransferEdges(receipt: ReceiptLike): NftTransferEdge[] {
-  const nftEdges: NftTransferEdge[] = [];
-
-  for (const log of receipt.logs) {
+function extractNftTransferEdgesFromLog(log: ReceiptLog): NftTransferEdge[] {
+  try {
     if (
       log.topics.length === 4 &&
       log.topics[0] === IFACE.getEvent('Transfer')!.topicHash
     ) {
-      nftEdges.push({
-        from: ethers.getAddress(`0x${log.topics[1].slice(26)}`),
-        to: ethers.getAddress(`0x${log.topics[2].slice(26)}`),
-        contract: log.address,
-        tokenId: BigInt(log.topics[3]).toString(),
-        amount: BigInt(1)
-      });
-      continue;
+      return [
+        {
+          from: ethers.getAddress(`0x${log.topics[1].slice(26)}`),
+          to: ethers.getAddress(`0x${log.topics[2].slice(26)}`),
+          contract: log.address,
+          tokenId: BigInt(log.topics[3]).toString(),
+          amount: BigInt(1)
+        }
+      ];
     }
 
     if (log.topics[0] === IFACE.getEvent('TransferSingle')!.topicHash) {
@@ -1116,14 +1117,15 @@ function extractNftTransferEdges(receipt: ReceiptLike): NftTransferEdge[] {
         log.data,
         log.topics
       );
-      nftEdges.push({
-        from: decoded.from as string,
-        to: decoded.to as string,
-        contract: log.address,
-        tokenId: (decoded.id as bigint).toString(),
-        amount: decoded.value as bigint
-      });
-      continue;
+      return [
+        {
+          from: decoded.from as string,
+          to: decoded.to as string,
+          contract: log.address,
+          tokenId: BigInt(decoded.id).toString(),
+          amount: BigInt(decoded.value)
+        }
+      ];
     }
 
     if (log.topics[0] === IFACE.getEvent('TransferBatch')!.topicHash) {
@@ -1134,18 +1136,30 @@ function extractNftTransferEdges(receipt: ReceiptLike): NftTransferEdge[] {
       );
       const ids = decoded.ids as bigint[];
       const values = decoded[4] as bigint[];
-      ids.forEach((id, index) => {
-        nftEdges.push({
-          from: decoded.from as string,
-          to: decoded.to as string,
-          contract: log.address,
-          tokenId: id.toString(),
-          amount: values[index] ?? BigInt(0)
-        });
-      });
+      return ids.map((id, index) => ({
+        from: decoded.from as string,
+        to: decoded.to as string,
+        contract: log.address,
+        tokenId: BigInt(id).toString(),
+        amount: BigInt(values[index] ?? 0)
+      }));
     }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unknown decoding error';
+    logger.debug(
+      `[NFT_TRANSFER_LOG_PARSE_FAILED] [CONTRACT=${log.address}] [ERROR=${message}]`
+    );
   }
 
+  return [];
+}
+
+function extractNftTransferEdges(receipt: ReceiptLike): NftTransferEdge[] {
+  const nftEdges: NftTransferEdge[] = [];
+  for (const log of receipt.logs) {
+    nftEdges.push(...extractNftTransferEdgesFromLog(log));
+  }
   return nftEdges;
 }
 
@@ -1183,9 +1197,7 @@ export function reconcileTransactionTokenCounts(
         (receiptCounts.get(key) ?? BigInt(0)) + edge.amount
       );
     });
-  let correctionCount = 0;
-
-  for (const row of rows) {
+  const reconciledCounts = rows.map((row) => {
     const key = getNftTransferKey(
       row.from_address,
       row.to_address,
@@ -1205,19 +1217,16 @@ export function reconcileTransactionTokenCounts(
       );
     }
 
-    const actualTokenCount = Number(tokenCount);
+    return { row, tokenCount: Number(tokenCount) };
+  });
+
+  let correctionCount = 0;
+  for (const { row, tokenCount } of reconciledCounts) {
+    const actualTokenCount = tokenCount;
     if (Number(row.token_count) !== actualTokenCount) {
       row.token_count = actualTokenCount;
       correctionCount++;
     }
-    receiptCounts.delete(key);
-  }
-
-  const missingRowKey = receiptCounts.keys().next().value;
-  if (missingRowKey) {
-    throw new Error(
-      `No Alchemy transaction row for NFT transfer log ${missingRowKey} in ${rows[0]?.transaction}`
-    );
   }
 
   return correctionCount;

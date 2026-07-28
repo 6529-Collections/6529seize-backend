@@ -215,7 +215,7 @@ export class TransactionsDiscoveryService {
   ): AssetTransfersWithMetadataParams {
     const startingBlockHex = `0x${startingBlock.toString(16)}`;
     const toBlock =
-      endBlock !== null ? `0x${endBlock.toString(16)}` : 'indexed';
+      typeof endBlock === 'number' ? `0x${endBlock.toString(16)}` : 'indexed';
     return {
       category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
       contractAddresses: [contract],

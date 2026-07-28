@@ -181,6 +181,20 @@ describe('TransactionsDiscoveryService', () => {
     );
   });
 
+  it('uses Alchemy indexed state when an untyped caller omits endBlock', async () => {
+    const { service, getAssetTransfers } = createService([[]]);
+
+    await service.getAndSaveTransactionsForContract(
+      CONTRACT,
+      1,
+      undefined as unknown as null
+    );
+
+    expect(getAssetTransfers).toHaveBeenCalledWith(
+      expect.objectContaining({ fromBlock: '0x1', toBlock: 'indexed' })
+    );
+  });
+
   it('saves the receipt-reconciled token count returned by enhancement', async () => {
     const firstCandidate = makeErc1155Transfer('event-1', [
       { tokenId: '0x87', value: '0x1' }

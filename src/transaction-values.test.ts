@@ -1,9 +1,21 @@
 import { Transaction } from '@/entities/ITransaction';
+import { getClosestEthUsdPrice } from '@/ethPriceLoop/db.eth_price';
+import { getRpcProvider } from '@/rpc-provider';
 import {
   ReceiptLike,
+  findDiscoveredTransactionValues,
   reconcileTransactionTokenCounts
 } from '@/transaction_values';
 import { ethers } from 'ethers';
+
+jest.mock('@/ethPriceLoop/db.eth_price', () => ({
+  getClosestEthUsdPrice: jest.fn()
+}));
+
+jest.mock('@/rpc-provider', () => ({
+  get6529RpcProvider: jest.fn(),
+  getRpcProvider: jest.fn()
+}));
 
 const CONTRACT = '0x1111111111111111111111111111111111111111';
 const OTHER_CONTRACT = '0x4444444444444444444444444444444444444444';
@@ -126,7 +138,23 @@ describe('reconcileTransactionTokenCounts', () => {
     );
   });
 
-  it('fails closed when Alchemy omits a transfer present in the receipt', () => {
+  it('does not partially mutate rows when reconciliation fails', () => {
+    const matchingRow = makeTransaction(473, 2);
+    const missingRow = makeTransaction(474, 1);
+    const receipt: ReceiptLike = {
+      logs: [
+        makeLog('TransferSingle', [FROM, FROM, TO, BigInt(473), BigInt(1)])
+      ]
+    };
+
+    expect(() =>
+      reconcileTransactionTokenCounts([matchingRow, missingRow], receipt)
+    ).toThrow('No matching NFT transfer log');
+    expect(matchingRow.token_count).toBe(2);
+    expect(missingRow.token_count).toBe(1);
+  });
+
+  it('ignores unrelated receipt transfers that have no Alchemy row', () => {
     const row = makeTransaction(473, 1);
     const receipt: ReceiptLike = {
       logs: [
@@ -135,8 +163,51 @@ describe('reconcileTransactionTokenCounts', () => {
       ]
     };
 
-    expect(() => reconcileTransactionTokenCounts([row], receipt)).toThrow(
-      'No Alchemy transaction row'
-    );
+    expect(reconcileTransactionTokenCounts([row], receipt)).toBe(0);
+    expect(row.token_count).toBe(1);
+  });
+
+  it('ignores malformed unrelated transfer logs', () => {
+    const row = makeTransaction(473, 1);
+    const receipt: ReceiptLike = {
+      logs: [
+        {
+          address: OTHER_CONTRACT,
+          topics: [NFT_IFACE.getEvent('TransferSingle')!.topicHash],
+          data: '0x'
+        },
+        makeLog('TransferSingle', [FROM, FROM, TO, BigInt(473), BigInt(1)])
+      ]
+    };
+
+    expect(reconcileTransactionTokenCounts([row], receipt)).toBe(0);
+    expect(row.token_count).toBe(1);
+  });
+
+  it('reuses the receipt RPC request during value resolution', async () => {
+    const row = makeTransaction(473, 2);
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog('TransferSingle', [FROM, FROM, TO, BigInt(473), BigInt(1)])
+      ]
+    };
+    const getTransaction = jest.fn().mockResolvedValue({
+      hash: HASH,
+      value: BigInt(0),
+      gasPrice: BigInt(0)
+    });
+    const getTransactionReceipt = jest.fn().mockResolvedValue(receipt);
+    jest.mocked(getRpcProvider).mockReturnValue({
+      getTransaction,
+      getTransactionReceipt
+    } as unknown as ReturnType<typeof getRpcProvider>);
+    jest.mocked(getClosestEthUsdPrice).mockResolvedValue(1);
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.token_count).toBe(1);
+    expect(getTransaction).toHaveBeenCalledTimes(1);
+    expect(getTransactionReceipt).toHaveBeenCalledTimes(1);
   });
 });
