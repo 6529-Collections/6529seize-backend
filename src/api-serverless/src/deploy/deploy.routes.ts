@@ -39,6 +39,7 @@ import { setNoStoreHeaders } from '@/api/response-headers';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { releaseBusGitHubApp } from '@/releaseBusV2/release-bus-v2.github-app';
 import {
+  deriveReleaseBusV2LaneStates,
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
   RELEASE_BUS_OPERATOR_TEAM,
@@ -763,12 +764,15 @@ deployRoutes.get('/release-bus-v2/manifests', async (_req, res) => {
 });
 
 deployRoutes.get('/release-bus-v2/controls', async (_req, res) => {
+  const controls = await releaseBusV2Repository.listControls({});
+  const mode = getReleaseBusV2Mode();
   setNoStoreHeaders(res);
   return res.json({
-    controls: await releaseBusV2Repository.listControls({}),
+    controls,
+    lanes: deriveReleaseBusV2LaneStates(mode, controls),
     locks: await releaseBusV2Repository.listLocks({}),
     staging_state: await releaseBusV2Repository.getStagingState({}),
-    mode: getReleaseBusV2Mode()
+    mode
   });
 });
 
@@ -780,9 +784,12 @@ async function updateBusV2Control(req: Request, paused: boolean) {
     reason: string;
   }>(req.body, ReleaseBusV2ControlBodySchema);
   await releaseBusV2Service.setPaused(body.scope, paused, body.reason, actor);
+  const controls = await releaseBusV2Repository.listControls({});
+  const mode = getReleaseBusV2Mode();
   return {
-    controls: await releaseBusV2Repository.listControls({}),
-    mode: getReleaseBusV2Mode()
+    controls,
+    lanes: deriveReleaseBusV2LaneStates(mode, controls),
+    mode
   };
 }
 

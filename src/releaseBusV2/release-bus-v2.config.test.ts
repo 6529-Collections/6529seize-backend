@@ -1,4 +1,5 @@
 import {
+  deriveReleaseBusV2LaneStates,
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
   releaseBusV2BetaAllowsCandidate,
@@ -216,5 +217,142 @@ describe('Release Bus v2 operator-only OFF beta configuration', () => {
       ReleaseBusV2BetaConfigurationError
     );
     expect(getReleaseBusV2Mode()).toBe('OFF');
+  });
+});
+
+describe('deriveReleaseBusV2LaneStates', () => {
+  const runningControls = [
+    {
+      scope: 'ALL' as const,
+      paused: false,
+      reason: 'Global recovery complete'
+    },
+    {
+      scope: 'STAGING' as const,
+      paused: false,
+      reason: 'Staging enabled'
+    },
+    {
+      scope: 'PRODUCTION' as const,
+      paused: false,
+      reason: 'Production enabled'
+    }
+  ];
+
+  it('exposes only the two effective automation lanes', () => {
+    expect(deriveReleaseBusV2LaneStates('PRODUCTION', runningControls)).toEqual(
+      [
+        {
+          lane: 'STAGING',
+          status: 'ON',
+          changeable: true,
+          reason: 'Staging enabled'
+        },
+        {
+          lane: 'PRODUCTION',
+          status: 'ON',
+          changeable: true,
+          reason: 'Production enabled'
+        }
+      ]
+    );
+  });
+
+  it('derives an individual lane off state from its control', () => {
+    expect(
+      deriveReleaseBusV2LaneStates('PRODUCTION', [
+        ...runningControls.filter(({ scope }) => scope !== 'PRODUCTION'),
+        {
+          scope: 'PRODUCTION',
+          paused: true,
+          reason: 'Production maintenance'
+        }
+      ])
+    ).toEqual([
+      {
+        lane: 'STAGING',
+        status: 'ON',
+        changeable: true,
+        reason: 'Staging enabled'
+      },
+      {
+        lane: 'PRODUCTION',
+        status: 'OFF',
+        changeable: true,
+        reason: 'Production maintenance'
+      }
+    ]);
+  });
+
+  it('derives both lanes off from the internal emergency fence', () => {
+    expect(
+      deriveReleaseBusV2LaneStates('PRODUCTION', [
+        {
+          scope: 'ALL',
+          paused: true,
+          reason: 'Emergency hard stop'
+        },
+        ...runningControls.filter(({ scope }) => scope !== 'ALL')
+      ])
+    ).toEqual([
+      {
+        lane: 'STAGING',
+        status: 'OFF',
+        changeable: false,
+        reason: 'Emergency hard stop'
+      },
+      {
+        lane: 'PRODUCTION',
+        status: 'OFF',
+        changeable: false,
+        reason: 'Emergency hard stop'
+      }
+    ]);
+  });
+
+  it('keeps the internal capability ceiling fail-closed', () => {
+    expect(deriveReleaseBusV2LaneStates('STAGING', runningControls)).toEqual([
+      {
+        lane: 'STAGING',
+        status: 'ON',
+        changeable: true,
+        reason: 'Staging enabled'
+      },
+      {
+        lane: 'PRODUCTION',
+        status: 'OFF',
+        changeable: false,
+        reason: 'Internal Release Bus hard stop is active'
+      }
+    ]);
+    expect(deriveReleaseBusV2LaneStates('OFF', runningControls)).toEqual([
+      {
+        lane: 'STAGING',
+        status: 'OFF',
+        changeable: false,
+        reason: 'Internal Release Bus hard stop is active'
+      },
+      {
+        lane: 'PRODUCTION',
+        status: 'OFF',
+        changeable: false,
+        reason: 'Internal Release Bus hard stop is active'
+      }
+    ]);
+  });
+
+  it('fails closed when an internal control is missing or duplicated', () => {
+    expect(() =>
+      deriveReleaseBusV2LaneStates(
+        'PRODUCTION',
+        runningControls.filter(({ scope }) => scope !== 'ALL')
+      )
+    ).toThrow('ALL control is unavailable');
+    expect(() =>
+      deriveReleaseBusV2LaneStates('PRODUCTION', [
+        ...runningControls,
+        runningControls[0]
+      ])
+    ).toThrow('ALL control is unavailable');
   });
 });

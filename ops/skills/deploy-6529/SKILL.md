@@ -1,6 +1,6 @@
 ---
 name: deploy-6529
-description: Route and execute 6529 backend, frontend, or coupled staging and production releases through Simple Release Bus v2 by exact PR head SHA, or use the serialized manual fallback only while v2 reports OFF. Use for staging, deploy, promotion, release merge, pause, resume, recovery, or rollout coordination.
+description: Route and execute 6529 backend, frontend, or coupled staging and production releases through an effective Release Bus lane by exact PR head SHA, or use the serialized manual fallback while that target lane reports OFF. Use for staging, deploy, promotion, release merge, turning a lane on or off, recovery, or rollout coordination.
 ---
 
 # Deploy 6529 Backend
@@ -9,20 +9,23 @@ description: Route and execute 6529 backend, frontend, or coupled staging and pr
 
 1. Run `node ops/scripts/release-bus-status.mjs` at the start and again before
    any readiness or environment mutation. The helper uses authenticated `gh`,
-   reads the versioned v2 controls endpoint.
+   reads the versioned controls endpoint, verifies hidden safety fences, and
+   returns only the two effective automation lanes.
 2. Fail closed on an unavailable/malformed API, authentication failure, unknown
-   mode, or incomplete controls. Never infer mode from files or old output.
-3. Route by the fresh v2 result:
+   or inconsistent lane state. Never infer ownership from files, raw mode,
+   hidden controls, or old output.
+3. Route the target environment by the fresh lane result:
 
-| Mode         | Staging                              | Production                                                                                     |
-| ------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `OFF`        | Serialized manual fallback           | Serialized manual fallback with explicit owner authorization; staging evidence is not required |
-| `STAGING`    | Register the exact candidate with v2 | Manual fallback only; production automation is disabled                                        |
-| `PRODUCTION` | Register the exact candidate with v2 | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for v2 production                 |
+| Target lane       | Route                                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `STAGING: ON`     | Register the exact candidate with Release Bus                                                                                   |
+| `STAGING: OFF`    | Serialized manual staging after the staging drain gate                                                                          |
+| `PRODUCTION: ON`  | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for Release Bus production                                         |
+| `PRODUCTION: OFF` | Serialized manual production after the production drain gate and explicit owner authorization; staging evidence is not required |
 
-When mode is active, stop if `ALL` or the target lane is paused. In `OFF`, v2
-controls are non-authoritative and do not prohibit manual staging or production
-through the documented fallback.
+Raw mode and `ALL` are internal emergency fences. They are verified by the
+helper but are not normal routing or UI controls. Do not bypass an internal
+fence. Both lanes `OFF` means full manual fallback after both drain gates.
 
 ## V2 readiness
 
@@ -72,10 +75,11 @@ and both base refs pass their fences. It never authors or posts release notes;
 every production operation emits the autonomous bot's canonical grouping
 metadata and finalize signal unless the candidate explicitly opts out.
 
-## Manual fallback while OFF
+## Manual fallback while the target lane is OFF
 
-1. Fetch the exact remote target head and inspect active frontend/backend
-   staging, production, and E2E workflows. Wait; never cancel another actor.
+1. Prove the target environment lock is free, no target mutation/E2E workflow
+   is active, and every already-dispatched exact operation is terminal. Fetch
+   the exact remote target head. Wait; never cancel another actor.
 2. Re-fetch immediately before pushing. If a shared ref moved, recompute from
    the new head. Never force-push.
 3. Merge the development branch into current `1a-staging`. Deploy required
@@ -87,8 +91,9 @@ metadata and finalize signal unless the candidate explicitly opts out.
    frontend.
 5. Record exact deployed frontend/backend SHAs before E2E and freeze staging
    until E2E is terminal.
-6. In `OFF`, production requires explicit owner authorization but not prior
-   staging deployment or validation. Re-fetch `main` and preserve dependency
+6. With the production lane `OFF`, production requires explicit owner
+   authorization but not prior staging deployment or validation. Re-fetch
+   `main` and preserve dependency
    order. Pass the same merged PR number and full canonical service set to every
    backend production run; set `release_note_publish=true` only on the final
    sequential service. For an explicitly authorized internal operation that
@@ -129,9 +134,12 @@ metadata and finalize signal unless the candidate explicitly opts out.
   candidates.
 - A merge conflict marks only the direct candidate `NEEDS_REBASE` and holds
   transitive dependants. Fix the branch and register its new SHA.
-- A control-plane defect pauses automation and leaves candidates unblamed. Keep
-  exact state, use the OFF/manual fallback only after an operator deliberately
-  disables v2, and resume explicitly after repair.
+- A control-plane defect turns the affected automation lane off and leaves
+  candidates unblamed. Keep exact state, wait for its drain gate, use manual
+  fallback for that environment, and turn the lane on explicitly after repair.
+- Use `node ops/scripts/release-bus-v2-fast-off.mjs --execute` only for an
+  emergency hard stop of both lanes. Its raw mode and `ALL` changes are
+  intentionally absent from normal UI and routing.
 - Failed E2E never creates staging validation. Do not mutate staging while the
   manifest owner still holds the environment lock.
 - If either production `main` base moved, v2 must cancel/requeue and freshly
@@ -149,5 +157,6 @@ metadata and finalize signal unless the candidate explicitly opts out.
 ## Closeout
 
 Report exact candidate SHAs/dependencies, train and operation states, deployed
-versions, manifest/E2E evidence, failures or holds, and live mode/controls. Do
+versions, manifest/E2E evidence, failures or holds, and both effective lane
+states. Do
 not expose credentials, signed URLs, raw production data, or hidden prompts.

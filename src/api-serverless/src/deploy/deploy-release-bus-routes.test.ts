@@ -564,6 +564,20 @@ describe('Release Bus v2 route authorization and exact actions', () => {
             row_version: 1
           })
         );
+        expect(response.body.lanes).toEqual([
+          {
+            lane: 'STAGING',
+            status: 'ON',
+            changeable: true,
+            reason: null
+          },
+          {
+            lane: 'PRODUCTION',
+            status: 'ON',
+            changeable: true,
+            reason: null
+          }
+        ]);
       }
       expect(mockGetViewer).not.toHaveBeenCalled();
       expectNoReleaseMutation();
