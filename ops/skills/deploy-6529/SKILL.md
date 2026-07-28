@@ -86,10 +86,34 @@ metadata and finalize signal unless the candidate explicitly opts out.
 
 ## Monitoring and recovery
 
+- Inspect the exact candidate ID, PR, head SHA, train, failed operation,
+  workflow, command/test, and log URL before acting.
+- Never infer that membership in a failed train makes a PR the culprit.
+- If failure evidence directly identifies that exact candidate/head or a
+  changed test, fix it, push a new head, and register that exact new SHA.
+- For grouped, `COMBINATION_FAILED`, or otherwise non-attributed staging
+  preflight failure, never push a dummy commit. Explicitly re-register the same
+  head only after its candidate is terminal and unowned; let the API fail
+  closed unless the audited grouped-failure evidence is exact.
+- Never start a parallel manual deployment or cancel another actor.
+- Report the exact failed command/test, candidate set, and log URL. Hand off
+  through durable bus/GitHub status; do not keep an interactive task polling.
 - Use train details, operations, workflow links, manifest identity, failure
   class, and recovery message in `/deploy/ui/bus`.
 - Infrastructure and retryable exact deployment failures retry the same
   idempotent operation. They do not isolate candidates.
+- An ordinary staging combined preflight failure never launches subset
+  isolation. After already-dispatched workflows drain, the failing
+  repository's NEW group fails once and independent repository candidates
+  return to the very next train.
+- Group failures do not auto-retry. Re-registering the unchanged exact head is
+  the only retry signal, and it succeeds only when fresh green PR evidence and
+  immutable registration data match one unowned audited group-failure row
+  version. Record the retry id/attempt; never require a dummy commit.
+- Active staging trains recheck every NEW exact PR head before further work.
+  A moved head stops new dispatch, drains existing workflows without
+  cancellation, supersedes the obsolete candidate, and replans unrelated NEW
+  candidates.
 - A merge conflict marks only the direct candidate `NEEDS_REBASE` and holds
   transitive dependants. Fix the branch and register its new SHA.
 - A control-plane defect pauses automation and leaves candidates unblamed. Keep

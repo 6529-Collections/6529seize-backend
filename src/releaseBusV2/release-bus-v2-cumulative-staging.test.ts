@@ -738,6 +738,38 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     expect(statements[0]).not.toContain('staging_live_state');
   });
 
+  it('rejects overlapping NEW and removed sets before any staging mutation', async () => {
+    const execute = jest.fn();
+    const repository = new ReleaseBusV2Repository(
+      () =>
+        ({
+          execute,
+          oneOrNull: async () => null,
+          getAffectedRows: () => 0
+        }) as never
+    );
+
+    await expect(
+      repository.commitValidatedStaging(
+        {
+          trainId: 'overlap-train',
+          expectedStateVersion: 4,
+          manifestId: 'overlap-manifest',
+          frontendSha: 'a'.repeat(40),
+          backendSha: 'b'.repeat(40),
+          frontendStagingRefSha: 'c'.repeat(40),
+          backendStagingRefSha: 'd'.repeat(40),
+          admittedCandidateIds: ['candidate-a'],
+          removedCandidateIds: ['candidate-a'],
+          newCandidateIds: ['candidate-a']
+        },
+        {}
+      )
+    ).rejects.toThrow('NEW and removed candidate sets must be disjoint');
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('replaces only the superseded exact PR head in the proposed cumulative manifest', async () => {
     const a = candidate('a1', 'frontend', 'STAGING_VALIDATED', true);
     const b = candidate('b2', 'backend', 'STAGING_VALIDATED', true);
@@ -804,6 +836,72 @@ describe('Release Bus v2 cumulative admitted staging', () => {
           replaced_candidate_ids: [a.id],
           carried_candidate_ids: [b.id],
           new_candidate_ids: [a2.id]
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('never classifies the same exact live candidate as both NEW and REPLACED', async () => {
+    const exact = candidate('a1', 'frontend', 'READY_FOR_STAGING', true);
+    const carried = candidate('b2', 'backend', 'STAGING_VALIDATED', true);
+    const createTrain = jest.fn(async () => train('self-replacement-guard'));
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      acquireLock: async () => ({ lease_token: 'scheduler' }),
+      releaseLock: async () => true,
+      getStagingState: async () => ({
+        id: 'current',
+        status: 'LIVE',
+        current_manifest_id: 'manifest-live',
+        last_validated_manifest_id: 'manifest-live',
+        frontend_sha: '1'.repeat(40),
+        backend_sha: '2'.repeat(40),
+        frontend_staging_ref_sha: '3'.repeat(40),
+        backend_staging_ref_sha: '4'.repeat(40),
+        clean_main: false,
+        last_transition_train_id: 'previous',
+        updated_at: 1,
+        row_version: 9
+      }),
+      listControls: async () => [
+        { scope: 'ALL', paused: false },
+        { scope: 'STAGING', paused: false },
+        { scope: 'PRODUCTION', paused: false }
+      ],
+      listTrains: async () => [],
+      listCandidates: async (statuses: string[]) =>
+        statuses.includes('READY_FOR_STAGING') ? [exact] : [],
+      listLiveStagingCandidates: async () => [exact, carried],
+      listStagingTransitionRequests: async () => [],
+      listDependencies: async () => [],
+      createTrain,
+      updateCandidate: async () => true,
+      appendEvent: async () => undefined
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await service.claimLane(
+      'STAGING',
+      'f'.repeat(40),
+      'b'.repeat(40),
+      'operator',
+      { frontendSha: '3'.repeat(40), backendSha: '4'.repeat(40) }
+    );
+
+    expect(createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateIds: [exact.id, carried.id],
+        candidateRoles: {
+          [carried.id]: 'CARRY_FORWARD',
+          [exact.id]: 'NEW'
+        },
+        stagingTransition: expect.objectContaining({
+          new_candidate_ids: [exact.id],
+          replaced_candidate_ids: [],
+          carried_candidate_ids: [carried.id]
         })
       }),
       expect.anything()

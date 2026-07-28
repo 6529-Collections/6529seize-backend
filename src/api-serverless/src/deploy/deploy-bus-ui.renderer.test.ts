@@ -12,6 +12,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain('id="production-candidates"');
     expect(html).toContain('successful staging E2E evidence');
     expect(html).toContain('STAGING_DEPLOYED is distinct');
+    expect(html).toContain('retry the unchanged SHA only after it is terminal');
+    expect(html).toContain('never push a dummy commit');
     expect(html).toContain('Mark selected for production');
     expect(html).toContain('Operator controls');
     expect(html).toContain('Pause all');
@@ -31,6 +33,10 @@ describe('deploy-bus-ui.renderer', () => {
 
     expect(app).toContain("request('/deploy/ui/branch-head?");
     expect(app).toContain("request('/deploy/release-bus-v2/candidates'");
+    expect(app).toContain('data-retry-same-head');
+    expect(app).toContain('Explicit same-head retry accepted');
+    expect(app).toContain('deploy_plan:parseJson(item.deploy_plan_json)');
+    expect(app).toContain('candidate_id:dependency.prerequisite_candidate_id');
     expect(app).toContain('replace(/[&<>"\']/g');
     expect(app).toContain('expected_head_sha:');
     expect(app).toContain('pr_number:');
@@ -41,6 +47,8 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('item.reason');
     expect(app).toContain('function renderRuntime');
     expect(app).toContain('function renderTrainDetail');
+    expect(app).toContain('Exact candidate set');
+    expect(app).toContain('membership.disposition');
     expect(app).toContain('function renderOperation');
     expect(app).toContain('function renderManifests');
     expect(app).toContain("request('/deploy/release-bus-v2/trains/'");
