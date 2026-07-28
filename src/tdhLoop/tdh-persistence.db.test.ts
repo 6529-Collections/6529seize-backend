@@ -61,7 +61,8 @@ class TypeOrmTestSqlExecutor extends SqlExecutor {
   ): Promise<T[]> {
     const statement = prepareStatement(sql, params);
     const queryRunner = options?.wrappedConnection?.connection as
-      QueryRunner | undefined;
+      | QueryRunner
+      | undefined;
     const result = queryRunner
       ? await queryRunner.query(statement)
       : await this.dataSource.query(statement);
