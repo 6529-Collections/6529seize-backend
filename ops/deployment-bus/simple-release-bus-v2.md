@@ -372,8 +372,13 @@ operations are terminal, and backend/frontend staging and production
 mutation/E2E workflows are inactive. It temporarily owns all three exact locks,
 rechecks the workflow/ref fence, and transactionally verifies the supplied
 control, lock, singleton, candidate-set, digest, and row versions. The
-transaction locks and rechecks the complete candidate table before deriving the
-active target set, so a newly admitted target cannot escape the exact CAS.
+transaction uses a status-indexed locking read over every mutable candidate
+status, excluding only immutable `PRODUCTION_DEPLOYED`, `CANCELLED`, and
+`DEREGISTERED` history. Under the database's verified `REPEATABLE-READ`
+isolation, the resulting next-key locks fence inserts into every active-intent
+status range; a newly admitted target therefore cannot escape the exact CAS.
+Latest branch-move events for all `SUPERSEDED` rows are read in one batched
+query while that fence is held.
 
 The transaction changes only active-intent targets to `DEREGISTERED`, clears
 their queue, current-train, admission, transition, live-manifest, and
