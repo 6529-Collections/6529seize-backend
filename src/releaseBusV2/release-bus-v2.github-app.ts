@@ -559,7 +559,22 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     },
     {
       from: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
-      to: 'b3ad89156f85993d6bf3557af4bc785c46d66e09b6a32b5b9a8045a4c4761805',
+      to: '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
+      to: '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
+      to: 'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: 'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
+      to: '1bd91e4d85b1d1e42d26e724fefa15ce3d5b010321f1ac5849eee6fb0dd4dceb',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
@@ -577,6 +592,8 @@ function trustedGatePolicyBundleTransition(
   from: string,
   to: string
 ): boolean {
+  // Expiry bounds only a digest migration. The equal-digest steady state
+  // remains trusted after the migration window closes.
   return (
     from === to ||
     TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS[repository].some(

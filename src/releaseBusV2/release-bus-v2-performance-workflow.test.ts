@@ -110,6 +110,11 @@ describe('Release Bus v2 backend critical-path contract', () => {
     const aws = steps.findIndex(
       ({ name }) => name === 'Configure AWS credentials'
     );
+    const emergencyRevalidation = steps.findIndex(
+      ({ name }) =>
+        name ===
+        'Revalidate emergency API bootstrap immediately before cloud credentials'
+    );
     const deployStep = steps.findIndex(({ name }) => name === 'Deploy API');
 
     expect(syntax).toBe(0);
@@ -119,6 +124,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(setupNode).toBeGreaterThan(checkout);
     expect(setupNode).toBeGreaterThan(verifySource);
     expect(aws).toBeGreaterThan(setupNode);
+    expect(emergencyRevalidation).toBe(aws - 1);
     expect(deployStep).toBeGreaterThan(aws);
     for (const step of steps.slice(0, authorize)) {
       expect(step.uses).toBeUndefined();
@@ -153,6 +159,18 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(guard).toContain('--arg source_sha "$GITHUB_SHA"');
     expect(guard).toContain('.ready == true and .mode == "manual"');
     expect(guard).toContain('.authorized == true and .train_id == $train_id');
+    expect(guard).toContain('if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]');
+    expect(guard).toContain(
+      'Manual backend deployment workflow identity is invalid'
+    );
+    expect(guard).toContain('emergency-api-bootstrap-readiness.sh');
+    expect(guard).toContain('EMERGENCY_API_BOOTSTRAP_AUTHORIZED');
+    expect(guard).toContain('>> "$GITHUB_STEP_SUMMARY"');
+    expect(guard).toContain('.name == "production-environment" and');
+    expect(guard).toContain('.lane == "PRODUCTION" and');
+    expect(guard).toContain(
+      '$RELEASE_BUS_API_URL/deploy/release-bus-v2/trains'
+    );
     expect(guard).not.toContain('head -c 4000');
     expect(steps[verifySource]?.if).toBeUndefined();
     expect(steps[verifySource]?.run).toContain(
@@ -240,6 +258,9 @@ printf '200'
           GITHUB_SHA: 'a'.repeat(40),
           INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
           INPUT_ARTIFACT_RUN_ID: '54321',
+          INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
+          INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
+          INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
           INPUT_ENVIRONMENT: 'staging',
           INPUT_EXPECTED_SHA: 'a'.repeat(40),
           INPUT_OPERATION_KEY: operationKey,
@@ -290,6 +311,328 @@ printf '200'
     }
   });
 
+  it('keeps emergency API bootstrap exact, opt-out only, and default-off', () => {
+    const parsed = YAML.parse(deploy) as {
+      on: {
+        workflow_dispatch: {
+          inputs: Record<string, { default?: boolean; type?: string }>;
+        };
+      };
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    expect(
+      parsed.on.workflow_dispatch.inputs.emergency_api_bootstrap
+    ).toMatchObject({
+      type: 'boolean',
+      default: false
+    });
+    const validation = parsed.jobs['build-and-deploy'].steps.find(
+      ({ name }) => name === 'Validate dispatch inputs before using credentials'
+    )?.run;
+    expect(validation).toBeTruthy();
+    const baseEnv = {
+      ...process.env,
+      GITHUB_ACTOR: 'prxt6529',
+      GITHUB_REF_NAME: 'main',
+      GITHUB_SHA: 'a'.repeat(40),
+      INPUT_ARTIFACT_CONTRACT_VERSION: 'legacy-v2',
+      INPUT_ARTIFACT_DIGEST: '',
+      INPUT_ARTIFACT_ENVIRONMENT: '',
+      INPUT_ARTIFACT_RUN_ID: '',
+      INPUT_ARTIFACT_TRAIN_ID: '',
+      INPUT_EMERGENCY_API_BOOTSTRAP: 'true',
+      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: 'a'.repeat(40),
+      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: 'manual-authorizer-self-bootstrap',
+      EMERGENCY_API_BOOTSTRAP_ACTORS: '["prxt6529"]',
+      INPUT_ENVIRONMENT: 'prod',
+      INPUT_EXPECTED_SHA: '',
+      INPUT_OPERATION_KEY: '',
+      INPUT_RELEASE_CONTRIBUTORS: '[]',
+      INPUT_RELEASE_GROUP_SERVICES: '',
+      INPUT_RELEASE_NOTE_GROUPS: '',
+      INPUT_RELEASE_NOTE_OPT_OUT: 'true',
+      INPUT_RELEASE_NOTE_PUBLISH: 'false',
+      INPUT_RELEASE_PULL_REQUEST: '',
+      INPUT_SERVICE: 'api',
+      INPUT_TRAIN_ID: '',
+      INPUT_TRAIN_REVISION: ''
+    };
+    const execute = (overrides: NodeJS.ProcessEnv = {}) =>
+      execFileSync('bash', ['-c', validation ?? 'exit 1'], {
+        cwd: root,
+        env: { ...baseEnv, ...overrides },
+        stdio: 'pipe'
+      });
+
+    expect(() => execute()).not.toThrow();
+    for (const invalid of [
+      { GITHUB_ACTOR: 'other-user' },
+      { GITHUB_REF_NAME: '1a-staging' },
+      { GITHUB_SHA: 'b'.repeat(40) },
+      { INPUT_ENVIRONMENT: 'staging' },
+      { INPUT_SERVICE: 'transactionsLoop' },
+      { INPUT_EMERGENCY_API_BOOTSTRAP_REASON: 'short' },
+      { INPUT_RELEASE_NOTE_OPT_OUT: 'false' },
+      { INPUT_RELEASE_NOTE_PUBLISH: 'true' },
+      { INPUT_RELEASE_PULL_REQUEST: '1861' }
+    ])
+      expect(() => execute(invalid)).toThrow();
+    expect(() =>
+      execute({
+        INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
+        INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
+        INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
+        INPUT_RELEASE_NOTE_OPT_OUT: 'false'
+      })
+    ).not.toThrow();
+  });
+
+  it('executes the authenticated emergency compatibility guard and durable audit', () => {
+    const parsed = YAML.parse(deploy) as {
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            name?: string;
+            run?: string;
+            env?: Record<string, string>;
+          }>;
+        }
+      >;
+    };
+    const steps = parsed.jobs['build-and-deploy'].steps;
+    const authorize = steps.find(
+      ({ name }) => name === 'Authorize exact deployment operation'
+    )?.run;
+    const revalidateStep = steps.find(
+      ({ name }) =>
+        name ===
+        'Revalidate emergency API bootstrap immediately before cloud credentials'
+    );
+    const revalidate = revalidateStep?.run;
+    expect(authorize).toBeTruthy();
+    expect(revalidate).toBeTruthy();
+    expect(revalidateStep?.env).toEqual({
+      RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
+      RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
+        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}',
+      GITHUB_TOKEN: '${{ github.token }}'
+    });
+
+    const fixture = mkdtempSync(path.join(tmpdir(), 'emergency-bootstrap-'));
+    const fakeCurl = path.join(fixture, 'curl');
+    const callLog = path.join(fixture, 'calls.txt');
+    const argumentLog = path.join(fixture, 'arguments.txt');
+    const githubOutput = path.join(fixture, 'github-output.txt');
+    const githubSummary = path.join(fixture, 'github-summary.md');
+    writeFileSync(
+      fakeCurl,
+      `#!/bin/sh
+output=
+headers=
+url=
+printf '%s\\n' "$*" >> "$ARGUMENT_LOG"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    --dump-header) headers="$2"; shift 2 ;;
+    --data) shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+printf '%s\\n' "$url" >> "$CALL_LOG"
+if [ -n "$headers" ]; then
+  printf 'HTTP/1.1 200 OK\\r\\nCache-Control: no-cache, no-store, must-revalidate\\r\\n\\r\\n' > "$headers"
+fi
+case "$url" in
+  */manual-deployment-readiness)
+    printf '{"error":"Manual backend deployment workflow identity is invalid"}' > "$output"
+    printf '409'
+    ;;
+  */release-bus-v2/controls)
+    if [ "$FAKE_BLOCKED" = true ]; then
+      printf '%s' '{"mode":"PRODUCTION","controls":[{"scope":"ALL","paused":false}],"lanes":[{"lane":"PRODUCTION","status":"OFF","changeable":true}],"locks":[{"name":"production-environment","owner_train_id":"active-train","lease_owner":"worker","lease_token":"held"}]}' > "$output"
+    else
+      printf '%s' '{"mode":"PRODUCTION","controls":[{"scope":"ALL","paused":false}],"lanes":[{"lane":"PRODUCTION","status":"OFF","changeable":true}],"locks":[{"name":"production-environment","owner_train_id":null,"lease_owner":null,"lease_token":null}]}' > "$output"
+    fi
+    printf '200'
+    ;;
+  */release-bus-v2/trains)
+    printf '%s' '{"mode":"PRODUCTION","trains":[]}' > "$output"
+    printf '200'
+    ;;
+  */git/ref/heads/main)
+    printf '%s' '{"object":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' > "$output"
+    printf '200'
+    ;;
+  */actions/runs/12345)
+    printf '%s' '{"id":12345,"run_attempt":2,"actor":{"login":"prxt6529"},"event":"workflow_dispatch","path":".github/workflows/deploy.yml","status":"in_progress","conclusion":null,"head_branch":"main","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"Deploy api to prod [manual]","display_title":"Deploy api to prod [manual]"}' > "$output"
+    printf '200'
+    ;;
+  */contents/.github/workflows/*)
+    if [ "$FAKE_MISSING_WORKFLOW" = true ]; then
+      printf '%s' '{"message":"Not Found"}' > "$output"
+      printf '404'
+    else
+      printf '%s' '{"type":"file","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' > "$output"
+      printf '200'
+    fi
+    ;;
+  */actions/runs\\?*)
+    if [ "$FAKE_INCOMPLETE_RUN_PAGE" = true ]; then
+      printf '%s' '{"total_count":101,"workflow_runs":[]}' > "$output"
+    else
+      printf '%s' '{"total_count":0,"workflow_runs":[]}' > "$output"
+    fi
+    printf '200'
+    ;;
+  *)
+    printf '%s' '{"error":"unexpected fake curl URL"}' > "$output"
+    printf '500'
+    ;;
+esac
+`
+    );
+    chmodSync(fakeCurl, 0o755);
+    const env = {
+      ...process.env,
+      ARGUMENT_LOG: argumentLog,
+      CALL_LOG: callLog,
+      FAKE_BLOCKED: 'false',
+      FAKE_INCOMPLETE_RUN_PAGE: 'false',
+      FAKE_MISSING_WORKFLOW: 'false',
+      GITHUB_ACTOR: 'prxt6529',
+      GITHUB_API_URL: 'https://api.github.invalid',
+      GITHUB_OUTPUT: githubOutput,
+      GITHUB_REF_NAME: 'main',
+      GITHUB_REPOSITORY: '6529-Collections/6529seize-backend',
+      GITHUB_REPOSITORY_OWNER: '6529-Collections',
+      GITHUB_RUN_ATTEMPT: '2',
+      GITHUB_RUN_ID: '12345',
+      GITHUB_SERVER_URL: 'https://github.com',
+      GITHUB_SHA: 'a'.repeat(40),
+      GITHUB_STEP_SUMMARY: githubSummary,
+      GITHUB_TOKEN: 'github-token',
+      INPUT_ARTIFACT_DIGEST: '',
+      INPUT_ARTIFACT_RUN_ID: '',
+      INPUT_EMERGENCY_API_BOOTSTRAP: 'true',
+      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: 'a'.repeat(40),
+      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: 'manual-authorizer-self-bootstrap',
+      INPUT_ENVIRONMENT: 'prod',
+      INPUT_EXPECTED_SHA: '',
+      INPUT_OPERATION_KEY: '',
+      INPUT_SERVICE: 'api',
+      INPUT_TRAIN_ID: '',
+      PATH: `${fixture}:${process.env.PATH ?? ''}`,
+      RELEASE_BUS_API_URL: 'https://release-bus.invalid',
+      RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'workflow-token',
+      RUNNER_TEMP: fixture
+    };
+    try {
+      expect(() =>
+        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
+          cwd: root,
+          env,
+          stdio: 'pipe'
+        })
+      ).not.toThrow();
+      expect(readFileSync(githubOutput, 'utf8')).toContain(
+        'emergency_compatibility_fallback=true'
+      );
+      expect(readFileSync(githubSummary, 'utf8')).toContain(
+        '"authorization_mode":"legacy-identity-compatibility"'
+      );
+      expect(readFileSync(githubSummary, 'utf8')).toContain(
+        '"reason":"manual-authorizer-self-bootstrap"'
+      );
+      writeFileSync(argumentLog, '');
+      expect(() =>
+        execFileSync('bash', ['-c', revalidate ?? 'exit 1'], {
+          cwd: root,
+          env,
+          stdio: 'pipe'
+        })
+      ).not.toThrow();
+      const revalidationArguments = readFileSync(argumentLog, 'utf8')
+        .trim()
+        .split('\n');
+      const githubArguments = revalidationArguments.filter((argumentsLine) =>
+        argumentsLine.includes('https://api.github.invalid/')
+      );
+      const releaseBusArguments = revalidationArguments.filter(
+        (argumentsLine) =>
+          argumentsLine.includes('https://release-bus.invalid/')
+      );
+      expect(githubArguments.length).toBeGreaterThan(0);
+      expect(
+        githubArguments.every((argumentsLine) =>
+          argumentsLine.includes('Authorization: Bearer github-token')
+        )
+      ).toBe(true);
+      expect(
+        githubArguments.every(
+          (argumentsLine) => !argumentsLine.includes('workflow-token')
+        )
+      ).toBe(true);
+      expect(releaseBusArguments.length).toBeGreaterThan(0);
+      expect(
+        releaseBusArguments.every((argumentsLine) =>
+          argumentsLine.includes('Authorization: Bearer workflow-token')
+        )
+      ).toBe(true);
+      expect(
+        releaseBusArguments.every(
+          (argumentsLine) => !argumentsLine.includes('github-token')
+        )
+      ).toBe(true);
+      const summary = readFileSync(githubSummary, 'utf8');
+      expect(summary).not.toContain('workflow-token');
+      expect(summary).not.toContain('github-token');
+      const calls = readFileSync(callLog, 'utf8');
+      expect(calls).toContain('/manual-deployment-readiness');
+      expect(calls).toContain('/release-bus-v2/controls');
+      expect(calls).toContain('/release-bus-v2/trains');
+      expect(calls).toContain('/git/ref/heads/main');
+      expect(calls).toContain('/actions/runs/12345');
+      expect(calls).toContain(
+        '/contents/.github/workflows/build-upload-deploy-prod.yml?ref=main'
+      );
+      expect(calls).toContain(
+        '/repos/6529-Collections/6529seize-frontend/actions/runs?'
+      );
+      expect(authorize).toContain('.total_count');
+      expect(authorize).toContain(
+        'deploy-control-prod-manual concurrency group'
+      );
+      expect(() =>
+        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
+          cwd: root,
+          env: { ...env, FAKE_BLOCKED: 'true' },
+          stdio: 'pipe'
+        })
+      ).toThrow();
+      writeFileSync(callLog, '');
+      expect(() =>
+        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
+          cwd: root,
+          env: { ...env, FAKE_INCOMPLETE_RUN_PAGE: 'true' },
+          stdio: 'pipe'
+        })
+      ).toThrow();
+      expect(readFileSync(callLog, 'utf8')).toContain('page=2');
+      expect(() =>
+        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
+          cwd: root,
+          env: { ...env, FAKE_MISSING_WORKFLOW: 'true' },
+          stdio: 'pipe'
+        })
+      ).toThrow();
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('rejects cross-train v3 artifacts before authorization or checkout', () => {
     const trainId = '11111111-1111-4111-8111-111111111111';
     const otherTrainId = '22222222-2222-4222-8222-222222222222';
@@ -309,6 +652,9 @@ printf '200'
           INPUT_ARTIFACT_ENVIRONMENT: 'production',
           INPUT_ARTIFACT_RUN_ID: '54321',
           INPUT_ARTIFACT_TRAIN_ID: artifactTrainId,
+          INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
+          INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
+          INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
           INPUT_ENVIRONMENT: 'prod',
           INPUT_EXPECTED_SHA: 'a'.repeat(40),
           INPUT_OPERATION_KEY: `rb2:${trainId}:deploy:production:backend:api:a1`,
