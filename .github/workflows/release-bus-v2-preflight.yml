@@ -550,7 +550,8 @@ jobs:
                   .repository == "backend" and
                   (.source_sha | test("^[a-f0-9]{40}$")) and
                   (.units | type == "array" and length > 0) and
-                  ((.artifact_bytes_reused // (.reused_exact_pr_artifact // false)) == false)
+                  ((.artifact_bytes_reused // false) == false) and
+                  ((.reused_exact_pr_artifact // false) == false)
                 ) |
                 {
                   artifact_digest:$digest,
