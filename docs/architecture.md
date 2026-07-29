@@ -165,6 +165,10 @@ flowchart TD
 | `releaseBusV2Reconciler`                 | Claim and reconcile exact Simple Release Bus v2 trains.                                                      |
 | `releaseBusCleaner`                      | Remove expired temporary v2 release branches that no active train owns.                                      |
 
+`transactionsLoop` receipt verification fails closed and raises per-function
+error alarms. See the [transactions ingestion runbook](transactions-loop-ingestion-runbook.md)
+for alert triage and recovery.
+
 ### Triggered Lambdas
 
 | Lambda                           | Trigger                                                                                                                            | Purpose                                                                                                                                    |
