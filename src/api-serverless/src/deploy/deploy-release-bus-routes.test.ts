@@ -28,6 +28,8 @@ const mockV2InvalidateBranch = jest.fn();
 const mockV2IsBetaTrainAllowed = jest.fn();
 const mockV2Authorize = jest.fn();
 const mockV2ReportProgress = jest.fn();
+const mockManualDeploymentAuthorize = jest.fn();
+const mockManualDispatchReady = jest.fn();
 const mockRecoverUnsatisfiableProductionQualifications = jest.fn();
 const mockRepairCurrentStagingManifestCandidates = jest.fn();
 
@@ -53,6 +55,16 @@ class MockReleaseBusV2CurrentStagingRepairError extends Error {
   ) {
     super(message);
     this.name = 'ReleaseBusV2CurrentStagingRepairError';
+  }
+}
+
+class MockReleaseBusV2ManualDeploymentError extends Error {
+  public constructor(
+    public readonly code: 'CONFLICT' | 'UNAVAILABLE',
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2ManualDeploymentError';
   }
 }
 
@@ -133,6 +145,22 @@ jest.mock('@/releaseBusV2/release-bus-v2.operations', () => ({
   releaseBusV2Operations: {
     authorize: (...args: unknown[]) => mockV2Authorize(...args),
     reportProgress: (...args: unknown[]) => mockV2ReportProgress(...args)
+  }
+}));
+
+jest.mock('@/releaseBusV2/release-bus-v2.manual-deployment', () => ({
+  ReleaseBusV2ManualDeploymentError: MockReleaseBusV2ManualDeploymentError,
+  isReleaseBusV2ManualDeploymentError: (error: unknown) =>
+    error instanceof Error &&
+    error.name === 'ReleaseBusV2ManualDeploymentError' &&
+    ['CONFLICT', 'UNAVAILABLE'].includes(
+      String((error as { code?: unknown }).code)
+    ),
+  releaseBusV2ManualDeploymentGuard: {
+    authorizeWorkflow: (...args: unknown[]) =>
+      mockManualDeploymentAuthorize(...args),
+    assertDispatchReady: (...args: unknown[]) =>
+      mockManualDispatchReady(...args)
   }
 }));
 
@@ -378,6 +406,20 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       unrelatedStatus: 401
     },
     {
+      name: 'manual workflow readiness',
+      path: '/deploy/release-bus-v2/manual-deployment-readiness',
+      body: {
+        repository: 'backend',
+        environment: 'staging',
+        service: 'api',
+        workflow_run_id: '12345',
+        workflow_run_attempt: 1,
+        source_ref: 'main',
+        source_sha: SHA
+      },
+      unrelatedStatus: 401
+    },
+    {
       name: 'workflow progress report',
       path: '/deploy/release-bus-v2/report-progress',
       body: {
@@ -433,6 +475,16 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     mockV2InvalidateBranch.mockResolvedValue(undefined);
     mockV2Authorize.mockResolvedValue({ authorized: true, reused: false });
     mockV2ReportProgress.mockResolvedValue({ accepted: true });
+    mockManualDeploymentAuthorize.mockImplementation(async (authorization) => ({
+      ready: true,
+      mode: 'manual',
+      lane:
+        (authorization as { environment: string }).environment === 'staging'
+          ? 'STAGING'
+          : 'PRODUCTION',
+      ...(authorization as Record<string, unknown>)
+    }));
+    mockManualDispatchReady.mockResolvedValue(undefined);
     mockV2ListCandidates.mockResolvedValue([v2Candidate]);
     mockV2ListTrains.mockResolvedValue([]);
     mockV2ListManifests.mockResolvedValue([]);
@@ -949,6 +1001,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       train_id: TRAIN_ID,
       operation_key: body.operation_key
     });
+    expect(mockManualDeploymentAuthorize).not.toHaveBeenCalled();
   });
 
   it('accepts only a complete strict aggregate for an orchestration authorization', async () => {
@@ -1415,6 +1468,165 @@ describe('Release Bus v2 route authorization and exact actions', () => {
 
     expect(response.status).toBe(403);
     expect(mockV2Authorize).not.toHaveBeenCalled();
+  });
+
+  it('returns exact manual readiness evidence without using operation authorization', async () => {
+    const body = {
+      repository: 'backend',
+      environment: 'staging',
+      service: 'api',
+      workflow_run_id: '12345',
+      workflow_run_attempt: 2,
+      source_ref: 'main',
+      source_sha: SHA
+    };
+
+    const response = await post(
+      '/deploy/release-bus-v2/manual-deployment-readiness',
+      body
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ready: true,
+      mode: 'manual',
+      lane: 'STAGING',
+      ...body
+    });
+    expect(mockManualDeploymentAuthorize).toHaveBeenCalledWith(body);
+    expect(mockV2Authorize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['CONFLICT', 409],
+    ['UNAVAILABLE', 503]
+  ] as const)(
+    'maps manual readiness %s failures without dispatching',
+    async (code, status) => {
+      mockManualDeploymentAuthorize.mockRejectedValue(
+        new MockReleaseBusV2ManualDeploymentError(
+          code,
+          'Manual deployment remains blocked'
+        )
+      );
+
+      const response = await post(
+        '/deploy/release-bus-v2/manual-deployment-readiness',
+        {
+          repository: 'frontend',
+          environment: 'prod',
+          service: 'frontend',
+          workflow_run_id: '12345',
+          workflow_run_attempt: 1,
+          source_ref: 'main',
+          source_sha: SHA
+        }
+      );
+
+      expect(response.status).toBe(status);
+      expect(mockDispatchDeploy).not.toHaveBeenCalled();
+      expect(mockV2Authorize).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects malformed manual readiness identity before consulting the guard', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/manual-deployment-readiness',
+      {
+        repository: 'backend',
+        environment: 'staging',
+        service: 'api',
+        workflow_run_id: '12345',
+        workflow_run_attempt: 0,
+        source_ref: 'main',
+        source_sha: SHA
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockManualDeploymentAuthorize).not.toHaveBeenCalled();
+  });
+
+  it('keeps root manual backend dispatch serialized to one service', async () => {
+    const response = await post('/deploy/ui/dispatch', {
+      target: 'backend',
+      ref: 'main',
+      environment: 'staging',
+      services: ['api', 'tdhLoop']
+    });
+
+    expect(response.status).toBe(400);
+    expect(mockManualDispatchReady).not.toHaveBeenCalled();
+    expect(mockDispatchDeploy).not.toHaveBeenCalled();
+  });
+
+  it('checks authoritative lane readiness before a root manual dispatch', async () => {
+    const response = await post('/deploy/ui/dispatch', {
+      target: 'backend',
+      ref: 'main',
+      environment: 'staging',
+      services: ['api']
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockManualDispatchReady).toHaveBeenCalledWith('staging');
+    expect(mockDispatchDeploy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['staging', 'prod'],
+    ['prod', 'staging']
+  ] as const)(
+    'routes %s ON and %s OFF independently without an ALL-level rejection',
+    async (blockedEnvironment, allowedEnvironment) => {
+      mockManualDispatchReady.mockImplementation(async (environment) => {
+        if (environment === blockedEnvironment)
+          throw new MockReleaseBusV2ManualDeploymentError(
+            'CONFLICT',
+            `${blockedEnvironment} lane is ON`
+          );
+      });
+
+      const allowed = await post('/deploy/ui/dispatch', {
+        target: 'backend',
+        ref: 'main',
+        environment: allowedEnvironment,
+        services: ['api']
+      });
+      const blocked = await post('/deploy/ui/dispatch', {
+        target: 'backend',
+        ref: 'main',
+        environment: blockedEnvironment,
+        services: ['api']
+      });
+
+      expect(allowed.status).toBe(200);
+      expect(blocked.status).toBe(409);
+      expect(mockDispatchDeploy).toHaveBeenCalledTimes(1);
+      expect(mockManualDispatchReady).toHaveBeenCalledWith(allowedEnvironment);
+      expect(mockManualDispatchReady).toHaveBeenCalledWith(blockedEnvironment);
+      expect(mockV2SetPaused).not.toHaveBeenCalled();
+      expect(mockV2AppendEvent).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not dispatch when authoritative manual readiness is unavailable', async () => {
+    mockManualDispatchReady.mockRejectedValue(
+      new MockReleaseBusV2ManualDeploymentError(
+        'UNAVAILABLE',
+        'Manual deployment remains blocked'
+      )
+    );
+
+    const response = await post('/deploy/ui/dispatch', {
+      target: 'backend',
+      ref: 'main',
+      environment: 'prod',
+      services: ['api']
+    });
+
+    expect(response.status).toBe(503);
+    expect(mockDispatchDeploy).not.toHaveBeenCalled();
   });
 
   it('reports a reconciliation dispatch failure without claiming it was queued', async () => {

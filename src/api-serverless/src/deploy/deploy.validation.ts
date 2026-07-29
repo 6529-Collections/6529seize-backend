@@ -1,5 +1,6 @@
 import * as Joi from 'joi';
 import {
+  canDeployServiceToEnvironment,
   DEFAULT_DEPLOY_REF,
   DEPLOY_SERVICES,
   isDeployEnvironment
@@ -47,7 +48,7 @@ export const DeployDispatchBodySchema = Joi.object({
   services: Joi.array()
     .items(Joi.string().valid(...DEPLOY_SERVICES))
     .min(1)
-    .max(50)
+    .max(1)
     .unique()
 })
   .custom((value, helpers) => {
@@ -241,6 +242,51 @@ export const ReleaseBusV2ProgressBodySchema = Joi.object({
   jest: Joi.object().unknown(true).allow(null).default(null)
 })
   .unknown(true)
+  .required();
+
+export const ReleaseBusV2ManualDeploymentReadinessBodySchema = Joi.object({
+  repository: ReleaseRepositorySchema.required(),
+  environment: Joi.string()
+    .custom((value, helpers) => {
+      if (value === 'production') return 'prod';
+      return ['staging', 'prod'].includes(value)
+        ? value
+        : helpers.error('any.only');
+    })
+    .required(),
+  service: Joi.when('repository', {
+    is: 'frontend',
+    then: Joi.string().valid('frontend').required(),
+    otherwise: Joi.string()
+      .valid(...DEPLOY_SERVICES)
+      .required()
+  }),
+  workflow_run_id: Joi.string()
+    .pattern(/^[1-9]\d{0,19}$/)
+    .required(),
+  workflow_run_attempt: Joi.number()
+    .integer()
+    .positive()
+    .max(1_000_000)
+    .strict()
+    .required(),
+  source_ref: Joi.string()
+    .trim()
+    .min(1)
+    .max(240)
+    .pattern(/^(?!refs\/)(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/)
+    .required(),
+  source_sha: ReleaseShaSchema.required()
+})
+  .custom((value, helpers) => {
+    if (
+      value.repository === 'backend' &&
+      !canDeployServiceToEnvironment(value.service, value.environment)
+    )
+      return helpers.error('any.invalid');
+    return value;
+  })
+  .unknown(false)
   .required();
 
 const releaseBusAuthorizationFields = () => ({

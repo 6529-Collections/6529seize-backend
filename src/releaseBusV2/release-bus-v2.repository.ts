@@ -12,6 +12,7 @@ import {
   RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE,
   RELEASE_BUS_V2_TRAINS_TABLE
 } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import type { RequestContext } from '@/request.context';
 import {
   dbSupplier,
@@ -991,6 +992,32 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async listNonterminalOperationsForLanes(
+    lanes: readonly ReleaseBusV2Lane[],
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2OperationRecord[]> {
+    const uniqueLanes = Array.from(new Set(lanes));
+    if (
+      uniqueLanes.length === 0 ||
+      uniqueLanes.some(
+        (lane) =>
+          !['STAGING', 'PRODUCTION', 'PRODUCTION_QUALIFICATION'].includes(lane)
+      )
+    )
+      throw new Error('Invalid Release Bus v2 operation lane filter');
+    return this.db.execute<ReleaseBusV2OperationRecord>(
+      `select operations.*
+       from ${RELEASE_BUS_V2_OPERATIONS_TABLE} operations
+       inner join ${RELEASE_BUS_V2_TRAINS_TABLE} trains
+         on trains.id = operations.train_id
+       where operations.status not in ('SUCCEEDED', 'FAILED', 'CANCELLED')
+         and trains.lane in (:lanes)
+       order by operations.created_at asc, operations.id asc`,
+      { lanes: uniqueLanes },
+      dbOptions(ctx)
+    );
+  }
+
   public async updateOperation(
     id: string,
     rowVersion: number,
@@ -1064,7 +1091,9 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<ReleaseBusV2LockRecord>(
       `select * from ${RELEASE_BUS_V2_LOCKS_TABLE} where name = :name`,
       { name },
-      dbOptions(ctx)
+      ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : { forcePool: DbPoolName.WRITE }
     );
   }
 

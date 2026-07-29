@@ -11,18 +11,22 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-
-const yaml = require('js-yaml') as {
-  load(source: string): unknown;
-};
+import YAML from 'yaml';
 
 const root = process.cwd();
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
+const LEGACY_PR_CI_WORKFLOW_BLOB = '0cc8865dbb869b5156b46cc45e8581b259052916';
 
 describe('Release Bus v2 backend critical-path contract', () => {
   const preflight = read('.github/workflows/release-bus-v2-preflight.yml');
   const deploy = read('.github/workflows/deploy.yml');
   const pullRequestCi = read('.github/workflows/on-pull-request.yml');
+  const pullRequestCiBlob = execFileSync(
+    'git',
+    ['hash-object', '.github/workflows/on-pull-request.yml'],
+    { cwd: root, encoding: 'utf8' }
+  ).trim();
+  const legacyPullRequestCi = pullRequestCiBlob === LEGACY_PR_CI_WORKFLOW_BLOB;
   const reconciler = read('src/releaseBusV2/release-bus-v2.reconciler.ts');
 
   it('keeps one candidate build runner without repository quality matrices', () => {
@@ -34,7 +38,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
         normal_preflight_steps: string[];
       };
     };
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     expect(Object.keys(parsed.jobs)).toEqual(
@@ -74,11 +78,272 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(preflight).toContain('release-bus-package-backend.mjs');
   });
 
+  it('guards every deploy before checkout, caches, cloud credentials, or mutation', () => {
+    const parsed = YAML.parse(deploy) as {
+      concurrency: { group: string; 'cancel-in-progress': boolean };
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            name?: string;
+            if?: string;
+            uses?: string;
+            run?: string;
+          }>;
+        }
+      >;
+    };
+    const steps = parsed.jobs['build-and-deploy'].steps;
+    const syntax = steps.findIndex(
+      ({ name }) => name === 'Validate dispatch inputs before using credentials'
+    );
+    const authorize = steps.findIndex(
+      ({ name }) => name === 'Authorize exact deployment operation'
+    );
+    const checkout = steps.findIndex(({ name }) => name === 'Checkout');
+    const verifySource = steps.findIndex(
+      ({ name }) => name === 'Verify immutable source'
+    );
+    const setupNode = steps.findIndex(({ name }) =>
+      name?.startsWith('Install Node.js')
+    );
+    const aws = steps.findIndex(
+      ({ name }) => name === 'Configure AWS credentials'
+    );
+    const deployStep = steps.findIndex(({ name }) => name === 'Deploy API');
+
+    expect(syntax).toBe(0);
+    expect(authorize).toBe(1);
+    expect(checkout).toBeGreaterThan(authorize);
+    expect(verifySource).toBe(checkout + 1);
+    expect(setupNode).toBeGreaterThan(checkout);
+    expect(setupNode).toBeGreaterThan(verifySource);
+    expect(aws).toBeGreaterThan(setupNode);
+    expect(deployStep).toBeGreaterThan(aws);
+    for (const step of steps.slice(0, authorize)) {
+      expect(step.uses).toBeUndefined();
+      expect(step.run ?? '').not.toMatch(
+        /actions\/checkout|actions\/setup-node|configure-aws-credentials|git\s+(?:fetch|checkout)|npm\s+(?:ci|i|run)/
+      );
+    }
+    const syntaxScript = steps[syntax]?.run ?? '';
+    for (const manualOnlyEmpty of [
+      'INPUT_TRAIN_ID',
+      'INPUT_TRAIN_REVISION',
+      'INPUT_EXPECTED_SHA',
+      'INPUT_ARTIFACT_RUN_ID',
+      'INPUT_ARTIFACT_TRAIN_ID',
+      'INPUT_ARTIFACT_DIGEST',
+      'INPUT_ARTIFACT_ENVIRONMENT'
+    ])
+      expect(syntaxScript).toContain(`test -z "$${manualOnlyEmpty}"`);
+    expect(syntaxScript).toContain(
+      'test "$INPUT_ARTIFACT_CONTRACT_VERSION" = legacy-v2'
+    );
+
+    const guard = steps[authorize]?.run ?? '';
+    expect(steps[authorize]?.if).toBeUndefined();
+    expect(guard).toContain('if [ -n "$INPUT_OPERATION_KEY" ]');
+    expect(guard).toContain('release-bus-v2/authorize');
+    expect(guard).toContain('release-bus-v2/manual-deployment-readiness');
+    expect(guard).toContain('--connect-timeout 10');
+    expect(guard).toContain('--max-time 60');
+    expect(guard).toContain('--argjson workflow_run_attempt');
+    expect(guard).toContain('--arg source_ref "$GITHUB_REF_NAME"');
+    expect(guard).toContain('--arg source_sha "$GITHUB_SHA"');
+    expect(guard).toContain('.ready == true and .mode == "manual"');
+    expect(guard).toContain('.authorized == true and .train_id == $train_id');
+    expect(guard).not.toContain('head -c 4000');
+    expect(steps[verifySource]?.if).toBeUndefined();
+    expect(steps[verifySource]?.run).toContain(
+      'expected_source_sha="$GITHUB_SHA"'
+    );
+    expect(steps[verifySource]?.run).toContain(
+      'expected_source_sha="$INPUT_EXPECTED_SHA"'
+    );
+    expect(deploy).not.toContain('Authorize immutable Release Bus operation');
+    expect(JSON.stringify(steps[checkout])).toContain('github.sha');
+    expect(parsed.concurrency.group).toContain("|| 'manual'");
+    expect(parsed.concurrency.group).not.toContain('manual-production');
+    expect(parsed.concurrency['cancel-in-progress']).toBe(false);
+  });
+
+  it('executes the early guard with exact manual and Release Bus payloads', () => {
+    const parsed = YAML.parse(deploy) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const guard = parsed.jobs['build-and-deploy'].steps.find(
+      ({ name }) => name === 'Authorize exact deployment operation'
+    )?.run;
+    expect(guard).toBeTruthy();
+    const fixture = mkdtempSync(path.join(tmpdir(), 'deploy-guard-'));
+    const fakeCurl = path.join(fixture, 'curl');
+    const capturePayload = path.join(fixture, 'payload.json');
+    const captureUrl = path.join(fixture, 'url.txt');
+    const response = path.join(fixture, 'response.json');
+    writeFileSync(
+      fakeCurl,
+      `#!/bin/sh
+output=
+payload=
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    --data) payload="$2"; shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$payload" > "$CAPTURE_PAYLOAD"
+printf '%s' "$url" > "$CAPTURE_URL"
+cp "$CAPTURE_RESPONSE" "$output"
+printf '200'
+`
+    );
+    chmodSync(fakeCurl, 0o755);
+    const execute = (operationKey: string) => {
+      const manual = operationKey.length === 0;
+      writeFileSync(
+        response,
+        `${JSON.stringify(
+          manual
+            ? {
+                ready: true,
+                mode: 'manual',
+                lane: 'STAGING',
+                repository: 'backend',
+                environment: 'staging',
+                service: 'api',
+                workflow_run_id: '12345',
+                workflow_run_attempt: 2,
+                source_ref: '1a-staging',
+                source_sha: 'a'.repeat(40)
+              }
+            : {
+                authorized: true,
+                train_id: 'train-id',
+                operation_key: operationKey
+              }
+        )}\n`
+      );
+      execFileSync('bash', ['-c', guard ?? 'exit 1'], {
+        cwd: root,
+        env: {
+          ...process.env,
+          CAPTURE_PAYLOAD: capturePayload,
+          CAPTURE_RESPONSE: response,
+          CAPTURE_URL: captureUrl,
+          GITHUB_REF_NAME: '1a-staging',
+          GITHUB_RUN_ATTEMPT: '2',
+          GITHUB_RUN_ID: '12345',
+          GITHUB_SHA: 'a'.repeat(40),
+          INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
+          INPUT_ARTIFACT_RUN_ID: '54321',
+          INPUT_ENVIRONMENT: 'staging',
+          INPUT_EXPECTED_SHA: 'a'.repeat(40),
+          INPUT_OPERATION_KEY: operationKey,
+          INPUT_SERVICE: 'api',
+          INPUT_TRAIN_ID: 'train-id',
+          PATH: `${fixture}:${process.env.PATH ?? ''}`,
+          RELEASE_BUS_API_URL: 'https://release-bus.invalid',
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'test-token'
+        }
+      });
+      return {
+        payload: JSON.parse(readFileSync(capturePayload, 'utf8')) as Record<
+          string,
+          unknown
+        >,
+        url: readFileSync(captureUrl, 'utf8')
+      };
+    };
+    try {
+      expect(execute('')).toEqual({
+        payload: {
+          repository: 'backend',
+          environment: 'staging',
+          service: 'api',
+          workflow_run_id: '12345',
+          workflow_run_attempt: 2,
+          source_ref: '1a-staging',
+          source_sha: 'a'.repeat(40)
+        },
+        url: 'https://release-bus.invalid/deploy/release-bus-v2/manual-deployment-readiness'
+      });
+      expect(execute('rb2:train-id:deploy:api:a1')).toEqual({
+        payload: {
+          train_id: 'train-id',
+          operation_key: 'rb2:train-id:deploy:api:a1',
+          workflow_run_id: '12345',
+          artifact_run_id: '54321',
+          repository: 'backend',
+          environment: 'staging',
+          service: 'api',
+          expected_sha: 'a'.repeat(40),
+          artifact_digest: 'b'.repeat(64)
+        },
+        url: 'https://release-bus.invalid/deploy/release-bus-v2/authorize'
+      });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects cross-train v3 artifacts before authorization or checkout', () => {
+    const parsed = YAML.parse(deploy) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const validation = parsed.jobs['build-and-deploy'].steps.find(
+      ({ name }) => name === 'Validate dispatch inputs before using credentials'
+    )?.run;
+    const execute = (artifactTrainId: string) =>
+      execFileSync('bash', ['-c', validation ?? 'exit 1'], {
+        cwd: root,
+        env: {
+          ...process.env,
+          INPUT_ARTIFACT_CONTRACT_VERSION: 'environment-bound-v3',
+          INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
+          INPUT_ARTIFACT_ENVIRONMENT: 'production',
+          INPUT_ARTIFACT_RUN_ID: '54321',
+          INPUT_ARTIFACT_TRAIN_ID: artifactTrainId,
+          INPUT_ENVIRONMENT: 'prod',
+          INPUT_EXPECTED_SHA: 'a'.repeat(40),
+          INPUT_OPERATION_KEY: 'rb2:train-id:deploy:api:a1',
+          INPUT_RELEASE_CONTRIBUTORS: '[]',
+          INPUT_SERVICE: 'api',
+          INPUT_TRAIN_ID: 'train-id',
+          INPUT_TRAIN_REVISION: '1'
+        },
+        stdio: 'pipe'
+      });
+
+    expect(() => execute('other-train')).toThrow();
+    expect(() => execute('train-id')).not.toThrow();
+    expect(() => execute('')).not.toThrow();
+  });
+
   it('keeps full tests in exact merge-tree PR CI before evidence is emitted', () => {
-    const parsed = yaml.load(pullRequestCi) as {
+    const parsed = YAML.parse(pullRequestCi) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const steps = parsed.jobs.build.steps;
+    if (legacyPullRequestCi) {
+      expect(pullRequestCiBlob).toBe(LEGACY_PR_CI_WORKFLOW_BLOB);
+      expect(steps.find(({ name }) => name === 'Build backend')?.run).toContain(
+        'npm run build'
+      );
+      expect(steps.find(({ name }) => name === 'Lint')?.run).toContain(
+        'npm run lint:check'
+      );
+      expect(steps.find(({ name }) => name === 'Format')?.run).toContain(
+        'npm run format:check'
+      );
+      expect(steps.find(({ name }) => name === 'Build API')?.run).toContain(
+        'npm run build'
+      );
+      return;
+    }
     const test = steps.findIndex(({ name }) => name === 'Test backend');
     const build = steps.findIndex(({ name }) => name === 'Build backend');
     const bind = steps.findIndex(
@@ -97,7 +362,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
   });
 
   it('isolates secret-bearing authorization and reporting from candidate-controlled code', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<
         string,
         {
@@ -131,7 +396,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
   });
 
   it('authorizes before candidate checkout or cache and verifies the exact live source tip', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<
         string,
         {
@@ -173,10 +438,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(steps[checkout]).toMatchObject({
       uses: expect.stringMatching(/^actions\/checkout@[a-f0-9]{40}$/)
     });
-    expect(steps[checkout].if).toContain("steps.evidence.outcome == 'success'");
-    expect(steps[checkout].if).toContain(
-      "steps.evidence.outputs.artifact_bytes_reused != 'true'"
-    );
+    expect(steps[checkout].if).toBe("steps.evidence.outcome == 'success'");
     expect(steps[composition].run).toContain(
       'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
     );
@@ -188,7 +450,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
   });
 
   it('keeps legacy authorization old-API-shaped and binds strict authorization to its source ref', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const authorize = parsed.jobs.authorize.steps.find(
@@ -321,18 +583,36 @@ exit 1
     }
   });
 
-  it('uses strict PR CI artifacts only as evidence and bounds old deploy-byte reuse to the legacy bridge', () => {
+  it('uses every PR CI artifact only as evidence and always builds fresh train bytes', () => {
     expect(preflight).toContain('Verify exact green PR CI evidence');
+    expect(preflight).toContain('.head_sha == $expected_sha');
     expect(preflight).not.toContain('Download exact green PR artifact');
     expect(preflight).toContain('is_exact_evidence_archive=false');
-    expect(preflight).toContain('reused_exact_pr_artifact:true');
     expect(preflight).toContain(
-      '# whose bytes are reusable. An old producer can also name the new'
+      '# bytes are never promoted into a staging or production train.'
     );
-    expect(preflight).toContain(
+    expect(preflight).not.toContain('artifact_bytes_reused=true');
+    expect(preflight).not.toContain(
       "steps.evidence.outputs.artifact_bytes_reused == 'true'"
     );
+    expect(preflight).not.toContain(
+      'mv legacy-deploy-artifact release-bus-artifact'
+    );
+    expect(preflight).toContain(
+      '((.artifact_bytes_reused // false) == false) and'
+    );
+    expect(preflight).toContain(
+      '((.reused_exact_pr_artifact // false) == false)'
+    );
+    expect(preflight).toContain("if: steps.package.outcome == 'success'");
     const pullRequest = read('.github/workflows/on-pull-request.yml');
+    if (legacyPullRequestCi) {
+      expect(pullRequestCiBlob).toBe(LEGACY_PR_CI_WORKFLOW_BLOB);
+      expect(pullRequest).toContain('npm run lint:check');
+      expect(pullRequest).toContain('npm run build');
+      expect(pullRequest).not.toContain('policy-bundle.txt');
+      return;
+    }
     expect(pullRequest).toContain('exact-merge-tree-pr-ci-v1');
     expect(pullRequest).not.toContain(
       'release-bus-v2-pr-artifact/packages/api'
@@ -342,7 +622,7 @@ exit 1
   });
 
   it('treats an old-producer schema-v1 PR artifact as evidence and still builds fresh bytes', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const evidence = parsed.jobs.preflight.steps.find(
@@ -396,7 +676,7 @@ case "$*" in
     printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
     ;;
   *actions/runs/54321)
-    printf '{"event":"pull_request","status":"completed","conclusion":"success","path":".github/workflows/on-pull-request.yml"}\\n'
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml"}\\n'
     ;;
   *actions/artifacts/777/zip)
     cat "$ARTIFACT_ZIP"
@@ -441,8 +721,8 @@ esac
     }
   });
 
-  it('reuses old schema-v2 bytes only for an exact selected-unit inventory', () => {
-    const parsed = yaml.load(preflight) as {
+  it('accepts old schema-v2 archives only as exact-SHA evidence', () => {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const evidence = parsed.jobs.preflight.steps.find(
@@ -496,7 +776,7 @@ case "$*" in
     printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
     ;;
   *actions/runs/54321)
-    printf '{"event":"pull_request","status":"completed","conclusion":"success","path":".github/workflows/on-pull-request.yml"}\\n'
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml"}\\n'
     ;;
   *actions/artifacts/777/zip)
     cat "$ARTIFACT_ZIP"
@@ -542,13 +822,11 @@ esac
       );
 
       const exact = execute(['api']);
-      expect(exact).toContain('legacy_artifact_kind=deploy');
-      expect(exact).toContain('artifact_bytes_reused=true');
-      expect(
-        existsSync(
-          path.join(fixture, 'release-bus-artifact/packages/api/index.zip')
-        )
-      ).toBe(true);
+      expect(exact).toContain('legacy_artifact_kind=deploy-evidence');
+      expect(exact).not.toContain('artifact_bytes_reused=true');
+      expect(existsSync(path.join(fixture, 'release-bus-artifact'))).toBe(
+        false
+      );
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
@@ -556,8 +834,32 @@ esac
 
   it('records exact Node and npm provenance in immutable PR CI evidence', () => {
     const policy = require('../../scripts/pr-ci-policy-bundle.cjs') as {
-      buildPolicyBundle(input: { root: string }): { canonical: string };
+      FILE_PATHS: readonly string[];
+      buildPolicyBundle(input: Record<string, unknown>): {
+        canonical: string;
+        digest: string;
+      };
     };
+    if (legacyPullRequestCi) {
+      const modernOnly = new Set([
+        'scripts/pr-ci-policy-bundle.cjs',
+        'scripts/release-bus-backend-package-strategies.mjs',
+        'scripts/release-bus-package-backend.mjs',
+        'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts'
+      ]);
+      const bridge = policy.buildPolicyBundle({
+        root,
+        filePaths: policy.FILE_PATHS.filter((file) => !modernOnly.has(file)),
+        runtimePins: {},
+        nodePinWorkflows: [],
+        pinnedActionWorkflows: []
+      });
+      expect(bridge.digest).toBe(
+        '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143'
+      );
+      expect(pullRequestCiBlob).toBe(LEGACY_PR_CI_WORKFLOW_BLOB);
+      return;
+    }
     const { canonical } = policy.buildPolicyBundle({ root });
     expect(canonical).toContain('runtime-pin\tnode\t"22.17.1"\n');
     expect(canonical).toContain(
@@ -584,7 +886,7 @@ esac
   });
 
   it('attributes source-ref transport, movement, and candidate graph failures separately', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const composition = parsed.jobs.preflight.steps.find(
@@ -681,7 +983,7 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
   });
 
   it('accepts old-producer empty portable identity and requires v3 environment binding', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const validation = parsed.jobs.authorize.steps.find(
@@ -729,7 +1031,7 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
   });
 
   it('binds an old fast-path producer branch to one exact immutable train ref', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const composition = parsed.jobs.preflight.steps.find(
@@ -787,7 +1089,7 @@ esac
   });
 
   it('bridges legacy missing refs only through one exact lane ref and classifies ambiguity and transport', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const composition = parsed.jobs.preflight.steps.find(
@@ -918,7 +1220,7 @@ esac
   });
 
   it('reports a missing or cancelled candidate runner as retryable infrastructure', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const terminal = parsed.jobs.report.steps.find(
@@ -1001,7 +1303,7 @@ exit 1
   });
 
   it('reports trusted artifact corruption instead of losing the terminal callback', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const terminal = parsed.jobs.report.steps.find(
@@ -1130,6 +1432,78 @@ exit 1
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
+  });
+
+  it('keeps portable legacy packaging environment-agnostic and validates exact candidate evidence modes', () => {
+    const result = execFileSync(
+      'node',
+      [
+        '--input-type=module',
+        '--eval',
+        `
+          import {
+            concreteDeployEnvironment as concrete,
+            validateCandidateEvidence as validate
+          } from './scripts/release-bus-package-backend.mjs';
+          const sourceSha = '${'a'.repeat(40)}';
+          validate({
+            aggregateCandidateEvidenceDigest: '',
+            candidateEvidenceMode: 'legacy-whole-train',
+            contractVersion: 'legacy-v2',
+            reuseArtifactDigest: '',
+            reuseArtifactName: '',
+            reuseArtifactRunId: '',
+            sourceSha
+          });
+          validate({
+            aggregateCandidateEvidenceDigest: '',
+            candidateEvidenceMode: 'strict-single',
+            contractVersion: 'environment-bound-v3',
+            reuseArtifactDigest: '${'b'.repeat(64)}',
+            reuseArtifactName: \`release-bus-v2-pr-\${sourceSha}\`,
+            reuseArtifactRunId: '123',
+            sourceSha
+          });
+          validate({
+            aggregateCandidateEvidenceDigest: '${'c'.repeat(64)}',
+            candidateEvidenceMode: 'strict-aggregate',
+            contractVersion: 'environment-bound-v3',
+            reuseArtifactDigest: '',
+            reuseArtifactName: '',
+            reuseArtifactRunId: '',
+            sourceSha
+          });
+          let incompleteRejected = false;
+          try {
+            validate({
+              aggregateCandidateEvidenceDigest: '',
+              candidateEvidenceMode: 'strict-single',
+              contractVersion: 'environment-bound-v3',
+              reuseArtifactDigest: '',
+              reuseArtifactName: '',
+              reuseArtifactRunId: '',
+              sourceSha
+            });
+          } catch {
+            incompleteRejected = true;
+          }
+          process.stdout.write(JSON.stringify({
+            portable: concrete('portable'),
+            production: concrete('production'),
+            staging: concrete('staging'),
+            incompleteRejected
+          }));
+        `
+      ],
+      { cwd: root, encoding: 'utf8' }
+    );
+
+    expect(JSON.parse(result)).toEqual({
+      portable: null,
+      production: 'prod',
+      staging: 'staging',
+      incompleteRejected: true
+    });
   });
 
   it('binds policy bytes to the exact commit and rejects mutable action tags', () => {
@@ -1395,7 +1769,9 @@ exit 1
     expect(deploy).toContain('.environment == $environment');
     expect(deploy).toContain('.source_evidence_reused == true');
     expect(deploy).toContain('.artifact_bytes_reused == false');
-    expect(deploy).toContain('test "$artifact_train_id" = "$INPUT_TRAIN_ID"');
+    expect(deploy).toContain(
+      'test -z "$INPUT_ARTIFACT_TRAIN_ID" -o "$INPUT_ARTIFACT_TRAIN_ID" = "$INPUT_TRAIN_ID"'
+    );
     expect(deploy).toContain('.schema_version == 2');
     expect(deploy).toContain('artifact_contract:"legacy-v2"');
     expect(deploy).toContain('environment:"portable"');

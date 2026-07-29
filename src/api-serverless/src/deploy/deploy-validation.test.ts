@@ -2,21 +2,32 @@ import {
   DeployDispatchBodySchema,
   ReleaseBusV2CandidateActionBodySchema,
   ReleaseBusV2CandidateBodySchema,
+  ReleaseBusV2ManualDeploymentReadinessBodySchema,
   ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
   ReleaseBusV2ProgressBodySchema
 } from '@/api/deploy/deploy.validation';
 
 describe('deploy.validation', () => {
-  it('accepts a valid deploy batch request', () => {
+  it('accepts one serialized backend service request', () => {
     const { error, value } = DeployDispatchBodySchema.validate({
       ref: 'feature/deploy-ui',
       environment: 'staging',
-      services: ['api', 'tdhLoop']
+      services: ['api']
     });
 
     expect(error).toBeUndefined();
     expect(value.ref).toBe('feature/deploy-ui');
+  });
+
+  it('rejects a concurrent backend service batch', () => {
+    const { error } = DeployDispatchBodySchema.validate({
+      ref: 'main',
+      environment: 'staging',
+      services: ['api', 'tdhLoop']
+    });
+
+    expect(error).toBeDefined();
   });
 
   it('rejects duplicate services', () => {
@@ -45,6 +56,46 @@ describe('deploy.validation', () => {
 });
 
 describe('Release Bus v2 validation', () => {
+  it('binds manual deployment readiness to exact backend and frontend runs', () => {
+    const request = {
+      repository: 'backend',
+      environment: 'staging',
+      service: 'api',
+      workflow_run_id: '12345',
+      workflow_run_attempt: 2,
+      source_ref: 'main',
+      source_sha: 'a'.repeat(40)
+    };
+
+    expect(
+      ReleaseBusV2ManualDeploymentReadinessBodySchema.validate(request).value
+    ).toEqual(request);
+    expect(
+      ReleaseBusV2ManualDeploymentReadinessBodySchema.validate({
+        ...request,
+        repository: 'frontend',
+        environment: 'production',
+        service: 'frontend'
+      }).value
+    ).toEqual({
+      ...request,
+      repository: 'frontend',
+      environment: 'prod',
+      service: 'frontend'
+    });
+    for (const invalid of [
+      { ...request, service: 'frontend' },
+      { ...request, repository: 'frontend', service: 'api' },
+      { ...request, workflow_run_attempt: 0 },
+      { ...request, workflow_run_attempt: '2' },
+      { ...request, source_ref: 'refs/heads/main' },
+      { ...request, extra: true }
+    ])
+      expect(
+        ReleaseBusV2ManualDeploymentReadinessBodySchema.validate(invalid).error
+      ).toBeDefined();
+  });
+
   it('binds workflow authorization to the exact v2 train key', () => {
     const trainId = '8af60034-9741-4b9d-bb1c-80b483f75455';
     const authorization = {

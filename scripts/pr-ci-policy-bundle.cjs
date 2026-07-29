@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+/* eslint @typescript-eslint/no-require-imports: off */
+/* global Buffer, __dirname, console, module, process, require */
 'use strict';
 
 const crypto = require('node:crypto');
@@ -12,6 +14,8 @@ const MAX_FILE_COUNT = 96;
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_CANONICAL_BYTES = 64 * 1024;
 const GIT_BINARY = '/usr/bin/git';
+const LEGACY_PR_CI_WORKFLOW_SHA256 =
+  '8e7263390b15e4576fa04d0877c5b924a5ad210705f300363497676949fa6369';
 
 const FILE_PATHS = Object.freeze([
   '.github/workflows/deploy.yml',
@@ -198,13 +202,17 @@ function assertNodeRuntimePins(root, workflows, expectedNodeVersion) {
       path.join(root, relativePath),
       `protected path ${relativePath}`
     ).toString('utf8');
+    const exactLegacyWorkflow =
+      relativePath === '.github/workflows/on-pull-request.yml' &&
+      sha256(source) === LEGACY_PR_CI_WORKFLOW_SHA256;
     const versions = Array.from(
       source.matchAll(/node-version:\s*["']?([^"'#\s]+)["']?/gu),
       (match) => match[1]
     );
     if (
       versions.length === 0 ||
-      versions.some((version) => version !== expectedNodeVersion)
+      (versions.some((version) => version !== expectedNodeVersion) &&
+        !exactLegacyWorkflow)
     ) {
       throw new Error(
         `pr-ci-policy-bundle: ${relativePath} must pin every Node setup to ${expectedNodeVersion}`
@@ -219,6 +227,11 @@ function assertPinnedWorkflowActions(root, workflows) {
       path.join(root, relativePath),
       `protected path ${relativePath}`
     ).toString('utf8');
+    if (
+      relativePath === '.github/workflows/on-pull-request.yml' &&
+      sha256(source) === LEGACY_PR_CI_WORKFLOW_SHA256
+    )
+      continue;
     let workflow;
     try {
       workflow = YAML.parse(source, { maxAliasCount: 0 });

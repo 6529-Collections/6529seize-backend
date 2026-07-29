@@ -110,6 +110,65 @@ function retryDelayMs(attempt: number): number {
 }
 
 const DISPATCH_DISCOVERY_GRACE_MS = 30_000;
+const LEGACY_WORKFLOW_BLOB_ALLOWLIST_EXPIRES_AT = Date.UTC(
+  2026,
+  7,
+  31,
+  23,
+  59,
+  59
+);
+const LEGACY_OPERATION_WORKFLOW_BLOBS: Readonly<
+  Record<ReleaseBusV2Repository, Readonly<Record<string, readonly string[]>>>
+> = {
+  backend: {
+    'release-bus-v2-compose.yml': ['addb25bb6d8c59a7e61bd996e481c4934902012f'],
+    'release-bus-v2-preflight.yml': [
+      'f3cbf1ec1f0ca1284dd84289adc6e801b12ef329',
+      'e1f3508d917cb20cc5211c7ed7cdceaf87ff2116'
+    ],
+    'deploy.yml': [
+      '93069abfac648a9906fc8bac9ed2c72df6b93f8f',
+      '2bc91d47fe41ee61c10ef6b6eb4b63e4f6fe6c6c'
+    ]
+  },
+  frontend: {
+    'release-bus-v2-compose.yml': ['e630365d0a7b5305765cdb0683efe55906520373'],
+    'release-bus-v2-preflight.yml': [
+      'c4d7c0a7a2e9d10ddb82eec7feff7d8523e25b9f',
+      'c2f54b2bc7558f48830bc9c3ada7b6725b80ebdb'
+    ],
+    'release-bus-deploy-staging.yml': [
+      'ed7355c9136b9edf12d2479b1ec1a3d9c0c76b21',
+      '7313fb46dc997397b4d10d0a9d05b2f123d82772'
+    ],
+    'staging-e2e.yml': [
+      '183912f5daf70a502773bb41cebe73613e2b46e2',
+      '7a8960bbbe2369c27cd9e798a1257e01815bd566'
+    ],
+    'release-bus-deploy-production.yml': [
+      'c9ff9ef27ea65c265921294ef4724a54b913e064',
+      '52044731c96e9629f56ee1c9c94e481a0607e26f'
+    ],
+    'production-e2e.yml': [
+      'cd95ff1b43692864f1b29e574e37f20fcb46f6b4',
+      '9e791c077285b2708df0e985bde753ec02cc9cd0'
+    ]
+  }
+};
+
+function isAllowedLegacyOperationWorkflowBlob(
+  repository: ReleaseBusV2Repository,
+  workflow: string,
+  blobSha: string
+): boolean {
+  return (
+    Date.now() <= LEGACY_WORKFLOW_BLOB_ALLOWLIST_EXPIRES_AT &&
+    (LEGACY_OPERATION_WORKFLOW_BLOBS[repository][workflow] ?? []).includes(
+      blobSha
+    )
+  );
+}
 
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
@@ -890,6 +949,7 @@ export class ReleaseBusV2Operations {
       input.repository,
       input.workflow_run_id
     );
+    const expectedWorkflowPath = `.github/workflows/${request.workflow}`;
     const legacyControlIdentity =
       !request.workflow_control_sha &&
       (request.inputs.candidate_evidence_mode === undefined ||
@@ -897,13 +957,29 @@ export class ReleaseBusV2Operations {
       identity.headBranch === request.ref
         ? identity.headSha
         : null;
+    if (legacyControlIdentity) {
+      const workflowBlobSha = await releaseBusGitHubApp.getWorkflowBlobIdentity(
+        input.repository,
+        request.workflow,
+        legacyControlIdentity
+      );
+      if (
+        !isAllowedLegacyOperationWorkflowBlob(
+          input.repository,
+          request.workflow,
+          workflowBlobSha
+        )
+      )
+        throw new Error(
+          'Legacy Release Bus workflow content is not exactly allowlisted'
+        );
+    }
     const workflowControlSha =
       request.workflow_control_sha ?? legacyControlIdentity;
     if (!/^[a-f0-9]{40}$/.test(workflowControlSha ?? ''))
       throw new Error(
         'Release Bus v2 operation has no exact workflow control identity'
       );
-    const expectedWorkflowPath = `.github/workflows/${request.workflow}`;
     const expectedWorkflowRefs = new Set([
       expectedWorkflowPath,
       `${expectedWorkflowPath}@${request.ref}`,

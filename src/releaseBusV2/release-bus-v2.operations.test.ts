@@ -1,4 +1,5 @@
 const mockGetWorkflowRunIdentity = jest.fn();
+const mockGetWorkflowBlobIdentity = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
 const mockResolveRef = jest.fn();
@@ -13,6 +14,8 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
   return {
     ReleaseBusGitHubInfrastructureError,
     releaseBusGitHubApp: {
+      getWorkflowBlobIdentity: (...args: unknown[]) =>
+        mockGetWorkflowBlobIdentity(...args),
       getWorkflowRunIdentity: (...args: unknown[]) =>
         mockGetWorkflowRunIdentity(...args),
       findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args),
@@ -138,6 +141,10 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
 describe('Release Bus v2 exact operation callbacks', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetWorkflowBlobIdentity.mockReset();
+    mockGetWorkflowBlobIdentity.mockResolvedValue(
+      'c4d7c0a7a2e9d10ddb82eec7feff7d8523e25b9f'
+    );
     mockGetWorkflowRunIdentity.mockReset();
     mockFindWorkflowRun.mockReset();
     mockDispatchWorkflow.mockReset();
@@ -1398,6 +1405,11 @@ describe('Release Bus v2 exact operation callbacks', () => {
         aggregate_candidate_evidence_digest: null
       })
     ).resolves.toEqual({ authorized: true });
+    expect(mockGetWorkflowBlobIdentity).toHaveBeenCalledWith(
+      'frontend',
+      'release-bus-v2-preflight.yml',
+      'c'.repeat(40)
+    );
     expect(mockResolveRef).not.toHaveBeenCalled();
   });
 
@@ -1440,6 +1452,87 @@ describe('Release Bus v2 exact operation callbacks', () => {
     ).resolves.toEqual({ authorized: true });
     expect(mockResolveRef).not.toHaveBeenCalled();
     expect(state.current().external_id).toBe('12345');
+  });
+
+  it('accepts an old-producer operation only through the exact new-consumer workflow blob', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {}
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headBranch: 'main',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    mockGetWorkflowBlobIdentity.mockResolvedValue(
+      'c2f54b2bc7558f48830bc9c3ada7b6725b80ebdb'
+    );
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
+      })
+    ).resolves.toEqual({ authorized: true });
+  });
+
+  it('rejects an old-producer operation when its exact workflow blob is not allowlisted', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'DISPATCHED',
+      request_json: {
+        workflow: 'release-bus-v2-preflight.yml',
+        ref: 'main',
+        inputs: {}
+      }
+    });
+    const state = repositoryFor(initial);
+    mockGetWorkflowRunIdentity.mockResolvedValue({
+      actor: '6529-release-bus[bot]',
+      event: 'workflow_dispatch',
+      headBranch: 'main',
+      headSha: 'c'.repeat(40),
+      path: '.github/workflows/release-bus-v2-preflight.yml',
+      displayTitle: 'Preflight [rb2:train-id:prepare:frontend:a1]'
+    });
+    mockGetWorkflowBlobIdentity.mockResolvedValue('f'.repeat(40));
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.authorize({
+        train_id: 'train-id',
+        operation_key: 'rb2:train-id:prepare:frontend:a1',
+        workflow_run_id: '12345',
+        artifact_run_id: null,
+        repository: 'frontend',
+        environment: 'orchestration',
+        service: null,
+        expected_sha: 'a'.repeat(40),
+        artifact_digest: null,
+        candidate_evidence_mode: null,
+        aggregate_candidate_evidence_digest: null
+      })
+    ).rejects.toThrow('workflow content is not exactly allowlisted');
+    expect(state.current().external_id).toBeNull();
   });
 
   it('fails closed when an old-producer run does not prove its stored dispatch ref', async () => {

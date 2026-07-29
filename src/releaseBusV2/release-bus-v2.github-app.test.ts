@@ -1,5 +1,7 @@
 import fetch, { Response } from 'node-fetch';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import AdmZip from 'adm-zip';
 import {
   isValidGitHubWorkflowActor,
@@ -12,6 +14,11 @@ import {
   workflowRunMatchesOperation,
   type GitHubWorkflowJob
 } from '@/releaseBusV2/release-bus-v2.github-app';
+
+const { buildPolicyBundle } =
+  require('../../scripts/pr-ci-policy-bundle.cjs') as {
+    buildPolicyBundle(input: { root: string }): { canonical: string };
+  };
 
 jest.mock('node-fetch', () => {
   const actual = jest.requireActual('node-fetch');
@@ -65,11 +72,11 @@ const EVIDENCE_CHECKS = {
 const TRUSTED_WORKFLOW_BLOBS = {
   backend: {
     legacy: '0cc8865dbb869b5156b46cc45e8581b259052916',
-    modern: '232615ebaccaa9845ae28bb0425e8692e848d42a'
+    modern: 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40'
   },
   frontend: {
     legacy: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
-    modern: '47fb17c7e4bda412a05b07f470f9f490aee873d4'
+    modern: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3'
   }
 } as const;
 
@@ -101,6 +108,70 @@ function setDottedString(
     current[segment] = next;
     current = next;
   });
+}
+
+function readDottedString(
+  document: Readonly<Record<string, unknown>>,
+  dottedKey: string
+): string {
+  const value = dottedKey
+    .split('.')
+    .reduce<unknown>(
+      (current, segment) =>
+        current && typeof current === 'object'
+          ? (current as Readonly<Record<string, unknown>>)[segment]
+          : undefined,
+      document
+    );
+  if (typeof value !== 'string' || value.length === 0)
+    throw new Error(`Missing package policy value ${dottedKey}`);
+  return value;
+}
+
+function backendPolicyBundleFromVerifierInventory(): string {
+  const root = process.cwd();
+  const inventory = releaseBusPrCiPolicyInventory('backend', true);
+  const packages = new Map(
+    inventory.packages.map((policy) => [policy.path, policy])
+  );
+  const lines: string[] = [];
+  for (const relativePath of inventory.paths) {
+    const policy = packages.get(relativePath);
+    const bytes = readFileSync(path.join(root, relativePath));
+    if (!policy) {
+      lines.push(`file\t${relativePath}\t${gitBlobSha(bytes)}\n`);
+      continue;
+    }
+    const document = JSON.parse(bytes.toString('utf8')) as Readonly<
+      Record<string, unknown>
+    >;
+    const scripts =
+      document.scripts &&
+      typeof document.scripts === 'object' &&
+      !Array.isArray(document.scripts)
+        ? (document.scripts as Readonly<Record<string, unknown>>)
+        : {};
+    for (const key of policy.scriptKeys) {
+      const value = scripts[key];
+      if (typeof value !== 'string' || value.length === 0)
+        throw new Error(`Missing package policy script ${relativePath}#${key}`);
+      lines.push(
+        `package-script\t${relativePath}#${key}\t${JSON.stringify(value)}\n`
+      );
+    }
+    for (const key of policy.fieldKeys)
+      lines.push(
+        `package-field\t${relativePath}#${key}\t${JSON.stringify(
+          readDottedString(document, key)
+        )}\n`
+      );
+  }
+  lines.push('runtime-pin\tnode\t"22.17.1"\n');
+  return lines
+    .sort((left, right) =>
+      Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+    )
+    .join('');
 }
 
 function policyFixture(
@@ -477,6 +548,19 @@ function queueQualificationResponses(input: {
   );
   return fetchMock;
 }
+
+describe('backend PR CI policy bundle contract', () => {
+  it('keeps producer and verifier canonical inventories byte-identical', () => {
+    const produced = buildPolicyBundle({ root: process.cwd() }).canonical;
+
+    expect(backendPolicyBundleFromVerifierInventory()).toBe(produced);
+    expect(
+      releaseBusPrCiPolicyInventory('backend', true).packages.find(
+        ({ path: packagePath }) => packagePath === 'package.json'
+      )?.fieldKeys
+    ).toContain('devDependencies.@types/jest');
+  });
+});
 
 describe('GitHub immutable release refs', () => {
   const ref = 'release-bus-v2/staging-train-train-id-frontend';
@@ -1045,6 +1129,7 @@ describe('GitHub workflow operation identity', () => {
       new Response(
         JSON.stringify({
           id: 12345,
+          run_attempt: 2,
           name: 'Release Bus v2 - Compose Backend',
           path: '.github/workflows/release-bus-v2-compose.yml',
           display_title: 'Compose backend v2 train beta [rb2:beta:a1]',
@@ -1064,14 +1149,66 @@ describe('GitHub workflow operation identity', () => {
         app.getWorkflowRunIdentity('backend', '12345')
       ).resolves.toMatchObject({
         actor: '6529-release-bus[bot]',
+        attempt: 2,
+        conclusion: null,
         event: 'workflow_dispatch',
         headBranch: 'main',
-        headSha: 'a'.repeat(40)
+        headSha: 'a'.repeat(40),
+        status: 'in_progress'
       });
     } finally {
       fetchMock.mockReset();
     }
   });
+
+  it('reads the exact workflow blob at the immutable run head', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          type: 'file',
+          sha: 'B'.repeat(40)
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getWorkflowBlobIdentity(
+          'frontend',
+          'release-bus-v2-preflight.yml',
+          'a'.repeat(40)
+        )
+      ).resolves.toBe('b'.repeat(40));
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        `/contents/.github/workflows/release-bus-v2-preflight.yml?ref=${'a'.repeat(
+          40
+        )}`
+      );
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it.each([
+    ['../deploy.yml', 'a'.repeat(40), 'filename'],
+    ['Deploy.yml', 'a'.repeat(40), 'filename'],
+    ['deploy.yaml', 'a'.repeat(40), 'filename'],
+    ['deploy.yml', 'main', 'ref'],
+    ['deploy.yml', 'A'.repeat(40), 'ref']
+  ])(
+    'rejects a malformed workflow blob identity %s at %s',
+    async (workflow, ref, field) => {
+      const app = appWithCachedToken();
+      const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+
+      await expect(
+        app.getWorkflowBlobIdentity('backend', workflow, ref)
+      ).rejects.toThrow(`Invalid GitHub workflow ${field}`);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
 
   it('matches only the exact bracketed operation key', () => {
     const operationKey = 'rb:train-1:r1:preflight:aabbcc:a2';
@@ -1154,6 +1291,44 @@ describe('GitHub staging idle handshake', () => {
       await expect(
         app.hasActiveStagingMutationOrE2ERun('frontend')
       ).resolves.toBe(true);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('ignores only the exact validated current manual run during drain checks', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 12345,
+                name: 'Deploy a service',
+                path: '.github/workflows/deploy.yml',
+                display_title: 'Deploy api to staging [manual]',
+                status: 'in_progress'
+              }
+            ]
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ workflow_runs: [] }))
+      );
+
+    try {
+      await expect(
+        app.hasActiveStagingMutationOrE2ERun('backend', ['12345'])
+      ).resolves.toBe(false);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        'status=queued&per_page=100&page=1'
+      );
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+        'status=in_progress&per_page=100&page=1'
+      );
     } finally {
       fetchMock.mockReset();
     }

@@ -77,6 +77,7 @@ export type GitHubWorkflowJob = {
 };
 export type GitHubRun = {
   readonly id: number;
+  readonly run_attempt?: number;
   readonly name: string;
   readonly path?: string;
   readonly display_title: string;
@@ -94,12 +95,15 @@ export type GitHubRun = {
 
 export type ReleaseBusWorkflowRunIdentity = {
   readonly actor: string;
+  readonly attempt: number;
+  readonly conclusion: string | null;
   readonly event: string;
   readonly headBranch: string;
   readonly headSha: string;
   readonly name: string;
   readonly path: string;
   readonly displayTitle: string;
+  readonly status: string;
 };
 type GitHubMembership = {
   readonly state?: string;
@@ -192,19 +196,14 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
   backend: [
     {
       from: '0cc8865dbb869b5156b46cc45e8581b259052916',
-      to: '232615ebaccaa9845ae28bb0425e8692e848d42a',
+      to: 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
   frontend: [
     {
       from: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
-      to: '47fb17c7e4bda412a05b07f470f9f490aee873d4',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: '47fb17c7e4bda412a05b07f470f9f490aee873d4',
-      to: '7a4a25eabdfd43b987ff5792b3f609eda9668c04',
+      to: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]
@@ -256,62 +255,9 @@ type TrustedGatePolicyTransition = {
   readonly expiresAt: number;
 };
 
-const TRUSTED_GATE_POLICY_TRANSITION_EXPIRES_AT = Date.UTC(
-  2026,
-  7,
-  31,
-  23,
-  59,
-  59
-);
-
-function trustedGatePolicyTransition(
-  from: string | null,
-  to: string
-): readonly TrustedGatePolicyTransition[] {
-  return [
-    {
-      from,
-      to,
-      expiresAt: TRUSTED_GATE_POLICY_TRANSITION_EXPIRES_AT
-    }
-  ];
-}
-
 const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
   Record<string, readonly TrustedGatePolicyTransition[]>
-> = {
-  'scripts/generate-deploy-config.mjs': trustedGatePolicyTransition(
-    '9b3714372af37edd89e4b47df02bff6863a2024d',
-    '4f057c14dbe9a2664747ac5f56d7c1cec3f4664b'
-  ),
-  '.github/workflows/release-bus-v2-preflight.yml': trustedGatePolicyTransition(
-    'f3cbf1ec1f0ca1284dd84289adc6e801b12ef329',
-    'e1f3508d917cb20cc5211c7ed7cdceaf87ff2116'
-  ),
-  '.github/workflows/deploy.yml': trustedGatePolicyTransition(
-    '93069abfac648a9906fc8bac9ed2c72df6b93f8f',
-    '113ea261377d5e6fd2c81ecf7ef9272ab0c8b587'
-  ),
-  'scripts/release-bus-package-backend.mjs': trustedGatePolicyTransition(
-    null,
-    'e5f40518bc63ba1c21f240dad5a7da5152781dba'
-  ),
-  'scripts/pr-ci-policy-bundle.cjs': trustedGatePolicyTransition(
-    null,
-    '243d7f7c02989343a2dedf62a58cbaf301d9b9f9'
-  ),
-  'scripts/release-bus-backend-package-strategies.mjs':
-    trustedGatePolicyTransition(
-      null,
-      '6123157a351d03d6e78c9c0ad18ce7fe4d7dc296'
-    ),
-  'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts':
-    trustedGatePolicyTransition(
-      null,
-      '797aaf3bb5e0043d70603b051f1ec0725c0e210b'
-    )
-};
+> = {};
 
 const BACKEND_PACKAGE_POLICY = {
   'package.json': {
@@ -329,6 +275,7 @@ const BACKEND_PACKAGE_POLICY = {
     fieldKeys: [
       'packageManager',
       'dependencies.adm-zip',
+      'devDependencies.@types/jest',
       'devDependencies.@typescript-eslint/parser',
       'devDependencies.esbuild',
       'devDependencies.eslint',
@@ -537,68 +484,7 @@ const FRONTEND_PACKAGE_POLICY = {
 
 const TRUSTED_FRONTEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
   Record<string, readonly TrustedGatePolicyTransition[]>
-> = {
-  '.github/workflows/production-e2e.yml': trustedGatePolicyTransition(
-    'cd95ff1b43692864f1b29e574e37f20fcb46f6b4',
-    '4570330931c626edb9f2a38785da6d1dbff17b94'
-  ),
-  '.github/workflows/release-bus-deploy-production.yml':
-    trustedGatePolicyTransition(
-      '99006a1d5ffcc8780496b717940a3581635d066c',
-      'e5437e6680294b8b29f96b5d369b0ac6aaa35403'
-    ),
-  '.github/workflows/release-bus-deploy-staging.yml':
-    trustedGatePolicyTransition(
-      'ed7355c9136b9edf12d2479b1ec1a3d9c0c76b21',
-      '60f3be0bdeaee9c346e37fde44f02d99bfc5d363'
-    ),
-  '.github/workflows/release-bus-v2-compose.yml': trustedGatePolicyTransition(
-    'd7475c193e99b3f02b54791c2dda470f21f41f83',
-    'e630365d0a7b5305765cdb0683efe55906520373'
-  ),
-  '.github/workflows/release-bus-v2-preflight.yml': trustedGatePolicyTransition(
-    'c4d7c0a7a2e9d10ddb82eec7feff7d8523e25b9f',
-    '7961c8de16a23236b56a0d4c7befc187fa414da3'
-  ),
-  '.github/workflows/staging-e2e.yml': trustedGatePolicyTransition(
-    '183912f5daf70a502773bb41cebe73613e2b46e2',
-    'a8f9bc720c26920f0d7a1e75ce14afc172f86fdb'
-  ),
-  'playwright.config.ts': trustedGatePolicyTransition(
-    '2009c69433c58fb933696ddaf93bd6e484e4457a',
-    '151830e075f55c1d7bd497c1913e5adc0856f175'
-  ),
-  'scripts/e2e-packs.cjs': trustedGatePolicyTransition(
-    '4d8b9b7c14c853ce55c10267837e525c5ab7a977',
-    '06d36759f8e03372ee3baf0ee0fca2c977c3ceb3'
-  ),
-  'tests/packs.manifest.cjs': trustedGatePolicyTransition(
-    'cc5ff179e181b254f3e83ff265b5c83ba902145a',
-    'd9186a12120c8834bc57592e8b4ba12998e022f5'
-  ),
-  'ops/deployment-bus/release-bus-performance-contract.v1.json':
-    trustedGatePolicyTransition(
-      null,
-      'a1fe2db01337a791b6ce627ad8b1f17ffc36ec60'
-    ),
-  '__tests__/scripts/deployment-bus.test.ts': trustedGatePolicyTransition(
-    '599543dbdd338b8a364f6b46d615f0c3d7088618',
-    '6bae52b220152ccdb4b784ba3f79f2f876d5813c'
-  ),
-  '__tests__/scripts/e2e-packs.test.ts': trustedGatePolicyTransition(
-    '55c6855d34226477ea51b17c19ef04af9fb23dce',
-    '8dcdb807fc652e65bb0a00b43c4573be3ffe16ad'
-  ),
-  '__tests__/scripts/release-bus-performance-contract.test.ts':
-    trustedGatePolicyTransition(
-      null,
-      '4d91f7fbf90a0c6c8489e9dad0579c350cf14a2c'
-    ),
-  '__tests__/scripts/sync-e2e-manifest.test.ts': trustedGatePolicyTransition(
-    '3952a4b013dab68b476c2bffc4b275b23bdba560',
-    'c29c446d1b654dd900615bc4a41a325c1ed06ea3'
-  )
-};
+> = {};
 
 function sha256(value: Buffer | string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -647,12 +533,18 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
 > = {
   backend: [
     {
-      from: '3b6c8b88a0864d15bc4135010722f4dab480f2debc6082778d8585fbddbcbc84',
-      to: '0cd5614722ccc00f272297a6142c48bf01422a135b19093717bcd116f5c7606c',
+      from: '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
+      to: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
-  frontend: []
+  frontend: [
+    {
+      from: '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8',
+      to: '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ]
 };
 
 function trustedGatePolicyBundleTransition(
@@ -1687,8 +1579,8 @@ export class ReleaseBusGitHubApp {
       !exactStringList(
         entries
           .map(({ entryName }) => entryName)
-          .sort((left, right) => left.localeCompare(right)),
-        ['manifest.json', 'policy-bundle.txt', 'SHA256SUMS']
+          .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+        ['SHA256SUMS', 'manifest.json', 'policy-bundle.txt']
       )
     )
       throw new Error('Pull request CI evidence archive has unexpected files');
@@ -2010,24 +1902,49 @@ export class ReleaseBusGitHubApp {
       !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(run.head_branch)
     )
       throw new Error('GitHub workflow run has no valid head branch');
+    if (!Number.isInteger(run.run_attempt) || Number(run.run_attempt) < 1)
+      throw new Error('GitHub workflow run has no valid attempt');
     return {
       actor,
+      attempt: Number(run.run_attempt),
+      conclusion: run.conclusion,
       event: run.event ?? '',
       headBranch: run.head_branch,
       headSha: run.head_sha.toLowerCase(),
       name: run.name,
       path: run.path ?? '',
-      displayTitle: run.display_title
+      displayTitle: run.display_title,
+      status: run.status
     };
   }
 
+  public async getWorkflowBlobIdentity(
+    repository: ReleaseBusV2Repository,
+    workflow: string,
+    ref: string
+  ): Promise<string> {
+    if (!/^[a-z0-9][a-z0-9-]*\.yml$/.test(workflow))
+      throw new Error('Invalid GitHub workflow filename');
+    if (!/^[a-f0-9]{40}$/.test(ref))
+      throw new Error('Invalid GitHub workflow ref');
+    return (
+      await this.getContentIdentity(
+        repository,
+        `.github/workflows/${workflow}`,
+        ref
+      )
+    ).sha;
+  }
+
   public async hasActiveStagingMutationOrE2ERun(
-    repository: ReleaseBusV2Repository
+    repository: ReleaseBusV2Repository,
+    ignoredRunIds: readonly string[] = []
   ): Promise<boolean> {
     return this.hasActiveWorkflowRun(
       repository,
       'staging mutation or E2E',
-      (run) => this.isStagingMutationOrE2ERun(repository, run)
+      (run) => this.isStagingMutationOrE2ERun(repository, run),
+      ignoredRunIds
     );
   }
 
@@ -2040,7 +1957,7 @@ export class ReleaseBusGitHubApp {
       throw new Error('Invalid staging workflow fence timestamp');
     if (ignoredRunIds.some((runId) => !/^\d+$/.test(runId)))
       throw new Error('Invalid staging workflow fence run id');
-    const ignored = new Set(ignoredRunIds.map(Number));
+    const ignored = new Set(ignoredRunIds);
     const created = encodeURIComponent(`>=${new Date(since).toISOString()}`);
     for (let page = 1; page <= MAX_STAGING_FENCE_PAGES; page += 1) {
       const response = await this.request(
@@ -2057,7 +1974,7 @@ export class ReleaseBusGitHubApp {
       if (
         runs.some(
           (run) =>
-            !ignored.has(run.id) &&
+            !ignored.has(String(run.id)) &&
             typeof run.created_at === 'string' &&
             Date.parse(run.created_at) >= since &&
             this.isStagingMutationOrE2ERun(repository, run)
@@ -2093,7 +2010,8 @@ export class ReleaseBusGitHubApp {
   }
 
   public async hasActiveProductionMutationOrE2ERun(
-    repository: ReleaseBusV2Repository
+    repository: ReleaseBusV2Repository,
+    ignoredRunIds: readonly string[] = []
   ): Promise<boolean> {
     return this.hasActiveWorkflowRun(
       repository,
@@ -2113,7 +2031,8 @@ export class ReleaseBusGitHubApp {
           'Production E2E'
         ];
         return paths.includes(run.path ?? '') || legacyNames.includes(run.name);
-      }
+      },
+      ignoredRunIds
     );
   }
 
@@ -2131,21 +2050,30 @@ export class ReleaseBusGitHubApp {
   private async hasActiveWorkflowRun(
     repository: ReleaseBusV2Repository,
     description: string,
-    matches: (run: GitHubRun) => boolean
+    matches: (run: GitHubRun) => boolean,
+    ignoredRunIds: readonly string[] = []
   ): Promise<boolean> {
+    if (ignoredRunIds.some((runId) => !/^[1-9]\d{0,19}$/.test(runId)))
+      throw new Error(`Invalid ${description} ignored workflow run id`);
+    const ignored = new Set(ignoredRunIds);
     for (const status of ['queued', 'in_progress']) {
-      const response = await this.request(
-        repository,
-        `/actions/runs?status=${status}&per_page=100`
-      );
-      await this.assertOk(
-        response,
-        `list active ${repository} ${description} workflow runs`
-      );
-      const runs =
-        ((await response.json()) as { workflow_runs?: GitHubRun[] })
-          .workflow_runs ?? [];
-      if (runs.some(matches)) return true;
+      for (let page = 1; page <= MAX_STAGING_FENCE_PAGES; page += 1) {
+        const response = await this.request(
+          repository,
+          `/actions/runs?status=${status}&per_page=100&page=${page}`
+        );
+        await this.assertOk(
+          response,
+          `list active ${repository} ${description} workflow runs`
+        );
+        const runs =
+          ((await response.json()) as { workflow_runs?: GitHubRun[] })
+            .workflow_runs ?? [];
+        if (runs.some((run) => !ignored.has(String(run.id)) && matches(run)))
+          return true;
+        if (runs.length < 100) break;
+        if (page === MAX_STAGING_FENCE_PAGES) return true;
+      }
     }
     return false;
   }

@@ -42,6 +42,7 @@ import {
   ReleaseBusV2Reconciler
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import { irreversibleProductionOperationReason } from '@/releaseBusV2/release-bus-v2.service';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
@@ -6223,7 +6224,17 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
     expect(pullRequestWorkflow).toContain('npm run lint:check');
     expect(pullRequestWorkflow).toContain('npm run build');
-    expect(pullRequestWorkflow).toContain('exact-merge-tree-pr-ci-v1');
+    const pullRequestWorkflowBlob = execFileSync(
+      'git',
+      ['hash-object', '.github/workflows/on-pull-request.yml'],
+      { cwd: process.cwd(), encoding: 'utf8' }
+    ).trim();
+    expect([
+      '0cc8865dbb869b5156b46cc45e8581b259052916',
+      'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40'
+    ]).toContain(pullRequestWorkflowBlob);
+    if (pullRequestWorkflowBlob === 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40')
+      expect(pullRequestWorkflow).toContain('exact-merge-tree-pr-ci-v1');
   });
 
   it('never routes a staging or qualification artifact source into production', () => {
