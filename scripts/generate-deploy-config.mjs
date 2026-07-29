@@ -51,6 +51,11 @@ function buildWorkflowYaml(config) {
       (service) => service.validation_profile === 'lambda-edge-association'
     )
     .map((service) => service.name);
+  const deployToolingServices = config.services
+    .filter((service) =>
+      ['serverless', 'resources-only'].includes(service.deploy_adapter)
+    )
+    .map((service) => service.name);
 
   const prodCondition = prodOnlyServices.length
     ? `(${prodOnlyServices
@@ -69,6 +74,11 @@ function buildWorkflowYaml(config) {
     : 'false';
   const lambdaEdgeCondition = lambdaEdgeServices.length
     ? lambdaEdgeServices
+        .map((service) => `github.event.inputs.service == '${service}'`)
+        .join(' || ')
+    : 'false';
+  const deployToolingCondition = deployToolingServices.length
+    ? deployToolingServices
         .map((service) => `github.event.inputs.service == '${service}'`)
         .join(' || ')
     : 'false';
@@ -149,15 +159,25 @@ ${indent(yamlList(serviceNames))}
         type: string
         description: 'Release Bus immutable aggregate artifact digest'
         required: false
+      artifact_environment:
+        type: string
+        description: 'Release Bus artifact environment; blank for legacy-v2'
+        required: false
+        default: ''
+      artifact_contract_version:
+        type: string
+        description: 'Release Bus immutable artifact contract'
+        required: false
+        default: legacy-v2
 permissions:
   actions: read
   contents: read
 
-# The workflow-level control mutex keeps manual production deployments globally
+# The workflow-level control mutex keeps each manual environment globally
 # serial. Release Bus v2 operations use their exact operation
 # key here, then share the job-level environment/service mutex with every mode.
 concurrency:
-  group: deploy-control-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || (github.event.inputs.environment == 'prod' && 'manual-production' || github.event.inputs.service) }}
+  group: deploy-control-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || 'manual' }}
   cancel-in-progress: false
 
 env:
@@ -198,6 +218,8 @@ jobs:
       INPUT_ARTIFACT_RUN_ID: \${{ github.event.inputs.artifact_run_id }}
       INPUT_ARTIFACT_TRAIN_ID: \${{ github.event.inputs.artifact_train_id }}
       INPUT_ARTIFACT_DIGEST: \${{ github.event.inputs.artifact_digest }}
+      INPUT_ARTIFACT_ENVIRONMENT: \${{ github.event.inputs.artifact_environment }}
+      INPUT_ARTIFACT_CONTRACT_VERSION: \${{ github.event.inputs.artifact_contract_version }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -212,6 +234,8 @@ jobs:
           INPUT_ARTIFACT_RUN_ID: \${{ github.event.inputs.artifact_run_id }}
           INPUT_ARTIFACT_TRAIN_ID: \${{ github.event.inputs.artifact_train_id }}
           INPUT_ARTIFACT_DIGEST: \${{ github.event.inputs.artifact_digest }}
+          INPUT_ARTIFACT_ENVIRONMENT: \${{ github.event.inputs.artifact_environment }}
+          INPUT_ARTIFACT_CONTRACT_VERSION: \${{ github.event.inputs.artifact_contract_version }}
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
@@ -225,9 +249,108 @@ jobs:
             [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
             [[ "$INPUT_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
             [[ "$INPUT_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+            test -z "$INPUT_ARTIFACT_TRAIN_ID" -o "$INPUT_ARTIFACT_TRAIN_ID" = "$INPUT_TRAIN_ID"
+            case "$INPUT_ARTIFACT_CONTRACT_VERSION" in
+              environment-bound-v3)
+                [[ "$INPUT_ARTIFACT_ENVIRONMENT" =~ ^(staging|production)$ ]]
+                case "$INPUT_ENVIRONMENT" in
+                  staging) expected_artifact_environment=staging ;;
+                  prod) expected_artifact_environment=production ;;
+                  *) exit 1 ;;
+                esac
+                test "$INPUT_ARTIFACT_ENVIRONMENT" = "$expected_artifact_environment"
+                ;;
+              legacy-v2)
+                test -z "$INPUT_ARTIFACT_ENVIRONMENT"
+                ;;
+              *) echo "Unsupported artifact contract" >&2; exit 1 ;;
+            esac
             if [ -n "$INPUT_ARTIFACT_TRAIN_ID" ]; then
               [[ "$INPUT_ARTIFACT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             fi
+          else
+            test -z "$INPUT_TRAIN_ID"
+            test -z "$INPUT_TRAIN_REVISION"
+            test -z "$INPUT_EXPECTED_SHA"
+            test -z "$INPUT_ARTIFACT_RUN_ID"
+            test -z "$INPUT_ARTIFACT_TRAIN_ID"
+            test -z "$INPUT_ARTIFACT_DIGEST"
+            test -z "$INPUT_ARTIFACT_ENVIRONMENT"
+            test "$INPUT_ARTIFACT_CONTRACT_VERSION" = legacy-v2
+          fi
+      - name: Authorize exact deployment operation
+        shell: bash
+        env:
+          RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_BUS_API_URL"
+          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          if [ -n "$INPUT_OPERATION_KEY" ]; then
+            payload="$(jq -n \
+              --arg train_id "$INPUT_TRAIN_ID" \
+              --arg operation_key "$INPUT_OPERATION_KEY" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID" \
+              --arg repository backend \
+              --arg environment "$INPUT_ENVIRONMENT" \
+              --arg service "$INPUT_SERVICE" \
+              --arg expected_sha "$INPUT_EXPECTED_SHA" \
+              --arg artifact_digest "$INPUT_ARTIFACT_DIGEST" \
+              '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:$artifact_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,artifact_digest:$artifact_digest}')"
+            endpoint=release-bus-v2/authorize
+          else
+            expected_lane="$([ "$INPUT_ENVIRONMENT" = staging ] && printf STAGING || printf PRODUCTION)"
+            payload="$(jq -n \
+              --arg repository backend \
+              --arg environment "$INPUT_ENVIRONMENT" \
+              --arg service "$INPUT_SERVICE" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+              --arg source_ref "$GITHUB_REF_NAME" \
+              --arg source_sha "$GITHUB_SHA" \
+              '{repository:$repository,environment:$environment,service:$service,workflow_run_id:$workflow_run_id,workflow_run_attempt:$workflow_run_attempt,source_ref:$source_ref,source_sha:$source_sha}')"
+            endpoint=release-bus-v2/manual-deployment-readiness
+          fi
+          http_status="$(curl --silent --show-error \
+            --connect-timeout 10 \
+            --max-time 60 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$RELEASE_BUS_API_URL/deploy/$endpoint")"
+          if [ "$http_status" != 200 ]; then
+            echo "::error::Deployment authorization was rejected with HTTP $http_status"
+            exit 1
+          fi
+          if [ -n "$INPUT_OPERATION_KEY" ]; then
+            jq -e \
+              --arg train_id "$INPUT_TRAIN_ID" \
+              --arg operation_key "$INPUT_OPERATION_KEY" \
+              '.authorized == true and .train_id == $train_id and
+               .operation_key == $operation_key' \
+              "$response_file" > /dev/null
+          else
+            jq -e \
+              --arg repository backend \
+              --arg environment "$INPUT_ENVIRONMENT" \
+              --arg lane "$expected_lane" \
+              --arg service "$INPUT_SERVICE" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+              --arg source_ref "$GITHUB_REF_NAME" \
+              --arg source_sha "$GITHUB_SHA" \
+              '.ready == true and .mode == "manual" and .lane == $lane and
+               .repository == $repository and .environment == $environment and
+               .service == $service and .workflow_run_id == $workflow_run_id and
+               .workflow_run_attempt == $workflow_run_attempt and
+               .source_ref == $source_ref and .source_sha == $source_sha' \
+              "$response_file" > /dev/null
           fi
       - name: Validate Release Bus GitHub App configuration
         if: github.event.inputs.service == 'releaseBus'
@@ -315,47 +438,32 @@ jobs:
               exit 1
               ;;
           esac
-      - name: Authorize immutable Release Bus operation
-        if: github.event.inputs.operation_key != ''
-        shell: bash
-        env:
-          RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
-          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$RELEASE_BUS_API_URL"
-          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
-          payload="$(jq -n \
-            --arg train_id "$INPUT_TRAIN_ID" \
-            --arg operation_key "$INPUT_OPERATION_KEY" \
-            --arg workflow_run_id "$GITHUB_RUN_ID" \
-            --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID" \
-            --arg repository backend \
-            --arg environment "$INPUT_ENVIRONMENT" \
-            --arg service "$INPUT_SERVICE" \
-            --arg expected_sha "$INPUT_EXPECTED_SHA" \
-            --arg artifact_digest "$INPUT_ARTIFACT_DIGEST" \
-            '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:$artifact_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,artifact_digest:$artifact_digest}')"
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data "$payload" \
-            "$RELEASE_BUS_API_URL/deploy/release-bus-v2/authorize"
-      - name: Extract branch name
-        shell: bash
-        run: echo "branch=\${GITHUB_HEAD_REF:-\${GITHUB_REF#refs/heads/}}" >> "$GITHUB_OUTPUT"
-        id: extract_branch
       - name: Checkout
         id: source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          ref: \${{ github.event.inputs.expected_sha || steps.extract_branch.outputs.branch }}
+          ref: \${{ github.event.inputs.operation_key != '' && github.event.inputs.expected_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_OPERATION_KEY" ]; then
+            expected_source_sha="$INPUT_EXPECTED_SHA"
+          else
+            expected_source_sha="$GITHUB_SHA"
+          fi
+          [[ "$expected_source_sha" =~ ^[a-f0-9]{40}$ ]]
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$expected_source_sha" ]; then
+            echo "Expected $expected_source_sha, checked out $actual_sha" >&2
+            exit 1
+          fi
       - name: Install Node.js with cached deploy-tool downloads
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '22.17.1'
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Activate pinned npm
@@ -376,17 +484,6 @@ jobs:
           repositories: |
             6529seize-backend
             6529seize-frontend
-      - name: Verify immutable source
-        if: github.event.inputs.operation_key != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
-          actual_sha="$(git rev-parse HEAD)"
-          if [ "$actual_sha" != "$INPUT_EXPECTED_SHA" ]; then
-            echo "Expected $INPUT_EXPECTED_SHA, checked out $actual_sha" >&2
-            exit 1
-          fi
       - name: Download immutable preflight artifact
         if: github.event.inputs.operation_key != ''
         id: artifact_download
@@ -408,23 +505,54 @@ jobs:
           artifact_train_id="\${INPUT_ARTIFACT_TRAIN_ID:-$INPUT_TRAIN_ID}"
           [[ "$artifact_train_id" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
           cd release-bus-artifact
-          jq -e \
-            --arg train_id "$artifact_train_id" \
-            --arg source_sha "$INPUT_EXPECTED_SHA" \
-            --arg service "$INPUT_SERVICE" \
-            '.train_id == $train_id and .source_sha == $source_sha and (.units | index($service)) != null' \
-            manifest.json >/dev/null
           sha256sum -c SHA256SUMS
           artifact_digest="$(sha256sum SHA256SUMS | cut -d' ' -f1)"
           test "$artifact_digest" = "$INPUT_ARTIFACT_DIGEST"
           package_digest="$(sha256sum "packages/$INPUT_SERVICE/index.zip" | cut -d' ' -f1)"
+          if [ "$INPUT_ARTIFACT_CONTRACT_VERSION" = environment-bound-v3 ]; then
+            case "$INPUT_ENVIRONMENT" in
+              staging) expected_artifact_environment=staging ;;
+              prod) expected_artifact_environment=production ;;
+              *) exit 1 ;;
+            esac
+            jq -e \
+              --arg train_id "$artifact_train_id" \
+              --arg source_sha "$INPUT_EXPECTED_SHA" \
+              --arg service "$INPUT_SERVICE" \
+              --arg environment "$expected_artifact_environment" \
+              --arg package_digest "$package_digest" \
+              '.schema_version == 3 and
+               .artifact_contract == "environment-bound-v1" and
+               .artifact_contract_version == "environment-bound-v3" and
+               .repository == "backend" and
+               .train_id == $train_id and
+               .source_sha == $source_sha and
+               .environment == $environment and
+               .source_evidence_reused == true and
+               .artifact_bytes_reused == false and
+               (.units | index($service)) != null and
+               .packages[$service].sha256 == $package_digest' \
+              manifest.json >/dev/null
+          else
+            jq -e \
+              --arg train_id "$artifact_train_id" \
+              --arg source_sha "$INPUT_EXPECTED_SHA" \
+              --arg service "$INPUT_SERVICE" \
+              '.schema_version == 2 and
+               .repository == "backend" and
+               .train_id == $train_id and
+               .source_sha == $source_sha and
+               ((.environment // "portable") == "portable") and
+               (.units | index($service)) != null' \
+              manifest.json >/dev/null
+          fi
           echo "artifact_digest=$artifact_digest" >> "$GITHUB_OUTPUT"
           echo "package_digest=$package_digest" >> "$GITHUB_OUTPUT"
       - name: Install root dependencies for manual build
         if: github.event.inputs.operation_key == ''
         run: npm i
       - name: Install frozen root deploy tooling
-        if: github.event.inputs.operation_key != ''
+        if: github.event.inputs.operation_key != '' && (${deployToolingCondition})
         run: npm ci
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api' && github.event.inputs.operation_key == ''
@@ -749,6 +877,7 @@ jobs:
           DOWNLOAD_OUTCOME: \${{ steps.artifact_download.outcome }}
           ARTIFACT_OUTCOME: \${{ steps.release_bus_artifact.outcome }}
           AWS_OUTCOME: \${{ steps.aws_credentials.outcome }}
+          PACKAGE_DIGEST: \${{ steps.release_bus_artifact.outputs.package_digest }}
         run: |
           set -euo pipefail
           status=SUCCEEDED
@@ -769,7 +898,73 @@ jobs:
               failure_phase=deployment_identity_or_credentials
             fi
           fi
-          payload="$(jq -n --arg train_id "$INPUT_TRAIN_ID" --arg operation_key "$INPUT_OPERATION_KEY" --arg workflow_run_id "$GITHUB_RUN_ID" --arg status "$status" --arg failure_class "$failure_class" --arg failure_phase "$failure_phase" --argjson retryable "$retryable" '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,phase:"complete",status:$status,failure_class:(if $failure_class == "null" then null else $failure_class end),failure_phase:(if $failure_phase == "null" then null else $failure_phase end),retryable:$retryable,summary:null,stages:[],jest:null,backend_evidence:null}')"
+          artifact_train_id="\${INPUT_ARTIFACT_TRAIN_ID:-$INPUT_TRAIN_ID}"
+          payload="$(jq -n \
+            --arg train_id "$INPUT_TRAIN_ID" \
+            --arg operation_key "$INPUT_OPERATION_KEY" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --arg status "$status" \
+            --arg failure_class "$failure_class" \
+            --arg failure_phase "$failure_phase" \
+            --argjson retryable "$retryable" \
+            --arg artifact_digest "$INPUT_ARTIFACT_DIGEST" \
+            --arg artifact_contract_version "$INPUT_ARTIFACT_CONTRACT_VERSION" \
+            --arg artifact_environment "$INPUT_ARTIFACT_ENVIRONMENT" \
+            --arg deployment_environment "$INPUT_ENVIRONMENT" \
+            --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID" \
+            --arg artifact_train_id "$artifact_train_id" \
+            --arg repository backend \
+            --arg source_sha "$INPUT_EXPECTED_SHA" \
+            --arg service "$INPUT_SERVICE" \
+            --arg package_digest "$PACKAGE_DIGEST" \
+            '{
+              train_id:$train_id,
+              operation_key:$operation_key,
+              workflow_run_id:$workflow_run_id,
+              phase:"complete",
+              status:$status,
+              failure_class:(if $failure_class == "null" then null else $failure_class end),
+              failure_phase:(if $failure_phase == "null" then null else $failure_phase end),
+              retryable:$retryable,
+              summary:(
+                if $status != "SUCCEEDED" then null
+                elif $artifact_contract_version == "environment-bound-v3" then {
+                  schema_version:3,
+                  artifact_contract:"environment-bound-v1",
+                  artifact_contract_version:$artifact_contract_version,
+                  repository:$repository,
+                  source_sha:$source_sha,
+                  environment:$artifact_environment,
+                  service:$service,
+                  artifact_run_id:$artifact_run_id,
+                  artifact_train_id:$artifact_train_id,
+                  artifact_digest:$artifact_digest,
+                  package_digest:$package_digest,
+                  consumed_preflight_artifact:true,
+                  rebuilt:false
+                }
+                else {
+                  schema_version:2,
+                  artifact_contract:"legacy-v2",
+                  artifact_contract_version:"legacy-v2",
+                  repository:$repository,
+                  source_sha:$source_sha,
+                  environment:"portable",
+                  deployment_environment:$deployment_environment,
+                  service:$service,
+                  artifact_run_id:$artifact_run_id,
+                  artifact_train_id:$artifact_train_id,
+                  artifact_digest:$artifact_digest,
+                  package_digest:$package_digest,
+                  consumed_preflight_artifact:true,
+                  rebuilt:false
+                }
+                end
+              ),
+              stages:[],
+              jest:null,
+              backend_evidence:null
+            }')"
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
             -H 'Content-Type: application/json' \
@@ -784,7 +979,7 @@ jobs:
           sparse-checkout: scripts/notify-ci-wave.mjs
           sparse-checkout-cone-mode: false
       - name: Notify about failure
-        uses: sarisia/actions-status-discord@v1
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708 # v1
         if: failure()
         env:
           DISCORD_WEBHOOK: \${{ secrets.DISCORD_WEBHOOK }}
@@ -811,7 +1006,7 @@ jobs:
         run: node scripts/notify-ci-wave.mjs
 
       - name: Notify about success
-        uses: sarisia/actions-status-discord@v1
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708 # v1
         if: success()
         env:
           DISCORD_WEBHOOK: \${{ secrets.DISCORD_WEBHOOK }}

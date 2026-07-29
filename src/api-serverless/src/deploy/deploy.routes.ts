@@ -29,6 +29,7 @@ import {
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
   ReleaseBusV2CurrentStagingRepairBodySchema,
+  ReleaseBusV2ManualDeploymentReadinessBodySchema,
   ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
@@ -49,6 +50,11 @@ import {
   releaseBusV2Operations,
   type ReleaseBusV2Progress
 } from '@/releaseBusV2/release-bus-v2.operations';
+import {
+  isReleaseBusV2ManualDeploymentError,
+  releaseBusV2ManualDeploymentGuard,
+  type ReleaseBusV2ManualDeploymentAuthorizationInput
+} from '@/releaseBusV2/release-bus-v2.manual-deployment';
 import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -311,12 +317,6 @@ deployRoutes.post('/ui/dispatch', async (req, res) => {
   const token = getGitHubTokenOrThrow(req);
   const body = getValidatedByJoiOrThrow(req.body, DeployDispatchBodySchema);
   await gitHubDeployService.assertRepositoryWriteAccess(token, body.target);
-  if (['STAGING', 'PRODUCTION'].includes(getReleaseBusV2Mode())) {
-    throw new CustomApiCompliantException(
-      409,
-      'Manual deployment is unavailable while Release Bus v2 is enabled; an operator must switch v2 OFF before using the serialized fallback'
-    );
-  }
   const services = body.target === 'backend' ? (body.services as string[]) : [];
   const invalidService = services.find(
     (service: string) =>
@@ -329,6 +329,16 @@ deployRoutes.post('/ui/dispatch', async (req, res) => {
       `${invalidService} cannot be deployed to ${body.environment}`
     );
   }
+  await releaseBusV2ManualDeploymentGuard
+    .assertDispatchReady(body.environment)
+    .catch((error: unknown) => {
+      if (isReleaseBusV2ManualDeploymentError(error))
+        throw new CustomApiCompliantException(
+          error.code === 'CONFLICT' ? 409 : 503,
+          error.message
+        );
+      throw error;
+    });
 
   const settledResults = await Promise.allSettled(
     body.target === 'frontend'
@@ -970,6 +980,31 @@ deployRoutes.post(
   }
 );
 
+deployRoutes.post(
+  '/release-bus-v2/manual-deployment-readiness',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2ManualDeploymentAuthorizationInput>(
+        req.body,
+        ReleaseBusV2ManualDeploymentReadinessBodySchema
+      );
+    try {
+      const authorization =
+        await releaseBusV2ManualDeploymentGuard.authorizeWorkflow(body);
+      setNoStoreHeaders(res);
+      return res.json(authorization);
+    } catch (error) {
+      if (isReleaseBusV2ManualDeploymentError(error))
+        throw new CustomApiCompliantException(
+          error.code === 'CONFLICT' ? 409 : 503,
+          error.message
+        );
+      throw error;
+    }
+  }
+);
+
 async function requireV2TrainAutomationAllowed(trainId: string) {
   if (getReleaseBusV2Mode() !== 'OFF') return;
   let allowed = false;
@@ -1001,6 +1036,16 @@ deployRoutes.post('/release-bus-v2/authorize', async (req, res) => {
     service: string | null;
     expected_sha: string;
     artifact_digest: string | null;
+    source_ref: string | null;
+    reuse_artifact_run_id: string | null;
+    reuse_artifact_name: string | null;
+    reuse_artifact_digest: string | null;
+    candidate_evidence_mode:
+      | 'legacy-whole-train'
+      | 'strict-single'
+      | 'strict-aggregate'
+      | null;
+    aggregate_candidate_evidence_digest: string | null;
   }>(req.body, ReleaseBusV2AuthorizationBodySchema);
   await requireV2TrainAutomationAllowed(authorization.train_id);
   try {

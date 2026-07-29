@@ -19,13 +19,22 @@ description: Route and execute 6529 backend, frontend, or coupled staging and pr
 | Target lane       | Route                                                                                                                           |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `STAGING: ON`     | Register the exact candidate with Release Bus                                                                                   |
-| `STAGING: OFF`    | Serialized manual staging after the staging drain gate                                                                          |
+| `STAGING: OFF`    | If `changeable: true`, serialized manual staging after the staging drain gate                                                    |
 | `PRODUCTION: ON`  | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for Release Bus production                                         |
-| `PRODUCTION: OFF` | Serialized manual production after the production drain gate and explicit owner authorization; staging evidence is not required |
+| `PRODUCTION: OFF` | If `changeable: true`, serialized manual production after the production drain gate and explicit owner authorization; staging evidence is not required |
 
 Raw mode and `ALL` are internal emergency fences. They are verified by the
 helper but are not normal routing or UI controls. Do not bypass an internal
 fence. Both lanes `OFF` means full manual fallback after both drain gates.
+
+There is no inferred control-plane or self-upgrade exception. When a target
+lane is `ON`, every deployment for that environment—including API,
+`releaseBus`, cleaner/reconciler, and other control-plane changes—must be an
+authenticated Release Bus operation. Manual workflows must reject before
+checkout, build, ref, credential, or deployment mutation unless the affected
+lane is authoritatively `OFF` with `changeable: true`, no hidden fence blocks
+fallback, and its drain gate passes. If Release Bus cannot safely self-deploy
+while `ON`, stop for explicit owner direction.
 
 ## V2 readiness
 
@@ -63,11 +72,16 @@ fence. Both lanes `OFF` means full manual fallback after both drain gates.
    `READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION`; never rewrite it to the legacy
    ready status to make an older worker claim it.
 
-For staging, v2 reuses exact green PR merge-tree evidence when eligible and
-otherwise runs one combined preflight and immutable build. For production, the
-default `CANDIDATE_STAGING_EVIDENCE_V1` policy records every selected
+For staging, v2 reuses exact green PR merge-tree evidence and freshly builds one
+environment-bound artifact from the exact staging composition. For production,
+the default `CANDIDATE_STAGING_EVIDENCE_V1` policy records every selected
 candidate's staging train, manifest, and successful E2E operation/run, then
-freshly composes and builds the selected set from both current `main` bases.
+freshly composes and freshly builds an environment-bound artifact for the exact
+dependency-closed set from both current `main` bases. Staging artifact bytes
+are never reused for ordinary production selection. Backend preparation
+installs dependencies once and builds/packages only the selected deploy units;
+repository-wide lint, typecheck, test inventory, and full Jest matrices belong
+to exact-head/merge-tree PR CI rather than normal train preflight.
 It does not mutate shared staging or create a `PRODUCTION_QUALIFICATION` child
 merely because the selected combination differs from a staging manifest. It
 updates `main` only after candidate evidence, fresh checks, immutable artifacts,
@@ -75,11 +89,14 @@ and both base refs pass their fences. It never authors or posts release notes;
 every production operation emits the autonomous bot's canonical grouping
 metadata and finalize signal unless the candidate explicitly opts out.
 
-## Manual fallback while the target lane is OFF
+## Manual fallback while the target lane is OFF and changeable
 
-1. Prove the target environment lock is free, no target mutation/E2E workflow
-   is active, and every already-dispatched exact operation is terminal. Fetch
-   the exact remote target head. Wait; never cancel another actor.
+1. Require the helper to report the target lane `OFF` with `changeable: true`
+   and no hidden emergency fence blocking fallback. The workflow enforces the
+   same gate before checkout or mutation. Prove the target environment lock is
+   free, no target mutation/E2E workflow is active, and every already-dispatched
+   exact operation is terminal. Fetch the exact remote target head. Wait; never
+   cancel another actor.
 2. Re-fetch immediately before pushing. If a shared ref moved, recompute from
    the new head. Never force-push.
 3. Merge the development branch into current `1a-staging`. Deploy required
@@ -134,9 +151,11 @@ metadata and finalize signal unless the candidate explicitly opts out.
   candidates.
 - A merge conflict marks only the direct candidate `NEEDS_REBASE` and holds
   transitive dependants. Fix the branch and register its new SHA.
-- A control-plane defect turns the affected automation lane off and leaves
-  candidates unblamed. Keep exact state, wait for its drain gate, use manual
-  fallback for that environment, and turn the lane on explicitly after repair.
+- A control-plane defect leaves candidates unblamed. If the supported,
+  owner-authorized procedure turns the affected automation lane off, keep exact
+  state and wait for its drain gate before manual fallback; turn the lane on
+  explicitly after repair. While it remains `ON`, do not infer a self-upgrade
+  exception—stop for explicit owner direction.
 - Use `node ops/scripts/release-bus-v2-fast-off.mjs --execute` only for an
   emergency hard stop of both lanes. Its raw mode and `ALL` changes are
   intentionally absent from normal UI and routing.
