@@ -3,10 +3,18 @@
 - Before staging, production, promotion, or release mutation, run
   `node ops/scripts/release-bus-status.mjs` and follow `deploy-6529`.
 - Route only from the helper's two effective lane states. When the target lane
-  is `ON`, use v2. When it is `OFF`, use serialized manual fallback only after
-  the target environment lock is free, no mutation/E2E workflow is active, and
-  every already-dispatched exact operation is terminal. Both lanes `OFF` means
-  full manual fallback.
+  is `ON`, use v2. When it is `OFF`, use serialized manual fallback only when
+  `changeable: true`, no hidden emergency fence blocks fallback, the target
+  environment lock is free, no mutation/E2E workflow is active, and every
+  already-dispatched exact operation is terminal. Both lanes `OFF` means full
+  manual fallback.
+- There is no inferred control-plane or self-upgrade exception. While a target
+  lane is `ON`, every deploy for that environment—including API, `releaseBus`,
+  cleaner/reconciler, and other control-plane changes—must carry a valid
+  Release Bus operation identity. A manual workflow must fail before checkout,
+  build, ref, credential, or deployment mutation unless the affected lane is
+  authoritatively `OFF` and its fallback gate passes. If the bus cannot safely
+  self-deploy while `ON`, stop for explicit owner direction.
 - Staging `ON` accepts exact candidates. Production `ON` requires a separate
   exact-SHA production action after `STAGING_VALIDATED`.
 - Raw mode and `ALL` are internal emergency fences, not normal routing or UI
@@ -29,6 +37,12 @@
   `PRODUCTION_QUALIFICATION` child, and require terminal read-only production
   E2E before `PRODUCTION_DEPLOYED`. Null-policy legacy trains retain their
   immutable claimed behavior.
+- Normal train preflight reuses exact-head/merge-tree PR CI evidence, not
+  environment-incompatible artifact bytes. It installs dependencies once,
+  builds/packages only the selected backend units, and emits immutable
+  environment-bound manifests. Repository-wide lint, typecheck, test inventory,
+  and full Jest matrices remain PR CI gates and must not return to the normal
+  staging or production train critical path.
 - Never cancel another actor's workflow, force-push a shared ref, or bypass exact
   SHA/artifact checks. Never author or post release notes manually; preserve the
   autonomous bot's complete grouping metadata and finalize signal.

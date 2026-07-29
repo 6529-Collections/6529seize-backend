@@ -170,6 +170,15 @@ export type ReleaseBusV2PrEvidence = {
   readonly artifact_run_id: string | null;
   readonly artifact_name: string | null;
   readonly artifact_digest: string | null;
+  /** Added for exact workflow-source audit; absent only on historical rows. */
+  readonly workflow_path?: string;
+  readonly base_workflow_blob_sha?: string;
+  readonly merge_workflow_blob_sha?: string;
+  readonly base_gate_policy_digest?: string;
+  readonly merge_gate_policy_digest?: string;
+  /** Historical single-digest rows are not eligible for a new train. */
+  readonly gate_policy_digest?: string;
+  readonly trust_mode?: 'evidence-manifest-v1' | 'legacy-exact-workflow-v0';
   readonly contributor_github_logins?: readonly string[];
 };
 
