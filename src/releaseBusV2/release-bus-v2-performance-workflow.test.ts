@@ -153,6 +153,12 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(guard).toContain('--arg source_sha "$GITHUB_SHA"');
     expect(guard).toContain('.ready == true and .mode == "manual"');
     expect(guard).toContain('.authorized == true and .train_id == $train_id');
+    expect(guard).toContain('if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]');
+    expect(guard).toContain('.name == "production-environment" and');
+    expect(guard).toContain('.lane == "PRODUCTION" and');
+    expect(guard).toContain(
+      '$RELEASE_BUS_API_URL/deploy/release-bus-v2/trains'
+    );
     expect(guard).not.toContain('head -c 4000');
     expect(steps[verifySource]?.if).toBeUndefined();
     expect(steps[verifySource]?.run).toContain(
@@ -288,6 +294,81 @@ printf '200'
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
+  });
+
+  it('keeps emergency API bootstrap exact, opt-out only, and default-off', () => {
+    const parsed = YAML.parse(deploy) as {
+      on: {
+        workflow_dispatch: {
+          inputs: Record<string, { default?: boolean; type?: string }>;
+        };
+      };
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    expect(
+      parsed.on.workflow_dispatch.inputs.emergency_api_bootstrap
+    ).toMatchObject({
+      type: 'boolean',
+      default: false
+    });
+    const validation = parsed.jobs['build-and-deploy'].steps.find(
+      ({ name }) => name === 'Validate dispatch inputs before using credentials'
+    )?.run;
+    expect(validation).toBeTruthy();
+    const baseEnv = {
+      ...process.env,
+      GITHUB_ACTOR: 'prxt6529',
+      GITHUB_REF_NAME: 'main',
+      GITHUB_SHA: 'a'.repeat(40),
+      INPUT_ARTIFACT_CONTRACT_VERSION: 'legacy-v2',
+      INPUT_ARTIFACT_DIGEST: '',
+      INPUT_ARTIFACT_ENVIRONMENT: '',
+      INPUT_ARTIFACT_RUN_ID: '',
+      INPUT_ARTIFACT_TRAIN_ID: '',
+      INPUT_EMERGENCY_API_BOOTSTRAP: 'true',
+      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: 'a'.repeat(40),
+      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: 'manual-authorizer-self-bootstrap',
+      INPUT_ENVIRONMENT: 'prod',
+      INPUT_EXPECTED_SHA: '',
+      INPUT_OPERATION_KEY: '',
+      INPUT_RELEASE_CONTRIBUTORS: '[]',
+      INPUT_RELEASE_GROUP_SERVICES: '',
+      INPUT_RELEASE_NOTE_GROUPS: '',
+      INPUT_RELEASE_NOTE_OPT_OUT: 'true',
+      INPUT_RELEASE_NOTE_PUBLISH: 'false',
+      INPUT_RELEASE_PULL_REQUEST: '',
+      INPUT_SERVICE: 'api',
+      INPUT_TRAIN_ID: '',
+      INPUT_TRAIN_REVISION: ''
+    };
+    const execute = (overrides: Record<string, string> = {}) =>
+      execFileSync('bash', ['-c', validation ?? 'exit 1'], {
+        cwd: root,
+        env: { ...baseEnv, ...overrides },
+        stdio: 'pipe'
+      });
+
+    expect(() => execute()).not.toThrow();
+    for (const invalid of [
+      { GITHUB_ACTOR: 'other-user' },
+      { GITHUB_REF_NAME: '1a-staging' },
+      { GITHUB_SHA: 'b'.repeat(40) },
+      { INPUT_ENVIRONMENT: 'staging' },
+      { INPUT_SERVICE: 'transactionsLoop' },
+      { INPUT_EMERGENCY_API_BOOTSTRAP_REASON: 'short' },
+      { INPUT_RELEASE_NOTE_OPT_OUT: 'false' },
+      { INPUT_RELEASE_NOTE_PUBLISH: 'true' },
+      { INPUT_RELEASE_PULL_REQUEST: '1861' }
+    ])
+      expect(() => execute(invalid)).toThrow();
+    expect(() =>
+      execute({
+        INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
+        INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
+        INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
+        INPUT_RELEASE_NOTE_OPT_OUT: 'false'
+      })
+    ).not.toThrow();
   });
 
   it('rejects cross-train v3 artifacts before authorization or checkout', () => {

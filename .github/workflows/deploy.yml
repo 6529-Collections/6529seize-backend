@@ -98,6 +98,19 @@ on:
         description: 'Explicitly skip autonomous release notes for an internal operation'
         required: false
         default: false
+      emergency_api_bootstrap:
+        type: boolean
+        description: 'Break-glass API production bootstrap when the deployed authorizer blocks its own fix'
+        required: false
+        default: false
+      emergency_api_bootstrap_expected_sha:
+        type: string
+        description: 'Exact main SHA authorized for the emergency API bootstrap'
+        required: false
+      emergency_api_bootstrap_reason:
+        type: string
+        description: 'Audit reason for the emergency API bootstrap'
+        required: false
       release_train_id:
         type: string
         description: 'Release Bus train id; blank for manual deploys'
@@ -192,6 +205,9 @@ jobs:
       INPUT_ARTIFACT_DIGEST: ${{ github.event.inputs.artifact_digest }}
       INPUT_ARTIFACT_ENVIRONMENT: ${{ github.event.inputs.artifact_environment }}
       INPUT_ARTIFACT_CONTRACT_VERSION: ${{ github.event.inputs.artifact_contract_version }}
+      INPUT_EMERGENCY_API_BOOTSTRAP: ${{ github.event.inputs.emergency_api_bootstrap }}
+      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: ${{ github.event.inputs.emergency_api_bootstrap_expected_sha }}
+      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: ${{ github.event.inputs.emergency_api_bootstrap_reason }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -208,6 +224,14 @@ jobs:
           INPUT_ARTIFACT_DIGEST: ${{ github.event.inputs.artifact_digest }}
           INPUT_ARTIFACT_ENVIRONMENT: ${{ github.event.inputs.artifact_environment }}
           INPUT_ARTIFACT_CONTRACT_VERSION: ${{ github.event.inputs.artifact_contract_version }}
+          INPUT_EMERGENCY_API_BOOTSTRAP: ${{ github.event.inputs.emergency_api_bootstrap }}
+          INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: ${{ github.event.inputs.emergency_api_bootstrap_expected_sha }}
+          INPUT_EMERGENCY_API_BOOTSTRAP_REASON: ${{ github.event.inputs.emergency_api_bootstrap_reason }}
+          INPUT_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
+          INPUT_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}
+          INPUT_RELEASE_NOTE_GROUPS: ${{ github.event.inputs.release_note_groups }}
+          INPUT_RELEASE_NOTE_PUBLISH: ${{ github.event.inputs.release_note_publish }}
+          INPUT_RELEASE_NOTE_OPT_OUT: ${{ github.event.inputs.release_note_opt_out }}
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
@@ -250,15 +274,83 @@ jobs:
             test -z "$INPUT_ARTIFACT_ENVIRONMENT"
             test "$INPUT_ARTIFACT_CONTRACT_VERSION" = legacy-v2
           fi
+          case "$INPUT_EMERGENCY_API_BOOTSTRAP" in
+            true)
+              test -z "$INPUT_OPERATION_KEY"
+              test "$INPUT_ENVIRONMENT" = prod
+              test "$INPUT_SERVICE" = api
+              test "$GITHUB_REF_NAME" = main
+              test "$GITHUB_ACTOR" = prxt6529
+              [[ "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+              test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$GITHUB_SHA"
+              [[ "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON" =~ ^[A-Za-z0-9._:/-]{10,200}$ ]]
+              test "$INPUT_RELEASE_NOTE_OPT_OUT" = true
+              test "$INPUT_RELEASE_NOTE_PUBLISH" = false
+              test -z "$INPUT_RELEASE_PULL_REQUEST"
+              test -z "$INPUT_RELEASE_GROUP_SERVICES"
+              test -z "$INPUT_RELEASE_NOTE_GROUPS"
+              ;;
+            false|'')
+              test -z "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA"
+              test -z "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON"
+              ;;
+            *) exit 1 ;;
+          esac
       - name: Authorize exact deployment operation
         shell: bash
         env:
           RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
           RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          INPUT_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
+          INPUT_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}
+          INPUT_RELEASE_NOTE_GROUPS: ${{ github.event.inputs.release_note_groups }}
+          INPUT_RELEASE_NOTE_PUBLISH: ${{ github.event.inputs.release_note_publish }}
+          INPUT_RELEASE_NOTE_OPT_OUT: ${{ github.event.inputs.release_note_opt_out }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_BUS_API_URL"
           test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
+          if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]; then
+            test -z "$INPUT_OPERATION_KEY"
+            test "$INPUT_ENVIRONMENT" = prod
+            test "$INPUT_SERVICE" = api
+            test "$GITHUB_REF_NAME" = main
+            test "$GITHUB_ACTOR" = prxt6529
+            test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$GITHUB_SHA"
+            test "$INPUT_RELEASE_NOTE_OPT_OUT" = true
+            test "$INPUT_RELEASE_NOTE_PUBLISH" = false
+            test -z "$INPUT_RELEASE_PULL_REQUEST"
+            test -z "$INPUT_RELEASE_GROUP_SERVICES"
+            test -z "$INPUT_RELEASE_NOTE_GROUPS"
+            controls_file="$(mktemp)"
+            trains_file="$(mktemp)"
+            trap 'rm -f "$controls_file" "$trains_file"' EXIT
+            controls_status="$(curl --silent --show-error               --connect-timeout 10               --max-time 60               --output "$controls_file"               --write-out '%{http_code}'               "$RELEASE_BUS_API_URL/deploy/release-bus-v2/controls")"
+            test "$controls_status" = 200
+            jq -e '
+              .mode == "PRODUCTION" and
+              ([.controls[] | select(.scope == "ALL" and .paused == false)] | length == 1) and
+              ([.lanes[] | select(.lane == "PRODUCTION" and .status == "OFF" and .changeable == true)] | length == 1) and
+              ([.locks[] | select(
+                .name == "production-environment" and
+                .owner_train_id == null and
+                .lease_owner == null and
+                .lease_token == null
+              )] | length == 1)
+            ' "$controls_file" > /dev/null
+            trains_status="$(curl --silent --show-error               --connect-timeout 10               --max-time 60               --output "$trains_file"               --write-out '%{http_code}'               "$RELEASE_BUS_API_URL/deploy/release-bus-v2/trains")"
+            test "$trains_status" = 200
+            jq -e '
+              [.trains[] | select(
+                .lane == "PRODUCTION" and
+                .status != "PRODUCTION_DEPLOYED" and
+                .status != "FAILED" and
+                .status != "CANCELLED"
+              )] | length == 0
+            ' "$trains_file" > /dev/null
+            jq -cn               --arg actor "$GITHUB_ACTOR"               --arg sha "$GITHUB_SHA"               --arg reason "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON"               '{emergency_api_bootstrap:true,actor:$actor,sha:$sha,reason:$reason}'
+            exit 0
+          fi
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
           if [ -n "$INPUT_OPERATION_KEY" ]; then
