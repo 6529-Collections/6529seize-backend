@@ -378,7 +378,10 @@ current SHA/ref fields are cleared. Global and per-target events record the
 before-state and active-inventory digest. Each per-target event records every
 cleared or replaced field, including current train, staging live timestamps and
 transition request metadata, production requester/selection, and hold reason,
-so the logical change is reconstructable one-to-one. No Git ref, artifact,
+and the supersession timestamp, so the logical change is reconstructable
+one-to-one. Exact-head re-registration also clears that stale supersession
+marker before a new staging cycle, preventing recovered deleted-branch intent
+from remaining permanently ineligible for production. No Git ref, artifact,
 workflow, deployment, E2E, release note, or immutable history is mutated.
 
 The database commit is the mutation boundary. If a post-commit GitHub/ref

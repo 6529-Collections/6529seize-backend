@@ -3540,6 +3540,7 @@ describe('Release Bus v2 deregistered exact-head registration', () => {
       staging_validated_train_id: 'historical-train',
       staging_validated_manifest_id: 'historical-manifest',
       staging_live_state: 'DETACHED',
+      superseded_at: 73,
       row_version: 7
     };
     const updateCandidate = jest.fn(
@@ -3567,6 +3568,10 @@ describe('Release Bus v2 deregistered exact-head registration', () => {
           production_selection_id: fields.productionSelectionId as
             | string
             | null,
+          superseded_at:
+            fields.supersededAt === undefined
+              ? current.superseded_at
+              : (fields.supersededAt as number | null),
           pr_evidence_json:
             fields.prEvidence as ReleaseBusV2CandidateRecord['pr_evidence_json'],
           row_version: current.row_version + 1
@@ -3606,7 +3611,46 @@ describe('Release Bus v2 deregistered exact-head registration', () => {
       addDependency: jest.fn(async () => undefined),
       listCandidates: jest.fn(async () => [current]),
       updateCandidate,
-      appendEvent: jest.fn(async () => undefined)
+      appendEvent: jest.fn(async () => undefined),
+      findTrain: jest.fn(async () => ({
+        id: 'new-staging-train',
+        lane: 'STAGING',
+        status: 'STAGING_VALIDATED',
+        manifest_id: 'new-staging-manifest'
+      })),
+      findManifest: jest.fn(async () => ({
+        id: 'new-staging-manifest',
+        train_id: 'new-staging-train',
+        status: 'STAGING_VALIDATED',
+        e2e_run_id: 'new-staging-e2e-run',
+        identity_sha256: '2'.repeat(64),
+        frontend_artifact_digest: '3'.repeat(64),
+        backend_artifact_digest: '4'.repeat(64),
+        manifest_json: {
+          candidates: [
+            {
+              candidate_id: current.id,
+              repository: current.repository,
+              pr_number: current.pr_number,
+              head_sha: current.head_sha
+            }
+          ]
+        }
+      })),
+      listTrainCandidates: jest.fn(async () => [
+        {
+          candidate_id: current.id,
+          disposition: 'INCLUDED'
+        }
+      ]),
+      listOperations: jest.fn(async () => [
+        {
+          id: 'new-staging-e2e-operation',
+          operation_type: 'E2E_STAGING',
+          status: 'SUCCEEDED',
+          external_id: 'new-staging-e2e-run'
+        }
+      ])
     };
     return { repository, updateCandidate, current: () => current };
   }
@@ -3645,6 +3689,7 @@ describe('Release Bus v2 deregistered exact-head registration', () => {
       {
         status: 'READY_FOR_STAGING',
         staging_live_state: 'NOT_LIVE',
+        superseded_at: null,
         staging_validated_train_id: 'historical-train',
         staging_validated_manifest_id: 'historical-manifest',
         row_version: 8
@@ -3657,6 +3702,7 @@ describe('Release Bus v2 deregistered exact-head registration', () => {
       expect.objectContaining({
         status: 'READY_FOR_STAGING',
         stagingLiveState: 'NOT_LIVE',
+        supersededAt: null,
         prEvidence: expect.objectContaining({
           base_sha: '9'.repeat(40),
           merge_sha: '8'.repeat(40),
@@ -3680,6 +3726,7 @@ describe('Release Bus v2 deregistered exact-head registration', () => {
         payload: expect.objectContaining({
           historical_staging_train_id: 'historical-train',
           historical_staging_manifest_id: 'historical-manifest',
+          previous_superseded_at: 73,
           previous_pr_evidence: oldEvidence,
           fresh_pr_evidence: expect.objectContaining({
             base_sha: '9'.repeat(40),
@@ -3690,6 +3737,26 @@ describe('Release Bus v2 deregistered exact-head registration', () => {
       }),
       expect.anything()
     );
+    await expect(
+      service.resolveCandidateStagingEvidence(
+        [
+          {
+            ...current(),
+            status: 'STAGING_VALIDATED',
+            staging_validated_train_id: 'new-staging-train',
+            staging_validated_manifest_id: 'new-staging-manifest'
+          }
+        ],
+        {}
+      )
+    ).resolves.toEqual([
+      expect.objectContaining({
+        candidate_id: 'candidate-id',
+        staging_train_id: 'new-staging-train',
+        staging_manifest_id: 'new-staging-manifest',
+        staging_e2e_run_id: 'new-staging-e2e-run'
+      })
+    ]);
   });
 });
 

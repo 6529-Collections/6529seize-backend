@@ -923,6 +923,7 @@ export class ReleaseBusV2Service {
                     productionRequestedBy: null,
                     productionSelectionId: null,
                     holdReason: null,
+                    supersededAt: null,
                     prEvidence: evidence
                   },
                   ctx
@@ -949,7 +950,8 @@ export class ReleaseBusV2Service {
                     historical_staging_train_id:
                       candidate.staging_validated_train_id,
                     historical_staging_manifest_id:
-                      candidate.staging_validated_manifest_id
+                      candidate.staging_validated_manifest_id,
+                    previous_superseded_at: candidate.superseded_at
                   }
                 },
                 ctx

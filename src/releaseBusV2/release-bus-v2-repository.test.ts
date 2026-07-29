@@ -444,7 +444,8 @@ describe('ReleaseBusV2Repository', () => {
         stagingLiveState: 'DETACHED',
         stagingLiveManifestId: null,
         productionRequestedAt: null,
-        productionSelectionId: null
+        productionSelectionId: null,
+        supersededAt: null
       }),
       expect.objectContaining({ connection: expect.anything() })
     );
@@ -490,6 +491,17 @@ describe('ReleaseBusV2Repository', () => {
           previous_production_requested_by: 'production-operator',
           previous_production_selection_id: 'selection',
           previous_hold_reason: 'Dependency evidence pending'
+        })
+      }),
+      expect.anything()
+    );
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: 'recoverable-superseded-production',
+        eventType: 'CANDIDATE_LOGICALLY_DEREGISTERED',
+        payload: expect.objectContaining({
+          previous_status: 'SUPERSEDED',
+          previous_superseded_at: 3
         })
       }),
       expect.anything()

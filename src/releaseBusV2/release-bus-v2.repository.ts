@@ -1889,7 +1889,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
               productionRequestedAt: null,
               productionRequestedBy: null,
               productionSelectionId: null,
-              holdReason: null
+              holdReason: null,
+              supersededAt: null
             },
             ctx
           ))
@@ -1931,6 +1932,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
               previous_production_selection_id:
                 candidate.production_selection_id ?? null,
               previous_hold_reason: candidate.hold_reason,
+              previous_superseded_at: candidate.superseded_at,
               historical_staging_train_id: candidate.staging_validated_train_id,
               historical_staging_manifest_id:
                 candidate.staging_validated_manifest_id,
