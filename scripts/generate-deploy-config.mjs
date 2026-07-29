@@ -249,18 +249,19 @@ jobs:
             [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
             [[ "$INPUT_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
             [[ "$INPUT_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+            test -z "$INPUT_ARTIFACT_TRAIN_ID" -o "$INPUT_ARTIFACT_TRAIN_ID" = "$INPUT_TRAIN_ID"
             case "$INPUT_ARTIFACT_CONTRACT_VERSION" in
               environment-bound-v3)
                 [[ "$INPUT_ARTIFACT_ENVIRONMENT" =~ ^(staging|production)$ ]]
-                expected_artifact_environment="\${INPUT_ENVIRONMENT/prod/production}"
+                case "$INPUT_ENVIRONMENT" in
+                  staging) expected_artifact_environment=staging ;;
+                  prod) expected_artifact_environment=production ;;
+                  *) exit 1 ;;
+                esac
                 test "$INPUT_ARTIFACT_ENVIRONMENT" = "$expected_artifact_environment"
                 ;;
               legacy-v2)
                 test -z "$INPUT_ARTIFACT_ENVIRONMENT"
-                # Rollout bridge only: an old reconciler may finish an artifact
-                # it dispatched for this same train. Cross-train schema v2
-                # would make staging bytes ambiguous in production.
-                test -z "$INPUT_ARTIFACT_TRAIN_ID" -o "$INPUT_ARTIFACT_TRAIN_ID" = "$INPUT_TRAIN_ID"
                 ;;
               *) echo "Unsupported artifact contract" >&2; exit 1 ;;
             esac
@@ -325,7 +326,6 @@ jobs:
             "$RELEASE_BUS_API_URL/deploy/$endpoint")"
           if [ "$http_status" != 200 ]; then
             echo "::error::Deployment authorization was rejected with HTTP $http_status"
-            head -c 4000 "$response_file" >&2 || true
             exit 1
           fi
           if [ -n "$INPUT_OPERATION_KEY" ]; then
@@ -445,6 +445,21 @@ jobs:
           ref: \${{ github.event.inputs.operation_key != '' && github.event.inputs.expected_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_OPERATION_KEY" ]; then
+            expected_source_sha="$INPUT_EXPECTED_SHA"
+          else
+            expected_source_sha="$GITHUB_SHA"
+          fi
+          [[ "$expected_source_sha" =~ ^[a-f0-9]{40}$ ]]
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$expected_source_sha" ]; then
+            echo "Expected $expected_source_sha, checked out $actual_sha" >&2
+            exit 1
+          fi
       - name: Install Node.js with cached deploy-tool downloads
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -469,17 +484,6 @@ jobs:
           repositories: |
             6529seize-backend
             6529seize-frontend
-      - name: Verify immutable source
-        if: github.event.inputs.operation_key != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
-          actual_sha="$(git rev-parse HEAD)"
-          if [ "$actual_sha" != "$INPUT_EXPECTED_SHA" ]; then
-            echo "Expected $INPUT_EXPECTED_SHA, checked out $actual_sha" >&2
-            exit 1
-          fi
       - name: Download immutable preflight artifact
         if: github.event.inputs.operation_key != ''
         id: artifact_download
@@ -506,7 +510,11 @@ jobs:
           test "$artifact_digest" = "$INPUT_ARTIFACT_DIGEST"
           package_digest="$(sha256sum "packages/$INPUT_SERVICE/index.zip" | cut -d' ' -f1)"
           if [ "$INPUT_ARTIFACT_CONTRACT_VERSION" = environment-bound-v3 ]; then
-            expected_artifact_environment="\${INPUT_ENVIRONMENT/prod/production}"
+            case "$INPUT_ENVIRONMENT" in
+              staging) expected_artifact_environment=staging ;;
+              prod) expected_artifact_environment=production ;;
+              *) exit 1 ;;
+            esac
             jq -e \
               --arg train_id "$artifact_train_id" \
               --arg source_sha "$INPUT_EXPECTED_SHA" \
@@ -526,7 +534,6 @@ jobs:
                .packages[$service].sha256 == $package_digest' \
               manifest.json >/dev/null
           else
-            test "$artifact_train_id" = "$INPUT_TRAIN_ID"
             jq -e \
               --arg train_id "$artifact_train_id" \
               --arg source_sha "$INPUT_EXPECTED_SHA" \

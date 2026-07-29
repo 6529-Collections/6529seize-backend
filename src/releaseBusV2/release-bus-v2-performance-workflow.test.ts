@@ -104,6 +104,9 @@ describe('Release Bus v2 backend critical-path contract', () => {
       ({ name }) => name === 'Authorize exact deployment operation'
     );
     const checkout = steps.findIndex(({ name }) => name === 'Checkout');
+    const verifySource = steps.findIndex(
+      ({ name }) => name === 'Verify immutable source'
+    );
     const setupNode = steps.findIndex(({ name }) =>
       name?.startsWith('Install Node.js')
     );
@@ -115,7 +118,9 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(syntax).toBe(0);
     expect(authorize).toBe(1);
     expect(checkout).toBeGreaterThan(authorize);
+    expect(verifySource).toBe(checkout + 1);
     expect(setupNode).toBeGreaterThan(checkout);
+    expect(setupNode).toBeGreaterThan(verifySource);
     expect(aws).toBeGreaterThan(setupNode);
     expect(deployStep).toBeGreaterThan(aws);
     for (const step of steps.slice(0, authorize)) {
@@ -151,6 +156,14 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(guard).toContain('--arg source_sha "$GITHUB_SHA"');
     expect(guard).toContain('.ready == true and .mode == "manual"');
     expect(guard).toContain('.authorized == true and .train_id == $train_id');
+    expect(guard).not.toContain('head -c 4000');
+    expect(steps[verifySource]?.if).toBeUndefined();
+    expect(steps[verifySource]?.run).toContain(
+      'expected_source_sha="$GITHUB_SHA"'
+    );
+    expect(steps[verifySource]?.run).toContain(
+      'expected_source_sha="$INPUT_EXPECTED_SHA"'
+    );
     expect(deploy).not.toContain('Authorize immutable Release Bus operation');
     expect(JSON.stringify(steps[checkout])).toContain('github.sha');
     expect(parsed.concurrency.group).toContain("|| 'manual'");
@@ -207,7 +220,7 @@ printf '200'
                 service: 'api',
                 workflow_run_id: '12345',
                 workflow_run_attempt: 2,
-                source_ref: 'main',
+                source_ref: '1a-staging',
                 source_sha: 'a'.repeat(40)
               }
             : {
@@ -224,7 +237,7 @@ printf '200'
           CAPTURE_PAYLOAD: capturePayload,
           CAPTURE_RESPONSE: response,
           CAPTURE_URL: captureUrl,
-          GITHUB_REF_NAME: 'main',
+          GITHUB_REF_NAME: '1a-staging',
           GITHUB_RUN_ATTEMPT: '2',
           GITHUB_RUN_ID: '12345',
           GITHUB_SHA: 'a'.repeat(40),
@@ -256,7 +269,7 @@ printf '200'
           service: 'api',
           workflow_run_id: '12345',
           workflow_run_attempt: 2,
-          source_ref: 'main',
+          source_ref: '1a-staging',
           source_sha: 'a'.repeat(40)
         },
         url: 'https://release-bus.invalid/deploy/release-bus-v2/manual-deployment-readiness'
@@ -278,6 +291,39 @@ printf '200'
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
+  });
+
+  it('rejects cross-train v3 artifacts before authorization or checkout', () => {
+    const parsed = yaml.load(deploy) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const validation = parsed.jobs['build-and-deploy'].steps.find(
+      ({ name }) => name === 'Validate dispatch inputs before using credentials'
+    )?.run;
+    const execute = (artifactTrainId: string) =>
+      execFileSync('bash', ['-c', validation ?? 'exit 1'], {
+        cwd: root,
+        env: {
+          ...process.env,
+          INPUT_ARTIFACT_CONTRACT_VERSION: 'environment-bound-v3',
+          INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
+          INPUT_ARTIFACT_ENVIRONMENT: 'production',
+          INPUT_ARTIFACT_RUN_ID: '54321',
+          INPUT_ARTIFACT_TRAIN_ID: artifactTrainId,
+          INPUT_ENVIRONMENT: 'prod',
+          INPUT_EXPECTED_SHA: 'a'.repeat(40),
+          INPUT_OPERATION_KEY: 'rb2:train-id:deploy:api:a1',
+          INPUT_RELEASE_CONTRIBUTORS: '[]',
+          INPUT_SERVICE: 'api',
+          INPUT_TRAIN_ID: 'train-id',
+          INPUT_TRAIN_REVISION: '1'
+        },
+        stdio: 'pipe'
+      });
+
+    expect(() => execute('other-train')).toThrow();
+    expect(() => execute('train-id')).not.toThrow();
+    expect(() => execute('')).not.toThrow();
   });
 
   it('keeps full tests in exact merge-tree PR CI before evidence is emitted', () => {
@@ -395,10 +441,7 @@ printf '200'
     expect(steps[checkout]).toMatchObject({
       uses: expect.stringMatching(/^actions\/checkout@[a-f0-9]{40}$/)
     });
-    expect(steps[checkout].if).toContain("steps.evidence.outcome == 'success'");
-    expect(steps[checkout].if).toContain(
-      "steps.evidence.outputs.artifact_bytes_reused != 'true'"
-    );
+    expect(steps[checkout].if).toBe("steps.evidence.outcome == 'success'");
     expect(steps[composition].run).toContain(
       'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
     );
@@ -543,17 +586,19 @@ exit 1
     }
   });
 
-  it('uses strict PR CI artifacts only as evidence and bounds old deploy-byte reuse to the legacy bridge', () => {
+  it('uses every PR CI artifact only as evidence and always builds fresh train bytes', () => {
     expect(preflight).toContain('Verify exact green PR CI evidence');
+    expect(preflight).toContain('.head_sha == $expected_sha');
     expect(preflight).not.toContain('Download exact green PR artifact');
     expect(preflight).toContain('is_exact_evidence_archive=false');
-    expect(preflight).toContain('reused_exact_pr_artifact:true');
     expect(preflight).toContain(
-      '# whose bytes are reusable. An old producer can also name the new'
+      '# bytes are never promoted into a staging or production train.'
     );
-    expect(preflight).toContain(
+    expect(preflight).not.toContain('artifact_bytes_reused=true');
+    expect(preflight).not.toContain(
       "steps.evidence.outputs.artifact_bytes_reused == 'true'"
     );
+    expect(preflight).toContain("if: steps.package.outcome == 'success'");
     const pullRequest = read('.github/workflows/on-pull-request.yml');
     if (legacyPullRequestCi) {
       expect(pullRequestCiBlob).toBe(LEGACY_PR_CI_WORKFLOW_BLOB);
@@ -625,7 +670,7 @@ case "$*" in
     printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
     ;;
   *actions/runs/54321)
-    printf '{"event":"pull_request","status":"completed","conclusion":"success","path":".github/workflows/on-pull-request.yml"}\\n'
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml"}\\n'
     ;;
   *actions/artifacts/777/zip)
     cat "$ARTIFACT_ZIP"
@@ -670,7 +715,7 @@ esac
     }
   });
 
-  it('reuses old schema-v2 bytes only for an exact selected-unit inventory', () => {
+  it('accepts old schema-v2 archives only as exact-SHA evidence', () => {
     const parsed = yaml.load(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
@@ -725,7 +770,7 @@ case "$*" in
     printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
     ;;
   *actions/runs/54321)
-    printf '{"event":"pull_request","status":"completed","conclusion":"success","path":".github/workflows/on-pull-request.yml"}\\n'
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml"}\\n'
     ;;
   *actions/artifacts/777/zip)
     cat "$ARTIFACT_ZIP"
@@ -771,13 +816,11 @@ esac
       );
 
       const exact = execute(['api']);
-      expect(exact).toContain('legacy_artifact_kind=deploy');
-      expect(exact).toContain('artifact_bytes_reused=true');
-      expect(
-        existsSync(
-          path.join(fixture, 'release-bus-artifact/packages/api/index.zip')
-        )
-      ).toBe(true);
+      expect(exact).toContain('legacy_artifact_kind=deploy-evidence');
+      expect(exact).not.toContain('artifact_bytes_reused=true');
+      expect(existsSync(path.join(fixture, 'release-bus-artifact'))).toBe(
+        false
+      );
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
@@ -806,7 +849,7 @@ esac
         pinnedActionWorkflows: []
       });
       expect(bridge.digest).toBe(
-        '637373d3b48a171ffdd7c2b7c813de80a5c1ac29fd683a44847df6d110bcb96b'
+        '56034568367c44dbb8200405742a40cf028ef821de27a6371be2788899a03842'
       );
       expect(pullRequestCiBlob).toBe(LEGACY_PR_CI_WORKFLOW_BLOB);
       return;
@@ -1648,7 +1691,9 @@ exit 1
     expect(deploy).toContain('.environment == $environment');
     expect(deploy).toContain('.source_evidence_reused == true');
     expect(deploy).toContain('.artifact_bytes_reused == false');
-    expect(deploy).toContain('test "$artifact_train_id" = "$INPUT_TRAIN_ID"');
+    expect(deploy).toContain(
+      'test -z "$INPUT_ARTIFACT_TRAIN_ID" -o "$INPUT_ARTIFACT_TRAIN_ID" = "$INPUT_TRAIN_ID"'
+    );
     expect(deploy).toContain('.schema_version == 2');
     expect(deploy).toContain('artifact_contract:"legacy-v2"');
     expect(deploy).toContain('environment:"portable"');

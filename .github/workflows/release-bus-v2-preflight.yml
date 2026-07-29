@@ -206,10 +206,11 @@ jobs:
             echo "failure_class=INFRASTRUCTURE" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          jq -e '
+          jq -e --arg expected_sha "$EXPECTED_SHA" '
             .event == "pull_request" and
             .status == "completed" and
             .conclusion == "success" and
+            .head_sha == $expected_sha and
             (.path == ".github/workflows/on-pull-request.yml" or
              (.path | startswith(".github/workflows/on-pull-request.yml@")))
           ' <<< "$run" >/dev/null
@@ -249,10 +250,9 @@ jobs:
               echo "legacy_artifact_kind=evidence" >> "$GITHUB_OUTPUT"
             fi
           elif [ "$CANDIDATE_EVIDENCE_MODE" = legacy-whole-train ]; then
-            # A verified schema-v2 deploy archive is the only old artifact
-            # whose bytes are reusable. An old producer can also name the new
-            # schema-v1 evidence archive; that reuses only evidence and takes
-            # the exact fresh checkout/build path below.
+            # A verified schema-v2 deploy archive from an old producer remains
+            # acceptable only as exact-SHA CI evidence. Its portable package
+            # bytes are never promoted into a staging or production train.
             rm -rf legacy-deploy-artifact release-bus-artifact
             mv candidate-pr-artifact legacy-deploy-artifact
             (
@@ -275,52 +275,14 @@ jobs:
               test "${#deploy_files[@]}" -eq "${#expected_files[@]}"
               test "$(printf '%s\n' "${deploy_files[@]}")" = "$(printf '%s\n' "${expected_files[@]}")"
             )
-            legacy_units="$(jq -c '.units' legacy-deploy-artifact/manifest.json)"
-            if [ "$legacy_units" = "$(jq -c . <<< "$DEPLOY_UNITS")" ]; then
-              mv legacy-deploy-artifact release-bus-artifact
-              (
-                cd release-bus-artifact
-                effective_layers="$(jq -c --argjson units "$DEPLOY_UNITS" '
-                  if length == 0 then $units | map([.]) else . end
-                ' <<< "$DEPLOY_LAYERS")"
-                packages='{}'
-                while IFS= read -r unit; do
-                  package_digest="$(sha256sum "packages/$unit/index.zip" | cut -d' ' -f1)"
-                  packages="$(jq -c --arg unit "$unit" --arg digest "$package_digest" '. + {($unit):{path:("packages/" + $unit + "/index.zip"),sha256:$digest}}' <<< "$packages")"
-                done < <(jq -r '.[]' <<< "$DEPLOY_UNITS")
-                jq --arg train_id "$TRAIN_ID" --argjson units "$DEPLOY_UNITS" --argjson layers "$effective_layers" --argjson packages "$packages" --arg evidence_run_id "$REUSE_ARTIFACT_RUN_ID" --arg evidence_name "$REUSE_ARTIFACT_NAME" --arg evidence_digest "$REUSE_ARTIFACT_DIGEST" '
-                  . + {
-                    train_id:$train_id,
-                    units:$units,
-                    layers:$layers,
-                    packages:$packages,
-                    environment:"portable",
-                    reused_exact_pr_artifact:true,
-                    ci_evidence:{
-                      mode:"legacy-whole-train",
-                      artifact_run_id:$evidence_run_id,
-                      artifact_name:$evidence_name,
-                      artifact_digest:$evidence_digest,
-                      aggregate_candidate_evidence_digest:null
-                    }
-                  }
-                ' manifest.json > manifest.next.json
-                mv manifest.next.json manifest.json
-                find packages -type f -name index.zip -print0 |
-                  LC_ALL=C sort -z |
-                  xargs -0 sha256sum > SHA256SUMS
-                sha256sum manifest.json >> SHA256SUMS
-              )
-              echo "artifact_bytes_reused=true" >> "$GITHUB_OUTPUT"
-              echo "legacy_artifact_kind=deploy" >> "$GITHUB_OUTPUT"
-            else
-              rm -rf legacy-deploy-artifact
-              echo "legacy_artifact_kind=deploy-evidence" >> "$GITHUB_OUTPUT"
-            fi
+            # Compatibility consumes old deploy archives only as exact-SHA CI
+            # evidence. Staging and production always compose and build fresh.
+            rm -rf legacy-deploy-artifact
+            echo "legacy_artifact_kind=deploy-evidence" >> "$GITHUB_OUTPUT"
           fi
       - name: Check out exact fresh composition
         id: source
-        if: steps.evidence.outcome == 'success' && steps.evidence.outputs.artifact_bytes_reused != 'true'
+        if: steps.evidence.outcome == 'success'
         continue-on-error: true
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -505,7 +467,7 @@ jobs:
           (cd release-bus-artifact && sha256sum -c SHA256SUMS)
       - name: Upload one exact backend artifact
         id: upload
-        if: steps.package.outcome == 'success' || (steps.evidence.outcome == 'success' && steps.evidence.outputs.artifact_bytes_reused == 'true')
+        if: steps.package.outcome == 'success'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -525,12 +487,11 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           test "$EVIDENCE_OUTCOME" = success
-          if [ "$ARTIFACT_BYTES_REUSED" != true ]; then
-            test "$SOURCE_OUTCOME" = success
-            test "$COMPOSITION_OUTCOME" = success
-            test "$ROOT_INSTALL_OUTCOME" = success
-            test "$PACKAGE_OUTCOME" = success
-          fi
+          test "$ARTIFACT_BYTES_REUSED" != true
+          test "$SOURCE_OUTCOME" = success
+          test "$COMPOSITION_OUTCOME" = success
+          test "$ROOT_INSTALL_OUTCOME" = success
+          test "$PACKAGE_OUTCOME" = success
           test "$UPLOAD_OUTCOME" = success
   report:
     if: always() && needs.authorize.result == 'success'
@@ -588,7 +549,8 @@ jobs:
                   (.schema_version == 2 or .schema_version == 3) and
                   .repository == "backend" and
                   (.source_sha | test("^[a-f0-9]{40}$")) and
-                  (.units | type == "array" and length > 0)
+                  (.units | type == "array" and length > 0) and
+                  ((.artifact_bytes_reused // (.reused_exact_pr_artifact // false)) == false)
                 ) |
                 {
                   artifact_digest:$digest,
@@ -601,10 +563,10 @@ jobs:
                   units:.units,
                   layers:.layers,
                   source_evidence_reused:(.source_evidence_reused // true),
-                  artifact_bytes_reused:(.artifact_bytes_reused // (.reused_exact_pr_artifact // false)),
+                  artifact_bytes_reused:false,
                   ci_evidence:.ci_evidence,
                   package_digests:(.packages // {} | with_entries(.value = .value.sha256)),
-                  fresh_or_reused:(if (.reused_exact_pr_artifact // false) then "reused" else "fresh" end)
+                  fresh_or_reused:"fresh"
                 }
               ' <<< "$manifest")"
             integrity_status=$?
