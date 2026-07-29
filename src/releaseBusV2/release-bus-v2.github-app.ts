@@ -1683,7 +1683,9 @@ export class ReleaseBusGitHubApp {
     const logins: string[] = [];
     const addUser = (
       value:
-        { readonly login?: string; readonly type?: string } | null | undefined
+        | { readonly login?: string; readonly type?: string }
+        | null
+        | undefined
     ) => {
       const login = value?.login?.trim();
       const type = value?.type?.trim().toLowerCase();
