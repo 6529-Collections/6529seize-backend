@@ -15,10 +15,10 @@ The helper reads `/deploy/release-bus-v2/controls`, verifies the hidden safety
 fences, and fails closed if the versioned status is unavailable, malformed, or
 internally inconsistent. Its operator-facing result contains only:
 
-| Effective lane | `ON`                                                                                | `OFF`                                                                                                                                                           |
-| -------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Staging        | Register exact candidates with Release Bus                                          | If `changeable: true`, serialized manual staging after the staging drain gate                                                                                   |
-| Production     | Separately select an exact `STAGING_VALIDATED` candidate for Release Bus production | If `changeable: true`, serialized manual production after the production drain gate and explicit owner authorization; no staging evidence gate                  |
+| Effective lane | `ON`                                                                                | `OFF`                                                                                                                                          |
+| -------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Staging        | Register exact candidates with Release Bus                                          | If `changeable: true`, serialized manual staging after the staging drain gate                                                                  |
+| Production     | Separately select an exact `STAGING_VALIDATED` candidate for Release Bus production | If `changeable: true`, serialized manual production after the production drain gate and explicit owner authorization; no staging evidence gate |
 
 The drain gate requires the target environment lock to be free, no target
 mutation/E2E workflow to be active, and every already-dispatched exact
@@ -99,6 +99,12 @@ register backend first and declare it as the frontend prerequisite.
    deploy units. Repository-wide lint, typecheck, test inventory, and full Jest
    matrices remain PR CI gates and never run in a normal train. Ordinary
    staging never bisects a failed repository or builds diagnostic subsets.
+   The resulting immutable artifact is bound to this exact train. The
+   `environment-bound-v3` deploy-input guards reject a mismatched train
+   identity before authorization or checkout. The legacy-v2 input shim keeps
+   its immutable exact-manifest checks for trains claimed before the new
+   artifact policy; it is compatibility for those frozen trains, not permission
+   to reuse their bytes in a new train.
 4. Preparation may finish while another train owns staging.
 5. The train acquires the staging lock only for deployment plus E2E.
    Under that lock it binds every unchanged repository to the exact current
@@ -163,10 +169,12 @@ Release Bus locks the terminal train and its operation range, binds its durable
 membership to the locked exact candidate row and exact historical staging
 train/manifest/E2E evidence, revalidates the unchanged branch head, creates a
 new production-selection identity, and records the failed train as the retry
-source. Selection IDs remain attempt-level audit provenance; eligibility does
-not trust an event payload as authoritative state. Any empty operation range,
-deploy, E2E, ref-mutation, unknown, or nonterminal operation makes the failure
-ineligible for this path.
+source. The retry then freshly composes and builds an artifact bound to that new
+production train; it reuses only the locked source/evidence and never the failed
+train's artifact bytes. Selection IDs remain attempt-level audit provenance;
+eligibility does not trust an event payload as authoritative state. Any empty
+operation range, deploy, E2E, ref-mutation, unknown, or nonterminal operation
+makes the failure ineligible for this path.
 
 The selection must be transitively dependency-closed. A production-scoped
 prerequisite must either be selected in the same action or already be terminal
@@ -211,7 +219,9 @@ New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`:
 - freshly compose both repositories against the current trusted `main` bases.
   Frontend and backend preparation may run concurrently. A candidate's old PR
   artifact or an exact combined staging artifact is never reused for ordinary
-  production qualification;
+  production qualification. The production deploy consumes only the freshly
+  built exact production-train artifact and rejects every cross-train artifact
+  identity before authorization or checkout;
 - fail closed on moved candidate heads, superseded or ambiguous evidence,
   missing staging E2E/artifact identity, an invalid dependency DAG, composition
   conflicts, failed checks/builds, artifact mismatch, or either stale
@@ -257,7 +267,7 @@ explicitly.
 | Ordinary staging preflight    | After already-running workflows drain, fail the affected repository's NEW candidate group once, hold only dependants, and return independent repository candidates to the next train; never dispatch subset-isolation workflows                                                                      |
 | Infrastructure                | Bounded idempotent retry; no candidate isolation                                                                                                                                                                                                                                                     |
 | Retryable deployment          | Retry only the failed operation; preserve successful sibling evidence                                                                                                                                                                                                                                |
-| Control plane                 | Fail the train, preserve or requeue exact candidates, turn the affected automation lane off where safe, release its environment lock only after every operation is terminal, and permit manual fallback only after the lane drain gate                                                                 |
+| Control plane                 | Fail the train, preserve or requeue exact candidates, turn the affected automation lane off where safe, release its environment lock only after every operation is terminal, and permit manual fallback only after the lane drain gate                                                               |
 | E2E                           | Keep the failed manifest unvalidated and restore/deploy/E2E the exact last validated live manifest under the same staging lock; commit no admission change until restoration validates                                                                                                               |
 | Production preflight          | Fail before shared mutation. A later explicit exact-SHA selection may retry only after the unchanged staging evidence is revalidated and the locked failed train contains only terminal compose/preflight operations; audit both selection identities and the failed source train                    |
 | Production base moved         | Before irreversible mutation, transactionally preserve explicit intent and form a new audited replacement from all currently eligible dependency-closed selections; retain every omission reason. After irreversible mutation, freeze the original exact set and pause production for exact recovery |
