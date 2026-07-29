@@ -598,6 +598,15 @@ exit 1
     expect(preflight).not.toContain(
       "steps.evidence.outputs.artifact_bytes_reused == 'true'"
     );
+    expect(preflight).not.toContain(
+      'mv legacy-deploy-artifact release-bus-artifact'
+    );
+    expect(preflight).toContain(
+      '((.artifact_bytes_reused // false) == false) and'
+    );
+    expect(preflight).toContain(
+      '((.reused_exact_pr_artifact // false) == false)'
+    );
     expect(preflight).toContain("if: steps.package.outcome == 'success'");
     const pullRequest = read('.github/workflows/on-pull-request.yml');
     if (legacyPullRequestCi) {
@@ -849,7 +858,7 @@ esac
         pinnedActionWorkflows: []
       });
       expect(bridge.digest).toBe(
-        '56034568367c44dbb8200405742a40cf028ef821de27a6371be2788899a03842'
+        '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143'
       );
       expect(pullRequestCiBlob).toBe(LEGACY_PR_CI_WORKFLOW_BLOB);
       return;
