@@ -312,6 +312,7 @@ describe('ReleaseNoteGitHubService', () => {
     };
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
       .mockResolvedValueOnce(
         response({
           workflow_runs: [
@@ -409,6 +410,7 @@ describe('ReleaseNoteGitHubService', () => {
     }));
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
       .mockResolvedValueOnce(
         response({
           workflow_runs: [previousRun, ...excludedSameShaRuns]
@@ -422,7 +424,7 @@ describe('ReleaseNoteGitHubService', () => {
     });
 
     expect(context?.previous_sha).toBe('previous-sha');
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
     expect(
       (fetch as unknown as jest.Mock).mock.calls.some(([url]) =>
         String(url).includes('page=2')
@@ -438,7 +440,6 @@ describe('ReleaseNoteGitHubService', () => {
     };
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(releaseBusRun))
-      .mockResolvedValueOnce(response({ workflow_runs: [] }))
       .mockResolvedValueOnce(
         response({
           workflow_runs: [
@@ -451,6 +452,7 @@ describe('ReleaseNoteGitHubService', () => {
           ]
         })
       )
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
       .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
@@ -459,6 +461,39 @@ describe('ReleaseNoteGitHubService', () => {
     });
 
     expect(context?.previous_sha).toBe('manual-production-sha');
+  });
+
+  it('uses a newer manual production run before a later Release Bus run', async () => {
+    const releaseBusRun = {
+      ...currentRun,
+      name: 'Release Bus - Deploy Frontend Production',
+      created_at: '2026-07-13T12:00:00Z',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    const priorReleaseBus = {
+      ...releaseBusRun,
+      id: 121,
+      head_sha: 'older-release-bus-sha',
+      created_at: '2026-07-10T12:00:00Z'
+    };
+    const priorManual = {
+      ...currentRun,
+      id: 122,
+      head_sha: 'newer-manual-production-sha',
+      created_at: '2026-07-12T12:00:00Z'
+    };
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(response({ workflow_runs: [priorManual] }))
+      .mockResolvedValueOnce(response({ workflow_runs: [priorReleaseBus] }))
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      workflow: releaseBusRun.name
+    });
+
+    expect(context?.previous_sha).toBe('newer-manual-production-sha');
   });
 
   it('allows an approved manual production run to follow Release Bus production', async () => {
@@ -491,6 +526,7 @@ describe('ReleaseNoteGitHubService', () => {
     };
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
       .mockResolvedValueOnce(
         response({
           workflow_runs: [
@@ -501,8 +537,7 @@ describe('ReleaseNoteGitHubService', () => {
             }
           ]
         })
-      )
-      .mockResolvedValueOnce(response({ workflow_runs: [] }));
+      );
 
     await expect(
       new ReleaseNoteGitHubService().getReleaseContext({

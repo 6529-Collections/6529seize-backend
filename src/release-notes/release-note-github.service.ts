@@ -575,22 +575,6 @@ export class ReleaseNoteGitHubService {
     request: ReleaseNoteGenerationRequest,
     currentRun: GitHubWorkflowRun
   ): Promise<GitHubWorkflowRun | null> {
-    if (request.workflow === FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW) {
-      const releaseBusRuns = await this.listPreviousFrontendProductionRuns(
-        repository,
-        request,
-        currentRun,
-        FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW
-      );
-      if (releaseBusRuns.length) return releaseBusRuns[0];
-      const manualRuns = await this.listPreviousFrontendProductionRuns(
-        repository,
-        request,
-        currentRun,
-        FRONTEND_MANUAL_PRODUCTION_WORKFLOW
-      );
-      return manualRuns[0] ?? null;
-    }
     const [manualRuns, releaseBusRuns] = await Promise.all([
       this.listPreviousFrontendProductionRuns(
         repository,
