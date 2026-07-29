@@ -219,7 +219,7 @@ jobs:
                 .pull_requests[0].head.repo.url == $repository_url
               ) |
               .head_sha
-            ' <<< "$run")"; then
+          ' <<< "$run")"; then
             echo "failure_class=CANDIDATE" >> "$GITHUB_OUTPUT"
             exit 1
           fi
