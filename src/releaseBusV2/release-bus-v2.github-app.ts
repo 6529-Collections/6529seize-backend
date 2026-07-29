@@ -529,8 +529,7 @@ export class ReleaseBusGitHubApp {
       const type = value?.type?.trim().toLowerCase();
       if (
         !login ||
-        type === 'bot' ||
-        type === 'app' ||
+        (type !== undefined && type !== 'user') ||
         !isHumanGithubContributorLogin(login) ||
         isReleaseBusGitHubAppActor(login)
       )

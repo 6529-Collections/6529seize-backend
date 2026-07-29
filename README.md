@@ -127,6 +127,13 @@ The list scrolls automatically as you move beyond the visible items. `j` / `k` a
 
 Root mode supports staging batches. Production services are deployed one at a time from their service folders so each successful workflow can either hold the PR release note for another service or publish it.
 
+By default, `ghdeploy` requires the exact PR represented by the deployment and
+uses that immutable PR evidence for contributor attribution. For an explicit
+internal or recovery operation that represents no PR, run `ghdeploy --internal`
+or `ghdeploy --recovery`. Those modes select the no-attribution opt-out path:
+they do not ask for a PR, do not attach contributors, and never publish a
+release note.
+
 ### 0.4.2 Use `ghdeploy` from a service folder
 
 If you only want to deploy one service, `cd` into that service folder and run:

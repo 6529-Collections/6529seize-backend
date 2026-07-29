@@ -33,7 +33,8 @@ const {
   GITHUB_TRIGGERING_ACTOR,
   GITHUB_ACTOR,
   GITHUB_TOKEN,
-  GITHUB_API_URL = 'https://api.github.com'
+  GITHUB_API_URL = 'https://api.github.com',
+  CI_GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS
 } = process.env;
 
 function requireValue(name, value) {
@@ -64,6 +65,20 @@ function getFetchFailureMessage(error) {
   }
   return 'unknown request error';
 }
+
+function boundedDuration(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum
+    ? parsed
+    : fallback;
+}
+
+const GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS = boundedDuration(
+  CI_GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS,
+  3_000,
+  25,
+  10_000
+);
 
 function validateOptionalBoolean(name, value) {
   if (value && value !== 'true' && value !== 'false') {
@@ -194,23 +209,40 @@ function parseReleaseContributors(value) {
 }
 
 async function githubApi(repository, path) {
-  const response = await fetch(
-    `${GITHUB_API_URL.replace(/\/$/, '')}/repos/${repository}${path}`,
-    {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
-        'User-Agent': '6529-ci-contributor-attribution',
-        'X-GitHub-Api-Version': '2022-11-28'
-      }
-    }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS
   );
-  if (!response.ok) {
-    throw new Error(
-      `GitHub contributor evidence request failed: ${response.status} ${response.statusText}`
+  try {
+    const response = await fetch(
+      `${GITHUB_API_URL.replace(/\/$/, '')}/repos/${repository}${path}`,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
+          'User-Agent': '6529-ci-contributor-attribution',
+          'X-GitHub-Api-Version': '2022-11-28'
+        },
+        signal: controller.signal
+      }
     );
+    if (!response.ok) {
+      throw new Error(
+        `GitHub contributor evidence request failed: ${response.status} ${response.statusText}`
+      );
+    }
+    return await response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(
+        `GitHub contributor evidence request timed out after ${GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS}ms: ${path}`
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return response.json();
 }
 
 async function validatePullRequestDeploymentEvidence({
@@ -279,9 +311,22 @@ function assertPullRequestAffectsService({
   pullRequestNumber,
   service
 }) {
-  const servicePrefix =
-    service === 'api' ? 'src/api-serverless/' : `src/${service}/`;
-  if (!files.some((file) => file.filename?.startsWith(servicePrefix))) {
+  const servicePrefixes =
+    service === 'api'
+      ? [
+          'src/api-serverless/',
+          'src/constants/',
+          'src/entities/',
+          'src/minting-claims/',
+          'src/numbers/',
+          'src/strings/'
+        ]
+      : [`src/${service}/`];
+  if (
+    !files.some((file) =>
+      servicePrefixes.some((prefix) => file.filename?.startsWith(prefix))
+    )
+  ) {
     throw new Error(
       `PR #${pullRequestNumber} does not contain changes for ${service}`
     );

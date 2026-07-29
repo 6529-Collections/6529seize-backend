@@ -127,6 +127,15 @@ const NON_HUMAN_GITHUB_LOGINS = new Set([
   'web-flow'
 ]);
 
+function isApprovedFrontendProductionWorkflow(
+  workflow: string
+): workflow is keyof typeof FRONTEND_PRODUCTION_WORKFLOWS {
+  return Object.prototype.hasOwnProperty.call(
+    FRONTEND_PRODUCTION_WORKFLOWS,
+    workflow
+  );
+}
+
 function normalizeRepository(repo: string): string {
   return repo.includes('/') ? repo : `6529-Collections/${repo}`;
 }
@@ -200,7 +209,7 @@ function isMatchingProductionRun(
     return run.display_title.endsWith(' to prod');
   }
   if (repoName === FRONTEND_REPO) {
-    return run.name in FRONTEND_PRODUCTION_WORKFLOWS;
+    return isApprovedFrontendProductionWorkflow(run.name);
   }
   return false;
 }
@@ -489,10 +498,12 @@ export class ReleaseNoteGitHubService {
       );
     }
     if (repoName === FRONTEND_REPO) {
-      const workflowFile =
-        FRONTEND_PRODUCTION_WORKFLOWS[
-          request.workflow as keyof typeof FRONTEND_PRODUCTION_WORKFLOWS
-        ];
+      if (!isApprovedFrontendProductionWorkflow(request.workflow)) {
+        throw new Error(
+          `GitHub release run ${request.run_id} is not an approved successful frontend production workflow`
+        );
+      }
+      const workflowFile = FRONTEND_PRODUCTION_WORKFLOWS[request.workflow];
       const runWorkflowFile =
         currentRun.path?.split('@')[0].split('/').at(-1) ?? null;
       if (
@@ -547,6 +558,7 @@ export class ReleaseNoteGitHubService {
           continue;
         matches.push(run);
       }
+      if (matches.length) break;
       if (runs.length < PAGE_SIZE) break;
       if (page === MAX_WORKFLOW_RUN_PAGES)
         throw new Error(

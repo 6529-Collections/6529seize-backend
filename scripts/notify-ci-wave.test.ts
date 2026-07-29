@@ -71,6 +71,7 @@ describe('notify-ci-wave release-note metadata', () => {
       environment: 'prod',
       branch: 'main',
       deployedSha: 'a'.repeat(40),
+      changedFile: 'src/constants/example.ts',
       pull: {
         number: 42,
         merged_at: '2026-07-28T12:00:00Z',
@@ -82,6 +83,7 @@ describe('notify-ci-wave release-note metadata', () => {
       environment: 'staging',
       branch: 'feature/manual-staging',
       deployedSha: 'b'.repeat(40),
+      changedFile: 'src/api-serverless/src/example.ts',
       pull: {
         number: 42,
         merged_at: null,
@@ -94,14 +96,14 @@ describe('notify-ci-wave release-note metadata', () => {
     }
   ])(
     'derives manual backend contributors for $environment from exact PR and service evidence',
-    async ({ environment, branch, deployedSha, pull }) => {
+    async ({ environment, branch, deployedSha, changedFile, pull }) => {
       const githubServer = createServer((request, response) => {
         const pathName = request.url ?? '';
         let body: unknown;
         if (pathName.endsWith('/pulls/42')) {
           body = pull;
         } else if (pathName.includes('/pulls/42/files')) {
-          body = [{ filename: 'src/api-serverless/src/example.ts' }];
+          body = [{ filename: changedFile }];
         } else if (pathName.includes('/pulls/42/commits')) {
           body = [
             {
@@ -158,6 +160,40 @@ describe('notify-ci-wave release-note metadata', () => {
       }
     }
   );
+
+  it('times out stalled contributor evidence and still sends the CI notification', async () => {
+    const githubServer = createServer(() => {
+      // Deliberately leave the evidence request open until the notifier aborts.
+    });
+    await new Promise<void>((resolve) =>
+      githubServer.listen(0, '127.0.0.1', resolve)
+    );
+    const address = githubServer.address();
+    if (!address || typeof address === 'string')
+      throw new Error('missing port');
+
+    try {
+      const result = await runNotifier({
+        CI_RELEASE_PULL_REQUEST: '42',
+        CI_RELEASE_NOTE_OPT_OUT: 'false',
+        GITHUB_TOKEN: 'test-token',
+        GITHUB_API_URL: `http://127.0.0.1:${address.port}`,
+        CI_GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS: '25'
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain(
+        'Contributors row omitted because exact manual deployment scope could not be established: GitHub contributor evidence request timed out after 25ms: /pulls/42'
+      );
+      expect(result.payload).not.toHaveProperty('contributor_evidence');
+      expect(result.payload).not.toHaveProperty('contributor_github_logins');
+    } finally {
+      githubServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        githubServer.close((error) => (error ? reject(error) : resolve()))
+      );
+    }
+  });
 
   it('sends canonical release train contributors and the deployed SHA', async () => {
     const expectedSha = 'b'.repeat(40);

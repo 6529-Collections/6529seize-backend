@@ -221,6 +221,26 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects inherited object properties as frontend workflow names', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...currentRun,
+        name: 'constructor',
+        path: '.github/workflows/constructor@refs/heads/main'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext({
+        ...request,
+        workflow: 'constructor'
+      })
+    ).rejects.toThrow(
+      'not an approved successful frontend production workflow'
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('finds a previous production run when run_number is missing', async () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(currentRun))
@@ -359,6 +379,47 @@ describe('ReleaseNoteGitHubService', () => {
         })
       ]
     });
+  });
+
+  it('stops production-history pagination after finding a valid baseline', async () => {
+    const releaseBusRun = {
+      ...currentRun,
+      name: 'Release Bus - Deploy Frontend Production',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    const previousRun = {
+      ...releaseBusRun,
+      id: 122,
+      head_sha: 'previous-sha',
+      run_number: 44,
+      created_at: '2026-07-12T11:38:00Z'
+    };
+    const excludedSameShaRuns = Array.from({ length: 99 }, (_, index) => ({
+      ...releaseBusRun,
+      id: 1000 + index,
+      created_at: `2026-07-12T10:${String(index % 60).padStart(2, '0')}:00Z`
+    }));
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [previousRun, ...excludedSameShaRuns]
+        })
+      )
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      workflow: releaseBusRun.name
+    });
+
+    expect(context?.previous_sha).toBe('previous-sha');
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(
+      (fetch as unknown as jest.Mock).mock.calls.some(([url]) =>
+        String(url).includes('page=2')
+      )
+    ).toBe(false);
   });
 
   it('bridges the first Release Bus production run to the latest approved manual production run', async () => {

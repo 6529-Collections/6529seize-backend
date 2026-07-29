@@ -258,6 +258,44 @@ describe('GitHub pull request qualification evidence', () => {
       fetchMock.mockReset();
     }
   });
+
+  it('accepts only users or untyped legacy identities as contributors', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            author: { login: 'Human-Author', type: 'User' },
+            committer: {
+              login: 'Organization-Committer',
+              type: 'Organization'
+            }
+          }
+        ])
+      )
+    );
+
+    try {
+      await expect(
+        (
+          app as unknown as {
+            getPullRequestContributorGithubLogins(
+              repository: 'backend',
+              pullNumber: number,
+              pull: {
+                user: { login: string; type?: string };
+              }
+            ): Promise<readonly string[]>;
+          }
+        ).getPullRequestContributorGithubLogins('backend', 42, {
+          user: { login: 'Legacy-User' }
+        })
+      ).resolves.toEqual(['Legacy-User', 'Human-Author']);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
 });
 
 describe('GitHub pull request release eligibility', () => {
