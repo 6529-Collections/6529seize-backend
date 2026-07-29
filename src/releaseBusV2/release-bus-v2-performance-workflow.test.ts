@@ -354,7 +354,7 @@ printf '200'
       INPUT_TRAIN_ID: '',
       INPUT_TRAIN_REVISION: ''
     };
-    const execute = (overrides: Record<string, string> = {}) =>
+    const execute = (overrides: NodeJS.ProcessEnv = {}) =>
       execFileSync('bash', ['-c', validation ?? 'exit 1'], {
         cwd: root,
         env: { ...baseEnv, ...overrides },
