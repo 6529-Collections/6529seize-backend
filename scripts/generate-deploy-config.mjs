@@ -126,6 +126,19 @@ ${indent(yamlList(serviceNames))}
         description: 'Explicitly skip autonomous release notes for an internal operation'
         required: false
         default: false
+      emergency_api_bootstrap:
+        type: boolean
+        description: 'Break-glass API production bootstrap for a known deployed workflow-identity incompatibility'
+        required: false
+        default: false
+      emergency_api_bootstrap_expected_sha:
+        type: string
+        description: 'Exact main SHA authorized for the emergency API bootstrap'
+        required: false
+      emergency_api_bootstrap_reason:
+        type: string
+        description: 'Audit reason for the emergency API bootstrap'
+        required: false
       release_train_id:
         type: string
         description: 'Release Bus train id; blank for manual deploys'
@@ -220,6 +233,9 @@ jobs:
       INPUT_ARTIFACT_DIGEST: \${{ github.event.inputs.artifact_digest }}
       INPUT_ARTIFACT_ENVIRONMENT: \${{ github.event.inputs.artifact_environment }}
       INPUT_ARTIFACT_CONTRACT_VERSION: \${{ github.event.inputs.artifact_contract_version }}
+      INPUT_EMERGENCY_API_BOOTSTRAP: \${{ github.event.inputs.emergency_api_bootstrap }}
+      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: \${{ github.event.inputs.emergency_api_bootstrap_expected_sha }}
+      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: \${{ github.event.inputs.emergency_api_bootstrap_reason }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -236,6 +252,15 @@ jobs:
           INPUT_ARTIFACT_DIGEST: \${{ github.event.inputs.artifact_digest }}
           INPUT_ARTIFACT_ENVIRONMENT: \${{ github.event.inputs.artifact_environment }}
           INPUT_ARTIFACT_CONTRACT_VERSION: \${{ github.event.inputs.artifact_contract_version }}
+          INPUT_EMERGENCY_API_BOOTSTRAP: \${{ github.event.inputs.emergency_api_bootstrap }}
+          INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: \${{ github.event.inputs.emergency_api_bootstrap_expected_sha }}
+          INPUT_EMERGENCY_API_BOOTSTRAP_REASON: \${{ github.event.inputs.emergency_api_bootstrap_reason }}
+          INPUT_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
+          INPUT_RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
+          INPUT_RELEASE_NOTE_GROUPS: \${{ github.event.inputs.release_note_groups }}
+          INPUT_RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
+          INPUT_RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
+          EMERGENCY_API_BOOTSTRAP_ACTORS: \${{ vars.EMERGENCY_API_BOOTSTRAP_ACTORS || '["prxt6529"]' }}
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
@@ -278,11 +303,40 @@ jobs:
             test -z "$INPUT_ARTIFACT_ENVIRONMENT"
             test "$INPUT_ARTIFACT_CONTRACT_VERSION" = legacy-v2
           fi
+          case "$INPUT_EMERGENCY_API_BOOTSTRAP" in
+            true)
+              test -z "$INPUT_OPERATION_KEY"
+              test "$INPUT_ENVIRONMENT" = prod
+              test "$INPUT_SERVICE" = api
+              test "$GITHUB_REF_NAME" = main
+              jq -e \
+                --arg actor "$GITHUB_ACTOR" \
+                'type == "array" and length >= 1 and length <= 20 and
+                 all(.[]; type == "string" and test("^[A-Za-z0-9-]{1,39}$")) and
+                 index($actor) != null' \
+                <<< "$EMERGENCY_API_BOOTSTRAP_ACTORS" > /dev/null
+              [[ "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+              test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$GITHUB_SHA"
+              [[ "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON" =~ ^[A-Za-z0-9._:/-]{10,200}$ ]]
+              test "$INPUT_RELEASE_NOTE_OPT_OUT" = true
+              test "$INPUT_RELEASE_NOTE_PUBLISH" = false
+              test -z "$INPUT_RELEASE_PULL_REQUEST"
+              test -z "$INPUT_RELEASE_GROUP_SERVICES"
+              test -z "$INPUT_RELEASE_NOTE_GROUPS"
+              ;;
+            false|'')
+              test -z "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA"
+              test -z "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON"
+              ;;
+            *) exit 1 ;;
+          esac
       - name: Authorize exact deployment operation
+        id: deployment_authorization
         shell: bash
         env:
           RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
           RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          GITHUB_TOKEN: \${{ github.token }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_BUS_API_URL"
@@ -323,19 +377,258 @@ jobs:
             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
             -H 'Content-Type: application/json' \
             --data "$payload" \
-            "$RELEASE_BUS_API_URL/deploy/$endpoint")"
+              "$RELEASE_BUS_API_URL/deploy/$endpoint")"
+          emergency_compatibility_fallback=false
           if [ "$http_status" != 200 ]; then
-            echo "::error::Deployment authorization was rejected with HTTP $http_status"
-            exit 1
+            rejection_reason="$(jq -r '.error // empty' "$response_file" 2>/dev/null)"
+            if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ] &&
+               [ -z "$INPUT_OPERATION_KEY" ] &&
+               [ "$http_status" = 409 ] &&
+               [ "$rejection_reason" = "Manual backend deployment workflow identity is invalid" ]; then
+              # The authenticated legacy server has verified this exact run,
+              # attempt, ref and SHA, then rejected only GitHub's newer run-name
+              # identity. Reproduce the remaining fail-closed readiness checks
+              # and save one script so the same guard is run again immediately
+              # before cloud credentials.
+              emergency_guard="$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"
+              cat > "$emergency_guard" <<'EMERGENCY_API_BOOTSTRAP_GUARD'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          guard_tmp="$(mktemp -d)"
+          trap 'rm -rf "$guard_tmp"' EXIT
+
+          fetch_release_bus_json() {
+            local url="$1"
+            local output="$2"
+            local headers="$3"
+            local status
+            status="$(curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 60 \
+              --header "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+              --header 'Cache-Control: no-cache' \
+              --header 'Pragma: no-cache' \
+              --dump-header "$headers" \
+              --output "$output" \
+              --write-out '%{http_code}' \
+              "$url")"
+            test "$status" = 200
+            grep -Eiq '^cache-control:.*no-store' "$headers"
+          }
+
+          fetch_github_json() {
+            local url="$1"
+            local output="$2"
+            local status
+            status="$(curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 60 \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'Cache-Control: no-cache' \
+              --output "$output" \
+              --write-out '%{http_code}' \
+              "$url")"
+            test "$status" = 200
+          }
+
+          controls_file="$guard_tmp/controls.json"
+          controls_headers="$guard_tmp/controls.headers"
+          fetch_release_bus_json \
+            "$RELEASE_BUS_API_URL/deploy/release-bus-v2/controls" \
+            "$controls_file" \
+            "$controls_headers"
+          jq -e '
+            type == "object" and
+            .mode == "PRODUCTION" and
+            (.controls | type == "array") and
+            (.lanes | type == "array") and
+            (.locks | type == "array") and
+            ([.controls[] | select(
+              type == "object" and .scope == "ALL" and .paused == false
+            )] | length == 1) and
+            ([.lanes[] | select(
+              type == "object" and .lane == "PRODUCTION" and
+              .status == "OFF" and .changeable == true
+            )] | length == 1) and
+            ([.locks[] | select(
+              type == "object" and
+              .name == "production-environment" and
+              .owner_train_id == null and
+              .lease_owner == null and
+              .lease_token == null
+            )] | length == 1)
+          ' "$controls_file" > /dev/null
+
+          trains_file="$guard_tmp/trains.json"
+          trains_headers="$guard_tmp/trains.headers"
+          fetch_release_bus_json \
+            "$RELEASE_BUS_API_URL/deploy/release-bus-v2/trains" \
+            "$trains_file" \
+            "$trains_headers"
+          jq -e '
+            type == "object" and
+            (.trains | type == "array") and
+            all(.trains[]; type == "object" and
+              (.id | type == "string") and
+              (.lane | type == "string") and
+              (.status | type == "string")) and
+            ([.trains[] | select(
+              .lane == "PRODUCTION" and
+              .status != "PRODUCTION_DEPLOYED" and
+              .status != "FAILED" and
+              .status != "CANCELLED"
+            )] | length == 0)
+          ' "$trains_file" > /dev/null
+
+          while IFS= read -r train_id; do
+            [[ "$train_id" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
+            train_file="$guard_tmp/train-$train_id.json"
+            train_headers="$guard_tmp/train-$train_id.headers"
+            fetch_release_bus_json \
+              "$RELEASE_BUS_API_URL/deploy/release-bus-v2/trains/$train_id" \
+              "$train_file" \
+              "$train_headers"
+            jq -e '
+              type == "object" and
+              (.operations | type == "array") and
+              all(.operations[];
+                type == "object" and
+                (.status == "SUCCEEDED" or
+                 .status == "FAILED" or
+                 .status == "CANCELLED"))
+            ' "$train_file" > /dev/null
+          done < <(jq -r '.trains[] | select(.lane == "PRODUCTION") | .id' "$trains_file")
+
+          main_ref_file="$guard_tmp/main-ref.json"
+          fetch_github_json \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            "$main_ref_file"
+          jq -e --arg sha "$GITHUB_SHA" \
+            'type == "object" and .object.sha == $sha' \
+            "$main_ref_file" > /dev/null
+
+          current_run_file="$guard_tmp/current-run.json"
+          fetch_github_json \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            "$current_run_file"
+          jq -e \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg sha "$GITHUB_SHA" \
+            'type == "object" and
+             (.id | tostring) == $run_id and
+             .run_attempt == $attempt and
+             .actor.login == $actor and
+             .event == "workflow_dispatch" and
+             .path == ".github/workflows/deploy.yml" and
+             .status == "in_progress" and
+             .conclusion == null and
+             .head_branch == $branch and
+             .head_sha == $sha and
+             .name == "Deploy api to prod [manual]" and
+             .display_title == "Deploy api to prod [manual]"' \
+            "$current_run_file" > /dev/null
+
+          assert_workflow_exists() {
+            local repository="$1"
+            local workflow="$2"
+            local workflow_file="$guard_tmp/workflow-$workflow.json"
+            [[ "$workflow" =~ ^[A-Za-z0-9._-]+[.]yml$ ]]
+            fetch_github_json \
+              "$GITHUB_API_URL/repos/$repository/contents/.github/workflows/$workflow?ref=main" \
+              "$workflow_file"
+            jq -e \
+              'type == "object" and .type == "file" and
+               (.sha | type == "string" and test("^[0-9a-f]{40}$"))' \
+              "$workflow_file" > /dev/null
+          }
+
+          assert_no_active_production_runs() {
+            local role="$1"
+            local repository="$2"
+            local run_status page runs_file run_count total_count expected_pages scanned_count
+            for run_status in queued in_progress; do
+              page=1
+              total_count=-1
+              expected_pages=1
+              scanned_count=0
+              while [ "$page" -le "$expected_pages" ]; do
+                runs_file="$guard_tmp/$role-$run_status-$page.json"
+                fetch_github_json \
+                  "$GITHUB_API_URL/repos/$repository/actions/runs?status=$run_status&per_page=100&page=$page" \
+                  "$runs_file"
+                jq -e \
+                  --argjson expected_total "$total_count" \
+                  --arg current_run_id "$GITHUB_RUN_ID" \
+                  --arg role "$role" \
+                  'type == "object" and
+                   (.total_count | type == "number" and . >= 0 and floor == .) and
+                   ($expected_total == -1 or .total_count == $expected_total) and
+                   (.workflow_runs | type == "array") and
+                   ([.workflow_runs[] | select(
+                     (.id | tostring) != $current_run_id and
+                     (if $role == "backend" then
+                        (.path == ".github/workflows/deploy.yml" and
+                         (.display_title | test(" to prod(?:[[:space:]]|$)")))
+                      else
+                        (.path == ".github/workflows/build-upload-deploy-prod.yml" or
+                          .path == ".github/workflows/release-bus-deploy-production.yml" or
+                          .path == ".github/workflows/production-e2e.yml")
+                      end)
+                   )] | length == 0)' \
+                  "$runs_file" > /dev/null
+                if [ "$total_count" -eq -1 ]; then
+                  total_count="$(jq -r '.total_count' "$runs_file")"
+                  test "$total_count" -le 1000
+                  expected_pages=$(((total_count + 99) / 100))
+                  if [ "$expected_pages" -eq 0 ]; then
+                    expected_pages=1
+                  fi
+                fi
+                run_count="$(jq -r '.workflow_runs | length' "$runs_file")"
+                scanned_count=$((scanned_count + run_count))
+                page=$((page + 1))
+              done
+              test "$scanned_count" -eq "$total_count"
+            done
+          }
+
+          assert_workflow_exists "$GITHUB_REPOSITORY" deploy.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" build-upload-deploy-prod.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" release-bus-deploy-production.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" production-e2e.yml
+
+          # The workflow-level deploy-control-prod-manual concurrency group
+          # serializes every backend manual production service. With the
+          # PRODUCTION lane OFF, no Release Bus train can claim production.
+          # Frontend production workflows reject while this backend run is
+          # active; this guard rejects any frontend production run already active.
+          assert_no_active_production_runs backend "$GITHUB_REPOSITORY"
+          assert_no_active_production_runs frontend "$GITHUB_REPOSITORY_OWNER/6529seize-frontend"
+          EMERGENCY_API_BOOTSTRAP_GUARD
+              chmod 700 "$emergency_guard"
+              "$emergency_guard"
+              emergency_compatibility_fallback=true
+            else
+              if [ -n "$rejection_reason" ]; then
+                echo "::error::Deployment authorization was rejected with HTTP $http_status: $rejection_reason"
+              else
+                echo "::error::Deployment authorization was rejected with HTTP $http_status"
+              fi
+              exit 1
+            fi
           fi
-          if [ -n "$INPUT_OPERATION_KEY" ]; then
+          if [ "$http_status" = 200 ] && [ -n "$INPUT_OPERATION_KEY" ]; then
             jq -e \
               --arg train_id "$INPUT_TRAIN_ID" \
               --arg operation_key "$INPUT_OPERATION_KEY" \
               '.authorized == true and .train_id == $train_id and
                .operation_key == $operation_key' \
               "$response_file" > /dev/null
-          else
+          elif [ "$http_status" = 200 ]; then
             jq -e \
               --arg repository backend \
               --arg environment "$INPUT_ENVIRONMENT" \
@@ -351,6 +644,25 @@ jobs:
                .workflow_run_attempt == $workflow_run_attempt and
                .source_ref == $source_ref and .source_sha == $source_sha' \
               "$response_file" > /dev/null
+          fi
+          echo "emergency_compatibility_fallback=$emergency_compatibility_fallback" >> "$GITHUB_OUTPUT"
+          if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]; then
+            audit_record="$(jq -cn \
+              --arg actor "$GITHUB_ACTOR" \
+              --arg authorization_mode "$([ "$emergency_compatibility_fallback" = true ] && printf legacy-identity-compatibility || printf normal-server-authorization)" \
+              --arg reason "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON" \
+              --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --arg sha "$GITHUB_SHA" \
+              '{schema_version:1,event:"EMERGENCY_API_BOOTSTRAP_AUTHORIZED",
+                actor:$actor,sha:$sha,reason:$reason,
+                authorization_mode:$authorization_mode,run_url:$run_url}')"
+            {
+              echo "### Emergency API bootstrap authorization"
+              echo
+              echo '\`\`\`json'
+              echo "$audit_record"
+              echo '\`\`\`'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Validate Release Bus GitHub App configuration
         if: github.event.inputs.service == 'releaseBus'
@@ -580,6 +892,20 @@ jobs:
           rm -rf "$destination"
           mkdir -p "$destination"
           cp "release-bus-artifact/packages/$INPUT_SERVICE/index.zip" "$destination/index.zip"
+      - name: Revalidate emergency API bootstrap immediately before cloud credentials
+        if: steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
+        shell: bash
+        env:
+          RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          GITHUB_TOKEN: \${{ github.token }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"
+          {
+            echo
+            echo "Emergency compatibility readiness revalidated immediately before cloud credentials."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Configure AWS credentials
         id: aws_credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
