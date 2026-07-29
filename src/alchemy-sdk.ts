@@ -42,7 +42,7 @@ export type AssetTransfersWithMetadataParams = {
 
 export type AssetTransfersWithMetadataResult = {
   blockNum: string;
-  uniqueId?: string;
+  uniqueId: string;
   hash: string;
   from: string;
   to: string;
