@@ -13,7 +13,7 @@ import {
 import { getAlchemyInstance } from '../alchemy';
 import { Logger } from '../logging';
 import { Transaction } from '../entities/ITransaction';
-import { findTransactionValues } from '../transaction_values';
+import { findDiscoveredTransactionValues } from '../transaction_values';
 import { consolidateTransactions } from '../db';
 import { Time } from '../time';
 import { discoverEns } from '../ens';
@@ -53,7 +53,13 @@ export class TransactionsDiscoveryService {
         const start = Time.now();
         const minBlock = transactionsFullBlock.at(0)?.block;
         const maxBlock = transactionsFullBlock.at(-1)?.block;
-        const transactions = this.mergeTransactions(transactionsFullBlock);
+        const mergedTransactions = this.mergeTransactions(
+          transactionsFullBlock
+        );
+        // Receipt reconciliation must run after this semantic merge so each
+        // row represents the complete transfer amount for its ownership key.
+        const transactions =
+          await this.enhanceTransactionsWithDetails(mergedTransactions);
         await this.transactionsDb.batchUpsertTransactions(
           consolidateTransactions(transactions)
         );
@@ -108,8 +114,9 @@ export class TransactionsDiscoveryService {
         ? transactionsBuffer.length - 1
         : this.getLastFullBlockIndex(transactionsBuffer);
       if (indexUntilWhichToCommit >= 0) {
-        const transactionsToFlush = await this.enhanceTransactionsWithDetails(
-          transactionsBuffer.slice(0, indexUntilWhichToCommit + 1)
+        const transactionsToFlush = transactionsBuffer.slice(
+          0,
+          indexUntilWhichToCommit + 1
         );
         transactionsBuffer = transactionsBuffer.slice(
           indexUntilWhichToCommit + 1
@@ -143,7 +150,14 @@ export class TransactionsDiscoveryService {
       if (!mappedTransactions.length) {
         return;
       }
-      if (!this.isNewAlchemyTransfer(transfer, seenTransferIds)) {
+      const transferId = this.getRequiredAlchemyTransferId(transfer);
+      if (
+        !this.isNewAlchemyTransfer(
+          transferId,
+          transfer.blockNum,
+          seenTransferIds
+        )
+      ) {
         duplicateCount++;
         return;
       }
@@ -153,20 +167,28 @@ export class TransactionsDiscoveryService {
     return { transactions, duplicateCount };
   }
 
+  private getRequiredAlchemyTransferId(
+    transfer: AssetTransfersWithMetadataResult
+  ): string {
+    const transferId = transfer.uniqueId?.trim().toLowerCase();
+    if (!transferId) {
+      throw new Error(
+        `Alchemy returned a mappable transfer without uniqueId for transaction ${transfer.hash}; refusing to advance the contract checkpoint`
+      );
+    }
+    return transferId;
+  }
+
   private isNewAlchemyTransfer(
-    transfer: AssetTransfersWithMetadataResult,
+    transferId: string,
+    blockNum: string,
     seenTransferIds: Map<string, number>
   ): boolean {
-    if (!transfer.uniqueId) {
-      return true;
-    }
-
-    const transferId = transfer.uniqueId.toLowerCase();
     if (seenTransferIds.has(transferId)) {
       return false;
     }
 
-    const block = fromHex(transfer.blockNum);
+    const block = fromHex(blockNum);
     if (Number.isFinite(block)) {
       seenTransferIds.set(transferId, block);
     }
@@ -207,15 +229,17 @@ export class TransactionsDiscoveryService {
     pageKey?: string
   ): AssetTransfersWithMetadataParams {
     const startingBlockHex = `0x${startingBlock.toString(16)}`;
-    const toBlockHex = endBlock ? `0x${endBlock.toString(16)}` : undefined;
+    const toBlock =
+      typeof endBlock === 'number' ? `0x${endBlock.toString(16)}` : 'indexed';
     return {
       category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
       contractAddresses: [contract],
+      excludeZeroValue: true,
       order: SortingOrder.ASCENDING,
       withMetadata: true,
       maxCount: 150,
       fromBlock: startingBlockHex,
-      toBlock: toBlockHex,
+      toBlock,
       pageKey: pageKey
     };
   }
@@ -327,5 +351,5 @@ export class TransactionsDiscoveryService {
 export const transactionsDiscoveryService = new TransactionsDiscoveryService(
   transactionsDb,
   getAlchemyInstance,
-  findTransactionValues
+  findDiscoveredTransactionValues
 );
