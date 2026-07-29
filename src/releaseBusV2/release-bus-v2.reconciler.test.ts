@@ -3,6 +3,7 @@ import {
   backendReleaseNoteInputs,
   backendReleaseNoteGroups,
   canUseSingleCandidateFastPath,
+  candidateEvidenceSelectionForPreparation,
   candidateUnavailableForTrainUpdate,
   candidateStatusMutationCandidates,
   deletedProductionCandidateCanRetainReadiness,
@@ -218,6 +219,14 @@ describe('Release Bus v2 deterministic orchestration', () => {
     expect(operationContributorCandidates(context, 'backend', 'api')).toEqual([
       selected
     ]);
+  });
+
+  it('uses the bounded legacy preparation bridge when transition-only work has no source candidate', () => {
+    expect(candidateEvidenceSelectionForPreparation([], null)).toEqual({
+      mode: 'legacy-whole-train',
+      aggregateDigest: null,
+      singular: null
+    });
   });
 
   it('mutates only new candidate statuses during cumulative staging preparation', () => {

@@ -15,16 +15,25 @@ The helper reads `/deploy/release-bus-v2/controls`, verifies the hidden safety
 fences, and fails closed if the versioned status is unavailable, malformed, or
 internally inconsistent. Its operator-facing result contains only:
 
-| Effective lane | `ON`                                                                                | `OFF`                                                                                                                   |
-| -------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Staging        | Register exact candidates with Release Bus                                          | Serialized manual staging after the staging drain gate                                                                  |
-| Production     | Separately select an exact `STAGING_VALIDATED` candidate for Release Bus production | Serialized manual production after the production drain gate and explicit owner authorization; no staging evidence gate |
+| Effective lane | `ON`                                                                                | `OFF`                                                                                                                                                           |
+| -------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Staging        | Register exact candidates with Release Bus                                          | If `changeable: true`, serialized manual staging after the staging drain gate                                                                                   |
+| Production     | Separately select an exact `STAGING_VALIDATED` candidate for Release Bus production | If `changeable: true`, serialized manual production after the production drain gate and explicit owner authorization; no staging evidence gate                  |
 
 The drain gate requires the target environment lock to be free, no target
 mutation/E2E workflow to be active, and every already-dispatched exact
 operation to be terminal. Both lanes `OFF` means full manual fallback after both
 drain gates. Raw `RELEASE_BUS_V2_MODE` and `ALL` remain internal emergency
 fences; they are not normal routing or UI controls and must never be bypassed.
+
+There is no inferred control-plane or self-upgrade exception. While a target
+lane is `ON`, every deploy for that environment—including API, `releaseBus`,
+cleaner/reconciler, and other control-plane changes—must carry a valid Release
+Bus operation identity. Manual workflows reject before checkout, build, ref,
+credential, or deployment mutation unless the helper authoritatively reports
+the affected lane `OFF` with `changeable: true`, no hidden emergency fence
+blocks fallback, and the drain gate passes. If Release Bus cannot safely
+self-deploy while `ON`, stop for explicit owner direction.
 
 ## Dashboard read model
 
@@ -84,10 +93,12 @@ register backend first and declare it as the frontend prerequisite.
    `1a-staging` state. Unchanged live candidates are immutable input evidence,
    not new work to diagnose or mutate.
 2. Frontend/backend composition and preparation run concurrently.
-3. A single exact PR merge-tree artifact is reused when eligible. Otherwise,
-   each application runs one combined sharded preflight and one immutable build.
-   Ordinary staging never bisects a failed repository or builds diagnostic
-   subsets.
+3. Exact green PR merge-tree evidence is reused when eligible; train artifact
+   bytes are freshly built for the exact staging composition. Backend
+   preparation installs dependencies once and builds/packages only selected
+   deploy units. Repository-wide lint, typecheck, test inventory, and full Jest
+   matrices remain PR CI gates and never run in a normal train. Ordinary
+   staging never bisects a failed repository or builds diagnostic subsets.
 4. Preparation may finish while another train owns staging.
 5. The train acquires the staging lock only for deployment plus E2E.
    Under that lock it binds every unchanged repository to the exact current

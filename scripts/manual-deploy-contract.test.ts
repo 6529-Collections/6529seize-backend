@@ -40,6 +40,8 @@ const baseDispatchEnv = {
   INPUT_ARTIFACT_RUN_ID: '',
   INPUT_ARTIFACT_TRAIN_ID: '',
   INPUT_ARTIFACT_DIGEST: '',
+  INPUT_ARTIFACT_ENVIRONMENT: '',
+  INPUT_ARTIFACT_CONTRACT_VERSION: 'legacy-v2',
   INPUT_RELEASE_PULL_REQUEST: '42',
   INPUT_RELEASE_NOTE_PUBLISH: 'false',
   INPUT_RELEASE_GROUP_SERVICES: 'api',
@@ -202,8 +204,10 @@ describe('manual backend deployment contract', () => {
         'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:staging:backend:api:a1',
       INPUT_EXPECTED_SHA: 'a'.repeat(40),
       INPUT_ARTIFACT_RUN_ID: '123',
-      INPUT_ARTIFACT_TRAIN_ID: 'train-1',
+      INPUT_ARTIFACT_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
       INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
+      INPUT_ARTIFACT_ENVIRONMENT: 'staging',
+      INPUT_ARTIFACT_CONTRACT_VERSION: 'environment-bound-v3',
       INPUT_RELEASE_PULL_REQUEST: '',
       INPUT_RELEASE_NOTE_OPT_OUT: 'false'
     });

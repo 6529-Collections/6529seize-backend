@@ -42,7 +42,7 @@
     "@eslint/js": "^9.27.0",
     "@testcontainers/mysql": "^12.0.3",
     "@types/fluent-ffmpeg": "^2.1.20",
-    "@types/jest": "^29.5.3",
+    "@types/jest": "^30.0.0",
     "@types/jest-when": "^3.5.5",
     "@types/memory-cache": "^0.2.2",
     "@types/mysql": "^2.15.22",
@@ -60,6 +60,7 @@
     "eslint-plugin-prettier": "^5.4.0",
     "fast-check": "^3.17.0",
     "globals": "^16.2.0",
+    "jest": "^30.4.2",
     "jest-when": "^3.6.0",
     "nodemon": "^3.0.1",
     "prettier": "^3.5.3",
@@ -74,7 +75,8 @@
     "tsconfig-paths": "^4.2.0",
     "typeorm": "^0.3.28",
     "typescript": "^5.0.4",
-    "typescript-eslint": "^8.32.1"
+    "typescript-eslint": "^8.32.1",
+    "yaml": "2.9.0"
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.980.0",
@@ -95,6 +97,7 @@
     "@smithy/node-http-handler": "^4.0.4",
     "@types/multer": "^2.0.0",
     "@wagmi/chains": "^1.8.0",
+    "adm-zip": "0.6.0",
     "arweave": "^1.11.6",
     "axios": "^1.13.5",
     "axios-retry": "^4.5.0",
