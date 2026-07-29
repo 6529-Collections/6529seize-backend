@@ -628,6 +628,12 @@ function groupedStagingRetryRepository() {
       artifact_run_id: null,
       artifact_name: null,
       artifact_digest: null,
+      workflow_path: '.github/workflows/on-pull-request.yml',
+      base_workflow_blob_sha: '4'.repeat(40),
+      merge_workflow_blob_sha: '5'.repeat(40),
+      base_gate_policy_digest: '6'.repeat(64),
+      merge_gate_policy_digest: '7'.repeat(64),
+      trust_mode: 'legacy-exact-workflow-v0',
       contributor_github_logins: ['developer']
     },
     staging_live_state: 'NOT_LIVE',
@@ -862,6 +868,12 @@ describe('Release Bus v2 explicit grouped staging preflight retry', () => {
       artifactRunId: null,
       artifactName: null,
       artifactDigest: null,
+      workflowPath: '.github/workflows/on-pull-request.yml',
+      baseWorkflowBlobSha: '4'.repeat(40),
+      mergeWorkflowBlobSha: '5'.repeat(40),
+      baseGatePolicyDigest: '6'.repeat(64),
+      mergeGatePolicyDigest: '7'.repeat(64),
+      trustMode: 'legacy-exact-workflow-v0',
       contributorGithubLogins: ['developer']
     });
     mockResolveRef.mockImplementation(
@@ -886,6 +898,12 @@ describe('Release Bus v2 explicit grouped staging preflight retry', () => {
               artifactRunId: null,
               artifactName: null,
               artifactDigest: null,
+              workflowPath: '.github/workflows/on-pull-request.yml',
+              baseWorkflowBlobSha: '4'.repeat(40),
+              mergeWorkflowBlobSha: '5'.repeat(40),
+              baseGatePolicyDigest: '6'.repeat(64),
+              mergeGatePolicyDigest: '7'.repeat(64),
+              trustMode: 'legacy-exact-workflow-v0',
               contributorGithubLogins: ['developer']
             };
       }
@@ -978,6 +996,12 @@ describe('Release Bus v2 explicit grouped staging preflight retry', () => {
       artifactRunId: null,
       artifactName: null,
       artifactDigest: null,
+      workflowPath: '.github/workflows/on-pull-request.yml',
+      baseWorkflowBlobSha: '4'.repeat(40),
+      mergeWorkflowBlobSha: '5'.repeat(40),
+      baseGatePolicyDigest: '6'.repeat(64),
+      mergeGatePolicyDigest: '7'.repeat(64),
+      trustMode: 'legacy-exact-workflow-v0',
       contributorGithubLogins: ['developer']
     });
     const input = {
@@ -1017,6 +1041,12 @@ describe('Release Bus v2 explicit grouped staging preflight retry', () => {
       artifactRunId: null,
       artifactName: null,
       artifactDigest: null,
+      workflowPath: '.github/workflows/on-pull-request.yml',
+      baseWorkflowBlobSha: '4'.repeat(40),
+      mergeWorkflowBlobSha: '5'.repeat(40),
+      baseGatePolicyDigest: '6'.repeat(64),
+      mergeGatePolicyDigest: '7'.repeat(64),
+      trustMode: 'legacy-exact-workflow-v0',
       contributorGithubLogins: ['developer']
     });
     await expect(service.register(input, 'developer')).rejects.toThrow(
@@ -1036,6 +1066,12 @@ describe('Release Bus v2 explicit grouped staging preflight retry', () => {
       artifactRunId: null,
       artifactName: null,
       artifactDigest: null,
+      workflowPath: '.github/workflows/on-pull-request.yml',
+      baseWorkflowBlobSha: '4'.repeat(40),
+      mergeWorkflowBlobSha: '5'.repeat(40),
+      baseGatePolicyDigest: '6'.repeat(64),
+      mergeGatePolicyDigest: '7'.repeat(64),
+      trustMode: 'legacy-exact-workflow-v0',
       contributorGithubLogins: ['developer']
     });
     await expect(service.register(input, 'developer')).rejects.toThrow(
@@ -3445,6 +3481,12 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
       artifactRunId: null,
       artifactName: null,
       artifactDigest: null,
+      workflowPath: '.github/workflows/on-pull-request.yml',
+      baseWorkflowBlobSha: 'e'.repeat(40),
+      mergeWorkflowBlobSha: 'f'.repeat(40),
+      baseGatePolicyDigest: '8'.repeat(64),
+      mergeGatePolicyDigest: '9'.repeat(64),
+      trustMode: 'evidence-manifest-v1',
       contributorGithubLogins: ['GelatoGenesis', 'ragnep']
     });
   });
@@ -3512,6 +3554,12 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
       expect.objectContaining({
         candidateId: betaId,
         prEvidence: expect.objectContaining({
+          workflow_path: '.github/workflows/on-pull-request.yml',
+          base_workflow_blob_sha: 'e'.repeat(40),
+          merge_workflow_blob_sha: 'f'.repeat(40),
+          base_gate_policy_digest: '8'.repeat(64),
+          merge_gate_policy_digest: '9'.repeat(64),
+          trust_mode: 'evidence-manifest-v1',
           contributor_github_logins: ['GelatoGenesis', 'ragnep']
         })
       }),
