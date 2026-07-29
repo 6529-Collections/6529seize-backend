@@ -895,6 +895,9 @@ jobs:
       - name: Revalidate emergency API bootstrap immediately before cloud credentials
         if: steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
         shell: bash
+        env:
+          RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"

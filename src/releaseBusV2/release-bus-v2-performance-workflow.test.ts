@@ -389,19 +389,34 @@ printf '200'
 
   it('executes the authenticated emergency compatibility guard and durable audit', () => {
     const parsed = YAML.parse(deploy) as {
-      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            name?: string;
+            run?: string;
+            env?: Record<string, string>;
+          }>;
+        }
+      >;
     };
     const steps = parsed.jobs['build-and-deploy'].steps;
     const authorize = steps.find(
       ({ name }) => name === 'Authorize exact deployment operation'
     )?.run;
-    const revalidate = steps.find(
+    const revalidateStep = steps.find(
       ({ name }) =>
         name ===
         'Revalidate emergency API bootstrap immediately before cloud credentials'
-    )?.run;
+    );
+    const revalidate = revalidateStep?.run;
     expect(authorize).toBeTruthy();
     expect(revalidate).toBeTruthy();
+    expect(revalidateStep?.env).toEqual({
+      RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
+      RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
+        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}'
+    });
 
     const fixture = mkdtempSync(path.join(tmpdir(), 'emergency-bootstrap-'));
     const fakeCurl = path.join(fixture, 'curl');
