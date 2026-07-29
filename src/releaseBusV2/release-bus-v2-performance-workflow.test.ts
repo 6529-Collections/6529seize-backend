@@ -463,7 +463,7 @@ case "$url" in
       printf '200'
     fi
     ;;
-  */actions/runs?*)
+  */actions/runs\\?*)
     if [ "$FAKE_INCOMPLETE_RUN_PAGE" = true ]; then
       printf '%s' '{"total_count":101,"workflow_runs":[]}' > "$output"
     else
@@ -563,6 +563,7 @@ esac
           stdio: 'pipe'
         })
       ).toThrow();
+      writeFileSync(callLog, '');
       expect(() =>
         execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
           cwd: root,
