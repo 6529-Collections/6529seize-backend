@@ -92,12 +92,21 @@ describe('deploy-bus-ui.renderer', () => {
     expect(app).toContain('(!activeId||candidate.current_train_id!==activeId)');
     expect(app).toContain('Production selection provenance is unavailable');
     expect(app).toContain('queued=ordered.slice(0,1)');
+    expect(app).toContain(
+      "staging.status==='LIVE'&&candidate.staging_live_state==='LIVE'&&candidate.staging_live_manifest_id===staging.current_manifest_id"
+    );
   });
 
   it('derives deployed and validated heads and keeps mutations authenticated', () => {
     const app = renderDeployBusUiApp();
 
     expect(app).toContain("headPair('Currently deployed'");
+    expect(app).toContain("staging.status==='DETACHED_MANUAL_OWNERSHIP'");
+    expect(app).toContain(
+      "'Currently deployed (detached; physical bytes unknown)'"
+    );
+    expect(app).toContain("'DEREGISTERED'");
+    expect(app).toContain("'DETACHED'");
     expect(app).toContain("headPair('Last successfully validated'");
     expect(app).toContain('staging.last_validated_manifest_id');
     expect(app).toContain('staging.last_validated_frontend_sha');

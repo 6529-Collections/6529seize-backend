@@ -218,6 +218,52 @@ describe('release-bus-status helper', () => {
     }
   );
 
+  it('reports detached manual ownership without claiming physical staging absence', async () => {
+    const result = await runWithResponse({
+      mode: 'PRODUCTION',
+      controls: VALID_CONTROLS.map((control) => ({
+        ...control,
+        paused: control.scope === 'ALL' ? false : true
+      })),
+      lanes: laneStates(
+        'PRODUCTION',
+        VALID_CONTROLS.map((control) => ({
+          ...control,
+          paused: control.scope === 'ALL' ? false : true
+        }))
+      ),
+      staging_state: {
+        status: 'DETACHED_MANUAL_OWNERSHIP',
+        current_manifest_id: null,
+        last_validated_manifest_id: 'historical-manifest',
+        frontend_sha: null,
+        backend_sha: null,
+        frontend_staging_ref_sha: null,
+        backend_staging_ref_sha: null,
+        clean_main: false,
+        last_transition_train_id: null,
+        row_version: 8
+      }
+    });
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      lanes: {
+        STAGING: { status: 'OFF', changeable: true },
+        PRODUCTION: { status: 'OFF', changeable: true }
+      },
+      staging: {
+        status: 'DETACHED_MANUAL_OWNERSHIP',
+        current_manifest_id: null,
+        last_validated_manifest_id: 'historical-manifest',
+        frontend_sha: null,
+        backend_sha: null,
+        clean_main: false,
+        row_version: 8
+      }
+    });
+  });
+
   test.each([
     ['ALL', 'OFF', 'OFF'],
     ['STAGING', 'OFF', 'ON'],

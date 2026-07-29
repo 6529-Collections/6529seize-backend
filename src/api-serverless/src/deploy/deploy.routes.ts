@@ -27,6 +27,7 @@ import {
   ReleaseBusV2CandidateActionBodySchema,
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
+  ReleaseBusV2CandidateDeregistrationBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
   ReleaseBusV2CurrentStagingRepairBodySchema,
   ReleaseBusV2ManualDeploymentReadinessBodySchema,
@@ -55,6 +56,10 @@ import {
   releaseBusV2ManualDeploymentGuard,
   type ReleaseBusV2ManualDeploymentAuthorizationInput
 } from '@/releaseBusV2/release-bus-v2.manual-deployment';
+import {
+  isReleaseBusV2CandidateDeregistrationError,
+  releaseBusV2CandidateDeregistrationService
+} from '@/releaseBusV2/release-bus-v2.candidate-deregistration';
 import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -71,8 +76,67 @@ import {
   type ReleaseBusV2ControlScope,
   type ReleaseBusV2RegisterInput
 } from '@/releaseBusV2/release-bus-v2.types';
+import type { ApiReleaseBusV2CandidateDeregistrationRequest } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationRequest';
+import { ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
+import { ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationLockVersion';
+import {
+  ApiReleaseBusV2CandidateDeregistrationResponse,
+  ApiReleaseBusV2CandidateDeregistrationResponseModeEnum,
+  ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum,
+  ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum
+} from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationResponse';
 
 const logger = Logger.get('DeployRoutes');
+
+const DEREGISTRATION_PHASE = {
+  PREPARE: ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Prepare,
+  EXECUTE: ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Execute
+} as const;
+
+const DEREGISTRATION_CONTROL_SCOPE = {
+  ALL: ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.All,
+  STAGING:
+    ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Staging,
+  PRODUCTION:
+    ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Production
+} as const;
+
+const DEREGISTRATION_LOCK_NAME = {
+  scheduler:
+    ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.Scheduler,
+  'staging-environment':
+    ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.StagingEnvironment,
+  'production-environment':
+    ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.ProductionEnvironment
+} as const;
+
+const DEREGISTRATION_MODE = {
+  OFF: ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Off,
+  STAGING: ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Staging,
+  PRODUCTION: ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Production
+} as const;
+
+const DEREGISTRATION_PHYSICAL_STAGING_PRESENCE = {
+  UNKNOWN_UNCHANGED:
+    ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Unchanged,
+  UNKNOWN_DETACHED:
+    ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Detached
+} as const;
+
+const DEREGISTRATION_ERROR_STATUS = {
+  BAD_REQUEST: 400,
+  CONFLICT: 409,
+  UNAVAILABLE: 503
+} as const;
+
+function deregistrationLockName(
+  name: string
+): ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum {
+  const mapped =
+    DEREGISTRATION_LOCK_NAME[name as keyof typeof DEREGISTRATION_LOCK_NAME];
+  if (mapped) return mapped;
+  throw new Error(`Unexpected candidate deregistration lock name: ${name}`);
+}
 
 function getGitHubTokenOrThrow(req: Request): string {
   const authorizationHeader = req.get('authorization');
@@ -929,6 +993,83 @@ deployRoutes.post(
           ? error.message
           : 'Stalled production qualification recovery failed'
       );
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/deregister-all-candidates',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    const body =
+      getValidatedByJoiOrThrow<ApiReleaseBusV2CandidateDeregistrationRequest>(
+        req.body,
+        ReleaseBusV2CandidateDeregistrationBodySchema
+      );
+    try {
+      const result =
+        body.phase === 'PREPARE'
+          ? await releaseBusV2CandidateDeregistrationService.prepare(
+              body.reason
+            )
+          : await releaseBusV2CandidateDeregistrationService.execute(
+              {
+                reason: body.reason,
+                expected_plan_sha256: body.expected_plan_sha256,
+                expected_inventory_sha256: body.expected_inventory_sha256,
+                expected_candidates: Array.from(body.expected_candidates),
+                expected_controls: Array.from(body.expected_controls),
+                expected_locks: Array.from(body.expected_locks),
+                expected_staging_state_row_version:
+                  body.expected_staging_state_row_version,
+                expected_staging_refs: body.expected_staging_refs
+              },
+              actor
+            );
+      const response: ApiReleaseBusV2CandidateDeregistrationResponse = {
+        ...result,
+        phase: DEREGISTRATION_PHASE[result.phase],
+        candidates: [...result.candidates],
+        controls: result.controls.map((control) => ({
+          ...control,
+          scope: DEREGISTRATION_CONTROL_SCOPE[control.scope]
+        })),
+        locks: result.locks.map((lock) => ({
+          ...lock,
+          name: deregistrationLockName(lock.name)
+        })),
+        mode: DEREGISTRATION_MODE[result.mode],
+        physical_staging_presence:
+          DEREGISTRATION_PHYSICAL_STAGING_PRESENCE[
+            result.physical_staging_presence
+          ],
+        requested_by: actor
+      };
+      setNoStoreHeaders(res);
+      return res.json(response);
+    } catch (error) {
+      if (isReleaseBusV2CandidateDeregistrationError(error)) {
+        const status = DEREGISTRATION_ERROR_STATUS[error.code];
+        if (error.committed && error.deregistration_id) {
+          setNoStoreHeaders(res);
+          return res.status(status).json({
+            outcome: 'COMMITTED',
+            error: error.message,
+            committed: true,
+            deregistration_id: error.deregistration_id,
+            physical_staging_presence: 'UNKNOWN_DETACHED'
+          });
+        }
+        setNoStoreHeaders(res);
+        return res.status(status).json({
+          outcome: 'NOT_COMMITTED',
+          error: error.message,
+          committed: false,
+          physical_staging_presence: 'UNKNOWN_UNCHANGED'
+        });
+      }
+      throw error;
     }
   }
 );

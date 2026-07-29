@@ -434,7 +434,7 @@ function candidateRegistrationStatus(candidate: ReleaseBusV2CandidateRecord): {
           ? 'Exact v2 composition requires rebase'
           : 'Release Bus v2 candidate failed; see Deploy UI'
     };
-  if (['SUPERSEDED', 'CANCELLED'].includes(candidate.status))
+  if (['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(candidate.status))
     return {
       state: 'success',
       description: `v2 readiness ${candidate.status.toLowerCase()}`
@@ -804,6 +804,11 @@ export class ReleaseBusV2Service {
       await this.repository.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctx: RequestContext = { connection };
+          const stagingState = await this.repository.getStagingState(ctx, true);
+          if (stagingState.status === 'DETACHED_MANUAL_OWNERSHIP')
+            throw new Error(
+              'Release Bus v2 staging ownership is detached; normalize both staging refs to exact current main before registering candidates'
+            );
           const superseded = isBetaRegistration
             ? []
             : await this.repository.supersedeOtherPrHeads(
@@ -876,17 +881,20 @@ export class ReleaseBusV2Service {
                   `${dependency.prerequisite_candidate_id}:${dependency.environment}`
               )
               .sort((left, right) => left.localeCompare(right));
-            if (
+            const immutableRegistrationChanged =
               candidate.branch_name !== input.branch_name ||
               !isDeepStrictEqual(
                 parseStoredJson(candidate.deploy_plan_json),
                 deployPlan
               ) ||
-              !sameQualificationIdentity(
-                candidate.pr_evidence_json,
-                evidence
-              ) ||
-              !isDeepStrictEqual(storedDependencies, requestedDependencies)
+              !isDeepStrictEqual(storedDependencies, requestedDependencies);
+            const qualificationChanged = !sameQualificationIdentity(
+              candidate.pr_evidence_json,
+              evidence
+            );
+            if (
+              immutableRegistrationChanged ||
+              (candidate.status !== 'DEREGISTERED' && qualificationChanged)
             )
               throw new Error(
                 'The exact candidate identity was reused with different immutable registration data'
@@ -895,6 +903,69 @@ export class ReleaseBusV2Service {
               throw new Error(
                 'A superseded exact candidate head cannot be registered again'
               );
+            if (candidate.status === 'DEREGISTERED') {
+              if (
+                !(await this.repository.updateCandidate(
+                  candidate.id,
+                  candidate.row_version,
+                  {
+                    status: 'READY_FOR_STAGING',
+                    currentTrainId: null,
+                    stagingLiveState: 'NOT_LIVE',
+                    stagingLiveManifestId: null,
+                    stagingAdmittedAt: null,
+                    stagingLiveUpdatedAt: Date.now(),
+                    stagingTransitionRequest: null,
+                    stagingTransitionRequestedAt: null,
+                    stagingTransitionRequestedBy: null,
+                    stagingTransitionReason: null,
+                    productionRequestedAt: null,
+                    productionRequestedBy: null,
+                    productionSelectionId: null,
+                    holdReason: null,
+                    supersededAt: null,
+                    prEvidence: evidence
+                  },
+                  ctx
+                ))
+              )
+                throw new Error(
+                  'Deregistered exact candidate changed during re-registration'
+                );
+              await this.repository.appendEvent(
+                {
+                  candidateId: candidate.id,
+                  eventType: 'CANDIDATE_EXACT_HEAD_REREGISTERED',
+                  actor,
+                  payload: {
+                    repository: candidate.repository,
+                    pr_number: candidate.pr_number,
+                    head_sha: candidate.head_sha,
+                    checks_run_id: evidence.checks_run_id,
+                    checks_completed_at: evidence.checks_completed_at,
+                    previous_pr_evidence: parseStoredJson(
+                      candidate.pr_evidence_json
+                    ),
+                    fresh_pr_evidence: evidence,
+                    historical_staging_train_id:
+                      candidate.staging_validated_train_id,
+                    historical_staging_manifest_id:
+                      candidate.staging_validated_manifest_id,
+                    previous_superseded_at: candidate.superseded_at
+                  }
+                },
+                ctx
+              );
+              const reactivated = await this.repository.findCandidateById(
+                candidate.id,
+                ctx
+              );
+              if (!reactivated)
+                throw new Error(
+                  'Re-registered exact candidate was not visible'
+                );
+              candidate = reactivated;
+            }
             if (candidate.status === 'FAILED')
               candidate = await this.retryGroupedStagingPreflightCandidate(
                 candidate,
@@ -2375,6 +2446,7 @@ export class ReleaseBusV2Service {
     return this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx: RequestContext = { connection };
+        const stagingState = await this.repository.getStagingState(ctx, true);
         const candidate = await this.repository.findCandidateById(
           input.candidateId,
           ctx,
@@ -2388,7 +2460,13 @@ export class ReleaseBusV2Service {
           throw new ReleaseBusV2StagingTransitionConflictError(
             'Candidate identity or version changed'
           );
-        if (candidate.staging_live_state !== 'LIVE')
+        if (
+          candidate.staging_live_state !== 'LIVE' ||
+          stagingState.status !== 'LIVE' ||
+          !stagingState.current_manifest_id ||
+          candidate.staging_live_manifest_id !==
+            stagingState.current_manifest_id
+        )
           throw new ReleaseBusV2StagingTransitionConflictError(
             'Only an exact candidate currently live in staging can leave the admitted set'
           );
@@ -2396,7 +2474,11 @@ export class ReleaseBusV2Service {
           throw new ReleaseBusV2StagingTransitionConflictError(
             'Candidate already has a staging lifecycle request'
           );
-        const live = await this.repository.listLiveStagingCandidates(ctx, true);
+        const live = await this.listAuthoritativeLiveStagingCandidates(
+          stagingState,
+          ctx,
+          true
+        );
         const dependencies = await this.repository.listDependencies(
           live.map(({ id }) => id),
           ctx
@@ -2459,6 +2541,20 @@ export class ReleaseBusV2Service {
     );
   }
 
+  private async listAuthoritativeLiveStagingCandidates(
+    state: Awaited<ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>>,
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<readonly ReleaseBusV2CandidateRecord[]> {
+    if (state.status !== 'LIVE' || !state.current_manifest_id) return [];
+    const currentManifestId = state.current_manifest_id;
+    return (
+      await this.repository.listLiveStagingCandidates(ctx, forUpdate)
+    ).filter(
+      (candidate) => candidate.staging_live_manifest_id === currentManifestId
+    );
+  }
+
   private async bootstrapCumulativeStagingState(
     state: Awaited<ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>>,
     stagingIdentity: ReleaseBusV2StagingIdentity | undefined,
@@ -2468,10 +2564,23 @@ export class ReleaseBusV2Service {
   ): Promise<Awaited<
     ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>
   > | null> {
-    if (state.status !== 'UNINITIALIZED') return state;
     const frontendSha = stagingIdentity?.frontendSha;
     const backendSha = stagingIdentity?.backendSha;
     if (!frontendSha || !backendSha) return null;
+    if (state.status === 'DETACHED_MANUAL_OWNERSHIP') {
+      if (frontendSha !== frontendBaseSha || backendSha !== backendBaseSha)
+        return null;
+      await this.repository.commitDetachedStagingCleanMain(
+        {
+          expectedStateVersion: state.row_version,
+          frontendSha,
+          backendSha
+        },
+        ctx
+      );
+      return this.repository.getStagingState(ctx, true);
+    }
+    if (state.status !== 'UNINITIALIZED') return state;
     if (
       frontendSha === frontendBaseSha &&
       backendSha === backendBaseSha &&
@@ -3290,11 +3399,15 @@ export class ReleaseBusV2Service {
         );
         if (!scheduler?.lease_token) return null;
         try {
+          const authoritativeStagingState =
+            await this.repository.getStagingState(ctx, true);
+          if (
+            lane === 'PRODUCTION' &&
+            authoritativeStagingState.status === 'DETACHED_MANUAL_OWNERSHIP'
+          )
+            return null;
           let stagingState =
-            lane === 'STAGING' &&
-            typeof this.repository.getStagingState === 'function'
-              ? await this.repository.getStagingState(ctx, true)
-              : null;
+            lane === 'STAGING' ? authoritativeStagingState : null;
           const active = (await this.repository.listTrains(100, ctx)).filter(
             (train) =>
               !TERMINAL_TRAIN_STATUSES.has(train.status) && train.lane === lane
@@ -3306,7 +3419,12 @@ export class ReleaseBusV2Service {
                 return train;
             }
           }
-          if (stagingState?.status === 'UNINITIALIZED') {
+          if (
+            stagingState &&
+            ['UNINITIALIZED', 'DETACHED_MANUAL_OWNERSHIP'].includes(
+              stagingState.status
+            )
+          ) {
             const bootstrapped = await this.bootstrapCumulativeStagingState(
               stagingState,
               stagingIdentity,
@@ -3384,7 +3502,11 @@ export class ReleaseBusV2Service {
               readyCandidates.map(({ id }) => id)
             );
             const live = stagingState
-              ? await this.repository.listLiveStagingCandidates(ctx, true)
+              ? await this.listAuthoritativeLiveStagingCandidates(
+                  stagingState,
+                  ctx,
+                  true
+                )
               : [];
             const replacements = new Set(
               candidates.map(
@@ -4061,9 +4183,12 @@ export class ReleaseBusV2Service {
         for (const candidate of candidates) {
           if (!candidate) continue;
           if (
-            ['SUPERSEDED', 'CANCELLED', 'PRODUCTION_DEPLOYED'].includes(
-              candidate.status
-            )
+            [
+              'SUPERSEDED',
+              'CANCELLED',
+              'DEREGISTERED',
+              'PRODUCTION_DEPLOYED'
+            ].includes(candidate.status)
           )
             continue;
           if (

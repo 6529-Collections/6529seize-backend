@@ -31,5 +31,6 @@ export enum ReleaseBusV2CandidateStatus {
     WaitingForDependency = 'WAITING_FOR_DEPENDENCY',
     Superseded = 'SUPERSEDED',
     Failed = 'FAILED',
-    Cancelled = 'CANCELLED'
+    Cancelled = 'CANCELLED',
+    Deregistered = 'DEREGISTERED'
 }
