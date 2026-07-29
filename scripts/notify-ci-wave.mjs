@@ -213,14 +213,13 @@ async function githubApi(repository, path) {
   return response.json();
 }
 
-async function deriveManualPullRequestContributors({
+async function validatePullRequestDeploymentEvidence({
   repository,
+  pull,
   pullRequestNumber,
   deployedSha,
-  service,
   branch
 }) {
-  const pull = await githubApi(repository, `/pulls/${pullRequestNumber}`);
   if (Number(pull.number) !== pullRequestNumber) {
     throw new Error(`PR #${pullRequestNumber} identity did not match`);
   }
@@ -238,32 +237,48 @@ async function deriveManualPullRequestContributors({
       `Open PR #${pullRequestNumber} does not exactly match deployed branch ${branch}`
     );
   }
-  if (merged && evidenceSha !== deployedSha) {
-    const comparison = await githubApi(
-      repository,
-      `/compare/${encodeURIComponent(evidenceSha)}...${encodeURIComponent(deployedSha)}`
+  if (!merged || evidenceSha === deployedSha) return;
+
+  const comparison = await githubApi(
+    repository,
+    `/compare/${encodeURIComponent(evidenceSha)}...${encodeURIComponent(deployedSha)}`
+  );
+  if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
+    throw new Error(
+      `Deployed SHA ${deployedSha} does not contain PR #${pullRequestNumber}`
     );
-    if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
-      throw new Error(
-        `Deployed SHA ${deployedSha} does not contain PR #${pullRequestNumber}`
+  }
+}
+
+async function fetchCompletePullRequestPages({
+  repository,
+  pullRequestNumber,
+  resource
+}) {
+  const entries = [];
+  for (let page = 1; page <= 3; page += 1) {
+    const pageEntries = await githubApi(
+      repository,
+      `/pulls/${pullRequestNumber}/${resource}?per_page=100&page=${page}`
+    );
+    if (!Array.isArray(pageEntries)) {
+      throw new TypeError(
+        `PR #${pullRequestNumber} ${resource} evidence is malformed`
       );
     }
+    entries.push(...pageEntries);
+    if (pageEntries.length < 100) return entries;
   }
-  const files = [];
-  for (let page = 1; page <= 3; page += 1) {
-    const pageFiles = await githubApi(
-      repository,
-      `/pulls/${pullRequestNumber}/files?per_page=100&page=${page}`
-    );
-    if (!Array.isArray(pageFiles)) {
-      throw new Error(`PR #${pullRequestNumber} file evidence is malformed`);
-    }
-    files.push(...pageFiles);
-    if (pageFiles.length < 100) break;
-    if (page === 3) {
-      throw new Error(`PR #${pullRequestNumber} file evidence is incomplete`);
-    }
-  }
+  throw new Error(
+    `PR #${pullRequestNumber} ${resource} evidence is incomplete`
+  );
+}
+
+function assertPullRequestAffectsService({
+  files,
+  pullRequestNumber,
+  service
+}) {
   const servicePrefix =
     service === 'api' ? 'src/api-serverless/' : `src/${service}/`;
   if (!files.some((file) => file.filename?.startsWith(servicePrefix))) {
@@ -271,22 +286,37 @@ async function deriveManualPullRequestContributors({
       `PR #${pullRequestNumber} does not contain changes for ${service}`
     );
   }
+}
+
+async function deriveManualPullRequestContributors({
+  repository,
+  pullRequestNumber,
+  deployedSha,
+  service,
+  branch
+}) {
+  const pull = await githubApi(repository, `/pulls/${pullRequestNumber}`);
+  await validatePullRequestDeploymentEvidence({
+    repository,
+    pull,
+    pullRequestNumber,
+    deployedSha,
+    branch
+  });
+  const files = await fetchCompletePullRequestPages({
+    repository,
+    pullRequestNumber,
+    resource: 'files'
+  });
+  assertPullRequestAffectsService({ files, pullRequestNumber, service });
+  const commits = await fetchCompletePullRequestPages({
+    repository,
+    pullRequestNumber,
+    resource: 'commits'
+  });
   const users = [pull.user];
-  for (let page = 1; page <= 3; page += 1) {
-    const commits = await githubApi(
-      repository,
-      `/pulls/${pullRequestNumber}/commits?per_page=100&page=${page}`
-    );
-    if (!Array.isArray(commits)) {
-      throw new Error(`PR #${pullRequestNumber} commit evidence is malformed`);
-    }
-    for (const commit of commits) {
-      users.push(commit.author, commit.committer);
-    }
-    if (commits.length < 100) break;
-    if (page === 3) {
-      throw new Error(`PR #${pullRequestNumber} commit evidence is incomplete`);
-    }
+  for (const commit of commits) {
+    users.push(commit.author, commit.committer);
   }
   return parseReleaseContributors(
     JSON.stringify(users.filter(isHumanGithubUser).map((user) => user.login))
@@ -364,6 +394,9 @@ try {
   console.error(releaseContributorMetadataErrorMessage(error));
   process.exit(1);
 }
+const suppliedReleaseContributorCount = CI_RELEASE_CONTRIBUTORS
+  ? JSON.parse(CI_RELEASE_CONTRIBUTORS).length
+  : 0;
 if (
   CI_RELEASE_TRAIN_ID &&
   !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
@@ -396,14 +429,52 @@ if (CI_PIPELINES_SHA && !/^[a-f0-9]{40}$/.test(CI_PIPELINES_SHA)) {
   console.error('CI_PIPELINES_SHA must be a 40-character lowercase Git SHA');
   process.exit(1);
 }
+const isReleaseBusOperation = Boolean(
+  CI_RELEASE_TRAIN_ID && CI_RELEASE_OPERATION_KEY
+);
 if (
   CI_RELEASE_NOTE_OPT_OUT === 'true' &&
+  isReleaseBusOperation &&
   ((releaseNoteGroups?.length ?? 0) > 0 || CI_RELEASE_NOTE_PUBLISH === 'true')
 ) {
   console.error(
-    'Release-note opt-out cannot include release-note groups or a publish request'
+    'Release Bus release-note opt-out cannot include release-note groups or a publish request'
   );
   process.exit(1);
+}
+if (
+  CI_RELEASE_NOTE_OPT_OUT === 'true' &&
+  !isReleaseBusOperation &&
+  (pullRequestNumber ||
+    CI_RELEASE_GROUP_SERVICES ||
+    CI_RELEASE_NOTE_GROUPS ||
+    suppliedReleaseContributorCount > 0 ||
+    CI_RELEASE_NOTE_PUBLISH === 'true')
+) {
+  console.error(
+    'Manual no-PR opt-out cannot include a PR, contributors, release-note metadata, or a publish request'
+  );
+  process.exit(1);
+}
+if (!isReleaseBusOperation) {
+  if (suppliedReleaseContributorCount > 0) {
+    console.error(
+      'Manual deployments cannot supply contributors; exact PR evidence is required'
+    );
+    process.exit(1);
+  }
+  if (CI_RELEASE_NOTE_GROUPS) {
+    console.error(
+      'CI_RELEASE_NOTE_GROUPS is reserved for verified Release Bus operations'
+    );
+    process.exit(1);
+  }
+  if (CI_RELEASE_NOTE_OPT_OUT !== 'true' && !pullRequestNumber) {
+    console.error(
+      'Manual deployments require CI_RELEASE_PULL_REQUEST or explicit CI_RELEASE_NOTE_OPT_OUT=true'
+    );
+    process.exit(1);
+  }
 }
 if (
   isReleaseNotesEligible &&
@@ -434,13 +505,8 @@ const releaseNotesFields = isReleaseNotesEligible
       }
   : {};
 let contributorEvidence = null;
-if (CI_RELEASE_TRAIN_ID && CI_RELEASE_OPERATION_KEY) {
+if (isReleaseBusOperation) {
   contributorEvidence = 'release-bus-operation';
-} else if (releaseContributors.length > 0) {
-  console.warn(
-    'Ignoring user-supplied contributors on a manual deployment; immutable GitHub evidence is required.'
-  );
-  releaseContributors = [];
 }
 const deployedSha = CI_PIPELINES_SHA || GITHUB_SHA || null;
 if (

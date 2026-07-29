@@ -600,7 +600,7 @@ describe('CiPipelineAlertService', () => {
     expect(content).not.toContain('Contributors: @[prxt0]');
   });
 
-  it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
+  it('links the actual GitHub initiator when the 6529 mapping is missing', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
@@ -619,14 +619,16 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
-    ).toContain('Initiated by: unknown');
+    ).toContain(
+      'Initiated by: [unknown-user](https://github.com/unknown-user)'
+    );
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .mentioned_users
     ).toEqual([]);
   });
 
-  it('posts with an unknown initiator when the mapped profile is missing', async () => {
+  it('links the actual GitHub initiator when its mapped profile is missing', async () => {
     identitiesRepository.getIdsByHandles.mockResolvedValue({});
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
@@ -638,7 +640,7 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
-    ).toContain('Initiated by: unknown');
+    ).toContain('Initiated by: [prxt6529](https://github.com/prxt6529)');
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .mentioned_users
@@ -656,6 +658,28 @@ describe('CiPipelineAlertService', () => {
         ...baseRequest,
         status: 'success',
         triggered_by_github_login: null
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Initiated by: unknown');
+  });
+
+  it('posts with an unknown initiator when actor metadata is invalid', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        triggered_by_github_login: 'not a github login'
       },
       {}
     );

@@ -214,6 +214,10 @@ jobs:
           INPUT_ARTIFACT_TRAIN_ID: \${{ github.event.inputs.artifact_train_id }}
           INPUT_ARTIFACT_DIGEST: \${{ github.event.inputs.artifact_digest }}
           INPUT_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
+          INPUT_RELEASE_NOTE_PUBLISH: \${{ github.event.inputs.release_note_publish }}
+          INPUT_RELEASE_GROUP_SERVICES: \${{ github.event.inputs.release_group_services }}
+          INPUT_RELEASE_NOTE_GROUPS: \${{ github.event.inputs.release_note_groups }}
+          INPUT_RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
@@ -231,7 +235,16 @@ jobs:
               [[ "$INPUT_ARTIFACT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             fi
           else
-            [[ "$INPUT_RELEASE_PULL_REQUEST" =~ ^[1-9][0-9]{0,9}$ ]]
+            [[ "$INPUT_RELEASE_NOTE_OPT_OUT" =~ ^(true|false)$ ]]
+            jq -e 'length == 0' <<< "$INPUT_RELEASE_CONTRIBUTORS" > /dev/null
+            test -z "$INPUT_RELEASE_NOTE_GROUPS"
+            if [ "$INPUT_RELEASE_NOTE_OPT_OUT" = true ]; then
+              test -z "$INPUT_RELEASE_PULL_REQUEST"
+              test -z "$INPUT_RELEASE_GROUP_SERVICES"
+              test "$INPUT_RELEASE_NOTE_PUBLISH" = false
+            else
+              [[ "$INPUT_RELEASE_PULL_REQUEST" =~ ^[1-9][0-9]{0,9}$ ]]
+            fi
           fi
       - name: Validate Release Bus GitHub App configuration
         if: github.event.inputs.service == 'releaseBus'
@@ -814,6 +827,7 @@ jobs:
           CI_RELEASE_OPERATION_KEY: \${{ github.event.inputs.operation_key }}
           CI_RELEASE_CONTRIBUTORS: \${{ github.event.inputs.release_contributors }}
           CI_RELEASE_PULL_REQUEST: \${{ github.event.inputs.release_pull_request }}
+          CI_RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
           GITHUB_TOKEN: \${{ github.token }}
         run: node scripts/notify-ci-wave.mjs
 

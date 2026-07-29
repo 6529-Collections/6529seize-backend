@@ -41,6 +41,7 @@ async function runNotifier(
         CI_PIPELINES_SERVICE: 'api',
         CI_RELEASE_NOTES_PROMPT_PATH:
           'ops/release-notes/release-notes.prompt.md',
+        CI_RELEASE_NOTE_OPT_OUT: 'true',
         GITHUB_REPOSITORY: '6529-Collections/6529seize-backend',
         GITHUB_WORKFLOW: 'Deploy a service',
         GITHUB_RUN_ID: '123',
@@ -129,6 +130,7 @@ describe('notify-ci-wave release-note metadata', () => {
       try {
         const result = await runNotifier({
           CI_RELEASE_PULL_REQUEST: '42',
+          CI_RELEASE_NOTE_OPT_OUT: 'false',
           CI_PIPELINES_TARGET_ENV: environment,
           GITHUB_REF_NAME: branch,
           GITHUB_SHA: deployedSha,
@@ -163,6 +165,7 @@ describe('notify-ci-wave release-note metadata', () => {
       CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
       CI_RELEASE_OPERATION_KEY:
         'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
       CI_RELEASE_CONTRIBUTORS: JSON.stringify([
         'GelatoGenesis',
         'prxt6529',
@@ -185,16 +188,39 @@ describe('notify-ci-wave release-note metadata', () => {
     });
   });
 
-  it('does not trust user-supplied contributors on a manual deployment', async () => {
+  it('preserves Release Bus contributors for an internal release-note opt-out', async () => {
     const result = await runNotifier({
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_OPERATION_KEY:
+        'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
+      CI_RELEASE_CONTRIBUTORS: JSON.stringify(['GelatoGenesis']),
+      CI_RELEASE_NOTE_GROUPS: '[]',
+      CI_RELEASE_NOTE_OPT_OUT: 'true'
+    });
+
+    expect(result).toMatchObject({
+      code: 0,
+      stderr: '',
+      payload: {
+        contributor_evidence: 'release-bus-operation',
+        contributor_github_logins: ['GelatoGenesis']
+      }
+    });
+    expect(result.payload).not.toHaveProperty('release_notes_prompt_path');
+  });
+
+  it('rejects user-supplied contributors on a manual deployment', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_PULL_REQUEST: '42',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
       CI_RELEASE_CONTRIBUTORS: JSON.stringify(['GelatoGenesis'])
     });
 
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(1);
     expect(result.stderr).toContain(
-      'Ignoring user-supplied contributors on a manual deployment'
+      'Manual deployments cannot supply contributors; exact PR evidence is required'
     );
-    expect(result.payload).not.toHaveProperty('contributor_github_logins');
+    expect(result.payload).toBeNull();
   });
 
   it('requires Release Bus train and operation identities together', async () => {
@@ -256,6 +282,10 @@ describe('notify-ci-wave release-note metadata', () => {
 
   it('sends canonical per-PR v2 release-note groups', async () => {
     const result = await runNotifier({
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_OPERATION_KEY:
+        'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
       CI_RELEASE_NOTE_GROUPS: JSON.stringify([
         {
           release_group_id: 'pr-1801',
@@ -288,9 +318,12 @@ describe('notify-ci-wave release-note metadata', () => {
 
   it('sends overlapping structured groups for the deployed service', async () => {
     const result = await runNotifier({
-      CI_RELEASE_PULL_REQUEST: '9999',
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_OPERATION_KEY:
+        'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
       CI_RELEASE_GROUP_SERVICES: 'wrongLegacyService',
       CI_RELEASE_NOTE_PUBLISH: 'false',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
       CI_RELEASE_NOTE_GROUPS: JSON.stringify([
         {
           release_group_id: 'pr-1801',
@@ -316,6 +349,10 @@ describe('notify-ci-wave release-note metadata', () => {
   it('rejects structured groups without a deployed service', async () => {
     const result = await runNotifier({
       CI_PIPELINES_SERVICE: '',
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_OPERATION_KEY:
+        'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
       CI_RELEASE_NOTE_GROUPS: JSON.stringify([
         {
           release_group_id: 'pr-1801',
@@ -334,6 +371,10 @@ describe('notify-ci-wave release-note metadata', () => {
 
   it('rejects duplicate structured group ids', async () => {
     const result = await runNotifier({
+      CI_RELEASE_TRAIN_ID: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+      CI_RELEASE_OPERATION_KEY:
+        'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
       CI_RELEASE_NOTE_GROUPS: JSON.stringify([
         {
           release_group_id: 'same-group',
@@ -360,6 +401,7 @@ describe('notify-ci-wave release-note metadata', () => {
     const result = await runNotifier({
       CI_PIPELINES_TARGET_ENV: 'staging',
       CI_RELEASE_PULL_REQUEST: '1801',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
       CI_RELEASE_GROUP_SERVICES: 'api',
       CI_RELEASE_NOTE_PUBLISH: 'true'
     });
@@ -378,7 +420,56 @@ describe('notify-ci-wave release-note metadata', () => {
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain(
-      'Release-note opt-out cannot include release-note groups or a publish request'
+      'Manual no-PR opt-out cannot include a PR, contributors, release-note metadata, or a publish request'
+    );
+    expect(result.payload).toBeNull();
+  });
+
+  it.each(['staging', 'prod'])(
+    'allows an explicit no-PR %s operation without contributors or release notes',
+    async (environment) => {
+      const result = await runNotifier({
+        CI_PIPELINES_TARGET_ENV: environment,
+        CI_RELEASE_PULL_REQUEST: '',
+        CI_RELEASE_NOTE_OPT_OUT: 'true'
+      });
+
+      expect(result).toMatchObject({
+        code: 0,
+        stderr: '',
+        payload: {
+          environment
+        }
+      });
+      expect(result.payload).not.toHaveProperty('contributor_evidence');
+      expect(result.payload).not.toHaveProperty('contributor_github_logins');
+      expect(result.payload).not.toHaveProperty('release_notes_prompt_path');
+      expect(result.payload).not.toHaveProperty('publish_release_note');
+    }
+  );
+
+  it('rejects an empty manual PR without explicit opt-out', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_PULL_REQUEST: '',
+      CI_RELEASE_NOTE_OPT_OUT: 'false'
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'Manual deployments require CI_RELEASE_PULL_REQUEST or explicit CI_RELEASE_NOTE_OPT_OUT=true'
+    );
+    expect(result.payload).toBeNull();
+  });
+
+  it('rejects contributor metadata on an explicit no-PR operation', async () => {
+    const result = await runNotifier({
+      CI_RELEASE_CONTRIBUTORS: JSON.stringify(['GelatoGenesis']),
+      CI_RELEASE_NOTE_OPT_OUT: 'true'
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'Manual no-PR opt-out cannot include a PR, contributors, release-note metadata, or a publish request'
     );
     expect(result.payload).toBeNull();
   });

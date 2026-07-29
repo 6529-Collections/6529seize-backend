@@ -47,10 +47,7 @@ export interface CiPipelineAlertRequest {
   readonly release_operation_key?: string | null;
   readonly contributor_github_logins?: string[];
   readonly contributor_evidence?:
-    | 'release-bus-operation'
-    | 'manual-pr'
-    | 'manual-range'
-    | null;
+    'release-bus-operation' | 'manual-pr' | 'manual-range' | null;
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
@@ -214,6 +211,21 @@ export function normalizeContributorGithubLogins(
   return logins;
 }
 
+function expectedReleaseBusWorkflow(
+  repo: string | undefined,
+  environment: 'staging' | 'prod'
+): string | null {
+  if (repo === '6529seize-frontend') {
+    return environment === 'staging'
+      ? 'Release Bus - Deploy Frontend Staging'
+      : 'Release Bus - Deploy Frontend Production';
+  }
+  if (repo === '6529seize-backend') {
+    return 'Deploy a service';
+  }
+  return null;
+}
+
 export function isVerifiedReleaseBusAlert(
   request: CiPipelineAlertRequest
 ): boolean {
@@ -232,14 +244,7 @@ export function isVerifiedReleaseBusAlert(
     return false;
   }
   const repo = request.repo.split('/').pop();
-  const expectedWorkflow =
-    repo === '6529seize-frontend'
-      ? environment === 'staging'
-        ? 'Release Bus - Deploy Frontend Staging'
-        : 'Release Bus - Deploy Frontend Production'
-      : repo === '6529seize-backend'
-        ? 'Deploy a service'
-        : null;
+  const expectedWorkflow = expectedReleaseBusWorkflow(repo, environment);
   if (request.workflow !== expectedWorkflow) return false;
   const parts = operationKey.split(':');
   const attempt = parts.at(-1);
@@ -363,8 +368,12 @@ function formatInitiator(
   if (isVerifiedReleaseBusAlert(request)) {
     return 'Release Train';
   }
-  return mentions.triggeredBy
-    ? '@[' + mentions.triggeredBy.handle + ']'
+  if (mentions.triggeredBy) {
+    return '@[' + mentions.triggeredBy.handle + ']';
+  }
+  const githubLogin = normalizeOptionalValue(request.triggered_by_github_login);
+  return githubLogin && isHumanGithubContributorLogin(githubLogin)
+    ? formatMarkdownLink(githubLogin, `https://github.com/${githubLogin}`)
     : 'unknown';
 }
 
@@ -500,6 +509,44 @@ export class CiPipelineAlertService {
     }
 
     const structuredGroups = request.release_note_groups !== undefined;
+    const { enqueued, queueFailures } = await this.enqueueReleaseNoteGroups({
+      request,
+      promptPath,
+      sha,
+      deployedAt,
+      isBackendRelease,
+      structuredGroups
+    });
+    if (queueFailures > 0) {
+      return {
+        release_note: 'queue-failed',
+        release_note_reason: `${queueFailures}-of-${enqueued + queueFailures}-requests`
+      };
+    }
+    if (enqueued > 0) return { release_note: 'enqueued' };
+    return {
+      release_note: 'skipped',
+      release_note_reason: structuredGroups
+        ? 'no-valid-release-note-groups'
+        : 'release-note-group-metadata-missing'
+    };
+  }
+
+  private async enqueueReleaseNoteGroups({
+    request,
+    promptPath,
+    sha,
+    deployedAt,
+    isBackendRelease,
+    structuredGroups
+  }: {
+    readonly request: CiPipelineAlertRequest;
+    readonly promptPath: string;
+    readonly sha: string;
+    readonly deployedAt: string;
+    readonly isBackendRelease: boolean;
+    readonly structuredGroups: boolean;
+  }): Promise<{ enqueued: number; queueFailures: number }> {
     let enqueued = 0;
     let queueFailures = 0;
     for (const group of requestedReleaseNoteGroups(request)) {
@@ -555,19 +602,7 @@ export class CiPipelineAlertService {
       if (queueOutcome === 'enqueued') enqueued += 1;
       else queueFailures += 1;
     }
-    if (queueFailures > 0) {
-      return {
-        release_note: 'queue-failed',
-        release_note_reason: `${queueFailures}-of-${enqueued + queueFailures}-requests`
-      };
-    }
-    if (enqueued > 0) return { release_note: 'enqueued' };
-    return {
-      release_note: 'skipped',
-      release_note_reason: structuredGroups
-        ? 'no-valid-release-note-groups'
-        : 'release-note-group-metadata-missing'
-    };
+    return { enqueued, queueFailures };
   }
 
   private async resolveAlertMentions(
