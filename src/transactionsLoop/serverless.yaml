@@ -60,7 +60,7 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'memeLabTransactionsLoop_${opt:stage, self:provider.stage}'
       TRANSACTIONS_CONTRACT_ADDRESS: '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb'
-      
+
 resources:
   Resources:
     MemesTransactionsLoopOOMFilter:
@@ -85,6 +85,28 @@ resources:
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MemesTransactionsLoopErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memesTransactionsLoop-Errors"
+        AlarmDescription: !Sub "Lambda memesTransactionsLoop invocation errors in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: memesTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        DatapointsToAlarm: 1
         Threshold: 1
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
@@ -123,6 +145,28 @@ resources:
         OKActions:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
+    GradientsTransactionsLoopErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-gradientsTransactionsLoop-Errors"
+        AlarmDescription: !Sub "Lambda gradientsTransactionsLoop invocation errors in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: gradientsTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        DatapointsToAlarm: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
     MemeLabTransactionsLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
@@ -145,6 +189,28 @@ resources:
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MemeLabTransactionsLoopErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memeLabTransactionsLoop-Errors"
+        AlarmDescription: !Sub "Lambda memeLabTransactionsLoop invocation errors in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: memeLabTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        DatapointsToAlarm: 1
         Threshold: 1
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
