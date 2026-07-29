@@ -386,10 +386,13 @@ workflow, deployment, E2E, release note, or immutable history is mutated.
 
 The database commit is the mutation boundary. If a post-commit GitHub/ref
 verification, supplemental audit publication, or maintenance-lease cleanup
-fails, the API response must say `committed: true`, include the immutable
-`deregistration_id`, and report `UNKNOWN_DETACHED`. Operators must treat that
-as a committed deregistration and audit by ID; a generic failure must never
-imply that the database mutation did not occur.
+fails, the API response must say `outcome: COMMITTED` and `committed: true`,
+include the immutable `deregistration_id`, and report `UNKNOWN_DETACHED`.
+Failures before that boundary say `outcome: NOT_COMMITTED`,
+`committed: false`, and `UNKNOWN_UNCHANGED`, with no deregistration ID.
+Operators must treat a `COMMITTED` error as a committed deregistration and
+audit by ID; a generic failure must never imply that the database mutation did
+not occur.
 
 `DETACHED` means physical staging presence is deliberately unknown. It must
 never be rewritten to `NOT_LIVE`, `CLEAN_MAIN`, or a historical live manifest

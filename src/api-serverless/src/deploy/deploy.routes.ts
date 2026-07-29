@@ -1027,17 +1027,18 @@ deployRoutes.post(
         if (error.committed && error.deregistration_id) {
           setNoStoreHeaders(res);
           return res.status(status).json({
+            outcome: 'COMMITTED',
             error: error.message,
             committed: true,
             deregistration_id: error.deregistration_id,
-            physical_staging_presence: error.physical_staging_presence
+            physical_staging_presence: 'UNKNOWN_DETACHED'
           });
         }
         setNoStoreHeaders(res);
         return res.status(status).json({
+          outcome: 'NOT_COMMITTED',
           error: error.message,
           committed: false,
-          deregistration_id: null,
           physical_staging_presence: 'UNKNOWN_UNCHANGED'
         });
       }

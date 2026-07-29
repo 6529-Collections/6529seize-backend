@@ -782,6 +782,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     expect(response.status).toBe(503);
     expect(response.cacheControl).toContain('no-store');
     expect(response.body).toEqual({
+      outcome: 'COMMITTED',
       error: expect.stringContaining(`deregistration_id=${RESET_ID}`),
       committed: true,
       deregistration_id: RESET_ID,
@@ -1517,9 +1518,9 @@ describe('Release Bus v2 route authorization and exact actions', () => {
 
       expect(response.status).toBe(status);
       expect(response.body).toEqual({
+        outcome: 'NOT_COMMITTED',
         error: 'Candidate deregistration remains blocked',
         committed: false,
-        deregistration_id: null,
         physical_staging_presence: 'UNKNOWN_UNCHANGED'
       });
       expect(response.cacheControl).toContain('no-store');

@@ -10,54 +10,27 @@
  * Do not edit the class manually.
  */
 
+import { ApiReleaseBusV2CandidateDeregistrationCommittedError } from '../models/ApiReleaseBusV2CandidateDeregistrationCommittedError';
+import { ApiReleaseBusV2CandidateDeregistrationUncommittedError } from '../models/ApiReleaseBusV2CandidateDeregistrationUncommittedError';
 import { HttpFile } from '../http/http';
 
-export class ApiReleaseBusV2CandidateDeregistrationError {
-    'error': string;
-    'committed': boolean;
-    'deregistration_id': string | null;
-    'physical_staging_presence': ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum;
+/**
+ * @type ApiReleaseBusV2CandidateDeregistrationError
+ * Type
+ * @export
+ */
+export type ApiReleaseBusV2CandidateDeregistrationError = ApiReleaseBusV2CandidateDeregistrationCommittedError | ApiReleaseBusV2CandidateDeregistrationUncommittedError;
 
-    static readonly discriminator: string | undefined = undefined;
+/**
+* @type ApiReleaseBusV2CandidateDeregistrationErrorClass
+* @export
+*/
+export class ApiReleaseBusV2CandidateDeregistrationErrorClass {
+    static readonly discriminator: string | undefined = "outcome";
 
-    static readonly mapping: {[index: string]: string} | undefined = undefined;
-
-    static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-        {
-            "name": "error",
-            "baseName": "error",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "committed",
-            "baseName": "committed",
-            "type": "boolean",
-            "format": ""
-        },
-        {
-            "name": "deregistration_id",
-            "baseName": "deregistration_id",
-            "type": "string",
-            "format": "uuid"
-        },
-        {
-            "name": "physical_staging_presence",
-            "baseName": "physical_staging_presence",
-            "type": "ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum",
-            "format": ""
-        }    ];
-
-    static getAttributeTypeMap() {
-        return ApiReleaseBusV2CandidateDeregistrationError.attributeTypeMap;
-    }
-
-    public constructor() {
-    }
-}
-
-export enum ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum {
-    Unchanged = 'UNKNOWN_UNCHANGED',
-    Detached = 'UNKNOWN_DETACHED'
+    static readonly mapping: {[index: string]: string} | undefined = {
+        "COMMITTED": "ApiReleaseBusV2CandidateDeregistrationCommittedError",
+        "NOT_COMMITTED": "ApiReleaseBusV2CandidateDeregistrationUncommittedError",
+    };
 }
 

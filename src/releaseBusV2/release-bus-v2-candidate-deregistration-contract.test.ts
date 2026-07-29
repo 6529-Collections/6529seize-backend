@@ -3,9 +3,16 @@ import {
   ApiReleaseBusV2CandidateDeregistrationExecuteRequestPhaseEnum
 } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationExecuteRequest';
 import {
-  ApiReleaseBusV2CandidateDeregistrationError,
-  ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum
-} from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationError';
+  ApiReleaseBusV2CandidateDeregistrationCommittedError,
+  ApiReleaseBusV2CandidateDeregistrationCommittedErrorOutcomeEnum,
+  ApiReleaseBusV2CandidateDeregistrationCommittedErrorPhysicalStagingPresenceEnum
+} from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationCommittedError';
+import { ApiReleaseBusV2CandidateDeregistrationError } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationError';
+import {
+  ApiReleaseBusV2CandidateDeregistrationUncommittedError,
+  ApiReleaseBusV2CandidateDeregistrationUncommittedErrorOutcomeEnum,
+  ApiReleaseBusV2CandidateDeregistrationUncommittedErrorPhysicalStagingPresenceEnum
+} from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationUncommittedError';
 import { ApiReleaseBusV2CandidateDeregistrationPrepareRequestPhaseEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationPrepareRequest';
 import { ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationResponse';
 import { ReleaseBusV2CandidateStagingLiveStateEnum } from '@/api/generated/models/ReleaseBusV2Candidate';
@@ -69,18 +76,21 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
 
   it.each([
     {
+      outcome:
+        ApiReleaseBusV2CandidateDeregistrationUncommittedErrorOutcomeEnum.NotCommitted,
       error: 'The exact safety fence changed before commit',
       committed: false,
-      deregistration_id: null,
       physical_staging_presence:
-        ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum.Unchanged
+        ApiReleaseBusV2CandidateDeregistrationUncommittedErrorPhysicalStagingPresenceEnum.UnknownUnchanged
     },
     {
+      outcome:
+        ApiReleaseBusV2CandidateDeregistrationCommittedErrorOutcomeEnum.Committed,
       error: 'The inventory committed before lock cleanup failed',
       committed: true,
       deregistration_id: '123e4567-e89b-42d3-a456-426614174001',
       physical_staging_presence:
-        ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum.Detached
+        ApiReleaseBusV2CandidateDeregistrationCommittedErrorPhysicalStagingPresenceEnum.UnknownDetached
     }
   ] satisfies readonly ApiReleaseBusV2CandidateDeregistrationError[])(
     'round-trips committed=$committed error evidence through the generated serializer',
@@ -98,9 +108,23 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
 
       expect(serialized).toEqual(evidence);
       expect(deserialized).toMatchObject(evidence);
+      const expectedType =
+        evidence.outcome ===
+        ApiReleaseBusV2CandidateDeregistrationCommittedErrorOutcomeEnum.Committed
+          ? 'ApiReleaseBusV2CandidateDeregistrationCommittedError'
+          : 'ApiReleaseBusV2CandidateDeregistrationUncommittedError';
       expect(
-        ApiReleaseBusV2CandidateDeregistrationError.getAttributeTypeMap()
-      ).toHaveLength(4);
+        ObjectSerializer.findCorrectType(
+          evidence,
+          'ApiReleaseBusV2CandidateDeregistrationError'
+        )
+      ).toBe(expectedType);
+      expect(
+        evidence.outcome ===
+          ApiReleaseBusV2CandidateDeregistrationCommittedErrorOutcomeEnum.Committed
+          ? ApiReleaseBusV2CandidateDeregistrationCommittedError.getAttributeTypeMap()
+          : ApiReleaseBusV2CandidateDeregistrationUncommittedError.getAttributeTypeMap()
+      ).toHaveLength(evidence.committed ? 5 : 4);
     }
   );
 
@@ -129,10 +153,17 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
     expect(schemas.match(/uniqueItems: true/g)).toHaveLength(3);
     expect(schemas).toContain('additionalProperties: false');
     expect(schemas).toContain('PREPARE accepts only phase and reason');
-    expect(schemas.match(/oneOf:/g)).toHaveLength(1);
+    expect(schemas.match(/oneOf:/g)).toHaveLength(2);
     expect(schemas).toContain('propertyName: phase');
+    expect(schemas).toContain('propertyName: outcome');
     expect(schemas).toMatch(
-      /ApiReleaseBusV2CandidateDeregistrationError:\n\s+type: object/
+      /ApiReleaseBusV2CandidateDeregistrationError:\n\s+oneOf:/
+    );
+    expect(schemas).toMatch(
+      /ApiReleaseBusV2CandidateDeregistrationCommittedError:\n\s+type: object/
+    );
+    expect(schemas).toMatch(
+      /ApiReleaseBusV2CandidateDeregistrationUncommittedError:\n\s+type: object/
     );
     expect(schemas).toMatch(
       /expected_candidates:\n\s+type: array\n\s+minItems: 1/
