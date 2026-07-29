@@ -153,6 +153,12 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(guard).toContain('--arg source_sha "$GITHUB_SHA"');
     expect(guard).toContain('.ready == true and .mode == "manual"');
     expect(guard).toContain('.authorized == true and .train_id == $train_id');
+    expect(guard).toContain('authorization_max_attempts=6');
+    expect(guard).toContain(
+      '[ -z "$INPUT_OPERATION_KEY" ] && [ "$http_status" = 409 ]'
+    );
+    expect(guard).toContain('sleep 5');
+    expect(guard).toContain('rejection_reason=');
     expect(guard).not.toContain('head -c 4000');
     expect(steps[verifySource]?.if).toBeUndefined();
     expect(steps[verifySource]?.run).toContain(
@@ -285,6 +291,95 @@ printf '200'
         },
         url: 'https://release-bus.invalid/deploy/release-bus-v2/authorize'
       });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('retries transient manual authorization conflicts without retrying Release Bus operations', () => {
+    const parsed = YAML.parse(deploy) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const guard = parsed.jobs['build-and-deploy'].steps.find(
+      ({ name }) => name === 'Authorize exact deployment operation'
+    )?.run;
+    expect(guard).toBeTruthy();
+    const fixture = mkdtempSync(path.join(tmpdir(), 'deploy-guard-retry-'));
+    const fakeCurl = path.join(fixture, 'curl');
+    const fakeSleep = path.join(fixture, 'sleep');
+    const callCount = path.join(fixture, 'call-count.txt');
+    const response = path.join(fixture, 'response.json');
+    writeFileSync(
+      fakeCurl,
+      `#!/bin/sh
+output=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+count="$(cat "$CALL_COUNT" 2>/dev/null || printf 0)"
+count=$((count + 1))
+printf '%s' "$count" > "$CALL_COUNT"
+if [ "$count" -lt 3 ]; then
+  printf '{"message":"Manual deployment workflow identity does not match this run"}' > "$output"
+  printf '409'
+else
+  cp "$CAPTURE_RESPONSE" "$output"
+  printf '200'
+fi
+`
+    );
+    writeFileSync(fakeSleep, '#!/bin/sh\nexit 0\n');
+    chmodSync(fakeCurl, 0o755);
+    chmodSync(fakeSleep, 0o755);
+    writeFileSync(
+      response,
+      `${JSON.stringify({
+        ready: true,
+        mode: 'manual',
+        lane: 'STAGING',
+        repository: 'backend',
+        environment: 'staging',
+        service: 'api',
+        workflow_run_id: '12345',
+        workflow_run_attempt: 2,
+        source_ref: '1a-staging',
+        source_sha: 'a'.repeat(40)
+      })}\n`
+    );
+    const execute = (operationKey: string) =>
+      execFileSync('bash', ['-c', guard ?? 'exit 1'], {
+        cwd: root,
+        env: {
+          ...process.env,
+          CALL_COUNT: callCount,
+          CAPTURE_RESPONSE: response,
+          GITHUB_REF_NAME: '1a-staging',
+          GITHUB_RUN_ATTEMPT: '2',
+          GITHUB_RUN_ID: '12345',
+          GITHUB_SHA: 'a'.repeat(40),
+          INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
+          INPUT_ARTIFACT_RUN_ID: '54321',
+          INPUT_ENVIRONMENT: 'staging',
+          INPUT_EXPECTED_SHA: 'a'.repeat(40),
+          INPUT_OPERATION_KEY: operationKey,
+          INPUT_SERVICE: 'api',
+          INPUT_TRAIN_ID: 'train-id',
+          PATH: `${fixture}:${process.env.PATH ?? ''}`,
+          RELEASE_BUS_API_URL: 'https://release-bus.invalid',
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'test-token'
+        },
+        stdio: 'pipe'
+      });
+    try {
+      expect(() => execute('')).not.toThrow();
+      expect(readFileSync(callCount, 'utf8')).toBe('3');
+
+      writeFileSync(callCount, '0');
+      expect(() => execute('rb2:train-id:deploy:api:a1')).toThrow();
+      expect(readFileSync(callCount, 'utf8')).toBe('1');
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

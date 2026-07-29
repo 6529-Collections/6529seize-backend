@@ -315,19 +315,35 @@ jobs:
               '{repository:$repository,environment:$environment,service:$service,workflow_run_id:$workflow_run_id,workflow_run_attempt:$workflow_run_attempt,source_ref:$source_ref,source_sha:$source_sha}')"
             endpoint=release-bus-v2/manual-deployment-readiness
           fi
-          http_status="$(curl --silent --show-error \
-            --connect-timeout 10 \
-            --max-time 60 \
-            --output "$response_file" \
-            --write-out '%{http_code}' \
-            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data "$payload" \
-            "$RELEASE_BUS_API_URL/deploy/$endpoint")"
-          if [ "$http_status" != 200 ]; then
-            echo "::error::Deployment authorization was rejected with HTTP $http_status"
+          authorization_attempt=1
+          authorization_max_attempts=6
+          while true; do
+            http_status="$(curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 60 \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data "$payload" \
+              "$RELEASE_BUS_API_URL/deploy/$endpoint")"
+            if [ "$http_status" = 200 ]; then
+              break
+            fi
+            if [ -z "$INPUT_OPERATION_KEY" ] && [ "$http_status" = 409 ] && [ "$authorization_attempt" -lt "$authorization_max_attempts" ]; then
+              echo "Manual deployment authorization is not ready; retrying after GitHub run-state propagation"
+              authorization_attempt=$((authorization_attempt + 1))
+              sleep 5
+              continue
+            fi
+            rejection_reason="$(jq -r '(.message // .error // empty) | tostring' "$response_file" 2>/dev/null | tr '\\r\\n' ' ' | cut -c1-300)"
+            if [ -n "$rejection_reason" ]; then
+              echo "::error::Deployment authorization was rejected with HTTP $http_status: $rejection_reason"
+            else
+              echo "::error::Deployment authorization was rejected with HTTP $http_status"
+            fi
             exit 1
-          fi
+          done
           if [ -n "$INPUT_OPERATION_KEY" ]; then
             jq -e \
               --arg train_id "$INPUT_TRAIN_ID" \
