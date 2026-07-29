@@ -521,6 +521,14 @@ function trustedWorkflowTransition(
   );
 }
 
+function trustedGatePolicyBundleRollout(from: string, to: string) {
+  return {
+    from,
+    to,
+    expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+  } as const;
+}
+
 const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   Record<
     ReleaseBusV2Repository,
@@ -557,11 +565,10 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
       to: '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     },
-    {
-      from: '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f',
-      to: '9726b0045dd826249544782a3effde02a867136378d45ece0e19e745343e36d4',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
+    trustedGatePolicyBundleRollout(
+      '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f',
+      '9726b0045dd826249544782a3effde02a867136378d45ece0e19e745343e36d4'
+    )
   ],
   frontend: [
     {
@@ -569,11 +576,10 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
       to: '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     },
-    {
-      from: '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
-      to: '8f8e4348f8b95957ed17c707839199f1aa1902ea151c637066e5a33ce7ec6379',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
+    trustedGatePolicyBundleRollout(
+      '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
+      '8f8e4348f8b95957ed17c707839199f1aa1902ea151c637066e5a33ce7ec6379'
+    )
   ]
 };
 
