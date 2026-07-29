@@ -705,6 +705,189 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     );
   });
 
+  it('blocks detached manual staging refs without resurrecting an old validated manifest', async () => {
+    const frontendMain = 'f'.repeat(40);
+    const backendMain = 'b'.repeat(40);
+    const state: ReleaseBusV2StagingStateRecord = {
+      id: 'current',
+      status: 'DETACHED_MANUAL_OWNERSHIP',
+      current_manifest_id: null,
+      last_validated_manifest_id: 'historical-manifest',
+      frontend_sha: null,
+      backend_sha: null,
+      frontend_staging_ref_sha: null,
+      backend_staging_ref_sha: null,
+      clean_main: false,
+      last_transition_train_id: null,
+      updated_at: 1,
+      row_version: 9
+    };
+    const findStagingValidatedManifestByShas = jest.fn();
+    const commitDetachedStagingCleanMain = jest.fn();
+    const createTrain = jest.fn();
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      acquireLock: async () => ({ lease_token: 'scheduler' }),
+      releaseLock: async () => true,
+      getStagingState: async () => state,
+      findStagingValidatedManifestByShas,
+      commitDetachedStagingCleanMain,
+      listControls: async () => [
+        { scope: 'ALL', paused: false },
+        { scope: 'STAGING', paused: false },
+        { scope: 'PRODUCTION', paused: false }
+      ],
+      listTrains: async () => [],
+      createTrain
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(
+      service.claimLane('STAGING', frontendMain, backendMain, 'operator', {
+        frontendSha: '1'.repeat(40),
+        backendSha: '2'.repeat(40)
+      })
+    ).resolves.toBeNull();
+    expect(findStagingValidatedManifestByShas).not.toHaveBeenCalled();
+    expect(commitDetachedStagingCleanMain).not.toHaveBeenCalled();
+    expect(createTrain).not.toHaveBeenCalled();
+  });
+
+  it('hard-blocks production claiming while staging ownership is detached', async () => {
+    const ready = candidate('a1', 'frontend', 'READY_FOR_PRODUCTION', false);
+    const listCandidates = jest.fn(async () => [ready]);
+    const createTrain = jest.fn();
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      acquireLock: async () => ({ lease_token: 'scheduler' }),
+      releaseLock: async () => true,
+      getStagingState: async () => ({
+        id: 'current',
+        status: 'DETACHED_MANUAL_OWNERSHIP',
+        current_manifest_id: null,
+        last_validated_manifest_id: 'historical-manifest',
+        frontend_sha: null,
+        backend_sha: null,
+        frontend_staging_ref_sha: null,
+        backend_staging_ref_sha: null,
+        clean_main: false,
+        last_transition_train_id: null,
+        updated_at: 1,
+        row_version: 9
+      }),
+      listControls: async () => [
+        { scope: 'ALL', paused: false },
+        { scope: 'STAGING', paused: false },
+        { scope: 'PRODUCTION', paused: false }
+      ],
+      listCandidates,
+      createTrain
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        'f'.repeat(40),
+        'b'.repeat(40),
+        'operator'
+      )
+    ).resolves.toBeNull();
+    expect(listCandidates).not.toHaveBeenCalled();
+    expect(createTrain).not.toHaveBeenCalled();
+  });
+
+  it('bootstraps detached ownership only from exact current mains and does not restore historical membership', async () => {
+    const frontendMain = 'f'.repeat(40);
+    const backendMain = 'b'.repeat(40);
+    const ready = candidate('b2', 'backend', 'READY_FOR_STAGING', false);
+    let state: ReleaseBusV2StagingStateRecord = {
+      id: 'current',
+      status: 'DETACHED_MANUAL_OWNERSHIP',
+      current_manifest_id: null,
+      last_validated_manifest_id: 'historical-manifest',
+      frontend_sha: null,
+      backend_sha: null,
+      frontend_staging_ref_sha: null,
+      backend_staging_ref_sha: null,
+      clean_main: false,
+      last_transition_train_id: null,
+      updated_at: 1,
+      row_version: 9
+    };
+    const findStagingValidatedManifestByShas = jest.fn();
+    const commitDetachedStagingCleanMain = jest.fn(async () => {
+      state = {
+        ...state,
+        status: 'CLEAN_MAIN',
+        current_manifest_id: null,
+        frontend_sha: frontendMain,
+        backend_sha: backendMain,
+        frontend_staging_ref_sha: frontendMain,
+        backend_staging_ref_sha: backendMain,
+        clean_main: true,
+        row_version: 10
+      };
+    });
+    const createTrain = jest.fn(async () => train('exact-main-plus-b'));
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      acquireLock: async () => ({ lease_token: 'scheduler' }),
+      releaseLock: async () => true,
+      getStagingState: async () => state,
+      findStagingValidatedManifestByShas,
+      commitDetachedStagingCleanMain,
+      listControls: async () => [
+        { scope: 'ALL', paused: false },
+        { scope: 'STAGING', paused: false },
+        { scope: 'PRODUCTION', paused: false }
+      ],
+      listTrains: async () => [],
+      listCandidates: async (statuses: string[]) =>
+        statuses.includes('READY_FOR_STAGING') ? [ready] : [],
+      listLiveStagingCandidates: async () => [],
+      listStagingTransitionRequests: async () => [],
+      listDependencies: async () => [],
+      createTrain,
+      updateCandidate: async () => true,
+      appendEvent: async () => undefined
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(
+      service.claimLane('STAGING', frontendMain, backendMain, 'operator', {
+        frontendSha: frontendMain,
+        backendSha: backendMain
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 'exact-main-plus-b' }));
+    expect(commitDetachedStagingCleanMain).toHaveBeenCalledWith(
+      {
+        expectedStateVersion: 9,
+        frontendSha: frontendMain,
+        backendSha: backendMain
+      },
+      expect.anything()
+    );
+    expect(findStagingValidatedManifestByShas).not.toHaveBeenCalled();
+    expect(createTrain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateIds: [ready.id],
+        stagingBaselineManifestId: null,
+        stagingTransition: expect.objectContaining({
+          baseline_manifest_id: null,
+          baseline_state_version: 10
+        })
+      }),
+      expect.anything()
+    );
+  });
+
   it('fences stale validation before it can overwrite a newer authoritative live manifest', async () => {
     const statements: string[] = [];
     const db = {

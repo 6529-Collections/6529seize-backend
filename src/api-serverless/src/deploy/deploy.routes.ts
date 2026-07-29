@@ -27,6 +27,7 @@ import {
   ReleaseBusV2CandidateActionBodySchema,
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
+  ReleaseBusV2CandidateDeregistrationBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
   ReleaseBusV2CurrentStagingRepairBodySchema,
   ReleaseBusV2ManualDeploymentReadinessBodySchema,
@@ -55,6 +56,10 @@ import {
   releaseBusV2ManualDeploymentGuard,
   type ReleaseBusV2ManualDeploymentAuthorizationInput
 } from '@/releaseBusV2/release-bus-v2.manual-deployment';
+import {
+  isReleaseBusV2CandidateDeregistrationError,
+  releaseBusV2CandidateDeregistrationService
+} from '@/releaseBusV2/release-bus-v2.candidate-deregistration';
 import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -71,6 +76,15 @@ import {
   type ReleaseBusV2ControlScope,
   type ReleaseBusV2RegisterInput
 } from '@/releaseBusV2/release-bus-v2.types';
+import type { ApiReleaseBusV2CandidateDeregistrationRequest } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationRequest';
+import { ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
+import { ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationLockVersion';
+import {
+  ApiReleaseBusV2CandidateDeregistrationResponse,
+  ApiReleaseBusV2CandidateDeregistrationResponseModeEnum,
+  ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum,
+  ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum
+} from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationResponse';
 
 const logger = Logger.get('DeployRoutes');
 
@@ -929,6 +943,90 @@ deployRoutes.post(
           ? error.message
           : 'Stalled production qualification recovery failed'
       );
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/deregister-all-candidates',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    const body =
+      getValidatedByJoiOrThrow<ApiReleaseBusV2CandidateDeregistrationRequest>(
+        req.body,
+        ReleaseBusV2CandidateDeregistrationBodySchema
+      );
+    try {
+      const result =
+        body.phase === 'PREPARE'
+          ? await releaseBusV2CandidateDeregistrationService.prepare(
+              body.reason
+            )
+          : await releaseBusV2CandidateDeregistrationService.execute(
+              {
+                reason: body.reason,
+                expected_plan_sha256: body.expected_plan_sha256!,
+                expected_inventory_sha256: body.expected_inventory_sha256!,
+                expected_candidates: Array.from(body.expected_candidates!),
+                expected_controls: Array.from(body.expected_controls!),
+                expected_locks: Array.from(body.expected_locks!),
+                expected_staging_state_row_version:
+                  body.expected_staging_state_row_version!,
+                expected_staging_refs: body.expected_staging_refs!
+              },
+              actor
+            );
+      const response: ApiReleaseBusV2CandidateDeregistrationResponse = {
+        ...result,
+        phase:
+          result.phase === 'PREPARE'
+            ? ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Prepare
+            : ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Execute,
+        candidates: [...result.candidates],
+        controls: result.controls.map((control) => ({
+          ...control,
+          scope:
+            control.scope === 'ALL'
+              ? ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.All
+              : control.scope === 'STAGING'
+                ? ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Staging
+                : ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Production
+        })),
+        locks: result.locks.map((lock) => ({
+          ...lock,
+          name:
+            lock.name === 'scheduler'
+              ? ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.Scheduler
+              : lock.name === 'staging-environment'
+                ? ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.StagingEnvironment
+                : ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.ProductionEnvironment
+        })),
+        mode:
+          result.mode === 'PRODUCTION'
+            ? ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Production
+            : result.mode === 'STAGING'
+              ? ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Staging
+              : ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Off,
+        physical_staging_presence:
+          result.physical_staging_presence === 'UNKNOWN_DETACHED'
+            ? ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Detached
+            : ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Unchanged,
+        requested_by: actor
+      };
+      setNoStoreHeaders(res);
+      return res.json(response);
+    } catch (error) {
+      if (isReleaseBusV2CandidateDeregistrationError(error)) {
+        const status =
+          error.code === 'BAD_REQUEST'
+            ? 400
+            : error.code === 'CONFLICT'
+              ? 409
+              : 503;
+        throw new CustomApiCompliantException(status, error.message);
+      }
+      throw error;
     }
   }
 );

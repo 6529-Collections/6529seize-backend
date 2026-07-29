@@ -337,6 +337,56 @@ republished so an idempotent retry can recover a prior GitHub outage. A nonzero
 failure count requires operator follow-up even though the durable ledger repair
 already committed.
 
+### Logical candidate deregistration
+
+The operator-only
+`POST /deploy/release-bus-v2/maintenance/deregister-all-candidates` action has
+separate `PREPARE` and `EXECUTE` phases. It is an exceptional logical ledger
+reset, not a staging removal deployment. Preparation is read-only and returns
+the exact candidate inventory digest, every candidate/control/lock row version,
+the staging-state row version, and the observed frontend/backend `1a-staging`
+refs. Execution must repeat that complete plan.
+
+Execution is allowed only when `ALL` is unpaused, both independently changeable
+lanes are paused `OFF`, all three v2 locks are wholly free, all trains and
+operations are terminal, and backend/frontend staging and production
+mutation/E2E workflows are inactive. It temporarily owns all three exact locks,
+rechecks the workflow/ref fence, and transactionally verifies the supplied
+control, lock, singleton, candidate-set, digest, and row versions.
+
+The transaction changes every candidate to `DEREGISTERED`, clears queue,
+current-train, admission, transition, live-manifest, and production-intent
+fields, and records `staging_live_state=DETACHED`. It preserves exact candidate
+identity, PR evidence, deploy plans, dependencies, historical staging
+validation pointers, trains, operations, manifests, and prior events. The
+singleton becomes `DETACHED_MANUAL_OWNERSHIP`: its last validated manifest is
+retained as history, while its current manifest and current SHA/ref fields are
+cleared. Global and per-candidate events record the before-state and inventory
+digest. No Git ref, artifact, workflow, deployment, E2E, release note, or
+immutable history is mutated.
+
+`DETACHED` means physical staging presence is deliberately unknown. It must
+never be rewritten to `NOT_LIVE`, `CLEAN_MAIN`, or a historical live manifest
+merely because the bus stopped owning those candidates. While detached, new
+registration and every staging claim fail closed. An old validated manifest
+whose SHAs still match the staging refs must not resurrect its members. The
+only automatic exit is when both exact `1a-staging` refs equal the current
+frontend/backend `main` bases; that proves clean main and changes detached
+candidate live fields to `NOT_LIVE` without restoring historical membership.
+If serialized manual fallback changed either staging ref to anything else, the
+bus remains detached until an authorized normalization deploy makes both refs
+exact current main. Re-registering a deregistered exact head after clean
+bootstrap requires fresh current branch and green PR evidence.
+
+The new literals fit the existing candidate/status/live-state and singleton
+`varchar` widths; this contract adds no DDL. Do not execute the maintenance
+action during a mixed API/reconciler rollout. Keep both lane controls paused
+until the API, reconciler, generated contracts, and UI all understand
+`DEREGISTERED`, `DETACHED`, and `DETACHED_MANUAL_OWNERSHIP`. An older
+reconciler cannot claim while the lane controls remain paused, so either
+deployment order is safe during that fenced window; resumption requires exact
+new-runtime parity.
+
 ## Operator rollout and rollback
 
 Deploy additive changes in this order: database migrations, API/UI, then the v2

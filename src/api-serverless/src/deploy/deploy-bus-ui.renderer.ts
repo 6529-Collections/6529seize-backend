@@ -227,8 +227,8 @@ export function renderDeployBusUiApp(): string {
   return String.raw`'use strict';
 (function(){
   var key='deploy-ui-token';
-  var terminal=['STAGING_VALIDATED','STAGING_ROLLBACK_FAILED','PRODUCTION_DEPLOYED','FAILED','CANCELLED'];
-  var candidateStatuses=['READY_FOR_STAGING','STAGING_IN_TRAIN','STAGING_BUILDING','STAGING_DEPLOYING','STAGING_DEPLOYED','STAGING_VALIDATING','STAGING_VALIDATED','READY_FOR_PRODUCTION','READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION','WAITING_FOR_PRODUCTION_REPLAN','PRODUCTION_IN_TRAIN','PRODUCTION_BUILDING_OR_QUALIFYING','PRODUCTION_DEPLOYING','PRODUCTION_DEPLOYED','NEEDS_REBASE','WAITING_FOR_DEPENDENCY','SUPERSEDED','FAILED','CANCELLED'];
+  var terminal=['STAGING_VALIDATED','STAGING_ROLLBACK_FAILED','PRODUCTION_DEPLOYED','FAILED','CANCELLED','DEREGISTERED'];
+  var candidateStatuses=['READY_FOR_STAGING','STAGING_IN_TRAIN','STAGING_BUILDING','STAGING_DEPLOYING','STAGING_DEPLOYED','STAGING_VALIDATING','STAGING_VALIDATED','READY_FOR_PRODUCTION','READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION','WAITING_FOR_PRODUCTION_REPLAN','PRODUCTION_IN_TRAIN','PRODUCTION_BUILDING_OR_QUALIFYING','PRODUCTION_DEPLOYING','PRODUCTION_DEPLOYED','NEEDS_REBASE','WAITING_FOR_DEPENDENCY','SUPERSEDED','FAILED','CANCELLED','DEREGISTERED'];
   var state={
     token:localStorage.getItem(key)||'',
     operator:false,
@@ -282,7 +282,7 @@ export function renderDeployBusUiApp(): string {
   function empty(message){return '<div class="empty">'+esc(message)+'</div>'}
   function statusTone(value){
     if(['STAGING_VALIDATED','PRODUCTION_DEPLOYED','SUCCEEDED','ON','LIVE'].includes(value))return 'success';
-    if(['FAILED','CANCELLED','STAGING_ROLLBACK_FAILED','OFF'].includes(value))return 'failed';
+    if(['FAILED','CANCELLED','DEREGISTERED','DETACHED','DETACHED_MANUAL_OWNERSHIP','STAGING_ROLLBACK_FAILED','OFF'].includes(value))return 'failed';
     if(['READY_FOR_STAGING','READY_FOR_PRODUCTION','READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION','WAITING_FOR_DEPENDENCY','WAITING_FOR_PRODUCTION_REPLAN','PAUSED'].includes(value))return 'warning';
     return ''
   }
@@ -467,7 +467,7 @@ export function renderDeployBusUiApp(): string {
       current=manifestById(staging.current_manifest_id);
       validated=manifestById(staging.last_validated_manifest_id);
       byId('staging-heads').innerHTML=
-        headPair('Currently deployed',current&&current.frontend_sha||staging.frontend_sha,current&&current.backend_sha||staging.backend_sha,staging.current_manifest_id)+
+        headPair(staging.status==='DETACHED_MANUAL_OWNERSHIP'?'Currently deployed (detached; physical bytes unknown)':'Currently deployed',current&&current.frontend_sha||staging.frontend_sha,current&&current.backend_sha||staging.backend_sha,staging.current_manifest_id)+
         headPair('Last successfully validated',validated&&validated.frontend_sha||staging.last_validated_frontend_sha,validated&&validated.backend_sha||staging.last_validated_backend_sha,staging.last_validated_manifest_id)
     }else{
       current=latestProductionManifest();

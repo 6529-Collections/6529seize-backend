@@ -5,7 +5,10 @@ import {
   RELEASE_BUS_V2_MANIFESTS_TABLE,
   RELEASE_BUS_V2_STAGING_STATE_TABLE
 } from '@/constants';
-import { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
+import {
+  releaseBusV2CandidateInventoryDigest,
+  ReleaseBusV2Repository
+} from '@/releaseBusV2/release-bus-v2.repository';
 import { ReleaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
 import { dbSupplier } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -1244,6 +1247,104 @@ describeWithSeed(
       await expect(
         repository.findStagingValidatedManifestByShas(SHA_A, SHA_B, {})
       ).resolves.toBeNull();
+    });
+
+    it('commits logical deregistration and its audit history in one exact database transaction', async () => {
+      const candidate = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 2001,
+          branchName: 'feature/logical-deregistration',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      await repository.setControl(
+        'STAGING',
+        true,
+        'integration maintenance',
+        'integration',
+        {}
+      );
+      await repository.setControl(
+        'PRODUCTION',
+        true,
+        'integration maintenance',
+        'integration',
+        {}
+      );
+      const controls = (await repository.listControls({})).map(
+        ({ scope, paused, row_version }) => ({
+          scope,
+          paused: paused === true || paused === 1,
+          row_version
+        })
+      );
+      const exactFreeLocks = (await repository.listLocks({})).map(
+        ({ name, row_version }) => ({ name, row_version })
+      );
+      const leases = await repository.acquireExactFreeMaintenanceLocks(
+        exactFreeLocks,
+        'integration-deregistration',
+        60_000
+      );
+      const candidates = await repository.listAllCandidates({});
+      const stagingState = await repository.getStagingState({});
+
+      try {
+        await repository.commitAllCandidateDeregistration({
+          deregistrationId: 'integration-deregistration',
+          actor: 'integration',
+          reason: 'Prove atomic logical deregistration',
+          expectedControls: controls,
+          maintenanceLeases: leases,
+          expectedStagingStateRowVersion: stagingState.row_version,
+          expectedCandidates: candidates.map(({ id, row_version }) => ({
+            id,
+            row_version
+          })),
+          expectedInventorySha256:
+            releaseBusV2CandidateInventoryDigest(candidates),
+          observedFrontendStagingSha: SHA_B,
+          observedBackendStagingSha: SHA_B
+        });
+
+        await expect(
+          repository.findCandidateById(candidate.id, {})
+        ).resolves.toMatchObject({
+          status: 'DEREGISTERED',
+          current_train_id: null,
+          staging_live_state: 'DETACHED',
+          staging_live_manifest_id: null,
+          production_requested_at: null
+        });
+        await expect(repository.getStagingState({})).resolves.toMatchObject({
+          status: 'DETACHED_MANUAL_OWNERSHIP',
+          current_manifest_id: null,
+          last_validated_manifest_id: stagingState.last_validated_manifest_id,
+          frontend_sha: null,
+          backend_sha: null,
+          clean_main: false
+        });
+        await expect(
+          repository.listCandidateEvents(
+            candidate.id,
+            'CANDIDATE_LOGICALLY_DEREGISTERED',
+            10,
+            {}
+          )
+        ).resolves.toEqual([
+          expect.objectContaining({
+            candidate_id: candidate.id,
+            github_actor: 'integration'
+          })
+        ]);
+      } finally {
+        await repository.releaseExactMaintenanceLocks(leases);
+      }
     });
 
     it('finds staging validation only for exact SHAs and artifact digests', async () => {

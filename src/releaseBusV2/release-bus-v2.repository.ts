@@ -120,6 +120,117 @@ export type ReleaseBusV2EventRecord = {
   readonly created_at: number;
 };
 
+export type ReleaseBusV2CandidateVersion = {
+  readonly id: string;
+  readonly row_version: number;
+};
+
+export type ReleaseBusV2ControlVersion = {
+  readonly scope: ReleaseBusV2ControlScope;
+  readonly paused: boolean;
+  readonly row_version: number;
+};
+
+export type ReleaseBusV2LockVersion = {
+  readonly name: string;
+  readonly row_version: number;
+};
+
+export type ReleaseBusV2MaintenanceLease = {
+  readonly name: string;
+  readonly lease_owner: string;
+  readonly lease_token: string;
+  readonly expires_at: number;
+  readonly row_version: number;
+};
+
+const RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES = [
+  'production-environment',
+  'scheduler',
+  'staging-environment'
+] as const;
+
+function canonicalDigestJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalDigestJson);
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalDigestJson(entry)])
+    );
+  return value;
+}
+
+function normalizedCandidateInventory(
+  candidates: readonly ReleaseBusV2CandidateRecord[]
+) {
+  return candidates
+    .map((candidate) => ({
+      id: candidate.id,
+      repository: candidate.repository,
+      pr_number: candidate.pr_number,
+      branch_name: candidate.branch_name,
+      head_sha: candidate.head_sha,
+      requested_by: candidate.requested_by,
+      status: candidate.status,
+      deploy_plan_json: canonicalDigestJson(
+        parsedJson(candidate.deploy_plan_json)
+      ),
+      pr_evidence_json: canonicalDigestJson(
+        parsedJson(candidate.pr_evidence_json)
+      ),
+      current_train_id: candidate.current_train_id,
+      staging_validated_train_id: candidate.staging_validated_train_id,
+      staging_validated_manifest_id: candidate.staging_validated_manifest_id,
+      staging_live_state: candidate.staging_live_state ?? null,
+      staging_live_manifest_id: candidate.staging_live_manifest_id ?? null,
+      staging_admitted_at: candidate.staging_admitted_at ?? null,
+      staging_live_updated_at: candidate.staging_live_updated_at ?? null,
+      staging_transition_request: candidate.staging_transition_request ?? null,
+      staging_transition_requested_at:
+        candidate.staging_transition_requested_at ?? null,
+      staging_transition_requested_by:
+        candidate.staging_transition_requested_by ?? null,
+      staging_transition_reason: candidate.staging_transition_reason ?? null,
+      production_requested_at: candidate.production_requested_at,
+      production_requested_by: candidate.production_requested_by,
+      production_selection_id: candidate.production_selection_id ?? null,
+      hold_reason: candidate.hold_reason,
+      superseded_at: candidate.superseded_at,
+      created_at: candidate.created_at,
+      updated_at: candidate.updated_at,
+      row_version: candidate.row_version
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function releaseBusV2CandidateInventoryDigest(
+  candidates: readonly ReleaseBusV2CandidateRecord[]
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify(normalizedCandidateInventory(candidates)))
+    .digest('hex');
+}
+
+function sameCandidateVersions(
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  expected: readonly ReleaseBusV2CandidateVersion[]
+): boolean {
+  if (candidates.length !== expected.length) return false;
+  const sortedExpected = [...expected].sort((left, right) =>
+    left.id.localeCompare(right.id)
+  );
+  return candidates.every(
+    (candidate, index) =>
+      candidate.id === sortedExpected[index]?.id &&
+      candidate.row_version === sortedExpected[index]?.row_version
+  );
+}
+
+function controlPaused(control: ReleaseBusV2ControlRecord): boolean {
+  return control.paused === true || control.paused === 1;
+}
+
 export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   public constructor(db: () => SqlExecutor = dbSupplier) {
     super(db);
@@ -203,7 +314,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
          and current_train_id is null
          and staging_live_state = 'NOT_LIVE'
-         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')
+         and status not in
+           ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED', 'DEREGISTERED')
        for update`,
       { repository, prNumber, headSha },
       dbOptions(ctx)
@@ -215,7 +327,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
        where repository = :repository and pr_number = :prNumber and head_sha <> :headSha
          and current_train_id is null
          and staging_live_state = 'NOT_LIVE'
-         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
+         and status not in
+           ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED', 'DEREGISTERED')`,
       { repository, prNumber, headSha, now },
       dbOptions(ctx)
     );
@@ -241,7 +354,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
          and head_sha <> :currentHeadSha
          and ${ownershipPredicate}
          and staging_live_state = 'NOT_LIVE'
-         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')
+         and status not in
+           ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED', 'DEREGISTERED')
        for update`,
       params,
       dbOptions(ctx)
@@ -256,7 +370,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
          and head_sha <> :currentHeadSha
          and ${ownershipPredicate}
          and staging_live_state = 'NOT_LIVE'
-         and status not in ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED')`,
+         and status not in
+           ('PRODUCTION_DEPLOYED', 'SUPERSEDED', 'CANCELLED', 'DEREGISTERED')`,
       { ...params, now },
       dbOptions(ctx)
     );
@@ -318,6 +433,18 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async listAllCandidates(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2CandidateRecord[]> {
+    return this.db.execute<ReleaseBusV2CandidateRecord>(
+      `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
+       order by id asc${forUpdate ? ' for update' : ''}`,
+      {},
+      dbOptions(ctx)
+    );
+  }
+
   public async listLiveStagingCandidates(
     ctx: RequestContext,
     forUpdate = false
@@ -326,6 +453,19 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where staging_live_state = 'LIVE'
        order by staging_admitted_at asc, created_at asc, id asc${forUpdate ? ' for update' : ''}`,
+      {},
+      dbOptions(ctx)
+    );
+  }
+
+  public async listDetachedStagingCandidates(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2CandidateRecord[]> {
+    return this.db.execute<ReleaseBusV2CandidateRecord>(
+      `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
+       where staging_live_state = 'DETACHED'
+       order by created_at asc, id asc${forUpdate ? ' for update' : ''}`,
       {},
       dbOptions(ctx)
     );
@@ -365,6 +505,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly productionSelectionId?: string | null;
       readonly holdReason?: string | null;
       readonly supersededAt?: number | null;
+      readonly prEvidence?: ReleaseBusV2PrEvidence | null;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -387,6 +528,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            production_selection_id = case when :setProductionSelectionId = 1 then :productionSelectionId else production_selection_id end,
            hold_reason = case when :setHoldReason = 1 then :holdReason else hold_reason end,
            superseded_at = case when :setSupersededAt = 1 then :supersededAt else superseded_at end,
+           pr_evidence_json = case when :setPrEvidence = 1 then :prEvidence else pr_evidence_json end,
            updated_at = :now, row_version = row_version + 1
        where id = :id and row_version = :rowVersion`,
       {
@@ -438,6 +580,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         holdReason: fields.holdReason ?? null,
         setSupersededAt: fields.supersededAt === undefined ? 0 : 1,
         supersededAt: fields.supersededAt ?? null,
+        setPrEvidence: fields.prEvidence === undefined ? 0 : 1,
+        prEvidence: json(fields.prEvidence),
         now: Date.now()
       },
       dbOptions(ctx)
@@ -679,6 +823,88 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         { removed, now },
         dbOptions(ctx)
       );
+  }
+
+  public async commitDetachedStagingCleanMain(
+    input: {
+      readonly expectedStateVersion: number;
+      readonly frontendSha: string;
+      readonly backendSha: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    if ((await this.listLiveStagingCandidates(ctx, true)).length > 0)
+      throw new Error(
+        'Detached staging cannot become clean main while a candidate is recorded live'
+      );
+    const detached = await this.listDetachedStagingCandidates(ctx, true);
+    if (detached.some(({ status }) => status !== 'DEREGISTERED'))
+      throw new Error(
+        'Detached staging contains a candidate that is not deregistered'
+      );
+    const state = await this.getStagingState(ctx, true);
+    if (
+      state.status !== 'DETACHED_MANUAL_OWNERSHIP' ||
+      state.row_version !== input.expectedStateVersion
+    )
+      throw new Error(
+        'Detached staging ownership changed during clean-main bootstrap'
+      );
+    const now = Date.now();
+    for (const candidate of detached) {
+      if (
+        !(await this.updateCandidate(
+          candidate.id,
+          candidate.row_version,
+          {
+            status: 'DEREGISTERED',
+            stagingLiveState: 'NOT_LIVE',
+            stagingLiveManifestId: null,
+            stagingAdmittedAt: null,
+            stagingLiveUpdatedAt: now
+          },
+          ctx
+        ))
+      )
+        throw new Error(
+          `Detached candidate ${candidate.id} changed during clean-main bootstrap`
+        );
+    }
+    if (
+      !(await this.updateStagingState(
+        state.row_version,
+        {
+          status: 'CLEAN_MAIN',
+          currentManifestId: null,
+          lastValidatedManifestId: state.last_validated_manifest_id,
+          frontendSha: input.frontendSha,
+          backendSha: input.backendSha,
+          frontendStagingRefSha: input.frontendSha,
+          backendStagingRefSha: input.backendSha,
+          cleanMain: true,
+          lastTransitionTrainId: null
+        },
+        ctx
+      ))
+    )
+      throw new Error(
+        'Detached staging ownership changed during clean-main bootstrap'
+      );
+    await this.appendEvent(
+      {
+        eventType: 'DETACHED_STAGING_BOOTSTRAPPED_FROM_EXACT_CLEAN_MAIN',
+        actor: 'release-bus-v2',
+        payload: {
+          frontend_sha: input.frontendSha,
+          backend_sha: input.backendSha,
+          deregistered_candidate_ids: detached.map(({ id }) => id),
+          restored_historical_manifest_id: state.last_validated_manifest_id,
+          historical_manifest_membership_restored: false,
+          physical_staging_presence: 'PROVEN_CLEAN_MAIN'
+        }
+      },
+      ctx
+    );
   }
 
   public async createQualificationTrain(
@@ -994,7 +1220,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listNonterminalOperationsForLanes(
     lanes: readonly ReleaseBusV2Lane[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2OperationRecord[]> {
     const uniqueLanes = Array.from(new Set(lanes));
     if (
@@ -1012,7 +1239,9 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
          on trains.id = operations.train_id
        where operations.status not in ('SUCCEEDED', 'FAILED', 'CANCELLED')
          and trains.lane in (:lanes)
-       order by operations.created_at asc, operations.id asc`,
+       order by operations.created_at asc, operations.id asc${
+         forUpdate ? ' for update' : ''
+       }`,
       { lanes: uniqueLanes },
       dbOptions(ctx)
     );
@@ -1112,6 +1341,110 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       dbOptions(ctx)
     );
     return this.db.getAffectedRows(result) === 1;
+  }
+
+  public async acquireExactFreeMaintenanceLocks(
+    expected: readonly ReleaseBusV2LockVersion[],
+    leaseOwner: string,
+    ttlMs: number
+  ): Promise<ReleaseBusV2MaintenanceLease[]> {
+    return this.executeNativeQueriesInTransaction(async (connection) => {
+      const ctx: RequestContext = { connection };
+      const locks = await this.listLocks(ctx, true);
+      const sortedExpected = [...expected].sort((left, right) =>
+        left.name.localeCompare(right.name)
+      );
+      if (
+        locks.length !== RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES.length ||
+        sortedExpected.length !== RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES.length
+      )
+        throw new Error('Release Bus v2 maintenance lock inventory changed');
+      for (
+        let index = 0;
+        index < RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES.length;
+        index += 1
+      ) {
+        const lock = locks[index];
+        const expectedLock = sortedExpected[index];
+        const expectedName = RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES[index];
+        if (
+          !lock ||
+          !expectedLock ||
+          lock.name !== expectedName ||
+          expectedLock.name !== expectedName ||
+          lock.row_version !== expectedLock.row_version ||
+          lock.owner_train_id !== null ||
+          lock.lease_owner !== null ||
+          lock.lease_token !== null ||
+          lock.heartbeat_at !== null ||
+          lock.expires_at !== null
+        )
+          throw new Error(
+            'Release Bus v2 maintenance requires every exact lock to be wholly free'
+          );
+      }
+      const leases: ReleaseBusV2MaintenanceLease[] = [];
+      for (const name of RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES) {
+        const lease = await this.acquireLock(
+          name,
+          null,
+          leaseOwner,
+          ttlMs,
+          ctx
+        );
+        if (
+          !lease?.lease_token ||
+          lease.lease_owner !== leaseOwner ||
+          lease.expires_at === null
+        )
+          throw new Error(
+            `Release Bus v2 maintenance could not acquire ${name}`
+          );
+        leases.push({
+          name,
+          lease_owner: leaseOwner,
+          lease_token: lease.lease_token,
+          expires_at: lease.expires_at,
+          row_version: lease.row_version
+        });
+      }
+      return leases;
+    });
+  }
+
+  public async releaseExactMaintenanceLocks(
+    leases: readonly ReleaseBusV2MaintenanceLease[]
+  ): Promise<void> {
+    await this.executeNativeQueriesInTransaction(async (connection) => {
+      const ctx: RequestContext = { connection };
+      const locks = await this.listLocks(ctx, true);
+      const byName = new Map(leases.map((lease) => [lease.name, lease]));
+      if (
+        locks.length !== RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES.length ||
+        leases.length !== RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES.length
+      )
+        throw new Error('Release Bus v2 maintenance lease inventory changed');
+      for (const lock of locks) {
+        const lease = byName.get(lock.name);
+        if (
+          !lease ||
+          lock.owner_train_id !== null ||
+          lock.lease_owner !== lease.lease_owner ||
+          lock.lease_token !== lease.lease_token ||
+          lock.expires_at !== lease.expires_at ||
+          lock.row_version !== lease.row_version
+        )
+          throw new Error(
+            `Release Bus v2 maintenance lost exact ownership of ${lock.name}`
+          );
+      }
+      for (const lease of leases) {
+        if (!(await this.releaseLock(lease.name, lease.lease_token, ctx)))
+          throw new Error(
+            `Release Bus v2 maintenance could not release ${lease.name}`
+          );
+      }
+    });
   }
 
   public async listLocks(
@@ -1345,13 +1678,212 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   }
 
   public async listControls(
-    ctx: RequestContext
+    ctx: RequestContext,
+    forUpdate = false
   ): Promise<ReleaseBusV2ControlRecord[]> {
     return this.db.execute<ReleaseBusV2ControlRecord>(
-      `select * from ${RELEASE_BUS_V2_CONTROLS_TABLE} order by scope asc`,
+      `select * from ${RELEASE_BUS_V2_CONTROLS_TABLE} order by scope asc${
+        forUpdate ? ' for update' : ''
+      }`,
       {},
       dbOptions(ctx)
     );
+  }
+
+  public async commitAllCandidateDeregistration(input: {
+    readonly deregistrationId: string;
+    readonly actor: string;
+    readonly reason: string;
+    readonly expectedControls: readonly ReleaseBusV2ControlVersion[];
+    readonly maintenanceLeases: readonly ReleaseBusV2MaintenanceLease[];
+    readonly expectedStagingStateRowVersion: number;
+    readonly expectedCandidates: readonly ReleaseBusV2CandidateVersion[];
+    readonly expectedInventorySha256: string;
+    readonly observedFrontendStagingSha: string;
+    readonly observedBackendStagingSha: string;
+  }): Promise<{ readonly candidateCount: number }> {
+    return this.executeNativeQueriesInTransaction(async (connection) => {
+      const ctx: RequestContext = { connection };
+      const controls = await this.listControls(ctx, true);
+      const expectedControls = [...input.expectedControls].sort((left, right) =>
+        left.scope.localeCompare(right.scope)
+      );
+      if (
+        controls.length !== expectedControls.length ||
+        controls.some(
+          (control, index) =>
+            control.scope !== expectedControls[index]?.scope ||
+            control.row_version !== expectedControls[index]?.row_version ||
+            controlPaused(control) !== expectedControls[index]?.paused
+        )
+      )
+        throw new Error(
+          'Release Bus v2 controls changed during candidate deregistration'
+        );
+      const locks = await this.listLocks(ctx, true);
+      const leaseValidationNow = Date.now();
+      const leaseByName = new Map(
+        input.maintenanceLeases.map((lease) => [lease.name, lease])
+      );
+      if (
+        locks.length !== RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES.length ||
+        locks.some((lock) => {
+          const lease = leaseByName.get(lock.name);
+          return (
+            !lease ||
+            lock.owner_train_id !== null ||
+            lock.lease_owner !== lease.lease_owner ||
+            lock.lease_token !== lease.lease_token ||
+            lock.heartbeat_at === null ||
+            lock.expires_at !== lease.expires_at ||
+            lease.expires_at <= leaseValidationNow ||
+            lock.row_version !== lease.row_version
+          );
+        })
+      )
+        throw new Error(
+          'Release Bus v2 maintenance lock ownership changed during candidate deregistration'
+        );
+      if ((await this.listActiveTrains(ctx, true)).length > 0)
+        throw new Error(
+          'Release Bus v2 candidate deregistration requires every train to be terminal'
+        );
+      if (
+        (
+          await this.listNonterminalOperationsForLanes(
+            ['STAGING', 'PRODUCTION', 'PRODUCTION_QUALIFICATION'],
+            ctx,
+            true
+          )
+        ).length > 0
+      )
+        throw new Error(
+          'Release Bus v2 candidate deregistration requires every operation to be terminal'
+        );
+      const state = await this.getStagingState(ctx, true);
+      if (state.row_version !== input.expectedStagingStateRowVersion)
+        throw new Error(
+          'Authoritative staging state changed during candidate deregistration'
+        );
+      const candidates = await this.listAllCandidates(ctx, true);
+      if (
+        !sameCandidateVersions(candidates, input.expectedCandidates) ||
+        releaseBusV2CandidateInventoryDigest(candidates) !==
+          input.expectedInventorySha256
+      )
+        throw new Error(
+          'Exact candidate inventory changed during candidate deregistration'
+        );
+      const now = Date.now();
+      for (const candidate of candidates) {
+        if (
+          !(await this.updateCandidate(
+            candidate.id,
+            candidate.row_version,
+            {
+              status: 'DEREGISTERED',
+              currentTrainId: null,
+              stagingLiveState: 'DETACHED',
+              stagingLiveManifestId: null,
+              stagingAdmittedAt: null,
+              stagingLiveUpdatedAt: now,
+              stagingTransitionRequest: null,
+              stagingTransitionRequestedAt: null,
+              stagingTransitionRequestedBy: null,
+              stagingTransitionReason: null,
+              productionRequestedAt: null,
+              productionRequestedBy: null,
+              productionSelectionId: null,
+              holdReason: null
+            },
+            ctx
+          ))
+        )
+          throw new Error(
+            `Candidate ${candidate.id} changed during candidate deregistration`
+          );
+        await this.appendEvent(
+          {
+            candidateId: candidate.id,
+            eventType: 'CANDIDATE_LOGICALLY_DEREGISTERED',
+            actor: input.actor,
+            payload: {
+              deregistration_id: input.deregistrationId,
+              inventory_sha256: input.expectedInventorySha256,
+              reason: input.reason,
+              previous_status: candidate.status,
+              previous_row_version: candidate.row_version,
+              previous_staging_live_state: candidate.staging_live_state ?? null,
+              previous_staging_live_manifest_id:
+                candidate.staging_live_manifest_id ?? null,
+              previous_staging_admitted_at:
+                candidate.staging_admitted_at ?? null,
+              previous_production_requested_at:
+                candidate.production_requested_at,
+              previous_production_selection_id:
+                candidate.production_selection_id ?? null,
+              historical_staging_train_id: candidate.staging_validated_train_id,
+              historical_staging_manifest_id:
+                candidate.staging_validated_manifest_id,
+              physical_staging_presence: 'UNKNOWN_DETACHED'
+            }
+          },
+          ctx
+        );
+      }
+      if (
+        !(await this.updateStagingState(
+          state.row_version,
+          {
+            status: 'DETACHED_MANUAL_OWNERSHIP',
+            currentManifestId: null,
+            lastValidatedManifestId: state.last_validated_manifest_id,
+            frontendSha: null,
+            backendSha: null,
+            frontendStagingRefSha: null,
+            backendStagingRefSha: null,
+            cleanMain: false,
+            lastTransitionTrainId: null
+          },
+          ctx
+        ))
+      )
+        throw new Error(
+          'Authoritative staging state changed during candidate deregistration'
+        );
+      await this.appendEvent(
+        {
+          eventType: 'CANDIDATE_INVENTORY_LOGICALLY_DEREGISTERED',
+          actor: input.actor,
+          payload: {
+            deregistration_id: input.deregistrationId,
+            reason: input.reason,
+            candidate_count: candidates.length,
+            inventory_sha256: input.expectedInventorySha256,
+            previous_staging_state: {
+              status: state.status,
+              row_version: state.row_version,
+              current_manifest_id: state.current_manifest_id,
+              last_validated_manifest_id: state.last_validated_manifest_id,
+              frontend_sha: state.frontend_sha,
+              backend_sha: state.backend_sha,
+              frontend_staging_ref_sha: state.frontend_staging_ref_sha,
+              backend_staging_ref_sha: state.backend_staging_ref_sha,
+              clean_main: Boolean(state.clean_main),
+              last_transition_train_id: state.last_transition_train_id
+            },
+            observed_staging_refs: {
+              frontend: input.observedFrontendStagingSha,
+              backend: input.observedBackendStagingSha
+            },
+            physical_staging_presence: 'UNKNOWN_DETACHED',
+            immutable_history_preserved: true
+          }
+        },
+        ctx
+      );
+      return { candidateCount: candidates.length };
+    });
   }
 
   public async setControl(

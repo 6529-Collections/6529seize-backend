@@ -98,6 +98,12 @@ describe('deploy-bus-ui.renderer', () => {
     const app = renderDeployBusUiApp();
 
     expect(app).toContain("headPair('Currently deployed'");
+    expect(app).toContain("staging.status==='DETACHED_MANUAL_OWNERSHIP'");
+    expect(app).toContain(
+      "'Currently deployed (detached; physical bytes unknown)'"
+    );
+    expect(app).toContain("'DEREGISTERED'");
+    expect(app).toContain("'DETACHED'");
     expect(app).toContain("headPair('Last successfully validated'");
     expect(app).toContain('staging.last_validated_manifest_id');
     expect(app).toContain('staging.last_validated_frontend_sha');

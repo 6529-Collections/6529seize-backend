@@ -32,6 +32,8 @@ const mockManualDeploymentAuthorize = jest.fn();
 const mockManualDispatchReady = jest.fn();
 const mockRecoverUnsatisfiableProductionQualifications = jest.fn();
 const mockRepairCurrentStagingManifestCandidates = jest.fn();
+const mockCandidateDeregistrationPrepare = jest.fn();
+const mockCandidateDeregistrationExecute = jest.fn();
 
 class MockReleaseBusV2ProductionSelectionError extends Error {
   public constructor(
@@ -65,6 +67,16 @@ class MockReleaseBusV2ManualDeploymentError extends Error {
   ) {
     super(message);
     this.name = 'ReleaseBusV2ManualDeploymentError';
+  }
+}
+
+class MockReleaseBusV2CandidateDeregistrationError extends Error {
+  public constructor(
+    public readonly code: 'BAD_REQUEST' | 'CONFLICT' | 'UNAVAILABLE',
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2CandidateDeregistrationError';
   }
 }
 
@@ -171,6 +183,20 @@ jest.mock('@/releaseBusV2/release-bus-v2.reconciler', () => ({
   }
 }));
 
+jest.mock('@/releaseBusV2/release-bus-v2.candidate-deregistration', () => ({
+  isReleaseBusV2CandidateDeregistrationError: (error: unknown) =>
+    error instanceof Error &&
+    error.name === 'ReleaseBusV2CandidateDeregistrationError' &&
+    ['BAD_REQUEST', 'CONFLICT', 'UNAVAILABLE'].includes(
+      String((error as { code?: unknown }).code)
+    ),
+  releaseBusV2CandidateDeregistrationService: {
+    prepare: (...args: unknown[]) =>
+      mockCandidateDeregistrationPrepare(...args),
+    execute: (...args: unknown[]) => mockCandidateDeregistrationExecute(...args)
+  }
+}));
+
 import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'node:http';
 import {
@@ -267,6 +293,8 @@ function expectNoReleaseMutation(): void {
     mockV2Authorize,
     mockV2ReportProgress,
     mockV2InvalidateBranch,
+    mockCandidateDeregistrationPrepare,
+    mockCandidateDeregistrationExecute,
     mockLambdaSend
   ]) {
     expect(mutation).not.toHaveBeenCalled();
@@ -387,6 +415,15 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       name: 'stalled-qualification recovery',
       path: '/deploy/release-bus-v2/maintenance/recover-stalled-qualifications',
       body: {},
+      unrelatedStatus: 403
+    },
+    {
+      name: 'candidate inventory deregistration',
+      path: '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+      body: {
+        phase: 'PREPARE',
+        reason: 'Adversarial authorization test'
+      },
       unrelatedStatus: 403
     },
     {
@@ -561,6 +598,58 @@ describe('Release Bus v2 route authorization and exact actions', () => {
           changed: true
         }
       ]
+    });
+    mockCandidateDeregistrationPrepare.mockResolvedValue({
+      phase: 'PREPARE',
+      plan_sha256: '1'.repeat(64),
+      inventory_sha256: '2'.repeat(64),
+      candidate_count: 1,
+      candidates: [{ id: candidateId, row_version: 4 }],
+      controls: [
+        { scope: 'ALL', paused: false, row_version: 1 },
+        { scope: 'PRODUCTION', paused: true, row_version: 2 },
+        { scope: 'STAGING', paused: true, row_version: 3 }
+      ],
+      locks: [
+        { name: 'production-environment', row_version: 1 },
+        { name: 'scheduler', row_version: 2 },
+        { name: 'staging-environment', row_version: 3 }
+      ],
+      staging_state_row_version: 9,
+      staging_refs: {
+        frontend: SHA,
+        backend: 'b'.repeat(40)
+      },
+      mode: 'PRODUCTION',
+      executed: false,
+      deregistration_id: null,
+      physical_staging_presence: 'UNKNOWN_UNCHANGED'
+    });
+    mockCandidateDeregistrationExecute.mockResolvedValue({
+      phase: 'EXECUTE',
+      plan_sha256: '1'.repeat(64),
+      inventory_sha256: '2'.repeat(64),
+      candidate_count: 1,
+      candidates: [{ id: candidateId, row_version: 4 }],
+      controls: [
+        { scope: 'ALL', paused: false, row_version: 1 },
+        { scope: 'PRODUCTION', paused: true, row_version: 2 },
+        { scope: 'STAGING', paused: true, row_version: 3 }
+      ],
+      locks: [
+        { name: 'production-environment', row_version: 1 },
+        { name: 'scheduler', row_version: 2 },
+        { name: 'staging-environment', row_version: 3 }
+      ],
+      staging_state_row_version: 9,
+      staging_refs: {
+        frontend: SHA,
+        backend: 'b'.repeat(40)
+      },
+      mode: 'PRODUCTION',
+      executed: true,
+      deregistration_id: RESET_ID,
+      physical_staging_presence: 'UNKNOWN_DETACHED'
     });
   });
 
@@ -1213,6 +1302,124 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       error: 'PRODUCTION must remain paused'
     });
   });
+
+  it('prepares a read-only exact candidate deregistration inventory for an operator', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+      {
+        phase: 'PREPARE',
+        reason: 'Retire the audited candidate inventory'
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.cacheControl).toContain('no-store');
+    expect(mockCandidateDeregistrationPrepare).toHaveBeenCalledWith(
+      'Retire the audited candidate inventory'
+    );
+    expect(mockCandidateDeregistrationExecute).not.toHaveBeenCalled();
+    expect(response.body).toMatchObject({
+      phase: 'PREPARE',
+      candidate_count: 1,
+      mode: 'PRODUCTION',
+      executed: false,
+      deregistration_id: null,
+      physical_staging_presence: 'UNKNOWN_UNCHANGED',
+      requested_by: 'developer'
+    });
+  });
+
+  it('executes only a complete strict candidate/control/lock/state/ref CAS plan', async () => {
+    const expected = {
+      expected_plan_sha256: '1'.repeat(64),
+      expected_inventory_sha256: '2'.repeat(64),
+      expected_candidates: [{ id: candidateId, row_version: 4 }],
+      expected_controls: [
+        { scope: 'ALL', paused: false, row_version: 1 },
+        { scope: 'PRODUCTION', paused: true, row_version: 2 },
+        { scope: 'STAGING', paused: true, row_version: 3 }
+      ],
+      expected_locks: [
+        { name: 'production-environment', row_version: 1 },
+        { name: 'scheduler', row_version: 2 },
+        { name: 'staging-environment', row_version: 3 }
+      ],
+      expected_staging_state_row_version: 9,
+      expected_staging_refs: {
+        frontend: SHA,
+        backend: 'b'.repeat(40)
+      }
+    };
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...expected
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCandidateDeregistrationExecute).toHaveBeenCalledWith(
+      {
+        reason: 'Retire the audited candidate inventory',
+        ...expected
+      },
+      'developer'
+    );
+    expect(response.body).toMatchObject({
+      phase: 'EXECUTE',
+      executed: true,
+      deregistration_id: RESET_ID,
+      physical_staging_presence: 'UNKNOWN_DETACHED',
+      requested_by: 'developer'
+    });
+  });
+
+  it('rejects incomplete execute input before invoking deregistration', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        expected_plan_sha256: '1'.repeat(64)
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockCandidateDeregistrationPrepare).not.toHaveBeenCalled();
+    expect(mockCandidateDeregistrationExecute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['BAD_REQUEST', 400],
+    ['CONFLICT', 409],
+    ['UNAVAILABLE', 503]
+  ] as const)(
+    'maps candidate deregistration %s failures without another mutation',
+    async (code, status) => {
+      mockCandidateDeregistrationPrepare.mockRejectedValue(
+        new MockReleaseBusV2CandidateDeregistrationError(
+          code,
+          'Candidate deregistration remains blocked'
+        )
+      );
+
+      const response = await post(
+        '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+        {
+          phase: 'PREPARE',
+          reason: 'Retire the audited candidate inventory'
+        }
+      );
+
+      expect(response.status).toBe(status);
+      expect(response.body).toMatchObject({
+        error: 'Candidate deregistration remains blocked'
+      });
+      expect(mockCandidateDeregistrationExecute).not.toHaveBeenCalled();
+    }
+  );
 
   it('repairs only exact identities derived from the current staging manifest', async () => {
     const body = {

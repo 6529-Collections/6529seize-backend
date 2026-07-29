@@ -1,5 +1,15 @@
 import { DbPoolName, type DbQueryOptions } from '@/db-query.options';
-import { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
+import {
+  releaseBusV2CandidateInventoryDigest,
+  ReleaseBusV2Repository,
+  type ReleaseBusV2ControlRecord,
+  type ReleaseBusV2LockRecord,
+  type ReleaseBusV2MaintenanceLease
+} from '@/releaseBusV2/release-bus-v2.repository';
+import type {
+  ReleaseBusV2CandidateRecord,
+  ReleaseBusV2StagingStateRecord
+} from '@/releaseBusV2/release-bus-v2.types';
 import { type ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 
 class RecordingSqlExecutor extends SqlExecutor {
@@ -30,6 +40,115 @@ class RecordingSqlExecutor extends SqlExecutor {
   ): Promise<T> {
     throw new Error('Not used by this test');
   }
+}
+
+function candidate(
+  id: string,
+  overrides: Partial<ReleaseBusV2CandidateRecord> = {}
+): ReleaseBusV2CandidateRecord {
+  return {
+    id,
+    repository: 'frontend',
+    pr_number: 1,
+    branch_name: `feature/${id}`,
+    head_sha: 'a'.repeat(40),
+    requested_by: 'operator',
+    status: 'STAGING_VALIDATED',
+    deploy_plan_json: null,
+    pr_evidence_json: null,
+    current_train_id: null,
+    staging_validated_train_id: 'historical-train',
+    staging_validated_manifest_id: 'historical-manifest',
+    staging_live_state: 'LIVE',
+    staging_live_manifest_id: 'historical-manifest',
+    staging_admitted_at: 1,
+    staging_live_updated_at: 1,
+    production_requested_at: 2,
+    production_requested_by: 'operator',
+    production_selection_id: 'selection',
+    hold_reason: null,
+    superseded_at: null,
+    created_at: 1,
+    updated_at: 2,
+    row_version: 7,
+    ...overrides
+  };
+}
+
+function controlRows(): ReleaseBusV2ControlRecord[] {
+  return [
+    {
+      scope: 'ALL',
+      paused: false,
+      reason: null,
+      github_actor: null,
+      updated_at: 1,
+      row_version: 1
+    },
+    {
+      scope: 'PRODUCTION',
+      paused: true,
+      reason: 'maintenance',
+      github_actor: 'operator',
+      updated_at: 1,
+      row_version: 2
+    },
+    {
+      scope: 'STAGING',
+      paused: true,
+      reason: 'maintenance',
+      github_actor: 'operator',
+      updated_at: 1,
+      row_version: 3
+    }
+  ];
+}
+
+function acquiredLocks(now = Date.now()): {
+  readonly locks: ReleaseBusV2LockRecord[];
+  readonly leases: ReleaseBusV2MaintenanceLease[];
+} {
+  const locks = [
+    'production-environment',
+    'scheduler',
+    'staging-environment'
+  ].map((name, index) => ({
+    name,
+    owner_train_id: null,
+    lease_owner: 'maintenance-owner',
+    lease_token: `token-${name}`,
+    heartbeat_at: now,
+    expires_at: now + 60_000,
+    updated_at: now,
+    row_version: index + 10
+  }));
+  return {
+    locks,
+    leases: locks.map((lock) => ({
+      name: lock.name,
+      lease_owner: lock.lease_owner,
+      lease_token: lock.lease_token,
+      expires_at: lock.expires_at,
+      row_version: lock.row_version
+    }))
+  };
+}
+
+function state(): ReleaseBusV2StagingStateRecord {
+  return {
+    id: 'current',
+    status: 'LIVE',
+    current_manifest_id: 'historical-manifest',
+    last_validated_manifest_id: 'historical-manifest',
+    frontend_sha: 'a'.repeat(40),
+    backend_sha: 'b'.repeat(40),
+    frontend_staging_ref_sha: 'a'.repeat(40),
+    backend_staging_ref_sha: 'b'.repeat(40),
+    clean_main: false,
+    last_transition_train_id: 'historical-train',
+    updated_at: 1,
+    row_version: 4
+  };
 }
 
 describe('ReleaseBusV2Repository', () => {
@@ -67,5 +186,296 @@ describe('ReleaseBusV2Repository', () => {
     expect(db.calls[0]?.params).toEqual({
       lanes: ['STAGING', 'PRODUCTION_QUALIFICATION']
     });
+  });
+
+  it('digests the complete mutable candidate inventory deterministically', () => {
+    const first = candidate('candidate-a');
+    const second = candidate('candidate-b', {
+      repository: 'backend',
+      head_sha: 'b'.repeat(40)
+    });
+
+    expect(releaseBusV2CandidateInventoryDigest([first, second])).toBe(
+      releaseBusV2CandidateInventoryDigest([second, first])
+    );
+    expect(
+      releaseBusV2CandidateInventoryDigest([
+        first,
+        { ...second, production_requested_at: 99, row_version: 8 }
+      ])
+    ).not.toBe(releaseBusV2CandidateInventoryDigest([first, second]));
+  });
+
+  it('does not steal an expired but non-null lock during exact-free maintenance acquisition', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    jest
+      .spyOn(repository, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (callback) =>
+        callback({ connection: {} } as never)
+      );
+    jest.spyOn(repository, 'listLocks').mockResolvedValue([
+      {
+        name: 'production-environment',
+        owner_train_id: null,
+        lease_owner: null,
+        lease_token: null,
+        heartbeat_at: null,
+        expires_at: null,
+        updated_at: 1,
+        row_version: 1
+      },
+      {
+        name: 'scheduler',
+        owner_train_id: null,
+        lease_owner: 'expired-owner',
+        lease_token: 'expired-token',
+        heartbeat_at: 1,
+        expires_at: 2,
+        updated_at: 2,
+        row_version: 2
+      },
+      {
+        name: 'staging-environment',
+        owner_train_id: null,
+        lease_owner: null,
+        lease_token: null,
+        heartbeat_at: null,
+        expires_at: null,
+        updated_at: 1,
+        row_version: 3
+      }
+    ]);
+    const acquire = jest.spyOn(repository, 'acquireLock');
+
+    await expect(
+      repository.acquireExactFreeMaintenanceLocks(
+        [
+          { name: 'production-environment', row_version: 1 },
+          { name: 'scheduler', row_version: 2 },
+          { name: 'staging-environment', row_version: 3 }
+        ],
+        'maintenance-owner',
+        60_000
+      )
+    ).rejects.toThrow('wholly free');
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  it('atomically detaches exact candidate rows while preserving immutable history pointers', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    const candidates = [candidate('candidate-a'), candidate('candidate-b')];
+    const controls = controlRows();
+    const stagingState = state();
+    const { locks, leases } = acquiredLocks();
+    jest
+      .spyOn(repository, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (callback) =>
+        callback({ connection: {} } as never)
+      );
+    jest.spyOn(repository, 'listControls').mockResolvedValue(controls);
+    jest.spyOn(repository, 'listLocks').mockResolvedValue(locks);
+    jest.spyOn(repository, 'listActiveTrains').mockResolvedValue([]);
+    jest
+      .spyOn(repository, 'listNonterminalOperationsForLanes')
+      .mockResolvedValue([]);
+    jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
+    jest.spyOn(repository, 'listAllCandidates').mockResolvedValue(candidates);
+    const updateCandidate = jest
+      .spyOn(repository, 'updateCandidate')
+      .mockResolvedValue(true);
+    const updateStagingState = jest
+      .spyOn(repository, 'updateStagingState')
+      .mockResolvedValue(true);
+    const appendEvent = jest
+      .spyOn(repository, 'appendEvent')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      repository.commitAllCandidateDeregistration({
+        deregistrationId: 'deregistration-id',
+        actor: 'operator',
+        reason: 'Audited candidate retirement',
+        expectedControls: controls.map(({ scope, paused, row_version }) => ({
+          scope,
+          paused: Boolean(paused),
+          row_version
+        })),
+        maintenanceLeases: leases,
+        expectedStagingStateRowVersion: stagingState.row_version,
+        expectedCandidates: candidates.map(({ id, row_version }) => ({
+          id,
+          row_version
+        })),
+        expectedInventorySha256:
+          releaseBusV2CandidateInventoryDigest(candidates),
+        observedFrontendStagingSha: 'a'.repeat(40),
+        observedBackendStagingSha: 'b'.repeat(40)
+      })
+    ).resolves.toEqual({ candidateCount: 2 });
+
+    expect(updateCandidate).toHaveBeenCalledTimes(2);
+    expect(updateCandidate).toHaveBeenCalledWith(
+      'candidate-a',
+      7,
+      expect.objectContaining({
+        status: 'DEREGISTERED',
+        currentTrainId: null,
+        stagingLiveState: 'DETACHED',
+        stagingLiveManifestId: null,
+        productionRequestedAt: null,
+        productionSelectionId: null
+      }),
+      expect.objectContaining({ connection: expect.anything() })
+    );
+    const candidateFields = updateCandidate.mock.calls[0]?.[2];
+    expect(candidateFields).not.toHaveProperty('stagingValidatedTrainId');
+    expect(candidateFields).not.toHaveProperty('stagingValidatedManifestId');
+    expect(updateStagingState).toHaveBeenCalledWith(
+      4,
+      expect.objectContaining({
+        status: 'DETACHED_MANUAL_OWNERSHIP',
+        currentManifestId: null,
+        lastValidatedManifestId: 'historical-manifest',
+        frontendSha: null,
+        backendSha: null,
+        cleanMain: false
+      }),
+      expect.objectContaining({ connection: expect.anything() })
+    );
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANDIDATE_INVENTORY_LOGICALLY_DEREGISTERED',
+        payload: expect.objectContaining({
+          physical_staging_presence: 'UNKNOWN_DETACHED',
+          immutable_history_preserved: true
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('aborts the transaction before any candidate mutation when the inventory CAS is stale', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    const current = candidate('candidate-a', { row_version: 8 });
+    const controls = controlRows();
+    const stagingState = state();
+    const { locks, leases } = acquiredLocks();
+    jest
+      .spyOn(repository, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (callback) =>
+        callback({ connection: {} } as never)
+      );
+    jest.spyOn(repository, 'listControls').mockResolvedValue(controls);
+    jest.spyOn(repository, 'listLocks').mockResolvedValue(locks);
+    jest.spyOn(repository, 'listActiveTrains').mockResolvedValue([]);
+    jest
+      .spyOn(repository, 'listNonterminalOperationsForLanes')
+      .mockResolvedValue([]);
+    jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
+    jest.spyOn(repository, 'listAllCandidates').mockResolvedValue([current]);
+    const updateCandidate = jest.spyOn(repository, 'updateCandidate');
+    const updateStagingState = jest.spyOn(repository, 'updateStagingState');
+    const appendEvent = jest.spyOn(repository, 'appendEvent');
+
+    await expect(
+      repository.commitAllCandidateDeregistration({
+        deregistrationId: 'deregistration-id',
+        actor: 'operator',
+        reason: 'Audited candidate retirement',
+        expectedControls: controls.map(({ scope, paused, row_version }) => ({
+          scope,
+          paused: Boolean(paused),
+          row_version
+        })),
+        maintenanceLeases: leases,
+        expectedStagingStateRowVersion: stagingState.row_version,
+        expectedCandidates: [{ id: current.id, row_version: 7 }],
+        expectedInventorySha256: releaseBusV2CandidateInventoryDigest([
+          { ...current, row_version: 7 }
+        ]),
+        observedFrontendStagingSha: 'a'.repeat(40),
+        observedBackendStagingSha: 'b'.repeat(40)
+      })
+    ).rejects.toThrow('Exact candidate inventory changed');
+    expect(updateCandidate).not.toHaveBeenCalled();
+    expect(updateStagingState).not.toHaveBeenCalled();
+    expect(appendEvent).not.toHaveBeenCalled();
+  });
+
+  it('proves clean main without restoring detached historical manifest membership', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    const detached = candidate('candidate-a', {
+      status: 'DEREGISTERED',
+      staging_live_state: 'DETACHED'
+    });
+    const detachedState = state();
+    Object.assign(detachedState, {
+      status: 'DETACHED_MANUAL_OWNERSHIP',
+      current_manifest_id: null,
+      frontend_sha: null,
+      backend_sha: null,
+      frontend_staging_ref_sha: null,
+      backend_staging_ref_sha: null,
+      clean_main: false
+    });
+    jest.spyOn(repository, 'listLiveStagingCandidates').mockResolvedValue([]);
+    jest
+      .spyOn(repository, 'listDetachedStagingCandidates')
+      .mockResolvedValue([detached]);
+    jest.spyOn(repository, 'getStagingState').mockResolvedValue(detachedState);
+    const updateCandidate = jest
+      .spyOn(repository, 'updateCandidate')
+      .mockResolvedValue(true);
+    const updateStagingState = jest
+      .spyOn(repository, 'updateStagingState')
+      .mockResolvedValue(true);
+    const appendEvent = jest
+      .spyOn(repository, 'appendEvent')
+      .mockResolvedValue(undefined);
+
+    await repository.commitDetachedStagingCleanMain(
+      {
+        expectedStateVersion: detachedState.row_version,
+        frontendSha: 'f'.repeat(40),
+        backendSha: 'b'.repeat(40)
+      },
+      {}
+    );
+
+    expect(updateCandidate).toHaveBeenCalledWith(
+      detached.id,
+      detached.row_version,
+      expect.objectContaining({
+        status: 'DEREGISTERED',
+        stagingLiveState: 'NOT_LIVE',
+        stagingLiveManifestId: null
+      }),
+      {}
+    );
+    expect(updateStagingState).toHaveBeenCalledWith(
+      detachedState.row_version,
+      expect.objectContaining({
+        status: 'CLEAN_MAIN',
+        currentManifestId: null,
+        lastValidatedManifestId: 'historical-manifest',
+        cleanMain: true
+      }),
+      {}
+    );
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'DETACHED_STAGING_BOOTSTRAPPED_FROM_EXACT_CLEAN_MAIN',
+        payload: expect.objectContaining({
+          restored_historical_manifest_id: 'historical-manifest',
+          historical_manifest_membership_restored: false,
+          physical_staging_presence: 'PROVEN_CLEAN_MAIN'
+        })
+      }),
+      {}
+    );
   });
 });

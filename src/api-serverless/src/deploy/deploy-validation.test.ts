@@ -2,6 +2,7 @@ import {
   DeployDispatchBodySchema,
   ReleaseBusV2CandidateActionBodySchema,
   ReleaseBusV2CandidateBodySchema,
+  ReleaseBusV2CandidateDeregistrationBodySchema,
   ReleaseBusV2ManualDeploymentReadinessBodySchema,
   ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
@@ -56,6 +57,79 @@ describe('deploy.validation', () => {
 });
 
 describe('Release Bus v2 validation', () => {
+  it('separates read-only deregistration preparation from strict exact execution', () => {
+    const candidateId = '8af60034-9741-4b9d-bb1c-80b483f75455';
+    const exact = {
+      expected_plan_sha256: '1'.repeat(64),
+      expected_inventory_sha256: '2'.repeat(64),
+      expected_candidates: [{ id: candidateId, row_version: 4 }],
+      expected_controls: [
+        { scope: 'ALL', paused: false, row_version: 1 },
+        { scope: 'PRODUCTION', paused: true, row_version: 2 },
+        { scope: 'STAGING', paused: true, row_version: 3 }
+      ],
+      expected_locks: [
+        { name: 'production-environment', row_version: 1 },
+        { name: 'scheduler', row_version: 2 },
+        { name: 'staging-environment', row_version: 3 }
+      ],
+      expected_staging_state_row_version: 9,
+      expected_staging_refs: {
+        frontend: 'a'.repeat(40),
+        backend: 'b'.repeat(40)
+      }
+    };
+    expect(
+      ReleaseBusV2CandidateDeregistrationBodySchema.validate({
+        phase: 'PREPARE',
+        reason: 'Retire the audited candidate inventory'
+      }).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2CandidateDeregistrationBodySchema.validate({
+        phase: 'PREPARE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2CandidateDeregistrationBodySchema.validate({
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact
+      }).error
+    ).toBeUndefined();
+    for (const invalid of [
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact,
+        expected_candidates: [
+          exact.expected_candidates[0],
+          exact.expected_candidates[0]
+        ]
+      },
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact,
+        expected_controls: exact.expected_controls.slice(1)
+      },
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact,
+        expected_locks: exact.expected_locks.map((lock) => ({
+          ...lock,
+          row_version: '1'
+        }))
+      }
+    ])
+      expect(
+        ReleaseBusV2CandidateDeregistrationBodySchema.validate(invalid).error
+      ).toBeDefined();
+  });
+
   it('binds manual deployment readiness to exact backend and frontend runs', () => {
     const request = {
       repository: 'backend',

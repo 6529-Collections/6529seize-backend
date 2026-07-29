@@ -347,6 +347,12 @@ export * from '../models/ApiRedeemConnectionShareResponse';
 export * from '../models/ApiRedeemRefreshTokenRequest';
 export * from '../models/ApiRedeemRefreshTokenResponse';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationCandidateVersion';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationLockVersion';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationRequest';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationResponse';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationStagingRefs';
 export * from '../models/ApiRepCategoriesPage';
 export * from '../models/ApiRepCategory';
 export * from '../models/ApiRepContributor';
@@ -945,6 +951,12 @@ import { ApiRedeemConnectionShareResponse    , ApiRedeemConnectionShareResponseC
 import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
+import { ApiReleaseBusV2CandidateDeregistrationCandidateVersion } from '../models/ApiReleaseBusV2CandidateDeregistrationCandidateVersion';
+import { ApiReleaseBusV2CandidateDeregistrationControlVersion, ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum     } from '../models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
+import { ApiReleaseBusV2CandidateDeregistrationLockVersion, ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum    } from '../models/ApiReleaseBusV2CandidateDeregistrationLockVersion';
+import { ApiReleaseBusV2CandidateDeregistrationRequest, ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum           } from '../models/ApiReleaseBusV2CandidateDeregistrationRequest';
+import { ApiReleaseBusV2CandidateDeregistrationResponse, ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum          , ApiReleaseBusV2CandidateDeregistrationResponseModeEnum    , ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum    } from '../models/ApiReleaseBusV2CandidateDeregistrationResponse';
+import { ApiReleaseBusV2CandidateDeregistrationStagingRefs } from '../models/ApiReleaseBusV2CandidateDeregistrationStagingRefs';
 import { ApiRepCategoriesPage } from '../models/ApiRepCategoriesPage';
 import { ApiRepCategory } from '../models/ApiRepCategory';
 import { ApiRepContributor } from '../models/ApiRepContributor';
@@ -1281,6 +1293,12 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiRateMatter",
     "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
     "ApiRedeemConnectionShareResponseClientTypeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum",
+    "ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum",
+    "ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum",
+    "ApiReleaseBusV2CandidateDeregistrationResponseModeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum",
     "ApiRepDirection",
     "ApiSessionLoginRequestClientTypeEnum",
     "ApiSessionLoginRequestWalletKindHintEnum",
@@ -1667,6 +1685,12 @@ let typeMap: {[index: string]: any} = {
     "ApiRedeemRefreshTokenRequest": ApiRedeemRefreshTokenRequest,
     "ApiRedeemRefreshTokenResponse": ApiRedeemRefreshTokenResponse,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
+    "ApiReleaseBusV2CandidateDeregistrationCandidateVersion": ApiReleaseBusV2CandidateDeregistrationCandidateVersion,
+    "ApiReleaseBusV2CandidateDeregistrationControlVersion": ApiReleaseBusV2CandidateDeregistrationControlVersion,
+    "ApiReleaseBusV2CandidateDeregistrationLockVersion": ApiReleaseBusV2CandidateDeregistrationLockVersion,
+    "ApiReleaseBusV2CandidateDeregistrationRequest": ApiReleaseBusV2CandidateDeregistrationRequest,
+    "ApiReleaseBusV2CandidateDeregistrationResponse": ApiReleaseBusV2CandidateDeregistrationResponse,
+    "ApiReleaseBusV2CandidateDeregistrationStagingRefs": ApiReleaseBusV2CandidateDeregistrationStagingRefs,
     "ApiRepCategoriesPage": ApiRepCategoriesPage,
     "ApiRepCategory": ApiRepCategory,
     "ApiRepContributor": ApiRepContributor,

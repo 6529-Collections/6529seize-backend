@@ -390,6 +390,20 @@ function selectionRepository(
   );
   const repository = {
     listControls: jest.fn(async () => []),
+    getStagingState: jest.fn(async () => ({
+      id: 'current',
+      status: 'CLEAN_MAIN',
+      current_manifest_id: null,
+      last_validated_manifest_id: null,
+      frontend_sha: 'f'.repeat(40),
+      backend_sha: 'b'.repeat(40),
+      frontend_staging_ref_sha: 'f'.repeat(40),
+      backend_staging_ref_sha: 'b'.repeat(40),
+      clean_main: true,
+      last_transition_train_id: null,
+      updated_at: 1,
+      row_version: 1
+    })),
     listTrains: jest.fn(async () => []),
     listCandidates: jest.fn(async (statuses: readonly string[]) =>
       Array.from(candidates.values()).filter(({ status }) =>
@@ -699,6 +713,20 @@ function groupedStagingRetryRepository() {
     executeNativeQueriesInTransaction: jest.fn(async (callback) =>
       callback({})
     ),
+    getStagingState: jest.fn(async () => ({
+      id: 'current',
+      status: 'CLEAN_MAIN',
+      current_manifest_id: null,
+      last_validated_manifest_id: null,
+      frontend_sha: 'f'.repeat(40),
+      backend_sha: 'b'.repeat(40),
+      frontend_staging_ref_sha: 'f'.repeat(40),
+      backend_staging_ref_sha: 'b'.repeat(40),
+      clean_main: true,
+      last_transition_train_id: null,
+      updated_at: 1,
+      row_version: 1
+    })),
     supersedeOtherPrHeads: jest.fn(
       async (repositoryName: string, prNumber: number, headSha: string) => {
         const superseded: ReleaseBusV2CandidateRecord[] = [];
@@ -3453,6 +3481,218 @@ describe('Release Bus v2 STAGING-mode production beta opt-in', () => {
   });
 });
 
+describe('Release Bus v2 deregistered exact-head registration', () => {
+  const previousMode = process.env.RELEASE_BUS_V2_MODE;
+  const headSha = 'a'.repeat(40);
+  const oldEvidence = {
+    base_sha: 'b'.repeat(40),
+    merge_sha: 'c'.repeat(40),
+    checks_run_id: 'old-check',
+    checks_completed_at: 1,
+    artifact_run_id: null,
+    artifact_name: null,
+    artifact_digest: null,
+    workflow_path: '.github/workflows/on-pull-request.yml',
+    base_workflow_blob_sha: 'd'.repeat(40),
+    merge_workflow_blob_sha: 'e'.repeat(40),
+    base_gate_policy_digest: 'f'.repeat(64),
+    merge_gate_policy_digest: '1'.repeat(64),
+    trust_mode: 'evidence-manifest-v1' as const,
+    contributor_github_logins: ['developer']
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RELEASE_BUS_V2_MODE = 'PRODUCTION';
+    mockResolveRef.mockResolvedValue(headSha);
+    mockQualification.mockResolvedValue({
+      baseSha: '9'.repeat(40),
+      mergeSha: '8'.repeat(40),
+      checksRunId: 'fresh-check',
+      checksCompletedAt: 99,
+      artifactRunId: null,
+      artifactName: null,
+      artifactDigest: null,
+      workflowPath: oldEvidence.workflow_path,
+      baseWorkflowBlobSha: oldEvidence.base_workflow_blob_sha,
+      mergeWorkflowBlobSha: oldEvidence.merge_workflow_blob_sha,
+      baseGatePolicyDigest: oldEvidence.base_gate_policy_digest,
+      mergeGatePolicyDigest: oldEvidence.merge_gate_policy_digest,
+      trustMode: oldEvidence.trust_mode,
+      contributorGithubLogins: ['developer']
+    });
+    mockEnsureCommitStatus.mockResolvedValue(undefined);
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
+    else process.env.RELEASE_BUS_V2_MODE = previousMode;
+  });
+
+  function registrationRepository(
+    stateStatus: 'DETACHED_MANUAL_OWNERSHIP' | 'CLEAN_MAIN'
+  ) {
+    let current: ReleaseBusV2CandidateRecord = {
+      ...candidate('DEREGISTERED'),
+      branch_name: 'feature/reregister',
+      head_sha: headSha,
+      pr_evidence_json: oldEvidence,
+      staging_validated_train_id: 'historical-train',
+      staging_validated_manifest_id: 'historical-manifest',
+      staging_live_state: 'DETACHED',
+      row_version: 7
+    };
+    const updateCandidate = jest.fn(
+      async (
+        _id: string,
+        expectedVersion: number,
+        fields: Record<string, unknown>
+      ) => {
+        if (expectedVersion !== current.row_version) return false;
+        current = {
+          ...current,
+          status: fields.status as ReleaseBusV2CandidateRecord['status'],
+          current_train_id: fields.currentTrainId as string | null,
+          staging_live_state: fields.stagingLiveState as 'NOT_LIVE',
+          staging_live_manifest_id: fields.stagingLiveManifestId as
+            | string
+            | null,
+          staging_admitted_at: fields.stagingAdmittedAt as number | null,
+          production_requested_at: fields.productionRequestedAt as
+            | number
+            | null,
+          production_requested_by: fields.productionRequestedBy as
+            | string
+            | null,
+          production_selection_id: fields.productionSelectionId as
+            | string
+            | null,
+          pr_evidence_json:
+            fields.prEvidence as ReleaseBusV2CandidateRecord['pr_evidence_json'],
+          row_version: current.row_version + 1
+        };
+        return true;
+      }
+    );
+    const repository = {
+      listControls: jest.fn(async () => [
+        { scope: 'ALL', paused: false, reason: null },
+        { scope: 'STAGING', paused: false, reason: null },
+        { scope: 'PRODUCTION', paused: false, reason: null }
+      ]),
+      executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+        callback({})
+      ),
+      getStagingState: jest.fn(async () => ({
+        id: 'current',
+        status: stateStatus,
+        current_manifest_id: null,
+        last_validated_manifest_id: 'historical-manifest',
+        frontend_sha: stateStatus === 'CLEAN_MAIN' ? 'f'.repeat(40) : null,
+        backend_sha: stateStatus === 'CLEAN_MAIN' ? 'b'.repeat(40) : null,
+        frontend_staging_ref_sha:
+          stateStatus === 'CLEAN_MAIN' ? 'f'.repeat(40) : null,
+        backend_staging_ref_sha:
+          stateStatus === 'CLEAN_MAIN' ? 'b'.repeat(40) : null,
+        clean_main: stateStatus === 'CLEAN_MAIN',
+        last_transition_train_id: null,
+        updated_at: 1,
+        row_version: 2
+      })),
+      supersedeOtherPrHeads: jest.fn(async () => []),
+      findCandidateByIdentity: jest.fn(async () => current),
+      findCandidateById: jest.fn(async () => current),
+      listDependencies: jest.fn(async () => []),
+      addDependency: jest.fn(async () => undefined),
+      listCandidates: jest.fn(async () => [current]),
+      updateCandidate,
+      appendEvent: jest.fn(async () => undefined)
+    };
+    return { repository, updateCandidate, current: () => current };
+  }
+
+  function input() {
+    return {
+      repository: 'frontend' as const,
+      pr_number: 42,
+      branch_name: 'feature/reregister',
+      expected_head_sha: headSha,
+      deploy_plan: null,
+      dependencies: []
+    };
+  }
+
+  it('hard-blocks registration while staging ownership remains detached', async () => {
+    const { repository, updateCandidate } = registrationRepository(
+      'DETACHED_MANUAL_OWNERSHIP'
+    );
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(service.register(input(), 'developer')).rejects.toThrow(
+      'staging ownership is detached'
+    );
+    expect(repository.supersedeOtherPrHeads).not.toHaveBeenCalled();
+    expect(updateCandidate).not.toHaveBeenCalled();
+    expect(repository.appendEvent).not.toHaveBeenCalled();
+  });
+
+  it('requires fresh exact-head qualification before explicitly reactivating the same immutable candidate', async () => {
+    const { repository, updateCandidate, current } =
+      registrationRepository('CLEAN_MAIN');
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(service.register(input(), 'developer')).resolves.toMatchObject(
+      {
+        status: 'READY_FOR_STAGING',
+        staging_live_state: 'NOT_LIVE',
+        staging_validated_train_id: 'historical-train',
+        staging_validated_manifest_id: 'historical-manifest',
+        row_version: 8
+      }
+    );
+    expect(mockQualification).toHaveBeenCalledWith('frontend', 42, headSha);
+    expect(updateCandidate).toHaveBeenCalledWith(
+      'candidate-id',
+      7,
+      expect.objectContaining({
+        status: 'READY_FOR_STAGING',
+        stagingLiveState: 'NOT_LIVE',
+        prEvidence: expect.objectContaining({
+          base_sha: '9'.repeat(40),
+          merge_sha: '8'.repeat(40),
+          checks_run_id: 'fresh-check',
+          checks_completed_at: 99
+        })
+      }),
+      expect.anything()
+    );
+    expect(current().pr_evidence_json).toEqual(
+      expect.objectContaining({
+        base_sha: '9'.repeat(40),
+        merge_sha: '8'.repeat(40),
+        checks_run_id: 'fresh-check',
+        checks_completed_at: 99
+      })
+    );
+    expect(repository.appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANDIDATE_EXACT_HEAD_REREGISTERED',
+        payload: expect.objectContaining({
+          historical_staging_train_id: 'historical-train',
+          historical_staging_manifest_id: 'historical-manifest',
+          previous_pr_evidence: oldEvidence,
+          fresh_pr_evidence: expect.objectContaining({
+            base_sha: '9'.repeat(40),
+            merge_sha: '8'.repeat(40),
+            checks_run_id: 'fresh-check'
+          })
+        })
+      }),
+      expect.anything()
+    );
+  });
+});
+
 describe('Release Bus v2 globally-OFF operator beta registration', () => {
   const previousMode = process.env.RELEASE_BUS_V2_MODE;
   const previousAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
@@ -3526,6 +3766,20 @@ describe('Release Bus v2 globally-OFF operator beta registration', () => {
     return {
       createCandidate,
       listControls: jest.fn(async () => []),
+      getStagingState: jest.fn(async () => ({
+        id: 'current',
+        status: 'CLEAN_MAIN',
+        current_manifest_id: null,
+        last_validated_manifest_id: null,
+        frontend_sha: 'f'.repeat(40),
+        backend_sha: 'b'.repeat(40),
+        frontend_staging_ref_sha: 'f'.repeat(40),
+        backend_staging_ref_sha: 'b'.repeat(40),
+        clean_main: true,
+        last_transition_train_id: null,
+        updated_at: 1,
+        row_version: 1
+      })),
       executeNativeQueriesInTransaction: jest.fn(async (callback) =>
         callback({})
       ),
