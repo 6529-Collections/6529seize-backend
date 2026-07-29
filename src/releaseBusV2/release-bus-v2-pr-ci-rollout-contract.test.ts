@@ -9,15 +9,17 @@ const PRODUCER_BACKEND_WORKFLOW_BLOB =
 const LEGACY_FRONTEND_WORKFLOW_BLOB =
   'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c';
 const PRODUCER_FRONTEND_WORKFLOW_BLOB =
-  '6fdbbd94f0d5fe8dfca93a96d5583ecc58f017da';
+  '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3';
 const BRIDGE_POLICY_DIGEST =
-  '89b2da6f3742cd9a3cf2ae7599084e442c742dd1f781133446a789b5a24c4195';
+  '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143';
 const PRODUCER_POLICY_DIGEST =
-  '890b4c9d976f66be52ff24fd0569f4d994515716822ac9f2dd42bcc22208af8c';
+  'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01';
+const RELEASE_ATTRIBUTION_POLICY_DIGEST =
+  'b3ad89156f85993d6bf3557af4bc785c46d66e09b6a32b5b9a8045a4c4761805';
 const FRONTEND_BRIDGE_POLICY_DIGEST =
   '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8';
 const FRONTEND_PRODUCER_POLICY_DIGEST =
-  'ddd9afbff8b7de02ee1fb86395a7f3cde4485b408073d34e1532fa29c30f4fab';
+  '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d';
 
 const workflowBlob = execFileSync(
   'git',
@@ -44,6 +46,7 @@ describe('Release Bus PR CI producer bridge', () => {
     for (const expected of [
       BRIDGE_POLICY_DIGEST,
       PRODUCER_POLICY_DIGEST,
+      RELEASE_ATTRIBUTION_POLICY_DIGEST,
       FRONTEND_BRIDGE_POLICY_DIGEST,
       FRONTEND_PRODUCER_POLICY_DIGEST
     ])
@@ -78,7 +81,7 @@ describe('Release Bus PR CI producer bridge', () => {
 
     expect(workflowBlob).toBe(PRODUCER_BACKEND_WORKFLOW_BLOB);
     expect(policy.buildPolicyBundle({ root }).digest).toBe(
-      PRODUCER_POLICY_DIGEST
+      RELEASE_ATTRIBUTION_POLICY_DIGEST
     );
   });
 });

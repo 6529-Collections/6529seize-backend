@@ -208,7 +208,7 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
   frontend: [
     {
       from: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
-      to: '6fdbbd94f0d5fe8dfca93a96d5583ecc58f017da',
+      to: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]
@@ -554,19 +554,19 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   backend: [
     {
       from: '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
-      to: '89b2da6f3742cd9a3cf2ae7599084e442c742dd1f781133446a789b5a24c4195',
+      to: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     },
     {
-      from: '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
-      to: '890b4c9d976f66be52ff24fd0569f4d994515716822ac9f2dd42bcc22208af8c',
+      from: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
+      to: 'b3ad89156f85993d6bf3557af4bc785c46d66e09b6a32b5b9a8045a4c4761805',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
   frontend: [
     {
       from: '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8',
-      to: 'ddd9afbff8b7de02ee1fb86395a7f3cde4485b408073d34e1532fa29c30f4fab',
+      to: '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]
