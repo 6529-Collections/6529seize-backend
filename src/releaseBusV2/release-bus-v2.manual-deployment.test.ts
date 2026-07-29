@@ -166,6 +166,8 @@ describe('ReleaseBusV2ManualDeploymentGuard', () => {
 
   it.each([
     ['api', 'staging', 'STAGING'],
+    ['api', 'prod', 'PRODUCTION'],
+    ['releaseBus', 'staging', 'STAGING'],
     ['releaseBus', 'prod', 'PRODUCTION']
   ] as const)(
     'accepts the current GitHub run-name payload for manual %s deployment',
