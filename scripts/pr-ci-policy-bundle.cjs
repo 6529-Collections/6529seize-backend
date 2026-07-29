@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+/* eslint @typescript-eslint/no-require-imports: off */
+/* global Buffer, __dirname, console, module, process, require */
 'use strict';
 
 const crypto = require('node:crypto');

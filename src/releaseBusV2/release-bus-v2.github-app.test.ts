@@ -1,5 +1,7 @@
 import fetch, { Response } from 'node-fetch';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import AdmZip from 'adm-zip';
 import {
   isValidGitHubWorkflowActor,
@@ -12,6 +14,11 @@ import {
   workflowRunMatchesOperation,
   type GitHubWorkflowJob
 } from '@/releaseBusV2/release-bus-v2.github-app';
+
+const { buildPolicyBundle } =
+  require('../../scripts/pr-ci-policy-bundle.cjs') as {
+    buildPolicyBundle(input: { root: string }): { canonical: string };
+  };
 
 jest.mock('node-fetch', () => {
   const actual = jest.requireActual('node-fetch');
@@ -101,6 +108,70 @@ function setDottedString(
     current[segment] = next;
     current = next;
   });
+}
+
+function readDottedString(
+  document: Readonly<Record<string, unknown>>,
+  dottedKey: string
+): string {
+  const value = dottedKey
+    .split('.')
+    .reduce<unknown>(
+      (current, segment) =>
+        current && typeof current === 'object'
+          ? (current as Readonly<Record<string, unknown>>)[segment]
+          : undefined,
+      document
+    );
+  if (typeof value !== 'string' || value.length === 0)
+    throw new Error(`Missing package policy value ${dottedKey}`);
+  return value;
+}
+
+function backendPolicyBundleFromVerifierInventory(): string {
+  const root = process.cwd();
+  const inventory = releaseBusPrCiPolicyInventory('backend', true);
+  const packages = new Map(
+    inventory.packages.map((policy) => [policy.path, policy])
+  );
+  const lines: string[] = [];
+  for (const relativePath of inventory.paths) {
+    const policy = packages.get(relativePath);
+    const bytes = readFileSync(path.join(root, relativePath));
+    if (!policy) {
+      lines.push(`file\t${relativePath}\t${gitBlobSha(bytes)}\n`);
+      continue;
+    }
+    const document = JSON.parse(bytes.toString('utf8')) as Readonly<
+      Record<string, unknown>
+    >;
+    const scripts =
+      document.scripts &&
+      typeof document.scripts === 'object' &&
+      !Array.isArray(document.scripts)
+        ? (document.scripts as Readonly<Record<string, unknown>>)
+        : {};
+    for (const key of policy.scriptKeys) {
+      const value = scripts[key];
+      if (typeof value !== 'string' || value.length === 0)
+        throw new Error(`Missing package policy script ${relativePath}#${key}`);
+      lines.push(
+        `package-script\t${relativePath}#${key}\t${JSON.stringify(value)}\n`
+      );
+    }
+    for (const key of policy.fieldKeys)
+      lines.push(
+        `package-field\t${relativePath}#${key}\t${JSON.stringify(
+          readDottedString(document, key)
+        )}\n`
+      );
+  }
+  lines.push('runtime-pin\tnode\t"22.17.1"\n');
+  return lines
+    .sort((left, right) =>
+      Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+    )
+    .join('');
 }
 
 function policyFixture(
@@ -477,6 +548,19 @@ function queueQualificationResponses(input: {
   );
   return fetchMock;
 }
+
+describe('backend PR CI policy bundle contract', () => {
+  it('keeps producer and verifier canonical inventories byte-identical', () => {
+    const produced = buildPolicyBundle({ root: process.cwd() }).canonical;
+
+    expect(backendPolicyBundleFromVerifierInventory()).toBe(produced);
+    expect(
+      releaseBusPrCiPolicyInventory('backend', true).packages.find(
+        ({ path: packagePath }) => packagePath === 'package.json'
+      )?.fieldKeys
+    ).toContain('devDependencies.@types/jest');
+  });
+});
 
 describe('GitHub immutable release refs', () => {
   const ref = 'release-bus-v2/staging-train-train-id-frontend';

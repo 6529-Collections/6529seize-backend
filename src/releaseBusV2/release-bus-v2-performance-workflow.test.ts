@@ -11,10 +11,7 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-
-const yaml = require('js-yaml') as {
-  load(source: string): unknown;
-};
+import YAML from 'yaml';
 
 const root = process.cwd();
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
@@ -41,7 +38,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
         normal_preflight_steps: string[];
       };
     };
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     expect(Object.keys(parsed.jobs)).toEqual(
@@ -82,7 +79,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
   });
 
   it('guards every deploy before checkout, caches, cloud credentials, or mutation', () => {
-    const parsed = yaml.load(deploy) as {
+    const parsed = YAML.parse(deploy) as {
       concurrency: { group: string; 'cancel-in-progress': boolean };
       jobs: Record<
         string,
@@ -172,7 +169,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
   });
 
   it('executes the early guard with exact manual and Release Bus payloads', () => {
-    const parsed = yaml.load(deploy) as {
+    const parsed = YAML.parse(deploy) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const guard = parsed.jobs['build-and-deploy'].steps.find(
@@ -294,7 +291,7 @@ printf '200'
   });
 
   it('rejects cross-train v3 artifacts before authorization or checkout', () => {
-    const parsed = yaml.load(deploy) as {
+    const parsed = YAML.parse(deploy) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const validation = parsed.jobs['build-and-deploy'].steps.find(
@@ -327,7 +324,7 @@ printf '200'
   });
 
   it('keeps full tests in exact merge-tree PR CI before evidence is emitted', () => {
-    const parsed = yaml.load(pullRequestCi) as {
+    const parsed = YAML.parse(pullRequestCi) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const steps = parsed.jobs.build.steps;
@@ -365,7 +362,7 @@ printf '200'
   });
 
   it('isolates secret-bearing authorization and reporting from candidate-controlled code', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<
         string,
         {
@@ -399,7 +396,7 @@ printf '200'
   });
 
   it('authorizes before candidate checkout or cache and verifies the exact live source tip', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<
         string,
         {
@@ -453,7 +450,7 @@ printf '200'
   });
 
   it('keeps legacy authorization old-API-shaped and binds strict authorization to its source ref', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const authorize = parsed.jobs.authorize.steps.find(
@@ -625,7 +622,7 @@ exit 1
   });
 
   it('treats an old-producer schema-v1 PR artifact as evidence and still builds fresh bytes', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const evidence = parsed.jobs.preflight.steps.find(
@@ -725,7 +722,7 @@ esac
   });
 
   it('accepts old schema-v2 archives only as exact-SHA evidence', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const evidence = parsed.jobs.preflight.steps.find(
@@ -889,7 +886,7 @@ esac
   });
 
   it('attributes source-ref transport, movement, and candidate graph failures separately', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const composition = parsed.jobs.preflight.steps.find(
@@ -986,7 +983,7 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
   });
 
   it('accepts old-producer empty portable identity and requires v3 environment binding', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const validation = parsed.jobs.authorize.steps.find(
@@ -1034,7 +1031,7 @@ printf '{"ref":"refs/heads/%s","object":{"type":"commit","sha":"%s"}}\\n' "$SOUR
   });
 
   it('binds an old fast-path producer branch to one exact immutable train ref', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const composition = parsed.jobs.preflight.steps.find(
@@ -1092,7 +1089,7 @@ esac
   });
 
   it('bridges legacy missing refs only through one exact lane ref and classifies ambiguity and transport', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const composition = parsed.jobs.preflight.steps.find(
@@ -1223,7 +1220,7 @@ esac
   });
 
   it('reports a missing or cancelled candidate runner as retryable infrastructure', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const terminal = parsed.jobs.report.steps.find(
@@ -1306,7 +1303,7 @@ exit 1
   });
 
   it('reports trusted artifact corruption instead of losing the terminal callback', () => {
-    const parsed = yaml.load(preflight) as {
+    const parsed = YAML.parse(preflight) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
     const terminal = parsed.jobs.report.steps.find(
@@ -1435,6 +1432,78 @@ exit 1
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
+  });
+
+  it('keeps portable legacy packaging environment-agnostic and validates exact candidate evidence modes', () => {
+    const result = execFileSync(
+      'node',
+      [
+        '--input-type=module',
+        '--eval',
+        `
+          import {
+            concreteDeployEnvironment as concrete,
+            validateCandidateEvidence as validate
+          } from './scripts/release-bus-package-backend.mjs';
+          const sourceSha = '${'a'.repeat(40)}';
+          validate({
+            aggregateCandidateEvidenceDigest: '',
+            candidateEvidenceMode: 'legacy-whole-train',
+            contractVersion: 'legacy-v2',
+            reuseArtifactDigest: '',
+            reuseArtifactName: '',
+            reuseArtifactRunId: '',
+            sourceSha
+          });
+          validate({
+            aggregateCandidateEvidenceDigest: '',
+            candidateEvidenceMode: 'strict-single',
+            contractVersion: 'environment-bound-v3',
+            reuseArtifactDigest: '${'b'.repeat(64)}',
+            reuseArtifactName: \`release-bus-v2-pr-\${sourceSha}\`,
+            reuseArtifactRunId: '123',
+            sourceSha
+          });
+          validate({
+            aggregateCandidateEvidenceDigest: '${'c'.repeat(64)}',
+            candidateEvidenceMode: 'strict-aggregate',
+            contractVersion: 'environment-bound-v3',
+            reuseArtifactDigest: '',
+            reuseArtifactName: '',
+            reuseArtifactRunId: '',
+            sourceSha
+          });
+          let incompleteRejected = false;
+          try {
+            validate({
+              aggregateCandidateEvidenceDigest: '',
+              candidateEvidenceMode: 'strict-single',
+              contractVersion: 'environment-bound-v3',
+              reuseArtifactDigest: '',
+              reuseArtifactName: '',
+              reuseArtifactRunId: '',
+              sourceSha
+            });
+          } catch {
+            incompleteRejected = true;
+          }
+          process.stdout.write(JSON.stringify({
+            portable: concrete('portable'),
+            production: concrete('production'),
+            staging: concrete('staging'),
+            incompleteRejected
+          }));
+        `
+      ],
+      { cwd: root, encoding: 'utf8' }
+    );
+
+    expect(JSON.parse(result)).toEqual({
+      portable: null,
+      production: 'prod',
+      staging: 'staging',
+      incompleteRejected: true
+    });
   });
 
   it('binds policy bytes to the exact commit and rejects mutable action tags', () => {

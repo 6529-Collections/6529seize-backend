@@ -472,393 +472,431 @@ export function candidateEvidenceSelection(
   };
 }
 
+export function candidateEvidenceSelectionForPreparation(
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  singleFastCandidateId: string | null
+): CandidateEvidenceSelection {
+  return candidates.length === 0
+    ? {
+        mode: 'legacy-whole-train',
+        aggregateDigest: null,
+        singular: null
+      }
+    : candidateEvidenceSelection(candidates, singleFastCandidateId);
+}
+
 function artifactEnvironmentForTrain(
   train: ReleaseBusV2TrainRecord
 ): 'staging' | 'production' {
   return train.lane === 'PRODUCTION' ? 'production' : 'staging';
 }
 
-export function preparedArtifactDeployBinding(
-  operation: ReleaseBusV2OperationRecord,
-  environment: 'staging' | 'prod'
-): ArtifactDeployBinding {
-  const request = parseStoredJson<{
-    workflow?: unknown;
-    ref?: unknown;
-    workflow_control_sha?: unknown;
-    inputs?: unknown;
-  }>(operation.request_json);
-  const inputs = stringRecord(request?.inputs);
-  const result = parseStoredJson<{ summary?: unknown }>(operation.result_json);
-  const summary =
-    result?.summary &&
-    typeof result.summary === 'object' &&
-    !Array.isArray(result.summary)
-      ? (result.summary as Readonly<Record<string, unknown>>)
-      : null;
-  if (
-    operation.status !== 'SUCCEEDED' ||
-    request?.workflow !== 'release-bus-v2-preflight.yml' ||
-    !inputs ||
-    !summary ||
-    !operation.external_id ||
-    !/^[1-9][0-9]{0,19}$/.test(operation.external_id) ||
-    !operation.expected_sha ||
-    !/^[a-f0-9]{40}$/.test(operation.expected_sha) ||
-    !operation.artifact_digest ||
-    !/^[a-f0-9]{64}$/.test(operation.artifact_digest) ||
-    inputs.release_train_id !== operation.train_id ||
-    inputs.expected_sha !== operation.expected_sha ||
-    summary.artifact_digest !== operation.artifact_digest ||
-    (summary.repository !== undefined &&
-      summary.repository !== operation.repository) ||
-    (summary.source_sha !== undefined &&
-      summary.source_sha !== operation.expected_sha)
-  )
-    throw new Error(
-      'Successful artifact preparation has no exact immutable deploy binding'
-    );
-  const contract = inputs.artifact_contract_version ?? 'legacy-v2';
-  if (contract === 'legacy-v2') {
-    const exactKeys = (
-      value: Readonly<Record<string, unknown>>,
-      expected: readonly string[]
-    ): boolean =>
-      isDeepStrictEqual(
-        Object.keys(value).sort(compareStrings),
-        [...expected].sort(compareStrings)
-      );
-    const parseUnits = (
-      value: string | undefined
-    ): readonly string[] | null => {
-      try {
-        const parsed = JSON.parse(value ?? 'null') as unknown;
-        if (
-          !Array.isArray(parsed) ||
-          parsed.length === 0 ||
-          parsed.some(
-            (unit) =>
-              typeof unit !== 'string' ||
-              !/^[A-Za-z][A-Za-z0-9]{0,99}$/.test(unit)
-          ) ||
-          new Set(parsed).size !== parsed.length
-        )
-          return null;
-        return parsed;
-      } catch {
-        return null;
-      }
-    };
-    const parseLayers = (
-      value: string | undefined,
-      units: readonly string[],
-      deriveWhenAbsent: boolean
-    ): readonly (readonly string[])[] | null => {
-      if (deriveWhenAbsent && value === undefined)
-        return units.map((unit) => [unit]);
-      try {
-        const parsed = JSON.parse(value ?? 'null') as unknown;
-        if (
-          !Array.isArray(parsed) ||
-          parsed.length === 0 ||
-          parsed.some(
-            (layer) =>
-              !Array.isArray(layer) ||
-              layer.length === 0 ||
-              layer.some((unit) => typeof unit !== 'string')
-          )
-        )
-          return null;
-        const flattened = parsed.flat() as string[];
-        if (
-          flattened.length !== units.length ||
-          new Set(flattened).size !== flattened.length ||
-          !isDeepStrictEqual(
-            [...flattened].sort(compareStrings),
-            [...units].sort(compareStrings)
-          )
-        )
-          return null;
-        return parsed as readonly (readonly string[])[];
-      } catch {
-        return null;
-      }
-    };
-    const reuseEvidence = (
-      allowComplete: boolean
-    ): {
-      readonly runId: string | null;
-      readonly name: string | null;
-      readonly digest: string | null;
-    } | null => {
-      const runId = inputs.reuse_artifact_run_id ?? '';
-      const name = inputs.reuse_artifact_name ?? '';
-      const digest = inputs.reuse_artifact_digest ?? '';
-      if (!runId && !name && !digest)
-        return { runId: null, name: null, digest: null };
-      if (
-        !allowComplete ||
-        !/^[1-9][0-9]{0,19}$/.test(runId) ||
-        !/^release-bus-v2-pr-[a-f0-9]{40}$/.test(name) ||
-        !/^[a-f0-9]{64}$/.test(digest)
+type ArtifactPreparationRequest = {
+  readonly workflow?: unknown;
+  readonly ref?: unknown;
+  readonly workflow_control_sha?: unknown;
+  readonly inputs?: unknown;
+};
+
+type ArtifactPreparationSummary = Readonly<Record<string, unknown>>;
+type ArtifactPreparationInputs = Readonly<Record<string, string>>;
+
+function exactKeys(
+  value: Readonly<Record<string, unknown>>,
+  expected: readonly string[]
+): boolean {
+  return isDeepStrictEqual(
+    Object.keys(value).sort(compareStrings),
+    [...expected].sort(compareStrings)
+  );
+}
+
+function parseArtifactUnits(
+  value: string | undefined
+): readonly string[] | null {
+  try {
+    const parsed = JSON.parse(value ?? 'null') as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some(
+        (unit) =>
+          typeof unit !== 'string' || !/^[A-Za-z][A-Za-z0-9]{0,99}$/.test(unit)
+      ) ||
+      new Set(parsed).size !== parsed.length
+    )
+      return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function parseArtifactLayers(
+  value: string | undefined,
+  units: readonly string[],
+  deriveWhenAbsent: boolean
+): readonly (readonly string[])[] | null {
+  if (deriveWhenAbsent && value === undefined)
+    return units.map((unit) => [unit]);
+  try {
+    const parsed = JSON.parse(value ?? 'null') as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some(
+        (layer) =>
+          !Array.isArray(layer) ||
+          layer.length === 0 ||
+          layer.some((unit) => typeof unit !== 'string')
       )
-        return null;
-      return { runId, name, digest };
-    };
-    const targetEnvironment = environment === 'prod' ? 'production' : 'staging';
-    const oldProducerBaseRequest =
-      !Object.prototype.hasOwnProperty.call(
-        inputs,
-        'artifact_contract_version'
-      ) &&
-      !Object.prototype.hasOwnProperty.call(
-        inputs,
-        'candidate_evidence_mode'
-      ) &&
-      !Object.prototype.hasOwnProperty.call(
-        inputs,
-        'aggregate_candidate_evidence_digest'
-      ) &&
-      !Object.prototype.hasOwnProperty.call(inputs, 'deploy_layers') &&
-      inputs.operation_key === 'replaced-by-reconciler' &&
-      /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
-      typeof inputs.source_ref === 'string' &&
-      inputs.source_ref.length > 0;
-    const newProducerBaseRequest =
-      request?.ref === 'main' &&
-      typeof request.workflow_control_sha === 'string' &&
-      /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
-      inputs.operation_key === 'replaced-by-reconciler' &&
-      /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
-      typeof inputs.source_ref === 'string' &&
-      inputs.source_ref.length > 0 &&
-      inputs.candidate_evidence_mode === 'legacy-whole-train' &&
-      inputs.aggregate_candidate_evidence_digest === '' &&
-      inputs.reuse_artifact_run_id === '' &&
-      inputs.reuse_artifact_name === '' &&
-      inputs.reuse_artifact_digest === '';
-    const oldProducerSummaryShape = isDeepStrictEqual(
-      Object.keys(summary).sort(compareStrings),
-      ['artifact_digest', 'fresh_or_reused']
-    );
-    const backendUnits = parseUnits(inputs.deploy_units);
-    const oldBackendProducer =
-      operation.repository === 'backend' &&
+    )
+      return null;
+    const flattened = parsed.flat() as string[];
+    if (
+      flattened.length !== units.length ||
+      new Set(flattened).size !== flattened.length ||
+      !isDeepStrictEqual(
+        [...flattened].sort(compareStrings),
+        [...units].sort(compareStrings)
+      )
+    )
+      return null;
+    return parsed as readonly (readonly string[])[];
+  } catch {
+    return null;
+  }
+}
+
+function legacyReuseEvidence(
+  inputs: ArtifactPreparationInputs,
+  allowComplete: boolean
+): {
+  readonly runId: string | null;
+  readonly name: string | null;
+  readonly digest: string | null;
+} | null {
+  const runId = inputs.reuse_artifact_run_id ?? '';
+  const name = inputs.reuse_artifact_name ?? '';
+  const digest = inputs.reuse_artifact_digest ?? '';
+  if (!runId && !name && !digest)
+    return { runId: null, name: null, digest: null };
+  if (
+    !allowComplete ||
+    !/^[1-9][0-9]{0,19}$/.test(runId) ||
+    !/^release-bus-v2-pr-[a-f0-9]{40}$/.test(name) ||
+    !/^[a-f0-9]{64}$/.test(digest)
+  )
+    return null;
+  return { runId, name, digest };
+}
+
+function isOldLegacyProducerBaseRequest(
+  inputs: ArtifactPreparationInputs
+): boolean {
+  return (
+    !Object.prototype.hasOwnProperty.call(
+      inputs,
+      'artifact_contract_version'
+    ) &&
+    !Object.prototype.hasOwnProperty.call(inputs, 'candidate_evidence_mode') &&
+    !Object.prototype.hasOwnProperty.call(
+      inputs,
+      'aggregate_candidate_evidence_digest'
+    ) &&
+    !Object.prototype.hasOwnProperty.call(inputs, 'deploy_layers') &&
+    inputs.operation_key === 'replaced-by-reconciler' &&
+    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+    typeof inputs.source_ref === 'string' &&
+    inputs.source_ref.length > 0
+  );
+}
+
+function isNewLegacyProducerBaseRequest(
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs
+): boolean {
+  return (
+    request.ref === 'main' &&
+    typeof request.workflow_control_sha === 'string' &&
+    /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
+    inputs.operation_key === 'replaced-by-reconciler' &&
+    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+    typeof inputs.source_ref === 'string' &&
+    inputs.source_ref.length > 0 &&
+    inputs.candidate_evidence_mode === 'legacy-whole-train' &&
+    inputs.aggregate_candidate_evidence_digest === '' &&
+    inputs.reuse_artifact_run_id === '' &&
+    inputs.reuse_artifact_name === '' &&
+    inputs.reuse_artifact_digest === ''
+  );
+}
+
+function isOldLegacyProducer(
+  operation: ReleaseBusV2OperationRecord,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production',
+  oldProducerBaseRequest: boolean,
+  backendUnits: readonly string[] | null
+): boolean {
+  const oldProducerSummaryShape = exactKeys(summary, [
+    'artifact_digest',
+    'fresh_or_reused'
+  ]);
+  if (operation.repository === 'backend')
+    return (
       oldProducerBaseRequest &&
       !Object.prototype.hasOwnProperty.call(inputs, 'artifact_environment') &&
       backendUnits !== null &&
       oldProducerSummaryShape &&
-      ['fresh', 'reused'].includes(String(summary.fresh_or_reused));
-    const oldFrontendProducer =
-      operation.repository === 'frontend' &&
-      oldProducerBaseRequest &&
-      inputs.artifact_environment === targetEnvironment &&
-      inputs.deploy_units === '[]' &&
-      oldProducerSummaryShape &&
-      ['fresh-dual-profile', 'reused'].includes(
-        String(summary.fresh_or_reused)
-      );
-    if (oldBackendProducer || oldFrontendProducer)
-      return {
+      ['fresh', 'reused'].includes(String(summary.fresh_or_reused))
+    );
+  return (
+    oldProducerBaseRequest &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.deploy_units === '[]' &&
+    oldProducerSummaryShape &&
+    ['fresh-dual-profile', 'reused'].includes(String(summary.fresh_or_reused))
+  );
+}
+
+function isExactLegacyFrontendBinding(
+  operation: ReleaseBusV2OperationRecord,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production',
+  oldProducerBaseRequest: boolean,
+  newProducerBaseRequest: boolean
+): boolean {
+  const newFrontendRequest =
+    newProducerBaseRequest &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    inputs.artifact_contract_version === 'legacy-v2' &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.deploy_units === '[]';
+  const oldFrontendStructuredRequest =
+    oldProducerBaseRequest &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.deploy_units === '[]';
+  return (
+    (newFrontendRequest || oldFrontendStructuredRequest) &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'package_digest',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha'
+    ]) &&
+    summary.schema_version === 2 &&
+    summary.artifact_contract === null &&
+    summary.artifact_contract_version === 'legacy-v2' &&
+    summary.repository === 'frontend' &&
+    summary.source_sha === operation.expected_sha &&
+    summary.environment === 'dual' &&
+    summary.fresh_or_reused === 'fresh-legacy-dual-profile' &&
+    summary.source_evidence_reused === false &&
+    summary.artifact_bytes_reused === false &&
+    summary.ci_evidence === null &&
+    typeof summary.package_digest === 'string' &&
+    /^[a-f0-9]{64}$/.test(summary.package_digest)
+  );
+}
+
+function exactPackageDigests(
+  value: unknown,
+  units: readonly string[]
+): boolean {
+  const packageDigests = stringRecord(value);
+  return (
+    packageDigests !== null &&
+    isDeepStrictEqual(
+      Object.keys(packageDigests).sort(compareStrings),
+      [...units].sort(compareStrings)
+    ) &&
+    Object.values(packageDigests).every((digest) =>
+      /^[a-f0-9]{64}$/.test(digest)
+    )
+  );
+}
+
+function isExactLegacyBackendBinding(
+  operation: ReleaseBusV2OperationRecord,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  backendUnits: readonly string[],
+  oldProducerBaseRequest: boolean,
+  newProducerBaseRequest: boolean
+): boolean {
+  const newBackendRequest =
+    newProducerBaseRequest &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_layers',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    inputs.artifact_contract_version === 'legacy-v2' &&
+    inputs.artifact_environment === '';
+  const oldBackendStructuredRequest =
+    oldProducerBaseRequest &&
+    !Object.prototype.hasOwnProperty.call(inputs, 'artifact_environment');
+  const layers = parseArtifactLayers(
+    inputs.deploy_layers,
+    backendUnits,
+    oldBackendStructuredRequest
+  );
+  const evidence = legacyReuseEvidence(inputs, oldBackendStructuredRequest);
+  return (
+    (newBackendRequest || oldBackendStructuredRequest) &&
+    layers !== null &&
+    evidence !== null &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'layers',
+      'package_digests',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha',
+      'units'
+    ]) &&
+    summary.schema_version === 2 &&
+    summary.artifact_contract === 'legacy-v2' &&
+    summary.artifact_contract_version === 'legacy-v2' &&
+    summary.repository === 'backend' &&
+    summary.source_sha === operation.expected_sha &&
+    summary.environment === 'portable' &&
+    summary.source_evidence_reused === true &&
+    typeof summary.artifact_bytes_reused === 'boolean' &&
+    summary.fresh_or_reused ===
+      (summary.artifact_bytes_reused ? 'reused' : 'fresh') &&
+    isDeepStrictEqual(summary.units, backendUnits) &&
+    isDeepStrictEqual(summary.layers, layers) &&
+    exactPackageDigests(summary.package_digests, backendUnits) &&
+    isDeepStrictEqual(summary.ci_evidence, {
+      mode: 'legacy-whole-train',
+      artifact_run_id: evidence.runId,
+      artifact_name: evidence.name,
+      artifact_digest: evidence.digest,
+      aggregate_candidate_evidence_digest: null
+    })
+  );
+}
+
+function legacyArtifactDeployBinding(
+  operation: ReleaseBusV2OperationRecord,
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production'
+): ArtifactDeployBinding | null {
+  const oldProducerBaseRequest = isOldLegacyProducerBaseRequest(inputs);
+  const newProducerBaseRequest = isNewLegacyProducerBaseRequest(
+    request,
+    inputs
+  );
+  const backendUnits = parseArtifactUnits(inputs.deploy_units);
+  const exactOldProducer = isOldLegacyProducer(
+    operation,
+    inputs,
+    summary,
+    targetEnvironment,
+    oldProducerBaseRequest,
+    backendUnits
+  );
+  const exactFrontend =
+    operation.repository === 'frontend' &&
+    isExactLegacyFrontendBinding(
+      operation,
+      inputs,
+      summary,
+      targetEnvironment,
+      oldProducerBaseRequest,
+      newProducerBaseRequest
+    );
+  const exactBackend =
+    operation.repository === 'backend' &&
+    backendUnits !== null &&
+    isExactLegacyBackendBinding(
+      operation,
+      inputs,
+      summary,
+      backendUnits,
+      oldProducerBaseRequest,
+      newProducerBaseRequest
+    );
+  return exactOldProducer || exactFrontend || exactBackend
+    ? {
         artifact_environment: '',
         artifact_contract_version: 'legacy-v2'
-      };
-    if (operation.repository === 'frontend') {
-      const newFrontendRequest =
-        newProducerBaseRequest &&
-        exactKeys(inputs, [
-          'aggregate_candidate_evidence_digest',
-          'artifact_contract_version',
-          'artifact_environment',
-          'candidate_evidence_mode',
-          'deploy_units',
-          'expected_sha',
-          'operation_key',
-          'release_train_id',
-          'release_train_revision',
-          'reuse_artifact_digest',
-          'reuse_artifact_name',
-          'reuse_artifact_run_id',
-          'source_ref'
-        ]) &&
-        inputs.artifact_contract_version === 'legacy-v2' &&
-        inputs.artifact_environment === targetEnvironment &&
-        inputs.deploy_units === '[]';
-      const oldFrontendStructuredRequest =
-        oldProducerBaseRequest &&
-        inputs.artifact_environment === targetEnvironment &&
-        inputs.deploy_units === '[]';
-      const exactFrontendSummary =
-        exactKeys(summary, [
-          'artifact_bytes_reused',
-          'artifact_contract',
-          'artifact_contract_version',
-          'artifact_digest',
-          'ci_evidence',
-          'environment',
-          'fresh_or_reused',
-          'package_digest',
-          'repository',
-          'schema_version',
-          'source_evidence_reused',
-          'source_sha'
-        ]) &&
-        summary.schema_version === 2 &&
-        summary.artifact_contract === null &&
-        summary.artifact_contract_version === 'legacy-v2' &&
-        summary.repository === 'frontend' &&
-        summary.source_sha === operation.expected_sha &&
-        summary.environment === 'dual' &&
-        summary.fresh_or_reused === 'fresh-legacy-dual-profile' &&
-        summary.source_evidence_reused === false &&
-        summary.artifact_bytes_reused === false &&
-        summary.ci_evidence === null &&
-        typeof summary.package_digest === 'string' &&
-        /^[a-f0-9]{64}$/.test(summary.package_digest);
-      if (
-        exactFrontendSummary &&
-        (newFrontendRequest || oldFrontendStructuredRequest)
-      )
-        return {
-          artifact_environment: '',
-          artifact_contract_version: 'legacy-v2'
-        };
-    }
-    if (operation.repository === 'backend' && backendUnits) {
-      const newBackendRequest =
-        newProducerBaseRequest &&
-        exactKeys(inputs, [
-          'aggregate_candidate_evidence_digest',
-          'artifact_contract_version',
-          'artifact_environment',
-          'candidate_evidence_mode',
-          'deploy_layers',
-          'deploy_units',
-          'expected_sha',
-          'operation_key',
-          'release_train_id',
-          'release_train_revision',
-          'reuse_artifact_digest',
-          'reuse_artifact_name',
-          'reuse_artifact_run_id',
-          'source_ref'
-        ]) &&
-        inputs.artifact_contract_version === 'legacy-v2' &&
-        inputs.artifact_environment === '';
-      const oldBackendStructuredRequest =
-        oldProducerBaseRequest &&
-        !Object.prototype.hasOwnProperty.call(inputs, 'artifact_environment');
-      const layers = parseLayers(
-        inputs.deploy_layers,
-        backendUnits,
-        oldBackendStructuredRequest
-      );
-      const evidence = reuseEvidence(oldBackendStructuredRequest);
-      const packageDigests = stringRecord(summary.package_digests);
-      const exactPackages =
-        packageDigests !== null &&
-        isDeepStrictEqual(
-          Object.keys(packageDigests).sort(compareStrings),
-          [...backendUnits].sort(compareStrings)
-        ) &&
-        Object.values(packageDigests).every((digest) =>
-          /^[a-f0-9]{64}$/.test(digest)
-        );
-      const exactBackendSummary =
-        layers !== null &&
-        evidence !== null &&
-        exactKeys(summary, [
-          'artifact_bytes_reused',
-          'artifact_contract',
-          'artifact_contract_version',
-          'artifact_digest',
-          'ci_evidence',
-          'environment',
-          'fresh_or_reused',
-          'layers',
-          'package_digests',
-          'repository',
-          'schema_version',
-          'source_evidence_reused',
-          'source_sha',
-          'units'
-        ]) &&
-        summary.schema_version === 2 &&
-        summary.artifact_contract === 'legacy-v2' &&
-        summary.artifact_contract_version === 'legacy-v2' &&
-        summary.repository === 'backend' &&
-        summary.source_sha === operation.expected_sha &&
-        summary.environment === 'portable' &&
-        summary.source_evidence_reused === true &&
-        typeof summary.artifact_bytes_reused === 'boolean' &&
-        summary.fresh_or_reused ===
-          (summary.artifact_bytes_reused ? 'reused' : 'fresh') &&
-        isDeepStrictEqual(summary.units, backendUnits) &&
-        isDeepStrictEqual(summary.layers, layers) &&
-        exactPackages &&
-        isDeepStrictEqual(summary.ci_evidence, {
-          mode: 'legacy-whole-train',
-          artifact_run_id: evidence.runId,
-          artifact_name: evidence.name,
-          artifact_digest: evidence.digest,
-          aggregate_candidate_evidence_digest: null
-        });
-      if (
-        exactBackendSummary &&
-        (newBackendRequest || oldBackendStructuredRequest)
-      )
-        return {
-          artifact_environment: '',
-          artifact_contract_version: 'legacy-v2'
-        };
-    }
-    throw new Error(
-      'Legacy artifact preparation does not prove an immutable portable artifact'
-    );
-  }
-  const targetEnvironment = environment === 'prod' ? 'production' : 'staging';
-  const exactKeys = (
-    value: Readonly<Record<string, unknown>>,
-    expected: readonly string[]
-  ): boolean =>
-    isDeepStrictEqual(
-      Object.keys(value).sort(compareStrings),
-      [...expected].sort(compareStrings)
-    );
-  const exactV3RequestBase =
-    contract === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
-    request?.ref === 'main' &&
-    typeof request.workflow_control_sha === 'string' &&
-    /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
-    inputs.artifact_environment === targetEnvironment &&
-    inputs.operation_key === 'replaced-by-reconciler' &&
-    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
-    typeof inputs.source_ref === 'string' &&
-    inputs.source_ref.length > 0;
-  let expectedCiEvidence: Readonly<Record<string, unknown>> | null = null;
+      }
+    : null;
+}
+
+function expectedV3CiEvidence(
+  inputs: ArtifactPreparationInputs,
+  expectedSha: string
+): Readonly<Record<string, unknown>> | null {
   if (
     inputs.candidate_evidence_mode === 'strict-single' &&
     inputs.aggregate_candidate_evidence_digest === '' &&
     /^[1-9][0-9]{0,19}$/.test(inputs.reuse_artifact_run_id ?? '') &&
-    inputs.reuse_artifact_name ===
-      `release-bus-v2-pr-${operation.expected_sha}` &&
+    inputs.reuse_artifact_name === `release-bus-v2-pr-${expectedSha}` &&
     /^[a-f0-9]{64}$/.test(inputs.reuse_artifact_digest ?? '')
   )
-    expectedCiEvidence = {
+    return {
       mode: 'strict-single',
       artifact_run_id: inputs.reuse_artifact_run_id,
       artifact_name: inputs.reuse_artifact_name,
       artifact_digest: inputs.reuse_artifact_digest,
       aggregate_candidate_evidence_digest: null
     };
-  else if (
+  if (
     inputs.candidate_evidence_mode === 'strict-aggregate' &&
     /^[a-f0-9]{64}$/.test(inputs.aggregate_candidate_evidence_digest ?? '') &&
     inputs.reuse_artifact_run_id === '' &&
     inputs.reuse_artifact_name === '' &&
     inputs.reuse_artifact_digest === ''
   )
-    expectedCiEvidence = {
+    return {
       mode: 'strict-aggregate',
       artifact_run_id: null,
       artifact_name: null,
@@ -866,7 +904,34 @@ export function preparedArtifactDeployBinding(
       aggregate_candidate_evidence_digest:
         inputs.aggregate_candidate_evidence_digest
     };
-  const exactV3SummaryBase =
+  return null;
+}
+
+function isExactV3RequestBase(
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs,
+  targetEnvironment: 'staging' | 'production'
+): boolean {
+  return (
+    inputs.artifact_contract_version === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
+    request.ref === 'main' &&
+    typeof request.workflow_control_sha === 'string' &&
+    /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.operation_key === 'replaced-by-reconciler' &&
+    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+    typeof inputs.source_ref === 'string' &&
+    inputs.source_ref.length > 0
+  );
+}
+
+function isExactV3SummaryBase(
+  operation: ReleaseBusV2OperationRecord,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production',
+  expectedCiEvidence: Readonly<Record<string, unknown>> | null
+): boolean {
+  return (
     summary.schema_version === 3 &&
     summary.artifact_contract === 'environment-bound-v1' &&
     summary.artifact_contract_version === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
@@ -876,145 +941,229 @@ export function preparedArtifactDeployBinding(
     summary.source_evidence_reused === true &&
     summary.artifact_bytes_reused === false &&
     expectedCiEvidence !== null &&
-    isDeepStrictEqual(summary.ci_evidence, expectedCiEvidence);
-  let exactRepositoryBinding = false;
-  if (operation.repository === 'frontend') {
-    exactRepositoryBinding =
-      exactV3RequestBase &&
-      exactKeys(inputs, [
-        'aggregate_candidate_evidence_digest',
-        'artifact_contract_version',
-        'artifact_environment',
-        'candidate_evidence_mode',
-        'deploy_units',
-        'expected_sha',
-        'operation_key',
-        'release_train_id',
-        'release_train_revision',
-        'reuse_artifact_digest',
-        'reuse_artifact_name',
-        'reuse_artifact_run_id',
-        'source_ref'
-      ]) &&
-      inputs.deploy_units === '[]' &&
-      exactV3SummaryBase &&
-      exactKeys(summary, [
-        'artifact_bytes_reused',
-        'artifact_contract',
-        'artifact_contract_version',
-        'artifact_digest',
-        'ci_evidence',
-        'environment',
-        'fresh_or_reused',
-        'package_digest',
-        'repository',
-        'schema_version',
-        'source_evidence_reused',
-        'source_sha'
-      ]) &&
-      summary.fresh_or_reused === 'fresh-environment-bound' &&
-      typeof summary.package_digest === 'string' &&
-      /^[a-f0-9]{64}$/.test(summary.package_digest);
-  } else {
-    let units: readonly string[] | null = null;
-    let layers: readonly (readonly string[])[] | null = null;
-    try {
-      const parsedUnits = JSON.parse(inputs.deploy_units ?? 'null') as unknown;
-      const parsedLayers = JSON.parse(
-        inputs.deploy_layers ?? 'null'
-      ) as unknown;
-      if (
-        Array.isArray(parsedUnits) &&
-        parsedUnits.length > 0 &&
-        parsedUnits.every(
-          (unit) =>
-            typeof unit === 'string' && /^[A-Za-z][A-Za-z0-9]{0,99}$/.test(unit)
-        ) &&
-        new Set(parsedUnits).size === parsedUnits.length &&
-        Array.isArray(parsedLayers) &&
-        parsedLayers.length > 0 &&
-        parsedLayers.every(
-          (layer) =>
-            Array.isArray(layer) &&
-            layer.length > 0 &&
-            layer.every((unit) => typeof unit === 'string')
+    isDeepStrictEqual(summary.ci_evidence, expectedCiEvidence)
+  );
+}
+
+function isExactV3FrontendBinding(
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  exactRequestBase: boolean,
+  exactSummaryBase: boolean
+): boolean {
+  return (
+    exactRequestBase &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    inputs.deploy_units === '[]' &&
+    exactSummaryBase &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'package_digest',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha'
+    ]) &&
+    summary.fresh_or_reused === 'fresh-environment-bound' &&
+    typeof summary.package_digest === 'string' &&
+    /^[a-f0-9]{64}$/.test(summary.package_digest)
+  );
+}
+
+function isExactV3BackendBinding(
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  exactRequestBase: boolean,
+  exactSummaryBase: boolean
+): boolean {
+  const units = parseArtifactUnits(inputs.deploy_units);
+  if (!units) return false;
+  const layers = parseArtifactLayers(inputs.deploy_layers, units, false);
+  return (
+    layers !== null &&
+    exactRequestBase &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_layers',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    exactSummaryBase &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'layers',
+      'package_digests',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha',
+      'units'
+    ]) &&
+    isDeepStrictEqual(summary.units, units) &&
+    isDeepStrictEqual(summary.layers, layers) &&
+    exactPackageDigests(summary.package_digests, units) &&
+    summary.fresh_or_reused === 'fresh'
+  );
+}
+
+function environmentBoundArtifactDeployBinding(
+  operation: ReleaseBusV2OperationRecord,
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production'
+): ArtifactDeployBinding | null {
+  const exactRequestBase = isExactV3RequestBase(
+    request,
+    inputs,
+    targetEnvironment
+  );
+  const expectedCiEvidence = expectedV3CiEvidence(
+    inputs,
+    operation.expected_sha!
+  );
+  const exactSummaryBase = isExactV3SummaryBase(
+    operation,
+    summary,
+    targetEnvironment,
+    expectedCiEvidence
+  );
+  const exactRepositoryBinding =
+    operation.repository === 'frontend'
+      ? isExactV3FrontendBinding(
+          inputs,
+          summary,
+          exactRequestBase,
+          exactSummaryBase
         )
-      ) {
-        const flattened = parsedLayers.flat() as string[];
-        if (
-          flattened.length === parsedUnits.length &&
-          new Set(flattened).size === flattened.length &&
-          isDeepStrictEqual(
-            [...flattened].sort(compareStrings),
-            [...parsedUnits].sort(compareStrings)
-          )
-        ) {
-          units = parsedUnits;
-          layers = parsedLayers as readonly (readonly string[])[];
-        }
+      : isExactV3BackendBinding(
+          inputs,
+          summary,
+          exactRequestBase,
+          exactSummaryBase
+        );
+  return exactRepositoryBinding
+    ? {
+        artifact_environment: targetEnvironment,
+        artifact_contract_version: ENVIRONMENT_BOUND_ARTIFACT_CONTRACT
       }
-    } catch {
-      units = null;
-      layers = null;
-    }
-    const packageDigests = stringRecord(summary.package_digests);
-    exactRepositoryBinding =
-      exactV3RequestBase &&
-      exactKeys(inputs, [
-        'aggregate_candidate_evidence_digest',
-        'artifact_contract_version',
-        'artifact_environment',
-        'candidate_evidence_mode',
-        'deploy_layers',
-        'deploy_units',
-        'expected_sha',
-        'operation_key',
-        'release_train_id',
-        'release_train_revision',
-        'reuse_artifact_digest',
-        'reuse_artifact_name',
-        'reuse_artifact_run_id',
-        'source_ref'
-      ]) &&
-      exactV3SummaryBase &&
-      exactKeys(summary, [
-        'artifact_bytes_reused',
-        'artifact_contract',
-        'artifact_contract_version',
-        'artifact_digest',
-        'ci_evidence',
-        'environment',
-        'fresh_or_reused',
-        'layers',
-        'package_digests',
-        'repository',
-        'schema_version',
-        'source_evidence_reused',
-        'source_sha',
-        'units'
-      ]) &&
-      units !== null &&
-      layers !== null &&
-      isDeepStrictEqual(summary.units, units) &&
-      isDeepStrictEqual(summary.layers, layers) &&
-      packageDigests !== null &&
-      isDeepStrictEqual(
-        Object.keys(packageDigests).sort(compareStrings),
-        [...units].sort(compareStrings)
-      ) &&
-      Object.values(packageDigests).every((digest) =>
-        /^[a-f0-9]{64}$/.test(digest)
-      ) &&
-      summary.fresh_or_reused === 'fresh';
-  }
-  if (!exactRepositoryBinding)
+    : null;
+}
+
+function parseArtifactPreparation(operation: ReleaseBusV2OperationRecord): {
+  readonly request: ArtifactPreparationRequest;
+  readonly inputs: ArtifactPreparationInputs;
+  readonly summary: ArtifactPreparationSummary;
+} | null {
+  const request = parseStoredJson<ArtifactPreparationRequest>(
+    operation.request_json
+  );
+  const inputs = stringRecord(request?.inputs);
+  const result = parseStoredJson<{ summary?: unknown }>(operation.result_json);
+  const summary =
+    result?.summary &&
+    typeof result.summary === 'object' &&
+    !Array.isArray(result.summary)
+      ? (result.summary as ArtifactPreparationSummary)
+      : null;
+  return request && inputs && summary ? { request, inputs, summary } : null;
+}
+
+function hasExactArtifactPreparationEnvelope(
+  operation: ReleaseBusV2OperationRecord,
+  prepared: ReturnType<typeof parseArtifactPreparation>
+): prepared is NonNullable<ReturnType<typeof parseArtifactPreparation>> {
+  if (!prepared) return false;
+  const { request, inputs, summary } = prepared;
+  return (
+    operation.status === 'SUCCEEDED' &&
+    request.workflow === 'release-bus-v2-preflight.yml' &&
+    Boolean(operation.external_id) &&
+    /^[1-9][0-9]{0,19}$/.test(operation.external_id ?? '') &&
+    Boolean(operation.expected_sha) &&
+    /^[a-f0-9]{40}$/.test(operation.expected_sha ?? '') &&
+    Boolean(operation.artifact_digest) &&
+    /^[a-f0-9]{64}$/.test(operation.artifact_digest ?? '') &&
+    inputs.release_train_id === operation.train_id &&
+    inputs.expected_sha === operation.expected_sha &&
+    summary.artifact_digest === operation.artifact_digest &&
+    (summary.repository === undefined ||
+      summary.repository === operation.repository) &&
+    (summary.source_sha === undefined ||
+      summary.source_sha === operation.expected_sha)
+  );
+}
+
+export function preparedArtifactDeployBinding(
+  operation: ReleaseBusV2OperationRecord,
+  environment: 'staging' | 'prod'
+): ArtifactDeployBinding {
+  const prepared = parseArtifactPreparation(operation);
+  if (!hasExactArtifactPreparationEnvelope(operation, prepared))
     throw new Error(
-      'Environment-bound preparation does not match the exact deploy environment'
+      'Successful artifact preparation has no exact immutable deploy binding'
     );
-  return {
-    artifact_environment: targetEnvironment,
-    artifact_contract_version: ENVIRONMENT_BOUND_ARTIFACT_CONTRACT
-  };
+  const { request, inputs, summary } = prepared;
+  const targetEnvironment = environment === 'prod' ? 'production' : 'staging';
+  const contract = inputs.artifact_contract_version ?? 'legacy-v2';
+  const binding =
+    contract === 'legacy-v2'
+      ? legacyArtifactDeployBinding(
+          operation,
+          request,
+          inputs,
+          summary,
+          targetEnvironment
+        )
+      : environmentBoundArtifactDeployBinding(
+          operation,
+          request,
+          inputs,
+          summary,
+          targetEnvironment
+        );
+  if (binding) return binding;
+  throw new Error(
+    contract === 'legacy-v2'
+      ? 'Legacy artifact preparation does not prove an immutable portable artifact'
+      : 'Environment-bound preparation does not match the exact deploy environment'
+  );
 }
 
 function frontendDeployBinding(
@@ -2277,7 +2426,7 @@ export class ReleaseBusV2Reconciler {
       canUseSingleCandidateFastPath(candidates[0], baseSha)
         ? candidates[0]
         : null;
-    const evidenceSelection = candidateEvidenceSelection(
+    const evidenceSelection = candidateEvidenceSelectionForPreparation(
       candidates,
       fastCandidate?.id ?? null
     );
@@ -3208,7 +3357,7 @@ export class ReleaseBusV2Reconciler {
       };
     const branch = this.rollbackBranch(train, repository);
     await releaseBusGitHubApp.createRef(repository, branch, composedSha);
-    const evidenceSelection = candidateEvidenceSelection(
+    const evidenceSelection = candidateEvidenceSelectionForPreparation(
       context.candidates.filter(
         (candidate) =>
           baseline.candidateIds.includes(candidate.id) &&
