@@ -6,7 +6,6 @@ import {
 } from '@/releaseBusV2/release-bus-v2.config';
 import { releaseBusGitHubApp } from '@/releaseBusV2/release-bus-v2.github-app';
 import {
-  releaseBusV2CandidateHasActiveIntent,
   releaseBusV2CandidateInventoryDigest,
   releaseBusV2Repository,
   type ReleaseBusV2CandidateVersion,
@@ -380,11 +379,16 @@ export class ReleaseBusV2CandidateDeregistrationService {
             committedDeregistrationId,
             'UNKNOWN_DETACHED'
           );
-        if (!failure)
-          throw new ReleaseBusV2CandidateDeregistrationError(
-            'UNAVAILABLE',
-            'Candidate deregistration did not commit and maintenance lock cleanup failed'
-          );
+        throw new ReleaseBusV2CandidateDeregistrationError(
+          'UNAVAILABLE',
+          `Candidate deregistration did not commit and maintenance lock cleanup failed${
+            failure instanceof Error
+              ? ` after ${failure.message}`
+              : failure
+                ? ' after another pre-commit failure'
+                : ''
+          }`
+        );
       }
       if (failure) throw failure;
       if (!execution)
@@ -406,7 +410,7 @@ export class ReleaseBusV2CandidateDeregistrationService {
           ['STAGING', 'PRODUCTION', 'PRODUCTION_QUALIFICATION'],
           {}
         ),
-        this.repository.listAllCandidates({}),
+        this.repository.listCandidateDeregistrationTargets({}),
         this.repository.getStagingState({})
       ]);
     this.assertControls(mode, controls);
@@ -421,10 +425,7 @@ export class ReleaseBusV2CandidateDeregistrationService {
         'CONFLICT',
         'Candidate deregistration requires every Release Bus operation to be terminal'
       );
-    const activeIntentCandidates = candidates.filter(
-      releaseBusV2CandidateHasActiveIntent
-    );
-    if (activeIntentCandidates.length > MAX_DEREGISTRATION_CANDIDATES)
+    if (candidates.length > MAX_DEREGISTRATION_CANDIDATES)
       throw new ReleaseBusV2CandidateDeregistrationError(
         'CONFLICT',
         `Candidate deregistration supports at most ${MAX_DEREGISTRATION_CANDIDATES} exact active-intent rows`
@@ -444,7 +445,7 @@ export class ReleaseBusV2CandidateDeregistrationService {
       locks: normalizedLocks(locks),
       stagingState: state,
       stagingRefs,
-      candidates: activeIntentCandidates
+      candidates
     };
   }
 

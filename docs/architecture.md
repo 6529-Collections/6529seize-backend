@@ -578,6 +578,10 @@ operation, manifest, and event history remains immutable. A detached singleton
 blocks registration and claims; it can become clean main only when both exact
 staging refs equal the corresponding current main bases. Matching an older
 validated manifest never restores its prior candidate membership.
+Terminal candidate history is byte-for-byte immutable, except that a
+`SUPERSEDED` row with the exact deleted-branch event and retained production
+request/staging evidence is still active intent because the reconciler can
+restore it; deregistration must consume that narrow recoverable case.
 These additive values fit the existing varchar widths and require no database
 migration. Execution is forbidden during mixed API/reconciler runtime; both
 lane controls remain paused until every runtime and generated/UI contract

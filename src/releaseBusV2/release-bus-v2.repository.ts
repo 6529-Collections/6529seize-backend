@@ -152,7 +152,6 @@ const RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES = [
 
 export const RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUSES = [
   'PRODUCTION_DEPLOYED',
-  'SUPERSEDED',
   'CANCELLED',
   'DEREGISTERED'
 ] as const satisfies readonly ReleaseBusV2CandidateStatus[];
@@ -163,8 +162,42 @@ const RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUS_SET =
   );
 
 export function releaseBusV2CandidateHasActiveIntent(
-  candidate: Pick<ReleaseBusV2CandidateRecord, 'status'>
+  candidate: Pick<
+    ReleaseBusV2CandidateRecord,
+    | 'status'
+    | 'current_train_id'
+    | 'production_requested_at'
+    | 'staging_validated_manifest_id'
+  >,
+  latestSupersededEvent: Pick<
+    ReleaseBusV2EventRecord,
+    'event_type' | 'payload_json'
+  > | null = null
 ): boolean {
+  if (candidate.status === 'SUPERSEDED') {
+    if (
+      candidate.current_train_id !== null ||
+      candidate.production_requested_at === null ||
+      candidate.staging_validated_manifest_id === null ||
+      latestSupersededEvent?.event_type !==
+        'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE'
+    )
+      return false;
+    try {
+      const payload =
+        typeof latestSupersededEvent.payload_json === 'string'
+          ? JSON.parse(latestSupersededEvent.payload_json)
+          : latestSupersededEvent.payload_json;
+      return (
+        typeof payload === 'object' &&
+        payload !== null &&
+        !Array.isArray(payload) &&
+        (payload as Record<string, unknown>).current_head_sha === 'deleted'
+      );
+    } catch {
+      return false;
+    }
+  }
   return !RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUS_SET.has(
     candidate.status
   );
@@ -463,6 +496,38 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       {},
       dbOptions(ctx)
     );
+  }
+
+  public async listCandidateDeregistrationTargets(
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2CandidateRecord[]> {
+    const candidates = await this.listAllCandidates(ctx, forUpdate);
+    const classified = await Promise.all(
+      candidates.map(async (candidate) => {
+        const latestSupersededEvent =
+          candidate.status === 'SUPERSEDED'
+            ? ((
+                await this.listCandidateEvents(
+                  candidate.id,
+                  'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
+                  1,
+                  ctx
+                )
+              )[0] ?? null)
+            : null;
+        return {
+          candidate,
+          active: releaseBusV2CandidateHasActiveIntent(
+            candidate,
+            latestSupersededEvent
+          )
+        };
+      })
+    );
+    return classified
+      .filter(({ active }) => active)
+      .map(({ candidate }) => candidate);
   }
 
   public async listLiveStagingCandidates(
@@ -854,7 +919,9 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<void> {
     const live = await this.listLiveStagingCandidates(ctx, true);
-    if (live.some(releaseBusV2CandidateHasActiveIntent))
+    if (
+      live.some((candidate) => releaseBusV2CandidateHasActiveIntent(candidate))
+    )
       throw new Error(
         'Detached staging cannot become clean main while an active-intent candidate is recorded live'
       );
@@ -1790,9 +1857,9 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       // Under the transaction isolation used by the Release Bus this also
       // fences inserts, so no new active target can appear between CAS and
       // mutation. Historical terminal rows are deliberately left untouched.
-      const allCandidates = await this.listAllCandidates(ctx, true);
-      const candidates = allCandidates.filter(
-        releaseBusV2CandidateHasActiveIntent
+      const candidates = await this.listCandidateDeregistrationTargets(
+        ctx,
+        true
       );
       if (
         !sameCandidateVersions(candidates, input.expectedCandidates) ||

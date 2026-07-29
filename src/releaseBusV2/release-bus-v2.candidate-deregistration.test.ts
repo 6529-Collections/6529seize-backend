@@ -149,7 +149,7 @@ function harness() {
     listLocks: jest.fn().mockResolvedValue(lockRows),
     listActiveTrains: jest.fn().mockResolvedValue([]),
     listNonterminalOperationsForLanes: jest.fn().mockResolvedValue([]),
-    listAllCandidates: jest.fn().mockResolvedValue(rows),
+    listCandidateDeregistrationTargets: jest.fn().mockResolvedValue(rows),
     getStagingState: jest.fn().mockResolvedValue(state),
     acquireExactFreeMaintenanceLocks: jest.fn().mockResolvedValue(leases),
     commitAllCandidateDeregistration: jest
@@ -281,27 +281,36 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
         status: 'PRODUCTION_DEPLOYED',
         row_version: 31
       }),
-      candidate('history-2', { status: 'SUPERSEDED', row_version: 32 }),
+      candidate('history-2', {
+        status: 'SUPERSEDED',
+        production_requested_at: null,
+        production_requested_by: null,
+        production_selection_id: null,
+        row_version: 32
+      }),
       candidate('history-3', { status: 'CANCELLED', row_version: 33 }),
       candidate('history-4', { status: 'DEREGISTERED', row_version: 34 })
     ];
-    repository.listAllCandidates.mockResolvedValue([
-      terminalHistory[2],
+    const recoverableSuperseded = candidate('recoverable-superseded', {
+      status: 'SUPERSEDED',
+      superseded_at: 35,
+      row_version: 35
+    });
+    repository.listCandidateDeregistrationTargets.mockResolvedValue([
       rows[1],
-      terminalHistory[0],
-      terminalHistory[3],
-      rows[0],
-      terminalHistory[1]
+      recoverableSuperseded,
+      rows[0]
     ]);
 
     const plan = await service.prepare(
       'Retire only the active candidate intent'
     );
 
-    expect(plan.candidate_count).toBe(2);
+    expect(plan.candidate_count).toBe(3);
     expect(plan.candidates).toEqual([
       { id: 'candidate-1', row_version: 7 },
-      { id: 'candidate-2', row_version: 7 }
+      { id: 'candidate-2', row_version: 7 },
+      { id: 'recoverable-superseded', row_version: 35 }
     ]);
     expect(plan.candidates).not.toEqual(
       expect.arrayContaining(
@@ -312,12 +321,7 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
 
   it('returns an explicit zero-target preparation as a safe non-executable no-op', async () => {
     const { service, repository } = harness();
-    repository.listAllCandidates.mockResolvedValue([
-      candidate('history-1', { status: 'PRODUCTION_DEPLOYED' }),
-      candidate('history-2', { status: 'SUPERSEDED' }),
-      candidate('history-3', { status: 'CANCELLED' }),
-      candidate('history-4', { status: 'DEREGISTERED' })
-    ]);
+    repository.listCandidateDeregistrationTargets.mockResolvedValue([]);
 
     const plan = await service.prepare('Confirm no active candidate intent');
 
@@ -580,6 +584,32 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
     expect(repository.commitAllCandidateDeregistration).toHaveBeenCalledTimes(
       1
     );
+  });
+
+  it('surfaces lock-release failure alongside a pre-commit failure', async () => {
+    const { service, repository, deps } = harness();
+    const plan = await service.prepare(
+      'Retire the audited candidate inventory'
+    );
+    deps.getMode
+      .mockReturnValueOnce('PRODUCTION')
+      .mockReturnValueOnce('STAGING');
+    repository.releaseExactMaintenanceLocks.mockRejectedValue(
+      new Error('Lock backend unavailable')
+    );
+
+    await expect(
+      service.execute(executeInput(plan), 'operator')
+    ).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+      committed: false,
+      deregistration_id: null,
+      message: expect.stringMatching(
+        /maintenance lock cleanup failed after Release Bus mode changed/
+      )
+    });
+    expect(repository.commitAllCandidateDeregistration).not.toHaveBeenCalled();
+    expect(repository.releaseExactMaintenanceLocks).toHaveBeenCalledTimes(1);
   });
 
   it('retains committed-state evidence when supplemental post-fence audit fails', async () => {

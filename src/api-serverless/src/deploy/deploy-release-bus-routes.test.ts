@@ -1466,9 +1466,13 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       );
 
       expect(response.status).toBe(status);
-      expect(response.body).toMatchObject({
-        error: 'Candidate deregistration remains blocked'
+      expect(response.body).toEqual({
+        error: 'Candidate deregistration remains blocked',
+        committed: false,
+        deregistration_id: null,
+        physical_staging_presence: 'UNKNOWN_UNCHANGED'
       });
+      expect(response.cacheControl).toContain('no-store');
       expect(mockCandidateDeregistrationExecute).not.toHaveBeenCalled();
     }
   );

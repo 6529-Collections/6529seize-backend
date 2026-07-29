@@ -346,10 +346,15 @@ reset, not a staging removal deployment. Preparation is read-only and returns
 the exact active-intent candidate inventory digest, every active-intent
 candidate row version, every control/lock row version, the staging-state row
 version, and the observed frontend/backend `1a-staging` refs. Active intent is
-defined as every status except the immutable terminal-history statuses
-`PRODUCTION_DEPLOYED`, `SUPERSEDED`, `CANCELLED`, and `DEREGISTERED`.
-Execution must repeat that complete plan. A preparation with zero active-intent
-targets is an audited safe no-op (`candidate_count: 0`); it cannot be executed.
+every nonterminal status plus the narrow `SUPERSEDED` case that is still
+semantically recoverable production intent: no current train, an explicit
+production request, staging evidence, and the latest branch-move supersession
+event records a deleted head. The reconciler can otherwise restore that exact
+row to production readiness, so deregistration must include it. Immutable
+`PRODUCTION_DEPLOYED`, `CANCELLED`, `DEREGISTERED`, and all other terminal
+`SUPERSEDED` history is excluded and preserved byte-for-byte. Execution must
+repeat that complete plan. A preparation with zero active-intent targets is an
+audited safe no-op (`candidate_count: 0`); it cannot be executed.
 
 Execution is allowed only when `ALL` is unpaused, both independently changeable
 lanes are paused `OFF`, all three v2 locks are wholly free, all trains and

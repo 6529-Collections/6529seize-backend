@@ -1,5 +1,6 @@
 import { DbPoolName, type DbQueryOptions } from '@/db-query.options';
 import {
+  releaseBusV2CandidateHasActiveIntent,
   releaseBusV2CandidateInventoryDigest,
   ReleaseBusV2Repository,
   type ReleaseBusV2ControlRecord,
@@ -262,6 +263,56 @@ describe('ReleaseBusV2Repository', () => {
     expect(acquire).not.toHaveBeenCalled();
   });
 
+  it('classifies only semantically recoverable superseded production intent as active', () => {
+    const recoverable = candidate('recoverable', {
+      status: 'SUPERSEDED',
+      current_train_id: null,
+      superseded_at: 3
+    });
+    const deletedHeadEvent = {
+      event_type: 'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
+      payload_json: { current_head_sha: 'deleted' }
+    };
+
+    expect(
+      releaseBusV2CandidateHasActiveIntent(recoverable, deletedHeadEvent)
+    ).toBe(true);
+    expect(releaseBusV2CandidateHasActiveIntent(recoverable)).toBe(false);
+    expect(
+      releaseBusV2CandidateHasActiveIntent(
+        {
+          ...recoverable,
+          current_train_id: 'active-train'
+        },
+        deletedHeadEvent
+      )
+    ).toBe(false);
+    expect(
+      releaseBusV2CandidateHasActiveIntent(
+        {
+          ...recoverable,
+          production_requested_at: null
+        },
+        deletedHeadEvent
+      )
+    ).toBe(false);
+    expect(
+      releaseBusV2CandidateHasActiveIntent(
+        {
+          ...recoverable,
+          staging_validated_manifest_id: null
+        },
+        deletedHeadEvent
+      )
+    ).toBe(false);
+    expect(
+      releaseBusV2CandidateHasActiveIntent(recoverable, {
+        ...deletedHeadEvent,
+        payload_json: { current_head_sha: 'moved-head' }
+      })
+    ).toBe(false);
+  });
+
   it('atomically detaches only active intent while preserving terminal rows byte-for-byte', async () => {
     const db = new RecordingSqlExecutor();
     const repository = new ReleaseBusV2Repository(() => db);
@@ -276,7 +327,12 @@ describe('ReleaseBusV2Repository', () => {
         production_requested_by: 'production-operator',
         hold_reason: 'Dependency evidence pending'
       }),
-      candidate('candidate-b')
+      candidate('candidate-b'),
+      candidate('recoverable-superseded-production', {
+        status: 'SUPERSEDED',
+        current_train_id: null,
+        superseded_at: 3
+      })
     ];
     const terminalHistory = [
       candidate('history-production', {
@@ -285,6 +341,7 @@ describe('ReleaseBusV2Repository', () => {
       }),
       candidate('history-superseded', {
         status: 'SUPERSEDED',
+        superseded_at: 4,
         row_version: 22
       }),
       candidate('history-cancelled', {
@@ -314,6 +371,32 @@ describe('ReleaseBusV2Repository', () => {
     const listAllCandidates = jest
       .spyOn(repository, 'listAllCandidates')
       .mockResolvedValue([...candidates, ...terminalHistory]);
+    jest
+      .spyOn(repository, 'listCandidateEvents')
+      .mockImplementation(async (candidateId) => {
+        if (
+          !['recoverable-superseded-production', 'history-superseded'].includes(
+            candidateId
+          )
+        )
+          return [];
+        return [
+          {
+            id: `superseded-event-${candidateId}`,
+            train_id: null,
+            candidate_id: candidateId,
+            event_type: 'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
+            github_actor: 'release-bus-v2',
+            payload_json: {
+              current_head_sha:
+                candidateId === 'recoverable-superseded-production'
+                  ? 'deleted'
+                  : 'moved-head'
+            },
+            created_at: 3
+          }
+        ];
+      });
     const updateCandidate = jest
       .spyOn(repository, 'updateCandidate')
       .mockResolvedValue(true);
@@ -345,9 +428,9 @@ describe('ReleaseBusV2Repository', () => {
         observedFrontendStagingSha: 'a'.repeat(40),
         observedBackendStagingSha: 'b'.repeat(40)
       })
-    ).resolves.toEqual({ candidateCount: 2 });
+    ).resolves.toEqual({ candidateCount: 3 });
 
-    expect(updateCandidate).toHaveBeenCalledTimes(2);
+    expect(updateCandidate).toHaveBeenCalledTimes(3);
     expect(listAllCandidates).toHaveBeenCalledWith(
       expect.objectContaining({ connection: expect.anything() }),
       true
@@ -370,7 +453,11 @@ describe('ReleaseBusV2Repository', () => {
     expect(candidateFields).not.toHaveProperty('stagingValidatedManifestId');
     expect(
       updateCandidate.mock.calls.map(([candidateId]) => candidateId)
-    ).toEqual(['candidate-a', 'candidate-b']);
+    ).toEqual([
+      'candidate-a',
+      'candidate-b',
+      'recoverable-superseded-production'
+    ]);
     expect(
       updateCandidate.mock.calls.map(([candidateId]) => candidateId)
     ).not.toEqual(expect.arrayContaining(terminalHistory.map(({ id }) => id)));

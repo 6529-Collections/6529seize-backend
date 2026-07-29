@@ -2,6 +2,10 @@ import {
   ApiReleaseBusV2CandidateDeregistrationExecuteRequest,
   ApiReleaseBusV2CandidateDeregistrationExecuteRequestPhaseEnum
 } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationExecuteRequest';
+import {
+  ApiReleaseBusV2CandidateDeregistrationError,
+  ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum
+} from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationError';
 import { ApiReleaseBusV2CandidateDeregistrationPrepareRequestPhaseEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationPrepareRequest';
 import { ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationResponse';
 import { ReleaseBusV2CandidateStagingLiveStateEnum } from '@/api/generated/models/ReleaseBusV2Candidate';
@@ -63,6 +67,43 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
     ).toBe('ApiReleaseBusV2CandidateDeregistrationPrepareRequest');
   });
 
+  it.each([
+    {
+      error: 'The exact safety fence changed before commit',
+      committed: false,
+      deregistration_id: null,
+      physical_staging_presence:
+        ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum.Unchanged
+    },
+    {
+      error: 'The inventory committed before lock cleanup failed',
+      committed: true,
+      deregistration_id: '123e4567-e89b-42d3-a456-426614174001',
+      physical_staging_presence:
+        ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum.Detached
+    }
+  ] satisfies readonly ApiReleaseBusV2CandidateDeregistrationError[])(
+    'round-trips committed=$committed error evidence through the generated serializer',
+    (evidence) => {
+      const serialized = ObjectSerializer.serialize(
+        evidence,
+        'ApiReleaseBusV2CandidateDeregistrationError',
+        ''
+      );
+      const deserialized = ObjectSerializer.deserialize(
+        serialized,
+        'ApiReleaseBusV2CandidateDeregistrationError',
+        ''
+      );
+
+      expect(serialized).toEqual(evidence);
+      expect(deserialized).toMatchObject(evidence);
+      expect(
+        ApiReleaseBusV2CandidateDeregistrationError.getAttributeTypeMap()
+      ).toHaveLength(4);
+    }
+  );
+
   it('keeps the operator route manual while OpenAPI declares strict unique CAS inventories', () => {
     const openapi = readFileSync(
       path.join(__dirname, '../api-serverless/openapi.yaml'),
@@ -88,8 +129,11 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
     expect(schemas.match(/uniqueItems: true/g)).toHaveLength(3);
     expect(schemas).toContain('additionalProperties: false');
     expect(schemas).toContain('PREPARE accepts only phase and reason');
-    expect(schemas).toContain('oneOf:');
+    expect(schemas.match(/oneOf:/g)).toHaveLength(1);
     expect(schemas).toContain('propertyName: phase');
+    expect(schemas).toMatch(
+      /ApiReleaseBusV2CandidateDeregistrationError:\n\s+type: object/
+    );
     expect(schemas).toMatch(
       /expected_candidates:\n\s+type: array\n\s+minItems: 1/
     );

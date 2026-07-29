@@ -6,7 +6,6 @@ import {
   RELEASE_BUS_V2_STAGING_STATE_TABLE
 } from '@/constants';
 import {
-  releaseBusV2CandidateHasActiveIntent,
   releaseBusV2CandidateInventoryDigest,
   ReleaseBusV2Repository
 } from '@/releaseBusV2/release-bus-v2.repository';
@@ -1327,8 +1326,8 @@ describeWithSeed(
         'integration-deregistration',
         60_000
       );
-      const candidates = (await repository.listAllCandidates({})).filter(
-        releaseBusV2CandidateHasActiveIntent
+      const candidates = await repository.listCandidateDeregistrationTargets(
+        {}
       );
       const stagingState = await repository.getStagingState({});
 

@@ -1033,7 +1033,13 @@ deployRoutes.post(
             physical_staging_presence: error.physical_staging_presence
           });
         }
-        throw new CustomApiCompliantException(status, error.message);
+        setNoStoreHeaders(res);
+        return res.status(status).json({
+          error: error.message,
+          committed: false,
+          deregistration_id: null,
+          physical_staging_presence: 'UNKNOWN_UNCHANGED'
+        });
       }
       throw error;
     }

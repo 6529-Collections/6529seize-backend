@@ -8176,17 +8176,20 @@ paths:
       description: >-
         Operator-only maintenance action. Preparation is read-only and returns
         the complete active-intent candidate/control/lock row-version inventory.
-        Existing PRODUCTION_DEPLOYED, SUPERSEDED, CANCELLED, and DEREGISTERED
-        history is excluded and preserved byte-for-byte. Execution succeeds only
-        while ALL is unpaused, both independently changeable lanes are paused
-        OFF, all locks were exactly free, every train and operation is terminal,
-        every staging/production mutation and E2E workflow is inactive, staging
-        refs are unchanged, and every supplied row version and digest still
-        matches. Execution does not mutate refs, deployments, immutable
-        manifests, trains, operations, dependencies, or historical events. It
-        marks physical staging presence detached/unknown; it never claims that
-        unchanged staging bytes are absent. A failure after the database commit
-        returns committed=true with the immutable deregistration_id.
+        Existing PRODUCTION_DEPLOYED, CANCELLED, DEREGISTERED, and terminal
+        SUPERSEDED history is excluded and preserved byte-for-byte. The sole
+        SUPERSEDED exception is exact deleted-branch production intent that the
+        reconciler can otherwise restore; that recoverable intent is an active
+        target. Execution succeeds only while ALL is unpaused, both independently
+        changeable lanes are paused OFF, all locks were exactly free, every train
+        and operation is terminal, every staging/production mutation and E2E
+        workflow is inactive, staging refs are unchanged, and every supplied row
+        version and digest still matches. Execution does not mutate refs,
+        deployments, immutable manifests, trains, operations, dependencies, or
+        historical events. It marks physical staging presence detached/unknown;
+        it never claims that unchanged staging bytes are absent. A failure after
+        the database commit returns committed=true with the immutable
+        deregistration_id.
       operationId: deregisterAllReleaseBusV2Candidates
       security:
         - bearerAuth: []
@@ -20262,28 +20265,6 @@ components:
         row_version:
           type: integer
           minimum: 1
-    ApiReleaseBusV2CandidateDeregistrationCommittedError:
-      type: object
-      additionalProperties: false
-      required:
-        - error
-        - committed
-        - deregistration_id
-        - physical_staging_presence
-      properties:
-        error:
-          type: string
-        committed:
-          type: boolean
-          enum:
-            - true
-        deregistration_id:
-          type: string
-          format: uuid
-        physical_staging_presence:
-          type: string
-          enum:
-            - UNKNOWN_DETACHED
     ApiReleaseBusV2CandidateDeregistrationControlVersion:
       type: object
       additionalProperties: false
@@ -20304,11 +20285,27 @@ components:
           type: integer
           minimum: 1
     ApiReleaseBusV2CandidateDeregistrationError:
-      oneOf:
-        - $ref: >-
-            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationUncommittedError
-        - $ref: >-
-            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationCommittedError
+      type: object
+      additionalProperties: false
+      required:
+        - error
+        - committed
+        - deregistration_id
+        - physical_staging_presence
+      properties:
+        error:
+          type: string
+        committed:
+          type: boolean
+        deregistration_id:
+          type: string
+          format: uuid
+          nullable: true
+        physical_staging_presence:
+          type: string
+          enum:
+            - UNKNOWN_UNCHANGED
+            - UNKNOWN_DETACHED
     ApiReleaseBusV2CandidateDeregistrationExecuteRequest:
       type: object
       additionalProperties: false
@@ -20506,14 +20503,6 @@ components:
         backend:
           type: string
           pattern: ^[a-f0-9]{40}$
-    ApiReleaseBusV2CandidateDeregistrationUncommittedError:
-      type: object
-      additionalProperties: false
-      required:
-        - error
-      properties:
-        error:
-          type: string
     ApiRepCategoriesPage:
       type: object
       required:
