@@ -389,19 +389,34 @@ printf '200'
 
   it('executes the authenticated emergency compatibility guard and durable audit', () => {
     const parsed = YAML.parse(deploy) as {
-      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            name?: string;
+            run?: string;
+            env?: Record<string, string>;
+          }>;
+        }
+      >;
     };
     const steps = parsed.jobs['build-and-deploy'].steps;
     const authorize = steps.find(
       ({ name }) => name === 'Authorize exact deployment operation'
     )?.run;
-    const revalidate = steps.find(
+    const revalidateStep = steps.find(
       ({ name }) =>
         name ===
         'Revalidate emergency API bootstrap immediately before cloud credentials'
-    )?.run;
+    );
+    const revalidate = revalidateStep?.run;
     expect(authorize).toBeTruthy();
     expect(revalidate).toBeTruthy();
+    expect(revalidateStep?.env).toEqual({
+      RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
+      RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
+        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}'
+    });
 
     const fixture = mkdtempSync(path.join(tmpdir(), 'emergency-bootstrap-'));
     const fakeCurl = path.join(fixture, 'curl');
@@ -530,6 +545,7 @@ esac
       expect(readFileSync(githubSummary, 'utf8')).toContain(
         '"reason":"manual-authorizer-self-bootstrap"'
       );
+      writeFileSync(argumentLog, '');
       expect(() =>
         execFileSync('bash', ['-c', revalidate ?? 'exit 1'], {
           cwd: root,
@@ -537,6 +553,12 @@ esac
           stdio: 'pipe'
         })
       ).not.toThrow();
+      expect(readFileSync(argumentLog, 'utf8')).toContain(
+        'Authorization: Bearer workflow-token'
+      );
+      expect(readFileSync(githubSummary, 'utf8')).not.toContain(
+        'workflow-token'
+      );
       const calls = readFileSync(callLog, 'utf8');
       expect(calls).toContain('/manual-deployment-readiness');
       expect(calls).toContain('/release-bus-v2/controls');
@@ -552,9 +574,6 @@ esac
       expect(authorize).toContain('.total_count');
       expect(authorize).toContain(
         'deploy-control-prod-manual concurrency group'
-      );
-      expect(readFileSync(argumentLog, 'utf8')).toContain(
-        'Authorization: Bearer workflow-token'
       );
       expect(() =>
         execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
