@@ -415,7 +415,8 @@ printf '200'
     expect(revalidateStep?.env).toEqual({
       RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
       RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
-        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}'
+        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}',
+      GITHUB_TOKEN: '${{ github.token }}'
     });
 
     const fixture = mkdtempSync(path.join(tmpdir(), 'emergency-bootstrap-'));
