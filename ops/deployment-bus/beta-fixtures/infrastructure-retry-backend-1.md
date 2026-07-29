@@ -1,12 +1,12 @@
-# Release Bus v2 infrastructure-retry backend beta fixture 1
+# Release Bus v2 API-only activation proof fixture
 
 This file intentionally changes no runtime behavior. It gives the bounded
-operator-only infrastructure-retry acceptance test one exact green backend
-merge-tree. The deploy plan selects only `api`; the matching one-shot beta
-configuration injects an infrastructure failure into
-`PREPARE_ARTIFACT_BACKEND` before dispatch, then requires the same operation to
-retry idempotently and deploy without candidate isolation or duplicate work.
+operator-owned activation and performance proof one exact green backend
+merge-tree. The normal deploy plan selects only `api` and must preserve fresh
+composition, the environment-bound immutable artifact, manifest-bound staging
+E2E, and read-only production E2E.
 
-- Test ID: `infrastructure-retry-1`
-- Candidate ID: `91a20f74-230b-4e66-9e1b-308930523c13`
-- Global Release Bus v2 mode: `OFF`
+- Proof scope: `api` only
+- Release notes: explicit operational opt-out
+- Candidate, train, operation, artifact, manifest, and E2E identities: recorded
+  from the bounded live proof
