@@ -164,6 +164,47 @@ describe('ReleaseBusV2ManualDeploymentGuard', () => {
     );
   });
 
+  it.each([
+    ['api', 'staging', 'STAGING'],
+    ['api', 'prod', 'PRODUCTION'],
+    ['releaseBus', 'staging', 'STAGING'],
+    ['releaseBus', 'prod', 'PRODUCTION']
+  ] as const)(
+    'accepts the current GitHub run-name payload for manual %s deployment',
+    async (service, environment, pausedLane) => {
+      const request = input({ service, environment });
+      const { guard, deps } = setup(pausedLane);
+      const runIdentity = identity(request);
+      deps.getWorkflowRunIdentity.mockResolvedValue({
+        ...runIdentity,
+        name: runIdentity.displayTitle
+      });
+
+      await expect(guard.authorizeWorkflow(request)).resolves.toMatchObject({
+        ready: true,
+        repository: 'backend',
+        environment,
+        service
+      });
+    }
+  );
+
+  it('still rejects an arbitrary backend workflow name with the exact path and title', async () => {
+    const { guard, deps } = setup('STAGING');
+    deps.getWorkflowRunIdentity.mockResolvedValue({
+      ...identity(),
+      name: 'Different workflow'
+    });
+
+    await expect(guard.authorizeWorkflow(input())).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining(
+        'Manual backend deployment workflow identity is invalid'
+      )
+    });
+    expect(deps.listControls).not.toHaveBeenCalled();
+  });
+
   it('keeps inverse staging and production manual fallback decisions independent', async () => {
     const stagingOn = setup('PRODUCTION');
     const productionFallback = input({ environment: 'prod' });
