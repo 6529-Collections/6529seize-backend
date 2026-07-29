@@ -1,15 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { getDeployServiceConfigs } from '@/api/deploy/deploy.config';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  getDeployServiceConfigs,
+  type DeployEnvironment
+} from '@/api/deploy/deploy.config';
 import {
   releaseBusGitHubApp,
   ReleaseBusGitHubInfrastructureError
-} from '@/releaseBus/release-bus.github-app';
+} from '@/releaseBusV2/release-bus-v2.github-app';
 import {
   getReleaseBusV2BetaAllowlist,
   getReleaseBusV2Mode,
+  RELEASE_BUS_V2_LOCK_TTL_MS,
   releaseBusV2BetaAllowsCandidate,
   releaseBusV2BetaInfrastructureFailureInjection,
   releaseBusV2BetaAllowsLane,
+  releaseBusV2BetaAllowsLaneInMode,
   type ReleaseBusV2BetaEntry
 } from '@/releaseBusV2/release-bus-v2.config';
 import {
@@ -25,25 +31,31 @@ import {
   type ReleaseBusV2TrainCandidateRecord
 } from '@/releaseBusV2/release-bus-v2.repository';
 import {
+  CANDIDATE_EVIDENCE_READY_STATUS,
+  CANDIDATE_STAGING_EVIDENCE_POLICY,
   releaseBusV2Service,
   storedDeployPlan,
   topologicalOrder,
   type ReleaseBusV2Service
 } from '@/releaseBusV2/release-bus-v2.service';
+import { isGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type {
   ReleaseBusV2CandidateRecord,
+  ReleaseBusV2CandidateStagingEvidence,
   ReleaseBusV2CandidateStatus,
   ReleaseBusV2FailureClass,
   ReleaseBusV2ManifestStatus,
   ReleaseBusV2OperationRecord,
   ReleaseBusV2PrEvidence,
   ReleaseBusV2Repository,
+  ReleaseBusV2StagingTransition,
   ReleaseBusV2TrainRecord,
   ReleaseBusV2TrainStatus
 } from '@/releaseBusV2/release-bus-v2.types';
 
 const TERMINAL_TRAINS = new Set<ReleaseBusV2TrainStatus>([
   'STAGING_VALIDATED',
+  'STAGING_ROLLBACK_FAILED',
   'PRODUCTION_DEPLOYED',
   'FAILED',
   'CANCELLED'
@@ -58,8 +70,17 @@ const TERMINAL_OPERATIONS = new Set<ReleaseBusV2OperationRecord['status']>([
 // Workflow timeouts are at most 90 minutes, so two hours prevents overlapping
 // mutation while still allowing deterministic recovery from an abandoned lock.
 const ENVIRONMENT_LOCK_TTL_MS = 2 * 60 * 60 * 1000;
+const REQUIRED_MAINTENANCE_LOCKS = [
+  'scheduler',
+  'staging-environment',
+  'production-environment'
+] as const;
+const ENVIRONMENT_BOUND_ARTIFACT_CONTRACT = 'environment-bound-v3';
+const ROLLBACK_ARTIFACT_REVISION = '900001';
+const compareStrings = (left: string, right: string): number =>
+  left.localeCompare(right, 'en');
 
-type TrainContext = {
+export type TrainContext = {
   readonly train: ReleaseBusV2TrainRecord;
   readonly memberships: readonly ReleaseBusV2TrainCandidateRecord[];
   readonly candidates: readonly ReleaseBusV2CandidateRecord[];
@@ -76,8 +97,22 @@ type PreparedRepository = {
 
 type ArtifactSource = {
   readonly trainId: string;
-  readonly frontendRunId: string | null;
-  readonly backendRunId: string | null;
+  readonly frontend: PreparedArtifactSource | null;
+  readonly backend: PreparedArtifactSource | null;
+};
+
+type ArtifactDeployBinding = {
+  readonly artifact_environment: '' | 'staging' | 'production';
+  readonly artifact_contract_version:
+    | 'legacy-v2'
+    | typeof ENVIRONMENT_BOUND_ARTIFACT_CONTRACT;
+};
+
+type PreparedArtifactSource = {
+  readonly runId: string;
+  readonly digest: string;
+  readonly expectedSha: string;
+  readonly binding: ArtifactDeployBinding;
 };
 
 type DeployResult = {
@@ -127,7 +162,13 @@ type IsolationDiagnosis = {
   } | null;
 };
 
-class MainMovedError extends Error {}
+class MainMovedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'MainMovedError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
 
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
@@ -153,6 +194,26 @@ function isOptimisticConcurrencyConflict(error: unknown): error is Error {
         error.message
       ))
   );
+}
+
+function operationMayStillBeRunning(
+  operation: ReleaseBusV2OperationRecord
+): boolean {
+  return (
+    ['DISPATCHED', 'RUNNING'].includes(operation.status) ||
+    (operation.status === 'PENDING' && operation.external_id !== null)
+  );
+}
+
+function stringRecord(value: unknown): Readonly<Record<string, string>> | null {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !Object.values(value).every((item) => typeof item === 'string')
+  )
+    return null;
+  return value as Readonly<Record<string, string>>;
 }
 
 function parseStoredJson<T>(value: unknown): T | null {
@@ -239,6 +300,27 @@ function prEvidence(
   return parseStoredJson(candidate.pr_evidence_json);
 }
 
+export function releaseTrainContributorGithubLogins(
+  candidates: readonly ReleaseBusV2CandidateRecord[]
+): string[] {
+  const logins: string[] = [];
+  for (const candidate of candidates) {
+    for (const value of prEvidence(candidate)?.contributor_github_logins ??
+      []) {
+      const login = value.trim();
+      if (
+        !isGithubContributorLogin(login) ||
+        logins.some(
+          (existing) => existing.toLowerCase() === login.toLowerCase()
+        )
+      )
+        continue;
+      logins.push(login);
+    }
+  }
+  return logins;
+}
+
 export function canUseSingleCandidateFastPath(
   candidate: ReleaseBusV2CandidateRecord,
   baseSha: string
@@ -251,29 +333,849 @@ export function canUseSingleCandidateFastPath(
   );
 }
 
-function reusablePrArtifact(
-  candidate: ReleaseBusV2CandidateRecord,
-  repository: ReleaseBusV2Repository,
-  deployUnits: readonly string[]
-): ReleaseBusV2PrEvidence | null {
-  const evidence = prEvidence(candidate);
+type CandidateEvidenceMode =
+  | 'legacy-whole-train'
+  | 'strict-single'
+  | 'strict-aggregate';
+
+type CandidateEvidenceSelection = {
+  readonly mode: CandidateEvidenceMode;
+  readonly aggregateDigest: string | null;
+  readonly singular: ReleaseBusV2PrEvidence | null;
+};
+
+function hasExactEvidenceAudit(
+  evidence: ReleaseBusV2PrEvidence | null
+): evidence is ReleaseBusV2PrEvidence & {
+  readonly workflow_path: string;
+  readonly base_workflow_blob_sha: string;
+  readonly merge_workflow_blob_sha: string;
+  readonly base_gate_policy_digest: string;
+  readonly merge_gate_policy_digest: string;
+  readonly trust_mode: 'evidence-manifest-v1' | 'legacy-exact-workflow-v0';
+} {
+  return Boolean(
+    evidence &&
+    /^[a-f0-9]{40}$/.test(evidence.base_sha) &&
+    /^[a-f0-9]{40}$/.test(evidence.merge_sha) &&
+    /^[1-9][0-9]{0,19}$/.test(evidence.checks_run_id) &&
+    Number.isSafeInteger(evidence.checks_completed_at) &&
+    evidence.checks_completed_at > 0 &&
+    evidence?.workflow_path &&
+    /^[a-f0-9]{40}$/.test(evidence.base_workflow_blob_sha ?? '') &&
+    /^[a-f0-9]{40}$/.test(evidence.merge_workflow_blob_sha ?? '') &&
+    /^[a-f0-9]{64}$/.test(evidence.base_gate_policy_digest ?? '') &&
+    /^[a-f0-9]{64}$/.test(evidence.merge_gate_policy_digest ?? '') &&
+    ['evidence-manifest-v1', 'legacy-exact-workflow-v0'].includes(
+      evidence.trust_mode ?? ''
+    )
+  );
+}
+
+export function candidateEvidenceSelection(
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  singleFastCandidateId: string | null
+): CandidateEvidenceSelection {
+  if (candidates.length === 0)
+    throw new Error('A selected repository has no exact candidate evidence');
+  const entries = candidates.map((candidate) => {
+    const evidence = prEvidence(candidate);
+    if (!hasExactEvidenceAudit(evidence))
+      throw new Error(
+        `${candidate.repository}#${candidate.pr_number} has no complete exact PR CI policy evidence`
+      );
+    const requiredWorkflow =
+      candidate.repository === 'frontend'
+        ? '.github/workflows/app-pr-ci.yml'
+        : '.github/workflows/on-pull-request.yml';
+    if (evidence.workflow_path !== requiredWorkflow)
+      throw new Error(
+        `${candidate.repository}#${candidate.pr_number} exact PR CI evidence names an unexpected workflow`
+      );
+    const artifactFields = [
+      evidence.artifact_run_id,
+      evidence.artifact_name,
+      evidence.artifact_digest
+    ];
+    const artifactComplete =
+      typeof artifactFields[0] === 'string' &&
+      /^[1-9][0-9]{0,19}$/.test(artifactFields[0]) &&
+      artifactFields[1] === `release-bus-v2-pr-${evidence.merge_sha}` &&
+      typeof artifactFields[2] === 'string' &&
+      /^[a-f0-9]{64}$/.test(artifactFields[2]);
+    const artifactEmpty = artifactFields.every((value) => value === null);
+    if (
+      evidence.trust_mode === 'evidence-manifest-v1'
+        ? !artifactComplete
+        : !artifactComplete && !artifactEmpty
+    )
+      throw new Error(
+        `${candidate.repository}#${candidate.pr_number} has incomplete exact PR CI artifact evidence`
+      );
+    return { candidate, evidence };
+  });
+  const modes = new Set(entries.map(({ evidence }) => evidence.trust_mode));
+  if (modes.size !== 1)
+    throw new Error(
+      'Strict and legacy PR CI evidence cannot be mixed in one repository train'
+    );
+  const trustMode = entries[0].evidence.trust_mode;
+  if (trustMode === 'legacy-exact-workflow-v0')
+    return {
+      mode: 'legacy-whole-train',
+      aggregateDigest: null,
+      singular: null
+    };
+  if (entries.length === 1 && singleFastCandidateId === entries[0].candidate.id)
+    return {
+      mode: 'strict-single',
+      aggregateDigest: null,
+      singular: entries[0].evidence
+    };
+  const canonical = entries
+    .map(({ candidate, evidence }) => ({
+      repository: candidate.repository,
+      pr_number: candidate.pr_number,
+      candidate_id: candidate.id,
+      head_sha: candidate.head_sha,
+      base_sha: evidence.base_sha,
+      merge_sha: evidence.merge_sha,
+      checks_run_id: evidence.checks_run_id,
+      checks_completed_at: evidence.checks_completed_at,
+      artifact_run_id: evidence.artifact_run_id,
+      artifact_name: evidence.artifact_name,
+      artifact_digest: evidence.artifact_digest,
+      workflow_path: evidence.workflow_path,
+      base_workflow_blob_sha: evidence.base_workflow_blob_sha,
+      merge_workflow_blob_sha: evidence.merge_workflow_blob_sha,
+      base_gate_policy_digest: evidence.base_gate_policy_digest,
+      merge_gate_policy_digest: evidence.merge_gate_policy_digest,
+      trust_mode: evidence.trust_mode
+    }))
+    .sort((left, right) => {
+      const leftKey = `${left.repository}:${String(left.pr_number).padStart(12, '0')}:${left.candidate_id}`;
+      const rightKey = `${right.repository}:${String(right.pr_number).padStart(12, '0')}:${right.candidate_id}`;
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    });
+  return {
+    mode: 'strict-aggregate',
+    aggregateDigest: createHash('sha256')
+      .update(
+        JSON.stringify({
+          schema_version: 1,
+          contract: 'release-bus-v2-candidate-evidence-aggregate-v1',
+          candidates: canonical
+        })
+      )
+      .digest('hex'),
+    singular: null
+  };
+}
+
+export function candidateEvidenceSelectionForPreparation(
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  singleFastCandidateId: string | null
+): CandidateEvidenceSelection {
+  return candidates.length === 0
+    ? {
+        mode: 'legacy-whole-train',
+        aggregateDigest: null,
+        singular: null
+      }
+    : candidateEvidenceSelection(candidates, singleFastCandidateId);
+}
+
+function artifactEnvironmentForTrain(
+  train: ReleaseBusV2TrainRecord
+): 'staging' | 'production' {
+  return train.lane === 'PRODUCTION' ? 'production' : 'staging';
+}
+
+type ArtifactPreparationRequest = {
+  readonly workflow?: unknown;
+  readonly ref?: unknown;
+  readonly workflow_control_sha?: unknown;
+  readonly inputs?: unknown;
+};
+
+type ArtifactPreparationSummary = Readonly<Record<string, unknown>>;
+type ArtifactPreparationInputs = Readonly<Record<string, string>>;
+
+function exactKeys(
+  value: Readonly<Record<string, unknown>>,
+  expected: readonly string[]
+): boolean {
+  return isDeepStrictEqual(
+    Object.keys(value).sort(compareStrings),
+    [...expected].sort(compareStrings)
+  );
+}
+
+function parseArtifactUnits(
+  value: string | undefined
+): readonly string[] | null {
+  try {
+    const parsed = JSON.parse(value ?? 'null') as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some(
+        (unit) =>
+          typeof unit !== 'string' || !/^[A-Za-z][A-Za-z0-9]{0,99}$/.test(unit)
+      ) ||
+      new Set(parsed).size !== parsed.length
+    )
+      return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function parseArtifactLayers(
+  value: string | undefined,
+  units: readonly string[],
+  deriveWhenAbsent: boolean
+): readonly (readonly string[])[] | null {
+  if (deriveWhenAbsent && value === undefined)
+    return units.map((unit) => [unit]);
+  try {
+    const parsed = JSON.parse(value ?? 'null') as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some(
+        (layer) =>
+          !Array.isArray(layer) ||
+          layer.length === 0 ||
+          layer.some((unit) => typeof unit !== 'string')
+      )
+    )
+      return null;
+    const flattened = parsed.flat() as string[];
+    if (
+      flattened.length !== units.length ||
+      new Set(flattened).size !== flattened.length ||
+      !isDeepStrictEqual(
+        [...flattened].sort(compareStrings),
+        [...units].sort(compareStrings)
+      )
+    )
+      return null;
+    return parsed as readonly (readonly string[])[];
+  } catch {
+    return null;
+  }
+}
+
+function legacyReuseEvidence(
+  inputs: ArtifactPreparationInputs,
+  allowComplete: boolean
+): {
+  readonly runId: string | null;
+  readonly name: string | null;
+  readonly digest: string | null;
+} | null {
+  const runId = inputs.reuse_artifact_run_id ?? '';
+  const name = inputs.reuse_artifact_name ?? '';
+  const digest = inputs.reuse_artifact_digest ?? '';
+  if (!runId && !name && !digest)
+    return { runId: null, name: null, digest: null };
   if (
-    !evidence?.artifact_run_id ||
-    !evidence.artifact_name ||
-    !evidence.artifact_digest
+    !allowComplete ||
+    !/^[1-9][0-9]{0,19}$/.test(runId) ||
+    !/^release-bus-v2-pr-[a-f0-9]{40}$/.test(name) ||
+    !/^[a-f0-9]{64}$/.test(digest)
   )
     return null;
-  // The backend PR lane deliberately packages only the API fast-path artifact.
-  // Other service sets still reuse the exact green merge-tree SHA, then build
-  // each requested unit once in the combined preflight.
+  return { runId, name, digest };
+}
+
+function isOldLegacyProducerBaseRequest(
+  inputs: ArtifactPreparationInputs
+): boolean {
+  return (
+    !Object.prototype.hasOwnProperty.call(
+      inputs,
+      'artifact_contract_version'
+    ) &&
+    !Object.prototype.hasOwnProperty.call(inputs, 'candidate_evidence_mode') &&
+    !Object.prototype.hasOwnProperty.call(
+      inputs,
+      'aggregate_candidate_evidence_digest'
+    ) &&
+    !Object.prototype.hasOwnProperty.call(inputs, 'deploy_layers') &&
+    inputs.operation_key === 'replaced-by-reconciler' &&
+    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+    typeof inputs.source_ref === 'string' &&
+    inputs.source_ref.length > 0
+  );
+}
+
+function isNewLegacyProducerBaseRequest(
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs
+): boolean {
+  return (
+    request.ref === 'main' &&
+    typeof request.workflow_control_sha === 'string' &&
+    /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
+    inputs.operation_key === 'replaced-by-reconciler' &&
+    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+    typeof inputs.source_ref === 'string' &&
+    inputs.source_ref.length > 0 &&
+    inputs.candidate_evidence_mode === 'legacy-whole-train' &&
+    inputs.aggregate_candidate_evidence_digest === '' &&
+    inputs.reuse_artifact_run_id === '' &&
+    inputs.reuse_artifact_name === '' &&
+    inputs.reuse_artifact_digest === ''
+  );
+}
+
+function isOldLegacyProducer(
+  operation: ReleaseBusV2OperationRecord,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production',
+  oldProducerBaseRequest: boolean,
+  backendUnits: readonly string[] | null
+): boolean {
+  const oldProducerSummaryShape = exactKeys(summary, [
+    'artifact_digest',
+    'fresh_or_reused'
+  ]);
+  if (operation.repository === 'backend')
+    return (
+      oldProducerBaseRequest &&
+      !Object.prototype.hasOwnProperty.call(inputs, 'artifact_environment') &&
+      backendUnits !== null &&
+      oldProducerSummaryShape &&
+      ['fresh', 'reused'].includes(String(summary.fresh_or_reused))
+    );
+  return (
+    oldProducerBaseRequest &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.deploy_units === '[]' &&
+    oldProducerSummaryShape &&
+    ['fresh-dual-profile', 'reused'].includes(String(summary.fresh_or_reused))
+  );
+}
+
+function isExactLegacyFrontendBinding(
+  operation: ReleaseBusV2OperationRecord,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production',
+  oldProducerBaseRequest: boolean,
+  newProducerBaseRequest: boolean
+): boolean {
+  const newFrontendRequest =
+    newProducerBaseRequest &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    inputs.artifact_contract_version === 'legacy-v2' &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.deploy_units === '[]';
+  const oldFrontendStructuredRequest =
+    oldProducerBaseRequest &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.deploy_units === '[]';
+  return (
+    (newFrontendRequest || oldFrontendStructuredRequest) &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'package_digest',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha'
+    ]) &&
+    summary.schema_version === 2 &&
+    summary.artifact_contract === null &&
+    summary.artifact_contract_version === 'legacy-v2' &&
+    summary.repository === 'frontend' &&
+    summary.source_sha === operation.expected_sha &&
+    summary.environment === 'dual' &&
+    summary.fresh_or_reused === 'fresh-legacy-dual-profile' &&
+    summary.source_evidence_reused === false &&
+    summary.artifact_bytes_reused === false &&
+    summary.ci_evidence === null &&
+    typeof summary.package_digest === 'string' &&
+    /^[a-f0-9]{64}$/.test(summary.package_digest)
+  );
+}
+
+function exactPackageDigests(
+  value: unknown,
+  units: readonly string[]
+): boolean {
+  const packageDigests = stringRecord(value);
+  return (
+    packageDigests !== null &&
+    isDeepStrictEqual(
+      Object.keys(packageDigests).sort(compareStrings),
+      [...units].sort(compareStrings)
+    ) &&
+    Object.values(packageDigests).every((digest) =>
+      /^[a-f0-9]{64}$/.test(digest)
+    )
+  );
+}
+
+function isExactLegacyBackendBinding(
+  operation: ReleaseBusV2OperationRecord,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  backendUnits: readonly string[],
+  oldProducerBaseRequest: boolean,
+  newProducerBaseRequest: boolean
+): boolean {
+  const newBackendRequest =
+    newProducerBaseRequest &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_layers',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    inputs.artifact_contract_version === 'legacy-v2' &&
+    inputs.artifact_environment === '';
+  const oldBackendStructuredRequest =
+    oldProducerBaseRequest &&
+    !Object.prototype.hasOwnProperty.call(inputs, 'artifact_environment');
+  const layers = parseArtifactLayers(
+    inputs.deploy_layers,
+    backendUnits,
+    oldBackendStructuredRequest
+  );
+  const evidence = legacyReuseEvidence(inputs, oldBackendStructuredRequest);
+  return (
+    (newBackendRequest || oldBackendStructuredRequest) &&
+    layers !== null &&
+    evidence !== null &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'layers',
+      'package_digests',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha',
+      'units'
+    ]) &&
+    summary.schema_version === 2 &&
+    summary.artifact_contract === 'legacy-v2' &&
+    summary.artifact_contract_version === 'legacy-v2' &&
+    summary.repository === 'backend' &&
+    summary.source_sha === operation.expected_sha &&
+    summary.environment === 'portable' &&
+    summary.source_evidence_reused === true &&
+    typeof summary.artifact_bytes_reused === 'boolean' &&
+    summary.fresh_or_reused ===
+      (summary.artifact_bytes_reused ? 'reused' : 'fresh') &&
+    isDeepStrictEqual(summary.units, backendUnits) &&
+    isDeepStrictEqual(summary.layers, layers) &&
+    exactPackageDigests(summary.package_digests, backendUnits) &&
+    isDeepStrictEqual(summary.ci_evidence, {
+      mode: 'legacy-whole-train',
+      artifact_run_id: evidence.runId,
+      artifact_name: evidence.name,
+      artifact_digest: evidence.digest,
+      aggregate_candidate_evidence_digest: null
+    })
+  );
+}
+
+function legacyArtifactDeployBinding(
+  operation: ReleaseBusV2OperationRecord,
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production'
+): ArtifactDeployBinding | null {
+  const oldProducerBaseRequest = isOldLegacyProducerBaseRequest(inputs);
+  const newProducerBaseRequest = isNewLegacyProducerBaseRequest(
+    request,
+    inputs
+  );
+  const backendUnits = parseArtifactUnits(inputs.deploy_units);
+  const exactOldProducer = isOldLegacyProducer(
+    operation,
+    inputs,
+    summary,
+    targetEnvironment,
+    oldProducerBaseRequest,
+    backendUnits
+  );
+  const exactFrontend =
+    operation.repository === 'frontend' &&
+    isExactLegacyFrontendBinding(
+      operation,
+      inputs,
+      summary,
+      targetEnvironment,
+      oldProducerBaseRequest,
+      newProducerBaseRequest
+    );
+  const exactBackend =
+    operation.repository === 'backend' &&
+    backendUnits !== null &&
+    isExactLegacyBackendBinding(
+      operation,
+      inputs,
+      summary,
+      backendUnits,
+      oldProducerBaseRequest,
+      newProducerBaseRequest
+    );
+  return exactOldProducer || exactFrontend || exactBackend
+    ? {
+        artifact_environment: '',
+        artifact_contract_version: 'legacy-v2'
+      }
+    : null;
+}
+
+function expectedV3CiEvidence(
+  inputs: ArtifactPreparationInputs,
+  expectedSha: string
+): Readonly<Record<string, unknown>> | null {
   if (
-    repository === 'backend' &&
-    (deployUnits.length !== 1 || deployUnits[0] !== 'api')
+    inputs.candidate_evidence_mode === 'strict-single' &&
+    inputs.aggregate_candidate_evidence_digest === '' &&
+    /^[1-9][0-9]{0,19}$/.test(inputs.reuse_artifact_run_id ?? '') &&
+    inputs.reuse_artifact_name === `release-bus-v2-pr-${expectedSha}` &&
+    /^[a-f0-9]{64}$/.test(inputs.reuse_artifact_digest ?? '')
   )
-    return null;
-  // Frontend PR CI emits one immutable dual-profile artifact. Staging and
-  // production select their environment-safe package from that same digest.
-  return evidence;
+    return {
+      mode: 'strict-single',
+      artifact_run_id: inputs.reuse_artifact_run_id,
+      artifact_name: inputs.reuse_artifact_name,
+      artifact_digest: inputs.reuse_artifact_digest,
+      aggregate_candidate_evidence_digest: null
+    };
+  if (
+    inputs.candidate_evidence_mode === 'strict-aggregate' &&
+    /^[a-f0-9]{64}$/.test(inputs.aggregate_candidate_evidence_digest ?? '') &&
+    inputs.reuse_artifact_run_id === '' &&
+    inputs.reuse_artifact_name === '' &&
+    inputs.reuse_artifact_digest === ''
+  )
+    return {
+      mode: 'strict-aggregate',
+      artifact_run_id: null,
+      artifact_name: null,
+      artifact_digest: null,
+      aggregate_candidate_evidence_digest:
+        inputs.aggregate_candidate_evidence_digest
+    };
+  return null;
+}
+
+function isExactV3RequestBase(
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs,
+  targetEnvironment: 'staging' | 'production'
+): boolean {
+  return (
+    inputs.artifact_contract_version === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
+    request.ref === 'main' &&
+    typeof request.workflow_control_sha === 'string' &&
+    /^[a-f0-9]{40}$/.test(request.workflow_control_sha) &&
+    inputs.artifact_environment === targetEnvironment &&
+    inputs.operation_key === 'replaced-by-reconciler' &&
+    /^[1-9][0-9]{0,8}$/.test(inputs.release_train_revision ?? '') &&
+    typeof inputs.source_ref === 'string' &&
+    inputs.source_ref.length > 0
+  );
+}
+
+function isExactV3SummaryBase(
+  operation: ReleaseBusV2OperationRecord,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production',
+  expectedCiEvidence: Readonly<Record<string, unknown>> | null
+): boolean {
+  return (
+    summary.schema_version === 3 &&
+    summary.artifact_contract === 'environment-bound-v1' &&
+    summary.artifact_contract_version === ENVIRONMENT_BOUND_ARTIFACT_CONTRACT &&
+    summary.environment === targetEnvironment &&
+    summary.repository === operation.repository &&
+    summary.source_sha === operation.expected_sha &&
+    summary.source_evidence_reused === true &&
+    summary.artifact_bytes_reused === false &&
+    expectedCiEvidence !== null &&
+    isDeepStrictEqual(summary.ci_evidence, expectedCiEvidence)
+  );
+}
+
+function isExactV3FrontendBinding(
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  exactRequestBase: boolean,
+  exactSummaryBase: boolean
+): boolean {
+  return (
+    exactRequestBase &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    inputs.deploy_units === '[]' &&
+    exactSummaryBase &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'package_digest',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha'
+    ]) &&
+    summary.fresh_or_reused === 'fresh-environment-bound' &&
+    typeof summary.package_digest === 'string' &&
+    /^[a-f0-9]{64}$/.test(summary.package_digest)
+  );
+}
+
+function isExactV3BackendBinding(
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  exactRequestBase: boolean,
+  exactSummaryBase: boolean
+): boolean {
+  const units = parseArtifactUnits(inputs.deploy_units);
+  if (!units) return false;
+  const layers = parseArtifactLayers(inputs.deploy_layers, units, false);
+  return (
+    layers !== null &&
+    exactRequestBase &&
+    exactKeys(inputs, [
+      'aggregate_candidate_evidence_digest',
+      'artifact_contract_version',
+      'artifact_environment',
+      'candidate_evidence_mode',
+      'deploy_layers',
+      'deploy_units',
+      'expected_sha',
+      'operation_key',
+      'release_train_id',
+      'release_train_revision',
+      'reuse_artifact_digest',
+      'reuse_artifact_name',
+      'reuse_artifact_run_id',
+      'source_ref'
+    ]) &&
+    exactSummaryBase &&
+    exactKeys(summary, [
+      'artifact_bytes_reused',
+      'artifact_contract',
+      'artifact_contract_version',
+      'artifact_digest',
+      'ci_evidence',
+      'environment',
+      'fresh_or_reused',
+      'layers',
+      'package_digests',
+      'repository',
+      'schema_version',
+      'source_evidence_reused',
+      'source_sha',
+      'units'
+    ]) &&
+    isDeepStrictEqual(summary.units, units) &&
+    isDeepStrictEqual(summary.layers, layers) &&
+    exactPackageDigests(summary.package_digests, units) &&
+    summary.fresh_or_reused === 'fresh'
+  );
+}
+
+function environmentBoundArtifactDeployBinding(
+  operation: ReleaseBusV2OperationRecord,
+  request: ArtifactPreparationRequest,
+  inputs: ArtifactPreparationInputs,
+  summary: ArtifactPreparationSummary,
+  targetEnvironment: 'staging' | 'production'
+): ArtifactDeployBinding | null {
+  const exactRequestBase = isExactV3RequestBase(
+    request,
+    inputs,
+    targetEnvironment
+  );
+  const expectedCiEvidence = expectedV3CiEvidence(
+    inputs,
+    operation.expected_sha!
+  );
+  const exactSummaryBase = isExactV3SummaryBase(
+    operation,
+    summary,
+    targetEnvironment,
+    expectedCiEvidence
+  );
+  const exactRepositoryBinding =
+    operation.repository === 'frontend'
+      ? isExactV3FrontendBinding(
+          inputs,
+          summary,
+          exactRequestBase,
+          exactSummaryBase
+        )
+      : isExactV3BackendBinding(
+          inputs,
+          summary,
+          exactRequestBase,
+          exactSummaryBase
+        );
+  return exactRepositoryBinding
+    ? {
+        artifact_environment: targetEnvironment,
+        artifact_contract_version: ENVIRONMENT_BOUND_ARTIFACT_CONTRACT
+      }
+    : null;
+}
+
+function parseArtifactPreparation(operation: ReleaseBusV2OperationRecord): {
+  readonly request: ArtifactPreparationRequest;
+  readonly inputs: ArtifactPreparationInputs;
+  readonly summary: ArtifactPreparationSummary;
+} | null {
+  const request = parseStoredJson<ArtifactPreparationRequest>(
+    operation.request_json
+  );
+  const inputs = stringRecord(request?.inputs);
+  const result = parseStoredJson<{ summary?: unknown }>(operation.result_json);
+  const summary =
+    result?.summary &&
+    typeof result.summary === 'object' &&
+    !Array.isArray(result.summary)
+      ? (result.summary as ArtifactPreparationSummary)
+      : null;
+  return request && inputs && summary ? { request, inputs, summary } : null;
+}
+
+function hasExactArtifactPreparationEnvelope(
+  operation: ReleaseBusV2OperationRecord,
+  prepared: ReturnType<typeof parseArtifactPreparation>
+): prepared is NonNullable<ReturnType<typeof parseArtifactPreparation>> {
+  if (!prepared) return false;
+  const { request, inputs, summary } = prepared;
+  return (
+    operation.status === 'SUCCEEDED' &&
+    request.workflow === 'release-bus-v2-preflight.yml' &&
+    Boolean(operation.external_id) &&
+    /^[1-9][0-9]{0,19}$/.test(operation.external_id ?? '') &&
+    Boolean(operation.expected_sha) &&
+    /^[a-f0-9]{40}$/.test(operation.expected_sha ?? '') &&
+    Boolean(operation.artifact_digest) &&
+    /^[a-f0-9]{64}$/.test(operation.artifact_digest ?? '') &&
+    inputs.release_train_id === operation.train_id &&
+    inputs.expected_sha === operation.expected_sha &&
+    summary.artifact_digest === operation.artifact_digest &&
+    (summary.repository === undefined ||
+      summary.repository === operation.repository) &&
+    (summary.source_sha === undefined ||
+      summary.source_sha === operation.expected_sha)
+  );
+}
+
+export function preparedArtifactDeployBinding(
+  operation: ReleaseBusV2OperationRecord,
+  environment: 'staging' | 'prod'
+): ArtifactDeployBinding {
+  const prepared = parseArtifactPreparation(operation);
+  if (!hasExactArtifactPreparationEnvelope(operation, prepared))
+    throw new Error(
+      'Successful artifact preparation has no exact immutable deploy binding'
+    );
+  const { request, inputs, summary } = prepared;
+  const targetEnvironment = environment === 'prod' ? 'production' : 'staging';
+  const contract = inputs.artifact_contract_version ?? 'legacy-v2';
+  const binding =
+    contract === 'legacy-v2'
+      ? legacyArtifactDeployBinding(
+          operation,
+          request,
+          inputs,
+          summary,
+          targetEnvironment
+        )
+      : environmentBoundArtifactDeployBinding(
+          operation,
+          request,
+          inputs,
+          summary,
+          targetEnvironment
+        );
+  if (binding) return binding;
+  throw new Error(
+    contract === 'legacy-v2'
+      ? 'Legacy artifact preparation does not prove an immutable portable artifact'
+      : 'Environment-bound preparation does not match the exact deploy environment'
+  );
+}
+
+function frontendDeployBinding(
+  binding: ArtifactDeployBinding,
+  environment: 'staging' | 'prod'
+): ArtifactDeployBinding {
+  return binding.artifact_contract_version === 'legacy-v2'
+    ? {
+        artifact_contract_version: 'legacy-v2',
+        artifact_environment: environment === 'prod' ? 'production' : 'staging'
+      }
+    : binding;
 }
 
 function operationKey(trainId: string, suffix: string): string {
@@ -295,35 +1197,85 @@ function candidateStatusForDeploy(
 }
 
 export function backendGraph(
-  candidates: readonly ReleaseBusV2CandidateRecord[]
+  candidates: readonly ReleaseBusV2CandidateRecord[],
+  environment?: DeployEnvironment
 ): {
   readonly units: readonly string[];
   readonly edges: ReadonlyArray<readonly [string, string]>;
   readonly layers: readonly string[][];
 } {
-  const units = new Set<string>();
-  const edgeKeys = new Set<string>();
-  const edges: Array<readonly [string, string]> = [];
+  const serviceConfigs = getDeployServiceConfigs();
+  const allowedServiceNames = environment
+    ? new Set(
+        serviceConfigs
+          .filter(({ allowed_environments }) =>
+            allowed_environments.includes(environment)
+          )
+          .map(({ name }) => name)
+      )
+    : null;
+  const requestedUnits = new Set<string>();
   for (const candidate of candidates) {
     if (candidate.repository !== 'backend') continue;
     const plan = storedDeployPlan(candidate);
-    for (const unit of plan?.units ?? []) units.add(unit);
+    for (const unit of plan?.units ?? []) requestedUnits.add(unit);
+  }
+  const allEdgeKeys = new Set<string>();
+  const allEdges: Array<readonly [string, string]> = [];
+  const addEdge = (
+    target: Array<readonly [string, string]>,
+    keys: Set<string>,
+    from: string,
+    to: string
+  ) => {
+    const key = `${from}\u0000${to}`;
+    if (keys.has(key)) return;
+    keys.add(key);
+    target.push([from, to]);
+  };
+  for (const candidate of candidates) {
+    if (candidate.repository !== 'backend') continue;
+    const plan = storedDeployPlan(candidate);
     for (const [from, to] of plan?.edges ?? []) {
-      const key = `${from}\u0000${to}`;
-      if (edgeKeys.has(key)) continue;
-      edgeKeys.add(key);
-      edges.push([from, to]);
+      if (!requestedUnits.has(from) || !requestedUnits.has(to)) continue;
+      addEdge(allEdges, allEdgeKeys, from, to);
     }
   }
-  for (const service of getDeployServiceConfigs()) {
-    if (!units.has(service.name)) continue;
+  for (const service of serviceConfigs) {
+    if (!requestedUnits.has(service.name)) continue;
     for (const dependency of service.default_dependencies) {
-      if (!units.has(dependency)) continue;
-      const key = `${dependency}\u0000${service.name}`;
-      if (edgeKeys.has(key)) continue;
-      edgeKeys.add(key);
-      edges.push([dependency, service.name]);
+      if (!requestedUnits.has(dependency)) continue;
+      addEdge(allEdges, allEdgeKeys, dependency, service.name);
     }
+  }
+  const units = new Set(
+    Array.from(requestedUnits).filter(
+      (unit) => !allowedServiceNames || allowedServiceNames.has(unit)
+    )
+  );
+  let edges = allEdges;
+  if (allowedServiceNames) {
+    const adjacency = new Map(
+      Array.from(requestedUnits).map((unit) => [unit, [] as string[]])
+    );
+    for (const [from, to] of allEdges) adjacency.get(from)?.push(to);
+    const projectedEdges: Array<readonly [string, string]> = [];
+    const projectedKeys = new Set<string>();
+    for (const source of Array.from(units)) {
+      const visited = new Set<string>();
+      const pending = [...(adjacency.get(source) ?? [])];
+      while (pending.length > 0) {
+        const target = pending.shift()!;
+        if (visited.has(target)) continue;
+        visited.add(target);
+        if (units.has(target)) {
+          addEdge(projectedEdges, projectedKeys, source, target);
+          continue;
+        }
+        pending.push(...(adjacency.get(target) ?? []));
+      }
+    }
+    edges = projectedEdges;
   }
   const orderedUnits = Array.from(units).sort((left, right) =>
     left.localeCompare(right)
@@ -434,7 +1386,7 @@ export function backendReleaseNoteInputs(
   };
 }
 
-function relevantCandidates(
+export function relevantCandidates(
   context: TrainContext,
   repository?: ReleaseBusV2Repository
 ): ReleaseBusV2CandidateRecord[] {
@@ -448,6 +1400,116 @@ function relevantCandidates(
       included.has(candidate.id) &&
       (!repository || candidate.repository === repository)
   );
+}
+
+export function stagingStatusCandidates(
+  context: TrainContext
+): ReleaseBusV2CandidateRecord[] {
+  if (
+    context.train.lane !== 'STAGING' ||
+    context.train.staging_policy !== 'CUMULATIVE_ADMITTED_SET_V1'
+  )
+    return relevantCandidates(context);
+  const mutable = new Set(
+    context.memberships
+      .filter(({ candidate_role }) => candidate_role === 'NEW')
+      .map(({ candidate_id }) => candidate_id)
+  );
+  return relevantCandidates(context).filter(({ id }) => mutable.has(id));
+}
+
+export function candidateStatusMutationCandidates(
+  context: TrainContext
+): ReleaseBusV2CandidateRecord[] {
+  return context.train.lane === 'STAGING'
+    ? stagingStatusCandidates(context)
+    : relevantCandidates(context);
+}
+
+export function stagingDeploymentCandidates(
+  context: TrainContext,
+  repository?: ReleaseBusV2Repository
+): ReleaseBusV2CandidateRecord[] {
+  if (
+    context.train.lane !== 'STAGING' ||
+    context.train.staging_policy !== 'CUMULATIVE_ADMITTED_SET_V1'
+  )
+    return relevantCandidates(context, repository);
+  const deployRoles = new Set([
+    'NEW',
+    'CARRY_FORWARD',
+    'REMOVAL',
+    'ABSORPTION'
+  ]);
+  // Removal/absorption candidates are intentionally excluded from the
+  // composition (AUDIT_ONLY) but still identify runtime units that must be
+  // redeployed from the new cumulative composition to scrub their old bytes.
+  const included = new Set(
+    context.memberships
+      .filter(({ candidate_role }) => deployRoles.has(candidate_role ?? 'NEW'))
+      .map(({ candidate_id }) => candidate_id)
+  );
+  return context.candidates.filter(
+    (candidate) =>
+      included.has(candidate.id) &&
+      (!repository || candidate.repository === repository)
+  );
+}
+
+export function candidateUnavailableForTrainUpdate(
+  current: ReleaseBusV2CandidateRecord,
+  claimed: ReleaseBusV2CandidateRecord
+): boolean {
+  if (['CANCELLED', 'SUPERSEDED', 'DEREGISTERED'].includes(current.status))
+    return true;
+  if (
+    claimed.current_train_id &&
+    current.current_train_id !== claimed.current_train_id
+  )
+    return true;
+  return false;
+}
+
+export function deletedProductionCandidateCanRetainReadiness(
+  candidate: ReleaseBusV2CandidateRecord
+): boolean {
+  return (
+    candidate.current_train_id === null &&
+    candidate.production_requested_at !== null &&
+    candidate.staging_validated_manifest_id !== null &&
+    [
+      'READY_FOR_PRODUCTION',
+      CANDIDATE_EVIDENCE_READY_STATUS,
+      'WAITING_FOR_PRODUCTION_REPLAN',
+      'SUPERSEDED'
+    ].includes(candidate.status)
+  );
+}
+
+type E2EWorkflowInputFields = {
+  readonly release_train_id: string;
+  readonly release_train_revision: string;
+  readonly operation_key: string;
+  readonly staging_source_ref: string;
+  readonly expected_sha: string;
+  readonly release_manifest_id: string;
+  readonly release_manifest_identity_sha256: string;
+  readonly frontend_sha: string;
+  readonly backend_sha: string;
+  readonly frontend_artifact_digest: string;
+  readonly backend_artifact_digest: string;
+};
+
+export function e2eWorkflowInputs(
+  environment: 'staging' | 'prod',
+  fields: E2EWorkflowInputFields
+): Record<string, string> {
+  const { staging_source_ref: stagingSourceRef, ...shared } = fields;
+  return {
+    ...(environment === 'staging' ? { pack: 'all' } : {}),
+    ...shared,
+    source_ref: environment === 'staging' ? stagingSourceRef : 'main'
+  };
 }
 
 function frontendDependsOnBackend(context: TrainContext): boolean {
@@ -484,22 +1546,47 @@ export class ReleaseBusV2Reconciler {
     const claimed: string[] = [];
     await this.releaseTerminalEnvironmentLocks();
     let betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [];
-    if (mode === 'OFF') {
+    if (mode === 'OFF' || mode === 'STAGING') {
+      let betaAllowlistValid = false;
       try {
         betaAllowlist = getReleaseBusV2BetaAllowlist();
+        betaAllowlistValid = true;
       } catch {
+        const scope = mode === 'OFF' ? 'ALL' : 'PRODUCTION';
         const controls = await this.repository.listControls({});
-        const allControl = controls.find(({ scope }) => scope === 'ALL');
-        if (!allControl?.paused)
+        const control = controls.find((item) => item.scope === scope);
+        if (!control?.paused)
           await this.service.setPaused(
-            'ALL',
+            scope,
             true,
-            'Release Bus v2 OFF beta allowlist is invalid; automation remains disabled',
+            mode === 'OFF'
+              ? 'Release Bus v2 OFF beta allowlist is invalid; automation remains disabled'
+              : 'Release Bus v2 production beta allowlist is invalid; staging remains enabled',
             'release-bus-v2-beta'
           );
-        return { mode, claimed, advanced: [] };
+        if (mode === 'OFF') return { mode, claimed, advanced: [] };
+        betaAllowlist = [];
       }
-      if (betaAllowlist.length === 0) return { mode, claimed, advanced: [] };
+      if (betaAllowlistValid) {
+        const betaScope = mode === 'OFF' ? 'ALL' : 'PRODUCTION';
+        const betaControl = (await this.repository.listControls({})).find(
+          (item) => item.scope === betaScope
+        );
+        if (
+          betaControl?.paused &&
+          betaControl.github_actor === 'release-bus-v2-beta'
+        )
+          await this.service.setPaused(
+            betaScope,
+            false,
+            mode === 'OFF'
+              ? 'Release Bus v2 beta allowlist configuration recovered; OFF manual fallback remains authoritative'
+              : 'Release Bus v2 production beta allowlist configuration recovered',
+            'release-bus-v2-beta'
+          );
+      }
+      if (mode === 'OFF' && betaAllowlist.length === 0)
+        return { mode, claimed, advanced: [] };
     }
     const controls = await this.repository.listControls({});
     const isPaused = (scope: 'ALL' | 'STAGING' | 'PRODUCTION') =>
@@ -513,21 +1600,39 @@ export class ReleaseBusV2Reconciler {
     const productionEnabled =
       !isPaused('PRODUCTION') &&
       (mode === 'PRODUCTION' ||
-        (mode === 'OFF' &&
-          releaseBusV2BetaAllowsLane(betaAllowlist, 'PRODUCTION')));
+        releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION'));
+    if (stagingEnabled) {
+      try {
+        await this.service.repairTerminalCumulativeCarryForwardStatuses(
+          'release-bus-v2-reconciler'
+        );
+      } catch (error) {
+        // A concurrent row-version winner will be observed on the next tick
+        // and must not delay unrelated train advancement. Other failures stay
+        // fail-closed and propagate.
+        if (!isOptimisticConcurrencyConflict(error)) throw error;
+      }
+    }
     if (stagingEnabled || productionEnabled) {
       try {
-        await this.reconcileQueuedCandidateHeads(betaAllowlist);
-        const [frontendMain, backendMain] = await Promise.all([
-          releaseBusGitHubApp.resolveRef('frontend', 'main'),
-          releaseBusGitHubApp.resolveRef('backend', 'main')
-        ]);
+        await this.reconcileQueuedCandidateHeads(betaAllowlist, mode);
+        const [frontendMain, backendMain, frontendStaging, backendStaging] =
+          await Promise.all([
+            releaseBusGitHubApp.resolveRef('frontend', 'main'),
+            releaseBusGitHubApp.resolveRef('backend', 'main'),
+            releaseBusGitHubApp.resolveRefIfExists('frontend', '1a-staging'),
+            releaseBusGitHubApp.resolveRefIfExists('backend', '1a-staging')
+          ]);
         if (stagingEnabled) {
           const staging = await this.service.claimLane(
             'STAGING',
             frontendMain,
             backendMain,
-            `${invocationId}:staging`
+            `${invocationId}:staging`,
+            {
+              frontendSha: frontendStaging,
+              backendSha: backendStaging
+            }
           );
           if (staging) claimed.push(staging.id);
         }
@@ -536,11 +1641,17 @@ export class ReleaseBusV2Reconciler {
             'PRODUCTION',
             frontendMain,
             backendMain,
-            `${invocationId}:production`
+            `${invocationId}:production`,
+            {
+              frontendSha: frontendStaging,
+              backendSha: backendStaging
+            }
           );
           if (production) claimed.push(production.id);
         }
       } catch (error) {
+        // A GitHub infrastructure error rolls the claim transaction back and
+        // leaves every explicit intent unchanged for the next scheduled tick.
         if (!isGitHubInfrastructureError(error)) {
           await this.service.setPaused(
             'ALL',
@@ -563,8 +1674,10 @@ export class ReleaseBusV2Reconciler {
       });
     const active: ReleaseBusV2TrainRecord[] = [];
     for (const train of activeByLane) {
+      const requiresBetaEligibility =
+        mode === 'OFF' || (mode === 'STAGING' && train.lane !== 'STAGING');
       if (
-        mode !== 'OFF' ||
+        !requiresBetaEligibility ||
         (await this.service.isBetaTrainAllowed(train, betaAllowlist, {}))
       )
         active.push(train);
@@ -601,6 +1714,21 @@ export class ReleaseBusV2Reconciler {
           await this.deferTrainForInfrastructure(train, error.message);
           continue;
         }
+        if (
+          train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1' &&
+          ['DEPLOYING', 'STAGING_DEPLOYED', 'E2E_RUNNING'].includes(
+            train.status
+          )
+        ) {
+          await this.beginCumulativeStagingRollback(
+            train,
+            'CONTROL_PLANE',
+            error instanceof Error
+              ? error.message
+              : 'Unknown cumulative staging failure'
+          );
+          continue;
+        }
         await this.failTrain(
           train,
           'CONTROL_PLANE',
@@ -612,20 +1740,64 @@ export class ReleaseBusV2Reconciler {
   }
 
   private async reconcileQueuedCandidateHeads(
-    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = []
+    betaAllowlist: readonly ReleaseBusV2BetaEntry[] = [],
+    mode = getReleaseBusV2Mode()
   ): Promise<void> {
     const candidates = (
       await this.repository.listCandidates(
-        ['READY_FOR_STAGING', 'WAITING_FOR_DEPENDENCY', 'READY_FOR_PRODUCTION'],
+        [
+          'READY_FOR_STAGING',
+          'WAITING_FOR_DEPENDENCY',
+          'STAGING_IN_TRAIN',
+          'STAGING_BUILDING',
+          'STAGING_DEPLOYING',
+          'STAGING_DEPLOYED',
+          'STAGING_VALIDATING',
+          'READY_FOR_PRODUCTION',
+          CANDIDATE_EVIDENCE_READY_STATUS,
+          'WAITING_FOR_PRODUCTION_REPLAN',
+          'SUPERSEDED'
+        ],
         500,
         {}
       )
-    ).filter((candidate) => {
-      if (betaAllowlist.length === 0) return true;
-      const lane =
-        candidate.status === 'READY_FOR_PRODUCTION' ? 'PRODUCTION' : 'STAGING';
-      return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
-    });
+    )
+      .filter(
+        (candidate) =>
+          candidate.status !== 'SUPERSEDED' ||
+          (candidate.current_train_id === null &&
+            candidate.production_requested_at !== null &&
+            candidate.staging_validated_manifest_id !== null)
+      )
+      .filter(
+        (candidate) =>
+          ![
+            'STAGING_IN_TRAIN',
+            'STAGING_BUILDING',
+            'STAGING_DEPLOYING',
+            'STAGING_DEPLOYED',
+            'STAGING_VALIDATING'
+          ].includes(candidate.status) ||
+          candidate.staging_live_state !== 'LIVE'
+      )
+      .filter((candidate) => {
+        const lane =
+          candidate.status === 'READY_FOR_PRODUCTION' ||
+          candidate.status === CANDIDATE_EVIDENCE_READY_STATUS ||
+          candidate.status === 'WAITING_FOR_PRODUCTION_REPLAN' ||
+          candidate.status === 'SUPERSEDED'
+            ? 'PRODUCTION'
+            : 'STAGING';
+        if (mode === 'STAGING') {
+          if (lane === 'STAGING') return true;
+          return (
+            betaAllowlist.length > 0 &&
+            releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane)
+          );
+        }
+        if (betaAllowlist.length === 0) return true;
+        return releaseBusV2BetaAllowsCandidate(betaAllowlist, candidate, lane);
+      });
     const branchHeads = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
@@ -637,11 +1809,29 @@ export class ReleaseBusV2Reconciler {
     );
     for (const { candidate, currentHead } of branchHeads) {
       if (currentHead === candidate.head_sha) continue;
+      if (
+        currentHead === null &&
+        deletedProductionCandidateCanRetainReadiness(candidate) &&
+        (await releaseBusGitHubApp.refContainsCommit(
+          candidate.repository,
+          'main',
+          candidate.head_sha
+        ))
+      ) {
+        if (candidate.status === 'SUPERSEDED')
+          await this.service.restoreProductionReadinessAfterBranchCleanup(
+            candidate.id,
+            'release-bus-v2-reconciler'
+          );
+        continue;
+      }
+      if (candidate.status === 'SUPERSEDED') continue;
       await this.service.invalidateBranch(
         candidate.repository,
         candidate.branch_name,
         currentHead ?? 'deleted',
-        'release-bus-v2-reconciler'
+        'release-bus-v2-reconciler',
+        candidate.current_train_id ?? undefined
       );
     }
   }
@@ -664,6 +1854,11 @@ export class ReleaseBusV2Reconciler {
 
   private async advance(train: ReleaseBusV2TrainRecord): Promise<void> {
     const context = await this.loadContext(train);
+    if (train.status === 'STAGING_ROLLING_BACK') {
+      await this.advanceCumulativeStagingRollback(context);
+      return;
+    }
+    if (await this.deferSupersededStagingPlan(context)) return;
     if (['CLAIMED', 'COMPOSING', 'PREFLIGHTING'].includes(train.status)) {
       await this.advancePreparation(context);
       return;
@@ -699,9 +1894,330 @@ export class ReleaseBusV2Reconciler {
     };
   }
 
+  private async deferMovedProductionPlan(
+    context: TrainContext
+  ): Promise<boolean> {
+    const train = context.train;
+    if (train.lane !== 'PRODUCTION') return false;
+    const repositories = ['backend', 'frontend'] as const;
+    const current = await Promise.all(
+      repositories.map(async (repository) => ({
+        repository,
+        sha: await releaseBusGitHubApp.resolveRef(repository, 'main')
+      }))
+    );
+    for (const { repository, sha } of current) {
+      if (!/^[a-f0-9]{40}$/.test(sha))
+        throw new Error(
+          `Invalid SHA returned for ${repository}:main while fencing a production replan`
+        );
+    }
+    const moved = current.find(({ repository, sha }) => {
+      const base =
+        repository === 'frontend'
+          ? train.frontend_base_sha
+          : train.backend_base_sha;
+      const composed =
+        repository === 'frontend'
+          ? train.frontend_composed_sha
+          : train.backend_composed_sha;
+      return sha !== base && sha !== composed;
+    });
+    if (!moved) return false;
+    const base =
+      moved.repository === 'frontend'
+        ? train.frontend_base_sha
+        : train.backend_base_sha;
+    const message = `${moved.repository} main moved from ${base} to ${moved.sha}; production composition must be rebuilt and requalified`;
+    const stillRunningIds = await this.observeAlreadyDispatchedWorkflows(train);
+    if (stillRunningIds.length === 0) throw new MainMovedError(message);
+    const recoveryMessage = `${message}; waiting for already-dispatched orchestration to report terminal before the safe replan; observing operations: ${stillRunningIds.join(',')}`;
+    if (train.recovery_message !== recoveryMessage)
+      await this.transitionTrain(train, {
+        status: train.status,
+        recoveryMessage
+      });
+    return true;
+  }
+
+  private async observeAlreadyDispatchedWorkflows(
+    train: ReleaseBusV2TrainRecord
+  ): Promise<readonly string[]> {
+    const operations = await this.repository.listOperations(train.id, {});
+    const carriedOperationIds = new Set(
+      /; observing operations: ([^;]+)$/
+        .exec(train.recovery_message ?? '')?.[1]
+        ?.split(',')
+        .map((id) => id.trim())
+        .filter(Boolean) ?? []
+    );
+    const observed = operations.filter(
+      (operation) =>
+        operationMayStillBeRunning(operation) ||
+        carriedOperationIds.has(operation.id)
+    );
+    if (observed.length === 0) return [];
+    const results = await Promise.all(
+      observed.map(async (operation) => {
+        const request = parseStoredJson<{
+          readonly workflow?: unknown;
+          readonly ref?: unknown;
+          readonly inputs?: unknown;
+        }>(operation.request_json);
+        const inputs = stringRecord(request?.inputs);
+        if (
+          !operation.repository ||
+          !operation.environment ||
+          !operation.expected_sha ||
+          typeof request?.workflow !== 'string' ||
+          typeof request.ref !== 'string' ||
+          !inputs
+        )
+          throw new Error(
+            `Dispatched operation ${operation.id} has no immutable workflow identity`
+          );
+        if (operationMayStillBeRunning(operation))
+          await releaseBusV2Operations.reconcileWorkflow({
+            idempotencyKey: operation.idempotency_key,
+            trainId: operation.train_id,
+            operationType: operation.operation_type,
+            repository: operation.repository,
+            workflow: request.workflow,
+            ref: request.ref,
+            environment: operation.environment,
+            service: operation.service,
+            expectedSha: operation.expected_sha,
+            artifactDigest: operation.artifact_digest,
+            inputs,
+            maxAttempts: operation.max_attempts
+          });
+        const refreshed =
+          (await this.repository.findOperation(
+            operation.idempotency_key,
+            {}
+          )) ?? operation;
+        if (operationMayStillBeRunning(refreshed))
+          return { id: operation.id, stillRunning: true };
+        if (!refreshed.external_id)
+          return { id: operation.id, stillRunning: false };
+        const run = await releaseBusGitHubApp.findWorkflowRun(
+          operation.repository,
+          request.workflow,
+          `${operation.idempotency_key}:a${refreshed.attempt}`,
+          refreshed.external_id
+        );
+        return {
+          id: operation.id,
+          stillRunning: run !== null && run.status !== 'completed'
+        };
+      })
+    );
+    return results
+      .filter(({ stillRunning }) => stillRunning)
+      .map(({ id }) => id);
+  }
+
+  private async deferSupersededStagingPlan(
+    context: TrainContext
+  ): Promise<boolean> {
+    const train = context.train;
+    if (train.lane !== 'STAGING') return false;
+    const newCandidates = stagingStatusCandidates(context);
+    const currentHeads = await Promise.all(
+      newCandidates
+        .filter(({ status }) => status !== 'SUPERSEDED')
+        .map(async (candidate) => ({
+          candidate,
+          currentHead: await releaseBusGitHubApp.resolveRefIfExists(
+            candidate.repository,
+            candidate.branch_name
+          )
+        }))
+    );
+    const moved = currentHeads.filter(
+      ({ candidate, currentHead }) => currentHead !== candidate.head_sha
+    );
+    for (const { candidate, currentHead } of moved)
+      await this.service.invalidateBranch(
+        candidate.repository,
+        candidate.branch_name,
+        currentHead ?? 'deleted',
+        'release-bus-v2-reconciler',
+        train.id
+      );
+    const currentTrain = await this.repository.findTrain(train.id, {});
+    if (!currentTrain || TERMINAL_TRAINS.has(currentTrain.status)) return true;
+    const refreshed = await this.loadContext(currentTrain);
+    const superseded = stagingStatusCandidates(refreshed).filter(
+      (candidate) =>
+        candidate.status === 'SUPERSEDED' &&
+        candidate.current_train_id === train.id
+    );
+    if (superseded.length === 0) {
+      if (moved.length > 0)
+        throw new Error(
+          `Active staging train ${train.id} did not durably supersede its moved candidate head`
+        );
+      return false;
+    }
+    const supersededSummary = superseded
+      .map(
+        ({ repository, pr_number, head_sha }) =>
+          `${repository}#${pr_number}@${head_sha}`
+      )
+      .join(',');
+    const message = `Active staging train contains superseded candidate head(s): ${supersededSummary}`;
+    const stillRunningIds =
+      await this.observeAlreadyDispatchedWorkflows(currentTrain);
+    if (stillRunningIds.length > 0) {
+      const recoveryMessage = `${message}; no further operations will be dispatched while already-dispatched workflows drain; observing operations: ${stillRunningIds.join(',')}`;
+      if (currentTrain.recovery_message !== recoveryMessage)
+        await this.transitionTrain(currentTrain, {
+          status: currentTrain.status,
+          recoveryMessage
+        });
+      return true;
+    }
+    const operations = await this.repository.listOperations(train.id, {});
+    for (const operation of operations) {
+      if (TERMINAL_OPERATIONS.has(operation.status)) continue;
+      if (
+        !(await this.repository.updateOperation(
+          operation.id,
+          operation.row_version,
+          {
+            status: 'CANCELLED',
+            failureClass: 'INTERACTION',
+            failureMessage: message,
+            completedAt: Date.now()
+          },
+          {}
+        ))
+      )
+        throw new Error('Release Bus v2 operation changed concurrently');
+    }
+    const stagingMutationStarted = operations.some(
+      (operation) =>
+        operation.environment === 'staging' && operation.external_id !== null
+    );
+    if (
+      stagingMutationStarted &&
+      currentTrain.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
+    ) {
+      await this.beginCumulativeStagingRollback(
+        currentTrain,
+        'INTERACTION',
+        message
+      );
+      return true;
+    }
+    await this.replanSupersededStagingCandidates(refreshed, message);
+    const latest = await this.repository.findTrain(train.id, {});
+    if (latest && !TERMINAL_TRAINS.has(latest.status))
+      await this.transitionTrain(latest, {
+        status: 'CANCELLED',
+        failureClass: 'INTERACTION',
+        failureMessage: message,
+        recoveryMessage:
+          'Obsolete exact heads were superseded and unrelated NEW candidates were returned immediately to the next staging train',
+        completedAt: Date.now()
+      });
+    await this.releaseTerminalEnvironmentLocks();
+    return true;
+  }
+
+  private async replanSupersededStagingCandidates(
+    context: TrainContext,
+    reason: string
+  ): Promise<void> {
+    const mutable = stagingStatusCandidates(context);
+    const supersededIds = new Set(
+      mutable
+        .filter(({ status }) => status === 'SUPERSEDED')
+        .map(({ id }) => id)
+    );
+    if (supersededIds.size === 0) return;
+    const blockedIds = candidateExclusionClosure(
+      Array.from(supersededIds),
+      context.dependencies
+    );
+    const returned: ReleaseBusV2CandidateRecord[] = [];
+    const blocked: ReleaseBusV2CandidateRecord[] = [];
+    for (const candidate of mutable) {
+      const current = await this.repository.findCandidateById(candidate.id, {});
+      if (!current || current.status === 'CANCELLED') continue;
+      const superseded = supersededIds.has(candidate.id);
+      const dependencyBlocked = !superseded && blockedIds.has(candidate.id);
+      const status: ReleaseBusV2CandidateStatus = superseded
+        ? 'SUPERSEDED'
+        : dependencyBlocked
+          ? 'WAITING_FOR_DEPENDENCY'
+          : 'READY_FOR_STAGING';
+      const holdReason = superseded
+        ? reason
+        : dependencyBlocked
+          ? 'A required exact staging candidate was superseded'
+          : null;
+      if (
+        !(await this.repository.updateCandidate(
+          current.id,
+          current.row_version,
+          {
+            status,
+            currentTrainId: null,
+            holdReason
+          },
+          {}
+        ))
+      )
+        throw new Error('Candidate changed concurrently');
+      await this.repository.updateTrainCandidateDisposition(
+        context.train.id,
+        current.id,
+        superseded
+          ? 'SUPERSEDED_HEAD'
+          : dependencyBlocked
+            ? 'DEPENDENCY_EXCLUDED'
+            : 'RETURNED_TO_QUEUE',
+        {}
+      );
+      if (dependencyBlocked) blocked.push(current);
+      else if (!superseded) returned.push(current);
+    }
+    await Promise.all([
+      this.publishCandidateStatuses(
+        blocked,
+        'pending',
+        'Waiting because an exact staging dependency was superseded'
+      ),
+      this.publishCandidateStatuses(
+        returned,
+        'pending',
+        'Independent candidate returned to the next exact v2 staging train'
+      )
+    ]);
+    await this.repository.appendEvent(
+      {
+        trainId: context.train.id,
+        eventType: 'ACTIVE_STAGING_HEADS_SUPERSEDED_AND_REPLANNED',
+        actor: 'release-bus-v2',
+        payload: {
+          superseded_candidate_ids: Array.from(supersededIds),
+          dependency_blocked_candidate_ids: blocked.map(({ id }) => id),
+          returned_candidate_ids: returned.map(({ id }) => id)
+        }
+      },
+      {}
+    );
+  }
+
   private async advancePreparation(context: TrainContext): Promise<void> {
     const train = context.train;
-    if (relevantCandidates(context).length === 0) {
+    if (await this.deferMovedProductionPlan(context)) return;
+    if (
+      relevantCandidates(context).length === 0 &&
+      stagingDeploymentCandidates(context).length === 0
+    ) {
       await this.transitionTrain(train, {
         status: 'CANCELLED',
         failureClass: 'INTERACTION',
@@ -712,11 +2228,56 @@ export class ReleaseBusV2Reconciler {
       });
       return;
     }
+    const evidenceFailures: Array<
+      Pick<
+        ReleaseBusV2OperationRecord,
+        'id' | 'repository' | 'failure_class' | 'failure_message'
+      >
+    > = [];
+    for (const repository of ['frontend', 'backend'] as const) {
+      const repositoryCandidates = relevantCandidates(context, repository);
+      if (repositoryCandidates.length === 0) continue;
+      try {
+        candidateEvidenceSelection(repositoryCandidates, null);
+      } catch (error) {
+        evidenceFailures.push({
+          id: `candidate-evidence-validation:${train.id}:${repository}`,
+          repository,
+          failure_class: 'CANDIDATE',
+          failure_message:
+            error instanceof Error
+              ? error.message
+              : 'Selected candidate PR CI evidence is invalid'
+        });
+      }
+    }
+    if (evidenceFailures.length > 0) {
+      if (train.lane === 'STAGING') {
+        await this.failStagingRepositoryCandidateGroups(
+          context,
+          evidenceFailures
+        );
+        return;
+      }
+      const message = evidenceFailures
+        .map(({ failure_message }) => failure_message)
+        .filter((value): value is string => Boolean(value))
+        .join('; ');
+      await this.failTrain(
+        train,
+        'CANDIDATE',
+        message || 'Selected candidate PR CI evidence is invalid'
+      );
+      return;
+    }
     await this.updateCandidateStatuses(
-      relevantCandidates(context),
+      candidateStatusMutationCandidates(context),
       candidateStatusForBuild(train.lane),
       train.id
     );
+    const usesCandidateEvidence =
+      train.lane === 'PRODUCTION' &&
+      train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY;
     const compositionOnly =
       train.lane === 'PRODUCTION' &&
       ['CLAIMED', 'COMPOSING'].includes(train.status);
@@ -724,10 +2285,59 @@ export class ReleaseBusV2Reconciler {
       this.prepareRepository(context, 'frontend', compositionOnly),
       this.prepareRepository(context, 'backend', compositionOnly)
     ]);
-    const failed = frontend.failedOperation ?? backend.failedOperation;
-    if (failed) {
+    const currentAfterPreparation = await this.repository.findTrain(
+      train.id,
+      {}
+    );
+    if (
+      currentAfterPreparation &&
+      TERMINAL_TRAINS.has(currentAfterPreparation.status)
+    )
+      return;
+    const failedOperations = [
+      frontend.failedOperation,
+      backend.failedOperation
+    ].filter(
+      (operation): operation is ReleaseBusV2OperationRecord =>
+        operation !== null
+    );
+    if (failedOperations.length > 0) {
+      const interactionFailure = failedOperations.find(
+        ({ failure_class }) => failure_class === 'INTERACTION'
+      );
+      if (interactionFailure) {
+        if (
+          train.lane === 'PRODUCTION' &&
+          (await this.deferMovedProductionPlan(context))
+        )
+          return;
+        if (
+          train.lane === 'STAGING' &&
+          (await this.deferSupersededStagingPlan(context))
+        )
+          return;
+      }
+      const nonCandidateFailure = failedOperations.find(
+        ({ failure_class }) => failure_class !== 'CANDIDATE'
+      );
+      if (nonCandidateFailure) {
+        await this.failTrain(
+          train,
+          nonCandidateFailure.failure_class ?? 'CONTROL_PLANE',
+          nonCandidateFailure.failure_message ??
+            `${nonCandidateFailure.operation_type} failed`
+        );
+        return;
+      }
+      if (train.lane === 'STAGING') {
+        await this.failStagingRepositoryCandidateGroups(
+          context,
+          failedOperations
+        );
+        return;
+      }
+      const failed = failedOperations[0];
       if (
-        failed.failure_class === 'CANDIDATE' &&
         failed.repository &&
         relevantCandidates(context, failed.repository).length > 1
       ) {
@@ -743,21 +2353,16 @@ export class ReleaseBusV2Reconciler {
     }
     const allComposed = Boolean(frontend.composedSha && backend.composedSha);
     if (compositionOnly && allComposed) {
-      const exact = await this.repository.findValidatedManifestByShas(
-        frontend.composedSha,
-        backend.composedSha,
-        {}
-      );
       await this.transitionTrain(train, {
-        status: exact ? 'PREPARED' : 'PREFLIGHTING',
+        status: 'PREFLIGHTING',
         frontendComposedSha: frontend.composedSha,
         backendComposedSha: backend.composedSha,
-        frontendArtifactDigest: exact?.frontend_artifact_digest ?? null,
-        backendArtifactDigest: exact?.backend_artifact_digest ?? null,
-        manifestId: exact?.id ?? null,
-        recoveryMessage: exact
-          ? 'Exact staging-validated composition and immutable artifacts were reused without rebuilding'
-          : 'Exact production composition differs from validated staging; preparing one immutable artifact per application'
+        frontendArtifactDigest: null,
+        backendArtifactDigest: null,
+        manifestId: null,
+        recoveryMessage: usesCandidateEvidence
+          ? 'Fresh production composition is preparing environment-bound immutable artifacts against the current trusted production bases'
+          : 'Production is freshly packaging its exact composition; staging artifact bytes are evidence only and are never production inputs'
       });
       return;
     }
@@ -794,12 +2399,13 @@ export class ReleaseBusV2Reconciler {
   ): Promise<PreparedRepository> {
     const train = context.train;
     const candidates = relevantCandidates(context, repository);
+    const deployCandidates = stagingDeploymentCandidates(context, repository);
     const baseSha =
       repository === 'frontend'
         ? train.frontend_base_sha
         : train.backend_base_sha;
     if (!baseSha) throw new Error(`Missing ${repository} base SHA`);
-    if (candidates.length === 0) {
+    if (deployCandidates.length === 0) {
       return {
         repository,
         composedSha: baseSha,
@@ -813,14 +2419,24 @@ export class ReleaseBusV2Reconciler {
         ? train.frontend_composed_sha
         : train.backend_composed_sha;
     const fastCandidate =
+      !(
+        train.lane === 'PRODUCTION' &&
+        train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+      ) &&
       candidates.length === 1 &&
       canUseSingleCandidateFastPath(candidates[0], baseSha)
         ? candidates[0]
         : null;
+    const evidenceSelection = candidateEvidenceSelectionForPreparation(
+      candidates,
+      fastCandidate?.id ?? null
+    );
     let composedSha =
       storedComposedSha ??
-      prEvidence(fastCandidate ?? candidates[0])?.merge_sha;
-    if (!storedComposedSha && !fastCandidate) {
+      (candidates.length === 0
+        ? baseSha
+        : prEvidence(fastCandidate ?? candidates[0])?.merge_sha);
+    if (!storedComposedSha && !fastCandidate && candidates.length > 0) {
       const compose = await releaseBusV2Operations.reconcileWorkflow({
         idempotencyKey: operationKey(train.id, `compose:${repository}`),
         trainId: train.id,
@@ -878,6 +2494,18 @@ export class ReleaseBusV2Reconciler {
         };
     }
     if (!composedSha) throw new Error(`Missing ${repository} composed SHA`);
+    if (fastCandidate || candidates.length === 0) {
+      // The compose workflow creates the immutable release ref for multi-PR
+      // trains. The single-PR fast path skips that workflow, so bind the same
+      // lane-scoped ref here before any artifact preparation or deployment.
+      // createRef is idempotent only when an existing ref already resolves to
+      // this exact SHA; a moved or conflicting ref fails closed.
+      await releaseBusGitHubApp.createRef(
+        repository,
+        releaseBusV2Branch(train, repository),
+        composedSha
+      );
+    }
     if (compositionOnly)
       return {
         repository,
@@ -901,10 +2529,19 @@ export class ReleaseBusV2Reconciler {
         pending: false,
         failedOperation: null
       };
-    const graph = repository === 'backend' ? backendGraph(candidates) : null;
-    const evidence = fastCandidate
-      ? reusablePrArtifact(fastCandidate, repository, graph?.units ?? [])
-      : null;
+    const graph =
+      repository === 'backend'
+        ? backendGraph(
+            deployCandidates,
+            train.lane === 'PRODUCTION' ? 'prod' : 'staging'
+          )
+        : null;
+    const evidence = evidenceSelection.singular;
+    const artifactEnvironment = artifactEnvironmentForTrain(train);
+    const artifactContract =
+      evidenceSelection.mode === 'legacy-whole-train'
+        ? 'legacy-v2'
+        : ENVIRONMENT_BOUND_ARTIFACT_CONTRACT;
     const operationType = `PREPARE_ARTIFACT_${repository.toUpperCase()}`;
     const betaInfrastructureFailureInjection =
       getReleaseBusV2Mode() === 'OFF' && train.lane === 'STAGING'
@@ -930,20 +2567,23 @@ export class ReleaseBusV2Reconciler {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        source_ref: fastCandidate
-          ? fastCandidate.branch_name
-          : releaseBusV2Branch(train, repository),
+        source_ref: releaseBusV2Branch(train, repository),
         expected_sha: composedSha,
         deploy_units: JSON.stringify(graph?.units ?? []),
+        ...(repository === 'backend'
+          ? { deploy_layers: JSON.stringify(graph?.layers ?? []) }
+          : {}),
         reuse_artifact_run_id: evidence?.artifact_run_id ?? '',
         reuse_artifact_name: evidence?.artifact_name ?? '',
         reuse_artifact_digest: evidence?.artifact_digest ?? '',
-        ...(repository === 'frontend'
-          ? {
-              artifact_environment:
-                train.lane === 'STAGING' ? 'staging' : 'production'
-            }
-          : {})
+        candidate_evidence_mode: evidenceSelection.mode,
+        aggregate_candidate_evidence_digest:
+          evidenceSelection.aggregateDigest ?? '',
+        artifact_environment:
+          artifactContract === 'legacy-v2' && repository === 'backend'
+            ? ''
+            : artifactEnvironment,
+        artifact_contract_version: artifactContract
       },
       maxAttempts: 3,
       ...(betaInfrastructureFailureInjection
@@ -963,6 +2603,10 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext,
     repository: ReleaseBusV2Repository
   ): Promise<void> {
+    if (context.train.lane === 'STAGING')
+      throw new Error(
+        'Ordinary staging never runs deterministic candidate subset isolation'
+      );
     const candidates = relevantCandidates(context, repository);
     const diagnosis = await this.diagnoseKnownFailedGroup(
       context,
@@ -1001,8 +2645,8 @@ export class ReleaseBusV2Reconciler {
       context.dependencies
     );
     const retryStatus: ReleaseBusV2CandidateStatus =
-      context.train.lane === 'STAGING'
-        ? 'READY_FOR_STAGING'
+      context.train.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+        ? CANDIDATE_EVIDENCE_READY_STATUS
         : 'READY_FOR_PRODUCTION';
     const failedCandidates: ReleaseBusV2CandidateRecord[] = [];
     const blockedCandidates: ReleaseBusV2CandidateRecord[] = [];
@@ -1010,7 +2654,10 @@ export class ReleaseBusV2Reconciler {
 
     for (const candidate of relevantCandidates(context)) {
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (
+        !current ||
+        ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+      )
         continue;
       const isAttributable = diagnosis.attributable.has(candidate.id);
       const isInteraction = diagnosis.interaction.has(candidate.id);
@@ -1086,6 +2733,163 @@ export class ReleaseBusV2Reconciler {
         'Failed candidates are quarantined; dependency-blocked candidates are held and independent candidates were returned to the next train',
       completedAt: Date.now()
     });
+  }
+
+  private async failStagingRepositoryCandidateGroups(
+    context: TrainContext,
+    failedOperations: ReadonlyArray<
+      Pick<
+        ReleaseBusV2OperationRecord,
+        'id' | 'repository' | 'failure_class' | 'failure_message'
+      >
+    >
+  ): Promise<void> {
+    const failedRepositories = new Set(
+      failedOperations
+        .map(({ repository }) => repository)
+        .filter(
+          (repository): repository is ReleaseBusV2Repository =>
+            repository === 'frontend' || repository === 'backend'
+        )
+    );
+    if (failedRepositories.size === 0)
+      throw new Error(
+        'Staging candidate preflight failure has no repository identity'
+      );
+    const stillRunningIds = await this.observeAlreadyDispatchedWorkflows(
+      context.train
+    );
+    if (stillRunningIds.length > 0) {
+      const recoveryMessage = `Combined ${Array.from(failedRepositories).join('+')} preflight failed; subset isolation is disabled and unrelated candidates will be replanned after already-dispatched workflows drain; observing operations: ${stillRunningIds.join(',')}`;
+      if (context.train.recovery_message !== recoveryMessage)
+        await this.transitionTrain(context.train, {
+          status: 'PREFLIGHTING',
+          recoveryMessage
+        });
+      return;
+    }
+    const mutable = stagingStatusCandidates(context);
+    const failedIds = new Set(
+      mutable
+        .filter(({ repository }) => failedRepositories.has(repository))
+        .map(({ id }) => id)
+    );
+    const blockedIds = candidateExclusionClosure(
+      Array.from(failedIds),
+      context.dependencies
+    );
+    const failed: ReleaseBusV2CandidateRecord[] = [];
+    const blocked: ReleaseBusV2CandidateRecord[] = [];
+    const returned: ReleaseBusV2CandidateRecord[] = [];
+    for (const candidate of mutable) {
+      const current = await this.repository.findCandidateById(candidate.id, {});
+      if (
+        !current ||
+        ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+      )
+        continue;
+      const repositoryFailed = failedIds.has(candidate.id);
+      const dependencyBlocked =
+        !repositoryFailed && blockedIds.has(candidate.id);
+      const status: ReleaseBusV2CandidateStatus = repositoryFailed
+        ? 'FAILED'
+        : dependencyBlocked
+          ? 'WAITING_FOR_DEPENDENCY'
+          : 'READY_FOR_STAGING';
+      const holdReason = repositoryFailed
+        ? `Combined ${candidate.repository} preflight failed for this train's NEW candidate group`
+        : dependencyBlocked
+          ? 'A required repository candidate group failed combined preflight'
+          : null;
+      if (
+        !(await this.repository.updateCandidate(
+          current.id,
+          current.row_version,
+          { status, currentTrainId: null, holdReason },
+          {}
+        ))
+      )
+        throw new Error('Candidate changed concurrently');
+      if (repositoryFailed)
+        await this.repository.appendEvent(
+          {
+            trainId: context.train.id,
+            candidateId: current.id,
+            eventType: 'STAGING_REPOSITORY_PREFLIGHT_GROUP_FAILED',
+            actor: 'release-bus-v2',
+            payload: {
+              repository: current.repository,
+              pr_number: current.pr_number,
+              head_sha: current.head_sha,
+              failed_candidate_row_version: current.row_version + 1,
+              failed_group_candidate_ids: mutable
+                .filter(
+                  (item) =>
+                    item.repository === current.repository &&
+                    failedIds.has(item.id)
+                )
+                .map(({ id }) => id),
+              failed_operation_ids: failedOperations
+                .filter(
+                  (operation) =>
+                    operation.repository === current.repository &&
+                    operation.failure_class === 'CANDIDATE'
+                )
+                .map(({ id }) => id),
+              failure_messages: failedOperations
+                .filter(
+                  (operation) =>
+                    operation.repository === current.repository &&
+                    operation.failure_class === 'CANDIDATE'
+                )
+                .map(({ failure_message }) => failure_message)
+                .filter((message): message is string => Boolean(message))
+            }
+          },
+          {}
+        );
+      await this.repository.updateTrainCandidateDisposition(
+        context.train.id,
+        current.id,
+        repositoryFailed
+          ? 'REPOSITORY_PREFLIGHT_FAILED'
+          : dependencyBlocked
+            ? 'DEPENDENCY_EXCLUDED'
+            : 'RETURNED_TO_QUEUE',
+        {}
+      );
+      if (repositoryFailed) failed.push(current);
+      else if (dependencyBlocked) blocked.push(current);
+      else returned.push(current);
+    }
+    await Promise.all([
+      this.publishCandidateStatuses(
+        failed,
+        'failure',
+        'Combined repository preflight failed for this NEW candidate group'
+      ),
+      this.publishCandidateStatuses(
+        blocked,
+        'pending',
+        'Waiting because a required repository candidate group failed'
+      ),
+      this.publishCandidateStatuses(
+        returned,
+        'pending',
+        'Independent repository candidate returned to the next staging train'
+      )
+    ]);
+    const current = await this.repository.findTrain(context.train.id, {});
+    if (current && !TERMINAL_TRAINS.has(current.status))
+      await this.transitionTrain(current, {
+        status: 'FAILED',
+        failureClass: 'CANDIDATE',
+        failureMessage: `Combined preflight failed for NEW ${Array.from(failedRepositories).join('+')} candidate group(s)`,
+        recoveryMessage:
+          'Failing repository NEW groups are terminal; dependency-blocked candidates are held and independent repository NEW candidates are immediately eligible for a new train',
+        completedAt: Date.now()
+      });
+    await this.releaseTerminalEnvironmentLocks();
   }
 
   private async diagnoseKnownFailedGroup(
@@ -1222,7 +3026,14 @@ export class ReleaseBusV2Reconciler {
         failureClass: 'CANDIDATE',
         message: 'Isolation subset conflicted with its exact base'
       };
-    const graph = repository === 'backend' ? backendGraph(candidates) : null;
+    const graph =
+      repository === 'backend'
+        ? backendGraph(
+            candidates,
+            train.lane === 'PRODUCTION' ? 'prod' : 'staging'
+          )
+        : null;
+    const evidenceSelection = candidateEvidenceSelection(candidates, null);
     const preflight = await releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(
         train.id,
@@ -1244,15 +3055,24 @@ export class ReleaseBusV2Reconciler {
         source_ref: branch,
         expected_sha: composedSha,
         deploy_units: JSON.stringify(graph?.units ?? []),
+        ...(repository === 'backend'
+          ? { deploy_layers: JSON.stringify(graph?.layers ?? []) }
+          : {}),
         reuse_artifact_run_id: '',
         reuse_artifact_name: '',
         reuse_artifact_digest: '',
-        ...(repository === 'frontend'
-          ? {
-              artifact_environment:
-                train.lane === 'STAGING' ? 'staging' : 'production'
-            }
-          : {})
+        candidate_evidence_mode: evidenceSelection.mode,
+        aggregate_candidate_evidence_digest:
+          evidenceSelection.aggregateDigest ?? '',
+        artifact_environment:
+          evidenceSelection.mode === 'legacy-whole-train' &&
+          repository === 'backend'
+            ? ''
+            : artifactEnvironmentForTrain(train),
+        artifact_contract_version:
+          evidenceSelection.mode === 'legacy-whole-train'
+            ? 'legacy-v2'
+            : ENVIRONMENT_BOUND_ARTIFACT_CONTRACT
       },
       maxAttempts: 3
     });
@@ -1328,6 +3148,61 @@ export class ReleaseBusV2Reconciler {
     }>(operation.result_json);
     const excludedShas = new Set(result?.summary?.excluded_shas ?? []);
     if (excludedShas.size === 0) return false;
+    if (
+      context.train.lane === 'STAGING' &&
+      context.train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
+    ) {
+      const newCandidates = stagingStatusCandidates(context);
+      for (const candidate of newCandidates) {
+        const current = await this.repository.findCandidateById(
+          candidate.id,
+          {}
+        );
+        if (!current) continue;
+        await this.repository.updateCandidate(
+          current.id,
+          current.row_version,
+          {
+            status: excludedShas.has(current.head_sha)
+              ? 'NEEDS_REBASE'
+              : 'READY_FOR_STAGING',
+            currentTrainId: null,
+            holdReason: excludedShas.has(current.head_sha)
+              ? 'Cumulative composition conflicted; the admitted staging manifest was left unchanged'
+              : 'Cumulative train failed closed because one exact candidate conflicted'
+          },
+          {}
+        );
+      }
+      await this.transitionTrain(context.train, {
+        status: 'FAILED',
+        failureClass: 'CANDIDATE',
+        failureMessage:
+          'Cumulative staging composition conflicted; no candidate was omitted and shared staging was not mutated',
+        recoveryMessage:
+          'The last validated admitted staging manifest remains authoritative and live',
+        completedAt: Date.now()
+      });
+      await this.repository.appendEvent(
+        {
+          trainId: context.train.id,
+          eventType: 'CUMULATIVE_STAGING_COMPOSITION_FAILED_CLOSED',
+          actor: 'release-bus-v2',
+          payload: {
+            excluded_shas: Array.from(excludedShas),
+            baseline_manifest_id: context.train.staging_baseline_manifest_id,
+            admitted_candidate_ids: relevantCandidates(context)
+              .filter(
+                ({ id }) =>
+                  !newCandidates.some((candidate) => candidate.id === id)
+              )
+              .map(({ id }) => id)
+          }
+        },
+        {}
+      );
+      return true;
+    }
     const directlyExcluded = context.candidates
       .filter((candidate) => excludedShas.has(candidate.head_sha))
       .map(({ id }) => id);
@@ -1347,7 +3222,10 @@ export class ReleaseBusV2Reconciler {
         {}
       );
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (
+        !current ||
+        ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+      )
         continue;
       await this.repository.updateCandidate(
         current.id,
@@ -1382,6 +3260,825 @@ export class ReleaseBusV2Reconciler {
     return true;
   }
 
+  private async beginCumulativeStagingRollback(
+    train: ReleaseBusV2TrainRecord,
+    failureClass: ReleaseBusV2FailureClass,
+    message: string
+  ): Promise<void> {
+    if (!train.staging_baseline_manifest_id)
+      throw new Error(
+        'Cumulative staging failure has no last validated manifest to restore'
+      );
+    if (train.manifest_id)
+      await this.repository.updateManifestStatus(
+        train.manifest_id,
+        'FAILED',
+        null,
+        {}
+      );
+    await this.repository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'CUMULATIVE_STAGING_ROLLBACK_STARTED',
+        actor: 'release-bus-v2',
+        payload: {
+          baseline_manifest_id: train.staging_baseline_manifest_id,
+          failed_manifest_id: train.manifest_id,
+          failure_class: failureClass,
+          failure_message: message,
+          rollback_policy: 'RESTORE_VALIDATED_STAGING_V1'
+        }
+      },
+      {}
+    );
+    await this.transitionTrain(train, {
+      status: 'STAGING_ROLLING_BACK',
+      failureClass,
+      failureMessage: message,
+      recoveryMessage:
+        'Restoring the exact last successfully validated live manifest before releasing staging ownership'
+    });
+  }
+
+  private rollbackBranch(
+    train: ReleaseBusV2TrainRecord,
+    repository: ReleaseBusV2Repository
+  ): string {
+    return `release-bus-v2/rollback-train-${train.id}-${repository}`;
+  }
+
+  private async cumulativeRollbackBaseline(context: TrainContext): Promise<{
+    readonly manifest: ReleaseBusV2ManifestRecord;
+    readonly candidateIds: readonly string[];
+    readonly frontendSha: string;
+    readonly backendSha: string;
+    readonly graph: ReturnType<typeof backendGraph>;
+    readonly deployFrontend: boolean;
+  }> {
+    const manifestId = context.train.staging_baseline_manifest_id;
+    if (!manifestId)
+      throw new Error('Cumulative rollback has no baseline manifest');
+    const manifest = await this.repository.findManifest(manifestId, {});
+    if (!manifest?.frontend_sha || !manifest.backend_sha)
+      throw new Error('Cumulative rollback baseline identity is incomplete');
+    const body = parseStoredJson<{
+      candidates?: Array<{ candidate_id?: string }>;
+    }>(manifest.manifest_json);
+    const candidateIds = Array.from(
+      new Set(
+        (body?.candidates ?? [])
+          .map(({ candidate_id }) => candidate_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+    return {
+      manifest,
+      candidateIds,
+      frontendSha: manifest.frontend_sha,
+      backendSha: manifest.backend_sha,
+      graph: backendGraph(
+        stagingDeploymentCandidates(context, 'backend'),
+        'staging'
+      ),
+      deployFrontend:
+        stagingDeploymentCandidates(context, 'frontend').length > 0
+    };
+  }
+
+  private async prepareCumulativeRollbackRepository(
+    context: TrainContext,
+    repository: ReleaseBusV2Repository
+  ): Promise<PreparedRepository> {
+    const train = context.train;
+    const baseline = await this.cumulativeRollbackBaseline(context);
+    const selected =
+      repository === 'frontend'
+        ? baseline.deployFrontend
+        : baseline.graph.units.length > 0;
+    const composedSha =
+      repository === 'frontend' ? baseline.frontendSha : baseline.backendSha;
+    if (!selected)
+      return {
+        repository,
+        composedSha,
+        artifactDigest: null,
+        pending: false,
+        failedOperation: null
+      };
+    const branch = this.rollbackBranch(train, repository);
+    await releaseBusGitHubApp.createRef(repository, branch, composedSha);
+    const evidenceSelection = candidateEvidenceSelectionForPreparation(
+      context.candidates.filter(
+        (candidate) =>
+          baseline.candidateIds.includes(candidate.id) &&
+          candidate.repository === repository
+      ),
+      null
+    );
+    const operation = await releaseBusV2Operations.reconcileWorkflow({
+      idempotencyKey: operationKey(train.id, `rollback:prepare:${repository}`),
+      trainId: train.id,
+      operationType: `ROLLBACK_PREPARE_ARTIFACT_${repository.toUpperCase()}`,
+      repository,
+      workflow: 'release-bus-v2-preflight.yml',
+      ref: 'main',
+      environment: 'orchestration',
+      service: null,
+      expectedSha: composedSha,
+      artifactDigest: null,
+      inputs: {
+        release_train_id: train.id,
+        release_train_revision: ROLLBACK_ARTIFACT_REVISION,
+        operation_key: 'replaced-by-reconciler',
+        source_ref: branch,
+        expected_sha: composedSha,
+        deploy_units:
+          repository === 'backend'
+            ? JSON.stringify(baseline.graph.units)
+            : '[]',
+        ...(repository === 'backend'
+          ? { deploy_layers: JSON.stringify(baseline.graph.layers) }
+          : {}),
+        reuse_artifact_run_id: '',
+        reuse_artifact_name: '',
+        reuse_artifact_digest: '',
+        candidate_evidence_mode: evidenceSelection.mode,
+        aggregate_candidate_evidence_digest:
+          evidenceSelection.aggregateDigest ?? '',
+        artifact_environment:
+          evidenceSelection.mode === 'legacy-whole-train' &&
+          repository === 'backend'
+            ? ''
+            : 'staging',
+        artifact_contract_version:
+          evidenceSelection.mode === 'legacy-whole-train'
+            ? 'legacy-v2'
+            : ENVIRONMENT_BOUND_ARTIFACT_CONTRACT
+      },
+      maxAttempts: 3
+    });
+    return {
+      repository,
+      composedSha,
+      artifactDigest: operation.artifact_digest,
+      pending: !['SUCCEEDED', 'FAILED'].includes(operation.status),
+      failedOperation: operation.status === 'FAILED' ? operation : null
+    };
+  }
+
+  private async reconcileCumulativeRollbackDeployments(
+    context: TrainContext,
+    frontendArtifact: ReleaseBusV2OperationRecord | null,
+    backendArtifact: ReleaseBusV2OperationRecord | null
+  ): Promise<DeployResult> {
+    const train = context.train;
+    const baseline = await this.cumulativeRollbackBaseline(context);
+    const baselineCandidates = context.candidates.filter((candidate) =>
+      baseline.candidateIds.includes(candidate.id)
+    );
+    const backendCandidates = baselineCandidates.filter(
+      ({ repository }) => repository === 'backend'
+    );
+    const frontendCandidates = baselineCandidates.filter(
+      ({ repository }) => repository === 'frontend'
+    );
+    const backendArtifactBinding =
+      backendCandidates.length > 0 && backendArtifact
+        ? preparedArtifactDeployBinding(backendArtifact, 'staging')
+        : null;
+    const frontendArtifactBinding =
+      frontendCandidates.length > 0 && frontendArtifact
+        ? preparedArtifactDeployBinding(frontendArtifact, 'staging')
+        : null;
+    const operations: ReleaseBusV2OperationRecord[] = [];
+    const existing = await this.repository.listOperations(train.id, {});
+    let backendComplete = baseline.graph.units.length === 0;
+    for (const layer of baseline.graph.layers) {
+      const previous = baseline.graph.layers
+        .slice(0, baseline.graph.layers.indexOf(layer))
+        .flat();
+      if (
+        !previous.every((unit) =>
+          [...existing, ...operations].some(
+            ({ operation_type, status }) =>
+              operation_type === `ROLLBACK_DEPLOY_BACKEND_STAGING_${unit}` &&
+              status === 'SUCCEEDED'
+          )
+        )
+      )
+        break;
+      const results = await Promise.all(
+        layer.map((unit) => {
+          if (!backendArtifact?.external_id || !backendArtifact.artifact_digest)
+            throw new Error('Rollback backend artifact identity is missing');
+          return releaseBusV2Operations.reconcileWorkflow({
+            idempotencyKey: operationKey(
+              train.id,
+              `rollback:deploy:staging:backend:${unit}`
+            ),
+            trainId: train.id,
+            operationType: `ROLLBACK_DEPLOY_BACKEND_STAGING_${unit}`,
+            repository: 'backend',
+            workflow: 'deploy.yml',
+            ref: 'main',
+            environment: 'staging',
+            service: unit,
+            expectedSha: baseline.backendSha,
+            artifactDigest: backendArtifact.artifact_digest,
+            inputs: {
+              environment: 'staging',
+              service: unit,
+              release_train_id: train.id,
+              release_train_revision: ROLLBACK_ARTIFACT_REVISION,
+              operation_key: 'replaced-by-reconciler',
+              expected_sha: baseline.backendSha,
+              artifact_run_id: backendArtifact.external_id,
+              artifact_train_id: train.id,
+              artifact_digest: backendArtifact.artifact_digest,
+              artifact_environment:
+                backendArtifactBinding?.artifact_environment ?? '',
+              artifact_contract_version:
+                backendArtifactBinding?.artifact_contract_version ??
+                'legacy-v2',
+              release_contributors: '[]',
+              release_pull_request: '',
+              release_group_services: '',
+              release_note_publish: 'false',
+              release_note_groups: '',
+              release_note_opt_out: 'true'
+            }
+          });
+        })
+      );
+      operations.push(...results);
+      const failed = results.find(({ status }) => status === 'FAILED');
+      if (failed)
+        return { complete: false, failedOperation: failed, operations };
+      if (results.some(({ status }) => status !== 'SUCCEEDED')) break;
+      if (layer === baseline.graph.layers.at(-1)) backendComplete = true;
+    }
+    if (!backendComplete)
+      return { complete: false, failedOperation: null, operations };
+    let frontendComplete = !baseline.deployFrontend;
+    if (baseline.deployFrontend) {
+      if (!frontendArtifact?.external_id || !frontendArtifact.artifact_digest)
+        throw new Error('Rollback frontend artifact identity is missing');
+      const frontend = await releaseBusV2Operations.reconcileWorkflow({
+        idempotencyKey: operationKey(
+          train.id,
+          'rollback:deploy:staging:frontend'
+        ),
+        trainId: train.id,
+        operationType: 'ROLLBACK_DEPLOY_FRONTEND_STAGING',
+        repository: 'frontend',
+        workflow: 'release-bus-deploy-staging.yml',
+        ref: 'main',
+        environment: 'staging',
+        service: null,
+        expectedSha: baseline.frontendSha,
+        artifactDigest: frontendArtifact.artifact_digest,
+        inputs: {
+          release_train_id: train.id,
+          release_train_revision: ROLLBACK_ARTIFACT_REVISION,
+          operation_key: 'replaced-by-reconciler',
+          source_ref: this.rollbackBranch(train, 'frontend'),
+          expected_sha: baseline.frontendSha,
+          artifact_run_id: frontendArtifact.external_id,
+          artifact_train_id: train.id,
+          artifact_digest: frontendArtifact.artifact_digest,
+          ...frontendDeployBinding(
+            frontendArtifactBinding ?? {
+              artifact_environment: '',
+              artifact_contract_version: 'legacy-v2'
+            },
+            'staging'
+          ),
+          release_contributors: '[]'
+        }
+      });
+      operations.push(frontend);
+      if (frontend.status === 'FAILED')
+        return { complete: false, failedOperation: frontend, operations };
+      frontendComplete = frontend.status === 'SUCCEEDED';
+    }
+    return {
+      complete: backendComplete && frontendComplete,
+      failedOperation: null,
+      operations
+    };
+  }
+
+  private async createCumulativeRollbackManifest(
+    context: TrainContext,
+    frontendArtifact: ReleaseBusV2OperationRecord | null,
+    backendArtifact: ReleaseBusV2OperationRecord | null
+  ): Promise<ReleaseBusV2ManifestRecord> {
+    const baseline = await this.cumulativeRollbackBaseline(context);
+    const operations = await this.repository.listOperations(
+      context.train.id,
+      {}
+    );
+    const identity = {
+      train_id: context.train.id,
+      lane: context.train.lane,
+      scope: 'cumulative-staging-rollback',
+      staging_policy: 'RESTORE_VALIDATED_STAGING_V1',
+      source_manifest_id: baseline.manifest.id,
+      frontend_sha: baseline.frontendSha,
+      backend_sha: baseline.backendSha,
+      frontend_artifact_digest: frontendArtifact?.artifact_digest ?? null,
+      backend_artifact_digest: backendArtifact?.artifact_digest ?? null,
+      candidates: baseline.candidateIds
+    };
+    return this.repository.createManifest(
+      {
+        train_id: context.train.id,
+        lane: context.train.lane,
+        identity_sha256: sha256(identity),
+        status: 'STAGING_DEPLOYED',
+        frontend_sha: baseline.frontendSha,
+        backend_sha: baseline.backendSha,
+        frontend_artifact_digest: frontendArtifact?.artifact_digest ?? null,
+        backend_artifact_digest: backendArtifact?.artifact_digest ?? null,
+        e2e_run_id: null,
+        manifest_json: {
+          schema_version: 2,
+          ...identity,
+          candidates:
+            parseStoredJson<{ candidates?: unknown[] }>(
+              baseline.manifest.manifest_json
+            )?.candidates ?? [],
+          operations: operations
+            .filter(({ operation_type }) =>
+              operation_type.startsWith('ROLLBACK_')
+            )
+            .map(
+              ({
+                operation_type,
+                service,
+                expected_sha,
+                external_id,
+                completed_at
+              }) => ({
+                type: operation_type,
+                service,
+                expected_sha,
+                workflow_run_id: external_id,
+                completed_at
+              })
+            )
+        },
+        deployed_at: Date.now(),
+        validated_at: null
+      },
+      {}
+    );
+  }
+
+  private async reconcileCumulativeRollbackE2E(
+    context: TrainContext,
+    manifest: ReleaseBusV2ManifestRecord
+  ): Promise<ReleaseBusV2OperationRecord> {
+    const baseline = await this.cumulativeRollbackBaseline(context);
+    const sourceRef = this.rollbackBranch(context.train, 'frontend');
+    await releaseBusGitHubApp.createRef(
+      'frontend',
+      sourceRef,
+      baseline.frontendSha
+    );
+    return releaseBusV2Operations.reconcileWorkflow({
+      idempotencyKey: operationKey(context.train.id, 'rollback:e2e:staging'),
+      trainId: context.train.id,
+      operationType: 'ROLLBACK_E2E_STAGING',
+      repository: 'frontend',
+      workflow: 'staging-e2e.yml',
+      ref: sourceRef,
+      environment: 'staging',
+      service: null,
+      expectedSha: baseline.frontendSha,
+      artifactDigest: manifest.identity_sha256,
+      inputs: e2eWorkflowInputs('staging', {
+        release_train_id: context.train.id,
+        release_train_revision: ROLLBACK_ARTIFACT_REVISION,
+        operation_key: 'replaced-by-reconciler',
+        staging_source_ref: sourceRef,
+        expected_sha: baseline.frontendSha,
+        release_manifest_id: manifest.id,
+        release_manifest_identity_sha256: manifest.identity_sha256,
+        frontend_sha: baseline.frontendSha,
+        backend_sha: baseline.backendSha,
+        frontend_artifact_digest: manifest.frontend_artifact_digest ?? '',
+        backend_artifact_digest: manifest.backend_artifact_digest ?? ''
+      }),
+      maxAttempts: 2
+    });
+  }
+
+  private async advanceCumulativeStagingRollback(
+    context: TrainContext
+  ): Promise<void> {
+    const train = context.train;
+    const [frontendPreparation, backendPreparation] = await Promise.all([
+      this.prepareCumulativeRollbackRepository(context, 'frontend'),
+      this.prepareCumulativeRollbackRepository(context, 'backend')
+    ]);
+    if (
+      frontendPreparation.failedOperation ||
+      backendPreparation.failedOperation
+    ) {
+      if (frontendPreparation.pending || backendPreparation.pending) return;
+      await this.failCumulativeStagingRollback(
+        context,
+        (
+          frontendPreparation.failedOperation ??
+          backendPreparation.failedOperation
+        )?.failure_message ?? 'Rollback artifact preparation failed'
+      );
+      return;
+    }
+    if (frontendPreparation.pending || backendPreparation.pending) return;
+    const operations = await this.repository.listOperations(train.id, {});
+    const frontendArtifact =
+      operations.find(
+        ({ operation_type, status }) =>
+          operation_type === 'ROLLBACK_PREPARE_ARTIFACT_FRONTEND' &&
+          status === 'SUCCEEDED'
+      ) ?? null;
+    const backendArtifact =
+      operations.find(
+        ({ operation_type, status }) =>
+          operation_type === 'ROLLBACK_PREPARE_ARTIFACT_BACKEND' &&
+          status === 'SUCCEEDED'
+      ) ?? null;
+    const deployed = await this.reconcileCumulativeRollbackDeployments(
+      context,
+      frontendArtifact,
+      backendArtifact
+    );
+    if (deployed.failedOperation) {
+      await this.failCumulativeStagingRollback(
+        context,
+        deployed.failedOperation.failure_message ?? 'Rollback deployment failed'
+      );
+      return;
+    }
+    if (!deployed.complete) return;
+    let manifest: ReleaseBusV2ManifestRecord | null = null;
+    if (train.manifest_id) {
+      const candidate = await this.repository.findManifest(
+        train.manifest_id,
+        {}
+      );
+      const body = parseStoredJson<{ scope?: string }>(
+        candidate?.manifest_json
+      );
+      if (body?.scope === 'cumulative-staging-rollback') manifest = candidate;
+    }
+    manifest ??= await this.createCumulativeRollbackManifest(
+      context,
+      frontendArtifact,
+      backendArtifact
+    );
+    if (train.manifest_id !== manifest.id) {
+      await this.transitionTrain(train, {
+        status: 'STAGING_ROLLING_BACK',
+        manifestId: manifest.id,
+        failureClass: train.failure_class,
+        failureMessage: train.failure_message,
+        recoveryMessage:
+          'The exact prior manifest is restored; rollback E2E is now required before releasing staging'
+      });
+      return;
+    }
+    const e2e = await this.reconcileCumulativeRollbackE2E(context, manifest);
+    if (e2e.status === 'FAILED') {
+      await this.failCumulativeStagingRollback(
+        context,
+        e2e.failure_message ?? 'Rollback staging E2E failed'
+      );
+      return;
+    }
+    if (e2e.status !== 'SUCCEEDED') return;
+    const handshake = await this.findStagingIdleHandshake(train.id);
+    const runIds = await this.stagingFenceRunIds(train.id);
+    const stable =
+      handshake &&
+      (await this.captureStagingIdleSnapshot({
+        since: handshake.workflow_fence_started_at,
+        ignoredRunIds: runIds
+      }));
+    if (
+      !stable ||
+      stable.frontend_staging_sha !== handshake.frontend_staging_sha ||
+      stable.backend_staging_sha !== handshake.backend_staging_sha
+    ) {
+      await this.failCumulativeStagingRollback(
+        context,
+        'Shared staging changed during rollback; the restored runtime cannot be certified'
+      );
+      return;
+    }
+    await this.repository.updateManifestStatus(
+      manifest.id,
+      'STAGING_VALIDATED',
+      e2e.external_id,
+      {}
+    );
+    const baseline = await this.cumulativeRollbackBaseline(context);
+    const statusCandidates = stagingStatusCandidates(context);
+    const supersededHeadRollback = statusCandidates.some(
+      ({ status }) => status === 'SUPERSEDED'
+    );
+    const terminalCandidateStatus: ReleaseBusV2CandidateStatus = [
+      'INFRASTRUCTURE',
+      'CONTROL_PLANE'
+    ].includes(train.failure_class ?? '')
+      ? 'READY_FOR_STAGING'
+      : 'FAILED';
+    const commitResult =
+      await this.repository.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const lockedState = await this.repository.getStagingState(
+            { connection },
+            true
+          );
+          if (
+            lockedState.last_transition_train_id === train.id &&
+            lockedState.current_manifest_id === manifest.id
+          )
+            return 'ALREADY_COMMITTED' as const;
+          // The current manifest identity is the authoritative epoch check.
+          // Any newer staging transition makes this callback a safe no-op.
+          if (
+            lockedState.current_manifest_id !==
+            train.staging_baseline_manifest_id
+          )
+            return 'SUPERSEDED' as const;
+          await this.repository.commitValidatedStaging(
+            {
+              trainId: train.id,
+              expectedStateVersion: lockedState.row_version,
+              manifestId: manifest.id,
+              frontendSha: baseline.frontendSha,
+              backendSha: baseline.backendSha,
+              frontendStagingRefSha: stable.frontend_staging_sha!,
+              backendStagingRefSha: stable.backend_staging_sha!,
+              admittedCandidateIds: baseline.candidateIds,
+              removedCandidateIds: [],
+              newCandidateIds: []
+            },
+            { connection }
+          );
+          return 'COMMITTED' as const;
+        }
+      );
+    if (commitResult === 'SUPERSEDED') {
+      if (supersededHeadRollback)
+        await this.replanSupersededStagingCandidates(
+          context,
+          train.failure_message ??
+            'Active staging candidate head was superseded'
+        );
+      else
+        await this.updateCandidateStatuses(
+          statusCandidates,
+          terminalCandidateStatus,
+          null,
+          false
+        );
+      const current = await this.repository.findTrain(train.id, {});
+      if (current && !TERMINAL_TRAINS.has(current.status))
+        await this.transitionTrain(current, {
+          status: 'FAILED',
+          failureClass: train.failure_class,
+          failureMessage: train.failure_message,
+          recoveryMessage:
+            'A newer authoritative staging transition superseded this stale rollback callback; current live state was not changed',
+          completedAt: Date.now()
+        });
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'CUMULATIVE_STAGING_ROLLBACK_SUPERSEDED',
+          actor: 'release-bus-v2',
+          payload: {
+            source_manifest_id: train.staging_baseline_manifest_id,
+            attempted_restored_manifest_id: manifest.id
+          }
+        },
+        {}
+      );
+      await this.releaseTerminalEnvironmentLocks();
+      return;
+    }
+    if (supersededHeadRollback)
+      await this.replanSupersededStagingCandidates(
+        context,
+        train.failure_message ?? 'Active staging candidate head was superseded'
+      );
+    else
+      await this.updateCandidateStatuses(
+        statusCandidates,
+        terminalCandidateStatus,
+        null,
+        false
+      );
+    const current = await this.repository.findTrain(train.id, {});
+    if (!current) throw new Error('Rollback train disappeared');
+    if (TERMINAL_TRAINS.has(current.status)) {
+      await this.releaseTerminalEnvironmentLocks();
+      return;
+    }
+    await this.transitionTrain(current, {
+      status: 'FAILED',
+      failureClass: train.failure_class,
+      failureMessage: train.failure_message,
+      recoveryMessage: supersededHeadRollback
+        ? 'The exact last validated manifest was restored; obsolete heads were superseded and unrelated NEW candidates were returned to the queue'
+        : 'The exact last validated admitted manifest was restored and passed rollback E2E; new candidate intent/evidence was retained appropriately',
+      completedAt: Date.now()
+    });
+    await this.repository.appendEvent(
+      {
+        trainId: train.id,
+        eventType: 'CUMULATIVE_STAGING_ROLLBACK_SUCCEEDED',
+        actor: 'release-bus-v2',
+        payload: {
+          source_manifest_id: train.staging_baseline_manifest_id,
+          restored_manifest_id: manifest.id,
+          rollback_e2e_run_id: e2e.external_id,
+          admitted_candidate_ids: baseline.candidateIds,
+          failed_new_candidate_ids: statusCandidates.map(({ id }) => id)
+        }
+      },
+      {}
+    );
+    await this.releaseTerminalEnvironmentLocks();
+  }
+
+  private async failCumulativeStagingRollback(
+    context: TrainContext,
+    message: string
+  ): Promise<void> {
+    await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        const state = await this.repository.getStagingState(ctx, true);
+        const train = await this.repository.findTrain(
+          context.train.id,
+          ctx,
+          true
+        );
+        if (!train) throw new Error('Rollback train disappeared');
+        const stateAlreadyMarked =
+          state.status === 'ROLLBACK_FAILED' &&
+          state.last_transition_train_id === context.train.id;
+        const stateSuperseded =
+          !stateAlreadyMarked &&
+          state.current_manifest_id !==
+            context.train.staging_baseline_manifest_id;
+        if (stateSuperseded) {
+          if (TERMINAL_TRAINS.has(train.status)) return;
+          const recoveryMessage =
+            'A newer authoritative staging transition superseded this failed rollback callback; current live state was not changed or paused';
+          if (
+            !(await this.repository.updateTrain(
+              train.id,
+              train.row_version,
+              {
+                status: 'FAILED',
+                failureClass: context.train.failure_class,
+                failureMessage: message,
+                recoveryMessage,
+                completedAt: Date.now()
+              },
+              ctx
+            ))
+          )
+            throw new Error(
+              'Rollback train changed while recording a superseded failure'
+            );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TRAIN_FAILED',
+              actor: 'release-bus-v2',
+              payload: {
+                previous_status: train.status,
+                failure_class: context.train.failure_class,
+                recovery_message: recoveryMessage
+              }
+            },
+            ctx
+          );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'CUMULATIVE_STAGING_ROLLBACK_FAILURE_SUPERSEDED',
+              actor: 'release-bus-v2',
+              payload: {
+                source_manifest_id: context.train.staging_baseline_manifest_id,
+                failure_message: message
+              }
+            },
+            ctx
+          );
+          return;
+        }
+        if (!TERMINAL_TRAINS.has(train.status)) {
+          if (
+            !stateAlreadyMarked &&
+            !(await this.repository.updateStagingState(
+              state.row_version,
+              {
+                status: 'ROLLBACK_FAILED',
+                currentManifestId: null,
+                lastValidatedManifestId: state.last_validated_manifest_id,
+                frontendSha: null,
+                backendSha: null,
+                frontendStagingRefSha: state.frontend_staging_ref_sha,
+                backendStagingRefSha: state.backend_staging_ref_sha,
+                cleanMain: false,
+                lastTransitionTrainId: train.id
+              },
+              ctx
+            ))
+          )
+            throw new Error(
+              'Authoritative staging state changed while recording rollback failure'
+            );
+          const recoveryMessage =
+            'Rollback could not be proven. Current staging membership is unknown; keep STAGING paused and use the documented serialized manual recovery';
+          if (
+            !(await this.repository.updateTrain(
+              train.id,
+              train.row_version,
+              {
+                status: 'STAGING_ROLLBACK_FAILED',
+                failureClass: 'CONTROL_PLANE',
+                failureMessage: message,
+                recoveryMessage,
+                completedAt: Date.now()
+              },
+              ctx
+            ))
+          )
+            throw new Error(
+              'Rollback train changed while recording its terminal failure'
+            );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TRAIN_STAGING_ROLLBACK_FAILED',
+              actor: 'release-bus-v2',
+              payload: {
+                previous_status: train.status,
+                failure_class: 'CONTROL_PLANE',
+                recovery_message: recoveryMessage
+              }
+            },
+            ctx
+          );
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'CUMULATIVE_STAGING_ROLLBACK_FAILED',
+              actor: 'release-bus-v2',
+              payload: {
+                source_manifest_id: context.train.staging_baseline_manifest_id,
+                failure_message: message,
+                recover_with: 'SERIALIZED_MANUAL_STAGING_RECOVERY'
+              }
+            },
+            ctx
+          );
+        }
+        const controls = await this.repository.listControls(ctx);
+        if (
+          !controls.some(({ scope, paused }) => scope === 'STAGING' && paused)
+        ) {
+          const reason = `Cumulative staging rollback failed in train ${train.id}: ${message}`;
+          await this.repository.setControl(
+            'STAGING',
+            true,
+            reason,
+            'release-bus-v2',
+            ctx
+          );
+          await this.repository.appendEvent(
+            {
+              eventType: 'BUS_PAUSED',
+              actor: 'release-bus-v2',
+              payload: { scope: 'STAGING', reason }
+            },
+            ctx
+          );
+        }
+      }
+    );
+    await this.releaseTerminalEnvironmentLocks();
+  }
+
   private async advanceStagingOrQualification(
     context: TrainContext
   ): Promise<void> {
@@ -1392,6 +4089,22 @@ export class ReleaseBusV2Reconciler {
     ].includes(train.status);
     const requiresBetaIdleHandshake =
       getReleaseBusV2Mode() === 'OFF' && requiresIdleHandshake;
+    if (
+      requiresIdleHandshake &&
+      relevantCandidates(context, 'frontend').length > 0
+    ) {
+      if (!train.frontend_composed_sha)
+        throw new Error(
+          'Frontend qualification has no exact composed SHA for its immutable workflow ref'
+        );
+      // createRef is retry-safe: an existing ref is accepted only when it
+      // already resolves to this exact SHA; a conflicting target fails closed.
+      await releaseBusGitHubApp.createRef(
+        'frontend',
+        releaseBusV2Branch(train, 'frontend'),
+        train.frontend_composed_sha
+      );
+    }
     const workflowFenceStartedAt = requiresIdleHandshake ? Date.now() : null;
     const beforeLock = requiresIdleHandshake
       ? await this.captureStagingIdleSnapshot()
@@ -1460,29 +4173,17 @@ export class ReleaseBusV2Reconciler {
       );
       if (!environmentBinding) {
         await this.releaseEnvironmentLease('staging-environment', lease);
-        if (train.status === 'PREPARED') {
-          await this.repository.appendEvent(
-            {
-              trainId: train.id,
-              eventType: 'PRODUCTION_QUALIFICATION_ENVIRONMENT_HOLD',
-              actor: 'release-bus-v2',
-              payload: {
-                target_frontend_sha: train.frontend_composed_sha,
-                target_backend_sha: train.backend_composed_sha,
-                staging_frontend_sha: afterLock.frontend_staging_sha,
-                staging_backend_sha: afterLock.backend_staging_sha
-              }
-            },
-            {}
-          );
-          await this.transitionTrain(train, {
-            status: 'WAITING_FOR_ENVIRONMENT',
-            recoveryMessage:
-              'Exact production qualification is waiting for unchanged repositories in staging to match the production target manifest'
-          });
-        }
-        // A held qualification remains waiting and retries from a fresh
-        // snapshot; it must never advance without an environment binding.
+        await this.service.yieldUnsatisfiableProductionQualification({
+          qualificationTrainId: train.id,
+          stagingIdentity: {
+            frontendSha: afterLock.frontend_staging_sha,
+            backendSha: afterLock.backend_staging_sha
+          },
+          actor: 'release-bus-v2'
+        });
+        // The immutable mismatch is terminalized transactionally without an
+        // environment mutation. Its exact candidates retain production opt-in
+        // and may join only a current-base batch that can bind both sides.
         return;
       }
       await this.repository.appendEvent(
@@ -1542,7 +4243,7 @@ export class ReleaseBusV2Reconciler {
     if (['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status)) {
       if (train.lane === 'STAGING')
         await this.updateCandidateStatuses(
-          relevantCandidates(context),
+          stagingStatusCandidates(context),
           candidateStatusForDeploy(train.lane),
           train.id
         );
@@ -1562,13 +4263,20 @@ export class ReleaseBusV2Reconciler {
         sourceTrainId
       );
       if (deployed.failedOperation) {
-        await this.failTrain(
-          train,
-          deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
-          deployed.failedOperation.failure_message ??
-            'Staging deployment failed',
-          lease
-        );
+        if (train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1')
+          await this.beginCumulativeStagingRollback(
+            train,
+            deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
+            deployed.failedOperation.failure_message ??
+              'Staging deployment failed'
+          );
+        else
+          await this.failTrain(
+            train,
+            deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
+            deployed.failedOperation.failure_message ??
+              'Staging deployment failed'
+          );
         return;
       }
       if (!deployed.complete) return;
@@ -1580,7 +4288,7 @@ export class ReleaseBusV2Reconciler {
       );
       if (train.lane === 'STAGING')
         await this.updateCandidateStatuses(
-          relevantCandidates(context),
+          stagingStatusCandidates(context),
           'STAGING_DEPLOYED',
           train.id
         );
@@ -1595,17 +4303,23 @@ export class ReleaseBusV2Reconciler {
     if (train.status === 'STAGING_DEPLOYED') {
       const e2e = await this.reconcileE2E(context, 'staging');
       if (e2e.status === 'FAILED') {
-        await this.failTrain(
-          train,
-          e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
-        );
+        if (train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1')
+          await this.beginCumulativeStagingRollback(
+            train,
+            e2e.failure_class ?? 'E2E',
+            e2e.failure_message ?? 'Staging E2E failed'
+          );
+        else
+          await this.failTrain(
+            train,
+            e2e.failure_class ?? 'E2E',
+            e2e.failure_message ?? 'Staging E2E failed'
+          );
         return;
       }
       if (train.lane === 'STAGING')
         await this.updateCandidateStatuses(
-          relevantCandidates(context),
+          stagingStatusCandidates(context),
           'STAGING_VALIDATING',
           train.id
         );
@@ -1619,12 +4333,18 @@ export class ReleaseBusV2Reconciler {
     if (train.status === 'E2E_RUNNING') {
       const e2e = await this.reconcileE2E(context, 'staging');
       if (e2e.status === 'FAILED') {
-        await this.failTrain(
-          train,
-          e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Staging E2E failed',
-          lease
-        );
+        if (train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1')
+          await this.beginCumulativeStagingRollback(
+            train,
+            e2e.failure_class ?? 'E2E',
+            e2e.failure_message ?? 'Staging E2E failed'
+          );
+        else
+          await this.failTrain(
+            train,
+            e2e.failure_class ?? 'E2E',
+            e2e.failure_message ?? 'Staging E2E failed'
+          );
         return;
       }
       if (e2e.status !== 'SUCCEEDED') return;
@@ -1637,7 +4357,9 @@ export class ReleaseBusV2Reconciler {
           {}
         );
       if (train.lane === 'STAGING') {
-        await this.markStagingValidated(context, train.manifest_id);
+        if (train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1')
+          await this.commitCumulativeStagingValidation(context);
+        else await this.markStagingValidated(context, train.manifest_id);
       }
       await this.transitionTrain(train, {
         status: 'STAGING_VALIDATED',
@@ -1667,8 +4389,10 @@ export class ReleaseBusV2Reconciler {
       !backendStaging
     )
       throw new Error('Staging environment identity is incomplete');
-    const hasFrontend = relevantCandidates(context, 'frontend').length > 0;
-    const hasBackend = relevantCandidates(context, 'backend').length > 0;
+    const hasFrontend =
+      stagingDeploymentCandidates(context, 'frontend').length > 0;
+    const hasBackend =
+      stagingDeploymentCandidates(context, 'backend').length > 0;
     if (train.lane === 'PRODUCTION_QUALIFICATION') {
       // Candidate-bearing repositories are about to be deployed to their
       // composed targets. Only unchanged counterparts must already match the
@@ -1720,6 +4444,157 @@ export class ReleaseBusV2Reconciler {
     };
   }
 
+  public async recoverUnsatisfiableProductionQualifications(
+    actor: string
+  ): Promise<{
+    readonly recovered: readonly {
+      readonly parent_train_id: string;
+      readonly qualification_train_id: string;
+      readonly candidate_ids: readonly string[];
+    }[];
+    readonly staging_identity: {
+      readonly frontend_sha: string;
+      readonly backend_sha: string;
+    };
+    readonly has_more: boolean;
+  }> {
+    const mode = getReleaseBusV2Mode();
+    if (!['OFF', 'STAGING'].includes(mode))
+      throw new Error(
+        'Stalled qualification maintenance recovery requires production automation to be disabled'
+      );
+    const controls = await this.repository.listControls({});
+    const all = controls.find(({ scope }) => scope === 'ALL');
+    const production = controls.find(({ scope }) => scope === 'PRODUCTION');
+    if (
+      (mode === 'OFF' && !all?.paused) ||
+      (mode === 'STAGING' && !production?.paused)
+    )
+      throw new Error(
+        mode === 'OFF'
+          ? 'Stalled qualification maintenance recovery requires ALL to be paused while v2 is OFF'
+          : 'Stalled qualification maintenance recovery requires PRODUCTION to be paused while STAGING remains enabled'
+      );
+    const locks = await this.repository.listLocks({});
+    if (
+      REQUIRED_MAINTENANCE_LOCKS.some(
+        (name) => !locks.some((lock) => lock.name === name)
+      ) ||
+      locks.some(
+        ({ owner_train_id, lease_token }) =>
+          owner_train_id !== null || lease_token !== null
+      )
+    )
+      throw new Error(
+        'Stalled qualification maintenance recovery requires every v2 lock to be free'
+      );
+    const scheduler = await this.repository.acquireLock(
+      'scheduler',
+      null,
+      `release-bus-v2-maintenance:${actor}:${randomUUID()}`,
+      RELEASE_BUS_V2_LOCK_TTL_MS,
+      {}
+    );
+    if (!scheduler?.lease_token)
+      throw new Error(
+        'Stalled qualification maintenance recovery could not acquire its exclusive scheduler fence'
+      );
+    try {
+      const before = await this.captureStagingIdleSnapshot();
+      const after = await this.captureStagingIdleSnapshot();
+      if (
+        !before ||
+        !after ||
+        !after.frontend_staging_sha ||
+        !after.backend_staging_sha ||
+        before.frontend_staging_sha !== after.frontend_staging_sha ||
+        before.backend_staging_sha !== after.backend_staging_sha
+      )
+        throw new Error(
+          'Stalled qualification maintenance recovery requires a stable idle staging identity'
+        );
+      const recovered: Array<{
+        readonly parent_train_id: string;
+        readonly qualification_train_id: string;
+        readonly candidate_ids: readonly string[];
+      }> = [];
+      const qualifications = (await this.repository.listTrains(200, {}))
+        .filter(({ lane }) => lane === 'PRODUCTION_QUALIFICATION')
+        .filter(({ status }) =>
+          ['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(status)
+        )
+        .sort(
+          (left, right) => Number(left.created_at) - Number(right.created_at)
+        );
+      for (const qualification of qualifications) {
+        const current = await this.repository.findTrain(qualification.id, {});
+        if (
+          !current ||
+          current.lane !== 'PRODUCTION_QUALIFICATION' ||
+          !['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(current.status)
+        )
+          continue;
+        const context = await this.loadContext(current);
+        if (this.bindStagingEnvironmentIdentity(context, after)) continue;
+        const result =
+          await this.service.yieldUnsatisfiableProductionQualification({
+            qualificationTrainId: current.id,
+            stagingIdentity: {
+              frontendSha: after.frontend_staging_sha,
+              backendSha: after.backend_staging_sha
+            },
+            actor,
+            maintenanceSchedulerLeaseToken: scheduler.lease_token
+          });
+        if (!result.yielded) continue;
+        recovered.push({
+          parent_train_id: result.parentTrainId,
+          qualification_train_id: result.qualificationTrainId,
+          candidate_ids: result.candidateIds
+        });
+        break;
+      }
+      // Recovery intentionally commits at most one yield per request. A
+      // successful yield can change the live yieldability of other
+      // qualifications, so the pre-yield snapshot cannot answer whether the
+      // backlog is drained. Require one follow-up check after every committed
+      // yield; only an invocation that recovers nothing proves this drain pass
+      // is complete.
+      const hasMore = recovered.length > 0;
+      if (recovered.length > 0)
+        await this.repository.appendEvent(
+          {
+            eventType: 'STALLED_PRODUCTION_QUALIFICATION_RECOVERY_COMPLETED',
+            actor,
+            payload: {
+              recovered,
+              has_more: hasMore,
+              staging_frontend_sha: after.frontend_staging_sha,
+              staging_backend_sha: after.backend_staging_sha
+            }
+          },
+          {}
+        );
+      return {
+        recovered,
+        staging_identity: {
+          frontend_sha: after.frontend_staging_sha,
+          backend_sha: after.backend_staging_sha
+        },
+        has_more: hasMore
+      };
+    } finally {
+      await this.releaseMaintenanceSchedulerFence(scheduler.lease_token);
+    }
+  }
+
+  private async releaseMaintenanceSchedulerFence(token: string): Promise<void> {
+    if (await this.repository.releaseLock('scheduler', token, {})) return;
+    throw new Error(
+      'Stalled qualification maintenance recovery could not release its exclusive scheduler fence'
+    );
+  }
+
   private async verifyStagingFinalFence(
     train: ReleaseBusV2TrainRecord,
     e2e: ReleaseBusV2OperationRecord,
@@ -1747,17 +4622,21 @@ export class ReleaseBusV2Reconciler {
         },
         {}
       );
-      await this.failTrain(
-        train,
-        'CONTROL_PLANE',
-        'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence',
-        lease
-      );
+      if (train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1')
+        await this.beginCumulativeStagingRollback(
+          train,
+          'CONTROL_PLANE',
+          'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence'
+        );
+      else
+        await this.failTrain(
+          train,
+          'CONTROL_PLANE',
+          'Staging idle-handshake evidence is missing or malformed; successful E2E cannot be accepted without an end-to-end fence'
+        );
       return false;
     }
-    const operationRunIds = (await this.repository.listOperations(train.id, {}))
-      .map(({ external_id }) => external_id)
-      .filter((runId): runId is string => runId !== null);
+    const operationRunIds = await this.stagingFenceRunIds(train.id);
     const currentSnapshot = await this.captureStagingIdleSnapshot({
       since: handshake.workflow_fence_started_at,
       ignoredRunIds: operationRunIds
@@ -1789,12 +4668,18 @@ export class ReleaseBusV2Reconciler {
         },
         {}
       );
-      await this.failTrain(
-        train,
-        'CONTROL_PLANE',
-        'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment',
-        lease
-      );
+      if (train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1')
+        await this.beginCumulativeStagingRollback(
+          train,
+          'CONTROL_PLANE',
+          'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment'
+        );
+      else
+        await this.failTrain(
+          train,
+          'CONTROL_PLANE',
+          'Shared staging refs or deploy/E2E workflows changed after the idle handshake; successful E2E cannot validate a mixed environment'
+        );
       return false;
     }
     await this.repository.appendEvent(
@@ -1813,6 +4698,53 @@ export class ReleaseBusV2Reconciler {
       {}
     );
     return true;
+  }
+
+  /**
+   * Operation rows retain the current attempt so reconciliation stays exactly
+   * idempotent, but an infrastructure retry replaces external_id with the new
+   * run. Recover every earlier exact attempt from its immutable operation key
+   * before evaluating the final shared-state fence. If GitHub can no longer
+   * prove an earlier attempt, the ordinary workflow scan still sees it and the
+   * fence fails closed.
+   */
+  private async stagingFenceRunIds(trainId: string): Promise<string[]> {
+    const operations = await this.repository.listOperations(trainId, {});
+    const runIds = new Set(
+      operations
+        .map(({ external_id }) => external_id)
+        .filter((runId): runId is string => runId !== null)
+    );
+    const previousAttempts = operations.flatMap((operation) => {
+      if (operation.attempt <= 1 || operation.repository === null) return [];
+      const request = parseStoredJson<{ workflow?: unknown }>(
+        operation.request_json
+      );
+      if (typeof request?.workflow !== 'string' || !request.workflow)
+        throw new Error(
+          `Retried operation ${operation.id} has no immutable workflow identity`
+        );
+      return Array.from({ length: operation.attempt - 1 }, (_, index) => ({
+        operation,
+        attempt: index + 1,
+        workflow: request.workflow as string
+      }));
+    });
+    const discovered = await Promise.all(
+      previousAttempts.map(({ operation, attempt, workflow }) =>
+        releaseBusGitHubApp.findWorkflowRun(
+          operation.repository!,
+          workflow,
+          `${operation.idempotency_key}:a${attempt}`
+        )
+      )
+    );
+    for (const run of discovered) {
+      if (run) runIds.add(String(run.id));
+    }
+    return Array.from(runIds).sort((left, right) =>
+      left.localeCompare(right, 'en')
+    );
   }
 
   private async findStagingIdleHandshake(
@@ -1859,86 +4791,145 @@ export class ReleaseBusV2Reconciler {
     );
   }
 
+  private async assertCandidateEvidenceCurrent(
+    context: TrainContext
+  ): Promise<readonly ReleaseBusV2CandidateStagingEvidence[]> {
+    const train = context.train;
+    if (train.qualification_policy !== CANDIDATE_STAGING_EVIDENCE_POLICY)
+      throw new Error(
+        `Train ${train.id} does not carry the candidate-evidence production policy`
+      );
+    const stored = parseStoredJson<
+      readonly ReleaseBusV2CandidateStagingEvidence[]
+    >(train.qualification_evidence_json);
+    const candidates = relevantCandidates(context);
+    const expectedCandidateIds = new Set(candidates.map(({ id }) => id));
+    const storedCandidateIds = new Set(
+      stored?.map(({ candidate_id }) => candidate_id) ?? []
+    );
+    if (
+      !stored ||
+      stored.length !== candidates.length ||
+      storedCandidateIds.size !== stored.length ||
+      storedCandidateIds.size !== expectedCandidateIds.size ||
+      Array.from(expectedCandidateIds).some(
+        (candidateId) => !storedCandidateIds.has(candidateId)
+      )
+    )
+      throw new Error(
+        `Train ${train.id} has missing or ambiguous candidate staging evidence`
+      );
+    const current = await this.service.resolveCandidateStagingEvidence(
+      candidates,
+      {}
+    );
+    if (!isDeepStrictEqual(stored, current))
+      throw new Error(
+        `Train ${train.id} candidate staging evidence changed after claim`
+      );
+    const heads = await Promise.all(
+      candidates.map(async (candidate) => ({
+        candidate,
+        currentHead: await releaseBusGitHubApp.resolveRefIfExists(
+          candidate.repository,
+          candidate.branch_name
+        )
+      }))
+    );
+    const moved = heads.find(
+      ({ candidate, currentHead }) => currentHead !== candidate.head_sha
+    );
+    if (moved)
+      throw new Error(
+        `Candidate ${moved.candidate.id} branch moved from ${moved.candidate.head_sha} to ${moved.currentHead ?? 'deleted'}`
+      );
+    return current;
+  }
+
   private async advanceProduction(context: TrainContext): Promise<void> {
     const train = context.train;
-    if (train.status === 'PREPARED') {
-      const exact = await this.repository.findValidatedManifestByRelease(
-        train.frontend_composed_sha,
-        train.backend_composed_sha,
-        relevantCandidates(context, 'frontend').length
-          ? train.frontend_artifact_digest
-          : null,
-        relevantCandidates(context, 'backend').length
-          ? train.backend_artifact_digest
-          : null,
+    if (
+      [
+        'PREPARED',
+        'WAITING_FOR_ENVIRONMENT',
+        'MERGING_PRODUCTION',
+        'PRODUCTION_DEPLOYING'
+      ].includes(train.status) &&
+      (train.status === 'WAITING_FOR_ENVIRONMENT' ||
+        train.qualification_policy !== CANDIDATE_STAGING_EVIDENCE_POLICY)
+    ) {
+      const message =
+        'Legacy staging-qualified artifacts cannot be reused for production; drain this legacy train and re-admit its exact candidates through the fresh production composition policy';
+      await this.repository.appendEvent(
+        {
+          trainId: train.id,
+          eventType: 'PRODUCTION_LEGACY_ARTIFACT_REUSE_REJECTED',
+          actor: 'release-bus-v2',
+          payload: {
+            qualification_policy: train.qualification_policy,
+            artifact_reuse: 'REJECTED',
+            production_ref_mutation:
+              train.status === 'PRODUCTION_DEPLOYING'
+                ? 'MAY_HAVE_STARTED_BEFORE_UPGRADE'
+                : 'NOT_STARTED',
+            production_deployment: 'BLOCKED',
+            recovery_contract:
+              train.status === 'PRODUCTION_DEPLOYING'
+                ? 'PROVE_EXACT_MAIN_RUNTIME_PARITY_OR_EXPLICIT_ROLLBACK_BEFORE_RESUME'
+                : 'DRAIN_AND_READMIT_EXACT_CANDIDATES_WITH_CANDIDATE_STAGING_EVIDENCE_V1'
+          }
+        },
         {}
       );
-      if (exact) {
-        await this.transitionTrain(train, {
-          status: 'MERGING_PRODUCTION',
-          manifestId: exact.id,
-          recoveryMessage:
-            'Exact staging validation and immutable artifacts are being reused'
-        });
-        return;
-      }
-      const qualification = await this.repository.createQualificationTrain(
+      await this.failTrain(train, 'CONTROL_PLANE', message);
+      return;
+    }
+    if (train.status === 'PREPARED') {
+      if (await this.deferMovedProductionPlan(context)) return;
+      const evidence = await this.assertCandidateEvidenceCurrent(context);
+      const preparationOperations = (
+        await this.repository.listOperations(train.id, {})
+      ).filter(({ status }) => status === 'SUCCEEDED');
+      const manifest = await this.createManifest(
+        context,
+        train.id,
+        preparationOperations,
+        'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+      );
+      await this.repository.appendEvent(
         {
-          parentTrainId: train.id,
-          frontendBaseSha: train.frontend_base_sha ?? '',
-          backendBaseSha: train.backend_base_sha ?? '',
-          frontendComposedSha: train.frontend_composed_sha,
-          backendComposedSha: train.backend_composed_sha,
-          frontendArtifactDigest: train.frontend_artifact_digest,
-          backendArtifactDigest: train.backend_artifact_digest,
-          candidateIds: relevantCandidates(context).map(({ id }) => id)
+          trainId: train.id,
+          eventType: 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED',
+          actor: 'release-bus-v2',
+          payload: {
+            qualification_policy: CANDIDATE_STAGING_EVIDENCE_POLICY,
+            qualification_manifest_id: manifest.id,
+            qualification_manifest_identity_sha256: manifest.identity_sha256,
+            candidate_evidence: evidence
+          }
         },
         {}
       );
       await this.transitionTrain(train, {
-        status: 'WAITING_FOR_ENVIRONMENT',
-        qualificationTrainId: qualification.id,
-        recoveryMessage:
-          'This explicit production subset differs from validated staging and is queued for exact qualification'
-      });
-      return;
-    }
-    if (train.status === 'WAITING_FOR_ENVIRONMENT') {
-      if (!train.qualification_train_id)
-        throw new Error('Production train lost its qualification identity');
-      const qualification = await this.repository.findTrain(
-        train.qualification_train_id,
-        {}
-      );
-      if (!qualification) throw new Error('Qualification train does not exist');
-      if (qualification.status === 'FAILED') {
-        // The qualification train already classified/requeued or quarantined
-        // the exact candidates. Preserve that result instead of overwriting it
-        // from the waiting parent production train.
-        await this.transitionTrain(train, {
-          status: 'FAILED',
-          failureClass: qualification.failure_class ?? 'E2E',
-          failureMessage:
-            qualification.failure_message ?? 'Production qualification failed',
-          recoveryMessage:
-            qualification.recovery_message ??
-            'Exact production qualification failed; candidate states were preserved',
-          completedAt: Date.now()
-        });
-        return;
-      }
-      if (qualification.status !== 'STAGING_VALIDATED') return;
-      await this.transitionTrain(train, {
         status: 'MERGING_PRODUCTION',
-        manifestId: qualification.manifest_id,
+        manifestId: manifest.id,
         recoveryMessage:
-          'The explicit production subset passed exact staging qualification'
+          'Every selected exact candidate SHA has successful staging E2E evidence; the fresh current-base composition is qualified for production without mutating staging'
       });
       return;
     }
-
+    const mode = getReleaseBusV2Mode();
+    const betaAllowlist =
+      mode === 'OFF' || mode === 'STAGING'
+        ? getReleaseBusV2BetaAllowlist()
+        : [];
+    const stagingModeProductionBeta =
+      mode === 'STAGING' &&
+      releaseBusV2BetaAllowsLaneInMode(mode, betaAllowlist, 'PRODUCTION') &&
+      (await this.service.isBetaTrainAllowed(train, betaAllowlist, {}));
     const requiresBetaIdleHandshake =
-      getReleaseBusV2Mode() === 'OFF' && train.status === 'MERGING_PRODUCTION';
+      train.status === 'MERGING_PRODUCTION' &&
+      (mode === 'OFF' || stagingModeProductionBeta);
     const beforeLock = requiresBetaIdleHandshake
       ? await this.captureProductionIdleSnapshot()
       : null;
@@ -1971,7 +4962,8 @@ export class ReleaseBusV2Reconciler {
           actor: 'release-bus-v2-beta',
           payload: {
             ...afterLock,
-            beta_test_id: getReleaseBusV2BetaAllowlist()[0]?.test_id,
+            // Config validation requires one shared test_id across all entries.
+            beta_test_id: betaAllowlist[0]?.test_id,
             production_lock: 'owned',
             verified_at: Date.now()
           }
@@ -1980,6 +4972,7 @@ export class ReleaseBusV2Reconciler {
       );
     }
     if (train.status === 'MERGING_PRODUCTION') {
+      await this.assertCandidateEvidenceCurrent(context);
       await this.advanceProductionRefs(context);
       await this.updateCandidateStatuses(
         relevantCandidates(context),
@@ -1989,11 +4982,20 @@ export class ReleaseBusV2Reconciler {
       await this.transitionTrain(train, {
         status: 'PRODUCTION_DEPLOYING',
         recoveryMessage:
-          'Exact qualified composition is on main; immutable artifacts are deploying'
+          'Fresh candidate-evidence-qualified composition is on main; immutable production artifacts are deploying'
       });
       return;
     }
     if (train.status === 'PRODUCTION_DEPLOYING') {
+      // A merge can delete the source branch and race the push webhook. Keep
+      // the immutable, already-claimed membership authoritative and repair any
+      // stale superseded bookkeeping before reconciling its deployments.
+      await this.updateCandidateStatuses(
+        relevantCandidates(context),
+        'PRODUCTION_DEPLOYING',
+        train.id,
+        false
+      );
       const sourceTrainId = await this.artifactSourceTrainId(train);
       const deployed = await this.reconcileDeployments(
         context,
@@ -2005,8 +5007,7 @@ export class ReleaseBusV2Reconciler {
           train,
           deployed.failedOperation.failure_class ?? 'DEPLOYMENT',
           deployed.failedOperation.failure_message ??
-            'Production deployment failed',
-          lease
+            'Production deployment failed'
         );
         return;
       }
@@ -2016,8 +5017,7 @@ export class ReleaseBusV2Reconciler {
         await this.failTrain(
           train,
           e2e.failure_class ?? 'E2E',
-          e2e.failure_message ?? 'Production E2E failed',
-          lease
+          e2e.failure_message ?? 'Production E2E failed'
         );
         return;
       }
@@ -2038,13 +5038,13 @@ export class ReleaseBusV2Reconciler {
         manifestId: manifest.id,
         completedAt: Date.now(),
         recoveryMessage:
-          'Exact explicit production subset deployed and verified'
+          'Explicit candidate-evidence production subset deployed its fresh production artifacts and passed read-only production E2E'
       });
       await this.releaseEnvironmentLease('production-environment', lease);
       await this.publishCandidateStatuses(
         relevantCandidates(context),
         'success',
-        'Exact v2 production deployment completed'
+        'Candidate-evidence v2 production deployment completed'
       );
     }
   }
@@ -2066,9 +5066,9 @@ export class ReleaseBusV2Reconciler {
 
   private async advanceProductionRefs(context: TrainContext): Promise<void> {
     const train = context.train;
-    const repositories = (['backend', 'frontend'] as const).filter(
-      (repository) => relevantCandidates(context, repository).length > 0
-    );
+    // Both repository bases are part of the qualified production identity,
+    // even when the explicit subset changes only one application.
+    const repositories = ['backend', 'frontend'] as const;
     const current = await Promise.all(
       repositories.map(async (repository) => ({
         repository,
@@ -2106,8 +5106,23 @@ export class ReleaseBusV2Reconciler {
         );
       throw new MainMovedError(message);
     }
-    for (const item of current)
-      await this.advanceMainRef(train, item.repository, item.sha);
+    const advanced: ReleaseBusV2Repository[] = [];
+    for (const item of current.filter(
+      ({ repository }) => relevantCandidates(context, repository).length > 0
+    )) {
+      try {
+        await this.advanceMainRef(train, item.repository, item.sha);
+        advanced.push(item.repository);
+      } catch (error) {
+        if (advanced.length > 0)
+          throw new Error(
+            `Partial production main advance: ${advanced.join(', ')} reached the exact composed SHA before ${item.repository} failed; automation must remain paused for exact reconciliation. ${
+              error instanceof Error ? error.message : 'Unknown ref failure'
+            }`
+          );
+        throw error;
+      }
+    }
   }
 
   private async advanceMainRef(
@@ -2135,7 +5150,7 @@ export class ReleaseBusV2Reconciler {
               ? train.frontend_base_sha
               : train.backend_base_sha
         },
-        maxAttempts: 1
+        maxAttempts: 3
       },
       {}
     );
@@ -2150,9 +5165,88 @@ export class ReleaseBusV2Reconciler {
         : train.backend_composed_sha;
     if (!base || !composed)
       throw new Error(`Missing ${repository} release SHA`);
-    if (observedSha === base)
-      await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
-    else if (observedSha !== composed)
+    if (observedSha === base) {
+      try {
+        await releaseBusGitHubApp.updateRef(repository, 'main', base, composed);
+      } catch (error) {
+        // A ref update can fail after GitHub accepted it. Re-read the ref before
+        // deciding whether the durable operation is complete, retryable, or a
+        // terminal control-plane failure. This keeps exact main advancement
+        // idempotent and prevents a known-rejected update from leaving a
+        // permanently PENDING operation behind a terminal train lock.
+        const afterFailure = await releaseBusGitHubApp.resolveRef(
+          repository,
+          'main'
+        );
+        if (afterFailure !== composed) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : `Failed to advance ${repository} main`;
+          if (afterFailure !== base) {
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: 'CANCELLED',
+                  failureClass: 'INTERACTION',
+                  failureMessage: `${repository} main moved to ${afterFailure} during exact advancement`,
+                  completedAt: Date.now()
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw new MainMovedError(
+              `${repository} main moved from ${base} to ${afterFailure}`
+            );
+          }
+          if (isGitHubInfrastructureError(error)) {
+            const exhausted = operation.attempt >= operation.max_attempts;
+            if (
+              !(await this.repository.updateOperation(
+                operation.id,
+                operation.row_version,
+                {
+                  status: exhausted ? 'FAILED' : 'PENDING',
+                  failureClass: 'INFRASTRUCTURE',
+                  failureMessage: `Exact ${repository} main advancement transport failure ${operation.attempt}/${operation.max_attempts}: ${message}`,
+                  attempt: exhausted
+                    ? operation.attempt
+                    : operation.attempt + 1,
+                  completedAt: exhausted ? Date.now() : null
+                },
+                {}
+              ))
+            )
+              throw new Error(
+                `${repository} main operation changed concurrently`
+              );
+            throw error;
+          }
+          if (
+            !(await this.repository.updateOperation(
+              operation.id,
+              operation.row_version,
+              {
+                status: 'FAILED',
+                failureClass: 'CONTROL_PLANE',
+                failureMessage: message,
+                completedAt: Date.now()
+              },
+              {}
+            ))
+          )
+            throw new Error(
+              `${repository} main operation changed concurrently`
+            );
+          throw error;
+        }
+      }
+    } else if (observedSha !== composed)
       throw new MainMovedError(
         `${repository} main moved from ${base} to ${observedSha}`
       );
@@ -2179,9 +5273,19 @@ export class ReleaseBusV2Reconciler {
     artifactSourceTrainId: string
   ): Promise<DeployResult> {
     const train = context.train;
-    const source = await this.artifactSource(artifactSourceTrainId);
-    const backendCandidates = relevantCandidates(context, 'backend');
-    const graph = backendGraph(backendCandidates);
+    if (environment === 'prod' && artifactSourceTrainId !== train.id)
+      throw new Error(
+        'Production deployment requires a freshly prepared same-train artifact'
+      );
+    const source = await this.artifactSource(
+      artifactSourceTrainId,
+      environment
+    );
+    const releaseContributors = JSON.stringify(
+      releaseTrainContributorGithubLogins(relevantCandidates(context))
+    );
+    const backendCandidates = stagingDeploymentCandidates(context, 'backend');
+    const graph = backendGraph(backendCandidates, environment);
     const operations: ReleaseBusV2OperationRecord[] = [];
     let backendComplete = graph.units.length === 0;
     for (const layer of graph.layers) {
@@ -2207,9 +5311,10 @@ export class ReleaseBusV2Reconciler {
             train,
             environment,
             artifactSourceTrainId,
-            source.backendRunId,
+            source.backend,
             unit,
-            backendCandidates
+            backendCandidates,
+            releaseContributors
           )
         )
       );
@@ -2221,7 +5326,7 @@ export class ReleaseBusV2Reconciler {
       if (layer === graph.layers.at(-1)) backendComplete = true;
     }
 
-    const frontendCandidates = relevantCandidates(context, 'frontend');
+    const frontendCandidates = stagingDeploymentCandidates(context, 'frontend');
     let frontendComplete = frontendCandidates.length === 0;
     if (
       frontendCandidates.length > 0 &&
@@ -2231,7 +5336,8 @@ export class ReleaseBusV2Reconciler {
         train,
         environment,
         artifactSourceTrainId,
-        source.frontendRunId
+        source.frontend,
+        releaseContributors
       );
       operations.push(frontend);
       if (frontend.status === 'FAILED')
@@ -2249,14 +5355,22 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
-    artifactRunId: string | null,
+    artifactSource: PreparedArtifactSource | null,
     service: string,
-    candidates: readonly ReleaseBusV2CandidateRecord[]
+    candidates: readonly ReleaseBusV2CandidateRecord[],
+    releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
-    if (!artifactRunId)
+    if (!artifactSource)
       throw new Error('Missing backend artifact workflow run');
     const expectedSha = train.backend_composed_sha;
     if (!expectedSha) throw new Error('Missing backend composed SHA');
+    if (
+      artifactSource.expectedSha !== expectedSha ||
+      artifactSource.digest !== train.backend_artifact_digest
+    )
+      throw new Error(
+        'Backend deploy artifact does not match the exact prepared train identity'
+      );
     const releaseNoteInputs = backendReleaseNoteInputs(
       candidates,
       service,
@@ -2283,9 +5397,11 @@ export class ReleaseBusV2Reconciler {
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
         expected_sha: expectedSha,
-        artifact_run_id: artifactRunId,
+        artifact_run_id: artifactSource.runId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.backend_artifact_digest ?? '',
+        ...artifactSource.binding,
+        release_contributors: releaseContributors,
         ...releaseNoteInputs
       }
     });
@@ -2295,12 +5411,20 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
-    artifactRunId: string | null
+    artifactSource: PreparedArtifactSource | null,
+    releaseContributors: string
   ): Promise<ReleaseBusV2OperationRecord> {
-    if (!artifactRunId)
+    if (!artifactSource)
       throw new Error('Missing frontend artifact workflow run');
     const expectedSha = train.frontend_composed_sha;
     if (!expectedSha) throw new Error('Missing frontend composed SHA');
+    if (
+      artifactSource.expectedSha !== expectedSha ||
+      artifactSource.digest !== train.frontend_artifact_digest
+    )
+      throw new Error(
+        'Frontend deploy artifact does not match the exact prepared train identity'
+      );
     const workflow =
       environment === 'staging'
         ? 'release-bus-deploy-staging.yml'
@@ -2325,10 +5449,11 @@ export class ReleaseBusV2Reconciler {
             ? 'main'
             : releaseBusV2Branch(train, 'frontend'),
         expected_sha: expectedSha,
-        artifact_run_id: artifactRunId,
+        artifact_run_id: artifactSource.runId,
         artifact_train_id: artifactTrainId,
         artifact_digest: train.frontend_artifact_digest ?? '',
-        artifact_environment: environment === 'prod' ? 'production' : 'staging'
+        ...frontendDeployBinding(artifactSource.binding, environment),
+        release_contributors: releaseContributors
       }
     });
   }
@@ -2349,15 +5474,31 @@ export class ReleaseBusV2Reconciler {
       manifest.frontend_sha !== train.frontend_composed_sha ||
       manifest.backend_sha !== train.backend_composed_sha ||
       manifest.frontend_artifact_digest !==
-        (relevantCandidates(context, 'frontend').length
+        (stagingDeploymentCandidates(context, 'frontend').length
           ? train.frontend_artifact_digest
           : null) ||
       manifest.backend_artifact_digest !==
-        (relevantCandidates(context, 'backend').length
+        (stagingDeploymentCandidates(context, 'backend').length
           ? train.backend_artifact_digest
           : null)
     )
       throw new Error('E2E manifest does not match the exact train release');
+    const releaseBranch = releaseBusV2Branch(train, 'frontend');
+    let exactSourceRef = 'main';
+    if (environment === 'staging') {
+      const sourceRefs = [releaseBranch, '1a-staging', 'main'];
+      const sourceShas = await Promise.all(
+        sourceRefs.map((ref) =>
+          releaseBusGitHubApp.resolveRefIfExists('frontend', ref)
+        )
+      );
+      const exactIndex = sourceShas.findIndex((sha) => sha === expectedSha);
+      if (exactIndex < 0)
+        throw new Error(
+          `No immutable frontend workflow ref resolves to exact staging SHA ${expectedSha}`
+        );
+      exactSourceRef = sourceRefs[exactIndex];
+    }
     const spec: ReleaseBusV2WorkflowSpec = {
       idempotencyKey: operationKey(train.id, `e2e:${environment}`),
       trainId: train.id,
@@ -2365,19 +5506,16 @@ export class ReleaseBusV2Reconciler {
       repository: 'frontend',
       workflow:
         environment === 'staging' ? 'staging-e2e.yml' : 'production-e2e.yml',
-      ref: 'main',
+      ref: exactSourceRef,
       environment,
       service: null,
       expectedSha,
       artifactDigest: manifest.identity_sha256,
-      inputs: {
-        pack: 'all',
+      inputs: e2eWorkflowInputs(environment, {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        source_ref: relevantCandidates(context, 'frontend').length
-          ? releaseBusV2Branch(train, 'frontend')
-          : 'main',
+        staging_source_ref: exactSourceRef,
         expected_sha: expectedSha,
         release_manifest_id: manifest.id,
         release_manifest_identity_sha256: manifest.identity_sha256,
@@ -2385,32 +5523,59 @@ export class ReleaseBusV2Reconciler {
         backend_sha: manifest.backend_sha ?? '',
         frontend_artifact_digest: manifest.frontend_artifact_digest ?? '',
         backend_artifact_digest: manifest.backend_artifact_digest ?? ''
-      },
+      }),
       maxAttempts: 2
     };
     return releaseBusV2Operations.reconcileWorkflow(spec);
   }
 
-  private async artifactSource(trainId: string): Promise<ArtifactSource> {
+  private async artifactSource(
+    trainId: string,
+    environment: 'staging' | 'prod'
+  ): Promise<ArtifactSource> {
     const operations = await this.repository.listOperations(trainId, {});
-    const frontend = operations.find(
+    const frontendOperations = operations.filter(
       ({ operation_type, status }) =>
         operation_type === 'PREPARE_ARTIFACT_FRONTEND' && status === 'SUCCEEDED'
     );
-    const backend = operations.find(
+    const backendOperations = operations.filter(
       ({ operation_type, status }) =>
         operation_type === 'PREPARE_ARTIFACT_BACKEND' && status === 'SUCCEEDED'
     );
+    if (frontendOperations.length > 1 || backendOperations.length > 1)
+      throw new Error(
+        'Artifact source train has ambiguous successful preparation operations'
+      );
+    const preparedSource = (
+      operation: ReleaseBusV2OperationRecord | undefined
+    ): PreparedArtifactSource | null => {
+      if (!operation) return null;
+      if (operation.train_id !== trainId)
+        throw new Error(
+          'Artifact preparation operation belongs to a different train'
+        );
+      const binding = preparedArtifactDeployBinding(operation, environment);
+      return {
+        runId: operation.external_id!,
+        digest: operation.artifact_digest!,
+        expectedSha: operation.expected_sha!,
+        binding
+      };
+    };
     return {
       trainId,
-      frontendRunId: frontend?.external_id ?? null,
-      backendRunId: backend?.external_id ?? null
+      frontend: preparedSource(frontendOperations[0]),
+      backend: preparedSource(backendOperations[0])
     };
   }
 
   private async artifactSourceTrainId(
     train: ReleaseBusV2TrainRecord
   ): Promise<string> {
+    // Production artifacts are always built by the exact production train.
+    // A staging/qualification manifest may prove source and E2E history, but
+    // its artifact run can never become a production deploy input.
+    if (train.lane === 'PRODUCTION') return train.id;
     if (!train.manifest_id) return train.id;
     const manifest = await this.repository.findManifest(train.manifest_id, {});
     const body = parseStoredJson<{ artifact_source_train_id?: string }>(
@@ -2426,12 +5591,35 @@ export class ReleaseBusV2Reconciler {
     status: ReleaseBusV2ManifestStatus
   ): Promise<ReleaseBusV2ManifestRecord> {
     const train = context.train;
-    const hasFrontend = relevantCandidates(context, 'frontend').length > 0;
-    const hasBackend = relevantCandidates(context, 'backend').length > 0;
+    const hasFrontend =
+      (train.lane === 'STAGING'
+        ? stagingDeploymentCandidates(context, 'frontend')
+        : relevantCandidates(context, 'frontend')
+      ).length > 0;
+    const hasBackend =
+      (train.lane === 'STAGING'
+        ? stagingDeploymentCandidates(context, 'backend')
+        : relevantCandidates(context, 'backend')
+      ).length > 0;
+    const isProductionManifest =
+      status === 'PRODUCTION_DEPLOYED' ||
+      status === 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED';
+    const qualificationEvidence = parseStoredJson<
+      readonly ReleaseBusV2CandidateStagingEvidence[]
+    >(train.qualification_evidence_json);
     const identity = {
       train_id: train.id,
       lane: train.lane,
-      scope: status === 'PRODUCTION_DEPLOYED' ? 'production' : 'staging',
+      scope:
+        status === 'PRODUCTION_DEPLOYED'
+          ? 'production'
+          : status === 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+            ? 'production-candidate-evidence-qualification'
+            : 'staging',
+      staging_policy: train.staging_policy,
+      staging_baseline_manifest_id: train.staging_baseline_manifest_id,
+      qualification_policy: train.qualification_policy,
+      candidate_staging_evidence: qualificationEvidence,
       // The manifest is the exact environment identity used by E2E, not only
       // the changed subset. Preparation always resolves both repositories to
       // either their composed tree or their unchanged base tree.
@@ -2444,10 +5632,14 @@ export class ReleaseBusV2Reconciler {
         ? train.backend_artifact_digest
         : null,
       candidates: relevantCandidates(context).map(
-        ({ repository, pr_number, head_sha }) => ({
+        ({ id, repository, pr_number, head_sha }) => ({
+          candidate_id: id,
           repository,
           pr_number,
-          head_sha
+          head_sha,
+          role:
+            context.memberships.find(({ candidate_id }) => candidate_id === id)
+              ?.candidate_role ?? 'NEW'
         })
       )
     };
@@ -2457,7 +5649,17 @@ export class ReleaseBusV2Reconciler {
       artifact_source_train_id: artifactSourceTrainId,
       train_id: train.id,
       lane: train.lane,
-      backend_graph: backendGraph(relevantCandidates(context, 'backend')),
+      staging_policy: train.staging_policy,
+      staging_baseline_manifest_id: train.staging_baseline_manifest_id,
+      staging_transition: parseStoredJson(train.staging_transition_json),
+      qualification_policy: train.qualification_policy,
+      candidate_staging_evidence: qualificationEvidence,
+      backend_graph: backendGraph(
+        train.lane === 'STAGING'
+          ? stagingDeploymentCandidates(context, 'backend')
+          : relevantCandidates(context, 'backend'),
+        isProductionManifest ? 'prod' : 'staging'
+      ),
       operations: operations.map((operation) => ({
         type: operation.operation_type,
         service: operation.service,
@@ -2472,6 +5674,12 @@ export class ReleaseBusV2Reconciler {
         current_phase: Date.now() - Number(train.phase_started_at)
       }
     };
+    const successfulE2eRunId =
+      operations.find(
+        (operation) =>
+          operation.status === 'SUCCEEDED' &&
+          ['E2E_STAGING', 'E2E_PROD'].includes(operation.operation_type)
+      )?.external_id ?? null;
     return this.repository.createManifest(
       {
         train_id: train.id,
@@ -2482,9 +5690,12 @@ export class ReleaseBusV2Reconciler {
         backend_sha: identity.backend_sha,
         frontend_artifact_digest: identity.frontend_artifact_digest,
         backend_artifact_digest: identity.backend_artifact_digest,
-        e2e_run_id: null,
+        e2e_run_id: successfulE2eRunId,
         manifest_json: manifestJson,
-        deployed_at: Date.now(),
+        deployed_at:
+          status === 'PRODUCTION_CANDIDATE_EVIDENCE_QUALIFIED'
+            ? null
+            : Date.now(),
         validated_at: null
       },
       {}
@@ -2496,9 +5707,10 @@ export class ReleaseBusV2Reconciler {
     manifestId: string | null
   ): Promise<void> {
     if (!manifestId) throw new Error('Staging validation has no manifest');
-    for (const candidate of relevantCandidates(context)) {
+    const statusCandidates = stagingStatusCandidates(context);
+    for (const candidate of statusCandidates) {
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (!current || candidateUnavailableForTrainUpdate(current, candidate))
         continue;
       await this.repository.updateCandidate(
         current.id,
@@ -2508,15 +5720,157 @@ export class ReleaseBusV2Reconciler {
           currentTrainId: null,
           stagingValidatedTrainId: context.train.id,
           stagingValidatedManifestId: manifestId,
-          holdReason: null
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
         },
         {}
       );
     }
     await this.publishCandidateStatuses(
-      relevantCandidates(context),
+      statusCandidates,
       'success',
       'Exact v2 staging manifest validated; production remains explicit'
+    );
+  }
+
+  private async commitCumulativeStagingValidation(
+    context: TrainContext
+  ): Promise<void> {
+    const train = context.train;
+    if (
+      train.staging_policy !== 'CUMULATIVE_ADMITTED_SET_V1' ||
+      !train.manifest_id ||
+      !train.frontend_composed_sha ||
+      !train.backend_composed_sha
+    )
+      throw new Error('Cumulative staging validation identity is incomplete');
+    const transition = parseStoredJson<ReleaseBusV2StagingTransition>(
+      train.staging_transition_json
+    );
+    if (
+      !transition ||
+      !Number.isInteger(transition.baseline_state_version) ||
+      transition.baseline_state_version < 1
+    )
+      throw new Error('Cumulative staging transition fence is malformed');
+    const handshake = await this.findStagingIdleHandshake(train.id);
+    if (!handshake?.frontend_staging_sha || !handshake.backend_staging_sha)
+      throw new Error('Cumulative staging validation lost its ref fence');
+    const admittedCandidateIds = relevantCandidates(context).map(
+      ({ id }) => id
+    );
+    const newCandidateIds = transition.new_candidate_ids ?? [];
+    const replacedCandidateIds = transition.replaced_candidate_ids ?? [];
+    const newCandidateIdSet = new Set(newCandidateIds);
+    if (
+      newCandidateIdSet.size !== newCandidateIds.length ||
+      replacedCandidateIds.some((id) => newCandidateIdSet.has(id))
+    )
+      throw new Error(
+        'Cumulative staging NEW and REPLACED candidate sets overlap'
+      );
+    const lifecycleRemovedCandidateIds = [
+      ...(transition.removed_candidate_ids ?? []),
+      ...(transition.absorbed_candidate_ids ?? [])
+    ];
+    const removedCandidateIds = [
+      ...replacedCandidateIds,
+      ...lifecycleRemovedCandidateIds
+    ];
+    await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.repository.commitValidatedStaging(
+          {
+            trainId: train.id,
+            expectedStateVersion: transition.baseline_state_version,
+            manifestId: train.manifest_id!,
+            frontendSha: train.frontend_composed_sha!,
+            backendSha: train.backend_composed_sha!,
+            frontendStagingRefSha: handshake.frontend_staging_sha!,
+            backendStagingRefSha: handshake.backend_staging_sha!,
+            admittedCandidateIds,
+            removedCandidateIds,
+            newCandidateIds
+          },
+          { connection }
+        );
+        for (const candidateId of newCandidateIds) {
+          const candidate = await this.repository.findCandidateById(
+            candidateId,
+            { connection },
+            true
+          );
+          if (
+            !candidate ||
+            candidateUnavailableForTrainUpdate(candidate, candidate)
+          )
+            continue;
+          await this.repository.updateCandidate(
+            candidate.id,
+            candidate.row_version,
+            {
+              status: 'STAGING_VALIDATED',
+              currentTrainId: null,
+              stagingValidatedTrainId: train.id,
+              stagingValidatedManifestId: train.manifest_id,
+              holdReason: null,
+              supersededAt: candidate.status === 'SUPERSEDED' ? null : undefined
+            },
+            { connection }
+          );
+        }
+        for (const candidateId of replacedCandidateIds) {
+          const candidate = await this.repository.findCandidateById(
+            candidateId,
+            { connection },
+            true
+          );
+          if (!candidate) continue;
+          await this.repository.updateCandidate(
+            candidate.id,
+            candidate.row_version,
+            {
+              status: 'SUPERSEDED',
+              currentTrainId: null,
+              stagingLiveState: 'NOT_LIVE',
+              stagingLiveManifestId: null,
+              stagingLiveUpdatedAt: Date.now(),
+              supersededAt: Date.now(),
+              holdReason: `Replaced in cumulative staging by train ${train.id}`
+            },
+            { connection }
+          );
+        }
+        await this.repository.appendEvent(
+          {
+            trainId: train.id,
+            eventType: 'CUMULATIVE_STAGING_ADMITTED_SET_COMMITTED',
+            actor: 'release-bus-v2',
+            payload: {
+              staging_policy: train.staging_policy,
+              manifest_id: train.manifest_id,
+              admitted_candidate_ids: admittedCandidateIds,
+              removed_candidate_ids: removedCandidateIds,
+              superseded_candidate_ids: replacedCandidateIds,
+              deliberately_removed_candidate_ids:
+                transition.removed_candidate_ids ?? [],
+              absorbed_candidate_ids: transition.absorbed_candidate_ids ?? [],
+              new_candidate_ids: transition.new_candidate_ids ?? [],
+              carried_candidate_ids: transition.carried_candidate_ids ?? [],
+              frontend_sha: train.frontend_composed_sha,
+              backend_sha: train.backend_composed_sha,
+              frontend_staging_ref_sha: handshake.frontend_staging_sha,
+              backend_staging_ref_sha: handshake.backend_staging_sha
+            }
+          },
+          { connection }
+        );
+      }
+    );
+    await this.publishCandidateStatuses(
+      stagingStatusCandidates(context),
+      'success',
+      'Exact cumulative staging manifest validated; production remains explicit'
     );
   }
 
@@ -2530,7 +5884,7 @@ export class ReleaseBusV2Reconciler {
       const current = await this.repository.findCandidateById(candidate.id, {});
       if (
         !current ||
-        ['SUPERSEDED', 'CANCELLED'].includes(current.status) ||
+        candidateUnavailableForTrainUpdate(current, candidate) ||
         (current.status === status &&
           current.current_train_id === currentTrainId &&
           current.hold_reason === null)
@@ -2539,7 +5893,12 @@ export class ReleaseBusV2Reconciler {
       await this.repository.updateCandidate(
         current.id,
         current.row_version,
-        { status, currentTrainId, holdReason: null },
+        {
+          status,
+          currentTrainId,
+          holdReason: null,
+          supersededAt: current.status === 'SUPERSEDED' ? null : undefined
+        },
         {}
       );
     }
@@ -2559,9 +5918,13 @@ export class ReleaseBusV2Reconciler {
       STAGING_DEPLOYED: 'Exact staging deployment complete; E2E is pending',
       STAGING_VALIDATING: 'Staging is frozen for exact-manifest E2E',
       READY_FOR_PRODUCTION: 'Explicitly queued for exact v2 production',
+      READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION:
+        'Explicit candidate-evidence production selection queued',
       PRODUCTION_IN_TRAIN: 'Claimed by an explicit v2 production train',
       PRODUCTION_BUILDING_OR_QUALIFYING:
         'Exact production composition is building or qualifying',
+      WAITING_FOR_PRODUCTION_REPLAN:
+        'Explicit production readiness is preserved for a safe current-base replan',
       PRODUCTION_DEPLOYING:
         'Exact qualified artifacts are deploying to production',
       PRODUCTION_DEPLOYED: 'Exact v2 production deployment completed',
@@ -2629,7 +5992,145 @@ export class ReleaseBusV2Reconciler {
         continue;
       const train = await this.repository.findTrain(lock.owner_train_id, {});
       if (!train || !TERMINAL_TRAINS.has(train.status)) continue;
-      const operations = await this.repository.listOperations(train.id, {});
+      let operations = await this.repository.listOperations(train.id, {});
+      for (const operation of operations) {
+        if (!operationMayStillBeRunning(operation)) continue;
+        let request: {
+          readonly workflow?: unknown;
+          readonly ref?: unknown;
+          readonly inputs?: unknown;
+        } | null = null;
+        try {
+          request = parseStoredJson(operation.request_json);
+        } catch {
+          // A malformed stored request cannot be guessed. Keep the lock until
+          // an operator can inspect the durable operation identity.
+          continue;
+        }
+        const inputs = stringRecord(request?.inputs);
+        if (
+          !operation.repository ||
+          !operation.environment ||
+          !operation.expected_sha ||
+          typeof request?.workflow !== 'string' ||
+          typeof request.ref !== 'string' ||
+          !inputs
+        )
+          continue;
+        let reconciled: ReleaseBusV2OperationRecord;
+        try {
+          reconciled = await releaseBusV2Operations.reconcileWorkflow({
+            idempotencyKey: operation.idempotency_key,
+            trainId: operation.train_id,
+            operationType: operation.operation_type,
+            repository: operation.repository,
+            workflow: request.workflow,
+            ref: request.ref,
+            environment: operation.environment,
+            service: operation.service,
+            expectedSha: operation.expected_sha,
+            artifactDigest: operation.artifact_digest,
+            inputs,
+            maxAttempts: operation.max_attempts
+          });
+        } catch {
+          // GitHub/API ambiguity is retried on the next reconciler pass. A
+          // reset never guesses that old bytes stopped running.
+          continue;
+        }
+        if (reconciled.status === 'RETRY_WAIT')
+          await this.repository.updateOperation(
+            reconciled.id,
+            reconciled.row_version,
+            {
+              status: 'CANCELLED',
+              failureClass: 'CONTROL_PLANE',
+              failureMessage: `Terminal train ${train.id} will not redispatch after authoritative staging reset`,
+              completedAt: Date.now()
+            },
+            {}
+          );
+      }
+      operations = await this.repository.listOperations(train.id, {});
+      for (const operation of operations) {
+        if (
+          operation.status !== 'PENDING' ||
+          !['ADVANCE_MAIN_BACKEND', 'ADVANCE_MAIN_FRONTEND'].includes(
+            operation.operation_type
+          ) ||
+          !operation.repository ||
+          !operation.expected_sha
+        )
+          continue;
+        const base =
+          operation.repository === 'frontend'
+            ? train.frontend_base_sha
+            : train.backend_base_sha;
+        if (!base) continue;
+        let observedSha: string;
+        try {
+          observedSha = await releaseBusGitHubApp.resolveRef(
+            operation.repository,
+            'main'
+          );
+        } catch {
+          // A terminal cleanup may never guess at an ambiguous ref outcome.
+          // Retain the lock and retry the read on a later invocation.
+          continue;
+        }
+        const status =
+          observedSha === operation.expected_sha
+            ? ('SUCCEEDED' as const)
+            : observedSha === base
+              ? ('FAILED' as const)
+              : null;
+        if (!status) continue;
+        if (
+          await this.repository.updateOperation(
+            operation.id,
+            operation.row_version,
+            {
+              status,
+              externalId:
+                status === 'SUCCEEDED' ? operation.expected_sha : undefined,
+              result: {
+                base_sha: base,
+                deployed_sha:
+                  status === 'SUCCEEDED' ? operation.expected_sha : null,
+                observed_sha: observedSha,
+                reconciled_after_terminal_train: true
+              },
+              failureClass:
+                status === 'FAILED'
+                  ? (train.failure_class ?? 'CONTROL_PLANE')
+                  : null,
+              failureMessage:
+                status === 'FAILED'
+                  ? 'Terminal train retained main at its exact recorded base'
+                  : null,
+              completedAt: Date.now()
+            },
+            {}
+          )
+        )
+          await this.repository.appendEvent(
+            {
+              trainId: train.id,
+              eventType: 'TERMINAL_INTERNAL_REF_OPERATION_RECONCILED',
+              actor: 'release-bus-v2',
+              payload: {
+                operation_id: operation.id,
+                repository: operation.repository,
+                operation_status: status,
+                observed_sha: observedSha,
+                expected_base_sha: base,
+                expected_target_sha: operation.expected_sha
+              }
+            },
+            {}
+          );
+      }
+      operations = await this.repository.listOperations(train.id, {});
       if (
         operations.some(
           (operation) => !TERMINAL_OPERATIONS.has(operation.status)
@@ -2664,35 +6165,93 @@ export class ReleaseBusV2Reconciler {
   private async failTrain(
     train: ReleaseBusV2TrainRecord,
     failureClass: ReleaseBusV2FailureClass,
-    message: string,
-    lease?: ReleaseBusV2LockRecord
+    message: string
   ): Promise<void> {
     const current = await this.repository.findTrain(train.id, {});
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const context = await this.loadContext(current);
+    // PRODUCTION_DEPLOYING is entered only after advanceProductionRefs has
+    // compare-and-swap advanced every affected main ref to the exact composed
+    // SHA. A later deploy/E2E failure must therefore stop new production
+    // claims until an operator proves main/runtime parity or completes an
+    // explicit rollback. Requeueing these candidates would let a later train
+    // inherit already-landed, potentially only partially deployed code.
+    const productionMainAdvanced =
+      current.lane === 'PRODUCTION' &&
+      current.status === 'PRODUCTION_DEPLOYING';
+    const postMainRecoveryMessage =
+      'The exact production composition is already on main, but deployment or read-only E2E did not complete successfully. PRODUCTION is paused and selected candidates are failed closed; reconcile the recorded main SHAs with production runtime before explicitly resuming';
+    if (productionMainAdvanced) {
+      const controls = await this.repository.listControls({});
+      if (
+        !controls.some(
+          ({ scope, paused }) => scope === 'PRODUCTION' && Boolean(paused)
+        )
+      )
+        await this.service.setPaused(
+          'PRODUCTION',
+          true,
+          `Release Bus v2 post-main production failure in train ${train.id}: ${message}`,
+          'release-bus-v2'
+        );
+      const alreadyAudited = (
+        await this.repository.listEvents(current.id, 200, {})
+      ).some(
+        ({ event_type }) => event_type === 'PRODUCTION_POST_MAIN_FAILURE_PAUSED'
+      );
+      if (!alreadyAudited)
+        await this.repository.appendEvent(
+          {
+            trainId: current.id,
+            eventType: 'PRODUCTION_POST_MAIN_FAILURE_PAUSED',
+            actor: 'release-bus-v2',
+            payload: {
+              failure_class: failureClass,
+              failure_message: message,
+              frontend_main_sha: current.frontend_composed_sha,
+              backend_main_sha: current.backend_composed_sha,
+              production_control: 'PAUSED',
+              selected_candidate_status: 'FAILED',
+              recovery_contract:
+                'PROVE_EXACT_MAIN_RUNTIME_PARITY_OR_EXPLICIT_ROLLBACK_BEFORE_RESUME'
+            }
+          },
+          {}
+        );
+    }
     const retryStatus: ReleaseBusV2CandidateStatus =
-      current.lane === 'STAGING' ? 'READY_FOR_STAGING' : 'READY_FOR_PRODUCTION';
-    const candidateStatus = ['INFRASTRUCTURE', 'CONTROL_PLANE'].includes(
-      failureClass
-    )
-      ? retryStatus
-      : 'FAILED';
+      current.lane === 'STAGING'
+        ? 'READY_FOR_STAGING'
+        : current.qualification_policy === CANDIDATE_STAGING_EVIDENCE_POLICY
+          ? CANDIDATE_EVIDENCE_READY_STATUS
+          : 'READY_FOR_PRODUCTION';
+    const candidateStatus = productionMainAdvanced
+      ? 'FAILED'
+      : ['INFRASTRUCTURE', 'CONTROL_PLANE'].includes(failureClass)
+        ? retryStatus
+        : 'FAILED';
+    const statusCandidates =
+      current.lane === 'STAGING'
+        ? stagingStatusCandidates(context)
+        : relevantCandidates(context);
     await this.updateCandidateStatuses(
-      relevantCandidates(context),
+      statusCandidates,
       candidateStatus,
       null,
       false
     );
-    if (failureClass === 'CONTROL_PLANE') {
+    if (failureClass === 'CONTROL_PLANE' && !productionMainAdvanced) {
+      const affectedLane =
+        current.lane === 'STAGING' ? 'STAGING' : 'PRODUCTION';
       await this.service.setPaused(
-        'ALL',
+        affectedLane,
         true,
-        `Release Bus v2 control-plane failure in train ${train.id}: ${message}`,
+        `Release Bus v2 ${affectedLane.toLowerCase()} control-plane failure in train ${train.id}: ${message}`,
         'release-bus-v2'
       );
     }
     await this.publishCandidateStatuses(
-      relevantCandidates(context),
+      statusCandidates,
       failureClass === 'CONTROL_PLANE'
         ? 'error'
         : failureClass === 'INFRASTRUCTURE'
@@ -2706,20 +6265,17 @@ export class ReleaseBusV2Reconciler {
       status: 'FAILED',
       failureClass,
       failureMessage: message,
-      recoveryMessage:
-        failureClass === 'CONTROL_PLANE'
-          ? 'Automation is paused; retain exact state and use the documented manual fallback'
+      recoveryMessage: productionMainAdvanced
+        ? postMainRecoveryMessage
+        : failureClass === 'CONTROL_PLANE'
+          ? `${current.lane === 'STAGING' ? 'Staging' : 'Production'} automation is paused independently; retain exact state and use that lane's documented manual fallback`
           : 'Exact state is retained for idempotent diagnosis or retry',
       completedAt: Date.now()
     });
-    if (lease) {
-      await this.releaseEnvironmentLease(
-        current.lane === 'PRODUCTION'
-          ? 'production-environment'
-          : 'staging-environment',
-        lease
-      );
-    }
+    // Release ownership only after the train and every operation are terminal.
+    // If a mutation outcome is still ambiguous, the nonterminal operation
+    // deliberately retains the lease until reconciliation can prove its state.
+    await this.releaseTerminalEnvironmentLocks();
   }
 
   private async deferTrainForInfrastructure(
@@ -2756,39 +6312,41 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     message: string
   ): Promise<void> {
-    const current = await this.repository.findTrain(train.id, {});
-    if (!current || TERMINAL_TRAINS.has(current.status)) return;
-    const context = await this.loadContext(current);
-    await this.updateCandidateStatuses(
-      relevantCandidates(context),
-      'READY_FOR_PRODUCTION',
-      null,
-      false
-    );
-    const lease = (await this.repository.listLocks({})).find(
-      (lock) =>
-        lock.name === 'production-environment' &&
-        lock.owner_train_id === current.id
-    );
-    if (lease?.lease_token)
-      await this.repository.releaseLock(
-        'production-environment',
-        lease.lease_token,
-        {}
-      );
-    await this.publishCandidateStatuses(
-      relevantCandidates(context),
-      'pending',
-      'Main moved; v2 will recompute and requalify this exact production subset'
-    );
-    await this.transitionTrain(current, {
-      status: 'CANCELLED',
-      failureClass: 'INTERACTION',
-      failureMessage: message,
-      recoveryMessage:
-        'Main moved before production mutation; the explicit candidate subset was safely requeued for fresh composition and qualification',
-      completedAt: Date.now()
+    const result = await this.service.preserveProductionIntentsForSafeReplan({
+      trainId: train.id,
+      reason: message,
+      actor: 'release-bus-v2'
     });
+    if (result.status === 'NOOP') return;
+    if (result.status === 'FROZEN') {
+      const controls = await this.repository.listControls({});
+      if (
+        !controls.some(
+          ({ scope, paused }) => scope === 'PRODUCTION' && Boolean(paused)
+        )
+      )
+        await this.service.setPaused(
+          'PRODUCTION',
+          true,
+          `${result.reason}; train ${train.id} must recover its original exact set`,
+          'release-bus-v2'
+        );
+      return;
+    }
+    const candidates = (
+      await Promise.all(
+        result.candidateIds.map((candidateId) =>
+          this.repository.findCandidateById(candidateId, {})
+        )
+      )
+    ).filter((candidate): candidate is ReleaseBusV2CandidateRecord =>
+      Boolean(candidate)
+    );
+    await this.publishCandidateStatuses(
+      candidates,
+      'pending',
+      'Main moved before mutation; explicit intent is preserved for a new audited replacement'
+    );
   }
 
   private async publishCandidateStatuses(
@@ -2802,7 +6360,10 @@ export class ReleaseBusV2Reconciler {
           candidate.id,
           {}
         );
-        if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+        if (
+          !current ||
+          ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+        )
           return;
         await releaseBusGitHubApp.ensureCommitStatus(
           candidate.repository,

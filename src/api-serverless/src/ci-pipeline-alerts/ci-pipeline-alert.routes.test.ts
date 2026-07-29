@@ -383,6 +383,46 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
+  it('requires a release train id with contributor metadata', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          contributor_github_logins: ['GelatoGenesis']
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'release_train_id is required with contributor_github_logins'
+    );
+
+    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+  });
+
+  it('accepts signed release train contributor metadata', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
+      undefined
+    );
+
+    await ciPipelineAlertHandler(
+      makeAlertRequest({
+        release_train_id: 'train-123',
+        contributor_github_logins: ['GelatoGenesis', 'prxt6529']
+      }),
+      makeResponse()
+    );
+
+    expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        release_train_id: 'train-123',
+        contributor_github_logins: ['GelatoGenesis', 'prxt6529']
+      }),
+      expect.any(Object)
+    );
+  });
+
   const structuredGroup = {
     release_group_id: 'pr-1801',
     release_group_services: ['api'],

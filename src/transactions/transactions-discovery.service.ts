@@ -7,12 +7,13 @@ import {
   AssetTransfersCategory,
   AssetTransfersWithMetadataParams,
   AssetTransfersWithMetadataResult,
+  SortingOrder,
   fromHex
 } from '@/alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
 import { Logger } from '../logging';
 import { Transaction } from '../entities/ITransaction';
-import { findTransactionValues } from '../transaction_values';
+import { findDiscoveredTransactionValues } from '../transaction_values';
 import { consolidateTransactions } from '../db';
 import { Time } from '../time';
 import { discoverEns } from '../ens';
@@ -52,7 +53,13 @@ export class TransactionsDiscoveryService {
         const start = Time.now();
         const minBlock = transactionsFullBlock.at(0)?.block;
         const maxBlock = transactionsFullBlock.at(-1)?.block;
-        const transactions = this.mergeTransactions(transactionsFullBlock);
+        const mergedTransactions = this.mergeTransactions(
+          transactionsFullBlock
+        );
+        // Receipt reconciliation must run after this semantic merge so each
+        // row represents the complete transfer amount for its ownership key.
+        const transactions =
+          await this.enhanceTransactionsWithDetails(mergedTransactions);
         await this.transactionsDb.batchUpsertTransactions(
           consolidateTransactions(transactions)
         );
@@ -83,6 +90,7 @@ export class TransactionsDiscoveryService {
   ): AsyncGenerator<Transaction[], void, void> {
     let pageKey: string | undefined = undefined;
     let transactionsBuffer: Transaction[] = [];
+    const seenTransferIds = new Map<string, number>();
     let timer = Time.now(); // For measuring time between each yield
     do {
       const alchemyParams = this.getAlchemyAssetTransfersParams(
@@ -94,18 +102,28 @@ export class TransactionsDiscoveryService {
       const { transfers, pageKey: nextPageKey } =
         await this.alchemy.core.getAssetTransfers(alchemyParams);
 
-      transactionsBuffer.push(
-        ...transfers.map(this.mapAlchemyTransferToTransactionEntities).flat()
-      );
+      const { transactions: newTransactions, duplicateCount } =
+        this.mapNewAlchemyTransfers(transfers, seenTransferIds);
+      transactionsBuffer.push(...newTransactions);
+      if (duplicateCount > 0) {
+        this.logger.info(
+          `Ignored ${duplicateCount} duplicate Alchemy transfer events`
+        );
+      }
       const indexUntilWhichToCommit = !nextPageKey
         ? transactionsBuffer.length - 1
         : this.getLastFullBlockIndex(transactionsBuffer);
       if (indexUntilWhichToCommit >= 0) {
-        const transactionsToFlush = await this.enhanceTransactionsWithDetails(
-          transactionsBuffer.slice(0, indexUntilWhichToCommit + 1)
+        const transactionsToFlush = transactionsBuffer.slice(
+          0,
+          indexUntilWhichToCommit + 1
         );
         transactionsBuffer = transactionsBuffer.slice(
           indexUntilWhichToCommit + 1
+        );
+        this.forgetCommittedAlchemyTransfers(
+          seenTransferIds,
+          transactionsBuffer.at(0)?.block
         );
         yield transactionsToFlush;
         this.logger.info(
@@ -117,6 +135,82 @@ export class TransactionsDiscoveryService {
       }
       pageKey = nextPageKey;
     } while (pageKey);
+  }
+
+  private mapNewAlchemyTransfers(
+    transfers: AssetTransfersWithMetadataResult[],
+    seenTransferIds: Map<string, number>
+  ): { transactions: Transaction[]; duplicateCount: number } {
+    const transactions: Transaction[] = [];
+    let duplicateCount = 0;
+
+    transfers.forEach((transfer) => {
+      const mappedTransactions =
+        this.mapAlchemyTransferToTransactionEntities(transfer);
+      if (!mappedTransactions.length) {
+        return;
+      }
+      const transferId = this.getRequiredAlchemyTransferId(transfer);
+      if (
+        !this.isNewAlchemyTransfer(
+          transferId,
+          transfer.blockNum,
+          seenTransferIds
+        )
+      ) {
+        duplicateCount++;
+        return;
+      }
+      transactions.push(...mappedTransactions);
+    });
+
+    return { transactions, duplicateCount };
+  }
+
+  private getRequiredAlchemyTransferId(
+    transfer: AssetTransfersWithMetadataResult
+  ): string {
+    const transferId = transfer.uniqueId?.trim().toLowerCase();
+    if (!transferId) {
+      throw new Error(
+        `Alchemy returned a mappable transfer without uniqueId for transaction ${transfer.hash}; refusing to advance the contract checkpoint`
+      );
+    }
+    return transferId;
+  }
+
+  private isNewAlchemyTransfer(
+    transferId: string,
+    blockNum: string,
+    seenTransferIds: Map<string, number>
+  ): boolean {
+    if (seenTransferIds.has(transferId)) {
+      return false;
+    }
+
+    const block = fromHex(blockNum);
+    if (Number.isFinite(block)) {
+      seenTransferIds.set(transferId, block);
+    }
+    return true;
+  }
+
+  private forgetCommittedAlchemyTransfers(
+    seenTransferIds: Map<string, number>,
+    firstPendingBlock: number | undefined
+  ): void {
+    if (firstPendingBlock === undefined) {
+      seenTransferIds.clear();
+      return;
+    }
+
+    seenTransferIds.forEach((block, transferId) => {
+      // Results are explicitly requested in ascending block order. Keep the
+      // boundary block because Alchemy can split one block across pages.
+      if (block < firstPendingBlock) {
+        seenTransferIds.delete(transferId);
+      }
+    });
   }
 
   private getLastFullBlockIndex(transactions: Transaction[]) {
@@ -135,14 +229,17 @@ export class TransactionsDiscoveryService {
     pageKey?: string
   ): AssetTransfersWithMetadataParams {
     const startingBlockHex = `0x${startingBlock.toString(16)}`;
-    const toBlockHex = endBlock ? `0x${endBlock.toString(16)}` : undefined;
+    const toBlock =
+      typeof endBlock === 'number' ? `0x${endBlock.toString(16)}` : 'indexed';
     return {
       category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
       contractAddresses: [contract],
+      excludeZeroValue: true,
+      order: SortingOrder.ASCENDING,
       withMetadata: true,
       maxCount: 150,
       fromBlock: startingBlockHex,
-      toBlock: toBlockHex,
+      toBlock,
       pageKey: pageKey
     };
   }
@@ -254,5 +351,5 @@ export class TransactionsDiscoveryService {
 export const transactionsDiscoveryService = new TransactionsDiscoveryService(
   transactionsDb,
   getAlchemyInstance,
-  findTransactionValues
+  findDiscoveredTransactionValues
 );

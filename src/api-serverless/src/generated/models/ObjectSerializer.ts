@@ -347,6 +347,17 @@ export * from '../models/ApiRedeemConnectionShareResponse';
 export * from '../models/ApiRedeemRefreshTokenRequest';
 export * from '../models/ApiRedeemRefreshTokenResponse';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationCandidateVersion';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationCommittedError';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationError';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationExecuteRequest';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationLockVersion';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationPrepareRequest';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationRequest';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationResponse';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationStagingRefs';
+export * from '../models/ApiReleaseBusV2CandidateDeregistrationUncommittedError';
 export * from '../models/ApiRepCategoriesPage';
 export * from '../models/ApiRepCategory';
 export * from '../models/ApiRepContributor';
@@ -377,6 +388,20 @@ export * from '../models/ApiSubmissionDropContext';
 export * from '../models/ApiSubmissionDropStatus';
 export * from '../models/ApiSubmissionDropVoting';
 export * from '../models/ApiSubmissionDropVotingContextProfileContext';
+export * from '../models/ApiSubscriptionCoverage';
+export * from '../models/ApiSubscriptionCoverageDeadlineBasis';
+export * from '../models/ApiSubscriptionCoverageEligibilityBasis';
+export * from '../models/ApiSubscriptionCoverageForecast';
+export * from '../models/ApiSubscriptionCoverageMinimumTopUp';
+export * from '../models/ApiSubscriptionCoverageMode';
+export * from '../models/ApiSubscriptionCoverageNextUnfunded';
+export * from '../models/ApiSubscriptionCoverageNotificationRisk';
+export * from '../models/ApiSubscriptionCoveragePoint';
+export * from '../models/ApiSubscriptionCoverageRecommendedTopUp';
+export * from '../models/ApiSubscriptionCoverageScheduleBasis';
+export * from '../models/ApiSubscriptionCoverageSource';
+export * from '../models/ApiSubscriptionCoverageStatus';
+export * from '../models/ApiSubscriptionCoverageUnknownReason';
 export * from '../models/ApiSubwavesSort';
 export * from '../models/ApiTargetAndSubscriptionActions';
 export * from '../models/ApiTdhEdition';
@@ -547,14 +572,26 @@ export * from '../models/ReleaseBusV2ControlsResponse';
 export * from '../models/ReleaseBusV2Dependency';
 export * from '../models/ReleaseBusV2DependencyRequest';
 export * from '../models/ReleaseBusV2DeployPlan';
+export * from '../models/ReleaseBusV2LaneState';
 export * from '../models/ReleaseBusV2Manifest';
 export * from '../models/ReleaseBusV2ManifestListResponse';
 export * from '../models/ReleaseBusV2Mode';
+export * from '../models/ReleaseBusV2ProductionSelectionItem';
+export * from '../models/ReleaseBusV2ProductionSelectionRequest';
+export * from '../models/ReleaseBusV2ProductionSelectionResponse';
 export * from '../models/ReleaseBusV2RegisterRequest';
+export * from '../models/ReleaseBusV2StagingState';
+export * from '../models/ReleaseBusV2StagingTransitionRequest';
 export * from '../models/ReleaseBusV2Train';
 export * from '../models/ReleaseBusV2TrainDetailResponse';
 export * from '../models/ReleaseBusV2TrainListResponse';
 export * from '../models/ReleaseBusV2VersionedActionRequest';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidates200Response';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInner';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdates';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInner';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequest';
+export * from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner';
 export * from '../models/SubscribeAllEditionsResponse';
 export * from '../models/SubscriptionCountResponse';
 export * from '../models/SubscriptionCounts';
@@ -847,7 +884,7 @@ import { ApiNftOwnerPage } from '../models/ApiNftOwnerPage';
 import { ApiNftsPage } from '../models/ApiNftsPage';
 import { ApiNonceResponse } from '../models/ApiNonceResponse';
 import { ApiNotification        } from '../models/ApiNotification';
-import { ApiNotificationAdditionalContextV2 } from '../models/ApiNotificationAdditionalContextV2';
+import { ApiNotificationAdditionalContextV2                                } from '../models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationCause } from '../models/ApiNotificationCause';
 import { ApiNotificationDropReactedReactor } from '../models/ApiNotificationDropReactedReactor';
 import { ApiNotificationPollVoteOption } from '../models/ApiNotificationPollVoteOption';
@@ -919,6 +956,17 @@ import { ApiRedeemConnectionShareResponse    , ApiRedeemConnectionShareResponseC
 import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
+import { ApiReleaseBusV2CandidateDeregistrationCandidateVersion } from '../models/ApiReleaseBusV2CandidateDeregistrationCandidateVersion';
+import { ApiReleaseBusV2CandidateDeregistrationCommittedError, ApiReleaseBusV2CandidateDeregistrationCommittedErrorOutcomeEnum     , ApiReleaseBusV2CandidateDeregistrationCommittedErrorPhysicalStagingPresenceEnum   } from '../models/ApiReleaseBusV2CandidateDeregistrationCommittedError';
+import { ApiReleaseBusV2CandidateDeregistrationControlVersion, ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum     } from '../models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
+import { ApiReleaseBusV2CandidateDeregistrationErrorClass } from '../models/ApiReleaseBusV2CandidateDeregistrationError';
+import { ApiReleaseBusV2CandidateDeregistrationExecuteRequest, ApiReleaseBusV2CandidateDeregistrationExecuteRequestPhaseEnum           } from '../models/ApiReleaseBusV2CandidateDeregistrationExecuteRequest';
+import { ApiReleaseBusV2CandidateDeregistrationLockVersion, ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum    } from '../models/ApiReleaseBusV2CandidateDeregistrationLockVersion';
+import { ApiReleaseBusV2CandidateDeregistrationPrepareRequest, ApiReleaseBusV2CandidateDeregistrationPrepareRequestPhaseEnum    } from '../models/ApiReleaseBusV2CandidateDeregistrationPrepareRequest';
+import { ApiReleaseBusV2CandidateDeregistrationRequestClass } from '../models/ApiReleaseBusV2CandidateDeregistrationRequest';
+import { ApiReleaseBusV2CandidateDeregistrationResponse, ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum          , ApiReleaseBusV2CandidateDeregistrationResponseModeEnum    , ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum    } from '../models/ApiReleaseBusV2CandidateDeregistrationResponse';
+import { ApiReleaseBusV2CandidateDeregistrationStagingRefs } from '../models/ApiReleaseBusV2CandidateDeregistrationStagingRefs';
+import { ApiReleaseBusV2CandidateDeregistrationUncommittedError, ApiReleaseBusV2CandidateDeregistrationUncommittedErrorOutcomeEnum    , ApiReleaseBusV2CandidateDeregistrationUncommittedErrorPhysicalStagingPresenceEnum   } from '../models/ApiReleaseBusV2CandidateDeregistrationUncommittedError';
 import { ApiRepCategoriesPage } from '../models/ApiRepCategoriesPage';
 import { ApiRepCategory } from '../models/ApiRepCategory';
 import { ApiRepContributor } from '../models/ApiRepContributor';
@@ -949,6 +997,20 @@ import { ApiSubmissionDropContext        } from '../models/ApiSubmissionDropCont
 import { ApiSubmissionDropStatus } from '../models/ApiSubmissionDropStatus';
 import { ApiSubmissionDropVoting } from '../models/ApiSubmissionDropVoting';
 import { ApiSubmissionDropVotingContextProfileContext } from '../models/ApiSubmissionDropVotingContextProfileContext';
+import { ApiSubscriptionCoverage                 } from '../models/ApiSubscriptionCoverage';
+import { ApiSubscriptionCoverageDeadlineBasis } from '../models/ApiSubscriptionCoverageDeadlineBasis';
+import { ApiSubscriptionCoverageEligibilityBasis } from '../models/ApiSubscriptionCoverageEligibilityBasis';
+import { ApiSubscriptionCoverageForecast           } from '../models/ApiSubscriptionCoverageForecast';
+import { ApiSubscriptionCoverageMinimumTopUp } from '../models/ApiSubscriptionCoverageMinimumTopUp';
+import { ApiSubscriptionCoverageMode } from '../models/ApiSubscriptionCoverageMode';
+import { ApiSubscriptionCoverageNextUnfunded          } from '../models/ApiSubscriptionCoverageNextUnfunded';
+import { ApiSubscriptionCoverageNotificationRisk } from '../models/ApiSubscriptionCoverageNotificationRisk';
+import { ApiSubscriptionCoveragePoint } from '../models/ApiSubscriptionCoveragePoint';
+import { ApiSubscriptionCoverageRecommendedTopUp } from '../models/ApiSubscriptionCoverageRecommendedTopUp';
+import { ApiSubscriptionCoverageScheduleBasis } from '../models/ApiSubscriptionCoverageScheduleBasis';
+import { ApiSubscriptionCoverageSource } from '../models/ApiSubscriptionCoverageSource';
+import { ApiSubscriptionCoverageStatus } from '../models/ApiSubscriptionCoverageStatus';
+import { ApiSubscriptionCoverageUnknownReason } from '../models/ApiSubscriptionCoverageUnknownReason';
 import { ApiSubwavesSort } from '../models/ApiSubwavesSort';
 import { ApiTargetAndSubscriptionActions } from '../models/ApiTargetAndSubscriptionActions';
 import { ApiTdhEdition } from '../models/ApiTdhEdition';
@@ -1108,25 +1170,37 @@ import { RedeemedSubscriptionCounts } from '../models/RedeemedSubscriptionCounts
 import { RedeemedSubscriptionCountsPage } from '../models/RedeemedSubscriptionCountsPage';
 import { RedeemedSubscriptionPage } from '../models/RedeemedSubscriptionPage';
 import { RefreshWalletAuthSessionRequestClass } from '../models/RefreshWalletAuthSessionRequest';
-import { ReleaseBusV2Candidate , ReleaseBusV2CandidateRepositoryEnum                     } from '../models/ReleaseBusV2Candidate';
+import { ReleaseBusV2Candidate , ReleaseBusV2CandidateRepositoryEnum            , ReleaseBusV2CandidateStagingLiveStateEnum     , ReleaseBusV2CandidateStagingTransitionRequestEnum               } from '../models/ReleaseBusV2Candidate';
 import { ReleaseBusV2CandidateActionRequest } from '../models/ReleaseBusV2CandidateActionRequest';
 import { ReleaseBusV2CandidateListResponse   } from '../models/ReleaseBusV2CandidateListResponse';
 import { ReleaseBusV2CandidateResponse   } from '../models/ReleaseBusV2CandidateResponse';
 import { ReleaseBusV2CandidateStatus } from '../models/ReleaseBusV2CandidateStatus';
 import { ReleaseBusV2ControlRequest, ReleaseBusV2ControlRequestScopeEnum    } from '../models/ReleaseBusV2ControlRequest';
-import { ReleaseBusV2ControlUpdateResponse   } from '../models/ReleaseBusV2ControlUpdateResponse';
-import { ReleaseBusV2ControlsResponse    } from '../models/ReleaseBusV2ControlsResponse';
+import { ReleaseBusV2ControlUpdateResponse    } from '../models/ReleaseBusV2ControlUpdateResponse';
+import { ReleaseBusV2ControlsResponse      } from '../models/ReleaseBusV2ControlsResponse';
 import { ReleaseBusV2Dependency   , ReleaseBusV2DependencyEnvironmentEnum    } from '../models/ReleaseBusV2Dependency';
 import { ReleaseBusV2DependencyRequest , ReleaseBusV2DependencyRequestEnvironmentEnum   } from '../models/ReleaseBusV2DependencyRequest';
 import { ReleaseBusV2DeployPlan } from '../models/ReleaseBusV2DeployPlan';
+import { ReleaseBusV2LaneState, ReleaseBusV2LaneStateLaneEnum  , ReleaseBusV2LaneStateStatusEnum     } from '../models/ReleaseBusV2LaneState';
 import { ReleaseBusV2Manifest  , ReleaseBusV2ManifestLaneEnum   , ReleaseBusV2ManifestStatusEnum             } from '../models/ReleaseBusV2Manifest';
 import { ReleaseBusV2ManifestListResponse } from '../models/ReleaseBusV2ManifestListResponse';
 import { ReleaseBusV2Mode } from '../models/ReleaseBusV2Mode';
+import { ReleaseBusV2ProductionSelectionItem } from '../models/ReleaseBusV2ProductionSelectionItem';
+import { ReleaseBusV2ProductionSelectionRequest } from '../models/ReleaseBusV2ProductionSelectionRequest';
+import { ReleaseBusV2ProductionSelectionResponse , ReleaseBusV2ProductionSelectionResponseQualificationPolicyEnum     } from '../models/ReleaseBusV2ProductionSelectionResponse';
 import { ReleaseBusV2RegisterRequest , ReleaseBusV2RegisterRequestRepositoryEnum        } from '../models/ReleaseBusV2RegisterRequest';
-import { ReleaseBusV2Train , ReleaseBusV2TrainLaneEnum  , ReleaseBusV2TrainStatusEnum                    } from '../models/ReleaseBusV2Train';
+import { ReleaseBusV2StagingState, ReleaseBusV2StagingStateIdEnum  , ReleaseBusV2StagingStateStatusEnum               } from '../models/ReleaseBusV2StagingState';
+import { ReleaseBusV2StagingTransitionRequest  , ReleaseBusV2StagingTransitionRequestTransitionEnum    } from '../models/ReleaseBusV2StagingTransitionRequest';
+import { ReleaseBusV2Train , ReleaseBusV2TrainLaneEnum  , ReleaseBusV2TrainStatusEnum          , ReleaseBusV2TrainStagingPolicyEnum    , ReleaseBusV2TrainQualificationPolicyEnum             } from '../models/ReleaseBusV2Train';
 import { ReleaseBusV2TrainDetailResponse } from '../models/ReleaseBusV2TrainDetailResponse';
 import { ReleaseBusV2TrainListResponse   } from '../models/ReleaseBusV2TrainListResponse';
 import { ReleaseBusV2VersionedActionRequest } from '../models/ReleaseBusV2VersionedActionRequest';
+import { RepairCurrentReleaseBusV2StagingCandidates200Response    , RepairCurrentReleaseBusV2StagingCandidates200ResponseModeEnum      } from '../models/RepairCurrentReleaseBusV2StagingCandidates200Response';
+import { RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInner , RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInnerRepositoryEnum      , RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInnerDerivedStatusEnum  , RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInnerDerivedStagingLiveStateEnum     } from '../models/RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInner';
+import { RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdates } from '../models/RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdates';
+import { RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInner , RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInnerRepositoryEnum     } from '../models/RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInner';
+import { RepairCurrentReleaseBusV2StagingCandidatesRequest } from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequest';
+import { RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner, RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInnerRepositoryEnum     } from '../models/RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner';
 import { SubscribeAllEditionsResponse } from '../models/SubscribeAllEditionsResponse';
 import { SubscriptionCountResponse } from '../models/SubscriptionCountResponse';
 import { SubscriptionCounts } from '../models/SubscriptionCounts';
@@ -1229,6 +1303,20 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiRateMatter",
     "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
     "ApiRedeemConnectionShareResponseClientTypeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationCommittedErrorOutcomeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationCommittedErrorPhysicalStagingPresenceEnum",
+    "ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationErrorOutcomeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationErrorPhysicalStagingPresenceEnum",
+    "ApiReleaseBusV2CandidateDeregistrationExecuteRequestPhaseEnum",
+    "ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum",
+    "ApiReleaseBusV2CandidateDeregistrationPrepareRequestPhaseEnum",
+    "ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum",
+    "ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum",
+    "ApiReleaseBusV2CandidateDeregistrationResponseModeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum",
+    "ApiReleaseBusV2CandidateDeregistrationUncommittedErrorOutcomeEnum",
+    "ApiReleaseBusV2CandidateDeregistrationUncommittedErrorPhysicalStagingPresenceEnum",
     "ApiRepDirection",
     "ApiSessionLoginRequestClientTypeEnum",
     "ApiSessionLoginRequestWalletKindHintEnum",
@@ -1241,6 +1329,13 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiSessionRefreshWebRequestClientTypeEnum",
     "ApiSessionWebResponseClientTypeEnum",
     "ApiSubmissionDropStatus",
+    "ApiSubscriptionCoverageDeadlineBasis",
+    "ApiSubscriptionCoverageEligibilityBasis",
+    "ApiSubscriptionCoverageMode",
+    "ApiSubscriptionCoverageScheduleBasis",
+    "ApiSubscriptionCoverageSource",
+    "ApiSubscriptionCoverageStatus",
+    "ApiSubscriptionCoverageUnknownReason",
     "ApiSubwavesSort",
     "ApiUpcomingMemeSubscriptionStatusSourceEnum",
     "ApiWaveCreditScope",
@@ -1270,16 +1365,32 @@ let enumsMap: Set<string> = new Set<string>([
     "MintingClaimAnimationDetailsHtmlFormatEnum",
     "RefreshWalletAuthSessionRequestClientTypeEnum",
     "ReleaseBusV2CandidateRepositoryEnum",
+    "ReleaseBusV2CandidateStagingLiveStateEnum",
+    "ReleaseBusV2CandidateStagingTransitionRequestEnum",
     "ReleaseBusV2CandidateStatus",
     "ReleaseBusV2ControlRequestScopeEnum",
     "ReleaseBusV2DependencyEnvironmentEnum",
     "ReleaseBusV2DependencyRequestEnvironmentEnum",
+    "ReleaseBusV2LaneStateLaneEnum",
+    "ReleaseBusV2LaneStateStatusEnum",
     "ReleaseBusV2ManifestLaneEnum",
     "ReleaseBusV2ManifestStatusEnum",
     "ReleaseBusV2Mode",
+    "ReleaseBusV2ProductionSelectionResponseQualificationPolicyEnum",
     "ReleaseBusV2RegisterRequestRepositoryEnum",
+    "ReleaseBusV2StagingStateIdEnum",
+    "ReleaseBusV2StagingStateStatusEnum",
+    "ReleaseBusV2StagingTransitionRequestTransitionEnum",
     "ReleaseBusV2TrainLaneEnum",
     "ReleaseBusV2TrainStatusEnum",
+    "ReleaseBusV2TrainStagingPolicyEnum",
+    "ReleaseBusV2TrainQualificationPolicyEnum",
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseModeEnum",
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInnerRepositoryEnum",
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInnerDerivedStatusEnum",
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInnerDerivedStagingLiveStateEnum",
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInnerRepositoryEnum",
+    "RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInnerRepositoryEnum",
 ]);
 
 let typeMap: {[index: string]: any} = {
@@ -1592,6 +1703,17 @@ let typeMap: {[index: string]: any} = {
     "ApiRedeemRefreshTokenRequest": ApiRedeemRefreshTokenRequest,
     "ApiRedeemRefreshTokenResponse": ApiRedeemRefreshTokenResponse,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
+    "ApiReleaseBusV2CandidateDeregistrationCandidateVersion": ApiReleaseBusV2CandidateDeregistrationCandidateVersion,
+    "ApiReleaseBusV2CandidateDeregistrationCommittedError": ApiReleaseBusV2CandidateDeregistrationCommittedError,
+    "ApiReleaseBusV2CandidateDeregistrationControlVersion": ApiReleaseBusV2CandidateDeregistrationControlVersion,
+    "ApiReleaseBusV2CandidateDeregistrationError": ApiReleaseBusV2CandidateDeregistrationErrorClass,
+    "ApiReleaseBusV2CandidateDeregistrationExecuteRequest": ApiReleaseBusV2CandidateDeregistrationExecuteRequest,
+    "ApiReleaseBusV2CandidateDeregistrationLockVersion": ApiReleaseBusV2CandidateDeregistrationLockVersion,
+    "ApiReleaseBusV2CandidateDeregistrationPrepareRequest": ApiReleaseBusV2CandidateDeregistrationPrepareRequest,
+    "ApiReleaseBusV2CandidateDeregistrationRequest": ApiReleaseBusV2CandidateDeregistrationRequestClass,
+    "ApiReleaseBusV2CandidateDeregistrationResponse": ApiReleaseBusV2CandidateDeregistrationResponse,
+    "ApiReleaseBusV2CandidateDeregistrationStagingRefs": ApiReleaseBusV2CandidateDeregistrationStagingRefs,
+    "ApiReleaseBusV2CandidateDeregistrationUncommittedError": ApiReleaseBusV2CandidateDeregistrationUncommittedError,
     "ApiRepCategoriesPage": ApiRepCategoriesPage,
     "ApiRepCategory": ApiRepCategory,
     "ApiRepContributor": ApiRepContributor,
@@ -1620,6 +1742,13 @@ let typeMap: {[index: string]: any} = {
     "ApiSubmissionDropContext": ApiSubmissionDropContext,
     "ApiSubmissionDropVoting": ApiSubmissionDropVoting,
     "ApiSubmissionDropVotingContextProfileContext": ApiSubmissionDropVotingContextProfileContext,
+    "ApiSubscriptionCoverage": ApiSubscriptionCoverage,
+    "ApiSubscriptionCoverageForecast": ApiSubscriptionCoverageForecast,
+    "ApiSubscriptionCoverageMinimumTopUp": ApiSubscriptionCoverageMinimumTopUp,
+    "ApiSubscriptionCoverageNextUnfunded": ApiSubscriptionCoverageNextUnfunded,
+    "ApiSubscriptionCoverageNotificationRisk": ApiSubscriptionCoverageNotificationRisk,
+    "ApiSubscriptionCoveragePoint": ApiSubscriptionCoveragePoint,
+    "ApiSubscriptionCoverageRecommendedTopUp": ApiSubscriptionCoverageRecommendedTopUp,
     "ApiTargetAndSubscriptionActions": ApiTargetAndSubscriptionActions,
     "ApiTdhEdition": ApiTdhEdition,
     "ApiTdhEditionsPage": ApiTdhEditionsPage,
@@ -1768,13 +1897,25 @@ let typeMap: {[index: string]: any} = {
     "ReleaseBusV2Dependency": ReleaseBusV2Dependency,
     "ReleaseBusV2DependencyRequest": ReleaseBusV2DependencyRequest,
     "ReleaseBusV2DeployPlan": ReleaseBusV2DeployPlan,
+    "ReleaseBusV2LaneState": ReleaseBusV2LaneState,
     "ReleaseBusV2Manifest": ReleaseBusV2Manifest,
     "ReleaseBusV2ManifestListResponse": ReleaseBusV2ManifestListResponse,
+    "ReleaseBusV2ProductionSelectionItem": ReleaseBusV2ProductionSelectionItem,
+    "ReleaseBusV2ProductionSelectionRequest": ReleaseBusV2ProductionSelectionRequest,
+    "ReleaseBusV2ProductionSelectionResponse": ReleaseBusV2ProductionSelectionResponse,
     "ReleaseBusV2RegisterRequest": ReleaseBusV2RegisterRequest,
+    "ReleaseBusV2StagingState": ReleaseBusV2StagingState,
+    "ReleaseBusV2StagingTransitionRequest": ReleaseBusV2StagingTransitionRequest,
     "ReleaseBusV2Train": ReleaseBusV2Train,
     "ReleaseBusV2TrainDetailResponse": ReleaseBusV2TrainDetailResponse,
     "ReleaseBusV2TrainListResponse": ReleaseBusV2TrainListResponse,
     "ReleaseBusV2VersionedActionRequest": ReleaseBusV2VersionedActionRequest,
+    "RepairCurrentReleaseBusV2StagingCandidates200Response": RepairCurrentReleaseBusV2StagingCandidates200Response,
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInner": RepairCurrentReleaseBusV2StagingCandidates200ResponseCandidatesInner,
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdates": RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdates,
+    "RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInner": RepairCurrentReleaseBusV2StagingCandidates200ResponseGithubStatusUpdatesFailedCandidatesInner,
+    "RepairCurrentReleaseBusV2StagingCandidatesRequest": RepairCurrentReleaseBusV2StagingCandidatesRequest,
+    "RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner": RepairCurrentReleaseBusV2StagingCandidatesRequestCandidatesInner,
     "SubscribeAllEditionsResponse": SubscribeAllEditionsResponse,
     "SubscriptionCountResponse": SubscriptionCountResponse,
     "SubscriptionCounts": SubscriptionCounts,

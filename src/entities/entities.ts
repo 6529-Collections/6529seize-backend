@@ -165,6 +165,8 @@ export {
   SubscriptionTopUp,
   SubscriptionTopUpLatestBlock
 } from './ISubscription';
+export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
+export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -222,15 +224,6 @@ export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificatio
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
 export { WSNotificationSubscriptionEntity } from './IWSNotificationSubscription';
-export { ReleaseReadyDeploymentEntity } from './IReleaseReadyDeployment';
-export { ReleaseCandidateDependencyEntity } from './IReleaseCandidateDependency';
-export { ReleaseTrainEntity } from './IReleaseTrain';
-export { ReleaseTrainItemEntity } from './IReleaseTrainItem';
-export { ReleaseTrainOperationEntity } from './IReleaseTrainOperation';
-export { ReleaseTrainEvidenceEntity } from './IReleaseTrainEvidence';
-export { ReleaseDeploymentLaneEntity } from './IReleaseDeploymentLane';
-export { ReleaseBusControlEntity } from './IReleaseBusControl';
-export { ReleaseTrainEventEntity } from './IReleaseTrainEvent';
 export {
   ReleaseBusV2CandidateDependencyEntity,
   ReleaseBusV2CandidateEntity,
@@ -239,6 +232,7 @@ export {
   ReleaseBusV2LockEntity,
   ReleaseBusV2ManifestEntity,
   ReleaseBusV2OperationEntity,
+  ReleaseBusV2StagingStateEntity,
   ReleaseBusV2TrainCandidateEntity,
   ReleaseBusV2TrainEntity
 } from './IReleaseBusV2';

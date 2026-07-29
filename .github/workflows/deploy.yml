@@ -98,10 +98,28 @@ on:
         description: 'Explicitly skip autonomous release notes for an internal operation'
         required: false
         default: false
+      emergency_api_bootstrap:
+        type: boolean
+        description: 'Break-glass API production bootstrap for a known deployed workflow-identity incompatibility'
+        required: false
+        default: false
+      emergency_api_bootstrap_expected_sha:
+        type: string
+        description: 'Exact main SHA authorized for the emergency API bootstrap'
+        required: false
+      emergency_api_bootstrap_reason:
+        type: string
+        description: 'Audit reason for the emergency API bootstrap'
+        required: false
       release_train_id:
         type: string
         description: 'Release Bus train id; blank for manual deploys'
         required: false
+      release_contributors:
+        type: string
+        description: 'Release Bus JSON array of contributing GitHub logins'
+        required: false
+        default: '[]'
       release_train_revision:
         type: string
         description: 'Release Bus train revision; blank for manual deploys'
@@ -126,32 +144,32 @@ on:
         type: string
         description: 'Release Bus immutable aggregate artifact digest'
         required: false
-      break_glass_reason:
+      artifact_environment:
         type: string
-        description: 'Operator-only reason for a manual deploy after bus enforcement'
+        description: 'Release Bus artifact environment; blank for legacy-v2'
         required: false
-
+        default: ''
+      artifact_contract_version:
+        type: string
+        description: 'Release Bus immutable artifact contract'
+        required: false
+        default: legacy-v2
 permissions:
   actions: read
   contents: read
 
-# The workflow-level control mutex keeps manual and break-glass production
-# deployments globally serial. Release Bus operations use their exact operation
+# The workflow-level control mutex keeps each manual environment globally
+# serial. Release Bus v2 operations use their exact operation
 # key here, then share the job-level environment/service mutex with every mode.
 concurrency:
-  group: deploy-control-${{ github.event.inputs.environment }}-${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || (github.event.inputs.environment == 'prod' && 'manual-production' || github.event.inputs.service) }}
+  group: deploy-control-${{ github.event.inputs.environment }}-${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || 'manual' }}
   cancel-in-progress: false
 
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-  RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
   RELEASE_BUS_V2_MODE: ${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
   RELEASE_BUS_V2_BETA_ALLOWLIST: ${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
-  RELEASE_BUS_BASE_EVIDENCE_REUSE: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE || 'false' }}
-  RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW || 'false' }}
-  RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS: ${{ vars.RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS || '24' }}
-  RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY: ${{ vars.RELEASE_BUS_BACKEND_DEPLOY_CONCURRENCY || '20' }}
   RELEASE_BUS_GITHUB_ORG: ${{ vars.RELEASE_BUS_GITHUB_ORG || github.repository_owner }}
   RELEASE_BUS_UI_URL: ${{ vars.RELEASE_BUS_UI_URL || 'https://api.6529.io/deploy/ui/bus' }}
   ATTACHMENTS_INGEST_S3_BUCKET_PROD: ${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_PROD }}
@@ -178,12 +196,18 @@ jobs:
       INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
       INPUT_SERVICE: ${{ github.event.inputs.service }}
       INPUT_TRAIN_ID: ${{ github.event.inputs.release_train_id }}
+      INPUT_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}
       INPUT_TRAIN_REVISION: ${{ github.event.inputs.release_train_revision }}
       INPUT_OPERATION_KEY: ${{ github.event.inputs.operation_key }}
       INPUT_EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
       INPUT_ARTIFACT_RUN_ID: ${{ github.event.inputs.artifact_run_id }}
       INPUT_ARTIFACT_TRAIN_ID: ${{ github.event.inputs.artifact_train_id }}
       INPUT_ARTIFACT_DIGEST: ${{ github.event.inputs.artifact_digest }}
+      INPUT_ARTIFACT_ENVIRONMENT: ${{ github.event.inputs.artifact_environment }}
+      INPUT_ARTIFACT_CONTRACT_VERSION: ${{ github.event.inputs.artifact_contract_version }}
+      INPUT_EMERGENCY_API_BOOTSTRAP: ${{ github.event.inputs.emergency_api_bootstrap }}
+      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: ${{ github.event.inputs.emergency_api_bootstrap_expected_sha }}
+      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: ${{ github.event.inputs.emergency_api_bootstrap_reason }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -191,16 +215,30 @@ jobs:
           INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
           INPUT_SERVICE: ${{ github.event.inputs.service }}
           INPUT_TRAIN_ID: ${{ github.event.inputs.release_train_id }}
+          INPUT_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}
           INPUT_TRAIN_REVISION: ${{ github.event.inputs.release_train_revision }}
           INPUT_OPERATION_KEY: ${{ github.event.inputs.operation_key }}
           INPUT_EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
           INPUT_ARTIFACT_RUN_ID: ${{ github.event.inputs.artifact_run_id }}
           INPUT_ARTIFACT_TRAIN_ID: ${{ github.event.inputs.artifact_train_id }}
           INPUT_ARTIFACT_DIGEST: ${{ github.event.inputs.artifact_digest }}
+          INPUT_ARTIFACT_ENVIRONMENT: ${{ github.event.inputs.artifact_environment }}
+          INPUT_ARTIFACT_CONTRACT_VERSION: ${{ github.event.inputs.artifact_contract_version }}
+          INPUT_EMERGENCY_API_BOOTSTRAP: ${{ github.event.inputs.emergency_api_bootstrap }}
+          INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: ${{ github.event.inputs.emergency_api_bootstrap_expected_sha }}
+          INPUT_EMERGENCY_API_BOOTSTRAP_REASON: ${{ github.event.inputs.emergency_api_bootstrap_reason }}
+          INPUT_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
+          INPUT_RELEASE_GROUP_SERVICES: ${{ github.event.inputs.release_group_services }}
+          INPUT_RELEASE_NOTE_GROUPS: ${{ github.event.inputs.release_note_groups }}
+          INPUT_RELEASE_NOTE_PUBLISH: ${{ github.event.inputs.release_note_publish }}
+          INPUT_RELEASE_NOTE_OPT_OUT: ${{ github.event.inputs.release_note_opt_out }}
+          EMERGENCY_API_BOOTSTRAP_ACTORS: ${{ vars.EMERGENCY_API_BOOTSTRAP_ACTORS || '["prxt6529"]' }}
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseBus|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop)$ ]]
+          # Semantic GitHub-login validation is centralized in notify-ci-wave.mjs.
+          jq -e 'type == "array" and length <= 100 and all(.[]; type == "string" and length >= 1 and length <= 39)' <<< "$INPUT_RELEASE_CONTRIBUTORS" > /dev/null
           if [ -n "$INPUT_OPERATION_KEY" ]; then
             [[ "$INPUT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             [[ "$INPUT_TRAIN_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]
@@ -208,9 +246,296 @@ jobs:
             [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
             [[ "$INPUT_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
             [[ "$INPUT_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+            test -z "$INPUT_ARTIFACT_TRAIN_ID" -o "$INPUT_ARTIFACT_TRAIN_ID" = "$INPUT_TRAIN_ID"
+            case "$INPUT_ARTIFACT_CONTRACT_VERSION" in
+              environment-bound-v3)
+                [[ "$INPUT_ARTIFACT_ENVIRONMENT" =~ ^(staging|production)$ ]]
+                case "$INPUT_ENVIRONMENT" in
+                  staging) expected_artifact_environment=staging ;;
+                  prod) expected_artifact_environment=production ;;
+                  *) exit 1 ;;
+                esac
+                test "$INPUT_ARTIFACT_ENVIRONMENT" = "$expected_artifact_environment"
+                ;;
+              legacy-v2)
+                test -z "$INPUT_ARTIFACT_ENVIRONMENT"
+                ;;
+              *) echo "Unsupported artifact contract" >&2; exit 1 ;;
+            esac
             if [ -n "$INPUT_ARTIFACT_TRAIN_ID" ]; then
               [[ "$INPUT_ARTIFACT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             fi
+          else
+            test -z "$INPUT_TRAIN_ID"
+            test -z "$INPUT_TRAIN_REVISION"
+            test -z "$INPUT_EXPECTED_SHA"
+            test -z "$INPUT_ARTIFACT_RUN_ID"
+            test -z "$INPUT_ARTIFACT_TRAIN_ID"
+            test -z "$INPUT_ARTIFACT_DIGEST"
+            test -z "$INPUT_ARTIFACT_ENVIRONMENT"
+            test "$INPUT_ARTIFACT_CONTRACT_VERSION" = legacy-v2
+          fi
+          case "$INPUT_EMERGENCY_API_BOOTSTRAP" in
+            true)
+              test -z "$INPUT_OPERATION_KEY"
+              test "$INPUT_ENVIRONMENT" = prod
+              test "$INPUT_SERVICE" = api
+              test "$GITHUB_REF_NAME" = main
+              jq -e                 --arg actor "$GITHUB_ACTOR"                 'type == "array" and length >= 1 and length <= 20 and
+                 all(.[]; type == "string" and test("^[A-Za-z0-9-]{1,39}$")) and
+                 index($actor) != null'                 <<< "$EMERGENCY_API_BOOTSTRAP_ACTORS" > /dev/null
+              [[ "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+              test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$GITHUB_SHA"
+              [[ "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON" =~ ^[A-Za-z0-9._:/-]{10,200}$ ]]
+              test "$INPUT_RELEASE_NOTE_OPT_OUT" = true
+              test "$INPUT_RELEASE_NOTE_PUBLISH" = false
+              test -z "$INPUT_RELEASE_PULL_REQUEST"
+              test -z "$INPUT_RELEASE_GROUP_SERVICES"
+              test -z "$INPUT_RELEASE_NOTE_GROUPS"
+              ;;
+            false|'')
+              test -z "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA"
+              test -z "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON"
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Authorize exact deployment operation
+        id: deployment_authorization
+        shell: bash
+        env:
+          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_BUS_API_URL"
+          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          if [ -n "$INPUT_OPERATION_KEY" ]; then
+            payload="$(jq -n               --arg train_id "$INPUT_TRAIN_ID"               --arg operation_key "$INPUT_OPERATION_KEY"               --arg workflow_run_id "$GITHUB_RUN_ID"               --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID"               --arg repository backend               --arg environment "$INPUT_ENVIRONMENT"               --arg service "$INPUT_SERVICE"               --arg expected_sha "$INPUT_EXPECTED_SHA"               --arg artifact_digest "$INPUT_ARTIFACT_DIGEST"               '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:$artifact_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,artifact_digest:$artifact_digest}')"
+            endpoint=release-bus-v2/authorize
+          else
+            expected_lane="$([ "$INPUT_ENVIRONMENT" = staging ] && printf STAGING || printf PRODUCTION)"
+            payload="$(jq -n               --arg repository backend               --arg environment "$INPUT_ENVIRONMENT"               --arg service "$INPUT_SERVICE"               --arg workflow_run_id "$GITHUB_RUN_ID"               --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT"               --arg source_ref "$GITHUB_REF_NAME"               --arg source_sha "$GITHUB_SHA"               '{repository:$repository,environment:$environment,service:$service,workflow_run_id:$workflow_run_id,workflow_run_attempt:$workflow_run_attempt,source_ref:$source_ref,source_sha:$source_sha}')"
+            endpoint=release-bus-v2/manual-deployment-readiness
+          fi
+          http_status="$(curl --silent --show-error             --connect-timeout 10             --max-time 60             --output "$response_file"             --write-out '%{http_code}'             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN"             -H 'Content-Type: application/json'             --data "$payload"               "$RELEASE_BUS_API_URL/deploy/$endpoint")"
+          emergency_compatibility_fallback=false
+          if [ "$http_status" != 200 ]; then
+            rejection_reason="$(jq -r '.error // empty' "$response_file" 2>/dev/null)"
+            if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ] &&
+               [ -z "$INPUT_OPERATION_KEY" ] &&
+               [ "$http_status" = 409 ] &&
+               [ "$rejection_reason" = "Manual backend deployment workflow identity is invalid" ]; then
+              # The authenticated legacy server has verified this exact run,
+              # attempt, ref and SHA, then rejected only GitHub's newer run-name
+              # identity. Reproduce the remaining fail-closed readiness checks
+              # and save one script so the same guard is run again immediately
+              # before cloud credentials.
+              emergency_guard="$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"
+              cat > "$emergency_guard" <<'EMERGENCY_API_BOOTSTRAP_GUARD'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          guard_tmp="$(mktemp -d)"
+          trap 'rm -rf "$guard_tmp"' EXIT
+
+          fetch_release_bus_json() {
+            local url="$1"
+            local output="$2"
+            local headers="$3"
+            local status
+            status="$(curl --silent --show-error               --connect-timeout 10               --max-time 60               --header "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN"               --header 'Cache-Control: no-cache'               --header 'Pragma: no-cache'               --dump-header "$headers"               --output "$output"               --write-out '%{http_code}'               "$url")"
+            test "$status" = 200
+            grep -Eiq '^cache-control:.*no-store' "$headers"
+          }
+
+          fetch_github_json() {
+            local url="$1"
+            local output="$2"
+            local status
+            status="$(curl --silent --show-error               --connect-timeout 10               --max-time 60               --header "Authorization: Bearer $GITHUB_TOKEN"               --header 'Accept: application/vnd.github+json'               --header 'Cache-Control: no-cache'               --output "$output"               --write-out '%{http_code}'               "$url")"
+            test "$status" = 200
+          }
+
+          controls_file="$guard_tmp/controls.json"
+          controls_headers="$guard_tmp/controls.headers"
+          fetch_release_bus_json             "$RELEASE_BUS_API_URL/deploy/release-bus-v2/controls"             "$controls_file"             "$controls_headers"
+          jq -e '
+            type == "object" and
+            .mode == "PRODUCTION" and
+            (.controls | type == "array") and
+            (.lanes | type == "array") and
+            (.locks | type == "array") and
+            ([.controls[] | select(
+              type == "object" and .scope == "ALL" and .paused == false
+            )] | length == 1) and
+            ([.lanes[] | select(
+              type == "object" and .lane == "PRODUCTION" and
+              .status == "OFF" and .changeable == true
+            )] | length == 1) and
+            ([.locks[] | select(
+              type == "object" and
+              .name == "production-environment" and
+              .owner_train_id == null and
+              .lease_owner == null and
+              .lease_token == null
+            )] | length == 1)
+          ' "$controls_file" > /dev/null
+
+          trains_file="$guard_tmp/trains.json"
+          trains_headers="$guard_tmp/trains.headers"
+          fetch_release_bus_json             "$RELEASE_BUS_API_URL/deploy/release-bus-v2/trains"             "$trains_file"             "$trains_headers"
+          jq -e '
+            type == "object" and
+            (.trains | type == "array") and
+            all(.trains[]; type == "object" and
+              (.id | type == "string") and
+              (.lane | type == "string") and
+              (.status | type == "string")) and
+            ([.trains[] | select(
+              .lane == "PRODUCTION" and
+              .status != "PRODUCTION_DEPLOYED" and
+              .status != "FAILED" and
+              .status != "CANCELLED"
+            )] | length == 0)
+          ' "$trains_file" > /dev/null
+
+          while IFS= read -r train_id; do
+            [[ "$train_id" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
+            train_file="$guard_tmp/train-$train_id.json"
+            train_headers="$guard_tmp/train-$train_id.headers"
+            fetch_release_bus_json               "$RELEASE_BUS_API_URL/deploy/release-bus-v2/trains/$train_id"               "$train_file"               "$train_headers"
+            jq -e '
+              type == "object" and
+              (.operations | type == "array") and
+              all(.operations[];
+                type == "object" and
+                (.status == "SUCCEEDED" or
+                 .status == "FAILED" or
+                 .status == "CANCELLED"))
+            ' "$train_file" > /dev/null
+          done < <(jq -r '.trains[] | select(.lane == "PRODUCTION") | .id' "$trains_file")
+
+          main_ref_file="$guard_tmp/main-ref.json"
+          fetch_github_json             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/main"             "$main_ref_file"
+          jq -e --arg sha "$GITHUB_SHA"             'type == "object" and .object.sha == $sha'             "$main_ref_file" > /dev/null
+
+          current_run_file="$guard_tmp/current-run.json"
+          fetch_github_json             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"             "$current_run_file"
+          jq -e             --arg actor "$GITHUB_ACTOR"             --arg branch "$GITHUB_REF_NAME"             --arg run_id "$GITHUB_RUN_ID"             --argjson attempt "$GITHUB_RUN_ATTEMPT"             --arg sha "$GITHUB_SHA"             'type == "object" and
+             (.id | tostring) == $run_id and
+             .run_attempt == $attempt and
+             .actor.login == $actor and
+             .event == "workflow_dispatch" and
+             .path == ".github/workflows/deploy.yml" and
+             .status == "in_progress" and
+             .conclusion == null and
+             .head_branch == $branch and
+             .head_sha == $sha and
+             .name == "Deploy api to prod [manual]" and
+             .display_title == "Deploy api to prod [manual]"'             "$current_run_file" > /dev/null
+
+          assert_workflow_exists() {
+            local repository="$1"
+            local workflow="$2"
+            local workflow_file="$guard_tmp/workflow-$workflow.json"
+            [[ "$workflow" =~ ^[A-Za-z0-9._-]+[.]yml$ ]]
+            fetch_github_json               "$GITHUB_API_URL/repos/$repository/contents/.github/workflows/$workflow?ref=main"               "$workflow_file"
+            jq -e               'type == "object" and .type == "file" and
+               (.sha | type == "string" and test("^[0-9a-f]{40}$"))'               "$workflow_file" > /dev/null
+          }
+
+          assert_no_active_production_runs() {
+            local role="$1"
+            local repository="$2"
+            local run_status page runs_file run_count total_count expected_pages scanned_count
+            for run_status in queued in_progress; do
+              page=1
+              total_count=-1
+              expected_pages=1
+              scanned_count=0
+              while [ "$page" -le "$expected_pages" ]; do
+                runs_file="$guard_tmp/$role-$run_status-$page.json"
+                fetch_github_json                   "$GITHUB_API_URL/repos/$repository/actions/runs?status=$run_status&per_page=100&page=$page"                   "$runs_file"
+                jq -e                   --argjson expected_total "$total_count"                   --arg current_run_id "$GITHUB_RUN_ID"                   --arg role "$role"                   'type == "object" and
+                   (.total_count | type == "number" and . >= 0 and floor == .) and
+                   ($expected_total == -1 or .total_count == $expected_total) and
+                   (.workflow_runs | type == "array") and
+                   ([.workflow_runs[] | select(
+                     (.id | tostring) != $current_run_id and
+                     (if $role == "backend" then
+                        (.path == ".github/workflows/deploy.yml" and
+                         (.display_title | test(" to prod(?:[[:space:]]|$)")))
+                      else
+                        (.path == ".github/workflows/build-upload-deploy-prod.yml" or
+                          .path == ".github/workflows/release-bus-deploy-production.yml" or
+                          .path == ".github/workflows/production-e2e.yml")
+                      end)
+                   )] | length == 0)'                   "$runs_file" > /dev/null
+                if [ "$total_count" -eq -1 ]; then
+                  total_count="$(jq -r '.total_count' "$runs_file")"
+                  test "$total_count" -le 1000
+                  expected_pages=$(((total_count + 99) / 100))
+                  if [ "$expected_pages" -eq 0 ]; then
+                    expected_pages=1
+                  fi
+                fi
+                run_count="$(jq -r '.workflow_runs | length' "$runs_file")"
+                scanned_count=$((scanned_count + run_count))
+                page=$((page + 1))
+              done
+              test "$scanned_count" -eq "$total_count"
+            done
+          }
+
+          assert_workflow_exists "$GITHUB_REPOSITORY" deploy.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" build-upload-deploy-prod.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" release-bus-deploy-production.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" production-e2e.yml
+
+          # The workflow-level deploy-control-prod-manual concurrency group
+          # serializes every backend manual production service. With the
+          # PRODUCTION lane OFF, no Release Bus train can claim production.
+          # Frontend production workflows reject while this backend run is
+          # active; this guard rejects any frontend production run already active.
+          assert_no_active_production_runs backend "$GITHUB_REPOSITORY"
+          assert_no_active_production_runs frontend "$GITHUB_REPOSITORY_OWNER/6529seize-frontend"
+          EMERGENCY_API_BOOTSTRAP_GUARD
+              chmod 700 "$emergency_guard"
+              "$emergency_guard"
+              emergency_compatibility_fallback=true
+            else
+              if [ -n "$rejection_reason" ]; then
+                echo "::error::Deployment authorization was rejected with HTTP $http_status: $rejection_reason"
+              else
+                echo "::error::Deployment authorization was rejected with HTTP $http_status"
+              fi
+              exit 1
+            fi
+          fi
+          if [ "$http_status" = 200 ] && [ -n "$INPUT_OPERATION_KEY" ]; then
+            jq -e               --arg train_id "$INPUT_TRAIN_ID"               --arg operation_key "$INPUT_OPERATION_KEY"               '.authorized == true and .train_id == $train_id and
+               .operation_key == $operation_key'               "$response_file" > /dev/null
+          elif [ "$http_status" = 200 ]; then
+            jq -e               --arg repository backend               --arg environment "$INPUT_ENVIRONMENT"               --arg lane "$expected_lane"               --arg service "$INPUT_SERVICE"               --arg workflow_run_id "$GITHUB_RUN_ID"               --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT"               --arg source_ref "$GITHUB_REF_NAME"               --arg source_sha "$GITHUB_SHA"               '.ready == true and .mode == "manual" and .lane == $lane and
+               .repository == $repository and .environment == $environment and
+               .service == $service and .workflow_run_id == $workflow_run_id and
+               .workflow_run_attempt == $workflow_run_attempt and
+               .source_ref == $source_ref and .source_sha == $source_sha'               "$response_file" > /dev/null
+          fi
+          echo "emergency_compatibility_fallback=$emergency_compatibility_fallback" >> "$GITHUB_OUTPUT"
+          if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]; then
+            audit_record="$(jq -cn               --arg actor "$GITHUB_ACTOR"               --arg authorization_mode "$([ "$emergency_compatibility_fallback" = true ] && printf legacy-identity-compatibility || printf normal-server-authorization)"               --arg reason "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON"               --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"               --arg sha "$GITHUB_SHA"               '{schema_version:1,event:"EMERGENCY_API_BOOTSTRAP_AUTHORIZED",
+                actor:$actor,sha:$sha,reason:$reason,
+                authorization_mode:$authorization_mode,run_url:$run_url}')"
+            {
+              echo "### Emergency API bootstrap authorization"
+              echo
+              echo '```json'
+              echo "$audit_record"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Validate Release Bus GitHub App configuration
         if: github.event.inputs.service == 'releaseBus'
@@ -220,14 +545,10 @@ jobs:
           RELEASE_BUS_GITHUB_PRIVATE_KEY: ${{ secrets.RELEASE_BUS_GITHUB_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
           [[ "$RELEASE_BUS_V2_MODE" =~ ^(OFF|STAGING|PRODUCTION)$ ]]
           if [ -n "$RELEASE_BUS_V2_BETA_ALLOWLIST" ]; then
             jq -e 'type == "array" and length > 0' <<< "$RELEASE_BUS_V2_BETA_ALLOWLIST" > /dev/null
           fi
-          [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE" =~ ^(false|true)$ ]]
-          [[ "$RELEASE_BUS_BASE_EVIDENCE_REUSE_SHADOW" =~ ^(false|true)$ ]]
-          [[ "$RELEASE_BUS_BASE_EVIDENCE_MAX_AGE_HOURS" =~ ^([1-9]|[1-9][0-9]|1[0-5][0-9]|16[0-8])$ ]]
           [[ "$RELEASE_BUS_GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]]
           test -n "$RELEASE_BUS_GITHUB_PRIVATE_KEY"
       - name: Validate Release Bus API configuration
@@ -240,7 +561,6 @@ jobs:
           RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_BUS_MODE" =~ ^(OFF|SHADOW|STAGING|PRODUCTION)$ ]]
           [[ "$RELEASE_BUS_V2_MODE" =~ ^(OFF|STAGING|PRODUCTION)$ ]]
           if [ -n "$RELEASE_BUS_V2_BETA_ALLOWLIST" ]; then
             jq -e 'type == "array" and length > 0' <<< "$RELEASE_BUS_V2_BETA_ALLOWLIST" > /dev/null
@@ -303,53 +623,32 @@ jobs:
               exit 1
               ;;
           esac
-      - name: Authorize operator break glass
-        if: github.event.inputs.operation_key == '' && vars.RELEASE_BUS_ENFORCEMENT == 'true'
-        shell: bash
-        env:
-          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
-          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
-          INPUT_BREAK_GLASS_REASON: ${{ github.event.inputs.break_glass_reason }}
-          INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
-        run: |
-          set -euo pipefail
-          test -n "$RELEASE_BUS_API_URL"
-          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
-          test -n "$INPUT_BREAK_GLASS_REASON" || {
-            echo 'A break-glass reason is required while Release Bus enforcement is enabled.' >&2
-            exit 1
-          }
-          expected_sha="${INPUT_EXPECTED_SHA:-$GITHUB_SHA}"
-          [[ "$expected_sha" =~ ^[a-f0-9]{40}$ ]]
-          payload="$(jq -n             --arg workflow_run_id "$GITHUB_RUN_ID"             --arg repository backend             --arg environment "$INPUT_ENVIRONMENT"             --arg service "$INPUT_SERVICE"             --arg expected_sha "$expected_sha"             --arg reason "$INPUT_BREAK_GLASS_REASON"             '{workflow_run_id:$workflow_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,reason:$reason}')"
-          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN"             -H 'Content-Type: application/json'             --data "$payload"             "$RELEASE_BUS_API_URL/deploy/release-bus/authorize-break-glass"
-      - name: Authorize immutable Release Bus operation
-        if: github.event.inputs.operation_key != ''
-        shell: bash
-        env:
-          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
-          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$RELEASE_BUS_API_URL"
-          test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
-          payload="$(jq -n             --arg train_id "$INPUT_TRAIN_ID"             --arg operation_key "$INPUT_OPERATION_KEY"             --arg workflow_run_id "$GITHUB_RUN_ID"             --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID"             --arg repository backend             --arg environment "$INPUT_ENVIRONMENT"             --arg service "$INPUT_SERVICE"             --arg expected_sha "$INPUT_EXPECTED_SHA"             --arg artifact_digest "$INPUT_ARTIFACT_DIGEST"             '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:$artifact_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,artifact_digest:$artifact_digest}')"
-          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN"             -H 'Content-Type: application/json'             --data "$payload"             "$RELEASE_BUS_API_URL/deploy/release-bus-v2/authorize"
-      - name: Extract branch name
-        shell: bash
-        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> "$GITHUB_OUTPUT"
-        id: extract_branch
       - name: Checkout
         id: source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          ref: ${{ github.event.inputs.expected_sha || steps.extract_branch.outputs.branch }}
+          ref: ${{ github.event.inputs.operation_key != '' && github.event.inputs.expected_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_OPERATION_KEY" ]; then
+            expected_source_sha="$INPUT_EXPECTED_SHA"
+          else
+            expected_source_sha="$GITHUB_SHA"
+          fi
+          [[ "$expected_source_sha" =~ ^[a-f0-9]{40}$ ]]
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$expected_source_sha" ]; then
+            echo "Expected $expected_source_sha, checked out $actual_sha" >&2
+            exit 1
+          fi
       - name: Install Node.js with cached deploy-tool downloads
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '22.17.1'
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Activate pinned npm
@@ -370,17 +669,6 @@ jobs:
           repositories: |
             6529seize-backend
             6529seize-frontend
-      - name: Verify immutable source
-        if: github.event.inputs.operation_key != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
-          actual_sha="$(git rev-parse HEAD)"
-          if [ "$actual_sha" != "$INPUT_EXPECTED_SHA" ]; then
-            echo "Expected $INPUT_EXPECTED_SHA, checked out $actual_sha" >&2
-            exit 1
-          fi
       - name: Download immutable preflight artifact
         if: github.event.inputs.operation_key != ''
         id: artifact_download
@@ -402,18 +690,42 @@ jobs:
           artifact_train_id="${INPUT_ARTIFACT_TRAIN_ID:-$INPUT_TRAIN_ID}"
           [[ "$artifact_train_id" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
           cd release-bus-artifact
-          jq -e             --arg train_id "$artifact_train_id"             --arg source_sha "$INPUT_EXPECTED_SHA"             --arg service "$INPUT_SERVICE"             '.train_id == $train_id and .source_sha == $source_sha and (.units | index($service)) != null'             manifest.json >/dev/null
           sha256sum -c SHA256SUMS
           artifact_digest="$(sha256sum SHA256SUMS | cut -d' ' -f1)"
           test "$artifact_digest" = "$INPUT_ARTIFACT_DIGEST"
           package_digest="$(sha256sum "packages/$INPUT_SERVICE/index.zip" | cut -d' ' -f1)"
+          if [ "$INPUT_ARTIFACT_CONTRACT_VERSION" = environment-bound-v3 ]; then
+            case "$INPUT_ENVIRONMENT" in
+              staging) expected_artifact_environment=staging ;;
+              prod) expected_artifact_environment=production ;;
+              *) exit 1 ;;
+            esac
+            jq -e               --arg train_id "$artifact_train_id"               --arg source_sha "$INPUT_EXPECTED_SHA"               --arg service "$INPUT_SERVICE"               --arg environment "$expected_artifact_environment"               --arg package_digest "$package_digest"               '.schema_version == 3 and
+               .artifact_contract == "environment-bound-v1" and
+               .artifact_contract_version == "environment-bound-v3" and
+               .repository == "backend" and
+               .train_id == $train_id and
+               .source_sha == $source_sha and
+               .environment == $environment and
+               .source_evidence_reused == true and
+               .artifact_bytes_reused == false and
+               (.units | index($service)) != null and
+               .packages[$service].sha256 == $package_digest'               manifest.json >/dev/null
+          else
+            jq -e               --arg train_id "$artifact_train_id"               --arg source_sha "$INPUT_EXPECTED_SHA"               --arg service "$INPUT_SERVICE"               '.schema_version == 2 and
+               .repository == "backend" and
+               .train_id == $train_id and
+               .source_sha == $source_sha and
+               ((.environment // "portable") == "portable") and
+               (.units | index($service)) != null'               manifest.json >/dev/null
+          fi
           echo "artifact_digest=$artifact_digest" >> "$GITHUB_OUTPUT"
           echo "package_digest=$package_digest" >> "$GITHUB_OUTPUT"
       - name: Install root dependencies for manual build
         if: github.event.inputs.operation_key == ''
         run: npm i
       - name: Install frozen root deploy tooling
-        if: github.event.inputs.operation_key != ''
+        if: github.event.inputs.operation_key != '' && (github.event.inputs.service == 'aggregatedActivityLoop' || github.event.inputs.service == 'attachmentsOrchestrator' || github.event.inputs.service == 'attachmentsProcessor' || github.event.inputs.service == 'artCurationNftWatchLoop' || github.event.inputs.service == 'cloudwatchAlarmsToDiscordLoop' || github.event.inputs.service == 'claimsBuilder' || github.event.inputs.service == 'claimsMediaArweaveUploader' || github.event.inputs.service == 'customReplayLoop' || github.event.inputs.service == 'dbDumpsDaily' || github.event.inputs.service == 'dbMigrationsLoop' || github.event.inputs.service == 'delegationsLoop' || github.event.inputs.service == 'discoverEnsLoop' || github.event.inputs.service == 'dropMediaIngestStorage' || github.event.inputs.service == 'dropMediaSanitizer' || github.event.inputs.service == 'dropVideoConversionInvokerLoop' || github.event.inputs.service == 'ethPriceLoop' || github.event.inputs.service == 'externalCollectionLiveTailingLoop' || github.event.inputs.service == 'externalCollectionSnapshottingLoop' || github.event.inputs.service == 'helpBotReplyLoop' || github.event.inputs.service == 'marketStatsLoop' || github.event.inputs.service == 'mintAnnouncementsLoop' || github.event.inputs.service == 'nextgenContractLoop' || github.event.inputs.service == 'nextgenMediaImageResolutions' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMetadataLoop' || github.event.inputs.service == 'nftHistoryLoop' || github.event.inputs.service == 'nftLinkRefresherLoop' || github.event.inputs.service == 'nftLinkMediaPreviewLoop' || github.event.inputs.service == 'nftOwnersLoop' || github.event.inputs.service == 'nftsLoop' || github.event.inputs.service == 'overRatesRevocationLoop' || github.event.inputs.service == 'ownersBalancesLoop' || github.event.inputs.service == 'populateHistoricConsolidatedTdh' || github.event.inputs.service == 'pushNotificationsHandler' || github.event.inputs.service == 'rateEventProcessingLoop' || github.event.inputs.service == 'releaseBus' || github.event.inputs.service == 'releaseNotesGenerationLoop' || github.event.inputs.service == 'refreshEnsLoop' || github.event.inputs.service == 'rememesLoop' || github.event.inputs.service == 'royaltiesLoop' || github.event.inputs.service == 's3Uploader' || github.event.inputs.service == 'subscriptionsDaily' || github.event.inputs.service == 'subscriptionsTopUpLoop' || github.event.inputs.service == 'xTdhGrantsReviewerLoop' || github.event.inputs.service == 'tdhHistoryLoop' || github.event.inputs.service == 'tdhLoop' || github.event.inputs.service == 'teamLoop' || github.event.inputs.service == 'transactionsLoop' || github.event.inputs.service == 'transactionsProcessingLoop' || github.event.inputs.service == 'waveDecisionExecutionLoop' || github.event.inputs.service == 'waveLeaderboardSnapshotterLoop' || github.event.inputs.service == 'waveDropMetricsRefreshLoop' || github.event.inputs.service == 'waveScoreRefreshLoop' || github.event.inputs.service == 'xTdhLoop')
         run: npm ci
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api' && github.event.inputs.operation_key == ''
@@ -441,6 +753,20 @@ jobs:
           rm -rf "$destination"
           mkdir -p "$destination"
           cp "release-bus-artifact/packages/$INPUT_SERVICE/index.zip" "$destination/index.zip"
+      - name: Revalidate emergency API bootstrap immediately before cloud credentials
+        if: steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
+        shell: bash
+        env:
+          RELEASE_BUS_API_URL: ${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: ${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"
+          {
+            echo
+            echo "Emergency compatibility readiness revalidated immediately before cloud credentials."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Configure AWS credentials
         id: aws_credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
@@ -562,7 +888,6 @@ jobs:
         env:
           RELEASE_BUS_GITHUB_APP_ID: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
           RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}
-          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
           RELEASE_BUS_V2_MODE: ${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
           RELEASE_BUS_V2_BETA_ALLOWLIST: ${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
         run: |
@@ -576,7 +901,6 @@ jobs:
         env:
           RELEASE_BUS_GITHUB_APP_ID: ${{ vars.RELEASE_BUS_GITHUB_APP_ID }}
           RELEASE_BUS_GITHUB_INSTALLATION_ID: ${{ steps.release_bus_app.outputs.installation-id }}
-          RELEASE_BUS_MODE: ${{ vars.RELEASE_BUS_MODE || 'OFF' }}
           RELEASE_BUS_V2_MODE: ${{ vars.RELEASE_BUS_V2_MODE || 'OFF' }}
           RELEASE_BUS_V2_BETA_ALLOWLIST: ${{ vars.RELEASE_BUS_V2_BETA_ALLOWLIST || '' }}
         run: |
@@ -597,9 +921,9 @@ jobs:
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
           jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
           if [ "${{ github.event.inputs.environment }}" = prod ]; then
-            jq --arg mode "$RELEASE_BUS_MODE" --arg v2Mode "$RELEASE_BUS_V2_MODE" --arg v2BetaAllowlist "$RELEASE_BUS_V2_BETA_ALLOWLIST" --arg appId "$RELEASE_BUS_GITHUB_APP_ID" --arg installationId "$RELEASE_BUS_GITHUB_INSTALLATION_ID" '. + {RELEASE_BUS_MODE: $mode, RELEASE_BUS_V2_MODE: $v2Mode, RELEASE_BUS_V2_BETA_ALLOWLIST: $v2BetaAllowlist, RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId} | del(.RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+            jq --arg v2Mode "$RELEASE_BUS_V2_MODE" --arg v2BetaAllowlist "$RELEASE_BUS_V2_BETA_ALLOWLIST" --arg appId "$RELEASE_BUS_GITHUB_APP_ID" --arg installationId "$RELEASE_BUS_GITHUB_INSTALLATION_ID" '. + {RELEASE_BUS_V2_MODE: $v2Mode, RELEASE_BUS_V2_BETA_ALLOWLIST: $v2BetaAllowlist, RELEASE_BUS_GITHUB_APP_ID: $appId, RELEASE_BUS_GITHUB_INSTALLATION_ID: $installationId} | del(.RELEASE_BUS_MODE, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           else
-            jq '. + {RELEASE_BUS_MODE: "OFF", RELEASE_BUS_V2_MODE: "OFF"} | del(.RELEASE_BUS_V2_BETA_ALLOWLIST, .RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
+            jq '. + {RELEASE_BUS_V2_MODE: "OFF"} | del(.RELEASE_BUS_MODE, .RELEASE_BUS_V2_BETA_ALLOWLIST, .RELEASE_BUS_GITHUB_APP_ID, .RELEASE_BUS_GITHUB_INSTALLATION_ID, .RELEASE_BUS_WORKFLOW_AUTH_TOKEN, .RELEASE_BUS_GITHUB_WEBHOOK_SECRET)' /tmp/app_env.json > /tmp/runtime_env.json
           fi
           jq '{Variables: .}' /tmp/runtime_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
@@ -638,7 +962,7 @@ jobs:
         if: github.event.inputs.operation_key != ''
         shell: bash
         env:
-          VERIFICATION_TARGETS_BY_SERVICE: '{"api":["seizeAPI"],"aggregatedActivityLoop":["aggregatedActivityLoop"],"attachmentsOrchestrator":["attachmentsOrchestrator"],"attachmentsProcessor":["attachmentsProcessor"],"artCurationNftWatchLoop":["artCurationNftWatchLoop"],"cloudwatchAlarmsToDiscordLoop":["cloudwatchAlarmsToDiscordLoop"],"claimsBuilder":["claimsBuilder"],"claimsMediaArweaveUploader":["claimsMediaArweaveUploader"],"customReplayLoop":["customReplayLoop"],"dbDumpsDaily":["dbDumpsDaily"],"dbMigrationsLoop":["dbMigrationsLoop"],"delegationsLoop":["delegationsLoop"],"discoverEnsLoop":["discoverEnsLoop"],"dropMediaIngestStorage":[],"dropMediaSanitizer":["dropMediaSanitizer"],"dropVideoConversionInvokerLoop":["dropVideoConversionInvokerLoop"],"ethPriceLoop":["ethPriceLoop"],"externalCollectionLiveTailingLoop":["externalCollectionLiveTailingLoop"],"externalCollectionSnapshottingLoop":["externalCollectionSnapshottingLoop"],"helpBotReplyLoop":["helpBotReplyLoop"],"marketStatsLoop":["marketStatsMEMES","marketStatsLAB","marketStatsGRADIENT","marketStatsNEXTGEN"],"mediaResizerLoop":["mediaResizerLoop"],"mintAnnouncementsLoop":["mintAnnouncementsLoop"],"nextgenContractLoop":["nextgenContractLoop"],"nextgenMediaImageResolutions":["nextgenMediaImageResolutions"],"nextgenMediaProxyInterceptor":["nextgenMediaProxyInterceptor"],"nextgenMediaUploader":["nextgenMediaUploader"],"nextgenMetadataLoop":["nextgenMetadataLoop"],"nftHistoryLoop":["nftHistoryLoop"],"nftLinkRefresherLoop":["nftLinkRefresherLoop"],"nftLinkMediaPreviewLoop":["nftLinkMediaPreviewLoop"],"nftOwnersLoop":["nftOwnersLoop"],"nftsLoop":["nftsLoop"],"overRatesRevocationLoop":["overRatesRevocationLoop"],"ownersBalancesLoop":["ownersBalancesLoop"],"populateHistoricConsolidatedTdh":["populateHistoricConsolidatedTdh"],"pushNotificationsHandler":["pushNotificationsHandler"],"rateEventProcessingLoop":["rateEventProcessingLoop"],"releaseBus":["releaseBusStarter","releaseBusWorker","releaseBusCleaner","releaseBusV2Reconciler"],"releaseNotesGenerationLoop":["releaseNotesGenerationLoop"],"refreshEnsLoop":["refreshENS"],"rememesLoop":["rememesS3Loop","rememesRefreshMetadataLoop","rememesFileLoop"],"royaltiesLoop":["royaltiesLoop"],"s3Uploader":["s3Uploader"],"subscriptionsDaily":["subscriptionsDaily"],"subscriptionsTopUpLoop":["subscriptionsTopUpLoop"],"xTdhGrantsReviewerLoop":["xTdhGrantsReviewerLoop"],"tdhHistoryLoop":["tdhHistoryLoop"],"tdhLoop":["tdhLoop"],"teamLoop":["teamLoop"],"transactionsLoop":["memesTransactionsLoop","gradientsTransactionsLoop","memeLabTransactionsLoop"],"transactionsProcessingLoop":["transactionsProcessingLoop"],"waveDecisionExecutionLoop":["waveDecisionExecutionLoop"],"waveLeaderboardSnapshotterLoop":["waveLeaderboardSnapshotterLoop"],"waveDropMetricsRefreshLoop":["waveDropMetricsRefreshLoop"],"waveScoreRefreshLoop":["waveScoreRefreshLoop"],"xTdhLoop":["xTdhLoop"]}'
+          VERIFICATION_TARGETS_BY_SERVICE: '{"api":["seizeAPI"],"aggregatedActivityLoop":["aggregatedActivityLoop"],"attachmentsOrchestrator":["attachmentsOrchestrator"],"attachmentsProcessor":["attachmentsProcessor"],"artCurationNftWatchLoop":["artCurationNftWatchLoop"],"cloudwatchAlarmsToDiscordLoop":["cloudwatchAlarmsToDiscordLoop"],"claimsBuilder":["claimsBuilder"],"claimsMediaArweaveUploader":["claimsMediaArweaveUploader"],"customReplayLoop":["customReplayLoop"],"dbDumpsDaily":["dbDumpsDaily"],"dbMigrationsLoop":["dbMigrationsLoop"],"delegationsLoop":["delegationsLoop"],"discoverEnsLoop":["discoverEnsLoop"],"dropMediaIngestStorage":[],"dropMediaSanitizer":["dropMediaSanitizer"],"dropVideoConversionInvokerLoop":["dropVideoConversionInvokerLoop"],"ethPriceLoop":["ethPriceLoop"],"externalCollectionLiveTailingLoop":["externalCollectionLiveTailingLoop"],"externalCollectionSnapshottingLoop":["externalCollectionSnapshottingLoop"],"helpBotReplyLoop":["helpBotReplyLoop"],"marketStatsLoop":["marketStatsMEMES","marketStatsLAB","marketStatsGRADIENT","marketStatsNEXTGEN"],"mediaResizerLoop":["mediaResizerLoop"],"mintAnnouncementsLoop":["mintAnnouncementsLoop"],"nextgenContractLoop":["nextgenContractLoop"],"nextgenMediaImageResolutions":["nextgenMediaImageResolutions"],"nextgenMediaProxyInterceptor":["nextgenMediaProxyInterceptor"],"nextgenMediaUploader":["nextgenMediaUploader"],"nextgenMetadataLoop":["nextgenMetadataLoop"],"nftHistoryLoop":["nftHistoryLoop"],"nftLinkRefresherLoop":["nftLinkRefresherLoop"],"nftLinkMediaPreviewLoop":["nftLinkMediaPreviewLoop"],"nftOwnersLoop":["nftOwnersLoop"],"nftsLoop":["nftsLoop"],"overRatesRevocationLoop":["overRatesRevocationLoop"],"ownersBalancesLoop":["ownersBalancesLoop"],"populateHistoricConsolidatedTdh":["populateHistoricConsolidatedTdh"],"pushNotificationsHandler":["pushNotificationsHandler"],"rateEventProcessingLoop":["rateEventProcessingLoop"],"releaseBus":["releaseBusCleaner","releaseBusV2Reconciler"],"releaseNotesGenerationLoop":["releaseNotesGenerationLoop"],"refreshEnsLoop":["refreshENS"],"rememesLoop":["rememesS3Loop","rememesRefreshMetadataLoop","rememesFileLoop"],"royaltiesLoop":["royaltiesLoop"],"s3Uploader":["s3Uploader"],"subscriptionsDaily":["subscriptionsDaily","subscriptionCoverageReconciliationLoop"],"subscriptionsTopUpLoop":["subscriptionsTopUpLoop"],"xTdhGrantsReviewerLoop":["xTdhGrantsReviewerLoop"],"tdhHistoryLoop":["tdhHistoryLoop"],"tdhLoop":["tdhLoop"],"teamLoop":["teamLoop"],"transactionsLoop":["memesTransactionsLoop","gradientsTransactionsLoop","memeLabTransactionsLoop"],"transactionsProcessingLoop":["transactionsProcessingLoop"],"waveDecisionExecutionLoop":["waveDecisionExecutionLoop"],"waveLeaderboardSnapshotterLoop":["waveLeaderboardSnapshotterLoop"],"waveDropMetricsRefreshLoop":["waveDropMetricsRefreshLoop"],"waveScoreRefreshLoop":["waveScoreRefreshLoop"],"xTdhLoop":["xTdhLoop"]}'
         run: |
           set -euo pipefail
           [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseBus|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop)$ ]]
@@ -710,6 +1034,7 @@ jobs:
           DOWNLOAD_OUTCOME: ${{ steps.artifact_download.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.release_bus_artifact.outcome }}
           AWS_OUTCOME: ${{ steps.aws_credentials.outcome }}
+          PACKAGE_DIGEST: ${{ steps.release_bus_artifact.outputs.package_digest }}
         run: |
           set -euo pipefail
           status=SUCCEEDED
@@ -730,7 +1055,55 @@ jobs:
               failure_phase=deployment_identity_or_credentials
             fi
           fi
-          payload="$(jq -n --arg train_id "$INPUT_TRAIN_ID" --arg operation_key "$INPUT_OPERATION_KEY" --arg workflow_run_id "$GITHUB_RUN_ID" --arg status "$status" --arg failure_class "$failure_class" --arg failure_phase "$failure_phase" --argjson retryable "$retryable" '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,phase:"complete",status:$status,failure_class:(if $failure_class == "null" then null else $failure_class end),failure_phase:(if $failure_phase == "null" then null else $failure_phase end),retryable:$retryable,summary:null,stages:[],jest:null,backend_evidence:null}')"
+          artifact_train_id="${INPUT_ARTIFACT_TRAIN_ID:-$INPUT_TRAIN_ID}"
+          payload="$(jq -n             --arg train_id "$INPUT_TRAIN_ID"             --arg operation_key "$INPUT_OPERATION_KEY"             --arg workflow_run_id "$GITHUB_RUN_ID"             --arg status "$status"             --arg failure_class "$failure_class"             --arg failure_phase "$failure_phase"             --argjson retryable "$retryable"             --arg artifact_digest "$INPUT_ARTIFACT_DIGEST"             --arg artifact_contract_version "$INPUT_ARTIFACT_CONTRACT_VERSION"             --arg artifact_environment "$INPUT_ARTIFACT_ENVIRONMENT"             --arg deployment_environment "$INPUT_ENVIRONMENT"             --arg artifact_run_id "$INPUT_ARTIFACT_RUN_ID"             --arg artifact_train_id "$artifact_train_id"             --arg repository backend             --arg source_sha "$INPUT_EXPECTED_SHA"             --arg service "$INPUT_SERVICE"             --arg package_digest "$PACKAGE_DIGEST"             '{
+              train_id:$train_id,
+              operation_key:$operation_key,
+              workflow_run_id:$workflow_run_id,
+              phase:"complete",
+              status:$status,
+              failure_class:(if $failure_class == "null" then null else $failure_class end),
+              failure_phase:(if $failure_phase == "null" then null else $failure_phase end),
+              retryable:$retryable,
+              summary:(
+                if $status != "SUCCEEDED" then null
+                elif $artifact_contract_version == "environment-bound-v3" then {
+                  schema_version:3,
+                  artifact_contract:"environment-bound-v1",
+                  artifact_contract_version:$artifact_contract_version,
+                  repository:$repository,
+                  source_sha:$source_sha,
+                  environment:$artifact_environment,
+                  service:$service,
+                  artifact_run_id:$artifact_run_id,
+                  artifact_train_id:$artifact_train_id,
+                  artifact_digest:$artifact_digest,
+                  package_digest:$package_digest,
+                  consumed_preflight_artifact:true,
+                  rebuilt:false
+                }
+                else {
+                  schema_version:2,
+                  artifact_contract:"legacy-v2",
+                  artifact_contract_version:"legacy-v2",
+                  repository:$repository,
+                  source_sha:$source_sha,
+                  environment:"portable",
+                  deployment_environment:$deployment_environment,
+                  service:$service,
+                  artifact_run_id:$artifact_run_id,
+                  artifact_train_id:$artifact_train_id,
+                  artifact_digest:$artifact_digest,
+                  package_digest:$package_digest,
+                  consumed_preflight_artifact:true,
+                  rebuilt:false
+                }
+                end
+              ),
+              stages:[],
+              jest:null,
+              backend_evidence:null
+            }')"
           curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN"             -H 'Content-Type: application/json'             --data "$payload"             "$RELEASE_BUS_API_URL/deploy/release-bus-v2/report-progress"
       - name: Checkout CI wave notifier after early failure
         if: failure() && hashFiles('scripts/notify-ci-wave.mjs') == ''
@@ -741,7 +1114,7 @@ jobs:
           sparse-checkout: scripts/notify-ci-wave.mjs
           sparse-checkout-cone-mode: false
       - name: Notify about failure
-        uses: sarisia/actions-status-discord@v1
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708 # v1
         if: failure()
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
@@ -762,10 +1135,13 @@ jobs:
           CI_PIPELINES_TITLE: Seize-Lambda ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
           CI_PIPELINES_ENVIRONMENT: ${{ github.event.inputs.environment }}
           CI_PIPELINES_SERVICE: ${{ github.event.inputs.service }}
+          CI_PIPELINES_SHA: ${{ github.event.inputs.expected_sha || github.sha }}
+          CI_RELEASE_TRAIN_ID: ${{ github.event.inputs.release_train_id }}
+          CI_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}
         run: node scripts/notify-ci-wave.mjs
 
       - name: Notify about success
-        uses: sarisia/actions-status-discord@v1
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708 # v1
         if: success()
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
@@ -785,6 +1161,9 @@ jobs:
           CI_PIPELINES_TITLE: Seize-Lambda ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline complete
           CI_PIPELINES_ENVIRONMENT: ${{ github.event.inputs.environment }}
           CI_PIPELINES_SERVICE: ${{ github.event.inputs.service }}
+          CI_PIPELINES_SHA: ${{ github.event.inputs.expected_sha || github.sha }}
+          CI_RELEASE_TRAIN_ID: ${{ github.event.inputs.release_train_id }}
+          CI_RELEASE_CONTRIBUTORS: ${{ github.event.inputs.release_contributors }}
           CI_RELEASE_NOTES_PROMPT_PATH: ops/release-notes/release-notes.prompt.md
           CI_RELEASE_PULL_REQUEST: ${{ github.event.inputs.release_pull_request }}
           CI_RELEASE_NOTE_PUBLISH: ${{ github.event.inputs.release_note_publish }}

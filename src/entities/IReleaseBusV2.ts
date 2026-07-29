@@ -7,6 +7,7 @@ import {
   RELEASE_BUS_V2_LOCKS_TABLE,
   RELEASE_BUS_V2_MANIFESTS_TABLE,
   RELEASE_BUS_V2_OPERATIONS_TABLE,
+  RELEASE_BUS_V2_STAGING_STATE_TABLE,
   RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE,
   RELEASE_BUS_V2_TRAINS_TABLE
 } from '@/constants';
@@ -18,7 +19,11 @@ import type {
   ReleaseBusV2Lane,
   ReleaseBusV2ManifestStatus,
   ReleaseBusV2OperationStatus,
+  ReleaseBusV2ProductionQualificationPolicy,
   ReleaseBusV2Repository,
+  ReleaseBusV2StagingLiveState,
+  ReleaseBusV2StagingPolicy,
+  ReleaseBusV2StagingStateStatus,
   ReleaseBusV2TrainStatus
 } from '@/releaseBusV2/release-bus-v2.types';
 
@@ -40,6 +45,10 @@ import type {
   'pr_number',
   'updated_at'
 ])
+@Index('idx_release_bus_v2_candidate_selection', [
+  'production_selection_id',
+  'status'
+])
 export class ReleaseBusV2CandidateEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 }) readonly id!: string;
   @Column({ type: 'varchar', length: 16 })
@@ -58,10 +67,28 @@ export class ReleaseBusV2CandidateEntity {
   readonly staging_validated_train_id!: string | null;
   @Column({ type: 'varchar', length: 36, nullable: true, default: null })
   readonly staging_validated_manifest_id!: string | null;
+  @Column({ type: 'varchar', length: 32, default: 'NOT_LIVE' })
+  readonly staging_live_state!: ReleaseBusV2StagingLiveState;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly staging_live_manifest_id!: string | null;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly staging_admitted_at!: number | null;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly staging_live_updated_at!: number | null;
+  @Column({ type: 'varchar', length: 32, nullable: true, default: null })
+  readonly staging_transition_request!: 'REMOVE' | 'ABSORB' | null;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly staging_transition_requested_at!: number | null;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly staging_transition_requested_by!: string | null;
+  @Column({ type: 'varchar', length: 1000, nullable: true, default: null })
+  readonly staging_transition_reason!: string | null;
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly production_requested_at!: number | null;
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly production_requested_by!: string | null;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly production_selection_id!: string | null;
   @Column({ type: 'varchar', length: 1000, nullable: true, default: null })
   readonly hold_reason!: string | null;
   @Column({ type: 'bigint', nullable: true, default: null })
@@ -118,6 +145,16 @@ export class ReleaseBusV2TrainEntity {
   readonly qualification_identity_sha256!: string | null;
   @Column({ type: 'varchar', length: 36, nullable: true, default: null })
   readonly qualification_train_id!: string | null;
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  readonly staging_policy!: ReleaseBusV2StagingPolicy | null;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly staging_baseline_manifest_id!: string | null;
+  @Column({ type: 'json', nullable: true })
+  readonly staging_transition_json!: unknown;
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  readonly qualification_policy!: ReleaseBusV2ProductionQualificationPolicy | null;
+  @Column({ type: 'json', nullable: true })
+  readonly qualification_evidence_json!: unknown;
   @Column({ type: 'varchar', length: 32, nullable: true, default: null })
   readonly failure_class!: ReleaseBusV2FailureClass | null;
   @Column({ type: 'varchar', length: 2000, nullable: true, default: null })
@@ -144,6 +181,8 @@ export class ReleaseBusV2TrainCandidateEntity {
   @Column({ type: 'int' }) readonly sequence!: number;
   @Column({ type: 'varchar', length: 32, default: 'INCLUDED' })
   readonly disposition!: string;
+  @Column({ type: 'varchar', length: 32, default: 'NEW' })
+  readonly candidate_role!: string;
   @Column({ type: 'bigint' }) readonly created_at!: number;
 }
 
@@ -215,7 +254,7 @@ export class ReleaseBusV2ManifestEntity {
   @Column({ type: 'varchar', length: 36 }) readonly train_id!: string;
   @Column({ type: 'varchar', length: 32 }) readonly lane!: ReleaseBusV2Lane;
   @Column({ type: 'char', length: 64 }) readonly identity_sha256!: string;
-  @Column({ type: 'varchar', length: 32 })
+  @Column({ type: 'varchar', length: 48 })
   readonly status!: ReleaseBusV2ManifestStatus;
   @Column({ type: 'char', length: 40, nullable: true, default: null })
   readonly frontend_sha!: string | null;
@@ -266,4 +305,28 @@ export class ReleaseBusV2EventEntity {
   readonly github_actor!: string | null;
   @Column({ type: 'json', nullable: true }) readonly payload_json!: unknown;
   @Column({ type: 'bigint' }) readonly created_at!: number;
+}
+
+@Entity(RELEASE_BUS_V2_STAGING_STATE_TABLE)
+export class ReleaseBusV2StagingStateEntity {
+  @PrimaryColumn({ type: 'varchar', length: 16 }) readonly id!: 'current';
+  @Column({ type: 'varchar', length: 32 })
+  readonly status!: ReleaseBusV2StagingStateStatus;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly current_manifest_id!: string | null;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly last_validated_manifest_id!: string | null;
+  @Column({ type: 'char', length: 40, nullable: true, default: null })
+  readonly frontend_sha!: string | null;
+  @Column({ type: 'char', length: 40, nullable: true, default: null })
+  readonly backend_sha!: string | null;
+  @Column({ type: 'char', length: 40, nullable: true, default: null })
+  readonly frontend_staging_ref_sha!: string | null;
+  @Column({ type: 'char', length: 40, nullable: true, default: null })
+  readonly backend_staging_ref_sha!: string | null;
+  @Column({ type: 'boolean', default: false }) readonly clean_main!: boolean;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly last_transition_train_id!: string | null;
+  @Column({ type: 'bigint' }) readonly updated_at!: number;
+  @Column({ type: 'int', default: 1 }) readonly row_version!: number;
 }

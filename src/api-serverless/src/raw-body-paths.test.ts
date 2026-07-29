@@ -9,7 +9,9 @@ describe('shouldCaptureRawBody', () => {
   });
 
   it('does not capture neighboring deploy routes', () => {
-    expect(shouldCaptureRawBody('/deploy/release-bus/authorize')).toBe(false);
+    expect(shouldCaptureRawBody('/deploy/release-bus-v2/authorize')).toBe(
+      false
+    );
     expect(shouldCaptureRawBody('/deploy/github/webhook/extra')).toBe(false);
   });
 

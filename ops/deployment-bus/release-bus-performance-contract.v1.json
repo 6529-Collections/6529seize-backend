@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "repository": "backend",
+  "critical_path": {
+    "normal_preflight_jobs": ["authorize", "preflight", "report"],
+    "normal_preflight_steps": [
+      "Validate dispatch syntax without candidate checkout",
+      "Authorize exact v2 operation",
+      "Verify exact green PR CI evidence",
+      "Check out exact fresh composition",
+      "Verify exact composition and deployment graph",
+      "Install Node.js",
+      "Activate exact package manager",
+      "Install frozen shared dependencies once",
+      "Build and package only selected deploy units",
+      "Upload one exact backend artifact",
+      "Return credential-free preflight result",
+      "Download exact backend artifact for trusted reporting",
+      "Report structured terminal result",
+      "Return authoritative preflight result"
+    ],
+    "excluded_train_gates": [
+      "repository_lint",
+      "repository_typecheck",
+      "jest_inventory",
+      "full_jest_shard_1",
+      "full_jest_shard_2",
+      "full_jest_shard_3",
+      "full_jest_shard_4"
+    ]
+  },
+  "baselines": [
+    {
+      "kind": "manual_api",
+      "workflow_run_id": "30298700708",
+      "total_seconds": 109,
+      "dependency_install_seconds": 55,
+      "api_build_seconds": 20,
+      "lambda_deploy_seconds": 15
+    },
+    {
+      "kind": "backend_api_only_production_train",
+      "train_id": "c96d604b-b3db-4dbd-96b9-e9f714cfacd2",
+      "preflight_workflow_run_id": "30353236225",
+      "total_minutes": 25,
+      "preflight_minutes": 17.2,
+      "deploy_minutes": 1.8,
+      "production_e2e_minutes": 3.7
+    }
+  ],
+  "targets": {
+    "healthy_one_unit_backend_production_minutes_excluding_runner_queue": {
+      "minimum": 6,
+      "maximum": 10
+    },
+    "healthy_mixed_staging_minutes_excluding_runner_queue": {
+      "minimum": 15,
+      "maximum": 20
+    }
+  },
+  "rollout": {
+    "phases": [
+      "api-trust-compatibility",
+      "legacy-consumer-compatibility",
+      "v3-evidence-producer-and-performance"
+    ],
+    "producer_cutover": {
+      "backend_only": true,
+      "dag": [["api"], ["releaseBus"]],
+      "release_bus_last": true,
+      "require_old_trust_drain": true
+    }
+  }
+}

@@ -10,6 +10,7 @@ import { ApiResponse } from '@/api/api-response';
 import { isDeployService } from '@/api/deploy/deploy.config';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
+import { GITHUB_CONTRIBUTOR_LOGIN_PATTERN } from '@/release-notes/release-note-contributors.config';
 import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
@@ -50,6 +51,17 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .valid('staging', 'prod', 'production')
       .required(),
     service: Joi.string().trim().max(200).allow(null, '').optional(),
+    release_train_id: Joi.string()
+      .trim()
+      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
+      .allow(null, '')
+      .optional(),
+    contributor_github_logins: Joi.array()
+      .items(
+        Joi.string().trim().max(39).pattern(GITHUB_CONTRIBUTOR_LOGIN_PATTERN)
+      )
+      .max(100)
+      .optional(),
     release_notes_prompt_path: Joi.string()
       .trim()
       .max(300)
@@ -101,6 +113,14 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   })
     .unknown(false)
     .custom((value, helpers) => {
+      if (
+        value.contributor_github_logins !== undefined &&
+        !value.release_train_id?.trim()
+      ) {
+        return helpers.message({
+          custom: 'release_train_id is required with contributor_github_logins'
+        });
+      }
       const groups = value.release_note_groups;
       if (!groups) return value;
       const service = value.service?.trim();

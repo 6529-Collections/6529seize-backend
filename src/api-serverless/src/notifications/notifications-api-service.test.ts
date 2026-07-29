@@ -1,6 +1,7 @@
 import { AuthenticationContext } from '@/auth-context';
 import { ApiDropGroupMention } from '@/api/generated/models/ApiDropGroupMention';
 import { ApiNotificationCause } from '@/api/generated/models/ApiNotificationCause';
+import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
 import { NotificationsApiService } from '@/api/notifications/notifications.api.service';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
@@ -480,6 +481,197 @@ describe('NotificationsApiService V2 notifications', () => {
       ],
       unread_count: 2
     });
+  });
+
+  it('maps actorless subscription coverage notifications in V2', async () => {
+    const { service, notificationsReader, identityFetcher, dropsService } =
+      createService();
+    const data = {
+      recipient_profile_id: 'viewer-1',
+      profile_handle: 'alice',
+      status: 'RUNNING_LOW',
+      consolidation_key: '0xabc',
+      mint_capacity: 3,
+      allocated_mints: 3,
+      fully_funded_drops: 3,
+      funded_through: {
+        token_id: 530,
+        mint_at: '2026-08-17T00:00:00.000Z'
+      },
+      next_unfunded: {
+        token_id: 531,
+        mint_at: '2026-08-24T00:00:00.000Z',
+        requested_mints: 1,
+        funded_mints: 0,
+        missing_mints: 1
+      },
+      minimum_top_up_eth: '0.06529',
+      top_up_deadline: null,
+      calculation_version: 1,
+      forecast_fingerprint: 'risk-531-x1'
+    } as const;
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 20,
+          created_at: 5000,
+          read_at: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          data
+        }
+      ],
+      total_unread: 1
+    });
+
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    await expect(
+      service.getNotificationsV2(
+        {
+          id_less_than: null,
+          limit: 10,
+          cause: null,
+          cause_exclude: null,
+          unread_only: false
+        },
+        authenticationContext,
+        { authenticationContext }
+      )
+    ).resolves.toEqual({
+      notifications: [
+        {
+          id: 20,
+          created_at: 5000,
+          read_at: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          related_identity: null,
+          related_drops: [],
+          additional_context: {
+            ...data,
+            status: ApiSubscriptionCoverageStatus.RunningLow,
+            funded_through: {
+              ...data.funded_through,
+              mint_at: new Date(data.funded_through.mint_at)
+            },
+            next_unfunded: {
+              ...data.next_unfunded,
+              mint_at: new Date(data.next_unfunded.mint_at)
+            }
+          }
+        }
+      ],
+      unread_count: 1
+    });
+    expect(identityFetcher.getApiIdentityOverviewsByIds).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ authenticationContext })
+    );
+  });
+});
+
+describe('NotificationsApiService V1 system notifications', () => {
+  it('maps actorless subscription coverage notifications', async () => {
+    const data = {
+      recipient_profile_id: 'viewer-1',
+      profile_handle: 'alice',
+      status: 'ACTION_REQUIRED',
+      consolidation_key: '0xabc',
+      mint_capacity: 2,
+      allocated_mints: 2,
+      fully_funded_drops: 0,
+      funded_through: null,
+      next_unfunded: {
+        token_id: 528,
+        mint_at: '2026-08-03T00:00:00.000Z',
+        requested_mints: 3,
+        funded_mints: 2,
+        missing_mints: 1
+      },
+      minimum_top_up_eth: '0.06529',
+      top_up_deadline: null,
+      calculation_version: 1,
+      forecast_fingerprint: 'risk-528-x3'
+    } as const;
+    const notificationsReader = {
+      getNotificationsForIdentity: jest.fn().mockResolvedValue({
+        notifications: [
+          {
+            id: 21,
+            created_at: 6000,
+            read_at: null,
+            cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+            data
+          }
+        ],
+        total_unread: 1
+      })
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    };
+    const identityFetcher = {
+      getOverviewsByIds: jest.fn().mockResolvedValue({})
+    };
+    const dropsService = {
+      findDropsByIds: jest.fn().mockResolvedValue({})
+    };
+    const service = new NotificationsApiService(
+      notificationsReader as any,
+      userGroupsService as any,
+      identityFetcher as any,
+      dropsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+
+    await expect(
+      service.getNotifications(
+        {
+          id_less_than: null,
+          limit: 10,
+          cause: null,
+          cause_exclude: null,
+          unread_only: false
+        },
+        authenticationContext
+      )
+    ).resolves.toEqual({
+      notifications: [
+        {
+          id: 21,
+          created_at: 6000,
+          read_at: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          related_identity: null,
+          related_drops: [],
+          additional_context: {
+            ...data,
+            status: ApiSubscriptionCoverageStatus.ActionRequired,
+            next_unfunded: {
+              ...data.next_unfunded,
+              mint_at: new Date(data.next_unfunded.mint_at)
+            }
+          }
+        }
+      ],
+      unread_count: 1
+    });
+    expect(identityFetcher.getOverviewsByIds).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(dropsService.findDropsByIds).toHaveBeenCalledWith(
+      [],
+      authenticationContext
+    );
   });
 });
 

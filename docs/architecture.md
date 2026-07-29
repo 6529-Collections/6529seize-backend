@@ -55,7 +55,8 @@ flowchart TD
     WaveDropMetricsRefreshLoop ~~~ WaveScoreRefreshLoop["waveScoreRefreshLoop"]
     WaveScoreRefreshLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
     XTdhGrantsReviewerLoop ~~~ SubscriptionsDaily["subscriptionsDaily"]
-    SubscriptionsDaily ~~~ SubscriptionsTopUpLoop["subscriptionsTopUpLoop"]
+    SubscriptionsDaily ~~~ SubscriptionCoverageReconciliationLoop["subscriptionCoverageReconciliationLoop (subscriptionsDaily stack)"]
+    SubscriptionCoverageReconciliationLoop ~~~ SubscriptionsTopUpLoop["subscriptionsTopUpLoop"]
     SubscriptionsTopUpLoop ~~~ DiscoverEnsLoop["discoverEnsLoop"]
     DiscoverEnsLoop ~~~ RefreshEnsLoop["refreshEnsLoop"]
     RefreshEnsLoop ~~~ EthPriceLoop["ethPriceLoop"]
@@ -125,70 +126,73 @@ flowchart TD
 
 ### Scheduled Lambdas (EventBridge)
 
-| Lambda                               | Purpose                                                              |
-| ------------------------------------ | -------------------------------------------------------------------- |
-| `nftsLoop`                           | Discover, refresh, and audit NFTs.                                   |
-| `transactionsLoop`                   | Index MEMES, Gradients, and Meme Lab transfers.                      |
-| `nftOwnersLoop`                      | Maintain current owner balance snapshots.                            |
-| `nftHistoryLoop`                     | Maintain ownership history.                                          |
-| `delegationsLoop`                    | Sync delegation.cash and consolidation data.                         |
-| `nextgenContractLoop`                | Index NextGen contract events.                                       |
-| `nextgenMetadataLoop`                | Refresh NextGen metadata.                                            |
-| `externalCollectionSnapshottingLoop` | Snapshot external collection ownership.                              |
-| `externalCollectionLiveTailingLoop`  | Live-tail external collection transfers.                             |
-| `transactionsProcessingLoop`         | Normalize raw transactions into processed state.                     |
-| `tdhLoop`                            | Calculate TDH and publish TDH completion.                            |
-| `tdhHistoryLoop`                     | Write historical TDH snapshots.                                      |
-| `ownersBalancesLoop`                 | Project owner balance aggregates.                                    |
-| `aggregatedActivityLoop`             | Calculate activity aggregates.                                       |
-| `marketStatsLoop`                    | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.       |
-| `rateEventProcessingLoop`            | Process DB-backed rating events.                                     |
-| `waveDecisionExecutionLoop`          | Execute wave decisions and enqueue claim builds.                     |
-| `waveLeaderboardSnapshotterLoop`     | Snapshot wave leaderboards.                                          |
-| `waveDropMetricsRefreshLoop`         | Scheduled fallback that drains dirty drop metric refresh requests.   |
-| `waveScoreRefreshLoop`               | Scheduled fallback that drains dirty Wave Score refresh requests.    |
-| `xTdhGrantsReviewerLoop`             | Review xTDH grants.                                                  |
-| `subscriptionsDaily`                 | Process daily subscription work.                                     |
-| `subscriptionsTopUpLoop`             | Process subscription top-ups.                                        |
-| `discoverEnsLoop`                    | Discover ENS names.                                                  |
-| `refreshEnsLoop`                     | Refresh known ENS names.                                             |
-| `ethPriceLoop`                       | Snapshot ETH price every five minutes.                               |
-| `mintAnnouncementsLoop`              | Publish mint announcements.                                          |
-| `artCurationNftWatchLoop`            | Watch curated NFT state.                                             |
-| `rememesLoop`                        | Refresh rememes S3 files and metadata.                               |
-| `royaltiesLoop`                      | Refresh royalty state.                                               |
-| `dbDumpsDaily`                       | Create daily database dumps.                                         |
-| `nextgenMediaUploader`               | Upload NextGen media.                                                |
-| `nextgenMediaImageResolutions`       | Generate NextGen image resolutions.                                  |
-| `releaseBusStarter`                  | Reconcile queued immutable candidates and start one release train.   |
-| `releaseBusV2Reconciler`             | Claim and reconcile exact Simple Release Bus v2 trains.              |
-| `releaseBusCleaner`                  | Remove expired temporary release branches that no active train owns. |
+| Lambda                                   | Purpose                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                           |
+| `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                              |
+| `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                    |
+| `nftHistoryLoop`                         | Maintain ownership history.                                                                                  |
+| `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                 |
+| `nextgenContractLoop`                    | Index NextGen contract events.                                                                               |
+| `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                    |
+| `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                      |
+| `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                     |
+| `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                             |
+| `tdhLoop`                                | Calculate TDH and publish TDH completion.                                                                    |
+| `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                              |
+| `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                            |
+| `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                               |
+| `marketStatsLoop`                        | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.                                               |
+| `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                             |
+| `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                             |
+| `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                  |
+| `waveDropMetricsRefreshLoop`             | Scheduled fallback that drains dirty drop metric refresh requests.                                           |
+| `waveScoreRefreshLoop`                   | Scheduled fallback that drains dirty Wave Score refresh requests.                                            |
+| `xTdhGrantsReviewerLoop`                 | Review xTDH grants.                                                                                          |
+| `subscriptionsDaily`                     | Process daily subscription work and own the shared Serverless deployment stack for subscription reconciliation. |
+| `subscriptionCoverageReconciliationLoop` | Reconcile projected subscription coverage from durable dirty keys every minute and run an hourly full sweep as a separate Lambda in the `subscriptionsDaily` stack. |
+| `subscriptionsTopUpLoop`                 | Process subscription top-ups.                                                                                |
+| `discoverEnsLoop`                        | Discover ENS names.                                                                                          |
+| `refreshEnsLoop`                         | Refresh known ENS names.                                                                                     |
+| `ethPriceLoop`                           | Snapshot ETH price every five minutes.                                                                       |
+| `mintAnnouncementsLoop`                  | Publish mint announcements.                                                                                  |
+| `artCurationNftWatchLoop`                | Watch curated NFT state.                                                                                     |
+| `rememesLoop`                            | Refresh rememes S3 files and metadata.                                                                       |
+| `royaltiesLoop`                          | Refresh royalty state.                                                                                       |
+| `dbDumpsDaily`                           | Create daily database dumps.                                                                                 |
+| `nextgenMediaUploader`                   | Upload NextGen media.                                                                                        |
+| `nextgenMediaImageResolutions`           | Generate NextGen image resolutions.                                                                          |
+| `releaseBusV2Reconciler`                 | Claim and reconcile exact Simple Release Bus v2 trains.                                                      |
+| `releaseBusCleaner`                      | Remove expired temporary v2 release branches that no active train owns.                                      |
+
+`transactionsLoop` receipt verification fails closed and raises per-function
+error alarms. See the [transactions ingestion runbook](transactions-loop-ingestion-runbook.md)
+for alert triage and recovery.
 
 ### Triggered Lambdas
 
-| Lambda                           | Trigger                                                                                                                            | Purpose                                                                                                                     |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                         | Public REST API and WebSocket boundary.                                                                                     |
-| `claimsBuilder`                  | SQS `claims-builder`                                                                                                               | Build minting claims from winning drops.                                                                                    |
-| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                  | Upload claim media and metadata to Arweave.                                                                                 |
-| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                             | Mirror, compress, and upload NFT media.                                                                                     |
-| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                        | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
-| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                       | Scan/process attachments.                                                                                                   |
-| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                         | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
-| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                           | Resolve external NFT links.                                                                                                 |
-| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                      | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
-| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` mentions and direct follow-ups to bot replies.                                                           |
+| Lambda                           | Trigger                                                                                                                            | Purpose                                                                                                                                    |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                         | Public REST API and WebSocket boundary.                                                                                                    |
+| `claimsBuilder`                  | SQS `claims-builder`                                                                                                               | Build minting claims from winning drops.                                                                                                   |
+| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                  | Upload claim media and metadata to Arweave.                                                                                                |
+| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                             | Mirror, compress, and upload NFT media.                                                                                                    |
+| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                        | Find uploaded attachment objects, retry, and enqueue processing.                                                                           |
+| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                       | Scan/process attachments.                                                                                                                  |
+| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                         | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                                |
+| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                           | Resolve external NFT links.                                                                                                                |
+| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                      | Generate media previews for NFT links.                                                                                                     |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.                     |
+| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` mentions and direct follow-ups to bot replies.                                                                          |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Production only: accumulate successful backend service runs by PR, then publish one repository-prompted note per completed PR as `ci6529`. |
-| `releaseBusWorker`               | AWS Standard Step Functions                                                                                                        | Advance and reconcile one durable staging or production release train without waiting inside Lambda.                        |
-| `waveDropMetricsRefreshLoop`      | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                |
-| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo`; self-queued stats phase                                                  | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
-| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                        |
-| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                    |
-| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                          |
-| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                               |
-| `cloudwatchAlarmsToDiscordLoop`  | SNS `cloudwatch-alarms`                                                                                                            | Post CloudWatch alarms to Discord.                                                                                          |
+| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                                |
+| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo`; self-queued stats phase                                                 | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                        |
+| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                                       |
+| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                |
+| `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                                   |
+| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                                         |
+| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                                              |
+| `cloudwatchAlarmsToDiscordLoop`  | SNS `cloudwatch-alarms`                                                                                                            | Post CloudWatch alarms to Discord.                                                                                                         |
 
 ### Manual Or One-Off Lambdas
 
@@ -249,14 +253,16 @@ Important API responsibilities:
 
 - Authentication and refresh-token flows. Legacy wallet auth keeps `/auth/nonce`,
   `/auth/login`, and `/auth/redeem-refresh-token`; wallet auth session v2 uses
-  separate structured-session endpoints such as `/auth/session-nonce`,
+  separate endpoints such as `/auth/session-nonce`,
   `/auth/session-login`, `/auth/session-refresh`, and `/auth/session-logout`.
-  Web session v2 challenges derive their domain and client origin from the
-  request `Origin` header and refresh/logout checks are bound to the stored
-  origin. Native and desktop session v2 challenges are explicitly requested with
-  `client_type=native` or `client_type=desktop` and do not receive first-party
-  web semantics. The full
-  auth contract is documented in
+  Web session-v2 challenges are canonical ERC-4361 SIWE messages whose scheme,
+  domain, and URI are bound to the exact normalized first-party request
+  `Origin`. They are carried in short-lived, server-signed object envelopes
+  bound to the allowlisted request API host. Native and desktop session-v2
+  challenges retain the existing structured-message format and are explicitly
+  requested with `client_type=native` or `client_type=desktop`. Both formats
+  complete all semantic and wallet-signature checks before a final atomic nonce
+  consumption. The full auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
@@ -382,6 +388,57 @@ Wave Score refreshes use a hybrid DB-backed/SQS pattern. Request-path mutations 
 
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
 
+Subscription coverage uses a DB-backed scheduled reconciliation pattern without
+a cross-service dirty-event queue. Top-up, redemption, subscription
+preference/selection, daily finalization, and consolidated eligibility writes
+make a best-effort upsert into `subscription_coverage_refresh_requests`; this
+bookkeeping never runs forecasts or creates notifications in those critical
+paths. Notification delivery still uses the existing post-commit SQS-backed
+push pipeline.
+`subscriptionCoverageReconciliationLoop` is a separate Lambda function in the
+existing allowlisted `subscriptionsDaily` Serverless stack. Deploying that unit
+updates both handlers and verifies both Lambda versions; its release-bus
+dependencies place the stack after schema, API, push, top-up, transaction, and
+owner-balance prerequisites. The function drains versioned dirty rows every
+minute and performs an hourly bounded full sweep to cover projected calendar
+changes, clock boundaries, and missed dirty writes. It reads subscription
+balances as decimal strings, derives demonstrated intent only from normalized
+balance, mode, top-up, intended-subscription, final-subscription, and redeemed
+rows, and uses a coverage-specific eligibility read where zero is meaningful.
+The shared schedule provider consumes the canonical frontend Meme calendar API,
+uses `mint_start` as a projected instant, caches one bounded horizon in memory,
+and never treats `mint_start` as an operational top-up deadline. It selects the
+calendar host from the explicit coverage environment or the Secrets
+Manager-provided `NODE_ENV` and fails closed when neither is authoritative. A
+live `/next` response is backfilled to retain the configured number of future
+drops. Failure or malformed data for a later token truncates the forecast to the
+contiguous valid prefix; failures are cached briefly to bound retry load, while
+successful cache TTLs start only after the calendar fetch completes.
+
+Alert transitions are serialized through a row lock in
+`subscription_coverage_alert_states`. The current alert state and actorless
+identity-notification row are advanced in one transaction, and push IDs are
+enqueued only after commit. Missing alert state is baselined without sending by
+default; neutral/recovered states clear notification eligibility, and unchanged
+material risk state deduplicates retries and skips unnecessary row writes.
+Notifications are routed only
+when a consolidation key joins to exactly one canonical profile. The
+reconciliation Lambda has reserved concurrency one, isolates per-key failures,
+and logs aggregate status/notification counts without addresses, consolidation
+keys, or balances.
+
+Normal rollout persists alert baselines and enables future transition
+notifications and eligible pushes. The no-blast guarantee comes from suppressing
+every missing-state first observation; initial critical alerts remain disabled
+unless `SUBSCRIPTION_COVERAGE_NOTIFY_INITIAL_CRITICAL=true`.
+`FEATURE_SUBSCRIPTION_COVERAGE_NOTIFICATIONS=false` and
+`SUBSCRIPTION_COVERAGE_PUSH_ENABLED=false` are independent kill switches.
+`SUBSCRIPTION_COVERAGE_DRY_RUN=true` performs aggregate evaluation without
+changing alert or dirty state, while
+`SUBSCRIPTION_COVERAGE_BASELINE_ONLY=true` persists state but emits nothing.
+No request cache is used for the coverage read boundary, so a confirmed top-up
+or redemption can be reflected immediately.
+
 `xTdhLoop` uses a two-phase FIFO queue flow. The TDH completion SNS topic
 delivers the universe phase through `xtdh-start.fifo`; after the universe
 transaction commits, the same Lambda enqueues a stats phase back to that FIFO
@@ -476,37 +533,107 @@ manifests, controls, and events. The reconciler has reserved concurrency one
 and an EventBridge one-minute fallback, but it advances several internal row
 transitions per invocation and exits at an actual external wait.
 
-The v2 API exposes authenticated candidate, train, manifest, and control routes
-under `/deploy/release-bus-v2`; `/deploy/ui/bus` is the operator/developer UI.
+The v2 API exposes candidate, train, train-detail, manifest, control, lock, and
+authoritative staging-state GET routes publicly under
+`/deploy/release-bus-v2`. These read-only responses are uncached and expose the
+same raw operational state used by `/deploy/ui/bus`, which loads as a public
+read-only dashboard. They remain covered by the API's existing anonymous/IP
+rate-limiting middleware. GitHub authentication is optional in the dashboard
+and is used only to request operator actions. Every mutation retains its
+route-specific GitHub repository-write, organization-operator,
+workflow-credential, or webhook signature authorization before state can
+change.
 `RELEASE_BUS_V2_MODE` supports `OFF`, `STAGING`, and `PRODUCTION`, with separate
 staging and production queues. Staging validation never schedules production:
-an unchanged exact candidate SHA must be explicitly marked ready.
+an unchanged exact candidate SHA must be explicitly marked ready. An
+operator-only maintenance route can transactionally yield legacy stalled
+production qualifications while v2 is `OFF` with `ALL` paused, or in `STAGING`
+mode with `PRODUCTION` paused. Every v2 lock must be free and a double staging
+workflow/ref handshake must be stable. Recovery then owns the scheduler fence,
+re-verifies every lock inside the yield transaction, and processes at most one
+qualification per request so committed progress is always reported. Every
+committed yield requires a follow-up drain check; only an empty recovery
+response proves there are no further live qualifications to yield. A separate
+operator-only maintenance route can idempotently restore a candidate's derived
+staging status only when its exact repository, PR, and head are uniquely
+included in the authoritative current validated staging manifest. The repair
+acquires the scheduler and staging fences, rejects active trains or production
+ownership, and cannot infer validation from candidate rows alone. Its
+mutation-free discovery mode enumerates exact current-manifest mismatches; an
+executing request must repeat the bounded repository/PR/head identities from
+that report, so historical superseded heads outside the manifest stay
+untouched.
 
-GitHub Actions performs exact composition, combined preflight, immutable
-packaging, backend DAG deployment, frontend deployment, and manifest-bound E2E.
-Frontend artifacts contain independently checksummed staging and production
-profiles inside one immutable aggregate. Frontend/backend preparation and
-independent backend DAG frontiers run concurrently; only shared environment
-mutation plus E2E ownership is serialized. Operation keys, workflow titles,
-workflow authorization, SHA/artifact checks, row versions, and callback
-identity make retries and duplicate reconciliation idempotent.
+The API also exposes a two-phase operator-only logical candidate
+deregistration boundary. Its read-only preparation returns one complete
+candidate/control/lock/staging-state row-version inventory and digest.
+Execution requires both independently changeable lanes paused while `ALL`
+remains unpaused, all three exact locks wholly free, every train/operation
+terminal, and all backend/frontend staging/production mutation and E2E
+workflows inactive. It temporarily owns all three locks and transactionally
+marks candidates `DEREGISTERED` with detached rather than absent staging
+presence, clears scheduling/admission/production intent, and moves the
+singleton to `DETACHED_MANUAL_OWNERSHIP`. Existing dependency, train,
+operation, manifest, and event history remains immutable. A detached singleton
+blocks registration and claims; it can become clean main only when both exact
+staging refs equal the corresponding current main bases. Matching an older
+validated manifest never restores its prior candidate membership.
+Terminal candidate history is byte-for-byte immutable, except that a
+`SUPERSEDED` row with the exact deleted-branch event and retained production
+request/staging evidence is still active intent because the reconciler can
+restore it; deregistration must consume that narrow recoverable case.
+These additive values fit the existing varchar widths and require no database
+migration. Execution is forbidden during mixed API/reconciler runtime; both
+lane controls remain paused until every runtime and generated/UI contract
+understands the detached states.
+
+GitHub Actions performs exact composition, fast preflight, immutable packaging,
+backend DAG deployment, frontend deployment, and manifest-bound E2E. Train
+preflight consumes exact-head/merge-tree PR CI evidence instead of repeating
+repository-wide lint, typecheck, test inventory, or full test matrices. It
+installs backend dependencies once and builds/packages only selected deploy
+units. Frontend builds only the target environment profile. Every artifact is
+environment-, composition-SHA-, unit-, and digest-bound; ordinary production
+freshly composes and builds its exact dependency-closed selection and never
+reuses staging artifact bytes. Frontend/backend preparation and independent
+backend DAG frontiers run concurrently; only shared environment mutation plus
+E2E ownership is serialized. Operation keys, workflow titles, workflow
+authorization, SHA/artifact checks, row versions, and callback identity make
+retries and duplicate reconciliation idempotent.
+
+Each staging reconcile rechecks every mutable NEW candidate against its open
+PR's current exact head, including candidates already building or deploying.
+Once a newer registered/current head supersedes a candidate, no additional
+operation is dispatched for the obsolete head. Already-dispatched workflows
+are observed to completion without cancellation, then unrelated NEW candidates
+return immediately to the queue for the next train. An ordinary combined
+staging preflight failure likewise fails the affected repository's NEW group
+once and requeues independent repositories after current workflows drain;
+subset-isolation diagnostics are reserved for production qualification and
+never extend the ordinary staging critical path. A grouped failure retries only
+after an explicit unchanged-head registration revalidates the exact green PR
+evidence and immutable dependency/plan identity against the terminal failure's
+candidate row version; reconciliation alone never loops it.
 
 The staging manifest distinguishes deployed from validated state and binds E2E
-to exact frontend/backend tree SHAs, artifact digests, service operations, and
-workflow runs. Production reuses an exact validated manifest when both composed
-trees match; a different explicit subset receives a staging qualification train
-before guarded `main` mutation. A moved `main` is never overwritten.
+to exact frontend/backend tree SHAs, environment-bound artifact digests,
+service operations, and workflow runs. Staging evidence qualifies unchanged
+candidate source and E2E history; it never qualifies staging artifact bytes for
+ordinary production. Production records the selected candidates' exact staging
+evidence, freshly composes the dependency-closed set onto the current production
+main bases, freshly builds production-bound artifacts, and advances only those
+tested SHAs by compare-and-swap. A moved `main` is never overwritten and
+triggers bounded production-only replan/coalescence without mutating the
+admitted staging set.
 
 Infrastructure and retryable deployment failures retry only the same operation.
 Control-plane defects pause automated claiming without blaming candidates, and
 the serialized manual workflow remains available after v2 is deliberately set
-`OFF`. Release Bus v1 starter/worker/Step Functions components and their tables
-remain deployed but disabled as rollback reference; v2 does not read or claim
-v1 candidates. The cleaner also removes expired unowned v2 release refs.
+`OFF`. The cleaner removes expired unowned v2 release refs.
 
 The GitHub App private key and workflow authorization token use the existing
 `prod/lambdas` secret bootstrap. Production API and releaseBus deployments copy
-only the non-secret v1/v2 mode and App identity into Lambda configuration.
+only the non-secret v2 mode and App identity into Lambda configuration.
 
 For successful production backend operations, v2 emits one canonical group per
 candidate PR and fans overlapping service deployments into each applicable

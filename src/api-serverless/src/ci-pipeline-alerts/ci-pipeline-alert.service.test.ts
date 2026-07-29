@@ -15,6 +15,7 @@ import {
   CiPipelineAlertService,
   formatMarkdownLink,
   normalizeConfiguredHandle,
+  normalizeContributorGithubLogins,
   normalizeTargetEnvironment,
   parseProfileHandles,
   truncate
@@ -188,6 +189,20 @@ describe('CiPipelineAlertService', () => {
     );
   });
 
+  it('normalizes and deduplicates contributor GitHub logins', () => {
+    expect(
+      normalizeContributorGithubLogins([
+        ' GelatoGenesis ',
+        'gelatogenesis',
+        'ragnep',
+        'dependabot[bot]',
+        'trailing-',
+        'double--hyphen',
+        'invalid login'
+      ])
+    ).toEqual(['GelatoGenesis', 'ragnep', 'dependabot[bot]']);
+  });
+
   it('posts failures with configured profile mentions', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
@@ -338,6 +353,104 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).not.toContain('cc @[');
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { environment: 'staging', waveId: 'staging-wave' },
+    { environment: 'prod', waveId: 'prod-wave' }
+  ] as const)(
+    'attributes $environment deployments to the Release Train',
+    async ({ environment, waveId }) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as any,
+        identitiesRepository as any
+      );
+
+      await service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          environment,
+          triggered_by_github_login: '6529-release-bus[bot]'
+        },
+        {}
+      );
+
+      expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+      expect(
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+      ).toEqual(
+        expect.objectContaining({
+          wave_id: waveId,
+          mentioned_users: [],
+          parts: [
+            expect.objectContaining({
+              content: expect.stringContaining('Initiated by: Release Train')
+            })
+          ]
+        })
+      );
+    }
+  );
+
+  it('does not render or notify train-wide contributors on each deployment', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      GelatoGenesis: 'profile-gelato',
+      ragne: 'profile-ragne'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        environment: 'staging',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'train-123',
+        contributor_github_logins: [
+          'GelatoGenesis',
+          'ragnep',
+          'external-user',
+          'gelatogenesis'
+        ]
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    const createDropRequest =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(createDropRequest.mentioned_users).toEqual([]);
+    expect(createDropRequest.parts[0].content).toContain(
+      'Initiated by: Release Train'
+    );
+    expect(createDropRequest.parts[0].content).not.toContain('Contributors:');
+  });
+
+  it('ignores contributor metadata for a manually initiated deployment', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        release_train_id: 'train-123',
+        contributor_github_logins: ['GelatoGenesis']
+      },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    expect(content).toContain('Initiated by: @[prxt0]');
+    expect(content).not.toContain('Contributors:');
   });
 
   it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
@@ -527,6 +640,9 @@ describe('CiPipelineAlertService', () => {
         workflow: 'Deploy a service',
         service: 'api',
         status: 'success',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'train-123',
+        contributor_github_logins: ['Alice', 'BOB', 'alice'],
         release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
         release_note_groups: [
           {
@@ -554,6 +670,7 @@ describe('CiPipelineAlertService', () => {
         release_group_id: 'pr-1801',
         release_group_services: ['api', 'worker'],
         pull_request_number: 1801,
+        contributor_github_logins: ['Alice', 'BOB'],
         publish_release_note: true
       })
     );
@@ -563,6 +680,7 @@ describe('CiPipelineAlertService', () => {
         release_group_id: 'pr-1802',
         release_group_services: ['api'],
         pull_request_number: 1802,
+        contributor_github_logins: ['Alice', 'BOB'],
         publish_release_note: false
       })
     );

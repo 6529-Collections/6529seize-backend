@@ -111,7 +111,7 @@ describe('ReleaseNoteGitHubService', () => {
           body: 'Adds the production mapping.',
           merged_at: '2026-07-14T12:00:00Z',
           merge_commit_sha: 'merge-sha',
-          user: { login: 'prxt0' },
+          user: { login: 'Alice', type: 'User' },
           base: { ref: 'main' }
         })
       )
@@ -123,6 +123,25 @@ describe('ReleaseNoteGitHubService', () => {
             additions: 10,
             deletions: 2,
             changes: 12
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            sha: 'first',
+            author: { login: 'bob', type: 'User' },
+            committer: { login: 'CAROL', type: 'User' }
+          },
+          {
+            sha: 'branch-sync',
+            author: { login: 'Dave', type: 'User' },
+            committer: { login: 'web-flow', type: 'User' }
+          },
+          {
+            sha: 'bot-change',
+            author: { login: 'dependabot[bot]', type: 'Bot' },
+            committer: { login: 'release-app[bot]', type: 'Bot' }
           }
         ])
       );
@@ -137,6 +156,12 @@ describe('ReleaseNoteGitHubService', () => {
       service: 'api',
       release_group_id: 'pr-1749',
       release_group_services: ['dbMigrationsLoop', 'claimsBuilder', 'api'],
+      contributor_github_logins: [
+        'ReleaseTrainUser',
+        'BOB',
+        'release-app[bot]',
+        'alice'
+      ],
       pull_request_number: 1749
     });
 
@@ -149,7 +174,7 @@ describe('ReleaseNoteGitHubService', () => {
           url: 'https://github.com/6529-Collections/6529seize-backend/pull/1749',
           title: 'Link Main Stage winners to Meme cards',
           body: 'Adds the production mapping.',
-          contributors: ['prxt0'],
+          contributors: ['Alice', 'bob', 'CAROL', 'Dave'],
           commit_messages: ['Link Main Stage winners to Meme cards'],
           changed_files: [
             {
@@ -163,10 +188,15 @@ describe('ReleaseNoteGitHubService', () => {
         }
       ]
     });
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(5);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
       'https://api.github.com/repos/6529-Collections/6529seize-backend/pulls/1749',
+      expect.any(Object)
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      5,
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/pulls/1749/commits?per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -319,10 +349,28 @@ describe('ReleaseNoteGitHubService', () => {
       .mockResolvedValueOnce(
         response([
           {
+            sha: 'api-pr-commit',
+            author: { login: 'api-coauthor', type: 'User' },
+            committer: { login: 'simo6529', type: 'User' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
             filename: 'src/claimsBuilder/index.ts',
             additions: 6,
             deletions: 2,
             changes: 8
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            sha: 'claims-pr-commit',
+            author: { login: 'claims-coauthor', type: 'User' },
+            committer: { login: 'automation[bot]', type: 'Bot' }
           }
         ])
       );
@@ -341,6 +389,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.pull_requests).toEqual([
       expect.objectContaining({
         number: 101,
+        contributors: ['simo6529', 'api-coauthor'],
         candidate_services: ['api'],
         changed_files: [
           {
@@ -353,6 +402,7 @@ describe('ReleaseNoteGitHubService', () => {
       }),
       expect.objectContaining({
         number: 102,
+        contributors: ['ragnep', 'claims-coauthor'],
         candidate_services: ['claimsBuilder']
       })
     ]);
@@ -361,6 +411,289 @@ describe('ReleaseNoteGitHubService', () => {
       'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?status=success&branch=main&per_page=100&page=1',
       expect.any(Object)
     );
+  });
+
+  it('does not add train-wide contributors to commit-range PR contexts', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          id: 123,
+          name: 'Deploy api to prod',
+          display_title: 'Deploy api to prod',
+          head_sha: 'current-sha',
+          run_number: 45,
+          workflow_id: 82013288
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Deploy api to prod',
+              display_title: 'Deploy api to prod',
+              head_sha: 'previous-sha',
+              run_number: 44,
+              workflow_id: 82013288
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          commits: [
+            {
+              sha: 'api-commit',
+              commit: { message: 'Improve API validation' }
+            }
+          ],
+          total_commits: 1
+        })
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            number: 101,
+            html_url: 'https://github.com/example/pull/101',
+            title: 'Improve API validation',
+            body: null,
+            merged_at: '2026-07-13T10:00:00Z',
+            user: { login: 'pr-author', type: 'User' },
+            base: { ref: 'main' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response([]));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      run_number: '45',
+      sha: 'current-sha',
+      branch: 'main',
+      release_group_id: 'backend-release',
+      release_group_services: ['api'],
+      contributor_github_logins: ['release-train-contributor']
+    });
+
+    expect(context?.pull_requests).toEqual([
+      expect.objectContaining({
+        number: 101,
+        contributors: ['pr-author']
+      })
+    ]);
+  });
+
+  it('keeps every PR when one changed-file list exceeds the enrichment cap', async () => {
+    (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+      if (url.endsWith('/actions/runs/123')) {
+        return Promise.resolve(response(currentRun));
+      }
+      if (url.includes('/actions/workflows/7/runs?')) {
+        return Promise.resolve(
+          response({
+            workflow_runs: [
+              {
+                ...currentRun,
+                id: 122,
+                head_sha: 'previous-sha',
+                run_number: 44
+              }
+            ]
+          })
+        );
+      }
+      if (url.includes('/compare/previous-sha...abc123')) {
+        return Promise.resolve(
+          response({
+            commits: [
+              {
+                sha: 'large-merge',
+                commit: { message: 'Add exact Stream public review snapshot' }
+              },
+              {
+                sha: 'normal-merge',
+                commit: { message: 'Improve navigation' }
+              }
+            ],
+            total_commits: 2
+          })
+        );
+      }
+      if (url.includes('/commits/large-merge/pulls')) {
+        return Promise.resolve(
+          response([
+            {
+              number: 3472,
+              html_url: 'https://github.com/example/pull/3472',
+              title: 'Add exact Stream public review snapshot',
+              body: 'Adds the public review snapshot.',
+              merged_at: '2026-07-26T20:40:13Z',
+              changed_files: 628,
+              user: { login: 'snapshot-author', type: 'User' },
+              base: { ref: 'main' }
+            }
+          ])
+        );
+      }
+      if (url.includes('/commits/normal-merge/pulls')) {
+        return Promise.resolve(
+          response([
+            {
+              number: 3473,
+              html_url: 'https://github.com/example/pull/3473',
+              title: 'Improve navigation',
+              body: 'Keeps navigation usable.',
+              merged_at: '2026-07-26T20:45:13Z',
+              user: { login: 'navigation-author', type: 'User' },
+              base: { ref: 'main' }
+            }
+          ])
+        );
+      }
+      if (url.includes('/pulls/3472/files?')) {
+        const page = Number(new URL(url).searchParams.get('page'));
+        return Promise.resolve(
+          response(
+            Array.from({ length: 100 }, (_, index) => ({
+              filename: `snapshot/page-${page}/file-${index}.json`,
+              additions: 1,
+              deletions: 0,
+              changes: 1
+            }))
+          )
+        );
+      }
+      if (url.includes('/pulls/3473/files?')) {
+        return Promise.resolve(
+          response([
+            {
+              filename: 'components/navigation.tsx',
+              additions: 2,
+              deletions: 1,
+              changes: 3
+            }
+          ])
+        );
+      }
+      if (url.includes('/pulls/3472/commits?')) {
+        return Promise.resolve(
+          response([
+            {
+              sha: 'large-pr-commit',
+              author: { login: 'snapshot-author', type: 'User' }
+            }
+          ])
+        );
+      }
+      if (url.includes('/pulls/3473/commits?')) {
+        return Promise.resolve(
+          response([
+            {
+              sha: 'normal-pr-commit',
+              author: { login: 'navigation-author', type: 'User' }
+            }
+          ])
+        );
+      }
+      throw new Error(`Unexpected GitHub URL ${url}`);
+    });
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request
+    );
+
+    expect(context?.pull_requests).toHaveLength(2);
+    expect(context?.pull_requests[0]).toEqual(
+      expect.objectContaining({
+        number: 3472,
+        changed_files: expect.any(Array),
+        changed_files_incomplete: true
+      })
+    );
+    expect(context?.pull_requests[0].changed_files).toHaveLength(300);
+    expect(context?.pull_requests[1]).toEqual(
+      expect.objectContaining({
+        number: 3473,
+        changed_files: [
+          {
+            filename: 'components/navigation.tsx',
+            additions: 2,
+            deletions: 1,
+            changes: 3
+          }
+        ]
+      })
+    );
+    expect(context?.pull_requests[1].changed_files_incomplete).toBeUndefined();
+    expect(
+      (fetch as unknown as jest.Mock).mock.calls.some(([url]) =>
+        String(url).includes('/pulls/3472/files?per_page=100&page=4')
+      )
+    ).toBe(false);
+  });
+
+  it('uses minimal PR context when optional GitHub enrichment fails', async () => {
+    (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+      if (url.includes('/actions/runs/123')) {
+        return Promise.resolve(
+          response({
+            ...currentRun,
+            name: 'Deploy api to prod',
+            display_title: 'Deploy api to prod',
+            head_sha: 'merge-sha'
+          })
+        );
+      }
+      if (url.endsWith('/pulls/1749')) {
+        return Promise.resolve(
+          response({
+            number: 1749,
+            html_url: 'https://github.com/example/pull/1749',
+            title: 'Keep release notes available',
+            body: 'Adds graceful fallback behavior.',
+            merged_at: '2026-07-27T12:00:00Z',
+            merge_commit_sha: 'merge-sha',
+            user: { login: 'pr-author', type: 'User' },
+            base: { ref: 'main' }
+          })
+        );
+      }
+      if (
+        url.includes('/pulls/1749/files?') ||
+        url.includes('/pulls/1749/commits?')
+      ) {
+        return Promise.reject(new Error('GitHub enrichment unavailable'));
+      }
+      throw new Error(`Unexpected GitHub URL ${url}`);
+    });
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      sha: 'merge-sha',
+      branch: 'main',
+      service: 'api',
+      release_group_id: 'pr-1749',
+      release_group_services: ['api'],
+      contributor_github_logins: ['release-train-contributor'],
+      pull_request_number: 1749
+    });
+
+    expect(context?.pull_requests).toEqual([
+      expect.objectContaining({
+        number: 1749,
+        title: 'Keep release notes available',
+        contributors: ['pr-author'],
+        changed_files: [],
+        changed_files_incomplete: true,
+        commit_contributors_incomplete: true,
+        candidate_services: ['api']
+      })
+    ]);
   });
 
   it('paginates past successful runs from the current backend SHA', async () => {

@@ -169,6 +169,59 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).not.toContain('Services affected:');
   });
 
+  it('renders mapped and unmapped contributors once with correct mention metadata', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: [
+            {
+              ...context.pull_requests[0],
+              contributors: ['Alice', 'Bob', 'BOB', 'AliceAlias']
+            }
+          ]
+        }),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 42,
+                summary: 'Made notification delivery more reliable.'
+              }
+            ]
+          })
+        )
+      },
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest
+          .fn()
+          .mockResolvedValue({ alice6529: 'alice-profile' })
+      } as unknown as IdentitiesDb,
+      { alice: 'alice6529', alicealias: 'alice6529' },
+      createDropsRepository()
+    );
+
+    await service.generateAndPost(request, {});
+
+    const createDropRequest = createDrop.mock.calls[0][0].createDropRequest;
+    expect(createDropRequest.parts[0].content).toContain(
+      ' - @[alice6529], [@Bob](https://github.com/Bob)'
+    );
+    expect(createDropRequest.parts[0].content).not.toContain('@BOB');
+    expect(createDropRequest.parts[0].content).not.toContain('AliceAlias');
+    expect(createDropRequest.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'alice-profile',
+        handle_in_content: 'alice6529'
+      }
+    ]);
+  });
+
   it('renders repository-specific single-service run links', async () => {
     const createDrop = jest.fn().mockResolvedValue({});
     const service = new ReleaseNoteGenerationService(
@@ -333,7 +386,8 @@ describe('ReleaseNoteGenerationService', () => {
     );
   });
 
-  it('rejects a model response that omits a pull request', async () => {
+  it('falls back to sanitized PR titles when generated notes are invalid', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue(context),
@@ -344,14 +398,21 @@ describe('ReleaseNoteGenerationService', () => {
           .fn()
           .mockResolvedValue(JSON.stringify({ pull_requests: [] }))
       },
-      { createDrop: jest.fn() } as unknown as DropCreationApiService,
-      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
       undefined,
       createDropsRepository()
     );
 
-    await expect(service.generateAndPost(request, {})).rejects.toThrow(
-      'did not include every pull request'
+    await expect(service.generateAndPost(request, {})).resolves.toBe(
+      'published'
+    );
+    expect(
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content
+    ).toContain(
+      '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Improve notifications'
     );
   });
 

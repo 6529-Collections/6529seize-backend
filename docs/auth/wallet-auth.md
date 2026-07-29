@@ -1,8 +1,12 @@
 # Wallet Authentication
 
-Revision: June 2026
+Revision: July 2026
 
-This document describes the current wallet authentication contract and the revised structured-session flow. The auth system intentionally keeps legacy endpoints stable while adding separate session-v2 endpoints for clients that opt in.
+This document describes the current wallet authentication contract and the
+session-v2 flow. Web session challenges use ERC-4361 Sign-In with Ethereum
+(SIWE), while native and desktop clients retain the 6529 structured-signature
+format. The auth system intentionally keeps legacy endpoints stable. The API
+contract and database schema are unchanged; no database migration is required.
 
 ## Compatibility Model
 
@@ -37,19 +41,28 @@ Connection sharing is a separate optional flow:
 
 ## Session V2 Nonce
 
-`GET /api/auth/session-nonce` always returns a structured wallet signature
-message in the `signable_message` response field, plus a `server_signature`
-over that exact message.
+`GET /api/auth/session-nonce` returns a backend-generated message in
+`signable_message` and an opaque server-signed challenge token in
+`server_signature`. The request and response shapes are unchanged.
 
 For web clients:
 
 - `client_type` defaults to `web`.
-- The request must include an `Origin` header.
-- The signature domain is derived from the request `Origin`; clients cannot supply it as a query parameter.
-- The normalized client origin is included in the message as `Client Origin`.
-- The structured message uses `Session Type: first_party_web`.
-- The origin domain must be allowed by the structured-signature domain configuration.
-- Cross-origin browser clients must also be allowed by the web app origin configuration so the API can return exact credentialed CORS headers.
+- The request must include an exact allowed `http` or `https` `Origin`.
+- The API rejects Origins containing credentials, non-root paths, queries, or
+  fragments instead of silently canonicalizing them.
+- The backend derives the SIWE scheme, domain, and URI from that validated
+  Origin; clients cannot supply them.
+- The SIWE header explicitly includes the Origin scheme and authority,
+  including a non-default port.
+- The SIWE URI equals the exact normalized frontend Origin, not the API origin.
+- The wallet address is emitted in EIP-55 checksum form.
+- SIWE `Version: 1` is the ERC-4361 message version. It is independent from
+  6529's structured-signature/session protocol version.
+- The backend issues a 128-bit hexadecimal nonce and a required five-minute
+  expiration.
+- Cross-origin browser clients must also be allowed by the web app origin
+  configuration so the API can return exact credentialed CORS headers.
 
 For native clients:
 
@@ -67,16 +80,40 @@ For 6529 Desktop clients:
 
 `chain_id` is accepted for backward-compatible request shape, but wallet auth challenges are issued for the backend-configured auth chain. `AUTH_WALLET_CHAIN_ID` defaults to Ethereum mainnet.
 
+For new web SIWE challenges, `server_signature` is a versioned HS256 JWT
+envelope. It binds the exact SIWE message, web client type, normalized frontend
+Origin, allowed API audience, issuer, subject, issued-at time, and expiration.
+The API request Host must resolve to an allowed API audience; the SIWE path does
+not substitute the production audience for a malformed or unrecognized Host.
+This envelope is the server-issuance proof. The Redis nonce record is created
+only when a fully verified login consumes the challenge, and then prevents that
+server-authenticated challenge from being used again. Clients must treat the
+token as opaque.
+
+Native and desktop challenges continue to use the previous signed-string token.
+The login endpoint also accepts valid outstanding `first_party_web` structured
+challenges issued before the SIWE deployment, subject to their existing
+five-minute expiration and message-level allowed-audience validation. These
+compatibility challenges do not acquire the new current-Host JWT audience check.
+The nonce endpoint does not issue new legacy web challenges.
+
 ## Session V2 Login
 
-`POST /api/auth/session-login` verifies the server signature and client wallet signature. Session-v2 login requires a structured authentication signature.
+`POST /api/auth/session-login` verifies the server challenge and wallet
+signature without changing the request or response contract. SIWE is treated as
+a strongly structured authentication format even when
+`AUTH_STRUCTURED_SIGNATURES_REQUIRED=true`.
 
 For web sessions:
 
-- The signed message must have `Session Type: first_party_web`.
-- The signed message must include `Client Origin`.
-- The request `Origin` must match the signed client origin.
+- New challenges must be canonical ERC-4361 SIWE with Version 1, the fixed 6529
+  sign-in statement, the expected checksummed address, configured chain,
+  normalized Origin scheme/domain/URI, and five-minute lifetime.
+- The request `Origin` must match both the SIWE URI and the Origin bound into the
+  server envelope.
 - The request `Origin` must be allowed by the web app origin configuration when the browser calls the API cross-origin with cookies.
+- Valid outstanding structured web challenges still require
+  `Session Type: first_party_web` and their signed `Client Origin`.
 - The server creates a row in `wallet_auth_sessions` with `client_type=web`.
 - The stored session includes the signed domain and normalized client origin.
 - The refresh secret is stored only as a server-side hash.
@@ -96,6 +133,14 @@ For native and desktop sessions:
 - The refresh token is stored only as a server-side hash.
 
 Both web and native session login return a JWT access token and access-token expiry.
+
+EOA wallet signatures continue to use ERC-191 personal-sign verification.
+Contract wallets and Safes continue to use EIP-1271 on
+`AUTH_WALLET_CHAIN_ID`. Every address, chain, client-type, domain, URI, Origin,
+audience, and timing check completes before the signature is accepted. The
+nonce is then consumed as a separate final atomic operation using Redis
+`SET NX EX`; repeated or concurrent use is rejected. Local/test can use the
+in-memory fallback, while production fails closed when Redis is unavailable.
 
 ## Session V2 Refresh And Logout
 
@@ -176,15 +221,15 @@ only while both connection sharing and legacy refresh redemption are enabled.
 The revised auth flow uses these relevant flags/config values:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: default false. When true, legacy signature verification paths reject unstructured wallet messages where structured verification is used.
-- `WEB_APP_ORIGIN`: canonical first-party web app origin. The backend uses it to derive credentialed CORS origins for web-cookie auth routes and first-party web structured-signature domains.
-- `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra first-party web app origins. These are additive to the built-in defaults and `WEB_APP_ORIGIN`.
+- `WEB_APP_ORIGIN`: canonical first-party web app origin. The backend uses it to derive credentialed CORS origins and SIWE domain/URI checks. Values must be exact origins without credentials, a non-root path, query, or fragment.
+- `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra exact first-party web app origins. These are additive to the built-in defaults and `WEB_APP_ORIGIN`.
 - Built-in web app origin defaults: `api.6529.io` allows credentialed web auth from `https://6529.io`; `api.staging.6529.io` allows credentialed web auth from `https://staging.6529.io`; localhost API hosts allow common localhost frontend ports.
 - `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; web app origins also derive allowed signature domains; non-production also allows localhost origins.
 - `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES`: comma-separated domain suffixes allowed for first-party web structured signatures. A value of `staging.6529.io` allows `staging.6529.io` and any host below it, such as `app.staging.6529.io`, but does not allow lookalike hosts such as `fake-staging.6529.io`.
-- Session-v2 nonce audience: when the request is served through an accepted API host such as `api.6529.io` or `api.staging.6529.io`, that host is used as the structured-signature `Audience`. Otherwise the backend falls back to `API_BASE_URL`, then `api.6529.io`.
+- Session-v2 nonce audience: new web SIWE envelope tokens require the exact accepted request API Host and fail closed when it is missing, malformed, or unrecognized. Native and desktop structured messages preserve their existing accepted-Host behavior and compatibility fallback.
 - `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: optional comma-separated audiences accepted during structured-signature verification.
 - `AUTH_WEB_CREDENTIAL_ORIGINS`: deprecated compatibility alias for extra browser origins allowed to call v2 web-auth cookie endpoints with credentials. Prefer `WEB_APP_ORIGIN` and `WEB_APP_ADDITIONAL_ORIGINS`.
-- `AUTH_WALLET_CHAIN_ID`: chain id accepted for structured login authentication. Defaults to Ethereum mainnet (`1`) when unset.
+- `AUTH_WALLET_CHAIN_ID`: authoritative chain id used for SIWE and structured login authentication. Defaults to Ethereum mainnet (`1`) when unset.
 - `AUTH_SESSION_HASH_SECRET`: secret used for hashing session cookies, native refresh tokens, connection share codes, and public user-agent values. Defaults to the JWT secret if unset.
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.
 - `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share`, `/auth/connection-share/legacy-desktop`, and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.

@@ -9,11 +9,15 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import {
   releaseNoteGenerationQueue,
   ReleaseNoteGenerationQueue
 } from '@/release-notes/release-note-generation-queue';
-import { GITHUB_TO_6529_HANDLES } from '@/release-notes/release-note-contributors.config';
+import {
+  GITHUB_TO_6529_HANDLES,
+  isGithubContributorLogin
+} from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
@@ -39,6 +43,8 @@ export interface CiPipelineAlertRequest {
   readonly branch?: string | null;
   readonly environment?: string | null;
   readonly service?: string | null;
+  readonly release_train_id?: string | null;
+  readonly contributor_github_logins?: string[];
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
@@ -176,6 +182,22 @@ export function normalizeTargetEnvironment(value: string | null | undefined) {
   return null;
 }
 
+export function normalizeContributorGithubLogins(
+  values: readonly string[] | null | undefined
+): string[] {
+  const logins: string[] = [];
+  for (const value of values ?? []) {
+    const login = value.trim();
+    if (
+      !isGithubContributorLogin(login) ||
+      logins.some((existing) => existing.toLowerCase() === login.toLowerCase())
+    )
+      continue;
+    logins.push(login);
+  }
+  return logins;
+}
+
 function formatStatusEmoji(status: CiPipelineAlertStatus): string {
   return status === 'success' ? '✅' : '🚨';
 }
@@ -241,6 +263,18 @@ function formatServiceLabel(request: CiPipelineAlertRequest): string {
     return '6529 Desktop';
   }
   return service ? `${repoLabel} - ${service}` : repoLabel;
+}
+
+function formatInitiator(
+  request: CiPipelineAlertRequest,
+  mentions: AlertMentions
+): string {
+  if (isReleaseBusGitHubAppActor(request.triggered_by_github_login)) {
+    return 'Release Train';
+  }
+  return mentions.triggeredBy
+    ? '@[' + mentions.triggeredBy.handle + ']'
+    : 'unknown';
 }
 
 function getGithubRepoUrl(request: CiPipelineAlertRequest): string | null {
@@ -381,6 +415,7 @@ export class CiPipelineAlertService {
         );
         continue;
       }
+      const contributorGithubLogins = this.getReleaseTrainContributors(request);
       await this.releaseNotesQueue.enqueueBestEffort({
         repo: request.repo,
         workflow: request.workflow,
@@ -395,10 +430,25 @@ export class CiPipelineAlertService {
         release_group_id: normalizedGroup.releaseGroupId,
         release_group_services: normalizedGroup.releaseGroupServices,
         pull_request_number: normalizedGroup.pullRequestNumber,
+        ...(contributorGithubLogins.length
+          ? { contributor_github_logins: contributorGithubLogins }
+          : {}),
         publish_release_note: normalizedGroup.publishReleaseNote,
         deployed_at: deployedAt
       });
     }
+  }
+
+  private getReleaseTrainContributors(
+    request: CiPipelineAlertRequest
+  ): string[] {
+    const triggeredByGithubLogin = normalizeOptionalValue(
+      request.triggered_by_github_login
+    );
+    return isReleaseBusGitHubAppActor(triggeredByGithubLogin) &&
+      normalizeOptionalValue(request.release_train_id)
+      ? normalizeContributorGithubLogins(request.contributor_github_logins)
+      : [];
   }
 
   private async resolveAlertMentions(
@@ -407,14 +457,16 @@ export class CiPipelineAlertService {
     const triggeredByGithubLogin = normalizeOptionalValue(
       request.triggered_by_github_login
     );
-    const triggeredByHandle = triggeredByGithubLogin
-      ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
-      : null;
+    const isReleaseTrain = isReleaseBusGitHubAppActor(triggeredByGithubLogin);
+    const triggeredByHandle =
+      triggeredByGithubLogin && !isReleaseTrain
+        ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
+        : null;
     if (!triggeredByGithubLogin) {
       this.logger.warn(
         'Unable to resolve CI workflow initiator: GitHub login is missing'
       );
-    } else if (!triggeredByHandle) {
+    } else if (!isReleaseTrain && !triggeredByHandle) {
       this.logger.warn(
         `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile mapping is missing`
       );
@@ -436,7 +488,11 @@ export class CiPipelineAlertService {
         ) === index
     );
     if (!handlesToResolve.length) {
-      return { triggeredBy: null, failureCc: [], all: [] };
+      return {
+        triggeredBy: null,
+        failureCc: [],
+        all: []
+      };
     }
 
     const profileIdsByHandle =
@@ -545,9 +601,7 @@ export class CiPipelineAlertService {
     const formattedDescription = description
       ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
       : null;
-    const triggeredBy = mentions.triggeredBy
-      ? '@[' + mentions.triggeredBy.handle + ']'
-      : 'unknown';
+    const triggeredBy = formatInitiator(request, mentions);
     const lines = [
       formatAlertHeading(request),
       '',

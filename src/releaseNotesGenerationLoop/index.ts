@@ -69,6 +69,34 @@ function parsePublishReleaseNote(value: unknown): boolean {
   return value;
 }
 
+function parseContributorGithubLogins(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new TypeError(
+      'Invalid release note message: contributor_github_logins must be an array'
+    );
+  }
+  const contributors: string[] = [];
+  for (const candidate of value) {
+    if (typeof candidate !== 'string' || !candidate.trim()) {
+      throw new TypeError(
+        'Invalid release note message: contributor_github_logins must contain non-empty strings'
+      );
+    }
+    const login = candidate.trim();
+    if (
+      !contributors.some(
+        (contributor) => contributor.toLowerCase() === login.toLowerCase()
+      )
+    ) {
+      contributors.push(login);
+    }
+  }
+  return contributors;
+}
+
 export function parseReleaseNoteMessage(
   body: string
 ): ReleaseNoteGenerationRequest {
@@ -96,6 +124,9 @@ export function parseReleaseNoteMessage(
     release_group_id: requireString(payload, 'release_group_id'),
     release_group_services: parseServices(payload.release_group_services),
     pull_request_number: parsePullRequestNumber(payload.pull_request_number),
+    contributor_github_logins: parseContributorGithubLogins(
+      payload.contributor_github_logins
+    ),
     publish_release_note: parsePublishReleaseNote(payload.publish_release_note),
     deployed_at: requireTimestamp(payload, 'deployed_at')
   };

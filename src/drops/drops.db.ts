@@ -430,98 +430,50 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async insertDrop(
     newDropEntity: NewDropEntity,
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    options: { deferMetrics?: boolean } = {}
   ) {
     const dropId = newDropEntity.id;
     const waveId = newDropEntity.wave_id;
     const replyToDropId = newDropEntity.reply_to_drop_id;
     const newDropSerialNo = newDropEntity.serial_no;
     const hideLinkPreview = newDropEntity.hide_link_preview ?? false;
-    const now = Time.currentMillis();
-    await Promise.all([
-      this.db.execute(
-        `
-            insert into ${WAVE_METRICS_TABLE}
-            (wave_id, drops_count, subscribers_count, participatory_drops_count, latest_drop_timestamp)
-            values (:waveId, ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }, 0, ${
-              newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-            }, :now)
-            on duplicate key update drops_count = (drops_count + ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }),
-                                    participatory_drops_count = (participatory_drops_count + ${
-                                      newDropEntity.drop_type ===
-                                      DropType.PARTICIPATORY
-                                        ? 1
-                                        : 0
-                                    }),
-                                    latest_drop_timestamp     = :now
-        `,
-        { waveId, now },
-        { wrappedConnection: connection }
-      ),
-      this.db.execute(
-        `
-            insert into ${WAVE_DROPPER_METRICS_TABLE}
-            (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
-            values (:waveId, :dropperId, ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }, ${
-              newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-            }, :now)
-            on duplicate key update drops_count = (drops_count + ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }),
-                                    participatory_drops_count = (participatory_drops_count + ${
-                                      newDropEntity.drop_type ===
-                                      DropType.PARTICIPATORY
-                                        ? 1
-                                        : 0
-                                    }),
-                                    latest_drop_timestamp     = :now
-        `,
-        { waveId, dropperId: newDropEntity.author_id, now },
-        { wrappedConnection: connection }
-      ),
-      this.db.execute(
-        `insert into ${DROPS_TABLE} (id,
-                                     author_id,
-                                     drop_type,
-                                     wave_id,
-                                     created_at,
-                                     updated_at,
-                                     title,
-                                     parts_count,
-                                     signature,
-                                     is_additional_action_promised,
-                                     hide_link_preview,
-                                     reply_to_drop_id,
-                                     reply_to_part_id${
-                                       newDropSerialNo !== null
-                                         ? `, serial_no`
-                                         : ``
-                                     })
-         values (:id,
-                 :author_id,
-                 :drop_type,
-                 :wave_id,
-                 :created_at,
-                 :updated_at,
-                 :title,
-                 :parts_count,
-                 :signature,
-                 :is_additional_action_promised,
-                 :hide_link_preview,
-                 :reply_to_drop_id,
-                 :reply_to_part_id
-              ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
+    await this.db.execute(
+      `insert into ${DROPS_TABLE} (id,
+                                   author_id,
+                                   drop_type,
+                                   wave_id,
+                                   created_at,
+                                   updated_at,
+                                   title,
+                                   parts_count,
+                                   signature,
+                                   is_additional_action_promised,
+                                   hide_link_preview,
+                                   reply_to_drop_id,
+                                   reply_to_part_id${
+                                     newDropSerialNo !== null
+                                       ? `, serial_no`
+                                       : ``
+                                   })
+       values (:id,
+               :author_id,
+               :drop_type,
+               :wave_id,
+               :created_at,
+               :updated_at,
+               :title,
+               :parts_count,
+               :signature,
+               :is_additional_action_promised,
+               :hide_link_preview,
+               :reply_to_drop_id,
+               :reply_to_part_id
+            ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
 
-        { ...newDropEntity, hide_link_preview: hideLinkPreview },
-        { wrappedConnection: connection }
-      )
-    ]);
+      { ...newDropEntity, hide_link_preview: hideLinkPreview },
+      { wrappedConnection: connection }
+    );
     if (replyToDropId) {
       const serialNo = await this.db
         .oneOrNull<{
@@ -585,6 +537,64 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         {},
         { wrappedConnection: connection }
       );
+    }
+    if (!options.deferMetrics) {
+      await this.applyInsertedDropMetricsDelta(newDropEntity, { connection });
+    }
+  }
+
+  async applyInsertedDropMetricsDelta(
+    drop: Pick<DropEntity, 'wave_id' | 'author_id' | 'drop_type'>,
+    ctx: RequestContext
+  ) {
+    // These shared rows serialize concurrent drops in the same wave. Call this
+    // at the transaction tail so their locks are released as soon as possible.
+    // Keep wave before dropper metrics in insert and delete paths to avoid lock
+    // order inversion.
+    const timerName = `${this.constructor.name}->applyInsertedDropMetricsDelta`;
+    ctx.timer?.start(timerName);
+    try {
+      const now = Time.currentMillis();
+      const chatDropsDelta = drop.drop_type === DropType.CHAT ? 1 : 0;
+      const participatoryDropsDelta =
+        drop.drop_type === DropType.PARTICIPATORY ? 1 : 0;
+      await this.db.execute(
+        `
+          insert into ${WAVE_METRICS_TABLE}
+          (wave_id, drops_count, subscribers_count, participatory_drops_count, latest_drop_timestamp)
+          values (:waveId, :chatDropsDelta, 0, :participatoryDropsDelta, :now)
+          on duplicate key update drops_count = (drops_count + :chatDropsDelta),
+                                  participatory_drops_count = (participatory_drops_count + :participatoryDropsDelta),
+                                  latest_drop_timestamp = :now
+        `,
+        {
+          waveId: drop.wave_id,
+          chatDropsDelta,
+          participatoryDropsDelta,
+          now
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      await this.db.execute(
+        `
+          insert into ${WAVE_DROPPER_METRICS_TABLE}
+          (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
+          values (:waveId, :dropperId, :chatDropsDelta, :participatoryDropsDelta, :now)
+          on duplicate key update drops_count = (drops_count + :chatDropsDelta),
+                                  participatory_drops_count = (participatory_drops_count + :participatoryDropsDelta),
+                                  latest_drop_timestamp = :now
+        `,
+        {
+          waveId: drop.wave_id,
+          dropperId: drop.author_id,
+          chatDropsDelta,
+          participatoryDropsDelta,
+          now
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
     }
   }
 
@@ -2027,16 +2037,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ) {
     ctx.timer?.start('dropsDb->applyDeletedDropMetricsDelta');
     try {
-      // Mirrors insertDrop: CHAT increments drops_count, PARTICIPATORY increments
-      // participatory_drops_count, and WINNER only affects latest_drop_timestamp.
+      // Mirrors applyInsertedDropMetricsDelta: CHAT increments drops_count,
+      // PARTICIPATORY increments participatory_drops_count, and WINNER only
+      // affects latest_drop_timestamp.
       // This keeps DELETE fast; the async full resync is the authoritative repair
       // for stale counters, retries, and races.
       const chatDropsDelta = drop.drop_type === DropType.CHAT ? 1 : 0;
       const participatoryDropsDelta =
         drop.drop_type === DropType.PARTICIPATORY ? 1 : 0;
-      await Promise.all([
-        this.db.execute(
-          `
+      await this.db.execute(
+        `
           update ${WAVE_METRICS_TABLE} wm
           set wm.drops_count = greatest(wm.drops_count - :chatDropsDelta, 0),
               wm.participatory_drops_count = greatest(
@@ -2050,15 +2060,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               )
           where wm.wave_id = :waveId
         `,
-          {
-            waveId: drop.wave_id,
-            chatDropsDelta,
-            participatoryDropsDelta
-          },
-          { wrappedConnection: ctx.connection }
-        ),
-        this.db.execute(
-          `
+        {
+          waveId: drop.wave_id,
+          chatDropsDelta,
+          participatoryDropsDelta
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      await this.db.execute(
+        `
           update ${WAVE_DROPPER_METRICS_TABLE} wdm
           set wdm.drops_count = greatest(wdm.drops_count - :chatDropsDelta, 0),
               wdm.participatory_drops_count = greatest(
@@ -2074,15 +2084,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where wdm.wave_id = :waveId
             and wdm.dropper_id = :dropperId
         `,
-          {
-            waveId: drop.wave_id,
-            dropperId: drop.author_id,
-            chatDropsDelta,
-            participatoryDropsDelta
-          },
-          { wrappedConnection: ctx.connection }
-        )
-      ]);
+        {
+          waveId: drop.wave_id,
+          dropperId: drop.author_id,
+          chatDropsDelta,
+          participatoryDropsDelta
+        },
+        { wrappedConnection: ctx.connection }
+      );
     } finally {
       ctx.timer?.stop('dropsDb->applyDeletedDropMetricsDelta');
     }

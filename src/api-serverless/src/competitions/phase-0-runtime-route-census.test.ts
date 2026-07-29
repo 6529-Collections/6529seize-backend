@@ -17,6 +17,13 @@ type GetCall = {
   readonly cache: ManifestRoute['cache'] | null;
 };
 
+const RETIRED_RELEASE_BUS_V1_ROUTES = new Set([
+  '/deploy/release-bus/controls',
+  '/deploy/release-candidates',
+  '/deploy/release-trains',
+  '/deploy/release-trains/:id'
+]);
+
 const repositoryRoot = path.resolve(__dirname, '../../../..');
 const fixtureRoot = path.resolve(
   __dirname,
@@ -116,12 +123,19 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(manifest.baseline.counts.runtime_route_shapes).toBe(296);
     expect(manifest.baseline.counts.openapi_get_operations).toBe(183);
     expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(296);
+    expect(
+      manifest.routes.filter(
+        (route) => !RETIRED_RELEASE_BUS_V1_ROUTES.has(route.path)
+      )
+    ).toHaveLength(292);
   });
 
-  it('keeps every accepted route declaration mounted in its owning source', () => {
+  it('keeps every non-retired route declaration mounted in its owning source', () => {
     const callsBySource = new Map<string, GetCall[]>();
     const failures: string[] = [];
-    for (const route of manifest.routes) {
+    for (const route of manifest.routes.filter(
+      (entry) => !RETIRED_RELEASE_BUS_V1_ROUTES.has(entry.path)
+    )) {
       const separator = route.source.lastIndexOf(':');
       const relativeFile = route.source.slice(0, separator);
       const baselineLine = Number(route.source.slice(separator + 1));
