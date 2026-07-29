@@ -564,6 +564,29 @@ executing request must repeat the bounded repository/PR/head identities from
 that report, so historical superseded heads outside the manifest stay
 untouched.
 
+The API also exposes a two-phase operator-only logical candidate
+deregistration boundary. Its read-only preparation returns one complete
+candidate/control/lock/staging-state row-version inventory and digest.
+Execution requires both independently changeable lanes paused while `ALL`
+remains unpaused, all three exact locks wholly free, every train/operation
+terminal, and all backend/frontend staging/production mutation and E2E
+workflows inactive. It temporarily owns all three locks and transactionally
+marks candidates `DEREGISTERED` with detached rather than absent staging
+presence, clears scheduling/admission/production intent, and moves the
+singleton to `DETACHED_MANUAL_OWNERSHIP`. Existing dependency, train,
+operation, manifest, and event history remains immutable. A detached singleton
+blocks registration and claims; it can become clean main only when both exact
+staging refs equal the corresponding current main bases. Matching an older
+validated manifest never restores its prior candidate membership.
+Terminal candidate history is byte-for-byte immutable, except that a
+`SUPERSEDED` row with the exact deleted-branch event and retained production
+request/staging evidence is still active intent because the reconciler can
+restore it; deregistration must consume that narrow recoverable case.
+These additive values fit the existing varchar widths and require no database
+migration. Execution is forbidden during mixed API/reconciler runtime; both
+lane controls remain paused until every runtime and generated/UI contract
+understands the detached states.
+
 GitHub Actions performs exact composition, fast preflight, immutable packaging,
 backend DAG deployment, frontend deployment, and manifest-bound E2E. Train
 preflight consumes exact-head/merge-tree PR CI evidence instead of repeating

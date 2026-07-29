@@ -195,6 +195,95 @@ export const ReleaseBusV2CurrentStagingRepairBodySchema = Joi.object({
     })
 }).required();
 
+const ReleaseBusV2CandidateDeregistrationCandidateVersionSchema = Joi.object({
+  id: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .required(),
+  row_version: Joi.number().integer().positive().strict().required()
+}).required();
+
+const ReleaseBusV2CandidateDeregistrationControlVersionSchema = Joi.object({
+  scope: Joi.string()
+    .valid(...RELEASE_BUS_V2_CONTROL_SCOPES)
+    .required(),
+  paused: Joi.boolean().strict().required(),
+  row_version: Joi.number().integer().positive().strict().required()
+}).required();
+
+const ReleaseBusV2CandidateDeregistrationLockVersionSchema = Joi.object({
+  name: Joi.string()
+    .valid('scheduler', 'staging-environment', 'production-environment')
+    .required(),
+  row_version: Joi.number().integer().positive().strict().required()
+}).required();
+
+const ReleaseBusV2CandidateDeregistrationStagingRefsSchema = Joi.object({
+  frontend: ReleaseShaSchema.required(),
+  backend: ReleaseShaSchema.required()
+}).required();
+
+export const ReleaseBusV2CandidateDeregistrationBodySchema = Joi.object({
+  phase: Joi.string().valid('PREPARE', 'EXECUTE').required(),
+  reason: Joi.string().trim().min(3).max(1000).required(),
+  expected_plan_sha256: Joi.string()
+    .pattern(/^[a-f0-9]{64}$/)
+    .when('phase', {
+      is: 'EXECUTE',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    }),
+  expected_inventory_sha256: Joi.string()
+    .pattern(/^[a-f0-9]{64}$/)
+    .when('phase', {
+      is: 'EXECUTE',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    }),
+  expected_candidates: Joi.array()
+    .items(ReleaseBusV2CandidateDeregistrationCandidateVersionSchema)
+    .min(1)
+    .max(500)
+    .unique('id')
+    .when('phase', {
+      is: 'EXECUTE',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    }),
+  expected_controls: Joi.array()
+    .items(ReleaseBusV2CandidateDeregistrationControlVersionSchema)
+    .length(3)
+    .unique('scope')
+    .when('phase', {
+      is: 'EXECUTE',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    }),
+  expected_locks: Joi.array()
+    .items(ReleaseBusV2CandidateDeregistrationLockVersionSchema)
+    .length(3)
+    .unique('name')
+    .when('phase', {
+      is: 'EXECUTE',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    }),
+  expected_staging_state_row_version: Joi.number()
+    .integer()
+    .positive()
+    .strict()
+    .when('phase', {
+      is: 'EXECUTE',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    }),
+  expected_staging_refs:
+    ReleaseBusV2CandidateDeregistrationStagingRefsSchema.when('phase', {
+      is: 'EXECUTE',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    })
+}).required();
+
 export const ReleaseBusV2CandidateCancelBodySchema = Joi.object({
   expected_row_version: Joi.number().integer().positive().required()
 }).required();

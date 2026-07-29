@@ -5,7 +5,11 @@ import {
   RELEASE_BUS_V2_MANIFESTS_TABLE,
   RELEASE_BUS_V2_STAGING_STATE_TABLE
 } from '@/constants';
-import { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
+import {
+  releaseBusV2CandidateInventoryDigest,
+  ReleaseBusV2Repository,
+  type ReleaseBusV2MaintenanceLease
+} from '@/releaseBusV2/release-bus-v2.repository';
 import { ReleaseBusV2Service } from '@/releaseBusV2/release-bus-v2.service';
 import { dbSupplier } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -1244,6 +1248,259 @@ describeWithSeed(
       await expect(
         repository.findStagingValidatedManifestByShas(SHA_A, SHA_B, {})
       ).resolves.toBeNull();
+    });
+
+    it('commits logical deregistration and its audit history in one exact database transaction', async () => {
+      const candidate = await repository.createCandidate(
+        {
+          repository: 'frontend',
+          prNumber: 2001,
+          branchName: 'feature/logical-deregistration',
+          headSha: SHA_A,
+          requestedBy: 'integration',
+          deployPlan: null,
+          prEvidence: null
+        },
+        {}
+      );
+      const terminalStatuses = [
+        'PRODUCTION_DEPLOYED',
+        'SUPERSEDED',
+        'CANCELLED',
+        'DEREGISTERED'
+      ] as const;
+      const terminalCandidates = await Promise.all(
+        terminalStatuses.map(async (status, index) => {
+          const created = await repository.createCandidate(
+            {
+              repository: index % 2 === 0 ? 'frontend' : 'backend',
+              prNumber: 2100 + index,
+              branchName: `feature/terminal-history-${index}`,
+              headSha: String(index + 1).repeat(40),
+              requestedBy: 'integration',
+              deployPlan: null,
+              prEvidence: null
+            },
+            {}
+          );
+          expect(
+            await repository.updateCandidate(
+              created.id,
+              created.row_version,
+              { status },
+              {}
+            )
+          ).toBe(true);
+          const updated = await repository.findCandidateById(created.id, {});
+          if (!updated)
+            throw new Error('Terminal integration row was not found');
+          return updated;
+        })
+      );
+      const terminalBefore = terminalCandidates.map((row) => ({ ...row }));
+      let leases: ReleaseBusV2MaintenanceLease[] = [];
+      try {
+        await repository.setControl(
+          'STAGING',
+          true,
+          'integration maintenance',
+          'integration',
+          {}
+        );
+        await repository.setControl(
+          'PRODUCTION',
+          true,
+          'integration maintenance',
+          'integration',
+          {}
+        );
+        const controls = (await repository.listControls({})).map(
+          ({ scope, paused, row_version }) => ({
+            scope,
+            paused: paused === true || paused === 1,
+            row_version
+          })
+        );
+        const exactFreeLocks = (await repository.listLocks({})).map(
+          ({ name, row_version }) => ({ name, row_version })
+        );
+        const candidates = await repository.listCandidateDeregistrationTargets(
+          {}
+        );
+        const stagingState = await repository.getStagingState({});
+        leases = await repository.acquireExactFreeMaintenanceLocks(
+          exactFreeLocks,
+          'integration-deregistration',
+          60_000
+        );
+        const originalListCandidateDeregistrationTargets =
+          repository.listCandidateDeregistrationTargets.bind(repository);
+        let releaseInventoryFence = () => {};
+        let inventoryFenceObserved!: () => void;
+        const inventoryFenceHeld = new Promise<void>((resolve) => {
+          inventoryFenceObserved = resolve;
+        });
+        const continueCommit = new Promise<void>((resolve) => {
+          releaseInventoryFence = resolve;
+        });
+        let trappedInventoryFence = false;
+        const inventorySpy = jest
+          .spyOn(repository, 'listCandidateDeregistrationTargets')
+          .mockImplementation(async (ctx, forUpdate) => {
+            const rows = await originalListCandidateDeregistrationTargets(
+              ctx,
+              forUpdate
+            );
+            if (forUpdate && !trappedInventoryFence) {
+              trappedInventoryFence = true;
+              const isolationRows = await dbSupplier().execute<{
+                readonly transaction_isolation: string;
+              }>(
+                'select @@transaction_isolation as transaction_isolation',
+                {},
+                ctx.connection
+                  ? { wrappedConnection: ctx.connection }
+                  : undefined
+              );
+              expect(isolationRows[0]?.transaction_isolation).toBe(
+                'REPEATABLE-READ'
+              );
+              inventoryFenceObserved();
+              await continueCommit;
+            }
+            return rows;
+          });
+        const commitPromise = repository.commitAllCandidateDeregistration({
+          deregistrationId: 'integration-deregistration',
+          actor: 'integration',
+          reason: 'Prove atomic logical deregistration',
+          expectedControls: controls,
+          maintenanceLeases: leases,
+          expectedStagingStateRowVersion: stagingState.row_version,
+          expectedCandidates: candidates.map(({ id, row_version }) => ({
+            id,
+            row_version
+          })),
+          expectedInventorySha256:
+            releaseBusV2CandidateInventoryDigest(candidates),
+          observedFrontendStagingSha: SHA_B,
+          observedBackendStagingSha: SHA_B
+        });
+        let concurrentInsertCompleted = false;
+        let concurrentInsert:
+          | Awaited<ReturnType<typeof repository.createCandidate>>
+          | undefined;
+        let concurrentInsertPromise:
+          | ReturnType<typeof repository.createCandidate>
+          | undefined;
+        try {
+          await inventoryFenceHeld;
+          concurrentInsertPromise = new ReleaseBusV2Repository()
+            .createCandidate(
+              {
+                repository: 'backend',
+                prNumber: 2002,
+                branchName: 'feature/concurrent-active-intent',
+                headSha: SHA_C,
+                requestedBy: 'integration',
+                deployPlan: null,
+                prEvidence: null
+              },
+              {}
+            )
+            .then((created) => {
+              concurrentInsertCompleted = true;
+              return created;
+            });
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          expect(concurrentInsertCompleted).toBe(false);
+          releaseInventoryFence();
+          await expect(commitPromise).resolves.toEqual({ candidateCount: 1 });
+          concurrentInsert = await concurrentInsertPromise;
+        } finally {
+          releaseInventoryFence();
+          await Promise.allSettled(
+            concurrentInsertPromise
+              ? [commitPromise, concurrentInsertPromise]
+              : [commitPromise]
+          );
+          inventorySpy.mockRestore();
+        }
+
+        await expect(
+          repository.findCandidateById(candidate.id, {})
+        ).resolves.toMatchObject({
+          status: 'DEREGISTERED',
+          current_train_id: null,
+          staging_live_state: 'DETACHED',
+          staging_live_manifest_id: null,
+          production_requested_at: null
+        });
+        await expect(
+          repository.findCandidateById(concurrentInsert?.id ?? '', {})
+        ).resolves.toMatchObject({
+          id: concurrentInsert?.id,
+          status: 'READY_FOR_STAGING'
+        });
+        for (let index = 0; index < terminalCandidates.length; index += 1) {
+          const terminal = terminalCandidates[index];
+          await expect(
+            repository.findCandidateById(terminal.id, {})
+          ).resolves.toEqual(terminalBefore[index]);
+          await expect(
+            repository.listCandidateEvents(
+              terminal.id,
+              'CANDIDATE_LOGICALLY_DEREGISTERED',
+              10,
+              {}
+            )
+          ).resolves.toEqual([]);
+        }
+        await expect(repository.getStagingState({})).resolves.toMatchObject({
+          status: 'DETACHED_MANUAL_OWNERSHIP',
+          current_manifest_id: null,
+          last_validated_manifest_id: stagingState.last_validated_manifest_id,
+          frontend_sha: null,
+          backend_sha: null,
+          clean_main: false
+        });
+        await expect(
+          repository.listCandidateEvents(
+            candidate.id,
+            'CANDIDATE_LOGICALLY_DEREGISTERED',
+            10,
+            {}
+          )
+        ).resolves.toEqual([
+          expect.objectContaining({
+            candidate_id: candidate.id,
+            github_actor: 'integration'
+          })
+        ]);
+      } finally {
+        try {
+          if (leases.length > 0)
+            await repository.releaseExactMaintenanceLocks(leases);
+        } finally {
+          try {
+            await repository.setControl(
+              'STAGING',
+              false,
+              'integration cleanup',
+              'integration',
+              {}
+            );
+          } finally {
+            await repository.setControl(
+              'PRODUCTION',
+              false,
+              'integration cleanup',
+              'integration',
+              {}
+            );
+          }
+        }
+      }
     });
 
     it('finds staging validation only for exact SHAs and artifact digests', async () => {
