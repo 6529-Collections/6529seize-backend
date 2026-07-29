@@ -549,7 +549,7 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     },
     {
       from: '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
-      to: '4519f99b19e83feaf332e437f9c04607dee1625ebbe444c631f58af60a9751cd',
+      to: 'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
