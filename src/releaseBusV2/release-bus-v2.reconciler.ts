@@ -1492,7 +1492,8 @@ export function candidateUnavailableForTrainUpdate(
   current: ReleaseBusV2CandidateRecord,
   claimed: ReleaseBusV2CandidateRecord
 ): boolean {
-  if (['CANCELLED', 'SUPERSEDED'].includes(current.status)) return true;
+  if (['CANCELLED', 'SUPERSEDED', 'DEREGISTERED'].includes(current.status))
+    return true;
   if (
     claimed.current_train_id &&
     current.current_train_id !== claimed.current_train_id
@@ -2685,7 +2686,10 @@ export class ReleaseBusV2Reconciler {
 
     for (const candidate of relevantCandidates(context)) {
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (
+        !current ||
+        ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+      )
         continue;
       const isAttributable = diagnosis.attributable.has(candidate.id);
       const isInteraction = diagnosis.interaction.has(candidate.id);
@@ -2811,7 +2815,10 @@ export class ReleaseBusV2Reconciler {
     const returned: ReleaseBusV2CandidateRecord[] = [];
     for (const candidate of mutable) {
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (
+        !current ||
+        ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+      )
         continue;
       const repositoryFailed = failedIds.has(candidate.id);
       const dependencyBlocked =
@@ -3247,7 +3254,10 @@ export class ReleaseBusV2Reconciler {
         {}
       );
       const current = await this.repository.findCandidateById(candidate.id, {});
-      if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+      if (
+        !current ||
+        ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+      )
         continue;
       await this.repository.updateCandidate(
         current.id,
@@ -6389,7 +6399,10 @@ export class ReleaseBusV2Reconciler {
           candidate.id,
           {}
         );
-        if (!current || ['SUPERSEDED', 'CANCELLED'].includes(current.status))
+        if (
+          !current ||
+          ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
+        )
           return;
         await releaseBusGitHubApp.ensureCommitStatus(
           candidate.repository,

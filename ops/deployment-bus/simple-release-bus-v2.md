@@ -347,6 +347,93 @@ republished so an idempotent retry can recover a prior GitHub outage. A nonzero
 failure count requires operator follow-up even though the durable ledger repair
 already committed.
 
+### Logical candidate deregistration
+
+The operator-only
+`POST /deploy/release-bus-v2/maintenance/deregister-all-candidates` action has
+separate `PREPARE` and `EXECUTE` phases. It is an exceptional logical ledger
+reset, not a staging removal deployment. Preparation is read-only and returns
+the exact active-intent candidate inventory digest, every active-intent
+candidate row version, every control/lock row version, the staging-state row
+version, and the observed frontend/backend `1a-staging` refs. Active intent is
+every nonterminal status plus the narrow `SUPERSEDED` case that is still
+semantically recoverable production intent: no current train, an explicit
+production request, staging evidence, and the latest branch-move supersession
+event records a deleted head. The reconciler can otherwise restore that exact
+row to production readiness, so deregistration must include it. Immutable
+`PRODUCTION_DEPLOYED`, `CANCELLED`, `DEREGISTERED`, and all other terminal
+`SUPERSEDED` history is excluded and preserved byte-for-byte. Execution must
+repeat that complete plan. A preparation with zero active-intent targets is an
+audited safe no-op (`candidate_count: 0`); it cannot be executed.
+
+Execution is allowed only when `ALL` is unpaused, both independently changeable
+lanes are paused `OFF`, all three v2 locks are wholly free, all trains and
+operations are terminal, and backend/frontend staging and production
+mutation/E2E workflows are inactive. It temporarily owns all three exact locks,
+rechecks the workflow/ref fence, and transactionally verifies the supplied
+control, lock, singleton, candidate-set, digest, and row versions. The
+transaction uses a status-indexed locking read over every mutable candidate
+status, excluding only immutable `PRODUCTION_DEPLOYED`, `CANCELLED`, and
+`DEREGISTERED` history. Under the database's verified `REPEATABLE-READ`
+isolation, the resulting next-key locks fence inserts into every active-intent
+status range; a newly admitted target therefore cannot escape the exact CAS.
+Latest branch-move events for all `SUPERSEDED` rows are read in one batched
+query while that fence is held.
+
+The transaction changes only active-intent targets to `DEREGISTERED`, clears
+their queue, current-train, admission, transition, live-manifest, and
+production-intent fields, and records `staging_live_state=DETACHED`.
+Pre-existing terminal-history rows are preserved byte-for-byte, including
+status, timestamps, live-history fields, and `row_version`. Exact candidate
+identity, PR evidence, deploy plans, dependencies, historical staging
+validation pointers, trains, operations, manifests, and prior events are also
+preserved. The singleton becomes `DETACHED_MANUAL_OWNERSHIP`: its last
+validated manifest is retained as history, while its current manifest and
+current SHA/ref fields are cleared. Global and per-target events record the
+before-state and active-inventory digest. Each per-target event records every
+cleared or replaced field, including current train, staging live timestamps and
+transition request metadata, production requester/selection, and hold reason,
+and the supersession timestamp, so the logical change is reconstructable
+one-to-one. Exact-head re-registration also clears that stale supersession
+marker before a new staging cycle, preventing recovered deleted-branch intent
+from remaining permanently ineligible for production. No Git ref, artifact,
+workflow, deployment, E2E, release note, or immutable history is mutated.
+
+The database commit is the mutation boundary. If a post-commit GitHub/ref
+verification, supplemental audit publication, or maintenance-lease cleanup
+fails, the API response must say `outcome: COMMITTED` and `committed: true`,
+include the immutable `deregistration_id`, and report `UNKNOWN_DETACHED`.
+Failures before that boundary say `outcome: NOT_COMMITTED`,
+`committed: false`, and `UNKNOWN_UNCHANGED`, with no deregistration ID.
+Operators must treat a `COMMITTED` error as a committed deregistration and
+audit by ID; a generic failure must never imply that the database mutation did
+not occur.
+
+`DETACHED` means physical staging presence is deliberately unknown. It must
+never be rewritten to `NOT_LIVE`, `CLEAN_MAIN`, or a historical live manifest
+merely because the bus stopped owning those candidates. While detached, new
+registration and every staging claim fail closed. An old validated manifest
+whose SHAs still match the staging refs must not resurrect its members. The
+only automatic exit is when both exact `1a-staging` refs equal the current
+frontend/backend `main` bases; that proves clean main and changes deregistered
+detached targets to `NOT_LIVE` without restoring historical membership.
+Terminal-history rows remain byte-for-byte unchanged; once the singleton is
+`CLEAN_MAIN`, their historical `LIVE` fields are not authoritative because
+current membership is bound to the singleton's exact current manifest.
+If serialized manual fallback changed either staging ref to anything else, the
+bus remains detached until an authorized normalization deploy makes both refs
+exact current main. Re-registering a deregistered exact head after clean
+bootstrap requires fresh current branch and green PR evidence.
+
+The new literals fit the existing candidate/status/live-state and singleton
+`varchar` widths; this contract adds no DDL. Do not execute the maintenance
+action during a mixed API/reconciler rollout. Keep both lane controls paused
+until the API, reconciler, generated contracts, and UI all understand
+`DEREGISTERED`, `DETACHED`, and `DETACHED_MANUAL_OWNERSHIP`. An older
+reconciler cannot claim while the lane controls remain paused, so either
+deployment order is safe during that fenced window; resumption requires exact
+new-runtime parity.
+
 ## Operator rollout and rollback
 
 Deploy additive changes in this order: database migrations, API/UI, then the v2
