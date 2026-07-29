@@ -99,6 +99,9 @@ register backend first and declare it as the frontend prerequisite.
    deploy units. Repository-wide lint, typecheck, test inventory, and full Jest
    matrices remain PR CI gates and never run in a normal train. Ordinary
    staging never bisects a failed repository or builds diagnostic subsets.
+   The resulting immutable artifact is bound to this exact train; deploy input
+   validation rejects cross-train artifact reuse for both the v3 contract and
+   its legacy-v2 compatibility bridge.
 4. Preparation may finish while another train owns staging.
 5. The train acquires the staging lock only for deployment plus E2E.
    Under that lock it binds every unchanged repository to the exact current
@@ -211,7 +214,9 @@ New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`:
 - freshly compose both repositories against the current trusted `main` bases.
   Frontend and backend preparation may run concurrently. A candidate's old PR
   artifact or an exact combined staging artifact is never reused for ordinary
-  production qualification;
+  production qualification. The production deploy consumes only the freshly
+  built exact production-train artifact and rejects every cross-train artifact
+  identity before authorization or checkout;
 - fail closed on moved candidate heads, superseded or ambiguous evidence,
   missing staging E2E/artifact identity, an invalid dependency DAG, composition
   conflicts, failed checks/builds, artifact mismatch, or either stale

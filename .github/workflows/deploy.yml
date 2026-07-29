@@ -221,6 +221,8 @@ jobs:
             [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
             [[ "$INPUT_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
             [[ "$INPUT_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+            # Every deploy consumes the artifact freshly built for this exact
+            # train. Cross-train reuse is invalid for v3 and legacy-v2 alike.
             test -z "$INPUT_ARTIFACT_TRAIN_ID" -o "$INPUT_ARTIFACT_TRAIN_ID" = "$INPUT_TRAIN_ID"
             case "$INPUT_ARTIFACT_CONTRACT_VERSION" in
               environment-bound-v3)
