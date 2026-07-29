@@ -540,42 +540,36 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   >
 > = {
   backend: [
-    {
-      from: '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
-      to: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
-      to: '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
-      to: '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
-      to: 'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: 'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
-      to: '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
+    trustedGatePolicyBundleRollout(
+      '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
+      'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01'
+    ),
+    trustedGatePolicyBundleRollout(
+      'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
+      '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d'
+    ),
+    trustedGatePolicyBundleRollout(
+      '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
+      '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b'
+    ),
+    trustedGatePolicyBundleRollout(
+      '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
+      'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1'
+    ),
+    trustedGatePolicyBundleRollout(
+      'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
+      '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f'
+    ),
     trustedGatePolicyBundleRollout(
       '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f',
       '9726b0045dd826249544782a3effde02a867136378d45ece0e19e745343e36d4'
     )
   ],
   frontend: [
-    {
-      from: '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8',
-      to: '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
+    trustedGatePolicyBundleRollout(
+      '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8',
+      '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d'
+    ),
     trustedGatePolicyBundleRollout(
       '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
       '8f8e4348f8b95957ed17c707839199f1aa1902ea151c637066e5a33ce7ec6379'
