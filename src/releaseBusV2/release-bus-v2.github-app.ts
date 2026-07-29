@@ -203,7 +203,7 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
   frontend: [
     {
       from: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
-      to: '6fdbbd94f0d5fe8dfca93a96d5583ecc58f017da',
+      to: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]
@@ -541,7 +541,7 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   frontend: [
     {
       from: '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8',
-      to: 'ddd9afbff8b7de02ee1fb86395a7f3cde4485b408073d34e1532fa29c30f4fab',
+      to: '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]
