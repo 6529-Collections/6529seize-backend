@@ -58,7 +58,8 @@ export const RELEASE_BUS_V2_CANDIDATE_STATUSES = [
   'WAITING_FOR_DEPENDENCY',
   'SUPERSEDED',
   'FAILED',
-  'CANCELLED'
+  'CANCELLED',
+  'DEREGISTERED'
 ] as const;
 export type ReleaseBusV2CandidateStatus =
   (typeof RELEASE_BUS_V2_CANDIDATE_STATUSES)[number];
@@ -122,7 +123,11 @@ export const RELEASE_BUS_V2_STAGING_POLICIES = [
 export type ReleaseBusV2StagingPolicy =
   (typeof RELEASE_BUS_V2_STAGING_POLICIES)[number];
 
-export const RELEASE_BUS_V2_STAGING_LIVE_STATES = ['NOT_LIVE', 'LIVE'] as const;
+export const RELEASE_BUS_V2_STAGING_LIVE_STATES = [
+  'NOT_LIVE',
+  'LIVE',
+  'DETACHED'
+] as const;
 export type ReleaseBusV2StagingLiveState =
   (typeof RELEASE_BUS_V2_STAGING_LIVE_STATES)[number];
 
@@ -130,7 +135,8 @@ export type ReleaseBusV2StagingStateStatus =
   | 'UNINITIALIZED'
   | 'LIVE'
   | 'CLEAN_MAIN'
-  | 'ROLLBACK_FAILED';
+  | 'ROLLBACK_FAILED'
+  | 'DETACHED_MANUAL_OWNERSHIP';
 
 export const RELEASE_BUS_V2_PRODUCTION_QUALIFICATION_POLICIES = [
   'CANDIDATE_STAGING_EVIDENCE_V1',

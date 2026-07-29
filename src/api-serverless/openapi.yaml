@@ -8166,6 +8166,78 @@ paths:
                             head_sha:
                               type: string
                               pattern: ^[a-f0-9]{40}$
+  /deploy/release-bus-v2/maintenance/deregister-all-candidates:
+    post:
+      tags:
+        - Release Bus v2
+      summary: >-
+        Prepare or execute an exact logical deregistration of active candidate
+        intent
+      description: >-
+        Operator-only maintenance action. Preparation is read-only and returns
+        the complete active-intent candidate/control/lock row-version inventory.
+        Existing PRODUCTION_DEPLOYED, CANCELLED, DEREGISTERED, and terminal
+        SUPERSEDED history is excluded and preserved byte-for-byte. The sole
+        SUPERSEDED exception is exact deleted-branch production intent that the
+        reconciler can otherwise restore; that recoverable intent is an active
+        target. Execution succeeds only while ALL is unpaused, both
+        independently changeable lanes are paused OFF, all locks were exactly
+        free, every train and operation is terminal, every staging/production
+        mutation and E2E workflow is inactive, staging refs are unchanged, and
+        every supplied row version and digest still matches. Execution does not
+        mutate refs, deployments, immutable manifests, trains, operations,
+        dependencies, or historical events. It marks physical staging presence
+        detached/unknown; it never claims that unchanged staging bytes are
+        absent. A failure after the database commit returns committed=true with
+        the immutable deregistration_id.
+      operationId: deregisterAllReleaseBusV2Candidates
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: >-
+                #/components/schemas/ApiReleaseBusV2CandidateDeregistrationRequest
+      responses:
+        "200":
+          description: Exact preparation plan or committed logical deregistration
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiReleaseBusV2CandidateDeregistrationResponse
+        "400":
+          description: >-
+            Invalid prepare or execute request. A BAD_REQUEST returned after
+            request validation uses the typed NOT_COMMITTED error response;
+            request-shape validation failures retain the standard API error
+            envelope.
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiReleaseBusV2CandidateDeregistrationError
+        "409":
+          description: >-
+            Exact safety, drain, or compare-and-swap fence failed. A post-commit
+            fence change returns committed=true and the deregistration ID.
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiReleaseBusV2CandidateDeregistrationError
+        "503":
+          description: >-
+            Safety evidence was unavailable. If the database commit already
+            completed, the response returns committed=true and the
+            deregistration ID; otherwise no new action was authorized.
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiReleaseBusV2CandidateDeregistrationError
   /subscriptions/consolidation/coverage/{consolidation_key}:
     get:
       tags:
@@ -20189,6 +20261,298 @@ components:
         platform:
           type: string
           description: Optional platform (ios, android, web)
+    ApiReleaseBusV2CandidateDeregistrationCandidateVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - row_version
+      properties:
+        id:
+          type: string
+          format: uuid
+        row_version:
+          type: integer
+          minimum: 1
+    ApiReleaseBusV2CandidateDeregistrationCommittedError:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - error
+        - committed
+        - deregistration_id
+        - physical_staging_presence
+      properties:
+        outcome:
+          type: string
+          enum:
+            - COMMITTED
+        error:
+          type: string
+        committed:
+          type: boolean
+          enum:
+            - true
+        deregistration_id:
+          type: string
+          format: uuid
+        physical_staging_presence:
+          type: string
+          enum:
+            - UNKNOWN_DETACHED
+    ApiReleaseBusV2CandidateDeregistrationControlVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - scope
+        - paused
+        - row_version
+      properties:
+        scope:
+          type: string
+          enum:
+            - ALL
+            - STAGING
+            - PRODUCTION
+        paused:
+          type: boolean
+        row_version:
+          type: integer
+          minimum: 1
+    ApiReleaseBusV2CandidateDeregistrationError:
+      oneOf:
+        - $ref: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationUncommittedError
+        - $ref: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationCommittedError
+      discriminator:
+        propertyName: outcome
+        mapping:
+          NOT_COMMITTED: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationUncommittedError
+          COMMITTED: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationCommittedError
+    ApiReleaseBusV2CandidateDeregistrationExecuteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - phase
+        - reason
+        - expected_plan_sha256
+        - expected_inventory_sha256
+        - expected_candidates
+        - expected_controls
+        - expected_locks
+        - expected_staging_state_row_version
+        - expected_staging_refs
+      properties:
+        phase:
+          type: string
+          enum:
+            - EXECUTE
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 1000
+        expected_plan_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        expected_inventory_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        expected_candidates:
+          type: array
+          minItems: 1
+          maxItems: 500
+          uniqueItems: true
+          items:
+            $ref: >-
+              #/components/schemas/ApiReleaseBusV2CandidateDeregistrationCandidateVersion
+        expected_controls:
+          type: array
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: >-
+              #/components/schemas/ApiReleaseBusV2CandidateDeregistrationControlVersion
+        expected_locks:
+          type: array
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: >-
+              #/components/schemas/ApiReleaseBusV2CandidateDeregistrationLockVersion
+        expected_staging_state_row_version:
+          type: integer
+          minimum: 1
+        expected_staging_refs:
+          $ref: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationStagingRefs
+    ApiReleaseBusV2CandidateDeregistrationLockVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - row_version
+      properties:
+        name:
+          type: string
+          enum:
+            - scheduler
+            - staging-environment
+            - production-environment
+        row_version:
+          type: integer
+          minimum: 1
+    ApiReleaseBusV2CandidateDeregistrationPrepareRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - phase
+        - reason
+      properties:
+        phase:
+          type: string
+          enum:
+            - PREPARE
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 1000
+    ApiReleaseBusV2CandidateDeregistrationRequest:
+      oneOf:
+        - $ref: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationPrepareRequest
+        - $ref: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationExecuteRequest
+      discriminator:
+        propertyName: phase
+        mapping:
+          PREPARE: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationPrepareRequest
+          EXECUTE: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationExecuteRequest
+      description: >-
+        PREPARE accepts only phase and reason. EXECUTE requires every expected_*
+        field copied from the exact preparation response.
+    ApiReleaseBusV2CandidateDeregistrationResponse:
+      type: object
+      required:
+        - phase
+        - plan_sha256
+        - inventory_sha256
+        - candidate_count
+        - candidates
+        - controls
+        - locks
+        - staging_state_row_version
+        - staging_refs
+        - mode
+        - executed
+        - deregistration_id
+        - physical_staging_presence
+        - requested_by
+      properties:
+        phase:
+          type: string
+          enum:
+            - PREPARE
+            - EXECUTE
+        plan_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        inventory_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        candidate_count:
+          type: integer
+          minimum: 0
+          maximum: 500
+        candidates:
+          type: array
+          minItems: 0
+          maxItems: 500
+          items:
+            $ref: >-
+              #/components/schemas/ApiReleaseBusV2CandidateDeregistrationCandidateVersion
+        controls:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            $ref: >-
+              #/components/schemas/ApiReleaseBusV2CandidateDeregistrationControlVersion
+        locks:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            $ref: >-
+              #/components/schemas/ApiReleaseBusV2CandidateDeregistrationLockVersion
+        staging_state_row_version:
+          type: integer
+          minimum: 1
+        staging_refs:
+          $ref: >-
+            #/components/schemas/ApiReleaseBusV2CandidateDeregistrationStagingRefs
+        mode:
+          type: string
+          enum:
+            - "OFF"
+            - STAGING
+            - PRODUCTION
+        executed:
+          type: boolean
+        deregistration_id:
+          type: string
+          format: uuid
+          nullable: true
+        physical_staging_presence:
+          type: string
+          enum:
+            - UNKNOWN_UNCHANGED
+            - UNKNOWN_DETACHED
+        requested_by:
+          type: string
+    ApiReleaseBusV2CandidateDeregistrationStagingRefs:
+      type: object
+      additionalProperties: false
+      required:
+        - frontend
+        - backend
+      properties:
+        frontend:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        backend:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+    ApiReleaseBusV2CandidateDeregistrationUncommittedError:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - error
+        - committed
+        - physical_staging_presence
+      properties:
+        outcome:
+          type: string
+          enum:
+            - NOT_COMMITTED
+        error:
+          type: string
+        committed:
+          type: boolean
+          enum:
+            - false
+        physical_staging_presence:
+          type: string
+          enum:
+            - UNKNOWN_UNCHANGED
     ApiRepCategoriesPage:
       type: object
       required:
@@ -24196,6 +24560,7 @@ components:
           enum:
             - NOT_LIVE
             - LIVE
+            - DETACHED
         staging_live_manifest_id:
           type: string
           format: uuid
@@ -24310,6 +24675,7 @@ components:
         - SUPERSEDED
         - FAILED
         - CANCELLED
+        - DEREGISTERED
     ReleaseBusV2Control:
       type: object
       additionalProperties: true
@@ -24669,6 +25035,7 @@ components:
             - LIVE
             - CLEAN_MAIN
             - ROLLBACK_FAILED
+            - DETACHED_MANUAL_OWNERSHIP
         current_manifest_id:
           type: string
           format: uuid

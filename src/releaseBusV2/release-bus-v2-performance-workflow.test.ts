@@ -199,6 +199,10 @@ describe('Release Bus v2 backend critical-path contract', () => {
     const capturePayload = path.join(fixture, 'payload.json');
     const captureUrl = path.join(fixture, 'url.txt');
     const response = path.join(fixture, 'response.json');
+    const githubOutput = path.join(fixture, 'github-output.txt');
+    const githubStepSummary = path.join(fixture, 'github-step-summary.md');
+    writeFileSync(githubOutput, '');
+    writeFileSync(githubStepSummary, '');
     writeFileSync(
       fakeCurl,
       `#!/bin/sh
@@ -256,6 +260,8 @@ printf '200'
           GITHUB_RUN_ATTEMPT: '2',
           GITHUB_RUN_ID: '12345',
           GITHUB_SHA: 'a'.repeat(40),
+          GITHUB_OUTPUT: githubOutput,
+          GITHUB_STEP_SUMMARY: githubStepSummary,
           INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
           INPUT_ARTIFACT_RUN_ID: '54321',
           INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
