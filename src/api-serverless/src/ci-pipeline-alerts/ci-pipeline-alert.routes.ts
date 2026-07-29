@@ -194,6 +194,17 @@ interface CiPipelineAlertProcessingState {
   readonly shouldSkip: boolean;
 }
 
+type CiPipelineAlertAcknowledgement =
+  | CiPipelineAlertOutcome
+  | {
+      readonly ci_drop: 'duplicate';
+      readonly release_note: 'duplicate';
+    }
+  | {
+      readonly ci_drop: 'failed';
+      readonly release_note: 'not-requested';
+    };
+
 function timingSafeEqualHex(a: string, b: string): boolean {
   const aBuffer = Buffer.from(a, 'hex');
   const bBuffer = Buffer.from(b, 'hex');
@@ -448,7 +459,7 @@ router.post(
   '/',
   async (
     req: Request<any, any, CiPipelineAlertRequest, any, any>,
-    res: Response<ApiResponse<any>>
+    res: Response<ApiResponse<CiPipelineAlertAcknowledgement>>
   ) => {
     const verification = verifyCiPipelineAlertSignature(req);
     if (!verification.ok) {

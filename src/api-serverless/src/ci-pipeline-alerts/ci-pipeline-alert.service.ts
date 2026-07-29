@@ -552,6 +552,7 @@ export class CiPipelineAlertService {
   }): Promise<{ enqueued: number; queueFailures: number }> {
     let enqueued = 0;
     let queueFailures = 0;
+    const contributorGithubLogins = verifiedContributorGithubLogins(request);
     for (const group of requestedReleaseNoteGroups(request)) {
       const normalizedGroup = normalizeReleaseNoteGroup(
         group,
@@ -569,7 +570,6 @@ export class CiPipelineAlertService {
         );
         continue;
       }
-      const contributorGithubLogins = verifiedContributorGithubLogins(request);
       const queueOutcome = await this.releaseNotesQueue.enqueueBestEffort({
         repo: request.repo,
         workflow: request.workflow,
