@@ -131,6 +131,9 @@ describe('deploy-bus-ui.renderer', () => {
     expect(html).toContain(
       '.pr-title .badge{max-width:100%;white-space:normal;overflow-wrap:anywhere}'
     );
+    expect(html).toContain(
+      '.heads,.repository-groups,.filters,.registration-form,.metrics{grid-template-columns:minmax(0,1fr)}'
+    );
     expect(app).toContain('new Intl.DateTimeFormat');
     expect(app).not.toContain('aria-pressed');
     expect(app).toContain(
