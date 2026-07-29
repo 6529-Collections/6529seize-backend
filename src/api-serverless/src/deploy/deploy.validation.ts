@@ -1,5 +1,6 @@
 import * as Joi from 'joi';
 import {
+  canDeployServiceToEnvironment,
   DEFAULT_DEPLOY_REF,
   DEPLOY_SERVICES,
   isDeployEnvironment
@@ -47,7 +48,7 @@ export const DeployDispatchBodySchema = Joi.object({
   services: Joi.array()
     .items(Joi.string().valid(...DEPLOY_SERVICES))
     .min(1)
-    .max(50)
+    .max(1)
     .unique()
 })
   .custom((value, helpers) => {
@@ -243,6 +244,51 @@ export const ReleaseBusV2ProgressBodySchema = Joi.object({
   .unknown(true)
   .required();
 
+export const ReleaseBusV2ManualDeploymentReadinessBodySchema = Joi.object({
+  repository: ReleaseRepositorySchema.required(),
+  environment: Joi.string()
+    .custom((value, helpers) => {
+      if (value === 'production') return 'prod';
+      return ['staging', 'prod'].includes(value)
+        ? value
+        : helpers.error('any.only');
+    })
+    .required(),
+  service: Joi.when('repository', {
+    is: 'frontend',
+    then: Joi.string().valid('frontend').required(),
+    otherwise: Joi.string()
+      .valid(...DEPLOY_SERVICES)
+      .required()
+  }),
+  workflow_run_id: Joi.string()
+    .pattern(/^[1-9]\d{0,19}$/)
+    .required(),
+  workflow_run_attempt: Joi.number()
+    .integer()
+    .positive()
+    .max(1_000_000)
+    .strict()
+    .required(),
+  source_ref: Joi.string()
+    .trim()
+    .min(1)
+    .max(240)
+    .pattern(/^(?!refs\/)(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/)
+    .required(),
+  source_sha: ReleaseShaSchema.required()
+})
+  .custom((value, helpers) => {
+    if (
+      value.repository === 'backend' &&
+      !canDeployServiceToEnvironment(value.service, value.environment)
+    )
+      return helpers.error('any.invalid');
+    return value;
+  })
+  .unknown(false)
+  .required();
+
 const releaseBusAuthorizationFields = () => ({
   train_id: Joi.string()
     .guid({ version: ['uuidv4'] })
@@ -266,6 +312,52 @@ const releaseBusAuthorizationFields = () => ({
 const RELEASE_BUS_V2_OPERATION_KEY_PATTERN =
   /^rb2:[a-f0-9-]{36}:[A-Za-z0-9._:-]+:a[1-9]\d{0,8}$/;
 
+function hasCompleteReuseEvidenceIdentity(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  return (
+    typeof value.reuse_artifact_run_id === 'string' &&
+    typeof value.reuse_artifact_name === 'string' &&
+    typeof value.reuse_artifact_digest === 'string' &&
+    value.reuse_artifact_name ===
+      `release-bus-v2-pr-${String(value.expected_sha)}`
+  );
+}
+
+function hasEmptyReuseEvidenceIdentity(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  return [
+    value.reuse_artifact_run_id,
+    value.reuse_artifact_name,
+    value.reuse_artifact_digest
+  ].every((entry) => entry === null);
+}
+
+function isValidOrchestrationEvidenceAuthorization(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  if (value.artifact_run_id !== null || value.artifact_digest !== null)
+    return false;
+  if (value.candidate_evidence_mode === 'strict-single')
+    return (
+      value.source_ref !== null &&
+      value.aggregate_candidate_evidence_digest === null &&
+      hasCompleteReuseEvidenceIdentity(value)
+    );
+  if (value.candidate_evidence_mode === 'strict-aggregate')
+    return (
+      value.source_ref !== null &&
+      value.aggregate_candidate_evidence_digest !== null &&
+      hasEmptyReuseEvidenceIdentity(value)
+    );
+  return (
+    value.source_ref === null &&
+    value.aggregate_candidate_evidence_digest === null &&
+    hasEmptyReuseEvidenceIdentity(value)
+  );
+}
+
 export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
   ...releaseBusAuthorizationFields(),
   operation_key: Joi.string()
@@ -274,16 +366,55 @@ export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
     .required(),
   artifact_digest: Joi.alternatives()
     .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
-    .required()
+    .required(),
+  source_ref: Joi.alternatives()
+    .try(
+      Joi.string()
+        .pattern(/^(?!refs\/)(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/)
+        .max(240),
+      Joi.valid(null)
+    )
+    .default(null),
+  candidate_evidence_mode: Joi.alternatives()
+    .try(
+      Joi.string().valid(
+        'legacy-whole-train',
+        'strict-single',
+        'strict-aggregate'
+      ),
+      Joi.valid(null)
+    )
+    .default(null),
+  aggregate_candidate_evidence_digest: Joi.alternatives()
+    .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
+    .default(null),
+  reuse_artifact_run_id: Joi.alternatives()
+    .try(Joi.string().pattern(/^[1-9]\d{0,19}$/), Joi.valid(null))
+    .default(null),
+  reuse_artifact_name: Joi.alternatives()
+    .try(
+      Joi.string().pattern(/^release-bus-v2-pr-[a-f0-9]{40}$/),
+      Joi.valid(null)
+    )
+    .default(null),
+  reuse_artifact_digest: Joi.alternatives()
+    .try(Joi.string().pattern(/^[a-f0-9]{64}$/), Joi.valid(null))
+    .default(null)
 })
   .custom((value, helpers) => {
     if (!value.operation_key.startsWith(`rb2:${value.train_id}:`))
       return helpers.error('any.invalid');
-    if (value.environment === 'orchestration') {
-      return value.artifact_run_id === null && value.artifact_digest === null
+    if (value.environment === 'orchestration')
+      return isValidOrchestrationEvidenceAuthorization(value)
         ? value
         : helpers.error('any.invalid');
-    }
+    if (
+      value.source_ref !== null ||
+      value.candidate_evidence_mode !== null ||
+      value.aggregate_candidate_evidence_digest !== null ||
+      !hasEmptyReuseEvidenceIdentity(value)
+    )
+      return helpers.error('any.invalid');
     const keySegments = value.operation_key.split(':');
     const isExactManifestE2E =
       keySegments.length === 5 &&
