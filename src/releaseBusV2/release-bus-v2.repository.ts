@@ -1828,6 +1828,22 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async getTransactionIsolation(ctx: RequestContext): Promise<string> {
+    const rows = await this.db.execute<{
+      readonly transaction_isolation: string;
+    }>(
+      'select @@transaction_isolation as transaction_isolation',
+      {},
+      dbOptions(ctx)
+    );
+    const isolation = rows[0]?.transaction_isolation;
+    if (typeof isolation !== 'string' || isolation.length === 0)
+      throw new Error(
+        'Candidate deregistration transaction isolation is unavailable'
+      );
+    return isolation;
+  }
+
   public async commitAllCandidateDeregistration(input: {
     readonly deregistrationId: string;
     readonly actor: string;
@@ -1842,6 +1858,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   }): Promise<{ readonly candidateCount: number }> {
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const ctx: RequestContext = { connection };
+      const transactionIsolation = await this.getTransactionIsolation(ctx);
+      if (
+        transactionIsolation !== 'REPEATABLE-READ' &&
+        transactionIsolation !== 'SERIALIZABLE'
+      )
+        throw new Error(
+          `Candidate deregistration requires REPEATABLE-READ or SERIALIZABLE transaction isolation; observed ${transactionIsolation}`
+        );
       const controls = (await this.listControls(ctx, true)).sort(
         (left, right) => compareCodeUnits(left.scope, right.scope)
       );
@@ -1905,10 +1929,10 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         throw new Error(
           'Authoritative staging state changed during candidate deregistration'
         );
-      // Lock the complete table before deriving the active-intent inventory.
-      // Under the transaction isolation used by the Release Bus this also
-      // fences inserts, so no new active target can appear between CAS and
-      // mutation. Historical terminal rows are deliberately left untouched.
+      // Lock every mutable status range before deriving active intent. The
+      // verified transaction isolation applies next-key locks to those ranges,
+      // so no new active target can appear between CAS and mutation. Immutable
+      // terminal history is deliberately excluded and left untouched.
       const candidates = await this.listCandidateDeregistrationTargets(
         ctx,
         true

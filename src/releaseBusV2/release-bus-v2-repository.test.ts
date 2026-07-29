@@ -28,6 +28,8 @@ class RecordingSqlExecutor extends SqlExecutor {
     this.calls.push({ sql, params, options });
     if (sql.trimStart().startsWith('update'))
       return { affectedRows: 1 } as unknown as T[];
+    if (sql.includes('@@transaction_isolation'))
+      return [{ transaction_isolation: 'REPEATABLE-READ' }] as unknown as T[];
     return [
       {
         name: 'scheduler',
@@ -657,7 +659,40 @@ describe('ReleaseBusV2Repository', () => {
     expect(appendEvent).not.toHaveBeenCalled();
   });
 
-  it('aborts under the full-table lock when a new active target appeared after preparation', async () => {
+  it('fails closed before locking controls when transaction isolation cannot fence inserts', async () => {
+    const repository = new ReleaseBusV2Repository(
+      () => new RecordingSqlExecutor()
+    );
+    jest
+      .spyOn(repository, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (callback) =>
+        callback({ connection: {} } as never)
+      );
+    jest
+      .spyOn(repository, 'getTransactionIsolation')
+      .mockResolvedValue('READ-COMMITTED');
+    const listControls = jest.spyOn(repository, 'listControls');
+
+    await expect(
+      repository.commitAllCandidateDeregistration({
+        deregistrationId: 'deregistration-id',
+        actor: 'operator',
+        reason: 'Audited candidate retirement',
+        expectedControls: [],
+        maintenanceLeases: [],
+        expectedStagingStateRowVersion: 1,
+        expectedCandidates: [],
+        expectedInventorySha256: 'a'.repeat(64),
+        observedFrontendStagingSha: 'a'.repeat(40),
+        observedBackendStagingSha: 'b'.repeat(40)
+      })
+    ).rejects.toThrow(
+      'requires REPEATABLE-READ or SERIALIZABLE transaction isolation'
+    );
+    expect(listControls).not.toHaveBeenCalled();
+  });
+
+  it('aborts under the mutable-status insertion fence when a new active target appeared after preparation', async () => {
     const db = new RecordingSqlExecutor();
     const repository = new ReleaseBusV2Repository(() => db);
     const prepared = candidate('candidate-a');
