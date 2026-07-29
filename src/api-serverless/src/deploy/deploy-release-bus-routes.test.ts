@@ -1381,6 +1381,56 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     });
   });
 
+  it('returns an explicit successful zero-target preparation as a non-executable no-op', async () => {
+    mockCandidateDeregistrationPrepare.mockResolvedValue({
+      phase: 'PREPARE',
+      plan_sha256: '1'.repeat(64),
+      inventory_sha256: '2'.repeat(64),
+      candidate_count: 0,
+      candidates: [],
+      controls: [
+        { scope: 'ALL', paused: false, row_version: 1 },
+        { scope: 'PRODUCTION', paused: true, row_version: 2 },
+        { scope: 'STAGING', paused: true, row_version: 3 }
+      ],
+      locks: [
+        { name: 'production-environment', row_version: 1 },
+        { name: 'scheduler', row_version: 2 },
+        { name: 'staging-environment', row_version: 3 }
+      ],
+      staging_state_row_version: 9,
+      staging_refs: {
+        frontend: SHA,
+        backend: 'b'.repeat(40)
+      },
+      mode: 'PRODUCTION',
+      executed: false,
+      deregistration_id: null,
+      physical_staging_presence: 'UNKNOWN_UNCHANGED'
+    });
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+      {
+        phase: 'PREPARE',
+        reason: 'Confirm no active candidate intent'
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.cacheControl).toContain('no-store');
+    expect(response.body).toMatchObject({
+      phase: 'PREPARE',
+      candidate_count: 0,
+      candidates: [],
+      executed: false,
+      deregistration_id: null,
+      physical_staging_presence: 'UNKNOWN_UNCHANGED',
+      requested_by: 'developer'
+    });
+    expect(mockCandidateDeregistrationExecute).not.toHaveBeenCalled();
+  });
+
   it('executes only a complete strict candidate/control/lock/state/ref CAS plan', async () => {
     const expected = {
       expected_plan_sha256: '1'.repeat(64),

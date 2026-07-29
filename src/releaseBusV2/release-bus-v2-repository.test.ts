@@ -207,6 +207,27 @@ describe('ReleaseBusV2Repository', () => {
     ).not.toBe(releaseBusV2CandidateInventoryDigest([first, second]));
   });
 
+  it('binds explicit null PR evidence as SQL NULL rather than serialized JSON', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+
+    await expect(
+      repository.updateCandidate(
+        'candidate-a',
+        7,
+        { status: 'READY_FOR_STAGING', prEvidence: null },
+        {}
+      )
+    ).resolves.toBe(true);
+
+    expect(db.calls[0]?.params).toEqual(
+      expect.objectContaining({
+        setPrEvidence: 1,
+        prEvidence: null
+      })
+    );
+  });
+
   it('does not steal an expired but non-null lock during exact-free maintenance acquisition', async () => {
     const db = new RecordingSqlExecutor();
     const repository = new ReleaseBusV2Repository(() => db);
