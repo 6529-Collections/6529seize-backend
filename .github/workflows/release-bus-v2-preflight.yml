@@ -206,14 +206,23 @@ jobs:
             echo "failure_class=INFRASTRUCTURE" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          jq -e --arg expected_sha "$EXPECTED_SHA" '
-            .event == "pull_request" and
-            .status == "completed" and
-            .conclusion == "success" and
-            .head_sha == $expected_sha and
-            (.path == ".github/workflows/on-pull-request.yml" or
-             (.path | startswith(".github/workflows/on-pull-request.yml@")))
-          ' <<< "$run" >/dev/null
+          if ! run_head_sha="$(jq -er --arg repository_url "https://api.github.com/repos/$GITHUB_REPOSITORY" '
+              select(
+                .event == "pull_request" and
+                .status == "completed" and
+                .conclusion == "success" and
+                (.head_sha | test("^[a-f0-9]{40}$")) and
+                (.path == ".github/workflows/on-pull-request.yml" or
+                 (.path | startswith(".github/workflows/on-pull-request.yml@"))) and
+                (.pull_requests | type == "array" and length == 1) and
+                .head_sha == .pull_requests[0].head.sha and
+                .pull_requests[0].head.repo.url == $repository_url
+              ) |
+              .head_sha
+            ' <<< "$run")"; then
+            echo "failure_class=CANDIDATE" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           artifact_id="$(jq -er '.[0].id' <<< "$artifact")"
           if ! gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > candidate-pr-artifact.zip; then
             echo "failure_class=INFRASTRUCTURE" >> "$GITHUB_OUTPUT"
@@ -234,11 +243,12 @@ jobs:
              [ "$is_exact_evidence_archive" = true ]; then
             test "$is_exact_evidence_archive" = true
             (cd candidate-pr-artifact && sha256sum -c SHA256SUMS)
-            jq -e --arg expected_sha "$EXPECTED_SHA" '
+            jq -e --arg expected_sha "$EXPECTED_SHA" --arg run_head_sha "$run_head_sha" '
               .schema_version == 1 and
               .evidence_contract == "exact-merge-tree-pr-ci-v1" and
               .repository == "backend" and
               .merge_sha == $expected_sha and
+              .head_sha == $run_head_sha and
               .workflow == ".github/workflows/on-pull-request.yml" and
               .policy_bundle_contract == "pr-ci-policy-bundle-v1" and
               (.policy_bundle_digest | test("^[a-f0-9]{64}$")) and
