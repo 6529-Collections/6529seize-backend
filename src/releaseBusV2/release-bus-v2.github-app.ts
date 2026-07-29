@@ -532,15 +532,15 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
 > = {
   backend: [
     {
-      from: '637373d3b48a171ffdd7c2b7c813de80a5c1ac29fd683a44847df6d110bcb96b',
+      from: '56034568367c44dbb8200405742a40cf028ef821de27a6371be2788899a03842',
       to: 'c836a83c5a6ffaaa5b98dd1c91887b4cb89c4e4795096a9cc6f507c0a773636d',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
   frontend: [
     {
-      from: '30c932be6b25cf1ce914d2f8ca08f286cda307087b8fbf9b9e82ff3ed507e477',
-      to: '5e46dcaa691c793cbf78609c5486e76a35a9664b05fee8068092609cae57164d',
+      from: '002097dbc4555441214d8dfc85100103bb9a7cd183257a41149bb6d6dbe1250d',
+      to: 'daef568277c6817218ee20ef0cfdb047347671f3a4217b719d04293c0d792b62',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]

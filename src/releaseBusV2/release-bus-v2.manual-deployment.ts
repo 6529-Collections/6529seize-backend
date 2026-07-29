@@ -81,6 +81,10 @@ export type ReleaseBusV2ManualDeploymentDependencies = {
     repository: ReleaseBusV2Repository,
     workflowRunId: string
   ) => Promise<ReleaseBusWorkflowRunIdentity>;
+  readonly resolveRef: (
+    repository: ReleaseBusV2Repository,
+    ref: string
+  ) => Promise<string>;
   readonly hasActiveStagingMutationOrE2ERun: (
     repository: ReleaseBusV2Repository,
     ignoredRunIds?: readonly string[]
@@ -100,6 +104,8 @@ const dependencies: ReleaseBusV2ManualDeploymentDependencies = {
     releaseBusV2Repository.listNonterminalOperationsForLanes(lanes, {}),
   getWorkflowRunIdentity: (repository, workflowRunId) =>
     releaseBusGitHubApp.getWorkflowRunIdentity(repository, workflowRunId),
+  resolveRef: (repository, ref) =>
+    releaseBusGitHubApp.resolveRef(repository, ref),
   hasActiveStagingMutationOrE2ERun: (repository, ignoredRunIds) =>
     releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun(
       repository,
@@ -142,12 +148,15 @@ function assertWorkflowIdentity(
   input: ReleaseBusV2ManualDeploymentAuthorizationInput,
   identity: ReleaseBusWorkflowRunIdentity
 ): void {
+  const expectedSourceRef =
+    input.environment === 'staging' ? '1a-staging' : 'main';
   if (
     identity.attempt !== input.workflow_run_attempt ||
     identity.status !== 'in_progress' ||
     identity.conclusion !== null ||
     identity.headBranch !== input.source_ref ||
-    identity.headSha !== input.source_sha
+    identity.headSha !== input.source_sha ||
+    input.source_ref !== expectedSourceRef
   )
     conflict('Manual deployment workflow identity does not match this run');
 
@@ -200,6 +209,14 @@ export class ReleaseBusV2ManualDeploymentGuard {
         input.workflow_run_id
       );
       assertWorkflowIdentity(input, identity);
+      const currentHead = await this.deps.resolveRef(
+        input.repository,
+        input.source_ref
+      );
+      if (currentHead !== input.source_sha)
+        conflict(
+          `Manual ${input.environment} deployment source is not the exact current ${input.source_ref} head`
+        );
       await this.assertLaneReady(input.environment, {
         repository: input.repository,
         workflowRunId: input.workflow_run_id

@@ -43,13 +43,14 @@ function locks(
 function input(
   overrides: Partial<ReleaseBusV2ManualDeploymentAuthorizationInput> = {}
 ): ReleaseBusV2ManualDeploymentAuthorizationInput {
+  const environment = overrides.environment ?? 'staging';
   return {
     repository: 'backend',
-    environment: 'staging',
+    environment,
     service: 'api',
     workflow_run_id: '12345',
     workflow_run_attempt: 2,
-    source_ref: 'main',
+    source_ref: environment === 'staging' ? '1a-staging' : 'main',
     source_sha: SHA,
     ...overrides
   };
@@ -102,6 +103,7 @@ function setup(pausedLane: 'STAGING' | 'PRODUCTION' = 'STAGING'): {
     getWorkflowRunIdentity: jest
       .fn()
       .mockImplementation(async () => identity()),
+    resolveRef: jest.fn().mockResolvedValue(SHA),
     hasActiveStagingMutationOrE2ERun: jest.fn().mockResolvedValue(false),
     hasActiveProductionMutationOrE2ERun: jest.fn().mockResolvedValue(false)
   };
@@ -151,6 +153,7 @@ describe('ReleaseBusV2ManualDeploymentGuard', () => {
       'backend',
       '12345'
     );
+    expect(deps.resolveRef).toHaveBeenCalledWith('backend', '1a-staging');
     expect(deps.hasActiveStagingMutationOrE2ERun).toHaveBeenCalledWith(
       'backend',
       ['12345']
@@ -323,6 +326,31 @@ describe('ReleaseBusV2ManualDeploymentGuard', () => {
     });
     expect(deps.listControls).not.toHaveBeenCalled();
     expect(deps.hasActiveStagingMutationOrE2ERun).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale dispatch SHA before lane or mutation checks', async () => {
+    const { guard, deps } = setup('STAGING');
+    deps.resolveRef.mockResolvedValue('b'.repeat(40));
+
+    await expect(guard.authorizeWorkflow(input())).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('exact current 1a-staging head')
+    });
+    expect(deps.listControls).not.toHaveBeenCalled();
+    expect(deps.listLocks).not.toHaveBeenCalled();
+  });
+
+  it('rejects backend manual dispatches from a non-target ref', async () => {
+    const wrongRef = input({ source_ref: 'feature/not-the-target' });
+    const { guard, deps } = setup('STAGING');
+    deps.getWorkflowRunIdentity.mockResolvedValue(identity(wrongRef));
+
+    await expect(guard.authorizeWorkflow(wrongRef)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('does not match')
+    });
+    expect(deps.resolveRef).not.toHaveBeenCalled();
+    expect(deps.listControls).not.toHaveBeenCalled();
   });
 
   it('fails closed when controls, locks, GitHub, or operation state is unavailable', async () => {
