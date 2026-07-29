@@ -545,6 +545,7 @@ esac
       expect(readFileSync(githubSummary, 'utf8')).toContain(
         '"reason":"manual-authorizer-self-bootstrap"'
       );
+      writeFileSync(argumentLog, '');
       expect(() =>
         execFileSync('bash', ['-c', revalidate ?? 'exit 1'], {
           cwd: root,
@@ -552,6 +553,12 @@ esac
           stdio: 'pipe'
         })
       ).not.toThrow();
+      expect(readFileSync(argumentLog, 'utf8')).toContain(
+        'Authorization: Bearer workflow-token'
+      );
+      expect(readFileSync(githubSummary, 'utf8')).not.toContain(
+        'workflow-token'
+      );
       const calls = readFileSync(callLog, 'utf8');
       expect(calls).toContain('/manual-deployment-readiness');
       expect(calls).toContain('/release-bus-v2/controls');
@@ -567,9 +574,6 @@ esac
       expect(authorize).toContain('.total_count');
       expect(authorize).toContain(
         'deploy-control-prod-manual concurrency group'
-      );
-      expect(readFileSync(argumentLog, 'utf8')).toContain(
-        'Authorization: Bearer workflow-token'
       );
       expect(() =>
         execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
