@@ -167,7 +167,12 @@ describe('Release Bus v2 cumulative admitted staging', () => {
 
     live = [
       a,
-      { ...b, status: 'STAGING_VALIDATED', staging_live_state: 'LIVE' }
+      {
+        ...b,
+        status: 'STAGING_VALIDATED',
+        staging_live_state: 'LIVE',
+        staging_live_manifest_id: 'manifest-live'
+      }
     ];
     ready = [c];
     await service.claimLane(
@@ -493,7 +498,8 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     const a = {
       ...candidate('a1', 'frontend', 'PRODUCTION_DEPLOYED', true),
       staging_validated_train_id: 'train-a',
-      staging_validated_manifest_id: 'manifest-a'
+      staging_validated_manifest_id: 'manifest-a',
+      staging_live_manifest_id: 'manifest-a'
     };
     const b = candidate('b2', 'backend', 'READY_FOR_STAGING', false);
     const frontendSha = '1'.repeat(40);
@@ -805,6 +811,10 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     const frontendMain = 'f'.repeat(40);
     const backendMain = 'b'.repeat(40);
     const ready = candidate('b2', 'backend', 'READY_FOR_STAGING', false);
+    const terminalHistoricalLive = {
+      ...candidate('a1', 'frontend', 'PRODUCTION_DEPLOYED', true),
+      staging_live_manifest_id: 'historical-manifest'
+    };
     let state: ReleaseBusV2StagingStateRecord = {
       id: 'current',
       status: 'DETACHED_MANUAL_OWNERSHIP',
@@ -834,6 +844,9 @@ describe('Release Bus v2 cumulative admitted staging', () => {
       };
     });
     const createTrain = jest.fn(async () => train('exact-main-plus-b'));
+    const listLiveStagingCandidates = jest.fn(async () => [
+      terminalHistoricalLive
+    ]);
     const repository = {
       executeNativeQueriesInTransaction: async (
         callback: (connection: unknown) => unknown
@@ -851,7 +864,7 @@ describe('Release Bus v2 cumulative admitted staging', () => {
       listTrains: async () => [],
       listCandidates: async (statuses: string[]) =>
         statuses.includes('READY_FOR_STAGING') ? [ready] : [],
-      listLiveStagingCandidates: async () => [],
+      listLiveStagingCandidates,
       listStagingTransitionRequests: async () => [],
       listDependencies: async () => [],
       createTrain,
@@ -875,6 +888,7 @@ describe('Release Bus v2 cumulative admitted staging', () => {
       expect.anything()
     );
     expect(findStagingValidatedManifestByShas).not.toHaveBeenCalled();
+    expect(listLiveStagingCandidates).not.toHaveBeenCalled();
     expect(createTrain).toHaveBeenCalledWith(
       expect.objectContaining({
         candidateIds: [ready.id],

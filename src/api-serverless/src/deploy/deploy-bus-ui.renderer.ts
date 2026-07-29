@@ -436,8 +436,9 @@ export function renderDeployBusUiApp(): string {
     }
     if(lane==='STAGING'&&queued.length){
       var proposedByPr={};
+      var staging=state.controls&&state.controls.staging_state||{};
       queued.forEach(function(candidate){proposedByPr[candidate.repository+':'+candidate.pr_number]=candidate});
-      state.candidates.filter(function(candidate){return candidate.staging_live_state==='LIVE'}).forEach(function(candidate){
+      state.candidates.filter(function(candidate){return staging.status==='LIVE'&&candidate.staging_live_state==='LIVE'&&candidate.staging_live_manifest_id===staging.current_manifest_id}).forEach(function(candidate){
         var identity=candidate.repository+':'+candidate.pr_number;
         if(!proposedByPr[identity])proposedByPr[identity]=candidate
       });

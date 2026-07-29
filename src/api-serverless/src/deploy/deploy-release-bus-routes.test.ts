@@ -73,7 +73,12 @@ class MockReleaseBusV2ManualDeploymentError extends Error {
 class MockReleaseBusV2CandidateDeregistrationError extends Error {
   public constructor(
     public readonly code: 'BAD_REQUEST' | 'CONFLICT' | 'UNAVAILABLE',
-    message: string
+    message: string,
+    public readonly committed: boolean = false,
+    public readonly deregistration_id: string | null = null,
+    public readonly physical_staging_presence:
+      | 'UNKNOWN_UNCHANGED'
+      | 'UNKNOWN_DETACHED' = 'UNKNOWN_UNCHANGED'
   ) {
     super(message);
     this.name = 'ReleaseBusV2CandidateDeregistrationError';
@@ -736,6 +741,53 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       expectNoReleaseMutation();
     }
   );
+
+  it('returns deterministic committed-state evidence when post-commit verification fails', async () => {
+    mockCandidateDeregistrationExecute.mockRejectedValue(
+      new MockReleaseBusV2CandidateDeregistrationError(
+        'UNAVAILABLE',
+        `Candidate inventory was committed as safely detached (deregistration_id=${RESET_ID}), but maintenance lock cleanup failed`,
+        true,
+        RESET_ID,
+        'UNKNOWN_DETACHED'
+      )
+    );
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        expected_plan_sha256: '1'.repeat(64),
+        expected_inventory_sha256: '2'.repeat(64),
+        expected_candidates: [{ id: candidateId, row_version: 4 }],
+        expected_controls: [
+          { scope: 'ALL', paused: false, row_version: 1 },
+          { scope: 'PRODUCTION', paused: true, row_version: 2 },
+          { scope: 'STAGING', paused: true, row_version: 3 }
+        ],
+        expected_locks: [
+          { name: 'production-environment', row_version: 1 },
+          { name: 'scheduler', row_version: 2 },
+          { name: 'staging-environment', row_version: 3 }
+        ],
+        expected_staging_state_row_version: 9,
+        expected_staging_refs: {
+          frontend: SHA,
+          backend: 'b'.repeat(40)
+        }
+      }
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.cacheControl).toContain('no-store');
+    expect(response.body).toEqual({
+      error: expect.stringContaining(`deregistration_id=${RESET_ID}`),
+      committed: true,
+      deregistration_id: RESET_ID,
+      physical_staging_presence: 'UNKNOWN_DETACHED'
+    });
+  });
 
   it.each(releaseMutationAttempts)(
     'rejects anonymous $name without executing a mutation',

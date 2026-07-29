@@ -262,10 +262,40 @@ describe('ReleaseBusV2Repository', () => {
     expect(acquire).not.toHaveBeenCalled();
   });
 
-  it('atomically detaches exact candidate rows while preserving immutable history pointers', async () => {
+  it('atomically detaches only active intent while preserving terminal rows byte-for-byte', async () => {
     const db = new RecordingSqlExecutor();
     const repository = new ReleaseBusV2Repository(() => db);
-    const candidates = [candidate('candidate-a'), candidate('candidate-b')];
+    const candidates = [
+      candidate('candidate-a', {
+        current_train_id: 'active-train',
+        staging_live_updated_at: 11,
+        staging_transition_request: 'REMOVE',
+        staging_transition_requested_at: 12,
+        staging_transition_requested_by: 'transition-operator',
+        staging_transition_reason: 'Replace the exact staging set',
+        production_requested_by: 'production-operator',
+        hold_reason: 'Dependency evidence pending'
+      }),
+      candidate('candidate-b')
+    ];
+    const terminalHistory = [
+      candidate('history-production', {
+        status: 'PRODUCTION_DEPLOYED',
+        row_version: 21
+      }),
+      candidate('history-superseded', {
+        status: 'SUPERSEDED',
+        row_version: 22
+      }),
+      candidate('history-cancelled', {
+        status: 'CANCELLED',
+        row_version: 23
+      }),
+      candidate('history-deregistered', {
+        status: 'DEREGISTERED',
+        row_version: 24
+      })
+    ];
     const controls = controlRows();
     const stagingState = state();
     const { locks, leases } = acquiredLocks();
@@ -281,7 +311,9 @@ describe('ReleaseBusV2Repository', () => {
       .spyOn(repository, 'listNonterminalOperationsForLanes')
       .mockResolvedValue([]);
     jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
-    jest.spyOn(repository, 'listAllCandidates').mockResolvedValue(candidates);
+    const listAllCandidates = jest
+      .spyOn(repository, 'listAllCandidates')
+      .mockResolvedValue([...candidates, ...terminalHistory]);
     const updateCandidate = jest
       .spyOn(repository, 'updateCandidate')
       .mockResolvedValue(true);
@@ -316,6 +348,10 @@ describe('ReleaseBusV2Repository', () => {
     ).resolves.toEqual({ candidateCount: 2 });
 
     expect(updateCandidate).toHaveBeenCalledTimes(2);
+    expect(listAllCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ connection: expect.anything() }),
+      true
+    );
     expect(updateCandidate).toHaveBeenCalledWith(
       'candidate-a',
       7,
@@ -332,6 +368,12 @@ describe('ReleaseBusV2Repository', () => {
     const candidateFields = updateCandidate.mock.calls[0]?.[2];
     expect(candidateFields).not.toHaveProperty('stagingValidatedTrainId');
     expect(candidateFields).not.toHaveProperty('stagingValidatedManifestId');
+    expect(
+      updateCandidate.mock.calls.map(([candidateId]) => candidateId)
+    ).toEqual(['candidate-a', 'candidate-b']);
+    expect(
+      updateCandidate.mock.calls.map(([candidateId]) => candidateId)
+    ).not.toEqual(expect.arrayContaining(terminalHistory.map(({ id }) => id)));
     expect(updateStagingState).toHaveBeenCalledWith(
       4,
       expect.objectContaining({
@@ -343,6 +385,27 @@ describe('ReleaseBusV2Repository', () => {
         cleanMain: false
       }),
       expect.objectContaining({ connection: expect.anything() })
+    );
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: 'candidate-a',
+        eventType: 'CANDIDATE_LOGICALLY_DEREGISTERED',
+        payload: expect.objectContaining({
+          previous_current_train_id: 'active-train',
+          previous_staging_live_manifest_id: 'historical-manifest',
+          previous_staging_admitted_at: 1,
+          previous_staging_live_updated_at: 11,
+          previous_staging_transition_request: 'REMOVE',
+          previous_staging_transition_requested_at: 12,
+          previous_staging_transition_requested_by: 'transition-operator',
+          previous_staging_transition_reason: 'Replace the exact staging set',
+          previous_production_requested_at: 2,
+          previous_production_requested_by: 'production-operator',
+          previous_production_selection_id: 'selection',
+          previous_hold_reason: 'Dependency evidence pending'
+        })
+      }),
+      expect.anything()
     );
     expect(appendEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -405,12 +468,78 @@ describe('ReleaseBusV2Repository', () => {
     expect(appendEvent).not.toHaveBeenCalled();
   });
 
+  it('aborts under the full-table lock when a new active target appeared after preparation', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    const prepared = candidate('candidate-a');
+    const newlyAdmitted = candidate('candidate-new', {
+      status: 'READY_FOR_STAGING',
+      row_version: 1
+    });
+    const controls = controlRows();
+    const stagingState = state();
+    const { locks, leases } = acquiredLocks();
+    jest
+      .spyOn(repository, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (callback) =>
+        callback({ connection: {} } as never)
+      );
+    jest.spyOn(repository, 'listControls').mockResolvedValue(controls);
+    jest.spyOn(repository, 'listLocks').mockResolvedValue(locks);
+    jest.spyOn(repository, 'listActiveTrains').mockResolvedValue([]);
+    jest
+      .spyOn(repository, 'listNonterminalOperationsForLanes')
+      .mockResolvedValue([]);
+    jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
+    const listAllCandidates = jest
+      .spyOn(repository, 'listAllCandidates')
+      .mockResolvedValue([prepared, newlyAdmitted]);
+    const updateCandidate = jest.spyOn(repository, 'updateCandidate');
+    const updateStagingState = jest.spyOn(repository, 'updateStagingState');
+
+    await expect(
+      repository.commitAllCandidateDeregistration({
+        deregistrationId: 'deregistration-id',
+        actor: 'operator',
+        reason: 'Audited candidate retirement',
+        expectedControls: controls.map(({ scope, paused, row_version }) => ({
+          scope,
+          paused: Boolean(paused),
+          row_version
+        })),
+        maintenanceLeases: leases,
+        expectedStagingStateRowVersion: stagingState.row_version,
+        expectedCandidates: [
+          { id: prepared.id, row_version: prepared.row_version }
+        ],
+        expectedInventorySha256: releaseBusV2CandidateInventoryDigest([
+          prepared
+        ]),
+        observedFrontendStagingSha: 'a'.repeat(40),
+        observedBackendStagingSha: 'b'.repeat(40)
+      })
+    ).rejects.toThrow('Exact candidate inventory changed');
+
+    expect(listAllCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ connection: expect.anything() }),
+      true
+    );
+    expect(updateCandidate).not.toHaveBeenCalled();
+    expect(updateStagingState).not.toHaveBeenCalled();
+  });
+
   it('proves clean main without restoring detached historical manifest membership', async () => {
     const db = new RecordingSqlExecutor();
     const repository = new ReleaseBusV2Repository(() => db);
     const detached = candidate('candidate-a', {
       status: 'DEREGISTERED',
       staging_live_state: 'DETACHED'
+    });
+    const terminalLiveHistory = candidate('history-production', {
+      status: 'PRODUCTION_DEPLOYED',
+      staging_live_state: 'LIVE',
+      staging_live_manifest_id: 'historical-manifest',
+      row_version: 41
     });
     const detachedState = state();
     Object.assign(detachedState, {
@@ -422,7 +551,9 @@ describe('ReleaseBusV2Repository', () => {
       backend_staging_ref_sha: null,
       clean_main: false
     });
-    jest.spyOn(repository, 'listLiveStagingCandidates').mockResolvedValue([]);
+    jest
+      .spyOn(repository, 'listLiveStagingCandidates')
+      .mockResolvedValue([terminalLiveHistory]);
     jest
       .spyOn(repository, 'listDetachedStagingCandidates')
       .mockResolvedValue([detached]);
@@ -455,6 +586,13 @@ describe('ReleaseBusV2Repository', () => {
         stagingLiveManifestId: null
       }),
       {}
+    );
+    expect(updateCandidate).toHaveBeenCalledTimes(1);
+    expect(updateCandidate).not.toHaveBeenCalledWith(
+      terminalLiveHistory.id,
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
     );
     expect(updateStagingState).toHaveBeenCalledWith(
       detachedState.row_version,

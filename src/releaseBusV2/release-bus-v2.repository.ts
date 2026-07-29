@@ -150,6 +150,26 @@ const RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES = [
   'staging-environment'
 ] as const;
 
+export const RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUSES = [
+  'PRODUCTION_DEPLOYED',
+  'SUPERSEDED',
+  'CANCELLED',
+  'DEREGISTERED'
+] as const satisfies readonly ReleaseBusV2CandidateStatus[];
+
+const RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUS_SET =
+  new Set<ReleaseBusV2CandidateStatus>(
+    RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUSES
+  );
+
+export function releaseBusV2CandidateHasActiveIntent(
+  candidate: Pick<ReleaseBusV2CandidateRecord, 'status'>
+): boolean {
+  return !RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUS_SET.has(
+    candidate.status
+  );
+}
+
 function canonicalDigestJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalDigestJson);
   if (value && typeof value === 'object')
@@ -833,9 +853,10 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    if ((await this.listLiveStagingCandidates(ctx, true)).length > 0)
+    const live = await this.listLiveStagingCandidates(ctx, true);
+    if (live.some(releaseBusV2CandidateHasActiveIntent))
       throw new Error(
-        'Detached staging cannot become clean main while a candidate is recorded live'
+        'Detached staging cannot become clean main while an active-intent candidate is recorded live'
       );
     const detached = await this.listDetachedStagingCandidates(ctx, true);
     if (detached.some(({ status }) => status !== 'DEREGISTERED'))
@@ -1765,7 +1786,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         throw new Error(
           'Authoritative staging state changed during candidate deregistration'
         );
-      const candidates = await this.listAllCandidates(ctx, true);
+      // Lock the complete table before deriving the active-intent inventory.
+      // Under the transaction isolation used by the Release Bus this also
+      // fences inserts, so no new active target can appear between CAS and
+      // mutation. Historical terminal rows are deliberately left untouched.
+      const allCandidates = await this.listAllCandidates(ctx, true);
+      const candidates = allCandidates.filter(
+        releaseBusV2CandidateHasActiveIntent
+      );
       if (
         !sameCandidateVersions(candidates, input.expectedCandidates) ||
         releaseBusV2CandidateInventoryDigest(candidates) !==
@@ -1813,15 +1841,29 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
               reason: input.reason,
               previous_status: candidate.status,
               previous_row_version: candidate.row_version,
+              previous_current_train_id: candidate.current_train_id,
               previous_staging_live_state: candidate.staging_live_state ?? null,
               previous_staging_live_manifest_id:
                 candidate.staging_live_manifest_id ?? null,
               previous_staging_admitted_at:
                 candidate.staging_admitted_at ?? null,
+              previous_staging_live_updated_at:
+                candidate.staging_live_updated_at ?? null,
+              previous_staging_transition_request:
+                candidate.staging_transition_request ?? null,
+              previous_staging_transition_requested_at:
+                candidate.staging_transition_requested_at ?? null,
+              previous_staging_transition_requested_by:
+                candidate.staging_transition_requested_by ?? null,
+              previous_staging_transition_reason:
+                candidate.staging_transition_reason ?? null,
               previous_production_requested_at:
                 candidate.production_requested_at,
+              previous_production_requested_by:
+                candidate.production_requested_by,
               previous_production_selection_id:
                 candidate.production_selection_id ?? null,
+              previous_hold_reason: candidate.hold_reason,
               historical_staging_train_id: candidate.staging_validated_train_id,
               historical_staging_manifest_id:
                 candidate.staging_validated_manifest_id,

@@ -2444,6 +2444,7 @@ export class ReleaseBusV2Service {
     return this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx: RequestContext = { connection };
+        const stagingState = await this.repository.getStagingState(ctx, true);
         const candidate = await this.repository.findCandidateById(
           input.candidateId,
           ctx,
@@ -2457,7 +2458,13 @@ export class ReleaseBusV2Service {
           throw new ReleaseBusV2StagingTransitionConflictError(
             'Candidate identity or version changed'
           );
-        if (candidate.staging_live_state !== 'LIVE')
+        if (
+          candidate.staging_live_state !== 'LIVE' ||
+          stagingState.status !== 'LIVE' ||
+          !stagingState.current_manifest_id ||
+          candidate.staging_live_manifest_id !==
+            stagingState.current_manifest_id
+        )
           throw new ReleaseBusV2StagingTransitionConflictError(
             'Only an exact candidate currently live in staging can leave the admitted set'
           );
@@ -2465,7 +2472,11 @@ export class ReleaseBusV2Service {
           throw new ReleaseBusV2StagingTransitionConflictError(
             'Candidate already has a staging lifecycle request'
           );
-        const live = await this.repository.listLiveStagingCandidates(ctx, true);
+        const live = await this.listAuthoritativeLiveStagingCandidates(
+          stagingState,
+          ctx,
+          true
+        );
         const dependencies = await this.repository.listDependencies(
           live.map(({ id }) => id),
           ctx
@@ -2525,6 +2536,20 @@ export class ReleaseBusV2Service {
           throw new Error('Staging lifecycle request was not visible');
         return updated;
       }
+    );
+  }
+
+  private async listAuthoritativeLiveStagingCandidates(
+    state: Awaited<ReturnType<ReleaseBusV2RepositoryClass['getStagingState']>>,
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<readonly ReleaseBusV2CandidateRecord[]> {
+    if (state.status !== 'LIVE' || !state.current_manifest_id) return [];
+    const currentManifestId = state.current_manifest_id;
+    return (
+      await this.repository.listLiveStagingCandidates(ctx, forUpdate)
+    ).filter(
+      (candidate) => candidate.staging_live_manifest_id === currentManifestId
     );
   }
 
@@ -3477,7 +3502,11 @@ export class ReleaseBusV2Service {
               readyCandidates.map(({ id }) => id)
             );
             const live = stagingState
-              ? await this.repository.listLiveStagingCandidates(ctx, true)
+              ? await this.listAuthoritativeLiveStagingCandidates(
+                  stagingState,
+                  ctx,
+                  true
+                )
               : [];
             const replacements = new Set(
               candidates.map(

@@ -1,4 +1,8 @@
-import { ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationRequest';
+import {
+  ApiReleaseBusV2CandidateDeregistrationExecuteRequest,
+  ApiReleaseBusV2CandidateDeregistrationExecuteRequestPhaseEnum
+} from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationExecuteRequest';
+import { ApiReleaseBusV2CandidateDeregistrationPrepareRequestPhaseEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationPrepareRequest';
 import { ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationResponse';
 import { ReleaseBusV2CandidateStagingLiveStateEnum } from '@/api/generated/models/ReleaseBusV2Candidate';
 import { ReleaseBusV2CandidateStatus } from '@/api/generated/models/ReleaseBusV2CandidateStatus';
@@ -9,14 +13,45 @@ import path from 'node:path';
 
 describe('Release Bus v2 logical deregistration generated contract', () => {
   it('publishes all terminal/detached literals through generated models', () => {
+    type ExecuteCasKeys =
+      | 'expected_plan_sha256'
+      | 'expected_inventory_sha256'
+      | 'expected_candidates'
+      | 'expected_controls'
+      | 'expected_locks'
+      | 'expected_staging_state_row_version'
+      | 'expected_staging_refs';
+    type ExecuteCasFieldsAreRequired =
+      Pick<
+        ApiReleaseBusV2CandidateDeregistrationExecuteRequest,
+        ExecuteCasKeys
+      > extends Required<
+        Pick<
+          ApiReleaseBusV2CandidateDeregistrationExecuteRequest,
+          ExecuteCasKeys
+        >
+      >
+        ? true
+        : false;
+    const executeCasFieldsAreRequired: ExecuteCasFieldsAreRequired = true;
+
+    expect(executeCasFieldsAreRequired).toBe(true);
     expect(ReleaseBusV2CandidateStatus.Deregistered).toBe('DEREGISTERED');
     expect(ReleaseBusV2CandidateStagingLiveStateEnum.Detached).toBe('DETACHED');
     expect(ReleaseBusV2StagingStateStatusEnum.DetachedManualOwnership).toBe(
       'DETACHED_MANUAL_OWNERSHIP'
     );
-    expect(ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum.Prepare).toBe(
-      'PREPARE'
-    );
+    expect(
+      ApiReleaseBusV2CandidateDeregistrationPrepareRequestPhaseEnum.Prepare
+    ).toBe('PREPARE');
+    expect(
+      ApiReleaseBusV2CandidateDeregistrationExecuteRequestPhaseEnum.Execute
+    ).toBe('EXECUTE');
+    expect(
+      ApiReleaseBusV2CandidateDeregistrationExecuteRequest.attributeTypeMap
+        .filter(({ name }) => name.startsWith('expected_'))
+        .map(({ name }) => name)
+    ).toHaveLength(7);
     expect(
       ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Detached
     ).toBe('UNKNOWN_DETACHED');
@@ -25,7 +60,7 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
         { phase: 'PREPARE' },
         'ApiReleaseBusV2CandidateDeregistrationRequest'
       )
-    ).toBe('ApiReleaseBusV2CandidateDeregistrationRequest');
+    ).toBe('ApiReleaseBusV2CandidateDeregistrationPrepareRequest');
   });
 
   it('keeps the operator route manual while OpenAPI declares strict unique CAS inventories', () => {
@@ -53,5 +88,14 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
     expect(schemas.match(/uniqueItems: true/g)).toHaveLength(3);
     expect(schemas).toContain('additionalProperties: false');
     expect(schemas).toContain('PREPARE accepts only phase and reason');
+    expect(schemas).toContain('oneOf:');
+    expect(schemas).toContain('propertyName: phase');
+    expect(schemas).toMatch(
+      /expected_candidates:\n\s+type: array\n\s+minItems: 1/
+    );
+    expect(schemas).toMatch(
+      /candidate_count:\n\s+type: integer\n\s+minimum: 0/
+    );
+    expect(schemas).toMatch(/candidates:\n\s+type: array\n\s+minItems: 0/);
   });
 });

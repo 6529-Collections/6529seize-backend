@@ -6,6 +6,7 @@ import {
   RELEASE_BUS_V2_STAGING_STATE_TABLE
 } from '@/constants';
 import {
+  releaseBusV2CandidateHasActiveIntent,
   releaseBusV2CandidateInventoryDigest,
   ReleaseBusV2Repository
 } from '@/releaseBusV2/release-bus-v2.repository';
@@ -1262,6 +1263,41 @@ describeWithSeed(
         },
         {}
       );
+      const terminalStatuses = [
+        'PRODUCTION_DEPLOYED',
+        'SUPERSEDED',
+        'CANCELLED',
+        'DEREGISTERED'
+      ] as const;
+      const terminalCandidates = await Promise.all(
+        terminalStatuses.map(async (status, index) => {
+          const created = await repository.createCandidate(
+            {
+              repository: index % 2 === 0 ? 'frontend' : 'backend',
+              prNumber: 2100 + index,
+              branchName: `feature/terminal-history-${index}`,
+              headSha: String(index + 1).repeat(40),
+              requestedBy: 'integration',
+              deployPlan: null,
+              prEvidence: null
+            },
+            {}
+          );
+          expect(
+            await repository.updateCandidate(
+              created.id,
+              created.row_version,
+              { status },
+              {}
+            )
+          ).toBe(true);
+          const updated = await repository.findCandidateById(created.id, {});
+          if (!updated)
+            throw new Error('Terminal integration row was not found');
+          return updated;
+        })
+      );
+      const terminalBefore = terminalCandidates.map((row) => ({ ...row }));
       await repository.setControl(
         'STAGING',
         true,
@@ -1291,7 +1327,9 @@ describeWithSeed(
         'integration-deregistration',
         60_000
       );
-      const candidates = await repository.listAllCandidates({});
+      const candidates = (await repository.listAllCandidates({})).filter(
+        releaseBusV2CandidateHasActiveIntent
+      );
       const stagingState = await repository.getStagingState({});
 
       try {
@@ -1321,6 +1359,20 @@ describeWithSeed(
           staging_live_manifest_id: null,
           production_requested_at: null
         });
+        for (let index = 0; index < terminalCandidates.length; index += 1) {
+          const terminal = terminalCandidates[index];
+          await expect(
+            repository.findCandidateById(terminal.id, {})
+          ).resolves.toEqual(terminalBefore[index]);
+          await expect(
+            repository.listCandidateEvents(
+              terminal.id,
+              'CANDIDATE_LOGICALLY_DEREGISTERED',
+              10,
+              {}
+            )
+          ).resolves.toEqual([]);
+        }
         await expect(repository.getStagingState({})).resolves.toMatchObject({
           status: 'DETACHED_MANUAL_OWNERSHIP',
           current_manifest_id: null,

@@ -10,96 +10,31 @@
  * Do not edit the class manually.
  */
 
-import { ApiReleaseBusV2CandidateDeregistrationCandidateVersion } from '../models/ApiReleaseBusV2CandidateDeregistrationCandidateVersion';
-import { ApiReleaseBusV2CandidateDeregistrationControlVersion } from '../models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
-import { ApiReleaseBusV2CandidateDeregistrationLockVersion } from '../models/ApiReleaseBusV2CandidateDeregistrationLockVersion';
-import { ApiReleaseBusV2CandidateDeregistrationStagingRefs } from '../models/ApiReleaseBusV2CandidateDeregistrationStagingRefs';
+import { ApiReleaseBusV2CandidateDeregistrationExecuteRequest } from '../models/ApiReleaseBusV2CandidateDeregistrationExecuteRequest';
+import { ApiReleaseBusV2CandidateDeregistrationPrepareRequest } from '../models/ApiReleaseBusV2CandidateDeregistrationPrepareRequest';
 import { HttpFile } from '../http/http';
 
 /**
 * PREPARE accepts only phase and reason. EXECUTE requires every expected_* field copied from the exact preparation response.
 */
-export class ApiReleaseBusV2CandidateDeregistrationRequest {
-    'phase': ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum;
-    'reason': string;
-    'expected_plan_sha256'?: string;
-    'expected_inventory_sha256'?: string;
-    'expected_candidates'?: Set<ApiReleaseBusV2CandidateDeregistrationCandidateVersion>;
-    'expected_controls'?: Set<ApiReleaseBusV2CandidateDeregistrationControlVersion>;
-    'expected_locks'?: Set<ApiReleaseBusV2CandidateDeregistrationLockVersion>;
-    'expected_staging_state_row_version'?: number;
-    'expected_staging_refs'?: ApiReleaseBusV2CandidateDeregistrationStagingRefs;
+/**
+ * @type ApiReleaseBusV2CandidateDeregistrationRequest
+ * Type
+ * @export
+ */
+export type ApiReleaseBusV2CandidateDeregistrationRequest = ApiReleaseBusV2CandidateDeregistrationExecuteRequest | ApiReleaseBusV2CandidateDeregistrationPrepareRequest;
 
-    static readonly discriminator: string | undefined = undefined;
+/**
+* @type ApiReleaseBusV2CandidateDeregistrationRequestClass
+    * PREPARE accepts only phase and reason. EXECUTE requires every expected_* field copied from the exact preparation response.
+* @export
+*/
+export class ApiReleaseBusV2CandidateDeregistrationRequestClass {
+    static readonly discriminator: string | undefined = "phase";
 
-    static readonly mapping: {[index: string]: string} | undefined = undefined;
-
-    static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-        {
-            "name": "phase",
-            "baseName": "phase",
-            "type": "ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum",
-            "format": ""
-        },
-        {
-            "name": "reason",
-            "baseName": "reason",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "expected_plan_sha256",
-            "baseName": "expected_plan_sha256",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "expected_inventory_sha256",
-            "baseName": "expected_inventory_sha256",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "expected_candidates",
-            "baseName": "expected_candidates",
-            "type": "Set<ApiReleaseBusV2CandidateDeregistrationCandidateVersion>",
-            "format": ""
-        },
-        {
-            "name": "expected_controls",
-            "baseName": "expected_controls",
-            "type": "Set<ApiReleaseBusV2CandidateDeregistrationControlVersion>",
-            "format": ""
-        },
-        {
-            "name": "expected_locks",
-            "baseName": "expected_locks",
-            "type": "Set<ApiReleaseBusV2CandidateDeregistrationLockVersion>",
-            "format": ""
-        },
-        {
-            "name": "expected_staging_state_row_version",
-            "baseName": "expected_staging_state_row_version",
-            "type": "number",
-            "format": ""
-        },
-        {
-            "name": "expected_staging_refs",
-            "baseName": "expected_staging_refs",
-            "type": "ApiReleaseBusV2CandidateDeregistrationStagingRefs",
-            "format": ""
-        }    ];
-
-    static getAttributeTypeMap() {
-        return ApiReleaseBusV2CandidateDeregistrationRequest.attributeTypeMap;
-    }
-
-    public constructor() {
-    }
-}
-
-export enum ApiReleaseBusV2CandidateDeregistrationRequestPhaseEnum {
-    Prepare = 'PREPARE',
-    Execute = 'EXECUTE'
+    static readonly mapping: {[index: string]: string} | undefined = {
+        "EXECUTE": "ApiReleaseBusV2CandidateDeregistrationExecuteRequest",
+        "PREPARE": "ApiReleaseBusV2CandidateDeregistrationPrepareRequest",
+    };
 }
 

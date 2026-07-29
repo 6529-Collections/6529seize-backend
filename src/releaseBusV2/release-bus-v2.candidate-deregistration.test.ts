@@ -274,6 +274,68 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
     expect(repository.releaseExactMaintenanceLocks).not.toHaveBeenCalled();
   });
 
+  it('digests only active intent and preserves terminal history outside the plan', async () => {
+    const { service, repository, rows } = harness();
+    const terminalHistory = [
+      candidate('history-1', {
+        status: 'PRODUCTION_DEPLOYED',
+        row_version: 31
+      }),
+      candidate('history-2', { status: 'SUPERSEDED', row_version: 32 }),
+      candidate('history-3', { status: 'CANCELLED', row_version: 33 }),
+      candidate('history-4', { status: 'DEREGISTERED', row_version: 34 })
+    ];
+    repository.listAllCandidates.mockResolvedValue([
+      terminalHistory[2],
+      rows[1],
+      terminalHistory[0],
+      terminalHistory[3],
+      rows[0],
+      terminalHistory[1]
+    ]);
+
+    const plan = await service.prepare(
+      'Retire only the active candidate intent'
+    );
+
+    expect(plan.candidate_count).toBe(2);
+    expect(plan.candidates).toEqual([
+      { id: 'candidate-1', row_version: 7 },
+      { id: 'candidate-2', row_version: 7 }
+    ]);
+    expect(plan.candidates).not.toEqual(
+      expect.arrayContaining(
+        terminalHistory.map(({ id, row_version }) => ({ id, row_version }))
+      )
+    );
+  });
+
+  it('returns an explicit zero-target preparation as a safe non-executable no-op', async () => {
+    const { service, repository } = harness();
+    repository.listAllCandidates.mockResolvedValue([
+      candidate('history-1', { status: 'PRODUCTION_DEPLOYED' }),
+      candidate('history-2', { status: 'SUPERSEDED' }),
+      candidate('history-3', { status: 'CANCELLED' }),
+      candidate('history-4', { status: 'DEREGISTERED' })
+    ]);
+
+    const plan = await service.prepare('Confirm no active candidate intent');
+
+    expect(plan).toMatchObject({
+      phase: 'PREPARE',
+      candidate_count: 0,
+      candidates: [],
+      executed: false
+    });
+    await expect(
+      service.execute(executeInput(plan), 'operator')
+    ).rejects.toMatchObject({
+      code: 'CONFLICT'
+    });
+    expect(repository.acquireExactFreeMaintenanceLocks).not.toHaveBeenCalled();
+    expect(repository.commitAllCandidateDeregistration).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['ALL paused', controls({ ALL: true }), 'PRODUCTION'],
     ['staging running', controls({ STAGING: false }), 'PRODUCTION'],
@@ -425,7 +487,11 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
 
     await expect(
       service.execute(executeInput(plan), 'operator')
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      committed: false,
+      deregistration_id: null
+    });
     expect(repository.commitAllCandidateDeregistration).not.toHaveBeenCalled();
     expect(repository.releaseExactMaintenanceLocks).toHaveBeenCalledTimes(1);
   });
@@ -442,7 +508,12 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
 
     await expect(
       service.execute(executeInput(plan), 'operator')
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      committed: true,
+      deregistration_id: expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9-]{27}$/),
+      physical_staging_presence: 'UNKNOWN_DETACHED'
+    });
     expect(repository.commitAllCandidateDeregistration).toHaveBeenCalledTimes(
       1
     );
@@ -456,6 +527,82 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
       }),
       {}
     );
+    expect(repository.releaseExactMaintenanceLocks).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the committed deregistration ID when post-commit ref evidence is unavailable', async () => {
+    const { service, repository, deps } = harness();
+    const plan = await service.prepare(
+      'Retire the audited candidate inventory'
+    );
+    deps.resolveStagingRefs
+      .mockResolvedValueOnce({
+        frontend: FRONTEND_REF,
+        backend: BACKEND_REF
+      })
+      .mockResolvedValueOnce({
+        frontend: FRONTEND_REF,
+        backend: BACKEND_REF
+      })
+      .mockRejectedValueOnce(new Error('GitHub unavailable'));
+
+    await expect(
+      service.execute(executeInput(plan), 'operator')
+    ).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+      committed: true,
+      deregistration_id: expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9-]{27}$/),
+      message: expect.stringContaining('was committed as safely detached')
+    });
+    expect(repository.commitAllCandidateDeregistration).toHaveBeenCalledTimes(
+      1
+    );
+    expect(repository.releaseExactMaintenanceLocks).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let lock-release failure obscure an already committed result', async () => {
+    const { service, repository } = harness();
+    const plan = await service.prepare(
+      'Retire the audited candidate inventory'
+    );
+    repository.releaseExactMaintenanceLocks.mockRejectedValue(
+      new Error('Lock backend unavailable')
+    );
+
+    await expect(
+      service.execute(executeInput(plan), 'operator')
+    ).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+      committed: true,
+      deregistration_id: expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9-]{27}$/),
+      message: expect.stringContaining('maintenance lock cleanup failed')
+    });
+    expect(repository.commitAllCandidateDeregistration).toHaveBeenCalledTimes(
+      1
+    );
+  });
+
+  it('retains committed-state evidence when supplemental post-fence audit fails', async () => {
+    const { service, repository, deps } = harness();
+    const plan = await service.prepare(
+      'Retire the audited candidate inventory'
+    );
+    deps.hasActiveWorkflow
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    repository.appendEvent.mockRejectedValue(new Error('Audit unavailable'));
+
+    await expect(
+      service.execute(executeInput(plan), 'operator')
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      committed: true,
+      deregistration_id: expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9-]{27}$/),
+      message: expect.stringContaining(
+        'supplemental post-fence audit event failed'
+      )
+    });
     expect(repository.releaseExactMaintenanceLocks).toHaveBeenCalledTimes(1);
   });
 });

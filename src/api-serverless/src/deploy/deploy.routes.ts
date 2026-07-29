@@ -966,14 +966,14 @@ deployRoutes.post(
           : await releaseBusV2CandidateDeregistrationService.execute(
               {
                 reason: body.reason,
-                expected_plan_sha256: body.expected_plan_sha256!,
-                expected_inventory_sha256: body.expected_inventory_sha256!,
-                expected_candidates: Array.from(body.expected_candidates!),
-                expected_controls: Array.from(body.expected_controls!),
-                expected_locks: Array.from(body.expected_locks!),
+                expected_plan_sha256: body.expected_plan_sha256,
+                expected_inventory_sha256: body.expected_inventory_sha256,
+                expected_candidates: Array.from(body.expected_candidates),
+                expected_controls: Array.from(body.expected_controls),
+                expected_locks: Array.from(body.expected_locks),
                 expected_staging_state_row_version:
-                  body.expected_staging_state_row_version!,
-                expected_staging_refs: body.expected_staging_refs!
+                  body.expected_staging_state_row_version,
+                expected_staging_refs: body.expected_staging_refs
               },
               actor
             );
@@ -1024,6 +1024,15 @@ deployRoutes.post(
             : error.code === 'CONFLICT'
               ? 409
               : 503;
+        if (error.committed && error.deregistration_id) {
+          setNoStoreHeaders(res);
+          return res.status(status).json({
+            error: error.message,
+            committed: true,
+            deregistration_id: error.deregistration_id,
+            physical_staging_presence: error.physical_staging_presence
+          });
+        }
         throw new CustomApiCompliantException(status, error.message);
       }
       throw error;
