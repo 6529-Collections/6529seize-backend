@@ -565,14 +565,19 @@ executing request must repeat the bounded repository/PR/head identities from
 that report, so historical superseded heads outside the manifest stay
 untouched.
 
-GitHub Actions performs exact composition, combined preflight, immutable
-packaging, backend DAG deployment, frontend deployment, and manifest-bound E2E.
-Frontend artifacts contain independently checksummed staging and production
-profiles inside one immutable aggregate. Frontend/backend preparation and
-independent backend DAG frontiers run concurrently; only shared environment
-mutation plus E2E ownership is serialized. Operation keys, workflow titles,
-workflow authorization, SHA/artifact checks, row versions, and callback
-identity make retries and duplicate reconciliation idempotent.
+GitHub Actions performs exact composition, fast preflight, immutable packaging,
+backend DAG deployment, frontend deployment, and manifest-bound E2E. Train
+preflight consumes exact-head/merge-tree PR CI evidence instead of repeating
+repository-wide lint, typecheck, test inventory, or full test matrices. It
+installs backend dependencies once and builds/packages only selected deploy
+units. Frontend builds only the target environment profile. Every artifact is
+environment-, composition-SHA-, unit-, and digest-bound; ordinary production
+freshly composes and builds its exact dependency-closed selection and never
+reuses staging artifact bytes. Frontend/backend preparation and independent
+backend DAG frontiers run concurrently; only shared environment mutation plus
+E2E ownership is serialized. Operation keys, workflow titles, workflow
+authorization, SHA/artifact checks, row versions, and callback identity make
+retries and duplicate reconciliation idempotent.
 
 Each staging reconcile rechecks every mutable NEW candidate against its open
 PR's current exact head, including candidates already building or deploying.
@@ -589,16 +594,15 @@ evidence and immutable dependency/plan identity against the terminal failure's
 candidate row version; reconciliation alone never loops it.
 
 The staging manifest distinguishes deployed from validated state and binds E2E
-to exact frontend/backend tree SHAs, artifact digests, service operations, and
-workflow runs. Production reuses an exact validated manifest when both composed
-trees match; a different explicit subset receives a staging qualification train
-before guarded `main` mutation. If an unchanged staging repository cannot match
-that immutable target, the child and parent terminalize atomically and preserve
-the explicit candidates in `WAITING_FOR_PRODUCTION_REPLAN`. The scheduler
-reclaims them only when current ready candidates cover the mismatched
-repositories or unchanged staging exactly matches the current base, so an
-impossible subset cannot monopolize production. A moved `main` is never
-overwritten.
+to exact frontend/backend tree SHAs, environment-bound artifact digests,
+service operations, and workflow runs. Staging evidence qualifies unchanged
+candidate source and E2E history; it never qualifies staging artifact bytes for
+ordinary production. Production records the selected candidates' exact staging
+evidence, freshly composes the dependency-closed set onto the current production
+main bases, freshly builds production-bound artifacts, and advances only those
+tested SHAs by compare-and-swap. A moved `main` is never overwritten and
+triggers bounded production-only replan/coalescence without mutating the
+admitted staging set.
 
 Infrastructure and retryable deployment failures retry only the same operation.
 Control-plane defects pause automated claiming without blaming candidates, and
