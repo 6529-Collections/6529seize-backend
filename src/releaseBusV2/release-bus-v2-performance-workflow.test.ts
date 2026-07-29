@@ -451,8 +451,21 @@ case "$url" in
     printf '%s' '{"id":12345,"run_attempt":2,"actor":{"login":"prxt6529"},"event":"workflow_dispatch","path":".github/workflows/deploy.yml","status":"in_progress","conclusion":null,"head_branch":"main","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"Deploy api to prod [manual]","display_title":"Deploy api to prod [manual]"}' > "$output"
     printf '200'
     ;;
+  */contents/.github/workflows/*)
+    if [ "$FAKE_MISSING_WORKFLOW" = true ]; then
+      printf '%s' '{"message":"Not Found"}' > "$output"
+      printf '404'
+    else
+      printf '%s' '{"type":"file","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' > "$output"
+      printf '200'
+    fi
+    ;;
   */actions/runs?*)
-    printf '%s' '{"workflow_runs":[]}' > "$output"
+    if [ "$FAKE_INCOMPLETE_RUN_PAGE" = true ]; then
+      printf '%s' '{"total_count":101,"workflow_runs":[]}' > "$output"
+    else
+      printf '%s' '{"total_count":0,"workflow_runs":[]}' > "$output"
+    fi
     printf '200'
     ;;
   *)
@@ -468,6 +481,8 @@ esac
       ARGUMENT_LOG: argumentLog,
       CALL_LOG: callLog,
       FAKE_BLOCKED: 'false',
+      FAKE_INCOMPLETE_RUN_PAGE: 'false',
+      FAKE_MISSING_WORKFLOW: 'false',
       GITHUB_ACTOR: 'prxt6529',
       GITHUB_API_URL: 'https://api.github.invalid',
       GITHUB_OUTPUT: githubOutput,
@@ -526,7 +541,14 @@ esac
       expect(calls).toContain('/git/ref/heads/main');
       expect(calls).toContain('/actions/runs/12345');
       expect(calls).toContain(
+        '/contents/.github/workflows/build-upload-deploy-prod.yml?ref=main'
+      );
+      expect(calls).toContain(
         '/repos/6529-Collections/6529seize-frontend/actions/runs?'
+      );
+      expect(authorize).toContain('.total_count');
+      expect(authorize).toContain(
+        'deploy-control-prod-manual concurrency group'
       );
       expect(readFileSync(argumentLog, 'utf8')).toContain(
         'Authorization: Bearer workflow-token'
@@ -535,6 +557,21 @@ esac
         execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
           cwd: root,
           env: { ...env, FAKE_BLOCKED: 'true' },
+          stdio: 'pipe'
+        })
+      ).toThrow();
+      expect(() =>
+        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
+          cwd: root,
+          env: { ...env, FAKE_INCOMPLETE_RUN_PAGE: 'true' },
+          stdio: 'pipe'
+        })
+      ).toThrow();
+      expect(readFileSync(callLog, 'utf8')).toContain('page=2');
+      expect(() =>
+        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
+          cwd: root,
+          env: { ...env, FAKE_MISSING_WORKFLOW: 'true' },
           stdio: 'pipe'
         })
       ).toThrow();

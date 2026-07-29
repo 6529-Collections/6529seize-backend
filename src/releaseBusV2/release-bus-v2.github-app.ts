@@ -539,7 +539,7 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     },
     {
       from: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
-      to: '63bbeb1c6db9bc7994ed37219efa956625223821cb75ba1d77eb032ddb4a816c',
+      to: '8814c76a7852fb1b2bbcc593e8ebbcd70dc1975dcacf8a6635c2af2de818e73c',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
@@ -557,6 +557,8 @@ function trustedGatePolicyBundleTransition(
   from: string,
   to: string
 ): boolean {
+  // Expiry bounds only a digest migration. The equal-digest steady state
+  // remains trusted after the migration window closes.
   return (
     from === to ||
     TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS[repository].some(

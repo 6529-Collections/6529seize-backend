@@ -436,42 +436,69 @@ jobs:
              .name == "Deploy api to prod [manual]" and
              .display_title == "Deploy api to prod [manual]"'             "$current_run_file" > /dev/null
 
+          assert_workflow_exists() {
+            local repository="$1"
+            local workflow="$2"
+            local workflow_file="$guard_tmp/workflow-$workflow.json"
+            [[ "$workflow" =~ ^[A-Za-z0-9._-]+[.]yml$ ]]
+            fetch_github_json               "$GITHUB_API_URL/repos/$repository/contents/.github/workflows/$workflow?ref=main"               "$workflow_file"
+            jq -e               'type == "object" and .type == "file" and
+               (.sha | type == "string" and test("^[0-9a-f]{40}$"))'               "$workflow_file" > /dev/null
+          }
+
           assert_no_active_production_runs() {
             local role="$1"
             local repository="$2"
-            local run_status page runs_file run_count
+            local run_status page runs_file run_count total_count expected_pages scanned_count
             for run_status in queued in_progress; do
               page=1
-              while [ "$page" -le 10 ]; do
+              total_count=-1
+              expected_pages=1
+              scanned_count=0
+              while [ "$page" -le "$expected_pages" ]; do
                 runs_file="$guard_tmp/$role-$run_status-$page.json"
                 fetch_github_json                   "$GITHUB_API_URL/repos/$repository/actions/runs?status=$run_status&per_page=100&page=$page"                   "$runs_file"
-                jq -e                   --arg current_run_id "$GITHUB_RUN_ID"                   --arg role "$role"                   'type == "object" and
+                jq -e                   --argjson expected_total "$total_count"                   --arg current_run_id "$GITHUB_RUN_ID"                   --arg role "$role"                   'type == "object" and
+                   (.total_count | type == "number" and . >= 0 and floor == .) and
+                   ($expected_total == -1 or .total_count == $expected_total) and
                    (.workflow_runs | type == "array") and
                    ([.workflow_runs[] | select(
                      (.id | tostring) != $current_run_id and
                      (if $role == "backend" then
-                        ((.path == ".github/workflows/deploy.yml" or
-                          .name == "Deploy a service") and
+                        (.path == ".github/workflows/deploy.yml" and
                          (.display_title | test(" to prod(?:[[:space:]]|$)")))
                       else
-                        ((.path == ".github/workflows/build-upload-deploy-prod.yml" or
+                        (.path == ".github/workflows/build-upload-deploy-prod.yml" or
                           .path == ".github/workflows/release-bus-deploy-production.yml" or
-                          .path == ".github/workflows/production-e2e.yml") or
-                         (.name == "Web Deploy - PROD" or
-                          .name == "Release Bus - Deploy Frontend Production" or
-                          .name == "Production E2E"))
+                          .path == ".github/workflows/production-e2e.yml")
                       end)
                    )] | length == 0)'                   "$runs_file" > /dev/null
-                run_count="$(jq -r '.workflow_runs | length' "$runs_file")"
-                if [ "$run_count" -lt 100 ]; then
-                  break
+                if [ "$total_count" -eq -1 ]; then
+                  total_count="$(jq -r '.total_count' "$runs_file")"
+                  test "$total_count" -le 1000
+                  expected_pages=$(((total_count + 99) / 100))
+                  if [ "$expected_pages" -eq 0 ]; then
+                    expected_pages=1
+                  fi
                 fi
-                test "$page" -lt 10
+                run_count="$(jq -r '.workflow_runs | length' "$runs_file")"
+                scanned_count=$((scanned_count + run_count))
                 page=$((page + 1))
               done
+              test "$scanned_count" -eq "$total_count"
             done
           }
 
+          assert_workflow_exists "$GITHUB_REPOSITORY" deploy.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" build-upload-deploy-prod.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" release-bus-deploy-production.yml
+          assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" production-e2e.yml
+
+          # The workflow-level deploy-control-prod-manual concurrency group
+          # serializes every backend manual production service. With the
+          # PRODUCTION lane OFF, no Release Bus train can claim production.
+          # Frontend production workflows reject while this backend run is
+          # active; this guard rejects any frontend production run already active.
           assert_no_active_production_runs backend "$GITHUB_REPOSITORY"
           assert_no_active_production_runs frontend "$GITHUB_REPOSITORY_OWNER/6529seize-frontend"
           EMERGENCY_API_BOOTSTRAP_GUARD
