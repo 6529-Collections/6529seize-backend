@@ -937,7 +937,9 @@ exit 1
 
   it('uses every PR CI artifact only as evidence and always builds fresh train bytes', () => {
     expect(preflight).toContain('Verify exact green PR CI evidence');
-    expect(preflight).toContain('.head_sha == $expected_sha');
+    expect(preflight).toContain('run_head_sha="$(jq -er');
+    expect(preflight).toContain('.head_sha == $run_head_sha');
+    expect(preflight).not.toContain('.head_sha == $expected_sha');
     expect(preflight).not.toContain('Download exact green PR artifact');
     expect(preflight).toContain('is_exact_evidence_archive=false');
     expect(preflight).toContain(
@@ -986,6 +988,7 @@ exit 1
     const output = path.join(fixture, 'github-output');
     const fakeGh = path.join(fixture, 'gh');
     const expectedSha = 'a'.repeat(40);
+    const pullRequestHeadSha = 'b'.repeat(40);
     mkdirSync(artifactDirectory);
     writeFileSync(
       path.join(artifactDirectory, 'policy-bundle.txt'),
@@ -1003,6 +1006,7 @@ exit 1
         evidence_contract: 'exact-merge-tree-pr-ci-v1',
         repository: 'backend',
         merge_sha: expectedSha,
+        head_sha: pullRequestHeadSha,
         workflow: '.github/workflows/on-pull-request.yml',
         policy_bundle_contract: 'pr-ci-policy-bundle-v1',
         policy_bundle_digest: policyDigest,
@@ -1028,7 +1032,7 @@ case "$*" in
     printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
     ;;
   *actions/runs/54321)
-    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml"}\\n'
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${pullRequestHeadSha}","path":".github/workflows/on-pull-request.yml"}\\n'
     ;;
   *actions/artifacts/777/zip)
     cat "$ARTIFACT_ZIP"
