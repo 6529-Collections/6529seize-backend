@@ -1,6 +1,15 @@
 const mockResolveRef = jest.fn();
 const mockStagingWorkflowScan = jest.fn();
 const mockProductionWorkflowScan = jest.fn();
+const mockLoggerError = jest.fn();
+
+jest.mock('@/logging', () => ({
+  Logger: {
+    get: () => ({
+      error: (...args: unknown[]) => mockLoggerError(...args)
+    })
+  }
+}));
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
   releaseBusGitHubApp: {
@@ -200,6 +209,10 @@ function executeInput(
 describe('ReleaseBusV2CandidateDeregistrationService', () => {
   const previousMode = process.env.RELEASE_BUS_V2_MODE;
 
+  beforeEach(() => {
+    mockLoggerError.mockClear();
+  });
+
   afterAll(() => {
     if (previousMode === undefined) delete process.env.RELEASE_BUS_V2_MODE;
     else process.env.RELEASE_BUS_V2_MODE = previousMode;
@@ -350,6 +363,7 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
     'rejects %s without changing either lane control',
     async (_name, rows, mode) => {
       const { service, repository, deps } = harness();
+      const pristine = rows.map((row) => ({ ...row }));
       repository.listControls.mockResolvedValue(rows);
       deps.getMode.mockReturnValue(mode);
 
@@ -365,7 +379,7 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
       expect(
         repository.commitAllCandidateDeregistration
       ).not.toHaveBeenCalled();
-      expect(rows).toEqual(rows);
+      expect(rows).toEqual(pristine);
     }
   );
 
@@ -441,6 +455,39 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(repository.acquireExactFreeMaintenanceLocks).not.toHaveBeenCalled();
     expect(repository.commitAllCandidateDeregistration).not.toHaveBeenCalled();
+  });
+
+  it('accepts explicit plan objects regardless of client key insertion order', async () => {
+    const { service } = harness();
+    const plan = await service.prepare(
+      'Retire the audited candidate inventory'
+    );
+    const input = executeInput(plan);
+
+    await expect(
+      service.execute(
+        {
+          ...input,
+          expected_candidates: input.expected_candidates.map((row) => ({
+            row_version: row.row_version,
+            id: row.id
+          })),
+          expected_controls: input.expected_controls.map((row) => ({
+            row_version: row.row_version,
+            paused: row.paused,
+            scope: row.scope
+          })),
+          expected_locks: input.expected_locks.map((row) => ({
+            row_version: row.row_version,
+            name: row.name
+          }))
+        },
+        'operator'
+      )
+    ).resolves.toMatchObject({
+      phase: 'EXECUTE',
+      executed: true
+    });
   });
 
   it('commits the exact plan under all three leases and releases them', async () => {
@@ -634,5 +681,30 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
       )
     });
     expect(repository.releaseExactMaintenanceLocks).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs non-domain fail-closed failures without exposing original secrets', async () => {
+    const { service, repository } = harness();
+    repository.listControls.mockRejectedValue(
+      new Error('Authorization: Bearer should-not-appear')
+    );
+
+    await expect(
+      service.prepare('Retire the audited candidate inventory')
+    ).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+      message:
+        'Candidate deregistration safety could not be proven; no new action is authorized'
+    });
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      '[CANDIDATE_DEREGISTRATION] unexpected fail-closed error',
+      {
+        error_type: 'Error',
+        error_fingerprint_sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }
+    );
+    expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain(
+      'should-not-appear'
+    );
   });
 });

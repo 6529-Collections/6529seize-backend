@@ -190,21 +190,81 @@ describe('ReleaseBusV2Repository', () => {
   });
 
   it('digests the complete mutable candidate inventory deterministically', () => {
-    const first = candidate('candidate-a');
-    const second = candidate('candidate-b', {
+    const first = candidate('candidate-A', {
+      deploy_plan_json: {
+        units: [],
+        edges: [],
+        publish_release_notes: true
+      }
+    });
+    const second = candidate('candidate-a', {
       repository: 'backend',
-      head_sha: 'b'.repeat(40)
+      head_sha: 'b'.repeat(40),
+      deploy_plan_json: {
+        publish_release_notes: true,
+        edges: [],
+        units: []
+      }
     });
 
-    expect(releaseBusV2CandidateInventoryDigest([first, second])).toBe(
-      releaseBusV2CandidateInventoryDigest([second, first])
-    );
+    const localeCompare = jest
+      .spyOn(String.prototype, 'localeCompare')
+      .mockImplementation(() => {
+        throw new Error(
+          'Canonical ordering must not depend on the host locale'
+        );
+      });
+    let forwardDigest: string;
+    let reverseDigest: string;
+    try {
+      forwardDigest = releaseBusV2CandidateInventoryDigest([first, second]);
+      reverseDigest = releaseBusV2CandidateInventoryDigest([second, first]);
+    } finally {
+      localeCompare.mockRestore();
+    }
+
+    expect(forwardDigest).toBe(reverseDigest);
     expect(
       releaseBusV2CandidateInventoryDigest([
         first,
         { ...second, production_requested_at: 99, row_version: 8 }
       ])
     ).not.toBe(releaseBusV2CandidateInventoryDigest([first, second]));
+  });
+
+  it('uses one status-indexed CAS scope and one latest-event query for deregistration', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+
+    await repository.listCandidateDeregistrationScope({}, true);
+    await repository.listLatestCandidateEventsForCandidates(
+      ['candidate-b', 'candidate-A', 'candidate-b'],
+      'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
+      {}
+    );
+
+    expect(db.calls).toHaveLength(2);
+    expect(db.calls[0]?.sql).toContain(
+      'force index (idx_release_bus_v2_candidate_queue)'
+    );
+    expect(db.calls[0]?.sql).toContain(
+      'where status not in (:terminalStatuses)'
+    );
+    expect(db.calls[0]?.sql).toContain('for update');
+    expect(db.calls[0]?.params).toEqual({
+      terminalStatuses: ['PRODUCTION_DEPLOYED', 'CANCELLED', 'DEREGISTERED']
+    });
+    expect(db.calls[1]?.sql).toContain('row_number() over');
+    expect(db.calls[1]?.sql).toContain(
+      'partition by candidate_events.candidate_id'
+    );
+    expect(db.calls[1]?.sql).toContain(
+      'where ranked_events.candidate_event_rank = 1'
+    );
+    expect(db.calls[1]?.params).toEqual({
+      candidateIds: ['candidate-A', 'candidate-b'],
+      eventType: 'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE'
+    });
   });
 
   it('binds explicit null PR evidence as SQL NULL rather than serialized JSON', async () => {
@@ -389,20 +449,19 @@ describe('ReleaseBusV2Repository', () => {
       .spyOn(repository, 'listNonterminalOperationsForLanes')
       .mockResolvedValue([]);
     jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
-    const listAllCandidates = jest
-      .spyOn(repository, 'listAllCandidates')
-      .mockResolvedValue([...candidates, ...terminalHistory]);
-    jest
-      .spyOn(repository, 'listCandidateEvents')
-      .mockImplementation(async (candidateId) => {
-        if (
-          !['recoverable-superseded-production', 'history-superseded'].includes(
-            candidateId
-          )
-        )
-          return [];
-        return [
-          {
+    const listCandidateDeregistrationScope = jest
+      .spyOn(repository, 'listCandidateDeregistrationScope')
+      .mockResolvedValue([
+        candidates[2],
+        candidates[1],
+        candidates[0],
+        terminalHistory[1]
+      ]);
+    const listLatestCandidateEventsForCandidates = jest
+      .spyOn(repository, 'listLatestCandidateEventsForCandidates')
+      .mockResolvedValue(
+        ['recoverable-superseded-production', 'history-superseded'].map(
+          (candidateId) => ({
             id: `superseded-event-${candidateId}`,
             train_id: null,
             candidate_id: candidateId,
@@ -415,9 +474,9 @@ describe('ReleaseBusV2Repository', () => {
                   : 'moved-head'
             },
             created_at: 3
-          }
-        ];
-      });
+          })
+        )
+      );
     const updateCandidate = jest
       .spyOn(repository, 'updateCandidate')
       .mockResolvedValue(true);
@@ -452,9 +511,15 @@ describe('ReleaseBusV2Repository', () => {
     ).resolves.toEqual({ candidateCount: 3 });
 
     expect(updateCandidate).toHaveBeenCalledTimes(3);
-    expect(listAllCandidates).toHaveBeenCalledWith(
+    expect(listCandidateDeregistrationScope).toHaveBeenCalledWith(
       expect.objectContaining({ connection: expect.anything() }),
       true
+    );
+    expect(listLatestCandidateEventsForCandidates).toHaveBeenCalledTimes(1);
+    expect(listLatestCandidateEventsForCandidates).toHaveBeenCalledWith(
+      ['recoverable-superseded-production', 'history-superseded'],
+      'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
+      expect.objectContaining({ connection: expect.anything() })
     );
     expect(updateCandidate).toHaveBeenCalledWith(
       'candidate-a',
@@ -480,9 +545,11 @@ describe('ReleaseBusV2Repository', () => {
       'candidate-b',
       'recoverable-superseded-production'
     ]);
-    expect(
-      updateCandidate.mock.calls.map(([candidateId]) => candidateId)
-    ).not.toEqual(expect.arrayContaining(terminalHistory.map(({ id }) => id)));
+    const updatedCandidateIds = updateCandidate.mock.calls.map(
+      ([candidateId]) => candidateId
+    );
+    for (const { id } of terminalHistory)
+      expect(updatedCandidateIds).not.toContain(id);
     expect(updateStagingState).toHaveBeenCalledWith(
       4,
       expect.objectContaining({
@@ -558,7 +625,9 @@ describe('ReleaseBusV2Repository', () => {
       .spyOn(repository, 'listNonterminalOperationsForLanes')
       .mockResolvedValue([]);
     jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
-    jest.spyOn(repository, 'listAllCandidates').mockResolvedValue([current]);
+    jest
+      .spyOn(repository, 'listCandidateDeregistrationScope')
+      .mockResolvedValue([current]);
     const updateCandidate = jest.spyOn(repository, 'updateCandidate');
     const updateStagingState = jest.spyOn(repository, 'updateStagingState');
     const appendEvent = jest.spyOn(repository, 'appendEvent');
@@ -611,8 +680,8 @@ describe('ReleaseBusV2Repository', () => {
       .spyOn(repository, 'listNonterminalOperationsForLanes')
       .mockResolvedValue([]);
     jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
-    const listAllCandidates = jest
-      .spyOn(repository, 'listAllCandidates')
+    const listCandidateDeregistrationScope = jest
+      .spyOn(repository, 'listCandidateDeregistrationScope')
       .mockResolvedValue([prepared, newlyAdmitted]);
     const updateCandidate = jest.spyOn(repository, 'updateCandidate');
     const updateStagingState = jest.spyOn(repository, 'updateStagingState');
@@ -640,7 +709,7 @@ describe('ReleaseBusV2Repository', () => {
       })
     ).rejects.toThrow('Exact candidate inventory changed');
 
-    expect(listAllCandidates).toHaveBeenCalledWith(
+    expect(listCandidateDeregistrationScope).toHaveBeenCalledWith(
       expect.objectContaining({ connection: expect.anything() }),
       true
     );

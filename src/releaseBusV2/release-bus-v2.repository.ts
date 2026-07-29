@@ -161,6 +161,17 @@ const RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUS_SET =
     RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUSES
   );
 
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareIds(
+  left: { readonly id: string },
+  right: { readonly id: string }
+): number {
+  return compareCodeUnits(left.id, right.id);
+}
+
 export function releaseBusV2CandidateHasActiveIntent(
   candidate: Pick<
     ReleaseBusV2CandidateRecord,
@@ -208,7 +219,7 @@ function canonicalDigestJson(value: unknown): unknown {
   if (value && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => compareCodeUnits(left, right))
         .map(([key, entry]) => [key, canonicalDigestJson(entry)])
     );
   return value;
@@ -254,7 +265,7 @@ function normalizedCandidateInventory(
       updated_at: candidate.updated_at,
       row_version: candidate.row_version
     }))
-    .sort((left, right) => left.id.localeCompare(right.id));
+    .sort(compareIds);
 }
 
 export function releaseBusV2CandidateInventoryDigest(
@@ -270,10 +281,9 @@ function sameCandidateVersions(
   expected: readonly ReleaseBusV2CandidateVersion[]
 ): boolean {
   if (candidates.length !== expected.length) return false;
-  const sortedExpected = [...expected].sort((left, right) =>
-    left.id.localeCompare(right.id)
-  );
-  return candidates.every(
+  const sortedExpected = [...expected].sort(compareIds);
+  const sortedCandidates = [...candidates].sort(compareIds);
+  return sortedCandidates.every(
     (candidate, index) =>
       candidate.id === sortedExpected[index]?.id &&
       candidate.row_version === sortedExpected[index]?.row_version
@@ -486,14 +496,46 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async listAllCandidates(
+  public async listCandidateDeregistrationScope(
     ctx: RequestContext,
     forUpdate = false
   ): Promise<ReleaseBusV2CandidateRecord[]> {
+    // Excluding only immutable terminal history keeps the status-indexed
+    // FOR UPDATE fence over every row and insertion capable of active intent.
     return this.db.execute<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
-       order by id asc${forUpdate ? ' for update' : ''}`,
-      {},
+       force index (idx_release_bus_v2_candidate_queue)
+       where status not in (:terminalStatuses)${forUpdate ? ' for update' : ''}`,
+      {
+        terminalStatuses: [
+          ...RELEASE_BUS_V2_CANDIDATE_DEREGISTRATION_TERMINAL_STATUSES
+        ]
+      },
+      dbOptions(ctx)
+    );
+  }
+
+  public async listLatestCandidateEventsForCandidates(
+    candidateIds: readonly string[],
+    eventType: string,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2EventRecord[]> {
+    const ids = Array.from(new Set(candidateIds)).sort(compareCodeUnits);
+    if (ids.length === 0) return [];
+    return this.db.execute<ReleaseBusV2EventRecord>(
+      `select ranked_events.*
+       from (
+         select candidate_events.*,
+                row_number() over (
+                  partition by candidate_events.candidate_id
+                  order by candidate_events.created_at desc, candidate_events.id desc
+                ) as candidate_event_rank
+         from ${RELEASE_BUS_V2_EVENTS_TABLE} candidate_events
+         where candidate_events.candidate_id in (:candidateIds)
+           and candidate_events.event_type = :eventType
+       ) ranked_events
+       where ranked_events.candidate_event_rank = 1`,
+      { candidateIds: ids, eventType },
       dbOptions(ctx)
     );
   }
@@ -502,32 +544,38 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     ctx: RequestContext,
     forUpdate = false
   ): Promise<ReleaseBusV2CandidateRecord[]> {
-    const candidates = await this.listAllCandidates(ctx, forUpdate);
-    const classified = await Promise.all(
-      candidates.map(async (candidate) => {
-        const latestSupersededEvent =
-          candidate.status === 'SUPERSEDED'
-            ? ((
-                await this.listCandidateEvents(
-                  candidate.id,
-                  'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
-                  1,
-                  ctx
-                )
-              )[0] ?? null)
-            : null;
-        return {
-          candidate,
-          active: releaseBusV2CandidateHasActiveIntent(
-            candidate,
-            latestSupersededEvent
-          )
-        };
-      })
+    const candidates = await this.listCandidateDeregistrationScope(
+      ctx,
+      forUpdate
     );
-    return classified
-      .filter(({ active }) => active)
-      .map(({ candidate }) => candidate);
+    const supersededCandidateIds = candidates
+      .filter(({ status }) => status === 'SUPERSEDED')
+      .map(({ id }) => id);
+    const latestSupersededEvents =
+      await this.listLatestCandidateEventsForCandidates(
+        supersededCandidateIds,
+        'CANDIDATE_SUPERSEDED_BY_BRANCH_MOVE',
+        ctx
+      );
+    const latestSupersededEventByCandidateId = new Map(
+      latestSupersededEvents
+        .filter(
+          (
+            event
+          ): event is ReleaseBusV2EventRecord & {
+            readonly candidate_id: string;
+          } => event.candidate_id !== null
+        )
+        .map((event) => [event.candidate_id, event])
+    );
+    return candidates
+      .filter((candidate) =>
+        releaseBusV2CandidateHasActiveIntent(
+          candidate,
+          latestSupersededEventByCandidateId.get(candidate.id) ?? null
+        )
+      )
+      .sort(compareIds);
   }
 
   public async listLiveStagingCandidates(
@@ -1438,9 +1486,11 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   ): Promise<ReleaseBusV2MaintenanceLease[]> {
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const ctx: RequestContext = { connection };
-      const locks = await this.listLocks(ctx, true);
+      const locks = (await this.listLocks(ctx, true)).sort((left, right) =>
+        compareCodeUnits(left.name, right.name)
+      );
       const sortedExpected = [...expected].sort((left, right) =>
-        left.name.localeCompare(right.name)
+        compareCodeUnits(left.name, right.name)
       );
       if (
         locks.length !== RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES.length ||
@@ -1792,9 +1842,11 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   }): Promise<{ readonly candidateCount: number }> {
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const ctx: RequestContext = { connection };
-      const controls = await this.listControls(ctx, true);
+      const controls = (await this.listControls(ctx, true)).sort(
+        (left, right) => compareCodeUnits(left.scope, right.scope)
+      );
       const expectedControls = [...input.expectedControls].sort((left, right) =>
-        left.scope.localeCompare(right.scope)
+        compareCodeUnits(left.scope, right.scope)
       );
       if (
         controls.length !== expectedControls.length ||

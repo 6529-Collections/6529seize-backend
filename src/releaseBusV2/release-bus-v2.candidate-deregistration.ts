@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { Logger } from '@/logging';
 import {
   deriveReleaseBusV2LaneStates,
   getReleaseBusV2Mode,
@@ -175,6 +176,25 @@ function sha256(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
+function unexpectedFailureEvidence(error: unknown): {
+  readonly error_type: 'Error' | 'non-Error';
+  readonly error_fingerprint_sha256: string;
+} {
+  if (!(error instanceof Error))
+    return {
+      error_type: 'non-Error',
+      error_fingerprint_sha256: sha256({ type: typeof error })
+    };
+  return {
+    error_type: 'Error',
+    error_fingerprint_sha256: sha256({
+      name: error.name,
+      message: error.message,
+      stack: error.stack ?? null
+    })
+  };
+}
+
 function planIdentity(
   reason: string,
   snapshot: DeregistrationSnapshot,
@@ -206,8 +226,47 @@ function planIdentity(
   };
 }
 
-function sameJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+function sameCandidateVersions(
+  left: readonly ReleaseBusV2CandidateVersion[],
+  right: readonly ReleaseBusV2CandidateVersion[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (row, index) =>
+        row.id === right[index]?.id &&
+        row.row_version === right[index]?.row_version
+    )
+  );
+}
+
+function sameControlVersions(
+  left: readonly ReleaseBusV2ControlVersion[],
+  right: readonly ReleaseBusV2ControlVersion[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (row, index) =>
+        row.scope === right[index]?.scope &&
+        row.paused === right[index]?.paused &&
+        row.row_version === right[index]?.row_version
+    )
+  );
+}
+
+function sameLockVersions(
+  left: readonly ReleaseBusV2LockVersion[],
+  right: readonly ReleaseBusV2LockVersion[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (row, index) =>
+        row.name === right[index]?.name &&
+        row.row_version === right[index]?.row_version
+    )
+  );
 }
 
 function sameStagingRefs(
@@ -218,6 +277,8 @@ function sameStagingRefs(
 }
 
 export class ReleaseBusV2CandidateDeregistrationService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   public constructor(
     private readonly repository: ReleaseBusV2RepositoryClass = releaseBusV2Repository,
     private readonly deps: DeregistrationDependencies = dependencies
@@ -247,156 +308,254 @@ export class ReleaseBusV2CandidateDeregistrationService {
           'CONFLICT',
           'Candidate deregistration preparation is a safe no-op because no active candidate intent exists'
         );
-      const leaseOwner = `deregister:${actor}:${randomUUID()}`;
-      let leases: readonly ReleaseBusV2MaintenanceLease[] = [];
-      let execution: ReleaseBusV2CandidateDeregistrationExecution | null = null;
-      let committedDeregistrationId: string | null = null;
-      let failure: unknown;
-      try {
-        leases = await this.repository.acquireExactFreeMaintenanceLocks(
-          input.expected_locks,
-          leaseOwner,
-          RELEASE_BUS_V2_LOCK_TTL_MS
-        );
-        const [stagingRefs, activeWorkflow] = await Promise.all([
-          this.deps.resolveStagingRefs(),
-          this.deps.hasActiveWorkflow()
-        ]);
-        if (activeWorkflow)
-          throw new ReleaseBusV2CandidateDeregistrationError(
-            'CONFLICT',
-            'Candidate deregistration requires every staging and production mutation or E2E workflow to be inactive'
-          );
-        if (!sameStagingRefs(stagingRefs, input.expected_staging_refs))
-          throw new ReleaseBusV2CandidateDeregistrationError(
-            'CONFLICT',
-            'Staging refs changed after the deregistration plan was prepared'
-          );
-        if (this.deps.getMode() !== plan.mode)
-          throw new ReleaseBusV2CandidateDeregistrationError(
-            'CONFLICT',
-            'Release Bus mode changed after the deregistration plan was prepared'
-          );
-        const deregistrationId = randomUUID();
-        await this.repository.commitAllCandidateDeregistration({
-          deregistrationId,
-          actor,
-          reason,
-          expectedControls: input.expected_controls,
-          maintenanceLeases: leases,
-          expectedStagingStateRowVersion:
-            input.expected_staging_state_row_version,
-          expectedCandidates: input.expected_candidates,
-          expectedInventorySha256: input.expected_inventory_sha256,
-          observedFrontendStagingSha: stagingRefs.frontend,
-          observedBackendStagingSha: stagingRefs.backend
-        });
-        committedDeregistrationId = deregistrationId;
-        execution = {
-          ...plan,
-          phase: 'EXECUTE',
-          executed: true,
-          deregistration_id: deregistrationId,
-          physical_staging_presence: 'UNKNOWN_DETACHED'
-        };
-        const [postCommitRefs, postCommitActiveWorkflow] = await Promise.all([
-          this.deps.resolveStagingRefs(),
-          this.deps.hasActiveWorkflow()
-        ]);
-        const postCommitMode = this.deps.getMode();
-        if (
-          postCommitActiveWorkflow ||
-          !sameStagingRefs(postCommitRefs, stagingRefs) ||
-          postCommitMode !== plan.mode
-        ) {
-          let auditFailure = false;
-          try {
-            await this.repository.appendEvent(
-              {
-                eventType: 'CANDIDATE_DEREGISTRATION_POST_FENCE_CHANGED',
-                actor,
-                payload: {
-                  deregistration_id: deregistrationId,
-                  workflow_active: postCommitActiveWorkflow,
-                  mode_changed: postCommitMode !== plan.mode,
-                  expected_staging_refs: stagingRefs,
-                  observed_staging_refs: postCommitRefs,
-                  staging_state_retained: 'DETACHED_MANUAL_OWNERSHIP'
-                }
-              },
-              {}
-            );
-          } catch {
-            auditFailure = true;
-          }
-          throw new ReleaseBusV2CandidateDeregistrationError(
-            'CONFLICT',
-            `Candidate inventory was committed as safely detached (deregistration_id=${deregistrationId}), but the post-commit workflow/ref fence changed${
-              auditFailure
-                ? ' and the supplemental post-fence audit event failed'
-                : ''
-            }`,
-            true,
-            deregistrationId,
-            'UNKNOWN_DETACHED'
-          );
-        }
-      } catch (error) {
-        failure =
-          committedDeregistrationId &&
-          !(
-            isReleaseBusV2CandidateDeregistrationError(error) && error.committed
-          )
-            ? new ReleaseBusV2CandidateDeregistrationError(
-                'UNAVAILABLE',
-                `Candidate inventory was committed as safely detached (deregistration_id=${committedDeregistrationId}), but post-commit verification failed`,
-                true,
-                committedDeregistrationId,
-                'UNKNOWN_DETACHED'
-              )
-            : error;
-      }
-      let releaseFailed = false;
-      if (leases.length > 0) {
-        try {
-          await this.repository.releaseExactMaintenanceLocks(leases);
-        } catch {
-          releaseFailed = true;
-        }
-      }
-      if (releaseFailed) {
-        if (committedDeregistrationId)
-          throw new ReleaseBusV2CandidateDeregistrationError(
-            'UNAVAILABLE',
-            `Candidate inventory was committed as safely detached (deregistration_id=${committedDeregistrationId}), but maintenance lock cleanup failed${
-              failure instanceof Error
-                ? ` after ${failure.message}`
-                : failure
-                  ? ' after another post-commit failure'
-                  : ''
-            }`,
-            true,
-            committedDeregistrationId,
-            'UNKNOWN_DETACHED'
-          );
-        throw new ReleaseBusV2CandidateDeregistrationError(
-          'UNAVAILABLE',
-          `Candidate deregistration did not commit and maintenance lock cleanup failed${
-            failure instanceof Error
-              ? ` after ${failure.message}`
-              : failure
-                ? ' after another pre-commit failure'
-                : ''
-          }`
-        );
-      }
-      if (failure) throw failure;
-      if (!execution)
-        throw new Error(
-          'Candidate deregistration ended without a committed execution result'
-        );
-      return execution;
+      return this.executePreparedPlan(plan, input, actor, reason);
     });
+  }
+
+  private async executePreparedPlan(
+    plan: ReleaseBusV2CandidateDeregistrationPlan,
+    input: ReleaseBusV2CandidateDeregistrationExecuteInput,
+    actor: string,
+    reason: string
+  ): Promise<ReleaseBusV2CandidateDeregistrationExecution> {
+    const leaseOwner = `deregister:${actor}:${randomUUID()}`;
+    let leases: readonly ReleaseBusV2MaintenanceLease[] = [];
+    let execution: ReleaseBusV2CandidateDeregistrationExecution | null = null;
+    let committedDeregistrationId: string | null = null;
+    let failure: unknown;
+    try {
+      leases = await this.repository.acquireExactFreeMaintenanceLocks(
+        input.expected_locks,
+        leaseOwner,
+        RELEASE_BUS_V2_LOCK_TTL_MS
+      );
+      const stagingRefs = await this.assertPreCommitFence(plan, input);
+      const deregistrationId = randomUUID();
+      await this.commitDeregistration(
+        deregistrationId,
+        actor,
+        reason,
+        input,
+        leases,
+        stagingRefs
+      );
+      committedDeregistrationId = deregistrationId;
+      execution = this.execution(plan, deregistrationId);
+      await this.assertPostCommitFence(
+        plan,
+        actor,
+        deregistrationId,
+        stagingRefs
+      );
+    } catch (error) {
+      failure = this.executionFailure(error, committedDeregistrationId);
+    }
+    await this.releaseMaintenanceLocks(
+      leases,
+      committedDeregistrationId,
+      failure
+    );
+    if (failure) throw failure;
+    if (!execution)
+      throw new Error(
+        'Candidate deregistration ended without a committed execution result'
+      );
+    return execution;
+  }
+
+  private async assertPreCommitFence(
+    plan: ReleaseBusV2CandidateDeregistrationPlan,
+    input: ReleaseBusV2CandidateDeregistrationExecuteInput
+  ): Promise<ReleaseBusV2DeregistrationStagingRefs> {
+    const [stagingRefs, activeWorkflow] = await Promise.all([
+      this.deps.resolveStagingRefs(),
+      this.deps.hasActiveWorkflow()
+    ]);
+    if (activeWorkflow)
+      throw new ReleaseBusV2CandidateDeregistrationError(
+        'CONFLICT',
+        'Candidate deregistration requires every staging and production mutation or E2E workflow to be inactive'
+      );
+    if (!sameStagingRefs(stagingRefs, input.expected_staging_refs))
+      throw new ReleaseBusV2CandidateDeregistrationError(
+        'CONFLICT',
+        'Staging refs changed after the deregistration plan was prepared'
+      );
+    if (this.deps.getMode() !== plan.mode)
+      throw new ReleaseBusV2CandidateDeregistrationError(
+        'CONFLICT',
+        'Release Bus mode changed after the deregistration plan was prepared'
+      );
+    return stagingRefs;
+  }
+
+  private async commitDeregistration(
+    deregistrationId: string,
+    actor: string,
+    reason: string,
+    input: ReleaseBusV2CandidateDeregistrationExecuteInput,
+    leases: readonly ReleaseBusV2MaintenanceLease[],
+    stagingRefs: ReleaseBusV2DeregistrationStagingRefs
+  ): Promise<void> {
+    await this.repository.commitAllCandidateDeregistration({
+      deregistrationId,
+      actor,
+      reason,
+      expectedControls: input.expected_controls,
+      maintenanceLeases: leases,
+      expectedStagingStateRowVersion: input.expected_staging_state_row_version,
+      expectedCandidates: input.expected_candidates,
+      expectedInventorySha256: input.expected_inventory_sha256,
+      observedFrontendStagingSha: stagingRefs.frontend,
+      observedBackendStagingSha: stagingRefs.backend
+    });
+  }
+
+  private execution(
+    plan: ReleaseBusV2CandidateDeregistrationPlan,
+    deregistrationId: string
+  ): ReleaseBusV2CandidateDeregistrationExecution {
+    return {
+      ...plan,
+      phase: 'EXECUTE',
+      executed: true,
+      deregistration_id: deregistrationId,
+      physical_staging_presence: 'UNKNOWN_DETACHED'
+    };
+  }
+
+  private async assertPostCommitFence(
+    plan: ReleaseBusV2CandidateDeregistrationPlan,
+    actor: string,
+    deregistrationId: string,
+    stagingRefs: ReleaseBusV2DeregistrationStagingRefs
+  ): Promise<void> {
+    const [postCommitRefs, postCommitActiveWorkflow] = await Promise.all([
+      this.deps.resolveStagingRefs(),
+      this.deps.hasActiveWorkflow()
+    ]);
+    const postCommitMode = this.deps.getMode();
+    if (
+      !postCommitActiveWorkflow &&
+      sameStagingRefs(postCommitRefs, stagingRefs) &&
+      postCommitMode === plan.mode
+    )
+      return;
+    const auditFailure = await this.appendPostFenceChangedEvent(
+      actor,
+      deregistrationId,
+      postCommitActiveWorkflow,
+      postCommitMode !== plan.mode,
+      stagingRefs,
+      postCommitRefs
+    );
+    throw new ReleaseBusV2CandidateDeregistrationError(
+      'CONFLICT',
+      `Candidate inventory was committed as safely detached (deregistration_id=${deregistrationId}), but the post-commit workflow/ref fence changed${
+        auditFailure
+          ? ' and the supplemental post-fence audit event failed'
+          : ''
+      }`,
+      true,
+      deregistrationId,
+      'UNKNOWN_DETACHED'
+    );
+  }
+
+  private async appendPostFenceChangedEvent(
+    actor: string,
+    deregistrationId: string,
+    workflowActive: boolean,
+    modeChanged: boolean,
+    expectedStagingRefs: ReleaseBusV2DeregistrationStagingRefs,
+    observedStagingRefs: ReleaseBusV2DeregistrationStagingRefs
+  ): Promise<boolean> {
+    try {
+      await this.repository.appendEvent(
+        {
+          eventType: 'CANDIDATE_DEREGISTRATION_POST_FENCE_CHANGED',
+          actor,
+          payload: {
+            deregistration_id: deregistrationId,
+            workflow_active: workflowActive,
+            mode_changed: modeChanged,
+            expected_staging_refs: expectedStagingRefs,
+            observed_staging_refs: observedStagingRefs,
+            staging_state_retained: 'DETACHED_MANUAL_OWNERSHIP'
+          }
+        },
+        {}
+      );
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  private executionFailure(
+    error: unknown,
+    committedDeregistrationId: string | null
+  ): unknown {
+    if (
+      !committedDeregistrationId ||
+      (isReleaseBusV2CandidateDeregistrationError(error) && error.committed)
+    )
+      return error;
+    return new ReleaseBusV2CandidateDeregistrationError(
+      'UNAVAILABLE',
+      `Candidate inventory was committed as safely detached (deregistration_id=${committedDeregistrationId}), but post-commit verification failed`,
+      true,
+      committedDeregistrationId,
+      'UNKNOWN_DETACHED'
+    );
+  }
+
+  private async releaseMaintenanceLocks(
+    leases: readonly ReleaseBusV2MaintenanceLease[],
+    committedDeregistrationId: string | null,
+    failure: unknown
+  ): Promise<void> {
+    if (leases.length === 0) return;
+    try {
+      await this.repository.releaseExactMaintenanceLocks(leases);
+    } catch {
+      throw this.maintenanceLockCleanupError(
+        committedDeregistrationId,
+        failure
+      );
+    }
+  }
+
+  private maintenanceLockCleanupError(
+    committedDeregistrationId: string | null,
+    failure: unknown
+  ): ReleaseBusV2CandidateDeregistrationError {
+    if (committedDeregistrationId)
+      return new ReleaseBusV2CandidateDeregistrationError(
+        'UNAVAILABLE',
+        `Candidate inventory was committed as safely detached (deregistration_id=${committedDeregistrationId}), but maintenance lock cleanup failed${this.describeFailureSuffix(
+          failure,
+          'post-commit'
+        )}`,
+        true,
+        committedDeregistrationId,
+        'UNKNOWN_DETACHED'
+      );
+    return new ReleaseBusV2CandidateDeregistrationError(
+      'UNAVAILABLE',
+      `Candidate deregistration did not commit and maintenance lock cleanup failed${this.describeFailureSuffix(
+        failure,
+        'pre-commit'
+      )}`
+    );
+  }
+
+  private describeFailureSuffix(
+    failure: unknown,
+    phase: 'pre-commit' | 'post-commit'
+  ): string {
+    if (failure instanceof Error) return ` after ${failure.message}`;
+    return failure ? ` after another ${phase} failure` : '';
   }
 
   private async readReadySnapshot(): Promise<DeregistrationSnapshot> {
@@ -540,9 +699,9 @@ export class ReleaseBusV2CandidateDeregistrationService {
       plan.inventory_sha256 !== input.expected_inventory_sha256 ||
       plan.staging_state_row_version !==
         input.expected_staging_state_row_version ||
-      !sameJson(plan.candidates, input.expected_candidates) ||
-      !sameJson(plan.controls, input.expected_controls) ||
-      !sameJson(plan.locks, input.expected_locks) ||
+      !sameCandidateVersions(plan.candidates, input.expected_candidates) ||
+      !sameControlVersions(plan.controls, input.expected_controls) ||
+      !sameLockVersions(plan.locks, input.expected_locks) ||
       !sameStagingRefs(plan.staging_refs, input.expected_staging_refs)
     )
       throw new ReleaseBusV2CandidateDeregistrationError(
@@ -566,6 +725,10 @@ export class ReleaseBusV2CandidateDeregistrationService {
       return await operation();
     } catch (error) {
       if (isReleaseBusV2CandidateDeregistrationError(error)) throw error;
+      this.logger.error(
+        '[CANDIDATE_DEREGISTRATION] unexpected fail-closed error',
+        unexpectedFailureEvidence(error)
+      );
       throw new ReleaseBusV2CandidateDeregistrationError(
         'UNAVAILABLE',
         'Candidate deregistration safety could not be proven; no new action is authorized'

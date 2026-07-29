@@ -1793,6 +1793,75 @@ describe('Release Bus v2 explicit production opt-in', () => {
     expect(state.candidates.get(b.id)).toEqual(b);
   });
 
+  it('fails a production claim closed when authoritative staging state is unavailable', async () => {
+    const ready = productionIntent(
+      validatedCandidate('candidate-state-unavailable', 'backend', 'a', 4001),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-state-unavailable',
+      1
+    );
+    const state = selectionRepository([ready]);
+    state.repository.getStagingState.mockRejectedValue(
+      new Error('staging state unavailable')
+    );
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler'
+      )
+    ).rejects.toThrow('staging state unavailable');
+    expect(state.createTrain).not.toHaveBeenCalled();
+    expect(state.repository.releaseLock).toHaveBeenCalledWith(
+      'scheduler',
+      'scheduler-lease',
+      expect.anything()
+    );
+  });
+
+  it('does not claim production while authoritative staging ownership is detached', async () => {
+    const ready = productionIntent(
+      validatedCandidate('candidate-state-detached', 'backend', 'a', 4002),
+      'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+      'selection-state-detached',
+      1
+    );
+    const state = selectionRepository([ready]);
+    state.repository.getStagingState.mockResolvedValue({
+      id: 'current',
+      status: 'DETACHED_MANUAL_OWNERSHIP',
+      current_manifest_id: null,
+      last_validated_manifest_id: null,
+      frontend_sha: '8'.repeat(40),
+      backend_sha: '9'.repeat(40),
+      frontend_staging_ref_sha: '8'.repeat(40),
+      backend_staging_ref_sha: '9'.repeat(40),
+      clean_main: true,
+      last_transition_train_id: null,
+      updated_at: 1,
+      row_version: 2
+    });
+    const service = new ReleaseBusV2Service(state.repository as never);
+
+    await expect(
+      service.claimLane(
+        'PRODUCTION',
+        '8'.repeat(40),
+        '9'.repeat(40),
+        'scheduler'
+      )
+    ).resolves.toBeNull();
+    expect(state.createTrain).not.toHaveBeenCalled();
+    expect(state.repository.releaseLock).toHaveBeenCalledWith(
+      'scheduler',
+      'scheduler-lease',
+      expect.anything()
+    );
+  });
+
   it('coalesces a later compatible explicit selection into a new pre-mutation replacement across repositories', async () => {
     const original = productionIntent(
       validatedCandidate('candidate-original', 'backend', 'a', 201),
@@ -4044,6 +4113,7 @@ describe('Release Bus v2 globally-OFF beta claim isolation', () => {
       executeNativeQueriesInTransaction: jest.fn(async (callback) =>
         callback({})
       ),
+      getStagingState: jest.fn(async () => null),
       acquireLock: jest.fn(async () => ({ lease_token: 'scheduler-token' })),
       releaseLock: jest.fn(async () => true),
       listTrains: jest.fn(async () => trains),

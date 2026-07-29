@@ -3400,12 +3400,10 @@ export class ReleaseBusV2Service {
         if (!scheduler?.lease_token) return null;
         try {
           const authoritativeStagingState =
-            typeof this.repository.getStagingState === 'function'
-              ? await this.repository.getStagingState(ctx, true)
-              : null;
+            await this.repository.getStagingState(ctx, true);
           if (
             lane === 'PRODUCTION' &&
-            authoritativeStagingState?.status === 'DETACHED_MANUAL_OWNERSHIP'
+            authoritativeStagingState.status === 'DETACHED_MANUAL_OWNERSHIP'
           )
             return null;
           let stagingState =

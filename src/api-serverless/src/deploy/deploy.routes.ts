@@ -88,6 +88,56 @@ import {
 
 const logger = Logger.get('DeployRoutes');
 
+const DEREGISTRATION_PHASE = {
+  PREPARE: ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Prepare,
+  EXECUTE: ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Execute
+} as const;
+
+const DEREGISTRATION_CONTROL_SCOPE = {
+  ALL: ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.All,
+  STAGING:
+    ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Staging,
+  PRODUCTION:
+    ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Production
+} as const;
+
+const DEREGISTRATION_LOCK_NAME = {
+  scheduler:
+    ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.Scheduler,
+  'staging-environment':
+    ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.StagingEnvironment,
+  'production-environment':
+    ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.ProductionEnvironment
+} as const;
+
+const DEREGISTRATION_MODE = {
+  OFF: ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Off,
+  STAGING: ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Staging,
+  PRODUCTION: ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Production
+} as const;
+
+const DEREGISTRATION_PHYSICAL_STAGING_PRESENCE = {
+  UNKNOWN_UNCHANGED:
+    ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Unchanged,
+  UNKNOWN_DETACHED:
+    ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Detached
+} as const;
+
+const DEREGISTRATION_ERROR_STATUS = {
+  BAD_REQUEST: 400,
+  CONFLICT: 409,
+  UNAVAILABLE: 503
+} as const;
+
+function deregistrationLockName(
+  name: string
+): ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum {
+  const mapped =
+    DEREGISTRATION_LOCK_NAME[name as keyof typeof DEREGISTRATION_LOCK_NAME];
+  if (mapped) return mapped;
+  throw new Error(`Unexpected candidate deregistration lock name: ${name}`);
+}
+
 function getGitHubTokenOrThrow(req: Request): string {
   const authorizationHeader = req.get('authorization');
   if (authorizationHeader?.toLowerCase().startsWith('bearer ')) {
@@ -979,51 +1029,28 @@ deployRoutes.post(
             );
       const response: ApiReleaseBusV2CandidateDeregistrationResponse = {
         ...result,
-        phase:
-          result.phase === 'PREPARE'
-            ? ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Prepare
-            : ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum.Execute,
+        phase: DEREGISTRATION_PHASE[result.phase],
         candidates: [...result.candidates],
         controls: result.controls.map((control) => ({
           ...control,
-          scope:
-            control.scope === 'ALL'
-              ? ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.All
-              : control.scope === 'STAGING'
-                ? ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Staging
-                : ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum.Production
+          scope: DEREGISTRATION_CONTROL_SCOPE[control.scope]
         })),
         locks: result.locks.map((lock) => ({
           ...lock,
-          name:
-            lock.name === 'scheduler'
-              ? ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.Scheduler
-              : lock.name === 'staging-environment'
-                ? ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.StagingEnvironment
-                : ApiReleaseBusV2CandidateDeregistrationLockVersionNameEnum.ProductionEnvironment
+          name: deregistrationLockName(lock.name)
         })),
-        mode:
-          result.mode === 'PRODUCTION'
-            ? ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Production
-            : result.mode === 'STAGING'
-              ? ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Staging
-              : ApiReleaseBusV2CandidateDeregistrationResponseModeEnum.Off,
+        mode: DEREGISTRATION_MODE[result.mode],
         physical_staging_presence:
-          result.physical_staging_presence === 'UNKNOWN_DETACHED'
-            ? ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Detached
-            : ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum.Unchanged,
+          DEREGISTRATION_PHYSICAL_STAGING_PRESENCE[
+            result.physical_staging_presence
+          ],
         requested_by: actor
       };
       setNoStoreHeaders(res);
       return res.json(response);
     } catch (error) {
       if (isReleaseBusV2CandidateDeregistrationError(error)) {
-        const status =
-          error.code === 'BAD_REQUEST'
-            ? 400
-            : error.code === 'CONFLICT'
-              ? 409
-              : 503;
+        const status = DEREGISTRATION_ERROR_STATUS[error.code];
         if (error.committed && error.deregistration_id) {
           setNoStoreHeaders(res);
           return res.status(status).json({

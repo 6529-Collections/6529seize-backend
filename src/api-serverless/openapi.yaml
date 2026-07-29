@@ -8209,7 +8209,16 @@ paths:
                 $ref: >-
                   #/components/schemas/ApiReleaseBusV2CandidateDeregistrationResponse
         "400":
-          description: Invalid prepare or execute request
+          description: >-
+            Invalid prepare or execute request. A BAD_REQUEST returned after
+            request validation uses the typed NOT_COMMITTED error response;
+            request-shape validation failures retain the standard API error
+            envelope.
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiReleaseBusV2CandidateDeregistrationError
         "409":
           description: >-
             Exact safety, drain, or compare-and-swap fence failed. A post-commit
