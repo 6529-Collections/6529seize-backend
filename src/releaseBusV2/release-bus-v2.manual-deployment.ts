@@ -161,12 +161,12 @@ function assertWorkflowIdentity(
     conflict('Manual deployment workflow identity does not match this run');
 
   if (input.repository === 'backend') {
+    const expectedTitle = `Deploy ${input.service} to ${input.environment} [manual]`;
     if (
       identity.event !== 'workflow_dispatch' ||
       identity.path !== '.github/workflows/deploy.yml' ||
-      identity.name !== 'Deploy a service' ||
-      identity.displayTitle !==
-        `Deploy ${input.service} to ${input.environment} [manual]`
+      !['Deploy a service', expectedTitle].includes(identity.name) ||
+      identity.displayTitle !== expectedTitle
     )
       conflict('Manual backend deployment workflow identity is invalid');
     return;
