@@ -157,8 +157,7 @@ function isHumanGithubUser(user: GitHubUser | null | undefined): boolean {
   const normalizedLogin = login.toLowerCase();
   const normalizedType = user?.type?.trim().toLowerCase();
   return (
-    normalizedType !== 'bot' &&
-    normalizedType !== 'app' &&
+    normalizedType === 'user' &&
     !normalizedLogin.endsWith('[bot]') &&
     !NON_HUMAN_GITHUB_LOGINS.has(normalizedLogin)
   );

@@ -65,6 +65,61 @@ async function runNotifier(
   return { code, stderr, payload };
 }
 
+async function runManualEvidenceNotifier({
+  pull,
+  files = [{ filename: 'src/api-serverless/src/example.ts' }],
+  commits = [
+    {
+      author: { login: 'Commit-Author', type: 'User' },
+      committer: { login: 'Commit-Committer', type: 'User' }
+    }
+  ],
+  comparison = { status: 'ahead' }
+}: {
+  readonly pull: Record<string, unknown>;
+  readonly files?: readonly Record<string, unknown>[];
+  readonly commits?: readonly Record<string, unknown>[];
+  readonly comparison?: Record<string, unknown>;
+}): Promise<RunResult> {
+  const githubServer = createServer((request, response) => {
+    const pathName = request.url ?? '';
+    let body: unknown;
+    if (pathName.endsWith('/pulls/42')) {
+      body = pull;
+    } else if (pathName.includes('/compare/')) {
+      body = comparison;
+    } else if (pathName.includes('/pulls/42/files')) {
+      body = files;
+    } else if (pathName.includes('/pulls/42/commits')) {
+      body = commits;
+    } else {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(body));
+  });
+  await new Promise<void>((resolve) =>
+    githubServer.listen(0, '127.0.0.1', resolve)
+  );
+  const address = githubServer.address();
+  if (!address || typeof address === 'string') throw new Error('missing port');
+
+  try {
+    return await runNotifier({
+      CI_RELEASE_PULL_REQUEST: '42',
+      CI_RELEASE_NOTE_OPT_OUT: 'false',
+      GITHUB_TOKEN: 'test-token',
+      GITHUB_API_URL: `http://127.0.0.1:${address.port}`
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      githubServer.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
+}
+
 describe('notify-ci-wave release-note metadata', () => {
   it.each([
     {
@@ -193,6 +248,79 @@ describe('notify-ci-wave release-note metadata', () => {
         githubServer.close((error) => (error ? reject(error) : resolve()))
       );
     }
+  });
+
+  it.each([
+    {
+      name: 'an open PR whose head and branch do not match',
+      pull: {
+        number: 42,
+        merged_at: null,
+        head: { ref: 'different-branch', sha: 'b'.repeat(40) },
+        user: { login: 'PR-Author', type: 'User' }
+      },
+      diagnostic: 'Open PR #42 does not exactly match deployed branch main'
+    },
+    {
+      name: 'a merged PR that is absent from the deployed SHA',
+      pull: {
+        number: 42,
+        merged_at: '2026-07-28T12:00:00Z',
+        merge_commit_sha: 'b'.repeat(40),
+        user: { login: 'PR-Author', type: 'User' }
+      },
+      comparison: { status: 'behind' },
+      diagnostic: `Deployed SHA ${'a'.repeat(40)} does not contain PR #42`
+    },
+    {
+      name: 'a PR that does not affect the deployed service',
+      pull: {
+        number: 42,
+        merged_at: '2026-07-28T12:00:00Z',
+        merge_commit_sha: 'a'.repeat(40),
+        user: { login: 'PR-Author', type: 'User' }
+      },
+      files: [{ filename: 'src/other-service/example.ts' }],
+      diagnostic: 'PR #42 does not contain changes for api'
+    }
+  ])(
+    'omits manual contributors for $name',
+    async ({ pull, files, comparison, diagnostic }) => {
+      const result = await runManualEvidenceNotifier({
+        pull,
+        ...(files ? { files } : {}),
+        ...(comparison ? { comparison } : {})
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain(
+        `Contributors row omitted because exact manual deployment scope could not be established: ${diagnostic}`
+      );
+      expect(result.payload).not.toHaveProperty('contributor_evidence');
+      expect(result.payload).not.toHaveProperty('contributor_github_logins');
+    }
+  );
+
+  it('excludes explicit non-user account types from manual contributors', async () => {
+    const result = await runManualEvidenceNotifier({
+      pull: {
+        number: 42,
+        merged_at: '2026-07-28T12:00:00Z',
+        merge_commit_sha: 'a'.repeat(40),
+        user: { login: 'release-organization', type: 'Organization' }
+      },
+      commits: [
+        {
+          author: { login: 'release-app', type: 'App' },
+          committer: { login: 'release-bot', type: 'Bot' }
+        }
+      ]
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.payload).not.toHaveProperty('contributor_evidence');
+    expect(result.payload).not.toHaveProperty('contributor_github_logins');
   });
 
   it('sends canonical release train contributors and the deployed SHA', async () => {

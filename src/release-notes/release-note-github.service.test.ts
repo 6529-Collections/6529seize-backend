@@ -147,6 +147,14 @@ describe('ReleaseNoteGitHubService', () => {
             sha: 'bot-change',
             author: { login: 'dependabot[bot]', type: 'Bot' },
             committer: { login: 'release-app[bot]', type: 'Bot' }
+          },
+          {
+            sha: 'non-user-change',
+            author: {
+              login: 'release-organization',
+              type: 'Organization'
+            },
+            committer: { login: 'release-app', type: 'App' }
           }
         ])
       );
@@ -535,12 +543,12 @@ describe('ReleaseNoteGitHubService', () => {
           commits: [
             {
               sha: 'api-commit',
-              author: { login: 'simo6529' },
+              author: { login: 'simo6529', type: 'User' },
               commit: { message: 'Improve API validation' }
             },
             {
               sha: 'claims-commit',
-              author: { login: 'ragnep' },
+              author: { login: 'ragnep', type: 'User' },
               commit: { message: 'Update claims builder' }
             }
           ],
@@ -555,7 +563,7 @@ describe('ReleaseNoteGitHubService', () => {
             title: 'Improve API validation',
             body: null,
             merged_at: '2026-07-13T10:00:00Z',
-            user: { login: 'simo6529' },
+            user: { login: 'simo6529', type: 'User' },
             base: { ref: 'main' }
           }
         ])
@@ -568,7 +576,7 @@ describe('ReleaseNoteGitHubService', () => {
             title: 'Update claims builder',
             body: null,
             merged_at: '2026-07-13T10:05:00Z',
-            user: { login: 'ragnep' },
+            user: { login: 'ragnep', type: 'User' },
             base: { ref: 'main' }
           }
         ])

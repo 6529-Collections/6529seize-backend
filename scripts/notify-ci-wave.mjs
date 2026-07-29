@@ -171,8 +171,7 @@ function isHumanGithubUser(user) {
   const type = user?.type?.trim().toLowerCase();
   return Boolean(
     login &&
-    type !== 'bot' &&
-    type !== 'app' &&
+    type === 'user' &&
     !login.toLowerCase().endsWith('[bot]') &&
     !NON_HUMAN_GITHUB_LOGINS.has(login.toLowerCase())
   );

@@ -247,11 +247,11 @@ describe('GitHub pull request qualification evidence', () => {
             getPullRequestContributorGithubLogins(
               repository: 'backend',
               pullNumber: number,
-              pull: { user: { login: string } }
+              pull: { user: { login: string; type: string } }
             ): Promise<readonly string[]>;
           }
         ).getPullRequestContributorGithubLogins('backend', 42, {
-          user: { login: 'PR-Author' }
+          user: { login: 'PR-Author', type: 'User' }
         })
       ).resolves.toEqual(['PR-Author']);
     } finally {
@@ -259,7 +259,7 @@ describe('GitHub pull request qualification evidence', () => {
     }
   });
 
-  it('accepts only users or untyped legacy identities as contributors', async () => {
+  it('accepts only identities explicitly classified as users', async () => {
     const app = appWithCachedToken();
     const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
     fetchMock.mockResolvedValueOnce(
@@ -291,7 +291,7 @@ describe('GitHub pull request qualification evidence', () => {
         ).getPullRequestContributorGithubLogins('backend', 42, {
           user: { login: 'Legacy-User' }
         })
-      ).resolves.toEqual(['Legacy-User', 'Human-Author']);
+      ).resolves.toEqual(['Human-Author']);
     } finally {
       fetchMock.mockReset();
     }
