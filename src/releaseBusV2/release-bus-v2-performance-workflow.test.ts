@@ -291,6 +291,8 @@ printf '200'
   });
 
   it('rejects cross-train v3 artifacts before authorization or checkout', () => {
+    const trainId = '11111111-1111-4111-8111-111111111111';
+    const otherTrainId = '22222222-2222-4222-8222-222222222222';
     const parsed = YAML.parse(deploy) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
@@ -309,17 +311,17 @@ printf '200'
           INPUT_ARTIFACT_TRAIN_ID: artifactTrainId,
           INPUT_ENVIRONMENT: 'prod',
           INPUT_EXPECTED_SHA: 'a'.repeat(40),
-          INPUT_OPERATION_KEY: 'rb2:train-id:deploy:api:a1',
+          INPUT_OPERATION_KEY: `rb2:${trainId}:deploy:production:backend:api:a1`,
           INPUT_RELEASE_CONTRIBUTORS: '[]',
           INPUT_SERVICE: 'api',
-          INPUT_TRAIN_ID: 'train-id',
+          INPUT_TRAIN_ID: trainId,
           INPUT_TRAIN_REVISION: '1'
         },
         stdio: 'pipe'
       });
 
-    expect(() => execute('other-train')).toThrow();
-    expect(() => execute('train-id')).not.toThrow();
+    expect(() => execute(otherTrainId)).toThrow();
+    expect(() => execute(trainId)).not.toThrow();
     expect(() => execute('')).not.toThrow();
   });
 

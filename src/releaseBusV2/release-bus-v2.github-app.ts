@@ -262,7 +262,22 @@ type TrustedGatePolicyTransition = {
 
 const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
   Record<string, readonly TrustedGatePolicyTransition[]>
-> = {};
+> = {
+  '.github/workflows/deploy.yml': [
+    {
+      from: '520395da44b53f27dd38d37e706baf8912936485',
+      to: '3a4bc83abe629a2950edbd65a99d0b9c65aebb39',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ],
+  'scripts/generate-deploy-config.mjs': [
+    {
+      from: 'a70486a49f592c9f03a5d456d6586abbe10ea790',
+      to: '1e83afae874a5b2c9d377e45d75e275c0ac33af9',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    }
+  ]
+};
 
 const BACKEND_PACKAGE_POLICY = {
   'package.json': {
@@ -537,6 +552,11 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   >
 > = {
   backend: [
+    {
+      from: '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
+      to: '89b2da6f3742cd9a3cf2ae7599084e442c742dd1f781133446a789b5a24c4195',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
     {
       from: '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
       to: '890b4c9d976f66be52ff24fd0569f4d994515716822ac9f2dd42bcc22208af8c',
@@ -1663,9 +1683,7 @@ export class ReleaseBusGitHubApp {
     const logins: string[] = [];
     const addUser = (
       value:
-        | { readonly login?: string; readonly type?: string }
-        | null
-        | undefined
+        { readonly login?: string; readonly type?: string } | null | undefined
     ) => {
       const login = value?.login?.trim();
       const type = value?.type?.trim().toLowerCase();
