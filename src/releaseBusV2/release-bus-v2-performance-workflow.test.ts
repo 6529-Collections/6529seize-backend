@@ -421,7 +421,8 @@ printf '200'
     expect(revalidateStep?.env).toEqual({
       RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
       RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
-        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}'
+        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}',
+      GITHUB_TOKEN: '${{ github.token }}'
     });
 
     const fixture = mkdtempSync(path.join(tmpdir(), 'emergency-bootstrap-'));
@@ -559,12 +560,41 @@ esac
           stdio: 'pipe'
         })
       ).not.toThrow();
-      expect(readFileSync(argumentLog, 'utf8')).toContain(
-        'Authorization: Bearer workflow-token'
+      const revalidationArguments = readFileSync(argumentLog, 'utf8')
+        .trim()
+        .split('\n');
+      const githubArguments = revalidationArguments.filter((argumentsLine) =>
+        argumentsLine.includes('https://api.github.invalid/')
       );
-      expect(readFileSync(githubSummary, 'utf8')).not.toContain(
-        'workflow-token'
+      const releaseBusArguments = revalidationArguments.filter(
+        (argumentsLine) =>
+          argumentsLine.includes('https://release-bus.invalid/')
       );
+      expect(githubArguments.length).toBeGreaterThan(0);
+      expect(
+        githubArguments.every((argumentsLine) =>
+          argumentsLine.includes('Authorization: Bearer github-token')
+        )
+      ).toBe(true);
+      expect(
+        githubArguments.every(
+          (argumentsLine) => !argumentsLine.includes('workflow-token')
+        )
+      ).toBe(true);
+      expect(releaseBusArguments.length).toBeGreaterThan(0);
+      expect(
+        releaseBusArguments.every((argumentsLine) =>
+          argumentsLine.includes('Authorization: Bearer workflow-token')
+        )
+      ).toBe(true);
+      expect(
+        releaseBusArguments.every(
+          (argumentsLine) => !argumentsLine.includes('github-token')
+        )
+      ).toBe(true);
+      const summary = readFileSync(githubSummary, 'utf8');
+      expect(summary).not.toContain('workflow-token');
+      expect(summary).not.toContain('github-token');
       const calls = readFileSync(callLog, 'utf8');
       expect(calls).toContain('/manual-deployment-readiness');
       expect(calls).toContain('/release-bus-v2/controls');
