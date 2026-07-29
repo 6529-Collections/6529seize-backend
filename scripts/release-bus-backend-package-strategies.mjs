@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 export const RELEASE_BUS_BACKEND_INSTALL_STRATEGIES = Object.freeze({
   api: 'local-frozen',
   aggregatedActivityLoop: 'root-bundled',

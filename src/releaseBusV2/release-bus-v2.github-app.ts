@@ -275,6 +275,7 @@ const BACKEND_PACKAGE_POLICY = {
     fieldKeys: [
       'packageManager',
       'dependencies.adm-zip',
+      'devDependencies.@types/jest',
       'devDependencies.@typescript-eslint/parser',
       'devDependencies.esbuild',
       'devDependencies.eslint',
@@ -1578,8 +1579,8 @@ export class ReleaseBusGitHubApp {
       !exactStringList(
         entries
           .map(({ entryName }) => entryName)
-          .sort((left, right) => left.localeCompare(right)),
-        ['manifest.json', 'policy-bundle.txt', 'SHA256SUMS']
+          .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+        ['SHA256SUMS', 'manifest.json', 'policy-bundle.txt']
       )
     )
       throw new Error('Pull request CI evidence archive has unexpected files');

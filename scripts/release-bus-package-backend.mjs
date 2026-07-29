@@ -77,14 +77,6 @@ async function pathExists(candidate) {
   }
 }
 
-function run(command, args, options = {}) {
-  execFileSync(command, args, {
-    cwd: repoRoot,
-    stdio: 'inherit',
-    ...options
-  });
-}
-
 export function hasUnmistakableTransportFailure(output) {
   if (TRANSPORT_ERROR_CODES.some((code) => output.includes(code))) return true;
   return output.split(/\r?\n/u).some((line) => {
@@ -205,6 +197,63 @@ function validateIdentity({
   }
 }
 
+export function validateCandidateEvidence({
+  aggregateCandidateEvidenceDigest,
+  candidateEvidenceMode,
+  contractVersion,
+  reuseArtifactDigest,
+  reuseArtifactName,
+  reuseArtifactRunId,
+  sourceSha
+}) {
+  if (candidateEvidenceMode === 'strict-single') {
+    if (
+      contractVersion !== V3_CONTRACT ||
+      aggregateCandidateEvidenceDigest ||
+      !/^[1-9]\d{0,19}$/.test(reuseArtifactRunId) ||
+      reuseArtifactName !== `release-bus-v2-pr-${sourceSha}` ||
+      !/^[a-f0-9]{64}$/.test(reuseArtifactDigest)
+    )
+      throw new Error('strict-single candidate evidence is incomplete');
+    return;
+  }
+  if (candidateEvidenceMode === 'strict-aggregate') {
+    if (
+      contractVersion !== V3_CONTRACT ||
+      !/^[a-f0-9]{64}$/.test(aggregateCandidateEvidenceDigest) ||
+      reuseArtifactRunId ||
+      reuseArtifactName ||
+      reuseArtifactDigest
+    )
+      throw new Error('strict-aggregate candidate evidence is incomplete');
+    return;
+  }
+  if (candidateEvidenceMode !== 'legacy-whole-train')
+    throw new Error('Unsupported candidate evidence mode');
+  const reuseFields = [
+    reuseArtifactRunId,
+    reuseArtifactName,
+    reuseArtifactDigest
+  ];
+  if (
+    contractVersion !== LEGACY_CONTRACT ||
+    aggregateCandidateEvidenceDigest ||
+    !(
+      reuseFields.every((value) => value === '') ||
+      (/^[1-9]\d{0,19}$/.test(reuseArtifactRunId) &&
+        /^release-bus-v2-pr-[a-f0-9]{40}$/.test(reuseArtifactName) &&
+        /^[a-f0-9]{64}$/.test(reuseArtifactDigest))
+    )
+  )
+    throw new Error('legacy-whole-train candidate evidence is incomplete');
+}
+
+export function concreteDeployEnvironment(environment) {
+  if (environment === 'production') return 'prod';
+  if (environment === 'portable') return null;
+  return environment;
+}
+
 async function main() {
   await clearInfrastructureFailureMarker();
   const argumentsByName = parseArguments(process.argv.slice(2));
@@ -231,42 +280,15 @@ async function main() {
   const units = JSON.parse(required(argumentsByName, 'units-json'));
   const layers = JSON.parse(required(argumentsByName, 'layers-json'));
   validateIdentity({ contractVersion, environment, sourceSha, trainId });
-  if (candidateEvidenceMode === 'strict-single') {
-    if (
-      contractVersion !== V3_CONTRACT ||
-      aggregateCandidateEvidenceDigest ||
-      !/^[1-9][0-9]{0,19}$/.test(reuseArtifactRunId) ||
-      reuseArtifactName !== `release-bus-v2-pr-${sourceSha}` ||
-      !/^[a-f0-9]{64}$/.test(reuseArtifactDigest)
-    )
-      throw new Error('strict-single candidate evidence is incomplete');
-  } else if (candidateEvidenceMode === 'strict-aggregate') {
-    if (
-      contractVersion !== V3_CONTRACT ||
-      !/^[a-f0-9]{64}$/.test(aggregateCandidateEvidenceDigest) ||
-      reuseArtifactRunId ||
-      reuseArtifactName ||
-      reuseArtifactDigest
-    )
-      throw new Error('strict-aggregate candidate evidence is incomplete');
-  } else if (candidateEvidenceMode === 'legacy-whole-train') {
-    const reuseFields = [
-      reuseArtifactRunId,
-      reuseArtifactName,
-      reuseArtifactDigest
-    ];
-    if (
-      contractVersion !== 'legacy-v2' ||
-      aggregateCandidateEvidenceDigest ||
-      !(
-        reuseFields.every((value) => value === '') ||
-        (/^[1-9][0-9]{0,19}$/.test(reuseArtifactRunId) &&
-          /^release-bus-v2-pr-[a-f0-9]{40}$/.test(reuseArtifactName) &&
-          /^[a-f0-9]{64}$/.test(reuseArtifactDigest))
-      )
-    )
-      throw new Error('legacy-whole-train candidate evidence is incomplete');
-  } else throw new Error('Unsupported candidate evidence mode');
+  validateCandidateEvidence({
+    aggregateCandidateEvidenceDigest,
+    candidateEvidenceMode,
+    contractVersion,
+    reuseArtifactDigest,
+    reuseArtifactName,
+    reuseArtifactRunId,
+    sourceSha
+  });
   if (
     !Array.isArray(units) ||
     units.length === 0 ||
@@ -281,7 +303,7 @@ async function main() {
     config.services.map((service) => [service.name, service])
   );
   validateReleaseBusBackendInstallStrategyCoverage(services.keys());
-  const deployEnvironment = environment === 'production' ? 'prod' : environment;
+  const deployEnvironment = concreteDeployEnvironment(environment);
   for (const unit of units) {
     const service = services.get(unit);
     if (!service) throw new Error(`Unknown deploy unit ${unit}`);
