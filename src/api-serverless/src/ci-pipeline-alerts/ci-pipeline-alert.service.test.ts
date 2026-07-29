@@ -784,6 +784,32 @@ describe('CiPipelineAlertService', () => {
     });
   });
 
+  it('distinguishes missing release-note metadata from an unrequested release', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await expect(
+      service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          release_notes_prompt_path:
+            'ops/release-notes/release-notes.prompt.md',
+          deployed_at: '2026-07-13T11:38:00.000Z'
+        },
+        {}
+      )
+    ).resolves.toEqual({
+      ci_drop: 'accepted',
+      release_note: 'skipped',
+      release_note_reason: 'release-note-group-metadata-missing'
+    });
+    expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
+  });
+
   it('does not enqueue an unreviewed repository prompt path', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,

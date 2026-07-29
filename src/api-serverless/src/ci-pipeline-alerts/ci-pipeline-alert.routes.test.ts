@@ -10,20 +10,15 @@ jest.mock('@/redis', () => ({
   getRedisClient: jest.fn()
 }));
 
-jest.mock('./ci-pipeline-alert.service', () => ({
-  ciPipelineAlertService: {
-    postAlert: jest.fn()
-  },
-  verifiedContributorGithubLogins: jest.fn(
-    (request: {
-      contributor_evidence?: string;
-      contributor_github_logins?: string[];
-    }) =>
-      request.contributor_evidence
-        ? (request.contributor_github_logins ?? [])
-        : []
-  )
-}));
+jest.mock('./ci-pipeline-alert.service', () => {
+  const actual = jest.requireActual('./ci-pipeline-alert.service');
+  return {
+    ...actual,
+    ciPipelineAlertService: {
+      postAlert: jest.fn()
+    }
+  };
+});
 
 import fc from 'fast-check';
 import { getRedisClient } from '@/redis';

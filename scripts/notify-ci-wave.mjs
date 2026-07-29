@@ -231,6 +231,8 @@ async function deriveManualPullRequestContributors({
   if (!/^[a-f0-9]{40}$/.test(evidenceSha)) {
     throw new Error(`PR #${pullRequestNumber} has no immutable SHA evidence`);
   }
+  // Manual operators select the PR input. For an open PR, bind that selection
+  // to its exact immutable head and branch before using it for attribution.
   if (!merged && (evidenceSha !== deployedSha || pull.head?.ref !== branch)) {
     throw new Error(
       `Open PR #${pullRequestNumber} does not exactly match deployed branch ${branch}`

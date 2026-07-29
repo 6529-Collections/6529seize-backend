@@ -564,7 +564,9 @@ export class CiPipelineAlertService {
     if (enqueued > 0) return { release_note: 'enqueued' };
     return {
       release_note: 'skipped',
-      release_note_reason: 'no-valid-release-note-groups'
+      release_note_reason: structuredGroups
+        ? 'no-valid-release-note-groups'
+        : 'release-note-group-metadata-missing'
     };
   }
 
