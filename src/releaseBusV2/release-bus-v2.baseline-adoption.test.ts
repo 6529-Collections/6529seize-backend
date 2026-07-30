@@ -1381,6 +1381,59 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     );
   });
 
+  it('keeps failed intent reads stable when recovery races, then retries cleanup', async () => {
+    const context = harness();
+    await prepare(context);
+    await freeze(context);
+    Object.assign(context.repository.operations[0], {
+      status: 'PENDING',
+      external_id: null
+    });
+    context.repository.operations.push({
+      ...structuredClone(context.repository.operations[0]),
+      id: '60000000-0000-4000-8000-000000000007',
+      idempotency_key: `rb2:${INTENT_ID}:e2e:staging:duplicate`,
+      status: 'SUCCEEDED'
+    });
+    await context.service.handleE2EProgress(INTENT_ID);
+    Object.assign(context.repository.operations[0], {
+      status: 'PENDING',
+      failure_class: null,
+      failure_message: null,
+      completed_at: null,
+      row_version: context.repository.operations[0].row_version + 1
+    });
+    context.repository.events = context.repository.events.filter(
+      ({ event_type }) =>
+        event_type !== 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED'
+    );
+    context.repository.updateOperation.mockImplementationOnce(
+      async () => false
+    );
+
+    await expect(
+      context.service.execute(input(), 'owner')
+    ).resolves.toMatchObject({
+      adoption_id: INTENT_ID,
+      status: 'FAILED',
+      reused: true
+    });
+    expect(context.repository.operations[0].status).toBe('PENDING');
+    expect(context.repository.events).not.toContainEqual(
+      expect.objectContaining({
+        event_type: 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED'
+      })
+    );
+
+    await expect(
+      context.service.execute(input(), 'owner')
+    ).resolves.toMatchObject({
+      status: 'FAILED',
+      reused: true
+    });
+    expect(context.repository.operations[0].status).toBe('CANCELLED');
+  });
+
   it('does not guess that a reserved E2E operation was never dispatched', async () => {
     const context = harness();
     await prepare(context);

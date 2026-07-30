@@ -833,12 +833,6 @@ export class ReleaseBusV2BaselineAdoptionService {
             {},
             false,
             true
-          )) &&
-          !(await this.repository.findEvent(
-            failureEventId(exact.intent_id),
-            {},
-            false,
-            true
           ))
         )
           await this.failIntent(
@@ -2373,29 +2367,43 @@ export class ReleaseBusV2BaselineAdoptionService {
     intent: PreparedIntent,
     actor: string
   ): Promise<void> {
-    await this.repository.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctx = { connection };
-        const failed = await this.repository.findEvent(
-          failureEventId(intent.intent_id),
-          ctx,
-          true
-        );
-        const train = await this.repository.findTrain(
-          intent.intent_id,
-          ctx,
-          true
-        );
-        if (!failed || train?.status !== 'FAILED') return;
-        await this.cancelExactUndispatchedOperation(
-          intent,
-          train,
-          'Cancelled an exact undispatched E2E operation after its baseline-adoption train failed closed',
-          actor,
-          ctx
-        );
-      }
-    );
+    try {
+      await this.repository.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx = { connection };
+          const failed = await this.repository.findEvent(
+            failureEventId(intent.intent_id),
+            ctx,
+            true
+          );
+          const train = await this.repository.findTrain(
+            intent.intent_id,
+            ctx,
+            true
+          );
+          if (!failed || train?.status !== 'FAILED') return;
+          await this.cancelExactUndispatchedOperation(
+            intent,
+            train,
+            'Cancelled an exact undispatched E2E operation after its baseline-adoption train failed closed',
+            actor,
+            ctx
+          );
+        }
+      );
+    } catch (error) {
+      this.logger.error(
+        '[BASELINE_ADOPTION] failed undispatched operation recovery deferred',
+        {
+          intent_id: intent.intent_id,
+          error_fingerprint_sha256: sha256(
+            error instanceof Error
+              ? { name: error.name, message: error.message }
+              : { type: typeof error }
+          )
+        }
+      );
+    }
   }
 
   private async releaseOwnedStagingLock(trainId: string): Promise<void> {
