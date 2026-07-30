@@ -902,7 +902,7 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     );
   });
 
-  it('fences stale validation before it can overwrite a newer authoritative live manifest', async () => {
+  it('rejects runtime/ref mismatch before it can overwrite authoritative staging state', async () => {
     const statements: string[] = [];
     const db = {
       execute: async (sql: string) => {
@@ -929,10 +929,10 @@ describe('Release Bus v2 cumulative admitted staging', () => {
         },
         {}
       )
-    ).rejects.toThrow('Authoritative staging state changed');
-    expect(statements).toHaveLength(1);
-    expect(statements[0]).toContain('release_bus_v2_staging_state');
-    expect(statements[0]).not.toContain('staging_live_state');
+    ).rejects.toThrow(
+      'Validated staging runtime SHAs must equal their exact staging ref SHAs'
+    );
+    expect(statements).toHaveLength(0);
   });
 
   it('rejects overlapping NEW and removed sets before any staging mutation', async () => {
@@ -954,8 +954,8 @@ describe('Release Bus v2 cumulative admitted staging', () => {
           manifestId: 'overlap-manifest',
           frontendSha: 'a'.repeat(40),
           backendSha: 'b'.repeat(40),
-          frontendStagingRefSha: 'c'.repeat(40),
-          backendStagingRefSha: 'd'.repeat(40),
+          frontendStagingRefSha: 'a'.repeat(40),
+          backendStagingRefSha: 'b'.repeat(40),
           admittedCandidateIds: ['candidate-a'],
           removedCandidateIds: ['candidate-a'],
           newCandidateIds: ['candidate-a']
@@ -1329,5 +1329,139 @@ describe('Release Bus v2 cumulative admitted staging', () => {
       }),
       expect.anything()
     );
+  });
+
+  it('surfaces manual 1a-staging drift without revoking historical validation evidence', async () => {
+    const historicalManifest = 'historical-manifest-a';
+    const currentManifest = 'manifest-live';
+    const updateStagingState = jest.fn(async () => true);
+    const setControl = jest.fn(async () => undefined);
+    const appendEvent = jest.fn(async () => undefined);
+    const createTrain = jest.fn();
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      acquireLock: async () => ({ lease_token: 'scheduler' }),
+      releaseLock: async () => true,
+      getStagingState: async () => ({
+        id: 'current',
+        status: 'LIVE',
+        current_manifest_id: currentManifest,
+        last_validated_manifest_id: historicalManifest,
+        frontend_sha: '1'.repeat(40),
+        backend_sha: '2'.repeat(40),
+        frontend_staging_ref_sha: '3'.repeat(40),
+        backend_staging_ref_sha: '4'.repeat(40),
+        clean_main: false,
+        last_transition_train_id: 'previous',
+        updated_at: 1,
+        row_version: 11
+      }),
+      updateStagingState,
+      setControl,
+      appendEvent,
+      listControls: async () => [
+        { scope: 'ALL', paused: false },
+        { scope: 'STAGING', paused: false },
+        { scope: 'PRODUCTION', paused: false }
+      ],
+      listTrains: async () => [],
+      listCandidates: async () => [
+        candidate('b2', 'backend', 'READY_FOR_STAGING', false)
+      ],
+      listLiveStagingCandidates: async () => [],
+      listStagingTransitionRequests: async () => [],
+      listDependencies: async () => [],
+      createTrain
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(
+      service.claimLane('STAGING', 'f'.repeat(40), 'b'.repeat(40), 'operator', {
+        frontendSha: '9'.repeat(40),
+        backendSha: '4'.repeat(40)
+      })
+    ).resolves.toBeNull();
+
+    expect(createTrain).not.toHaveBeenCalled();
+    expect(updateStagingState).toHaveBeenCalledWith(
+      11,
+      expect.objectContaining({
+        status: 'ROLLBACK_FAILED',
+        currentManifestId: null,
+        lastValidatedManifestId: historicalManifest,
+        frontendStagingRefSha: '9'.repeat(40),
+        backendStagingRefSha: '4'.repeat(40),
+        lastTransitionTrainId: 'previous'
+      }),
+      expect.anything()
+    );
+    expect(setControl).toHaveBeenCalledWith(
+      'STAGING',
+      true,
+      expect.stringContaining('drift'),
+      'release-bus-v2',
+      expect.anything()
+    );
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'STAGING_REF_DRIFT_DETECTED',
+        payload: expect.objectContaining({
+          current_manifest_id: currentManifest,
+          production_evidence_preserved: true
+        })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('does not classify an active train ref advance as manual drift', async () => {
+    const activeTrain = train('active-staging-train');
+    const updateStagingState = jest.fn(async () => true);
+    const setControl = jest.fn(async () => undefined);
+    const repository = {
+      executeNativeQueriesInTransaction: async (
+        callback: (connection: unknown) => unknown
+      ) => callback({}),
+      acquireLock: async () => ({ lease_token: 'scheduler' }),
+      releaseLock: async () => true,
+      listControls: async () => [
+        { scope: 'ALL', paused: false },
+        { scope: 'STAGING', paused: false },
+        { scope: 'PRODUCTION', paused: false }
+      ],
+      getStagingState: async () => ({
+        id: 'current',
+        status: 'LIVE',
+        current_manifest_id: 'manifest-live',
+        last_validated_manifest_id: 'manifest-live',
+        frontend_sha: '1'.repeat(40),
+        backend_sha: '2'.repeat(40),
+        frontend_staging_ref_sha: '3'.repeat(40),
+        backend_staging_ref_sha: '4'.repeat(40),
+        clean_main: false,
+        last_transition_train_id: 'previous',
+        updated_at: 1,
+        row_version: 11
+      }),
+      updateStagingState,
+      setControl,
+      appendEvent: jest.fn(async () => undefined),
+      listTrains: async () => [activeTrain]
+    };
+    const service = new ReleaseBusV2Service(repository as never);
+
+    await expect(
+      service.claimLane('STAGING', 'f'.repeat(40), 'b'.repeat(40), 'operator', {
+        // The live ref can already be at the train's target while the
+        // authoritative state transition is still committing.
+        frontendSha: '9'.repeat(40),
+        backendSha: '4'.repeat(40)
+      })
+    ).resolves.toEqual(activeTrain);
+
+    expect(updateStagingState).not.toHaveBeenCalled();
+    expect(setControl).not.toHaveBeenCalled();
   });
 });

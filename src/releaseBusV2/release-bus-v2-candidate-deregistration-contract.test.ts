@@ -166,7 +166,7 @@ describe('Release Bus v2 logical deregistration generated contract', () => {
       /ApiReleaseBusV2CandidateDeregistrationUncommittedError:\n\s+type: object/
     );
     expect(schemas).toMatch(
-      /expected_candidates:\n\s+type: array\n\s+minItems: 1/
+      /expected_candidates:\n\s+type: array[\s\S]*?\n\s+minItems: 0/
     );
     expect(schemas).toMatch(
       /candidate_count:\n\s+type: integer\n\s+minimum: 0/

@@ -21,6 +21,9 @@ export class ApiReleaseBusV2CandidateDeregistrationExecuteRequest {
     'reason': string;
     'expected_plan_sha256': string;
     'expected_inventory_sha256': string;
+    /**
+    * The exact active-intent inventory from PREPARE. An empty inventory remains executable to atomically detach authoritative staging ownership; every control, lock, workflow, ref, state-version, and digest fence still applies.
+    */
     'expected_candidates': Set<ApiReleaseBusV2CandidateDeregistrationCandidateVersion>;
     'expected_controls': Set<ApiReleaseBusV2CandidateDeregistrationControlVersion>;
     'expected_locks': Set<ApiReleaseBusV2CandidateDeregistrationLockVersion>;

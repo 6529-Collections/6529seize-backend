@@ -20,6 +20,7 @@ const LEGACY_PR_CI_WORKFLOW_SHA256 =
 const FILE_PATHS = Object.freeze([
   '.github/workflows/deploy.yml',
   '.github/workflows/on-pull-request.yml',
+  '.github/workflows/release-bus-v2-advance-staging-ref.yml',
   '.github/workflows/release-bus-v2-preflight.yml',
   '.prettierignore',
   '.prettierrc',
@@ -39,6 +40,7 @@ const FILE_PATHS = Object.freeze([
   'src/api-serverless/tsconfig.paths.json',
   'src/config/deploy-services.json',
   'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts',
+  'src/releaseBusV2/release-bus-v2-advance-staging-ref-workflow.test.ts',
   'src/tests/_setup/globalSetup.ts',
   'src/tests/_setup/globalTeardown.ts',
   'src/tests/_setup/perTestHooks.ts',

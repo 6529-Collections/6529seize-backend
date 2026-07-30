@@ -941,7 +941,10 @@ exit 1
 
   it('uses every PR CI artifact only as evidence and always builds fresh train bytes', () => {
     expect(preflight).toContain('Verify exact green PR CI evidence');
-    expect(preflight).toContain('.head_sha == $expected_sha');
+    expect(preflight).toContain('if ! run_head_sha="$(jq -er');
+    expect(preflight).toContain('.head_sha == .pull_requests[0].head.sha');
+    expect(preflight).toContain('.head_sha == $run_head_sha');
+    expect(preflight).not.toContain('.head_sha == $expected_sha');
     expect(preflight).not.toContain('Download exact green PR artifact');
     expect(preflight).toContain('is_exact_evidence_archive=false');
     expect(preflight).toContain(
@@ -990,6 +993,7 @@ exit 1
     const output = path.join(fixture, 'github-output');
     const fakeGh = path.join(fixture, 'gh');
     const expectedSha = 'a'.repeat(40);
+    const pullRequestHeadSha = 'b'.repeat(40);
     mkdirSync(artifactDirectory);
     writeFileSync(
       path.join(artifactDirectory, 'policy-bundle.txt'),
@@ -1007,6 +1011,7 @@ exit 1
         evidence_contract: 'exact-merge-tree-pr-ci-v1',
         repository: 'backend',
         merge_sha: expectedSha,
+        head_sha: pullRequestHeadSha,
         workflow: '.github/workflows/on-pull-request.yml',
         policy_bundle_contract: 'pr-ci-policy-bundle-v1',
         policy_bundle_digest: policyDigest,
@@ -1032,7 +1037,7 @@ case "$*" in
     printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
     ;;
   *actions/runs/54321)
-    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml"}\\n'
+    printf '{"event":"%s","status":"completed","conclusion":"success","head_sha":"%s","path":".github/workflows/on-pull-request.yml","pull_requests":[{"head":{"sha":"%s","repo":{"url":"https://api.github.com/repos/6529/backend"}}}]}\\n' "$MOCK_RUN_EVENT" "$MOCK_RUN_HEAD_SHA" "$MOCK_PR_HEAD_SHA"
     ;;
   *actions/artifacts/777/zip)
     cat "$ARTIFACT_ZIP"
@@ -1055,6 +1060,9 @@ esac
           EXPECTED_SHA: expectedSha,
           GITHUB_OUTPUT: output,
           GITHUB_REPOSITORY: '6529/backend',
+          MOCK_PR_HEAD_SHA: pullRequestHeadSha,
+          MOCK_RUN_EVENT: 'pull_request',
+          MOCK_RUN_HEAD_SHA: pullRequestHeadSha,
           PATH: `${fixture}:${process.env.PATH ?? ''}`,
           REUSE_ARTIFACT_DIGEST: '9'.repeat(64),
           REUSE_ARTIFACT_NAME: `release-bus-v2-pr-${expectedSha}`,
@@ -1072,6 +1080,57 @@ esac
       expect(existsSync(path.join(fixture, 'release-bus-artifact'))).toBe(
         false
       );
+      writeFileSync(output, '');
+      expect(() =>
+        execFileSync('bash', ['-c', evidence?.run ?? 'exit 1'], {
+          cwd: fixture,
+          env: {
+            ...process.env,
+            ARTIFACT_ZIP: artifactZip,
+            CANDIDATE_EVIDENCE_MODE: 'legacy-whole-train',
+            DEPLOY_LAYERS: '[]',
+            DEPLOY_UNITS: '["api"]',
+            EXPECTED_SHA: expectedSha,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: '6529/backend',
+            MOCK_PR_HEAD_SHA: 'c'.repeat(40),
+            MOCK_RUN_EVENT: 'pull_request',
+            MOCK_RUN_HEAD_SHA: 'c'.repeat(40),
+            PATH: `${fixture}:${process.env.PATH ?? ''}`,
+            REUSE_ARTIFACT_DIGEST: '9'.repeat(64),
+            REUSE_ARTIFACT_NAME: `release-bus-v2-pr-${expectedSha}`,
+            REUSE_ARTIFACT_RUN_ID: '54321',
+            TRAIN_ID: 'train-id'
+          },
+          stdio: 'pipe'
+        })
+      ).toThrow();
+      writeFileSync(output, '');
+      expect(() =>
+        execFileSync('bash', ['-c', evidence?.run ?? 'exit 1'], {
+          cwd: fixture,
+          env: {
+            ...process.env,
+            ARTIFACT_ZIP: artifactZip,
+            CANDIDATE_EVIDENCE_MODE: 'legacy-whole-train',
+            DEPLOY_LAYERS: '[]',
+            DEPLOY_UNITS: '["api"]',
+            EXPECTED_SHA: expectedSha,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: '6529/backend',
+            MOCK_PR_HEAD_SHA: 'c'.repeat(40),
+            MOCK_RUN_EVENT: 'pull_request',
+            MOCK_RUN_HEAD_SHA: pullRequestHeadSha,
+            PATH: `${fixture}:${process.env.PATH ?? ''}`,
+            REUSE_ARTIFACT_DIGEST: '9'.repeat(64),
+            REUSE_ARTIFACT_NAME: `release-bus-v2-pr-${expectedSha}`,
+            REUSE_ARTIFACT_RUN_ID: '54321',
+            TRAIN_ID: 'train-id'
+          },
+          stdio: 'pipe'
+        })
+      ).toThrow();
+      expect(readFileSync(output, 'utf8')).toContain('failure_class=CANDIDATE');
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
@@ -1132,7 +1191,7 @@ case "$*" in
     printf '{"artifacts":[{"id":777,"expired":false,"name":"release-bus-v2-pr-${expectedSha}","digest":"sha256:%s"}]}\\n' "${'9'.repeat(64)}"
     ;;
   *actions/runs/54321)
-    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml"}\\n'
+    printf '{"event":"pull_request","status":"completed","conclusion":"success","head_sha":"${expectedSha}","path":".github/workflows/on-pull-request.yml","pull_requests":[{"head":{"sha":"${expectedSha}","repo":{"url":"https://api.github.com/repos/6529/backend"}}}]}\\n'
     ;;
   *actions/artifacts/777/zip)
     cat "$ARTIFACT_ZIP"
