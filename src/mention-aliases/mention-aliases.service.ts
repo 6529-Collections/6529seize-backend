@@ -31,7 +31,7 @@ export class MentionAliasesService {
     ownerProfileId: string,
     input: MentionAliasInput
   ): Promise<MentionAlias> {
-    const normalized = this.validateInput(input);
+    const normalized = this.validateInput(ownerProfileId, input);
     const id = randomUUID();
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
       const ownerLocked = await this.db.lockOwnerProfile(
@@ -82,7 +82,7 @@ export class MentionAliasesService {
     aliasId: string,
     input: MentionAliasInput
   ): Promise<MentionAlias> {
-    const normalized = this.validateInput(input);
+    const normalized = this.validateInput(ownerProfileId, input);
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
       const existing = await this.db.findOwnedAlias(
         aliasId,
@@ -137,7 +137,10 @@ export class MentionAliasesService {
     });
   }
 
-  private validateInput(input: MentionAliasInput): {
+  private validateInput(
+    ownerProfileId: string,
+    input: MentionAliasInput
+  ): {
     alias: string;
     memberProfileIds: string[];
   } {
@@ -157,6 +160,9 @@ export class MentionAliasesService {
       );
     }
     const memberProfileIds = Array.from(new Set(input.member_profile_ids));
+    if (memberProfileIds.includes(ownerProfileId)) {
+      throw new BadRequestException("You can't add yourself to a Quick Tag.");
+    }
     if (!memberProfileIds.length) {
       throw new BadRequestException(
         'Mention shortcuts must contain at least one profile.'
