@@ -4,6 +4,7 @@ import { IdentitiesDb } from '@/identities/identities.db';
 import { DropsDb } from '@/drops/drops.db';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import {
+  AlreadyDeployedReleaseShaError,
   GitHubReleaseContext,
   NonForwardReleaseRangeError,
   ReleaseNoteGitHubService
@@ -619,6 +620,35 @@ describe('ReleaseNoteGenerationService', () => {
     const outcome = await service.generateAndPost(request, {});
 
     expect(outcome).toBe('no-baseline');
+    expect(getReleasePrompt).not.toHaveBeenCalled();
+    expect(promptAndGetReply).not.toHaveBeenCalled();
+    expect(createDrop).not.toHaveBeenCalled();
+  });
+
+  it('reports an already-deployed frontend SHA without generating content', async () => {
+    const getReleaseContext = jest
+      .fn()
+      .mockRejectedValue(
+        new AlreadyDeployedReleaseShaError('current-sha', 122)
+      );
+    const getReleasePrompt = jest.fn();
+    const promptAndGetReply = jest.fn();
+    const createDrop = jest.fn();
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext,
+        getReleasePrompt
+      } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
+      undefined,
+      createDropsRepository()
+    );
+
+    const outcome = await service.generateAndPost(request, {});
+
+    expect(outcome).toBe('already-deployed');
     expect(getReleasePrompt).not.toHaveBeenCalled();
     expect(promptAndGetReply).not.toHaveBeenCalled();
     expect(createDrop).not.toHaveBeenCalled();

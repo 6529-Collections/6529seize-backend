@@ -34,7 +34,8 @@ const {
   GITHUB_ACTOR,
   GITHUB_TOKEN,
   GITHUB_API_URL = 'https://api.github.com',
-  CI_GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS
+  CI_GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS,
+  CI_PIPELINES_ALERT_TIMEOUT_MS
 } = process.env;
 
 function requireValue(name, value) {
@@ -78,6 +79,12 @@ const GITHUB_EVIDENCE_REQUEST_TIMEOUT_MS = boundedDuration(
   3_000,
   25,
   10_000
+);
+const PIPELINES_ALERT_TIMEOUT_MS = boundedDuration(
+  CI_PIPELINES_ALERT_TIMEOUT_MS,
+  10_000,
+  25,
+  30_000
 );
 
 function validateOptionalBoolean(name, value) {
@@ -629,9 +636,13 @@ if (CI_PIPELINES_ALERT_API_AUTH) {
 }
 
 const controller = new AbortController();
-const timeoutId = setTimeout(() => controller.abort(), 10_000);
+const timeoutId = setTimeout(
+  () => controller.abort(),
+  PIPELINES_ALERT_TIMEOUT_MS
+);
 
 let response;
+let outcome = null;
 try {
   response = await fetch(CI_PIPELINES_ALERT_URL, {
     method: 'POST',
@@ -639,6 +650,20 @@ try {
     body,
     signal: controller.signal
   });
+  if (!response.ok) {
+    console.error(
+      `CI pipeline wave notification failed: ${response.status} ${response.statusText}`
+    );
+    process.exit(1);
+  }
+  try {
+    outcome = await response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw error;
+    }
+    // Older receivers returned an empty response. Preserve rollout compatibility.
+  }
 } catch (error) {
   console.error(
     `CI pipeline wave notification request failed: ${getFetchFailureMessage(error)}`
@@ -646,20 +671,6 @@ try {
   process.exit(1);
 } finally {
   clearTimeout(timeoutId);
-}
-
-if (!response.ok) {
-  console.error(
-    `CI pipeline wave notification failed: ${response.status} ${response.statusText}`
-  );
-  process.exit(1);
-}
-
-let outcome = null;
-try {
-  outcome = await response.json();
-} catch {
-  // Older receivers returned an empty response. Preserve rollout compatibility.
 }
 if (outcome?.ci_drop === 'accepted') {
   console.log('CI drop accepted.');

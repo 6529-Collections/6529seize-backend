@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
 import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
 import {
+  AlreadyDeployedReleaseShaError,
   GitHubReleaseContext,
   NonForwardReleaseRangeError,
   releaseNoteGitHubService,
@@ -55,6 +56,7 @@ const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
 export type ReleaseNoteGenerationOutcome =
   | 'published'
   | 'already-published'
+  | 'already-deployed'
   | 'invalid-range'
   | 'no-baseline'
   | 'no-pull-requests';
@@ -310,6 +312,12 @@ export class ReleaseNoteGenerationService {
     try {
       context = await this.githubService.getReleaseContext(request);
     } catch (error) {
+      if (error instanceof AlreadyDeployedReleaseShaError) {
+        this.logger.info(
+          `Skipping release notes for ${request.repo} run ${request.run_id}; ${error.message}`
+        );
+        return 'already-deployed';
+      }
       if (error instanceof NonForwardReleaseRangeError) {
         this.logger.warn(
           `Skipping release notes for ${request.repo} run ${request.run_id}; ${error.message}`

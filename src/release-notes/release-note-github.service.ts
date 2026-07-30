@@ -102,6 +102,19 @@ export class NonForwardReleaseRangeError extends Error {
   }
 }
 
+export class AlreadyDeployedReleaseShaError extends Error {
+  constructor(
+    readonly sha: string,
+    readonly previousRunId: number
+  ) {
+    super(
+      `Frontend production SHA ${sha} was already deployed by approved run ${previousRunId}`
+    );
+    this.name = 'AlreadyDeployedReleaseShaError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 interface AggregatedPullRequest {
   readonly pullRequest: GitHubPullRequest;
   readonly commitMessages: Set<string>;
@@ -568,7 +581,6 @@ export class ReleaseNoteGitHubService {
         const createdAt = Date.parse(run.created_at ?? '');
         if (
           String(run.id) === request.run_id ||
-          run.head_sha === request.sha ||
           run.name !== workflowName ||
           run.status !== 'completed' ||
           run.conclusion !== 'success' ||
@@ -612,12 +624,15 @@ export class ReleaseNoteGitHubService {
         FRONTEND_RELEASE_BUS_PRODUCTION_WORKFLOW
       )
     ]);
-    return (
+    const previousRun =
       [...manualRuns, ...releaseBusRuns].sort(
         (left, right) =>
           Date.parse(right.created_at!) - Date.parse(left.created_at!)
-      )[0] ?? null
-    );
+      )[0] ?? null;
+    if (previousRun?.head_sha === request.sha) {
+      throw new AlreadyDeployedReleaseShaError(request.sha, previousRun.id);
+    }
+    return previousRun;
   }
 
   private async findPreviousSuccessfulRun(

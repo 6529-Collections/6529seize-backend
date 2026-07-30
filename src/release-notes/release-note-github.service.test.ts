@@ -6,6 +6,7 @@ jest.mock('node-fetch', () => ({
 import fetch from 'node-fetch';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import {
+  AlreadyDeployedReleaseShaError,
   NonForwardReleaseRangeError,
   ReleaseNoteGitHubService
 } from './release-note-github.service';
@@ -616,7 +617,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('release-bus-production-sha');
   });
 
-  it('returns no baseline when approved production history is absent or same-SHA', async () => {
+  it('returns no baseline when approved production history is absent', async () => {
     const releaseBusRun = {
       ...currentRun,
       name: 'Release Bus - Deploy Frontend Production',
@@ -625,6 +626,36 @@ describe('ReleaseNoteGitHubService', () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(releaseBusRun))
       .mockResolvedValueOnce(response({ workflow_runs: [] }))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }));
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext({
+        ...request,
+        workflow: releaseBusRun.name
+      })
+    ).resolves.toBeNull();
+  });
+
+  it('stops a same-SHA redeployment before falling through to an older baseline', async () => {
+    const releaseBusRun = {
+      ...currentRun,
+      name: 'Release Bus - Deploy Frontend Production',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(releaseBusRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...currentRun,
+              id: 121,
+              head_sha: 'older-different-sha',
+              created_at: '2026-07-11T11:38:00Z'
+            }
+          ]
+        })
+      )
       .mockResolvedValueOnce(
         response({
           workflow_runs: [
@@ -642,7 +673,14 @@ describe('ReleaseNoteGitHubService', () => {
         ...request,
         workflow: releaseBusRun.name
       })
-    ).resolves.toBeNull();
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<AlreadyDeployedReleaseShaError>>({
+        name: 'AlreadyDeployedReleaseShaError',
+        sha: request.sha,
+        previousRunId: 122
+      })
+    );
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it.each(['behind', 'diverged', 'identical', undefined])(

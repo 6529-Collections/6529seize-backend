@@ -104,6 +104,32 @@ function dispatchArguments({
   );
 }
 
+function selectReleaseGroupServices({
+  currentService,
+  selectedServices
+}: {
+  readonly currentService: string;
+  readonly selectedServices: readonly string[];
+}) {
+  const script = [
+    'source "$1"',
+    'BATCH_SERVICES=(api worker releaseBus)',
+    `node() { printf '%s\\n' ${selectedServices.map((service) => `'${service}'`).join(' ')}; }`,
+    'choose_release_group_services "$2" main 42'
+  ].join('\n');
+  return spawnSync(
+    'bash',
+    ['-c', script, 'ghdeploy-test', ghdeployPath, currentService],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GHDEPLOY_SOURCE_ONLY: 'true'
+      }
+    }
+  );
+}
+
 describe('manual backend deployment contract', () => {
   it.each(['staging', 'prod'] as const)(
     'accepts a normal PR-backed %s dispatch',
@@ -253,5 +279,34 @@ describe('manual backend deployment contract', () => {
     expect(output).toContain('release_note_publish=false');
     expect(output).toContain('release_note_opt_out=true');
     expect(output).toContain('release_group_services=');
+  });
+
+  it('makes every manual production service use the same complete canonical group', () => {
+    const apiSelection = selectReleaseGroupServices({
+      currentService: 'api',
+      selectedServices: ['worker', 'api']
+    });
+    const workerSelection = selectReleaseGroupServices({
+      currentService: 'worker',
+      selectedServices: ['api', 'worker']
+    });
+
+    expect(apiSelection).toMatchObject({ status: 0, stdout: 'api,worker\n' });
+    expect(workerSelection).toMatchObject({
+      status: 0,
+      stdout: 'api,worker\n'
+    });
+  });
+
+  it('rejects a production release group that omits the deployed service', () => {
+    const selection = selectReleaseGroupServices({
+      currentService: 'worker',
+      selectedServices: ['api']
+    });
+
+    expect(selection.status).not.toBe(0);
+    expect(selection.stderr).toContain(
+      'Release group must include the service being deployed: worker'
+    );
   });
 });

@@ -143,7 +143,7 @@ cd src/tdhLoop
 ghdeploy
 ```
 
-Single-service mode opens the same environment picker, resolves the service from the current folder, and asks for the exact PR represented by the deployment. For production it also asks whether this successful deploy should hold or publish the release note. Use `hold` while more services for that PR remain, then choose `publish` for the final service. The published note includes every successful service accumulated for that PR, even when later services deploy a descendant commit. For staging, it triggers:
+Single-service mode opens the same environment picker, resolves the service from the current folder, and asks for the exact PR represented by the deployment. For production it also asks for the complete set of services represented by that PR and whether this successful deploy should hold or publish the release note. Select the same complete service set for every service deployment belonging to the PR. Use `hold` while more services for that PR remain, then choose `publish` for the final service. The backend waits for every selected service to succeed before publishing one grouped note, even when later services deploy a descendant commit. For staging, it triggers:
 
 ```bash
 gh workflow run "Deploy a service" \

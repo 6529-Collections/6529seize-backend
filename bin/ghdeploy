@@ -83,6 +83,50 @@ choose_release_note_mode() {
   printf '%s\n' "$choice"
 }
 
+choose_release_group_services() {
+  local current_service="$1"
+  local branch="$2"
+  local pull_request="$3"
+  local selected_output
+  local selected_service
+  local allowed_service
+  local canonical_services=''
+  local -a selected_services=()
+
+  selected_output="$(
+    node "$PICKER_SCRIPT" multi \
+      "Select every production service represented by PR #$pull_request on $branch" \
+      "${BATCH_SERVICES[@]}"
+  )" || die 'Cancelled'
+
+  while IFS= read -r selected_service; do
+    [[ -n "$selected_service" ]] || continue
+    service_is_allowed "$selected_service" "${BATCH_SERVICES[@]}" ||
+      die "Invalid release-group service '$selected_service'"
+    if (( ${#selected_services[@]} == 0 )) ||
+      ! service_is_allowed "$selected_service" "${selected_services[@]}"; then
+      selected_services+=("$selected_service")
+    fi
+  done <<< "$selected_output"
+
+  (( ${#selected_services[@]} > 0 )) ||
+    die 'Select at least one production service represented by the PR'
+  service_is_allowed "$current_service" "${selected_services[@]}" ||
+    die "Release group must include the service being deployed: $current_service"
+
+  for allowed_service in "${BATCH_SERVICES[@]}"; do
+    if ! service_is_allowed "$allowed_service" "${selected_services[@]}"; then
+      continue
+    fi
+    if [[ -n "$canonical_services" ]]; then
+      canonical_services+=','
+    fi
+    canonical_services+="$allowed_service"
+  done
+
+  printf '%s\n' "$canonical_services"
+}
+
 resolve_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null ||
     die 'Run this command from inside the repository'
@@ -512,7 +556,13 @@ main() {
     release_note_opt_out='true'
   else
     release_pull_request="$(read_release_pr_number)"
-    release_group_services="$service"
+    if [[ "$environment" == 'prod' ]]; then
+      release_group_services="$(
+        choose_release_group_services "$service" "$branch" "$release_pull_request"
+      )"
+    else
+      release_group_services="$service"
+    fi
   fi
   if [[ "$environment" == 'prod' && "$attribution_mode" == 'pr' ]]; then
     if [[ "$(choose_release_note_mode "$release_pull_request")" == 'publish' ]]; then

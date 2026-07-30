@@ -9,7 +9,8 @@ type RunResult = {
 };
 
 async function runNotifier(
-  overrides: Record<string, string> = {}
+  overrides: Record<string, string> = {},
+  options: { readonly stallResponseBody?: boolean } = {}
 ): Promise<RunResult> {
   let payload: Record<string, unknown> | null = null;
   const server = createServer((request, response) => {
@@ -20,6 +21,14 @@ async function runNotifier(
         string,
         unknown
       >;
+      if (options.stallResponseBody) {
+        response.writeHead(200, {
+          'content-type': 'application/json',
+          'content-length': '100'
+        });
+        response.flushHeaders();
+        return;
+      }
       response.writeHead(204);
       response.end();
     });
@@ -59,6 +68,7 @@ async function runNotifier(
   const code = await new Promise<number | null>((resolve) =>
     child.on('exit', resolve)
   );
+  server.closeAllConnections();
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve()))
   );
@@ -121,6 +131,24 @@ async function runManualEvidenceNotifier({
 }
 
 describe('notify-ci-wave release-note metadata', () => {
+  it('bounds a receiver response body that never completes', async () => {
+    const result = await runNotifier(
+      {
+        CI_PIPELINES_ALERT_TIMEOUT_MS: '500'
+      },
+      { stallResponseBody: true }
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      'CI pipeline wave notification request failed: request timed out'
+    );
+    expect(result.payload).toMatchObject({
+      run_id: '123',
+      status: 'success'
+    });
+  });
+
   it.each([
     {
       environment: 'prod',
