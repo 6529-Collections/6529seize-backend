@@ -423,6 +423,48 @@ function hasEmptyReuseEvidenceIdentity(
   ].every((entry) => entry === null);
 }
 
+function hasExactManifestE2EOperationKey(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  if (
+    typeof value.operation_key !== 'string' ||
+    typeof value.train_id !== 'string' ||
+    typeof value.environment !== 'string'
+  )
+    return false;
+  const segments = value.operation_key.split(':');
+  return (
+    segments.length === 5 &&
+    segments[0] === 'rb2' &&
+    segments[1] === value.train_id &&
+    segments[2] === 'e2e' &&
+    segments[3] === value.environment &&
+    /^a[1-9]\d{0,8}$/.test(segments[4])
+  );
+}
+
+function hasExactStagingRefOperationKey(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  if (
+    value.environment !== 'staging' ||
+    typeof value.operation_key !== 'string' ||
+    typeof value.train_id !== 'string' ||
+    typeof value.repository !== 'string'
+  )
+    return false;
+  const segments = value.operation_key.split(':');
+  return (
+    segments.length === 6 &&
+    segments[0] === 'rb2' &&
+    segments[1] === value.train_id &&
+    segments[2] === 'advance-staging' &&
+    ['release', 'rollback'].includes(segments[3]) &&
+    segments[4] === value.repository &&
+    /^a[1-9]\d{0,8}$/.test(segments[5])
+  );
+}
+
 function isValidOrchestrationEvidenceAuthorization(
   value: Readonly<Record<string, unknown>>
 ): boolean {
@@ -504,19 +546,18 @@ export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
       !hasEmptyReuseEvidenceIdentity(value)
     )
       return helpers.error('any.invalid');
-    const keySegments = value.operation_key.split(':');
-    const isExactManifestE2E =
-      keySegments.length === 5 &&
-      keySegments[0] === 'rb2' &&
-      keySegments[1] === value.train_id &&
-      keySegments[2] === 'e2e' &&
-      keySegments[3] === value.environment &&
-      /^a[1-9]\d{0,8}$/.test(keySegments[4]);
-    if (isExactManifestE2E) {
+    if (hasExactManifestE2EOperationKey(value)) {
       return value.repository === 'frontend' &&
         value.service === null &&
         value.artifact_run_id === null &&
         value.artifact_digest !== null
+        ? value
+        : helpers.error('any.invalid');
+    }
+    if (hasExactStagingRefOperationKey(value)) {
+      return value.service === null &&
+        value.artifact_run_id === null &&
+        value.artifact_digest === null
         ? value
         : helpers.error('any.invalid');
     }
