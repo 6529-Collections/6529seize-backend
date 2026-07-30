@@ -3444,6 +3444,10 @@ export class ReleaseBusV2Service {
             stagingState &&
             stagingIdentity?.frontendSha &&
             stagingIdentity.backendSha &&
+            // stagingIdentity is the exact pair of 1a-staging ref heads that
+            // the reconciler resolved for this claim. The historical field
+            // names predate cumulative staging; this compares ref to ref, not
+            // a separately sampled deployment runtime.
             (stagingState.frontend_staging_ref_sha !==
               stagingIdentity.frontendSha ||
               stagingState.backend_staging_ref_sha !==

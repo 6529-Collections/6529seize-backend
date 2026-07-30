@@ -3061,6 +3061,212 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
   });
 
+  it('retains the staging lease while an owned ref workflow is nonterminal', async () => {
+    const state = harness('SUCCEEDED');
+    const frontendBase = 'e'.repeat(40);
+    const backendBase = 'f'.repeat(40);
+    const exactTrain = train('train-1', {
+      frontend_composed_sha: frontendBase,
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest',
+      staging_transition_json: {
+        actor: 'acceptance',
+        requested_at: 1,
+        baseline_state_version: 1,
+        baseline_manifest_id: 'baseline-manifest',
+        baseline_frontend_sha: frontendBase,
+        baseline_backend_sha: backendBase,
+        observed_frontend_staging_sha: frontendBase,
+        observed_backend_staging_sha: backendBase,
+        new_candidate_ids: ['backend-candidate'],
+        carried_candidate_ids: ['frontend-candidate']
+      }
+    });
+    state.repository.trains.set(exactTrain.id, exactTrain);
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      ...state.repository.memberships.map((membership) => ({
+        ...membership,
+        candidate_role:
+          membership.candidate_id === 'backend-candidate'
+            ? ('NEW' as const)
+            : ('CARRY_FORWARD' as const)
+      }))
+    );
+    mockResolveRefIfExists.mockImplementation(
+      async (repository: 'frontend' | 'backend', ref: string) => {
+        if (ref.startsWith('feature/'))
+          return repository === 'frontend' ? '3'.repeat(40) : '4'.repeat(40);
+        return repository === 'frontend' ? frontendBase : backendBase;
+      }
+    );
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+      const spec = rawSpec as StagingRefWorkflowSpec;
+      const running: ReleaseBusV2OperationRecord = {
+        ...stagingRefWorkflowOperation(spec, '901', false),
+        status: 'RUNNING',
+        result_json: null,
+        completed_at: null
+      };
+      state.repository.operations.push(running);
+      return running;
+    });
+    const context = {
+      train: exactTrain,
+      memberships: [...state.repository.memberships],
+      candidates: Array.from(state.repository.candidates.values()),
+      dependencies: state.repository.dependencies
+    };
+
+    await (
+      state.reconciler as unknown as {
+        advanceStagingOrQualification(input: typeof context): Promise<void>;
+      }
+    ).advanceStagingOrQualification(context);
+
+    expect(state.repository.trains.get(exactTrain.id)?.status).toBe('PREPARED');
+    expect(state.repository.lock).toMatchObject({
+      owner_train_id: exactTrain.id,
+      lease_owner: `train:${exactTrain.id}`,
+      lease_token: expect.any(String)
+    });
+    expect(state.repository.operations).toContainEqual(
+      expect.objectContaining({
+        operation_type: 'ADVANCE_STAGING_RELEASE_BACKEND',
+        status: 'RUNNING'
+      })
+    );
+    expect(
+      state.repository.operations.some(({ operation_type }) =>
+        operation_type.startsWith('DEPLOY_')
+      )
+    ).toBe(false);
+  });
+
+  it.each(['malformed success evidence', 'terminal workflow failure'] as const)(
+    'fails %s through the STAGING-only control-plane handler without a reconcile loop',
+    async (scenario) => {
+      const state = harness('SUCCEEDED');
+      const frontendBase = 'e'.repeat(40);
+      const backendBase = 'f'.repeat(40);
+      const exactTrain = train('train-1', {
+        frontend_composed_sha: frontendBase,
+        staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+        staging_baseline_manifest_id: 'baseline-manifest',
+        staging_transition_json: {
+          actor: 'acceptance',
+          requested_at: 1,
+          baseline_state_version: 1,
+          baseline_manifest_id: 'baseline-manifest',
+          baseline_frontend_sha: frontendBase,
+          baseline_backend_sha: backendBase,
+          observed_frontend_staging_sha: frontendBase,
+          observed_backend_staging_sha: backendBase,
+          new_candidate_ids: ['backend-candidate'],
+          carried_candidate_ids: ['frontend-candidate']
+        }
+      });
+      state.repository.trains.set(exactTrain.id, exactTrain);
+      state.repository.memberships.splice(
+        0,
+        state.repository.memberships.length,
+        ...state.repository.memberships.map((membership) => ({
+          ...membership,
+          candidate_role:
+            membership.candidate_id === 'backend-candidate'
+              ? ('NEW' as const)
+              : ('CARRY_FORWARD' as const)
+        }))
+      );
+      const allBefore = structuredClone(state.repository.controls.get('ALL'));
+      const productionBefore = structuredClone(
+        state.repository.controls.get('PRODUCTION')
+      );
+      const carriedBefore = structuredClone(
+        state.repository.candidates.get('frontend-candidate')
+      );
+      mockResolveRefIfExists.mockImplementation(
+        async (repository: 'frontend' | 'backend', ref: string) => {
+          if (ref.startsWith('feature/'))
+            return repository === 'frontend' ? '3'.repeat(40) : '4'.repeat(40);
+          return repository === 'frontend' ? frontendBase : backendBase;
+        }
+      );
+      mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+        const spec = rawSpec as StagingRefWorkflowSpec;
+        const completed = stagingRefWorkflowOperation(spec, '901', false);
+        const operation: ReleaseBusV2OperationRecord =
+          scenario === 'malformed success evidence'
+            ? {
+                ...completed,
+                result_json: {
+                  phase: 'advance_staging_ref',
+                  status: 'SUCCEEDED',
+                  summary: null
+                }
+              }
+            : {
+                ...completed,
+                status: 'FAILED',
+                failure_class: 'CONTROL_PLANE',
+                failure_message: 'staging-ref callback failed closed',
+                result_json: {
+                  phase: 'advance_staging_ref',
+                  status: 'FAILED',
+                  failure_class: 'CONTROL_PLANE',
+                  failure_phase: 'authorization',
+                  retryable: false,
+                  summary: null
+                }
+              };
+        state.repository.operations.push(operation);
+        return operation;
+      });
+
+      await expect(
+        state.reconciler.runOnce(`acceptance-${scenario.replace(/ /g, '-')}`)
+      ).resolves.toEqual({
+        mode: 'STAGING',
+        claimed: [],
+        advanced: []
+      });
+
+      expect(state.repository.trains.get(exactTrain.id)).toMatchObject({
+        status: 'FAILED',
+        failure_class: 'CONTROL_PLANE',
+        completed_at: expect.any(Number)
+      });
+      expect(
+        state.repository.candidates.get('backend-candidate')
+      ).toMatchObject({
+        status: 'READY_FOR_STAGING',
+        current_train_id: null
+      });
+      expect(state.repository.candidates.get('frontend-candidate')).toEqual(
+        carriedBefore
+      );
+      expect(state.repository.controls.get('STAGING')).toMatchObject({
+        paused: true,
+        github_actor: 'release-bus-v2'
+      });
+      expect(state.repository.controls.get('ALL')).toEqual(allBefore);
+      expect(state.repository.controls.get('PRODUCTION')).toEqual(
+        productionBefore
+      );
+      expect(state.repository.lock.owner_train_id).toBeNull();
+      expect(state.repository.events).not.toContainEqual(
+        expect.objectContaining({ eventType: 'STAGING_REF_DRIFT_DETECTED' })
+      );
+      expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
+
+      await state.reconciler.runOnce(
+        'acceptance-terminal-ref-protocol-failure'
+      );
+      expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('moves only the affected repository for a single-repo cumulative train', async () => {
     const state = harness('SUCCEEDED');
     const frontendBase = 'e'.repeat(40);

@@ -4873,6 +4873,11 @@ export class ReleaseBusV2Reconciler {
       result.summary.observed_sha !== targetSha ||
       typeof result.summary.changed !== 'boolean'
     )
+      // This is a terminal workflow protocol failure, not evidence that the
+      // shared ref moved. The runOnce boundary deliberately routes this plain
+      // error through failTrain(CONTROL_PLANE): STAGING alone pauses, candidate
+      // intent is retained, and the lease releases only after all exact
+      // operations are terminal.
       throw new Error(
         `${repository} staging-ref workflow returned malformed terminal evidence`
       );
@@ -4918,6 +4923,8 @@ export class ReleaseBusV2Reconciler {
       throw new StagingRefMovedError(
         `${repository} 1a-staging moved from ${baseSha} to ${current} during exact ${phase} workflow`
       );
+    // The workflow is terminal and the ref is still within exact intent, so
+    // this is a lane-local control-plane failure rather than ref drift.
     throw new Error(
       operation.failure_message ??
         `${repository} staging-ref workflow failed closed`
