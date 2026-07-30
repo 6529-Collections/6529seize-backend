@@ -157,6 +157,77 @@ describe('HelpBotBedrockRenderer', () => {
     );
   });
 
+  it('adds strict versioned grounding rules for Stream evidence packets', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [{ type: 'text', text: 'The function takes no inputs.' }]
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await renderer.renderAnswer({
+      question: 'what inputs does withdrawBidderCredit take?',
+      record: {
+        ...RECORD,
+        id: '6529-stream@2026-07-27.1',
+        kind: 'public_review_knowledge',
+        title: '6529 Stream review evidence (2026-07-27.1)',
+        linkLabel: '6529 Stream Review',
+        canonicalPath: '/reviews/6529-stream/versions/2026-07-27.1',
+        facts: [
+          'Corpus identity: version 2026-07-27.1.',
+          '{"scope":"protocol","technical":{"declaration":{"inputs":[]}}}'
+        ]
+      },
+      canonicalUrl: 'https://6529.io/reviews/6529-stream/versions/2026-07-27.1'
+    });
+
+    const prompt = readPrompt(send);
+    expect(prompt).toContain(
+      'Treat structured technical fields as more authoritative'
+    );
+    expect(prompt).toContain(
+      'Distinguish protocol code from scripts, tests, dependencies'
+    );
+    expect(prompt).toContain(
+      'Do not infer exact inputs, outputs, caller authorization'
+    );
+    expect(prompt).toContain(
+      'If an AMBIGUITY fact is present, clearly ask for the contract'
+    );
+    expect(prompt).toContain('Mention the review version');
+  });
+
+  it('omits Stream grounding rules for non-Stream records', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({ content: [{ type: 'text', text: 'TDH is TDH.' }] })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await renderer.renderAnswer({
+      question: 'what is TDH?',
+      record: RECORD,
+      canonicalUrl: 'https://6529.io/network/tdh'
+    });
+
+    expect(readPrompt(send)).not.toContain('Mention the review version');
+    expect(readPrompt(send)).not.toContain(
+      'Distinguish protocol code from scripts'
+    );
+  });
+
   it('aborts a slow Bedrock response', async () => {
     const send = jest.fn(
       (
