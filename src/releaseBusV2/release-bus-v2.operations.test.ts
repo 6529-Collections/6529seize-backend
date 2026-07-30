@@ -117,7 +117,13 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
   return {
     repository: {
       appendEvent: jest.fn(async () => undefined),
-      findOperation: jest.fn(async () => current),
+      findOperation: jest.fn(
+        async (
+          _key: string,
+          _ctx: unknown,
+          _forceWrite = false
+        ): Promise<ReleaseBusV2OperationRecord | null> => current
+      ),
       getOrCreateOperation: jest.fn(async () => current),
       updateOperation
     },
