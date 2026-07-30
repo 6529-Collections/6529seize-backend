@@ -1348,20 +1348,25 @@ export class ReleaseBusV2BaselineAdoptionService {
     actor: string,
     payload: unknown
   ): Promise<void> {
-    await this.repository.appendEvent(
-      { eventId: id, eventType, actor, payload },
-      {}
+    await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        await this.repository.appendEvent(
+          { eventId: id, eventType, actor, payload },
+          ctx
+        );
+        const event = await this.repository.findEvent(id, ctx, true);
+        if (
+          !event ||
+          event.event_type !== eventType ||
+          !isDeepStrictEqual(parseStoredJson(event.payload_json), payload)
+        )
+          throw new ReleaseBusV2BaselineAdoptionError(
+            'CONFLICT',
+            'A different callback already owns this immutable evidence identity'
+          );
+      }
     );
-    const event = await this.repository.findEvent(id, {});
-    if (
-      !event ||
-      event.event_type !== eventType ||
-      !isDeepStrictEqual(parseStoredJson(event.payload_json), payload)
-    )
-      throw new ReleaseBusV2BaselineAdoptionError(
-        'CONFLICT',
-        'A different callback already owns this immutable evidence identity'
-      );
   }
 
   private async evidenceForIntent(intent: PreparedIntent): Promise<{
