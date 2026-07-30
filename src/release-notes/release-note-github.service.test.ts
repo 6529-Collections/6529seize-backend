@@ -5,7 +5,10 @@ jest.mock('node-fetch', () => ({
 
 import fetch from 'node-fetch';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
-import { ReleaseNoteGitHubService } from './release-note-github.service';
+import {
+  NonForwardReleaseRangeError,
+  ReleaseNoteGitHubService
+} from './release-note-github.service';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529seize-frontend',
@@ -223,9 +226,7 @@ describe('ReleaseNoteGitHubService', () => {
         workflow: 'Deploy Staging',
         run_number: '45'
       })
-    ).rejects.toThrow(
-      'not an approved successful frontend production workflow'
-    );
+    ).rejects.toThrow('not an approved frontend production workflow run');
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -243,13 +244,62 @@ describe('ReleaseNoteGitHubService', () => {
         ...request,
         workflow: 'constructor'
       })
-    ).rejects.toThrow(
-      'not an approved successful frontend production workflow'
-    );
+    ).rejects.toThrow('not an approved frontend production workflow run');
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('finds a previous production run when run_number is missing', async () => {
+  it.each([
+    ['queued', null, { status: 'queued' }],
+    ['completed with failure', 'failure', { status: 'completed' }],
+    ['completed with cancellation', 'cancelled', { status: 'completed' }],
+    ['wrong workflow name', 'success', { name: 'Other production deploy' }],
+    [
+      'wrong workflow path',
+      'success',
+      { path: '.github/workflows/other-production.yml@refs/heads/main' }
+    ],
+    ['missing workflow path', 'success', { path: undefined }],
+    ['wrong branch', 'success', { head_branch: 'release' }],
+    ['missing branch', 'success', { head_branch: undefined }]
+  ])(
+    'rejects frontend current-run evidence in the %s state',
+    async (_label, conclusion, overrides) => {
+      (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+        response({
+          ...currentRun,
+          conclusion,
+          ...overrides
+        })
+      );
+
+      await expect(
+        new ReleaseNoteGitHubService().getReleaseContext(request)
+      ).rejects.toThrow('not an approved frontend production workflow run');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    ['wrong run ID', { id: 124 }],
+    ['wrong deployed SHA', { head_sha: 'different-sha' }]
+  ])(
+    'rejects frontend current-run evidence with a %s',
+    async (_label, overrides) => {
+      (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+        response({
+          ...currentRun,
+          ...overrides
+        })
+      );
+
+      await expect(
+        new ReleaseNoteGitHubService().getReleaseContext(request)
+      ).rejects.toThrow('does not match the queued release metadata');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('accepts a completed successful frontend run for replay compatibility', async () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(currentRun))
       .mockResolvedValueOnce(
@@ -266,7 +316,9 @@ describe('ReleaseNoteGitHubService', () => {
         })
       )
       .mockResolvedValueOnce(response({ workflow_runs: [] }))
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext(
       request
@@ -283,6 +335,42 @@ describe('ReleaseNoteGitHubService', () => {
       'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/build-upload-deploy-prod.yml/runs?status=success&branch=main&per_page=100&page=1',
       expect.any(Object)
     );
+  });
+
+  it('accepts a live manual frontend production notification run', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          ...currentRun,
+          status: 'in_progress',
+          conclusion: null
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...currentRun,
+              id: 122,
+              head_sha: 'previous-sha',
+              run_number: 44,
+              created_at: '2026-07-12T11:38:00Z'
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext(request)
+    ).resolves.toEqual({
+      previous_sha: 'previous-sha',
+      current_sha: 'abc123',
+      pull_requests: []
+    });
   });
 
   it('builds the run #15 Release Bus context from the preceding Release Bus production run', async () => {
@@ -305,8 +393,8 @@ describe('ReleaseNoteGitHubService', () => {
       head_branch: 'main',
       run_number: 15,
       workflow_id: 99,
-      status: 'completed',
-      conclusion: 'success',
+      status: 'in_progress',
+      conclusion: null,
       created_at: '2026-07-23T11:38:00Z',
       path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
     };
@@ -321,6 +409,8 @@ describe('ReleaseNoteGitHubService', () => {
               id: 30370000000,
               head_sha: '8'.repeat(40),
               run_number: 14,
+              status: 'completed',
+              conclusion: 'success',
               created_at: '2026-07-22T11:38:00Z'
             }
           ]
@@ -416,7 +506,9 @@ describe('ReleaseNoteGitHubService', () => {
           workflow_runs: [previousRun, ...excludedSameShaRuns]
         })
       )
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
       ...request,
@@ -453,7 +545,9 @@ describe('ReleaseNoteGitHubService', () => {
         })
       )
       .mockResolvedValueOnce(response({ workflow_runs: [] }))
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
       ...request,
@@ -486,7 +580,9 @@ describe('ReleaseNoteGitHubService', () => {
       .mockResolvedValueOnce(response(releaseBusRun))
       .mockResolvedValueOnce(response({ workflow_runs: [priorManual] }))
       .mockResolvedValueOnce(response({ workflow_runs: [priorReleaseBus] }))
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
       ...request,
@@ -509,7 +605,9 @@ describe('ReleaseNoteGitHubService', () => {
       .mockResolvedValueOnce(response(currentRun))
       .mockResolvedValueOnce(response({ workflow_runs: [] }))
       .mockResolvedValueOnce(response({ workflow_runs: [priorReleaseBus] }))
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext(
       request
@@ -546,6 +644,47 @@ describe('ReleaseNoteGitHubService', () => {
       })
     ).resolves.toBeNull();
   });
+
+  it.each(['behind', 'diverged', 'identical', undefined])(
+    'omits release notes when the production comparison status is %s',
+    async (status) => {
+      (fetch as unknown as jest.Mock)
+        .mockResolvedValueOnce(response(currentRun))
+        .mockResolvedValueOnce(
+          response({
+            workflow_runs: [
+              {
+                ...currentRun,
+                id: 122,
+                head_sha: 'previous-sha',
+                run_number: 44,
+                created_at: '2026-07-12T11:38:00Z'
+              }
+            ]
+          })
+        )
+        .mockResolvedValueOnce(response({ workflow_runs: [] }))
+        .mockResolvedValueOnce(
+          response({
+            commits: [{ sha: 'unsafe-commit' }],
+            total_commits: 1,
+            status
+          })
+        );
+
+      await expect(
+        new ReleaseNoteGitHubService().getReleaseContext(request)
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<NonForwardReleaseRangeError>>({
+          name: 'NonForwardReleaseRangeError',
+          previousSha: 'previous-sha',
+          currentSha: 'abc123',
+          comparisonStatus: status
+        })
+      );
+      expect(fetch).toHaveBeenCalledTimes(4);
+    }
+  );
 
   it('uses service-specific backend run names from the deploy workflow', async () => {
     (fetch as unknown as jest.Mock)
@@ -587,7 +726,8 @@ describe('ReleaseNoteGitHubService', () => {
               commit: { message: 'Update claims builder' }
             }
           ],
-          total_commits: 2
+          total_commits: 2,
+          status: 'ahead'
         })
       )
       .mockResolvedValueOnce(
@@ -729,7 +869,8 @@ describe('ReleaseNoteGitHubService', () => {
               commit: { message: 'Improve API validation' }
             }
           ],
-          total_commits: 1
+          total_commits: 1,
+          status: 'ahead'
         })
       )
       .mockResolvedValueOnce(
@@ -810,7 +951,8 @@ describe('ReleaseNoteGitHubService', () => {
                 commit: { message: 'Improve navigation' }
               }
             ],
-            total_commits: 2
+            total_commits: 2,
+            status: 'ahead'
           })
         );
       }
@@ -1023,7 +1165,9 @@ describe('ReleaseNoteGitHubService', () => {
           ]
         })
       )
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
       ...request,

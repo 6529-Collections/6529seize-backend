@@ -88,6 +88,20 @@ export interface GitHubReleaseContext {
   readonly pull_requests: ReleasePullRequestContext[];
 }
 
+export class NonForwardReleaseRangeError extends Error {
+  constructor(
+    readonly previousSha: string,
+    readonly currentSha: string,
+    readonly comparisonStatus: string | undefined
+  ) {
+    super(
+      `Previous production SHA ${previousSha} is not an ancestor of deployed SHA ${currentSha}; comparison status: ${comparisonStatus ?? 'missing'}`
+    );
+    this.name = 'NonForwardReleaseRangeError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 interface AggregatedPullRequest {
   readonly pullRequest: GitHubPullRequest;
   readonly commitMessages: Set<string>;
@@ -133,6 +147,13 @@ function isApprovedFrontendProductionWorkflow(
   return Object.prototype.hasOwnProperty.call(
     FRONTEND_PRODUCTION_WORKFLOWS,
     workflow
+  );
+}
+
+function isAcceptedFrontendCurrentRunState(run: GitHubWorkflowRun): boolean {
+  return (
+    (run.status === 'in_progress' && run.conclusion === null) ||
+    (run.status === 'completed' && run.conclusion === 'success')
   );
 }
 
@@ -487,10 +508,7 @@ export class ReleaseNoteGitHubService {
     if (
       String(currentRun.id) !== request.run_id ||
       currentRun.head_sha !== request.sha ||
-      !Number.isSafeInteger(currentRun.workflow_id) ||
-      (currentRun.head_branch !== undefined &&
-        currentRun.head_branch !== null &&
-        currentRun.head_branch !== branch)
+      !Number.isSafeInteger(currentRun.workflow_id)
     ) {
       throw new Error(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
@@ -499,25 +517,33 @@ export class ReleaseNoteGitHubService {
     if (repoName === FRONTEND_REPO) {
       if (!isApprovedFrontendProductionWorkflow(request.workflow)) {
         throw new Error(
-          `GitHub release run ${request.run_id} is not an approved successful frontend production workflow`
+          `GitHub release run ${request.run_id} is not an approved frontend production workflow run`
         );
       }
       const workflowFile = FRONTEND_PRODUCTION_WORKFLOWS[request.workflow];
-      const runWorkflowFile =
-        currentRun.path?.split('@')[0].split('/').at(-1) ?? null;
+      const expectedWorkflowPath = `.github/workflows/${workflowFile}`;
+      const runWorkflowPath = currentRun.path?.split('@')[0] ?? null;
       if (
         !workflowFile ||
         currentRun.name !== request.workflow ||
-        currentRun.status !== 'completed' ||
-        currentRun.conclusion !== 'success' ||
+        currentRun.head_branch !== branch ||
+        !isAcceptedFrontendCurrentRunState(currentRun) ||
         !currentRun.created_at ||
         Number.isNaN(Date.parse(currentRun.created_at)) ||
-        runWorkflowFile !== workflowFile
+        runWorkflowPath !== expectedWorkflowPath
       ) {
         throw new Error(
-          `GitHub release run ${request.run_id} is not an approved successful frontend production workflow`
+          `GitHub release run ${request.run_id} is not an approved frontend production workflow run`
         );
       }
+    } else if (
+      currentRun.head_branch !== undefined &&
+      currentRun.head_branch !== null &&
+      currentRun.head_branch !== branch
+    ) {
+      throw new Error(
+        `GitHub release run ${request.run_id} does not match the queued release metadata`
+      );
     }
     return currentRun;
   }
@@ -538,8 +564,7 @@ export class ReleaseNoteGitHubService {
       );
       const runs = payload.workflow_runs ?? [];
       for (const run of runs) {
-        const runWorkflowFile =
-          run.path?.split('@')[0].split('/').at(-1) ?? null;
+        const runWorkflowPath = run.path?.split('@')[0] ?? null;
         const createdAt = Date.parse(run.created_at ?? '');
         if (
           String(run.id) === request.run_id ||
@@ -547,10 +572,8 @@ export class ReleaseNoteGitHubService {
           run.name !== workflowName ||
           run.status !== 'completed' ||
           run.conclusion !== 'success' ||
-          (run.head_branch !== undefined &&
-            run.head_branch !== null &&
-            run.head_branch !== normalizeBranch(request.branch)) ||
-          runWorkflowFile !== workflowFile ||
+          run.head_branch !== normalizeBranch(request.branch) ||
+          runWorkflowPath !== `.github/workflows/${workflowFile}` ||
           !Number.isFinite(createdAt) ||
           createdAt >= currentCreatedAt
         )
@@ -647,6 +670,13 @@ export class ReleaseNoteGitHubService {
       const payload = await this.api<GitHubCompareResponse>(
         `/repos/${repository}/compare/${encodeURIComponent(previousSha)}...${encodeURIComponent(currentSha)}?per_page=${PAGE_SIZE}&page=${page}`
       );
+      if (payload.status !== 'ahead') {
+        throw new NonForwardReleaseRangeError(
+          previousSha,
+          currentSha,
+          payload.status
+        );
+      }
       const pageCommits = payload.commits ?? [];
       const totalCommits = payload.total_commits;
       if (typeof totalCommits === 'number' && totalCommits > MAX_COMMITS) {

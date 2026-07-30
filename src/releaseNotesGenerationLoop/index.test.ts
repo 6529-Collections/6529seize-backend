@@ -341,6 +341,31 @@ describe('processRequest', () => {
     );
   });
 
+  it('records a terminal skip for a non-forward release range', async () => {
+    const redis = buildRedis();
+
+    await processRequest(
+      {
+        ...request,
+        release_group_services: ['api'],
+        publish_release_note: true
+      },
+      {
+        redis: redis as any,
+        generateAndPost: jest.fn().mockResolvedValue('invalid-range')
+      }
+    );
+
+    expect(redis.set).toHaveBeenCalledWith(
+      'release-note:6529seize-backend:pr-1749',
+      '1',
+      { EX: 7776000 }
+    );
+    expect(redis.del).toHaveBeenCalledWith(
+      'release-note:6529seize-backend:pr-1749:processing'
+    );
+  });
+
   it('keeps the latest successful run for a service before publication', async () => {
     const runKey = 'release-note-group:6529seize-backend:pr-1749:run:api';
     const originalRun = JSON.stringify({

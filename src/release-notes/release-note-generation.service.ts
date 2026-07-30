@@ -16,6 +16,7 @@ import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
 import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
 import {
   GitHubReleaseContext,
+  NonForwardReleaseRangeError,
   releaseNoteGitHubService,
   ReleaseNoteGitHubService,
   ReleasePullRequestContext
@@ -54,6 +55,7 @@ const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
 export type ReleaseNoteGenerationOutcome =
   | 'published'
   | 'already-published'
+  | 'invalid-range'
   | 'no-baseline'
   | 'no-pull-requests';
 
@@ -304,7 +306,18 @@ export class ReleaseNoteGenerationService {
       );
       return 'already-published';
     }
-    const context = await this.githubService.getReleaseContext(request);
+    let context: GitHubReleaseContext | null;
+    try {
+      context = await this.githubService.getReleaseContext(request);
+    } catch (error) {
+      if (error instanceof NonForwardReleaseRangeError) {
+        this.logger.warn(
+          `Skipping release notes for ${request.repo} run ${request.run_id}; ${error.message}`
+        );
+        return 'invalid-range';
+      }
+      throw error;
+    }
     if (!context) {
       this.logger.info(
         `Skipping release notes for ${request.repo} run ${request.run_id}; no previous successful production run was found`
