@@ -95,7 +95,10 @@ export type ReleaseBusV2BaselineAdoptionResult = {
   readonly operation_id: string | null;
   readonly workflow_run_id: string | null;
   readonly status:
-    'WAITING_FOR_DEPLOYMENTS' | 'E2E_RUNNING' | 'STAGING_VALIDATED' | 'FAILED';
+    | 'WAITING_FOR_DEPLOYMENTS'
+    | 'E2E_RUNNING'
+    | 'STAGING_VALIDATED'
+    | 'FAILED';
   readonly reused: boolean;
 };
 
