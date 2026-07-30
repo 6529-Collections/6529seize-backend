@@ -618,11 +618,11 @@ function controlsAreSafe(
 function lockIsWhollyFree(lock: ReleaseBusV2LockRecord | undefined): boolean {
   return Boolean(
     lock &&
-    lock.owner_train_id === null &&
-    lock.lease_owner === null &&
-    lock.lease_token === null &&
-    lock.heartbeat_at === null &&
-    lock.expires_at === null
+      lock.owner_train_id === null &&
+      lock.lease_owner === null &&
+      lock.lease_token === null &&
+      lock.heartbeat_at === null &&
+      lock.expires_at === null
   );
 }
 
@@ -1153,12 +1153,7 @@ export class ReleaseBusV2BaselineAdoptionService {
 
   public async handleE2EProgress(trainId: string): Promise<void> {
     return this.failClosed(async () => {
-      const train = await this.repository.findTrain(
-        trainId,
-        {},
-        false,
-        true
-      );
+      const train = await this.repository.findTrain(trainId, {}, false, true);
       if (!train || train.staging_policy !== ADOPTION_POLICY) return;
       if (['STAGING_VALIDATED', 'FAILED', 'CANCELLED'].includes(train.status))
         return;

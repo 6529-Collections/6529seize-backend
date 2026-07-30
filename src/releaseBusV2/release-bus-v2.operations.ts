@@ -745,8 +745,7 @@ export class ReleaseBusV2Operations {
             spec.idempotencyKey,
             {},
             true
-          )) ??
-          operation
+          )) ?? operation
         );
       }
       await this.update(operation, {
@@ -760,11 +759,7 @@ export class ReleaseBusV2Operations {
         completedAt: null
       });
       operation =
-        (await this.repository.findOperation(
-          spec.idempotencyKey,
-          {},
-          true
-        )) ??
+        (await this.repository.findOperation(spec.idempotencyKey, {}, true)) ??
         operation;
     }
 
@@ -799,11 +794,7 @@ export class ReleaseBusV2Operations {
         {}
       );
       return (
-        (await this.repository.findOperation(
-          spec.idempotencyKey,
-          {},
-          true
-        )) ??
+        (await this.repository.findOperation(spec.idempotencyKey, {}, true)) ??
         operation
       );
     }
@@ -835,8 +826,7 @@ export class ReleaseBusV2Operations {
             spec.idempotencyKey,
             {},
             true
-          )) ??
-          operation
+          )) ?? operation
         );
       }
       if (!run && operation.status === 'PENDING') {
@@ -899,11 +889,7 @@ export class ReleaseBusV2Operations {
         result: transportRetryState(operation.result_json) ? null : undefined
       });
       operation =
-        (await this.repository.findOperation(
-          spec.idempotencyKey,
-          {},
-          true
-        )) ??
+        (await this.repository.findOperation(spec.idempotencyKey, {}, true)) ??
         operation;
     }
     if (run.status !== 'completed') return operation;
@@ -1170,8 +1156,7 @@ export class ReleaseBusV2Operations {
         operation.idempotency_key,
         {},
         true
-      )) ??
-      operation
+      )) ?? operation
     );
   }
 }
