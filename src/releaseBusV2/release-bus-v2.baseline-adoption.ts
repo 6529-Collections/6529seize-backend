@@ -21,6 +21,7 @@ import {
   type ReleaseBusV2ManifestRecord,
   type ReleaseBusV2Repository as ReleaseBusV2RepositoryClass
 } from '@/releaseBusV2/release-bus-v2.repository';
+import type { RequestContext } from '@/request.context';
 import type {
   ReleaseBusV2CandidateRecord,
   ReleaseBusV2OperationRecord,
@@ -38,6 +39,8 @@ const BACKEND_VERIFIED_EVENT = 'EXACT_STAGING_BASELINE_BACKEND_UNIT_VERIFIED';
 const DEFERRED_EVENT = 'EXACT_STAGING_BASELINE_AUTOMATIC_E2E_DEFERRED';
 const FROZEN_EVENT = 'EXACT_STAGING_BASELINE_MANIFEST_FROZEN';
 const ADOPTED_EVENT = 'EXACT_STAGING_BASELINE_ADOPTED';
+const UNDISPATCHED_OPERATION_CANCELLED_EVENT =
+  'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED';
 const INTENT_EVENT_TYPES = [
   PREPARED_EVENT,
   FAILED_EVENT,
@@ -331,6 +334,12 @@ function frozenEventId(intentId: string): string {
   return deterministicUuid(`baseline-adoption:${intentId}:frozen`);
 }
 
+function undispatchedOperationCancelledEventId(intentId: string): string {
+  return deterministicUuid(
+    `baseline-adoption:${intentId}:undispatched-operation-cancelled`
+  );
+}
+
 function frontendEvidenceEventId(intentId: string): string {
   return deterministicUuid(`baseline-adoption:${intentId}:frontend`);
 }
@@ -618,11 +627,11 @@ function controlsAreSafe(
 function lockIsWhollyFree(lock: ReleaseBusV2LockRecord | undefined): boolean {
   return Boolean(
     lock &&
-    lock.owner_train_id === null &&
-    lock.lease_owner === null &&
-    lock.lease_token === null &&
-    lock.heartbeat_at === null &&
-    lock.expires_at === null
+      lock.owner_train_id === null &&
+      lock.lease_owner === null &&
+      lock.lease_token === null &&
+      lock.heartbeat_at === null &&
+      lock.expires_at === null
   );
 }
 
@@ -810,7 +819,14 @@ export class ReleaseBusV2BaselineAdoptionService {
             'CONFLICT',
             'Baseline adoption idempotency key has a different immutable intent'
           );
-        if (
+        const failed = await this.repository.findEvent(
+          failureEventId(exact.intent_id),
+          {},
+          false,
+          true
+        );
+        if (failed) await this.recoverFailedUndispatchedOperation(exact, actor);
+        else if (
           exact.expires_at <= this.deps.now() &&
           !(await this.repository.findEvent(
             frozenEventId(exact.intent_id),
@@ -2270,10 +2286,120 @@ export class ReleaseBusV2BaselineAdoptionService {
             },
             ctx
           );
+          if (current)
+            await this.cancelExactUndispatchedOperation(
+              intent,
+              current,
+              message,
+              'release-bus-v2',
+              ctx
+            );
           return current?.id ?? null;
         }
       );
     if (failedTrainId) await this.releaseOwnedStagingLock(failedTrainId);
+  }
+
+  private async cancelExactUndispatchedOperation(
+    intent: PreparedIntent,
+    train: ReleaseBusV2TrainRecord,
+    message: string,
+    actor: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const operation = await this.repository.findOperation(
+      intent.operation_key,
+      ctx,
+      true
+    );
+    if (
+      !operation ||
+      operation.status !== 'PENDING' ||
+      operation.external_id !== null
+    )
+      return;
+    const manifest = train.manifest_id
+      ? await this.repository.findManifest(train.manifest_id, ctx, true)
+      : null;
+    if (
+      !manifest ||
+      !this.isExactBoundOperation(
+        train,
+        manifest,
+        operation,
+        intent.operation_key
+      )
+    )
+      throw new Error(
+        'Failed baseline-adoption operation identity is ambiguous'
+      );
+    const completedAt = this.deps.now();
+    if (
+      !(await this.repository.updateOperation(
+        operation.id,
+        operation.row_version,
+        {
+          status: 'CANCELLED',
+          failureClass: 'CONTROL_PLANE',
+          failureMessage: message,
+          completedAt
+        },
+        ctx
+      ))
+    )
+      throw new Error(
+        'Failed baseline-adoption operation changed concurrently'
+      );
+    await this.repository.appendEvent(
+      {
+        eventId: undispatchedOperationCancelledEventId(intent.intent_id),
+        trainId: train.id,
+        operationId: operation.id,
+        eventType: UNDISPATCHED_OPERATION_CANCELLED_EVENT,
+        actor,
+        payload: {
+          intent_id: intent.intent_id,
+          intent_identity_sha256: intent.intent_identity_sha256,
+          operation_id: operation.id,
+          operation_key: operation.idempotency_key,
+          previous_status: 'PENDING',
+          operation_status: 'CANCELLED',
+          dispatch_reservation_observed: false,
+          external_workflow_run_observed: false,
+          failure_message: message
+        }
+      },
+      ctx
+    );
+  }
+
+  private async recoverFailedUndispatchedOperation(
+    intent: PreparedIntent,
+    actor: string
+  ): Promise<void> {
+    await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctx = { connection };
+        const failed = await this.repository.findEvent(
+          failureEventId(intent.intent_id),
+          ctx,
+          true
+        );
+        const train = await this.repository.findTrain(
+          intent.intent_id,
+          ctx,
+          true
+        );
+        if (!failed || !train || train.status !== 'FAILED') return;
+        await this.cancelExactUndispatchedOperation(
+          intent,
+          train,
+          'Cancelled an exact undispatched E2E operation after its baseline-adoption train failed closed',
+          actor,
+          ctx
+        );
+      }
+    );
   }
 
   private async releaseOwnedStagingLock(trainId: string): Promise<void> {
