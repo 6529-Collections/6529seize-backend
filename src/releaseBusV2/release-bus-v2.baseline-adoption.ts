@@ -95,10 +95,7 @@ export type ReleaseBusV2BaselineAdoptionResult = {
   readonly operation_id: string | null;
   readonly workflow_run_id: string | null;
   readonly status:
-    | 'WAITING_FOR_DEPLOYMENTS'
-    | 'E2E_RUNNING'
-    | 'STAGING_VALIDATED'
-    | 'FAILED';
+    'WAITING_FOR_DEPLOYMENTS' | 'E2E_RUNNING' | 'STAGING_VALIDATED' | 'FAILED';
   readonly reused: boolean;
 };
 
@@ -316,6 +313,10 @@ function exactSha(value: unknown, description: string): string {
 
 function operationKey(intentId: string): string {
   return `rb2:${intentId}:baseline-adoption-e2e:staging`;
+}
+
+function legacyOperationKey(intentId: string): string {
+  return `${operationKey(intentId)}:a1`;
 }
 
 function failureEventId(intentId: string): string {
@@ -672,7 +673,10 @@ function exactPreparedIntent(
       !payload ||
       payload.contract !== 'release-bus-v2-baseline-adoption-intent-v1' ||
       !UUID_V4_PATTERN.test(payload.intent_id) ||
-      payload.operation_key !== operationKey(payload.intent_id) ||
+      ![
+        operationKey(payload.intent_id),
+        legacyOperationKey(payload.intent_id)
+      ].includes(payload.operation_key) ||
       !SHA256_PATTERN.test(payload.intent_identity_sha256)
     )
       return null;
@@ -1728,7 +1732,7 @@ export class ReleaseBusV2BaselineAdoptionService {
         const updated = await this.repository.findTrain(train.id, ctx, true);
         if (!updated)
           throw new Error('Frozen baseline-adoption train is unavailable');
-        const spec = this.workflowSpec(updated, manifest);
+        const spec = this.workflowSpec(updated, manifest, intent.operation_key);
         await this.repository.getOrCreateOperation(
           {
             idempotencyKey: spec.idempotencyKey,
@@ -1774,7 +1778,8 @@ export class ReleaseBusV2BaselineAdoptionService {
 
   private workflowSpec(
     train: ReleaseBusV2TrainRecord,
-    manifest: ReleaseBusV2ManifestRecord
+    manifest: ReleaseBusV2ManifestRecord,
+    idempotencyKey: string
   ): ReleaseBusV2WorkflowSpec {
     const frontendSha = train.frontend_composed_sha;
     const backendSha = train.backend_composed_sha;
@@ -1784,11 +1789,14 @@ export class ReleaseBusV2BaselineAdoptionService {
       !backendSha ||
       !SHA_PATTERN.test(frontendSha) ||
       !SHA_PATTERN.test(backendSha) ||
-      !SHA256_PATTERN.test(manifest.identity_sha256)
+      !SHA256_PATTERN.test(manifest.identity_sha256) ||
+      ![operationKey(train.id), legacyOperationKey(train.id)].includes(
+        idempotencyKey
+      )
     )
       throw new Error('Baseline-adoption E2E identity is incomplete');
     return {
-      idempotencyKey: operationKey(train.id),
+      idempotencyKey,
       trainId: train.id,
       operationType: 'E2E_STAGING',
       repository: 'frontend',
@@ -1819,10 +1827,11 @@ export class ReleaseBusV2BaselineAdoptionService {
   private isExactBoundOperation(
     train: ReleaseBusV2TrainRecord,
     manifest: ReleaseBusV2ManifestRecord,
-    operation: ReleaseBusV2OperationRecord
+    operation: ReleaseBusV2OperationRecord,
+    idempotencyKey: string
   ): boolean {
     try {
-      const spec = this.workflowSpec(train, manifest);
+      const spec = this.workflowSpec(train, manifest, idempotencyKey);
       const request = parseStoredJson<unknown>(operation.request_json);
       return (
         operation.idempotency_key === spec.idempotencyKey &&
@@ -1861,7 +1870,7 @@ export class ReleaseBusV2BaselineAdoptionService {
         'Frozen baseline-adoption manifest is unavailable'
       );
     const reconciled = await this.operations.reconcileWorkflow(
-      this.workflowSpec(train, manifest)
+      this.workflowSpec(train, manifest, intent.operation_key)
     );
     if (['FAILED', 'CANCELLED'].includes(reconciled.status)) {
       await this.failIntent(
@@ -1961,7 +1970,14 @@ export class ReleaseBusV2BaselineAdoptionService {
     const body = this.exactManifestBody(intent, train, manifest);
     if (!body)
       throw new Error('Immutable baseline-adoption manifest is malformed');
-    if (!this.isExactBoundOperation(train, manifest, operation))
+    if (
+      !this.isExactBoundOperation(
+        train,
+        manifest,
+        operation,
+        intent.operation_key
+      )
+    )
       throw new Error('Manifest-bound E2E operation identity is malformed');
     const [refs, runtimes, controls, otherActive, nonterminal, activeWorkflow] =
       await Promise.all([
@@ -2034,7 +2050,12 @@ export class ReleaseBusV2BaselineAdoptionService {
         const exactE2e = lockedOperations.filter(
           (item) =>
             item.id === operation.id &&
-            this.isExactBoundOperation(lockedTrain ?? train, manifest, item) &&
+            this.isExactBoundOperation(
+              lockedTrain ?? train,
+              manifest,
+              item,
+              intent.operation_key
+            ) &&
             item.status === 'SUCCEEDED' &&
             item.external_id === operation.external_id &&
             item.artifact_digest === manifest.identity_sha256
