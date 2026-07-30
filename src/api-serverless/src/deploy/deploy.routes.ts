@@ -1339,7 +1339,13 @@ deployRoutes.post('/release-bus-v2/report-progress', async (req, res) => {
   await requireV2TrainAutomationAllowed(body.train_id);
   try {
     const result = await releaseBusV2Operations.reportProgress(body);
-    await releaseBusV2BaselineAdoptionService.handleE2EProgress(body.train_id);
+    if (
+      body.operation_key ===
+      `rb2:${body.train_id}:baseline-adoption-e2e:staging:a1`
+    )
+      await releaseBusV2BaselineAdoptionService.handleE2EProgress(
+        body.train_id
+      );
     setNoStoreHeaders(res);
     return res.json(result);
   } catch (error) {

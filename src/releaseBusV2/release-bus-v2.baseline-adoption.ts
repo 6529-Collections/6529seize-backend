@@ -47,7 +47,6 @@ const INTENT_MIN_TTL_MS = 5 * 60 * 1000;
 const INTENT_MAX_TTL_MS = 2 * 60 * 60 * 1000;
 const ADOPTION_STAGING_LOCK_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_CANDIDATES = 500;
-const MAX_BACKEND_UNITS = 100;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_V4_PATTERN =
@@ -312,7 +311,7 @@ function exactSha(value: unknown, description: string): string {
 }
 
 function operationKey(intentId: string): string {
-  return `rb2:${intentId}:e2e:staging`;
+  return `rb2:${intentId}:baseline-adoption-e2e:staging:a1`;
 }
 
 function failureEventId(intentId: string): string {
@@ -504,15 +503,12 @@ function normalizedInput(
       'Baseline adoption supports only exact 1a-staging refs'
     );
   if (
-    requiredBackendUnits.length < 1 ||
-    requiredBackendUnits.length > MAX_BACKEND_UNITS ||
-    requiredBackendUnits.some(({ service }) => !UNIT_PATTERN.test(service)) ||
-    new Set(requiredBackendUnits.map(({ service }) => service)).size !==
-      requiredBackendUnits.length
+    requiredBackendUnits.length !== 1 ||
+    requiredBackendUnits[0]?.service !== 'api'
   )
     throw new ReleaseBusV2BaselineAdoptionError(
       'BAD_REQUEST',
-      'Required backend deployment units are empty, duplicated, or malformed'
+      'Baseline adoption requires exactly the runtime-verifiable API backend unit'
     );
   const frontendSha = exactSha(
     input.expected_frontend_sha,
@@ -1272,12 +1268,14 @@ export class ReleaseBusV2BaselineAdoptionService {
     const events = await this.repository.listEventsByTypes(
       INTENT_EVENT_TYPES,
       2000,
-      {}
+      {},
+      false,
+      this.deps.now() - INTENT_MAX_TTL_MS
     );
     if (events.length >= 2000)
       throw new ReleaseBusV2BaselineAdoptionError(
         'UNAVAILABLE',
-        'Baseline-adoption lifecycle history exceeded its fail-closed scan bound'
+        'Baseline-adoption lifecycle activity exceeded its fail-closed two-hour scan bound'
       );
     const prepared = events
       .filter(({ event_type }) => event_type === PREPARED_EVENT)

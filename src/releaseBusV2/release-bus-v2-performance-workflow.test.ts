@@ -194,6 +194,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
           steps: Array<{
             name?: string;
             if?: string;
+            'continue-on-error'?: boolean;
             env?: Record<string, string>;
             run?: string;
           }>;
@@ -208,6 +209,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(callbacks).toHaveLength(1);
     expect(callbacks[0]).toMatchObject({
       if: "always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'staging'",
+      'continue-on-error': true,
       env: {
         RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
         RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
@@ -232,6 +234,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(generator).toContain(
       "always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'staging'"
     );
+    expect(generator).toContain('continue-on-error: true');
     expect(generator).toContain(
       '/adopt-exact-staging-baseline/backend-deployment-event'
     );

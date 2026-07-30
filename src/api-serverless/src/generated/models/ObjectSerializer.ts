@@ -964,7 +964,7 @@ import { ApiRedeemConnectionShareResponse    , ApiRedeemConnectionShareResponseC
 import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
-import { ApiReleaseBusV2BaselineAdoptionBackendUnit } from '../models/ApiReleaseBusV2BaselineAdoptionBackendUnit';
+import { ApiReleaseBusV2BaselineAdoptionBackendUnit, ApiReleaseBusV2BaselineAdoptionBackendUnitServiceEnum    } from '../models/ApiReleaseBusV2BaselineAdoptionBackendUnit';
 import { ApiReleaseBusV2BaselineAdoptionCandidate , ApiReleaseBusV2BaselineAdoptionCandidateRepositoryEnum      } from '../models/ApiReleaseBusV2BaselineAdoptionCandidate';
 import { ApiReleaseBusV2BaselineAdoptionRequest    , ApiReleaseBusV2BaselineAdoptionRequestExpectedFrontendRefEnum    , ApiReleaseBusV2BaselineAdoptionRequestExpectedBackendRefEnum       } from '../models/ApiReleaseBusV2BaselineAdoptionRequest';
 import { ApiReleaseBusV2BaselineAdoptionResponse        , ApiReleaseBusV2BaselineAdoptionResponseStatusEnum    } from '../models/ApiReleaseBusV2BaselineAdoptionResponse';
@@ -1319,6 +1319,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiRateMatter",
     "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
     "ApiRedeemConnectionShareResponseClientTypeEnum",
+    "ApiReleaseBusV2BaselineAdoptionBackendUnitServiceEnum",
     "ApiReleaseBusV2BaselineAdoptionCandidateRepositoryEnum",
     "ApiReleaseBusV2BaselineAdoptionRequestExpectedFrontendRefEnum",
     "ApiReleaseBusV2BaselineAdoptionRequestExpectedBackendRefEnum",

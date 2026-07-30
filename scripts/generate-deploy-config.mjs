@@ -1298,6 +1298,7 @@ jobs:
             "$RELEASE_BUS_API_URL/deploy/release-bus-v2/report-progress"
       - name: Record pending baseline-adoption backend deployment
         if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'staging'
+        continue-on-error: true
         shell: bash
         env:
           RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}

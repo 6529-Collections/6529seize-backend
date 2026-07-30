@@ -237,9 +237,19 @@ class FakeRepository {
     this.events.find((item) => item.id === id)
   );
   public listEventsByTypes = jest.fn(
-    async (eventTypes: readonly string[], limit: number) =>
+    async (
+      eventTypes: readonly string[],
+      limit: number,
+      _ctx: unknown,
+      _forUpdate: boolean,
+      createdAtGte?: number
+    ) =>
       this.events
-        .filter(({ event_type }) => eventTypes.includes(event_type))
+        .filter(
+          ({ event_type, created_at }) =>
+            eventTypes.includes(event_type) &&
+            (createdAtGte === undefined || created_at >= createdAtGte)
+        )
         .slice(0, limit)
   );
   public appendEvent = jest.fn(async (event: any) => {
@@ -619,6 +629,23 @@ function succeedBoundE2E(context: Harness) {
 }
 
 describe('ReleaseBusV2BaselineAdoptionService', () => {
+  it('accepts only the API unit whose deployed commit has an independent runtime proof', async () => {
+    const context = harness();
+    await expect(
+      context.service.execute(
+        {
+          ...input(),
+          required_backend_units: [
+            { service: 'releaseBus', expected_sha: BACKEND_SHA }
+          ]
+        },
+        'owner'
+      )
+    ).rejects.toBeInstanceOf(ReleaseBusV2BaselineAdoptionError);
+    expect(context.repository.events).toHaveLength(0);
+    expect(context.repository.trains).toHaveLength(0);
+  });
+
   it('prepares only an immutable expiring intent without a synthetic train, lock, operation, or state change', async () => {
     const context = harness();
     const result = await prepare(context);
@@ -808,6 +835,25 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     await expect(
       context.service.decideAutomaticE2E(automaticInput())
     ).rejects.toBeInstanceOf(ReleaseBusV2BaselineAdoptionError);
+    expect(context.repository.state.row_version).toBe(23);
+    expect(context.repository.trains).toHaveLength(0);
+  });
+
+  it('ignores immutable terminal lifecycle history older than any valid intent', async () => {
+    const context = harness();
+    context.repository.events = Array.from({ length: 2000 }, (_, index) => ({
+      id: `old-event-${index}`,
+      train_id: null,
+      candidate_id: null,
+      operation_id: null,
+      event_type: 'EXACT_STAGING_BASELINE_ADOPTION_FAILED',
+      actor: 'release-bus-v2',
+      payload_json: {},
+      created_at: NOW - 2 * 60 * 60 * 1000 - index - 1
+    }));
+    await expect(
+      context.service.decideAutomaticE2E(automaticInput())
+    ).resolves.toMatchObject({ decision: 'LEGACY' });
     expect(context.repository.state.row_version).toBe(23);
     expect(context.repository.trains).toHaveLength(0);
   });

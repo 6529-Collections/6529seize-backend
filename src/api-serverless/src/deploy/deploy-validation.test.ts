@@ -105,6 +105,12 @@ describe('Release Bus v2 validation', () => {
           { service: 'not-a-service', expected_sha: 'b'.repeat(40) }
         ]
       },
+      {
+        ...exact,
+        required_backend_units: [
+          { service: 'releaseBus', expected_sha: 'b'.repeat(40) }
+        ]
+      },
       { ...exact, candidates: [null] },
       {
         ...exact,

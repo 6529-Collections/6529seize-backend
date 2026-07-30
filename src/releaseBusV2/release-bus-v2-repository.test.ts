@@ -178,7 +178,8 @@ describe('ReleaseBusV2Repository', () => {
       ],
       10_000,
       {},
-      true
+      true,
+      1234
     );
 
     expect(db.calls[0]).toMatchObject({
@@ -191,11 +192,13 @@ describe('ReleaseBusV2Repository', () => {
     });
     expect(db.calls[0].sql).toContain('on duplicate key update id = id');
     expect(db.calls[1].sql).toContain('where id = :id for update');
+    expect(db.calls[2].sql).toContain('created_at >= :createdAtGte');
     expect(db.calls[2].sql).toContain('limit 2000 for update');
     expect(db.calls[2].params?.eventTypes).toEqual([
       'EXACT_STAGING_BASELINE_ADOPTION_INTENT_PREPARED',
       'EXACT_STAGING_BASELINE_ADOPTION_FAILED'
     ]);
+    expect(db.calls[2].params?.createdAtGte).toBe(1234);
   });
 
   it('uses an exact caller-owned train identity for one-shot adoption', async () => {

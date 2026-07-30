@@ -13,7 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export class ApiReleaseBusV2BaselineAdoptionBackendUnit {
-    'service': string;
+    'service': ApiReleaseBusV2BaselineAdoptionBackendUnitServiceEnum;
     'expected_sha': string;
 
     static readonly discriminator: string | undefined = undefined;
@@ -24,7 +24,7 @@ export class ApiReleaseBusV2BaselineAdoptionBackendUnit {
         {
             "name": "service",
             "baseName": "service",
-            "type": "string",
+            "type": "ApiReleaseBusV2BaselineAdoptionBackendUnitServiceEnum",
             "format": ""
         },
         {
@@ -41,3 +41,8 @@ export class ApiReleaseBusV2BaselineAdoptionBackendUnit {
     public constructor() {
     }
 }
+
+export enum ApiReleaseBusV2BaselineAdoptionBackendUnitServiceEnum {
+    Api = 'api'
+}
+

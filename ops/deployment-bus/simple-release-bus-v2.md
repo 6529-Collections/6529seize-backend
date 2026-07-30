@@ -209,21 +209,26 @@ drained.
 Before moving either staging ref or dispatching either manual deployment, the
 operator prepares an immutable, expiring intent. The request supplies a UUID v4
 idempotency key, expiry, exact authoritative staging-state row version, target
-frontend/backend `1a-staging` refs and SHAs, target runtime SHAs, every required
+frontend/backend `1a-staging` refs and SHAs, target runtime SHAs, the required
 backend deployment unit/SHA, and an explicit zero-or-known candidate inventory
-with row versions. Preparation verifies OFF/changeable controls, a drained and
-unlocked staging environment, exact authoritative state and candidate
-identity/membership, then writes only the audited intent event. Target refs and
-runtimes are expected to move later during the frozen deployments, so
-preparation creates no train, manifest, operation, lease, ref mutation, or
-deployment.
+with row versions. The one-shot contract currently permits exactly the `api`
+unit because its deployed commit is independently runtime-verifiable; a
+non-API unit cannot be accepted on workflow success alone. Preparation verifies
+OFF/changeable controls, a drained and unlocked staging environment, exact
+authoritative state and candidate identity/membership, then writes only the
+audited intent event. Target refs and runtimes are expected to move later
+during the frozen deployments, so preparation creates no train, manifest,
+operation, lease, ref mutation, or deployment.
 
 Every ordinary manual staging backend deployment sends one authenticated
 terminal callback. A successful callback advances only the unique unexpired
 intent whose backend ref, SHA, unit, GitHub run, attempt and runtime are exact.
 A failed, stale, moved, duplicate-different, or ambiguous callback fails that
 intent closed. With no matching intent, the ordinary manual workflow receives
-`NO_MATCH` and retains its existing behavior.
+`NO_MATCH` and retains its existing behavior. The additive callback step is
+non-blocking for the ordinary manual deploy job: an unavailable callback stays
+visible as a failed step, records no evidence, and therefore prevents the
+adoption from freezing without converting an unrelated deploy into a failure.
 
 The normal frontend `Web Deploy - STAGING` success still triggers
 `staging-e2e.yml` through `workflow_run`. Its trusted decision job performs one
@@ -249,6 +254,10 @@ queues behind the short automatic decision run. There is no polling runner,
 second expensive E2E, synthetic proof train, cancellation, bypass, new shared
 lease protocol, or manual-workflow guard.
 
+The bound operation uses the exact existing attempt identity
+`rb2:<adoption-id>:baseline-adoption-e2e:staging:a1`; ordinary E2E operation
+keys cannot enter its terminal adoption handler.
+
 Only one exact successful E2E operation, unchanged refs and runtimes, unchanged
 staging state/candidate row versions, unchanged OFF controls, and retained
 staging-lock ownership permit the final transaction. That transaction changes
@@ -262,6 +271,11 @@ or callback returns the same immutable attempt and cannot dispatch a second
 bound run; a failed attempt is never automatically replaced. This capability
 must be deployed while lanes are OFF, but must not be invoked until the owner
 separately authorizes and holds the brief manual freeze.
+
+Lifecycle discovery considers only the maximum two-hour intent-validity
+window. Older immutable terminal audit events remain stored but cannot hide or
+brick a currently valid intent; saturation inside that live window still fails
+closed.
 
 ## Production lifecycle
 

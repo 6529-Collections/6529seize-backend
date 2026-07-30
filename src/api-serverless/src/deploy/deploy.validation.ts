@@ -299,9 +299,7 @@ const ReleaseBusV2BaselineAdoptionCandidateSchema = Joi.object({
 }).unknown(false);
 
 const ReleaseBusV2BaselineAdoptionBackendUnitSchema = Joi.object({
-  service: Joi.string()
-    .valid(...DEPLOY_SERVICES)
-    .required(),
+  service: Joi.string().valid('api').required(),
   expected_sha: ReleaseShaSchema.required()
 }).unknown(false);
 
@@ -324,8 +322,7 @@ export const ReleaseBusV2BaselineAdoptionBodySchema = Joi.object({
   expected_backend_runtime_sha: ReleaseShaSchema.required(),
   required_backend_units: Joi.array()
     .items(ReleaseBusV2BaselineAdoptionBackendUnitSchema)
-    .min(1)
-    .max(100)
+    .length(1)
     .unique('service')
     .required(),
   candidates: Joi.array()
@@ -528,6 +525,26 @@ function hasExactManifestE2EOperationKey(
   );
 }
 
+function hasExactBaselineAdoptionE2EOperationKey(
+  value: Readonly<Record<string, unknown>>
+): boolean {
+  if (
+    typeof value.operation_key !== 'string' ||
+    typeof value.train_id !== 'string' ||
+    value.environment !== 'staging'
+  )
+    return false;
+  const segments = value.operation_key.split(':');
+  return (
+    segments.length === 5 &&
+    segments[0] === 'rb2' &&
+    segments[1] === value.train_id &&
+    segments[2] === 'baseline-adoption-e2e' &&
+    segments[3] === 'staging' &&
+    /^a[1-9]\d{0,8}$/.test(segments[4])
+  );
+}
+
 function hasExactStagingRefOperationKey(
   value: Readonly<Record<string, unknown>>
 ): boolean {
@@ -631,7 +648,10 @@ export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
       !hasEmptyReuseEvidenceIdentity(value)
     )
       return helpers.error('any.invalid');
-    if (hasExactManifestE2EOperationKey(value)) {
+    if (
+      hasExactManifestE2EOperationKey(value) ||
+      hasExactBaselineAdoptionE2EOperationKey(value)
+    ) {
       return value.repository === 'frontend' &&
         value.service === null &&
         value.artifact_run_id === null &&

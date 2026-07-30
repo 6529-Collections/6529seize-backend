@@ -718,7 +718,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       adoption_id: TRAIN_ID,
       manifest_id: RESET_ID,
       manifest_identity_sha256: 'd'.repeat(64),
-      operation_key: `rb2:${TRAIN_ID}:e2e:staging`,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
       operation_id: candidateId,
       workflow_run_id: null,
       status: 'E2E_RUNNING',
@@ -727,14 +727,14 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     mockBaselineAdoptionAutomaticDecision.mockResolvedValue({
       decision: 'DEFERRED',
       adoption_id: TRAIN_ID,
-      operation_key: `rb2:${TRAIN_ID}:e2e:staging`,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
       expires_at: Date.now() + 30 * 60 * 1000,
       manifest_ready: false
     });
     mockBaselineAdoptionBackendEvent.mockResolvedValue({
       outcome: 'RECORDED',
       adoption_id: TRAIN_ID,
-      operation_key: `rb2:${TRAIN_ID}:e2e:staging`
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`
     });
     mockBaselineAdoptionHandleE2EProgress.mockResolvedValue(undefined);
   });
@@ -1290,7 +1290,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     });
     const body = {
       train_id: TRAIN_ID,
-      operation_key: `rb2:${TRAIN_ID}:e2e:staging:a1`,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
       workflow_run_id: '12345',
       artifact_run_id: null,
       repository: 'frontend',
@@ -1315,7 +1315,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     });
     const body = {
       train_id: TRAIN_ID,
-      operation_key: `rb2:${TRAIN_ID}:e2e:staging:a1`,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
       workflow_run_id: BOUND_E2E_RUN_ID,
       phase: 'staging-e2e',
       status: 'SUCCEEDED'
@@ -1333,6 +1333,33 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     expect(mockV2ReportProgress.mock.invocationCallOrder[0]).toBeLessThan(
       mockBaselineAdoptionHandleE2EProgress.mock.invocationCallOrder[0]
     );
+  });
+
+  it('does not invoke adoption handling for an ordinary OFF-mode train progress callback', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    mockV2IsBetaTrainAllowed.mockResolvedValue(true);
+    mockV2FindTrain.mockResolvedValue({
+      id: TRAIN_ID,
+      staging_policy: 'CUMULATIVE'
+    });
+    mockBaselineAdoptionHandleE2EProgress.mockRejectedValue(
+      new Error('adoption subsystem unavailable')
+    );
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:e2e:staging:a1`,
+      workflow_run_id: BOUND_E2E_RUN_ID,
+      phase: 'staging-e2e',
+      status: 'SUCCEEDED'
+    };
+
+    const response = await post('/deploy/release-bus-v2/report-progress', body);
+
+    expect(response.status).toBe(200);
+    expect(mockV2ReportProgress).toHaveBeenCalledWith(
+      expect.objectContaining(body)
+    );
+    expect(mockBaselineAdoptionHandleE2EProgress).not.toHaveBeenCalled();
   });
 
   it('accepts only a complete strict-single evidence identity for orchestration', async () => {

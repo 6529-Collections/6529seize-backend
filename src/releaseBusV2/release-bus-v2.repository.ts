@@ -2144,19 +2144,29 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     eventTypes: readonly string[],
     limit: number,
     ctx: RequestContext,
-    forUpdate = false
+    forUpdate = false,
+    createdAtGte?: number
   ): Promise<ReleaseBusV2EventRecord[]> {
     const uniqueTypes = Array.from(new Set(eventTypes));
     if (uniqueTypes.length === 0 || uniqueTypes.length > 20)
       throw new Error('Invalid Release Bus v2 event type filter');
+    if (
+      createdAtGte !== undefined &&
+      (!Number.isSafeInteger(createdAtGte) || createdAtGte < 0)
+    )
+      throw new Error('Invalid Release Bus v2 event lower time bound');
     const boundedLimit = Math.max(1, Math.min(limit, 2000));
     return this.db.execute<ReleaseBusV2EventRecord>(
       `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
        where event_type in (:eventTypes)
+       ${createdAtGte === undefined ? '' : 'and created_at >= :createdAtGte'}
        order by created_at desc, id desc limit ${boundedLimit}${
          forUpdate ? ' for update' : ''
        }`,
-      { eventTypes: uniqueTypes },
+      {
+        eventTypes: uniqueTypes,
+        ...(createdAtGte === undefined ? {} : { createdAtGte })
+      },
       dbOptions(ctx)
     );
   }
