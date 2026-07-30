@@ -264,10 +264,17 @@ describe('whole-repository candidate evidence modes', () => {
     ).toThrow('no complete exact PR CI policy evidence');
   });
 
-  it('requires fresh evidence only from NEW candidates in a cumulative staging train', () => {
-    const fresh = candidate('fresh', 'frontend', null);
-    const carried = {
-      ...candidate('carried', 'frontend', null),
+  it('requires fresh evidence only from NEW frontend and backend candidates in cumulative staging', () => {
+    const freshFrontend = candidate('fresh-frontend', 'frontend', null);
+    const freshBackend = candidate('fresh-backend', 'backend', null);
+    const carriedFrontend = {
+      ...candidate('carried-frontend', 'frontend', null),
+      pr_evidence_json: null,
+      status: 'PRODUCTION_DEPLOYED' as const,
+      current_train_id: null
+    };
+    const carriedBackend = {
+      ...candidate('carried-backend', 'backend', null),
       pr_evidence_json: null,
       status: 'PRODUCTION_DEPLOYED' as const,
       current_train_id: null
@@ -277,40 +284,88 @@ describe('whole-repository candidate evidence modes', () => {
       staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
       staging_baseline_manifest_id: 'baseline-manifest'
     });
-    const selected = candidateEvidenceCandidates(
-      {
-        train: cumulative,
-        memberships: [
-          {
-            id: 'membership-fresh',
-            train_id: cumulative.id,
-            candidate_id: fresh.id,
-            sequence: 1,
-            disposition: 'INCLUDED',
-            candidate_role: 'NEW',
-            created_at: 1
-          },
-          {
-            id: 'membership-carried',
-            train_id: cumulative.id,
-            candidate_id: carried.id,
-            sequence: 2,
-            disposition: 'INCLUDED',
-            candidate_role: 'CARRY_FORWARD',
-            created_at: 1
-          }
-        ],
-        candidates: [fresh, carried],
-        dependencies: []
-      },
-      'frontend'
-    );
+    const context = {
+      train: cumulative,
+      memberships: [
+        {
+          id: 'membership-fresh-frontend',
+          train_id: cumulative.id,
+          candidate_id: freshFrontend.id,
+          sequence: 1,
+          disposition: 'INCLUDED' as const,
+          candidate_role: 'NEW' as const,
+          created_at: 1
+        },
+        {
+          id: 'membership-fresh-backend',
+          train_id: cumulative.id,
+          candidate_id: freshBackend.id,
+          sequence: 2,
+          disposition: 'INCLUDED' as const,
+          candidate_role: 'NEW' as const,
+          created_at: 1
+        },
+        {
+          id: 'membership-carried-frontend',
+          train_id: cumulative.id,
+          candidate_id: carriedFrontend.id,
+          sequence: 3,
+          disposition: 'INCLUDED' as const,
+          candidate_role: 'CARRY_FORWARD' as const,
+          created_at: 1
+        },
+        {
+          id: 'membership-carried-backend',
+          train_id: cumulative.id,
+          candidate_id: carriedBackend.id,
+          sequence: 4,
+          disposition: 'INCLUDED' as const,
+          candidate_role: 'CARRY_FORWARD' as const,
+          created_at: 1
+        }
+      ],
+      candidates: [
+        freshFrontend,
+        freshBackend,
+        carriedFrontend,
+        carriedBackend
+      ],
+      dependencies: []
+    };
 
-    expect(selected).toEqual([fresh]);
-    expect(candidateEvidenceSelection(selected, null)).toMatchObject({
-      mode: 'strict-aggregate',
-      aggregateDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
-    });
+    for (const [repository, fresh] of [
+      ['frontend', freshFrontend],
+      ['backend', freshBackend]
+    ] as const) {
+      const selected = candidateEvidenceCandidates(context, repository);
+      expect(selected).toEqual([fresh]);
+      expect(candidateEvidenceSelection(selected, null)).toMatchObject({
+        mode: 'strict-aggregate',
+        aggregateDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+      });
+    }
+
+    const productionContext = {
+      ...context,
+      train: {
+        ...cumulative,
+        lane: 'PRODUCTION' as const
+      },
+      memberships: context.memberships.map((membership) => ({
+        ...membership,
+        train_id: cumulative.id
+      }))
+    };
+    expect(candidateEvidenceCandidates(productionContext, 'frontend')).toEqual([
+      freshFrontend,
+      carriedFrontend
+    ]);
+    expect(() =>
+      candidateEvidenceSelection(
+        candidateEvidenceCandidates(productionContext, 'frontend'),
+        null
+      )
+    ).toThrow('frontend#20 has no complete exact PR CI policy evidence');
   });
 });
 
