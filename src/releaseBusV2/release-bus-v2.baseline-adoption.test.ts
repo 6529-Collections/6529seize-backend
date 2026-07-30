@@ -431,6 +431,29 @@ class FakeRepository {
     return operation;
   });
 
+  public updateOperation = jest.fn(
+    async (id: string, rowVersion: number, fields: any) => {
+      const operation = this.operations.find((item) => item.id === id);
+      if (!operation || operation.row_version !== rowVersion) return false;
+      Object.assign(operation, {
+        status: fields.status,
+        external_id:
+          fields.externalId === undefined
+            ? operation.external_id
+            : fields.externalId,
+        result_json:
+          fields.result === undefined ? operation.result_json : fields.result,
+        next_retry_at: fields.nextRetryAt ?? null,
+        failure_class: fields.failureClass ?? null,
+        failure_message: fields.failureMessage ?? null,
+        attempt: fields.attempt ?? operation.attempt,
+        completed_at: fields.completedAt ?? null,
+        row_version: operation.row_version + 1
+      });
+      return true;
+    }
+  );
+
   public updateStagingState = jest.fn(
     async (rowVersion: number, fields: any) => {
       if (this.state.row_version !== rowVersion) return false;
@@ -1272,6 +1295,161 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     await ambiguous.service.handleE2EProgress(INTENT_ID);
     expect(ambiguous.repository.state.row_version).toBe(23);
     expect(ambiguous.repository.trains[0].status).toBe('FAILED');
+  });
+
+  it('terminalizes an exact E2E operation that failed before dispatch reservation', async () => {
+    const context = harness();
+    await prepare(context);
+    await freeze(context);
+    Object.assign(context.repository.operations[0], {
+      status: 'PENDING',
+      external_id: null
+    });
+    context.repository.operations.push({
+      ...structuredClone(context.repository.operations[0]),
+      id: '60000000-0000-4000-8000-000000000007',
+      idempotency_key: `rb2:${INTENT_ID}:e2e:staging:duplicate`,
+      status: 'SUCCEEDED'
+    });
+
+    await context.service.handleE2EProgress(INTENT_ID);
+
+    expect(context.repository.operations[0]).toMatchObject({
+      status: 'CANCELLED',
+      external_id: null,
+      failure_class: 'CONTROL_PLANE'
+    });
+    expect(context.repository.events).toContainEqual(
+      expect.objectContaining({
+        train_id: INTENT_ID,
+        event_type: 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED',
+        actor: 'release-bus-v2',
+        payload_json: expect.objectContaining({
+          previous_status: 'PENDING',
+          operation_status: 'CANCELLED',
+          dispatch_reservation_observed: false,
+          external_workflow_run_observed: false
+        })
+      })
+    );
+  });
+
+  it('repairs a previously failed intent whose exact E2E operation was left pending', async () => {
+    const context = harness();
+    await prepare(context);
+    await freeze(context);
+    Object.assign(context.repository.operations[0], {
+      status: 'PENDING',
+      external_id: null
+    });
+    context.repository.operations.push({
+      ...structuredClone(context.repository.operations[0]),
+      id: '60000000-0000-4000-8000-000000000007',
+      idempotency_key: `rb2:${INTENT_ID}:e2e:staging:duplicate`,
+      status: 'SUCCEEDED'
+    });
+    await context.service.handleE2EProgress(INTENT_ID);
+
+    Object.assign(context.repository.operations[0], {
+      status: 'PENDING',
+      failure_class: null,
+      failure_message: null,
+      completed_at: null,
+      row_version: context.repository.operations[0].row_version + 1
+    });
+    context.repository.events = context.repository.events.filter(
+      ({ event_type }) =>
+        event_type !== 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED'
+    );
+    context.repository.updateOperation.mockClear();
+
+    await expect(
+      context.service.execute(input(), 'owner')
+    ).resolves.toMatchObject({
+      adoption_id: INTENT_ID,
+      status: 'FAILED',
+      reused: true
+    });
+    expect(context.repository.operations[0].status).toBe('CANCELLED');
+    expect(context.repository.updateOperation).toHaveBeenCalledTimes(1);
+    expect(context.repository.events).toContainEqual(
+      expect.objectContaining({
+        event_type: 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED',
+        actor: 'owner'
+      })
+    );
+  });
+
+  it('keeps failed intent reads stable when recovery races', async () => {
+    const context = harness();
+    await prepare(context);
+    await freeze(context);
+    Object.assign(context.repository.operations[0], {
+      status: 'PENDING',
+      external_id: null
+    });
+    context.repository.operations.push({
+      ...structuredClone(context.repository.operations[0]),
+      id: '60000000-0000-4000-8000-000000000007',
+      idempotency_key: `rb2:${INTENT_ID}:e2e:staging:duplicate`,
+      status: 'SUCCEEDED'
+    });
+    await context.service.handleE2EProgress(INTENT_ID);
+    Object.assign(context.repository.operations[0], {
+      status: 'PENDING',
+      failure_class: null,
+      failure_message: null,
+      completed_at: null,
+      row_version: context.repository.operations[0].row_version + 1
+    });
+    context.repository.events = context.repository.events.filter(
+      ({ event_type }) =>
+        event_type !== 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED'
+    );
+    context.repository.updateOperation.mockImplementationOnce(
+      async () => false
+    );
+
+    await expect(
+      context.service.execute(input(), 'owner')
+    ).resolves.toMatchObject({
+      adoption_id: INTENT_ID,
+      status: 'FAILED',
+      reused: true
+    });
+    expect(context.repository.operations[0].status).toBe('PENDING');
+    expect(context.repository.events).not.toContainEqual(
+      expect.objectContaining({
+        event_type: 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED'
+      })
+    );
+  });
+
+  it('does not guess that a reserved E2E operation was never dispatched', async () => {
+    const context = harness();
+    await prepare(context);
+    await freeze(context);
+    Object.assign(context.repository.operations[0], {
+      status: 'DISPATCHED',
+      external_id: null
+    });
+    context.repository.operations.push({
+      ...structuredClone(context.repository.operations[0]),
+      id: '60000000-0000-4000-8000-000000000007',
+      idempotency_key: `rb2:${INTENT_ID}:e2e:staging:duplicate`,
+      status: 'SUCCEEDED'
+    });
+
+    await context.service.handleE2EProgress(INTENT_ID);
+    await context.service.execute(input(), 'owner');
+
+    expect(context.repository.operations[0].status).toBe('DISPATCHED');
+    expect(context.repository.updateOperation).not.toHaveBeenCalled();
+    expect(context.repository.events).not.toContainEqual(
+      expect.objectContaining({
+        event_type: 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED'
+      })
+    );
   });
 
   it('rolls back all authoritative changes when a known-candidate CAS fails', async () => {
