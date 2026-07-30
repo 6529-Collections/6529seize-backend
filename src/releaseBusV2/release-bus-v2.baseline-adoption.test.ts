@@ -834,6 +834,38 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     expect(conflict.repository.trains).toHaveLength(0);
   });
 
+  it('verifies newly inserted immutable evidence through the writer when the replica is stale', async () => {
+    const context = harness();
+    await prepare(context);
+    context.repository.findEvent.mockImplementation(
+      async (id: string, ctx?: { connection?: unknown }) =>
+        ctx?.connection
+          ? context.repository.events.find((item) => item.id === id)
+          : undefined
+    );
+
+    await expect(
+      context.service.decideAutomaticE2E(automaticInput())
+    ).resolves.toMatchObject({
+      decision: 'DEFERRED',
+      manifest_ready: false
+    });
+    expect(
+      context.repository.events.filter(({ event_type }) =>
+        [
+          'EXACT_STAGING_BASELINE_FRONTEND_DEPLOYMENT_VERIFIED',
+          'EXACT_STAGING_BASELINE_AUTOMATIC_E2E_DEFERRED'
+        ].includes(event_type)
+      )
+    ).toHaveLength(2);
+    expect(
+      context.repository.events.some(
+        ({ event_type }) =>
+          event_type === 'EXACT_STAGING_BASELINE_ADOPTION_FAILED'
+      )
+    ).toBe(false);
+  });
+
   it('fails ambiguous and malformed intent lookup closed without partial adoption', async () => {
     const context = harness();
     const other = harness();
