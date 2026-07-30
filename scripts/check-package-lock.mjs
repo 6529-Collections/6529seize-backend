@@ -94,23 +94,21 @@ function collectLockfiles(directory) {
       found.push(path.join(directory, entry.name));
     }
   }
-  return found.sort();
+  return found.sort((left, right) => left.localeCompare(right));
 }
 
 function resolvePackage(packages, packagePath, dependency) {
   let currentPath = packagePath;
-  while (true) {
-    const candidate = currentPath
-      ? `${currentPath}/node_modules/${dependency}`
-      : `node_modules/${dependency}`;
+  while (currentPath) {
+    const candidate = `${currentPath}/node_modules/${dependency}`;
     if (Object.hasOwn(packages, candidate)) {
       return candidate;
     }
-    if (!currentPath) {
-      return null;
-    }
     currentPath = parentPackagePath(currentPath);
   }
+
+  const rootCandidate = `node_modules/${dependency}`;
+  return Object.hasOwn(packages, rootCandidate) ? rootCandidate : null;
 }
 
 function parentPackagePath(packagePath) {

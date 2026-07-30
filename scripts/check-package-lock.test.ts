@@ -101,6 +101,25 @@ describe('package lock optional dependency check', () => {
     expect(runChecker(lockfilePath).status).toBe(0);
   });
 
+  it('accepts an optional dependency hoisted above a three-level nested package', () => {
+    const lockfilePath = fixture({
+      '': {},
+      'node_modules/a': {},
+      'node_modules/a/node_modules/b': {},
+      'node_modules/a/node_modules/b/node_modules/c': {
+        optionalDependencies: {
+          native: '3.0.0'
+        }
+      },
+      'node_modules/a/node_modules/native': {
+        version: '3.0.0',
+        optional: true
+      }
+    });
+
+    expect(runChecker(lockfilePath).status).toBe(0);
+  });
+
   it('rejects an optional dependency without a package record', () => {
     const lockfilePath = fixture({
       '': {},
