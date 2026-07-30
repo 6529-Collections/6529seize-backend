@@ -208,7 +208,7 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
     },
     {
       from: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
-      to: 'c1fc5e740706c6495a2622459226ba0bf07aabc6',
+      to: '4c5c20889cb10e860c4190ddcd78b1078249e7b4',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]
@@ -583,7 +583,7 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     ),
     trustedGatePolicyBundleRollout(
       '9726b0045dd826249544782a3effde02a867136378d45ece0e19e745343e36d4',
-      '84c88e53262d60645cee03617ce28363ba2c5a15acaf4250eaff566885f730e8'
+      'b472c7d71fd8cb54f427770514329ddd3c26b757bc4f6c12c401be2f9e1cb006'
     )
   ],
   frontend: [
@@ -597,7 +597,7 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     ),
     trustedGatePolicyBundleRollout(
       '8f8e4348f8b95957ed17c707839199f1aa1902ea151c637066e5a33ce7ec6379',
-      'c18c60be12324e06a7d104cd50231f1632a22dca22b30eb13b5470dff5d04272'
+      'bc2a2fcb35b23e541c32fe6a7f4cab1a6e1efaba0fb3beea62566b908ed53087'
     )
   ]
 };

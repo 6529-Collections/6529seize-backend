@@ -77,7 +77,7 @@ const TRUSTED_WORKFLOW_BLOBS = {
   frontend: {
     legacy: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
     previous: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
-    modern: 'c1fc5e740706c6495a2622459226ba0bf07aabc6'
+    modern: '4c5c20889cb10e860c4190ddcd78b1078249e7b4'
   }
 } as const;
 
