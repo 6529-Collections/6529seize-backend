@@ -1296,6 +1296,49 @@ jobs:
             -H 'Content-Type: application/json' \
             --data "$payload" \
             "$RELEASE_BUS_API_URL/deploy/release-bus-v2/report-progress"
+      - name: Record pending baseline-adoption backend deployment
+        if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'staging'
+        continue-on-error: true
+        shell: bash
+        env:
+          RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          JOB_STATUS: \${{ job.status }}
+        run: |
+          set -euo pipefail
+          status="$([ "$JOB_STATUS" = success ] && printf SUCCEEDED || printf FAILED)"
+          payload="$(jq -n \
+            --arg environment staging \
+            --arg service "$INPUT_SERVICE" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg source_ref "$GITHUB_REF_NAME" \
+            --arg source_sha "$GITHUB_SHA" \
+            --arg status "$status" \
+            '{environment:$environment,service:$service,
+              workflow_run_id:$workflow_run_id,
+              workflow_run_attempt:$workflow_run_attempt,
+              source_ref:$source_ref,source_sha:$source_sha,status:$status}')"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          http_status="$(curl --silent --show-error \
+            --retry 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 \
+            --output "$response_file" --write-out '%{http_code}' \
+            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$RELEASE_BUS_API_URL/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline/backend-deployment-event")"
+          test "$http_status" = 200 || {
+            jq -r '.error // "Baseline-adoption callback failed closed"' "$response_file" >&2 || true
+            exit 1
+          }
+          jq -e '
+            (.outcome == "NO_MATCH" and .adoption_id == null and .operation_key == null) or
+            ((.outcome == "RECORDED" or .outcome == "E2E_DISPATCHED") and
+             (.adoption_id | type == "string") and
+             (.operation_key | type == "string"))
+          ' "$response_file" >/dev/null
       - name: Checkout CI wave notifier after early failure
         if: failure() && hashFiles('scripts/notify-ci-wave.mjs') == ''
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
