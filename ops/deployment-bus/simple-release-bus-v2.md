@@ -404,8 +404,13 @@ event records a deleted head. The reconciler can otherwise restore that exact
 row to production readiness, so deregistration must include it. Immutable
 `PRODUCTION_DEPLOYED`, `CANCELLED`, `DEREGISTERED`, and all other terminal
 `SUPERSEDED` history is excluded and preserved byte-for-byte. Execution must
-repeat that complete plan. A preparation with zero active-intent targets is an
-audited safe no-op (`candidate_count: 0`); it cannot be executed.
+repeat that complete plan. A preparation with zero active-intent targets
+remains executable (`candidate_count: 0`) solely to atomically detach the
+authoritative staging singleton before a clean-main bootstrap. The empty
+execution changes no candidate row, preserves immutable history, and still
+requires the exact controls, locks, trains, operations, workflow/ref fence,
+staging-state version, empty-inventory digest, and post-commit audit checks
+described below. Its global audit event records the zero candidate count.
 
 Execution is allowed only when `ALL` is unpaused, both independently changeable
 lanes are paused `OFF`, all three v2 locks are wholly free, all trains and

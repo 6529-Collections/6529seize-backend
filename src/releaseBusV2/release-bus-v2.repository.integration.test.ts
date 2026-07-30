@@ -1503,6 +1503,163 @@ describeWithSeed(
       }
     });
 
+    it('gap-fences an active candidate insert while committing an exact empty inventory', async () => {
+      let leases: ReleaseBusV2MaintenanceLease[] = [];
+      try {
+        await repository.setControl(
+          'STAGING',
+          true,
+          'empty inventory integration maintenance',
+          'integration',
+          {}
+        );
+        await repository.setControl(
+          'PRODUCTION',
+          true,
+          'empty inventory integration maintenance',
+          'integration',
+          {}
+        );
+        const controls = (await repository.listControls({})).map(
+          ({ scope, paused, row_version }) => ({
+            scope,
+            paused: paused === true || paused === 1,
+            row_version
+          })
+        );
+        const exactFreeLocks = (await repository.listLocks({})).map(
+          ({ name, row_version }) => ({ name, row_version })
+        );
+        const candidates = await repository.listCandidateDeregistrationTargets(
+          {}
+        );
+        expect(candidates).toEqual([]);
+        const stagingState = await repository.getStagingState({});
+        leases = await repository.acquireExactFreeMaintenanceLocks(
+          exactFreeLocks,
+          'integration-empty-deregistration',
+          60_000
+        );
+        const originalListCandidateDeregistrationTargets =
+          repository.listCandidateDeregistrationTargets.bind(repository);
+        let releaseInventoryFence = () => {};
+        let inventoryFenceObserved!: () => void;
+        const inventoryFenceHeld = new Promise<void>((resolve) => {
+          inventoryFenceObserved = resolve;
+        });
+        const continueCommit = new Promise<void>((resolve) => {
+          releaseInventoryFence = resolve;
+        });
+        let trappedInventoryFence = false;
+        const inventorySpy = jest
+          .spyOn(repository, 'listCandidateDeregistrationTargets')
+          .mockImplementation(async (ctx, forUpdate) => {
+            const rows = await originalListCandidateDeregistrationTargets(
+              ctx,
+              forUpdate
+            );
+            if (forUpdate && !trappedInventoryFence) {
+              trappedInventoryFence = true;
+              inventoryFenceObserved();
+              await continueCommit;
+            }
+            return rows;
+          });
+        const emptyInventorySha256 =
+          releaseBusV2CandidateInventoryDigest(candidates);
+        const commitPromise = repository.commitAllCandidateDeregistration({
+          deregistrationId: 'integration-empty-deregistration',
+          actor: 'integration',
+          reason: 'Prove atomic empty logical deregistration',
+          expectedControls: controls,
+          maintenanceLeases: leases,
+          expectedStagingStateRowVersion: stagingState.row_version,
+          expectedCandidates: [],
+          expectedInventorySha256: emptyInventorySha256,
+          observedFrontendStagingSha: SHA_A,
+          observedBackendStagingSha: SHA_B
+        });
+        let concurrentInsertCompleted = false;
+        let concurrentInsert:
+          | Awaited<ReturnType<typeof repository.createCandidate>>
+          | undefined;
+        let concurrentInsertPromise:
+          | ReturnType<typeof repository.createCandidate>
+          | undefined;
+        try {
+          await inventoryFenceHeld;
+          concurrentInsertPromise = new ReleaseBusV2Repository()
+            .createCandidate(
+              {
+                repository: 'backend',
+                prNumber: 2003,
+                branchName: 'feature/concurrent-empty-active-intent',
+                headSha: SHA_C,
+                requestedBy: 'integration',
+                deployPlan: null,
+                prEvidence: null
+              },
+              {}
+            )
+            .then((created) => {
+              concurrentInsertCompleted = true;
+              return created;
+            });
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          expect(concurrentInsertCompleted).toBe(false);
+          releaseInventoryFence();
+          await expect(commitPromise).resolves.toEqual({ candidateCount: 0 });
+          concurrentInsert = await concurrentInsertPromise;
+        } finally {
+          releaseInventoryFence();
+          await Promise.allSettled(
+            concurrentInsertPromise
+              ? [commitPromise, concurrentInsertPromise]
+              : [commitPromise]
+          );
+          inventorySpy.mockRestore();
+        }
+
+        await expect(repository.getStagingState({})).resolves.toMatchObject({
+          status: 'DETACHED_MANUAL_OWNERSHIP',
+          current_manifest_id: null,
+          last_validated_manifest_id: stagingState.last_validated_manifest_id,
+          frontend_sha: null,
+          backend_sha: null,
+          clean_main: false
+        });
+        await expect(
+          repository.findCandidateById(concurrentInsert?.id ?? '', {})
+        ).resolves.toMatchObject({
+          id: concurrentInsert?.id,
+          status: 'READY_FOR_STAGING'
+        });
+      } finally {
+        try {
+          if (leases.length > 0)
+            await repository.releaseExactMaintenanceLocks(leases);
+        } finally {
+          try {
+            await repository.setControl(
+              'STAGING',
+              false,
+              'empty inventory integration cleanup',
+              'integration',
+              {}
+            );
+          } finally {
+            await repository.setControl(
+              'PRODUCTION',
+              false,
+              'empty inventory integration cleanup',
+              'integration',
+              {}
+            );
+          }
+        }
+      }
+    });
+
     it('finds staging validation only for exact SHAs and artifact digests', async () => {
       const manifest = await repository.createManifest(
         {

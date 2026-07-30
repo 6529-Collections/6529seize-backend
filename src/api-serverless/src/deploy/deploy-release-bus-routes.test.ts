@@ -1409,7 +1409,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     });
   });
 
-  it('returns an explicit successful zero-target preparation as a non-executable no-op', async () => {
+  it('returns an explicit successful zero-target exact preparation', async () => {
     mockCandidateDeregistrationPrepare.mockResolvedValue({
       phase: 'PREPARE',
       plan_sha256: '1'.repeat(64),
@@ -1457,6 +1457,71 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       requested_by: 'developer'
     });
     expect(mockCandidateDeregistrationExecute).not.toHaveBeenCalled();
+  });
+
+  it('executes a complete strict zero-target control/lock/state/ref CAS plan', async () => {
+    const expected = {
+      expected_plan_sha256: '1'.repeat(64),
+      expected_inventory_sha256: '2'.repeat(64),
+      expected_candidates: [],
+      expected_controls: [
+        { scope: 'ALL', paused: false, row_version: 1 },
+        { scope: 'PRODUCTION', paused: true, row_version: 2 },
+        { scope: 'STAGING', paused: true, row_version: 3 }
+      ],
+      expected_locks: [
+        { name: 'production-environment', row_version: 1 },
+        { name: 'scheduler', row_version: 2 },
+        { name: 'staging-environment', row_version: 3 }
+      ],
+      expected_staging_state_row_version: 9,
+      expected_staging_refs: {
+        frontend: SHA,
+        backend: 'b'.repeat(40)
+      }
+    };
+    mockCandidateDeregistrationExecute.mockResolvedValue({
+      phase: 'EXECUTE',
+      plan_sha256: expected.expected_plan_sha256,
+      inventory_sha256: expected.expected_inventory_sha256,
+      candidate_count: 0,
+      candidates: [],
+      controls: expected.expected_controls,
+      locks: expected.expected_locks,
+      staging_state_row_version: expected.expected_staging_state_row_version,
+      staging_refs: expected.expected_staging_refs,
+      mode: 'PRODUCTION',
+      executed: true,
+      deregistration_id: RESET_ID,
+      physical_staging_presence: 'UNKNOWN_DETACHED'
+    });
+
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/deregister-all-candidates',
+      {
+        phase: 'EXECUTE',
+        reason: 'Detach the exact empty candidate inventory',
+        ...expected
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCandidateDeregistrationExecute).toHaveBeenCalledWith(
+      {
+        reason: 'Detach the exact empty candidate inventory',
+        ...expected
+      },
+      'developer'
+    );
+    expect(response.body).toMatchObject({
+      phase: 'EXECUTE',
+      candidate_count: 0,
+      candidates: [],
+      executed: true,
+      deregistration_id: RESET_ID,
+      physical_staging_presence: 'UNKNOWN_DETACHED',
+      requested_by: 'developer'
+    });
   });
 
   it('executes only a complete strict candidate/control/lock/state/ref CAS plan', async () => {
