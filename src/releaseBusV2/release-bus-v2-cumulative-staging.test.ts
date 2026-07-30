@@ -1392,7 +1392,8 @@ describe('Release Bus v2 cumulative admitted staging', () => {
         currentManifestId: null,
         lastValidatedManifestId: historicalManifest,
         frontendStagingRefSha: '9'.repeat(40),
-        backendStagingRefSha: '4'.repeat(40)
+        backendStagingRefSha: '4'.repeat(40),
+        lastTransitionTrainId: 'previous'
       }),
       expect.anything()
     );

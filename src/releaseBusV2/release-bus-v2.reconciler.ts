@@ -3432,22 +3432,22 @@ export class ReleaseBusV2Reconciler {
         head_sha?: string;
       }>;
     }>(manifest.manifest_json);
-    const candidateIds = Array.from(
-      new Set(
-        (body?.candidates ?? [])
-          .map(
-            ({ candidate_id, repository, pr_number, head_sha }) =>
-              candidate_id ??
-              context.candidates.find(
-                (candidate) =>
-                  candidate.repository === repository &&
-                  candidate.pr_number === pr_number &&
-                  candidate.head_sha === head_sha
-              )?.id
-          )
-          .filter((id): id is string => Boolean(id))
-      )
-    );
+    const resolvedCandidateIds = (body?.candidates ?? []).map((entry) => {
+      const id =
+        entry.candidate_id ??
+        context.candidates.find(
+          (candidate) =>
+            candidate.repository === entry.repository &&
+            candidate.pr_number === entry.pr_number &&
+            candidate.head_sha === entry.head_sha
+        )?.id;
+      if (!id)
+        throw new Error(
+          `Cumulative rollback baseline manifest ${manifestId} has an unresolvable candidate identity`
+        );
+      return id;
+    });
+    const candidateIds = Array.from(new Set(resolvedCandidateIds));
     return {
       manifest,
       candidateIds,

@@ -3468,7 +3468,7 @@ export class ReleaseBusV2Service {
                   frontendStagingRefSha: stagingIdentity.frontendSha,
                   backendStagingRefSha: stagingIdentity.backendSha,
                   cleanMain: false,
-                  lastTransitionTrainId: 'staging-ref-drift'
+                  lastTransitionTrainId: stagingState.last_transition_train_id
                 },
                 ctx
               ))
