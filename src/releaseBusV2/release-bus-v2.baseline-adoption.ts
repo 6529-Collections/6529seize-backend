@@ -46,6 +46,7 @@ const INTENT_EVENT_TYPES = [
 const INTENT_MIN_TTL_MS = 5 * 60 * 1000;
 const INTENT_MAX_TTL_MS = 2 * 60 * 60 * 1000;
 const ADOPTION_STAGING_LOCK_TTL_MS = 2 * 60 * 60 * 1000;
+const BACKEND_RUNTIME_RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 const MAX_CANDIDATES = 500;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -231,6 +232,7 @@ type BaselineAdoptionDependencies = {
   readonly readRuntimeShas: () => Promise<RuntimeShas>;
   readonly readFrontendRuntimeSha: () => Promise<string>;
   readonly readBackendRuntimeSha: () => Promise<string>;
+  readonly waitForBackendRuntimeRetry: (delayMs: number) => Promise<void>;
   readonly hasActiveStagingWorkflow: (
     ignoredRunIds?: readonly string[]
   ) => Promise<boolean>;
@@ -389,6 +391,8 @@ const dependencies: BaselineAdoptionDependencies = {
   },
   readFrontendRuntimeSha: defaultFrontendRuntimeSha,
   readBackendRuntimeSha: defaultBackendRuntimeSha,
+  waitForBackendRuntimeRetry: (delayMs) =>
+    new Promise((resolve) => setTimeout(resolve, delayMs)),
   hasActiveStagingWorkflow: async (ignoredRunIds) => {
     const active = await Promise.all([
       releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun(
@@ -1089,16 +1093,10 @@ export class ReleaseBusV2BaselineAdoptionService {
           );
         const runtimeSha =
           input.service === 'api'
-            ? await this.deps.readBackendRuntimeSha()
+            ? await this.readConvergedBackendRuntimeSha(
+                intent.expected_backend_runtime_sha
+              )
             : null;
-        if (
-          runtimeSha !== null &&
-          runtimeSha !== intent.expected_backend_runtime_sha
-        )
-          throw new ReleaseBusV2BaselineAdoptionError(
-            'CONFLICT',
-            'Backend API runtime moved from the pending adoption intent'
-          );
         const evidence: BackendEvidence = {
           contract: 'release-bus-v2-baseline-backend-evidence-v1',
           intent_id: intent.intent_id,
@@ -1179,6 +1177,23 @@ export class ReleaseBusV2BaselineAdoptionService {
         );
       }
     });
+  }
+
+  private async readConvergedBackendRuntimeSha(
+    expectedSha: string
+  ): Promise<string> {
+    let runtimeSha = await this.deps.readBackendRuntimeSha();
+    for (const delayMs of BACKEND_RUNTIME_RETRY_DELAYS_MS) {
+      if (runtimeSha === expectedSha) return runtimeSha;
+      await this.deps.waitForBackendRuntimeRetry(delayMs);
+      runtimeSha = await this.deps.readBackendRuntimeSha();
+    }
+    if (runtimeSha !== expectedSha)
+      throw new ReleaseBusV2BaselineAdoptionError(
+        'CONFLICT',
+        'Backend API runtime moved from the pending adoption intent'
+      );
+    return runtimeSha;
   }
 
   private async readPreparationSnapshot(intent: PreparedIntent): Promise<{
