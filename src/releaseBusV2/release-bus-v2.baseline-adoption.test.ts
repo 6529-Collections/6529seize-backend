@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ReleaseBusV2BaselineAdoptionError,
   ReleaseBusV2BaselineAdoptionService,
@@ -18,6 +19,23 @@ const FRONTEND_DEPLOY_RUN_ID = '92000';
 const BACKEND_DEPLOY_RUN_ID = '93000';
 const OTHER_BACKEND_DEPLOY_RUN_ID = '93001';
 const BOUND_E2E_RUN_ID = '94000';
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)])
+    );
+  return value;
+}
+
+function sha256(value: unknown): string {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalJson(value)))
+    .digest('hex');
+}
 
 function controls() {
   return [
@@ -728,7 +746,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
 
   it.each([
     'Staging E2E [automatic]',
-    `Staging E2E [rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1:a1]`
+    `Staging E2E [rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1]`
   ])('accepts the real trusted GitHub run.name %s', async (name) => {
     const context = harness();
     Object.assign(context.identities[FRONTEND_E2E_RUN_ID], {
@@ -751,6 +769,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     'Staging E2E [automatic]-lookalike',
     'Staging E2E [release-bus:train:e2e:a1]',
     'Staging E2E [rb2:train:e2e:a0]',
+    `Staging E2E [rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1:a1]`,
     `Staging E2E [rb2:${'x'.repeat(176)}:a1]`
   ])('rejects the lookalike or untrusted GitHub run.name %s', async (name) => {
     const context = harness();
@@ -766,6 +785,37 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     expect(context.repository.manifests).toHaveLength(0);
     expect(context.repository.operations).toHaveLength(0);
     expect(context.repository.state.row_version).toBe(23);
+  });
+
+  it('reconciles a frozen legacy once-suffixed operation without dispatching another E2E', async () => {
+    const context = harness();
+    await prepare(context);
+    await freeze(context);
+    const prepared = context.repository.events.find(
+      ({ id }) => id === INTENT_ID
+    ).payload_json;
+    const { intent_identity_sha256: _oldIdentity, ...core } = prepared;
+    core.operation_key = `rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1`;
+    Object.assign(prepared, {
+      ...core,
+      intent_identity_sha256: sha256(core)
+    });
+    Object.assign(context.repository.operations[0], {
+      idempotency_key: core.operation_key,
+      status: 'FAILED',
+      failure_message: 'Legacy double-suffixed workflow failed'
+    });
+
+    await expect(
+      context.service.recordBackendDeployment(backendInput())
+    ).rejects.toBeInstanceOf(ReleaseBusV2BaselineAdoptionError);
+    expect(context.operations.reconcileWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: core.operation_key })
+    );
+    expect(context.dispatchCount()).toBe(1);
+    expect(context.repository.operations).toHaveLength(1);
+    expect(context.repository.trains[0].status).toBe('FAILED');
+    expect(context.repository.locks[2].lease_token).toBeNull();
   });
 
   it.each(['frontend', 'backend'] as const)(
@@ -785,6 +835,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
       expect(context.repository.state.row_version).toBe(23);
       expect(context.repository.operations[0]).toMatchObject({
         operation_type: 'E2E_STAGING',
+        idempotency_key: `rb2:${INTENT_ID}:baseline-adoption-e2e:staging`,
         expected_sha: FRONTEND_SHA,
         max_attempts: 1,
         status: 'DISPATCHED',
@@ -792,6 +843,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
       });
       expect(context.operations.reconcileWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
+          idempotencyKey: `rb2:${INTENT_ID}:baseline-adoption-e2e:staging`,
           workflow: 'staging-e2e.yml',
           ref: '1a-staging',
           artifactDigest: context.repository.manifests[0].identity_sha256,
@@ -1006,7 +1058,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
         context.refs.backend = 'f'.repeat(40);
         return context.service.recordBackendDeployment(backendInput());
       }
-    ],
+    ]
   ])(
     'fails moved %s evidence closed with no partial adoption',
     async (_label, act) => {

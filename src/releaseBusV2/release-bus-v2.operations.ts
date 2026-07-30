@@ -826,9 +826,17 @@ export class ReleaseBusV2Operations {
         // reconcilers race on this optimistic update, so only one winner can
         // dispatch while the workflow is not yet discoverable.
         await this.update(operation, { status: 'DISPATCHED', result: null });
-        operation =
-          (await this.repository.findOperation(spec.idempotencyKey, {})) ??
-          operation;
+        const reserved = await this.repository.findOperation(
+          spec.idempotencyKey,
+          {},
+          true
+        );
+        if (!reserved)
+          throw new Error(
+            'Release Bus v2 dispatch reservation was not visible on the writer'
+          );
+        if (reserved.status !== 'DISPATCHED') return reserved;
+        operation = reserved;
         await releaseBusGitHubApp.dispatchWorkflow(
           spec.repository,
           operationRequest.workflow,
