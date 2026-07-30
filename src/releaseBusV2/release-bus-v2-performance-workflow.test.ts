@@ -186,6 +186,61 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(parsed.concurrency['cancel-in-progress']).toBe(false);
   });
 
+  it('emits one terminal event for an exact manual staging backend deployment without guarding ordinary workflows', () => {
+    const parsed = YAML.parse(deploy) as {
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            name?: string;
+            if?: string;
+            'continue-on-error'?: boolean;
+            env?: Record<string, string>;
+            run?: string;
+          }>;
+        }
+      >;
+    };
+    const steps = parsed.jobs['build-and-deploy'].steps;
+    const callbacks = steps.filter(
+      ({ name }) =>
+        name === 'Record pending baseline-adoption backend deployment'
+    );
+    expect(callbacks).toHaveLength(1);
+    expect(callbacks[0]).toMatchObject({
+      if: "always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'staging'",
+      'continue-on-error': true,
+      env: {
+        RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
+        RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
+          '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}',
+        JOB_STATUS: '${{ job.status }}'
+      }
+    });
+    expect(callbacks[0].run).toContain(
+      'status="$([ "$JOB_STATUS" = success ] && printf SUCCEEDED || printf FAILED)"'
+    );
+    expect(callbacks[0].run).toContain(
+      '/adopt-exact-staging-baseline/backend-deployment-event'
+    );
+    expect(callbacks[0].run).toContain(
+      '(.outcome == "NO_MATCH" and .adoption_id == null and .operation_key == null)'
+    );
+    expect(callbacks[0].run).not.toMatch(/\b(?:sleep|cancel|force)\b/i);
+    const generator = read('scripts/generate-deploy-config.mjs');
+    expect(generator).toContain(
+      'Record pending baseline-adoption backend deployment'
+    );
+    expect(generator).toContain(
+      "always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'staging'"
+    );
+    expect(generator).toContain('continue-on-error: true');
+    expect(generator).toContain(
+      '/adopt-exact-staging-baseline/backend-deployment-event'
+    );
+    expect(generator).toContain('JOB_STATUS: \\${{ job.status }}');
+  });
+
   it('executes the early guard with exact manual and Release Bus payloads', () => {
     const parsed = YAML.parse(deploy) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
