@@ -99,6 +99,14 @@ describe('Release Bus v2 validation', () => {
         ...exact
       }).error
     ).toBeUndefined();
+    expect(
+      ReleaseBusV2CandidateDeregistrationBodySchema.validate({
+        phase: 'EXECUTE',
+        reason: 'Detach the exact empty candidate inventory',
+        ...exact,
+        expected_candidates: []
+      }).error
+    ).toBeUndefined();
     for (const invalid of [
       {
         phase: 'EXECUTE',

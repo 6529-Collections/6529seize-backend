@@ -240,8 +240,8 @@ export const ReleaseBusV2CandidateDeregistrationBodySchema = Joi.object({
       otherwise: Joi.forbidden()
     }),
   expected_candidates: Joi.array()
-    .items(ReleaseBusV2CandidateDeregistrationCandidateVersionSchema)
-    .min(1)
+    .items(ReleaseBusV2CandidateDeregistrationCandidateVersionSchema.optional())
+    .min(0)
     .max(500)
     .unique('id')
     .when('phase', {
