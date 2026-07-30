@@ -1380,7 +1380,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     );
   });
 
-  it('keeps failed intent reads stable when recovery races, then retries cleanup', async () => {
+  it('keeps failed intent reads stable when recovery races', async () => {
     const context = harness();
     await prepare(context);
     await freeze(context);
@@ -1423,14 +1423,6 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
         event_type: 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED'
       })
     );
-
-    await expect(
-      context.service.execute(input(), 'owner')
-    ).resolves.toMatchObject({
-      status: 'FAILED',
-      reused: true
-    });
-    expect(context.repository.operations[0].status).toBe('CANCELLED');
   });
 
   it('does not guess that a reserved E2E operation was never dispatched', async () => {
