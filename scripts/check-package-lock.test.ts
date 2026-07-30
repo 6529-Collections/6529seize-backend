@@ -27,12 +27,16 @@ function writeLockfile(
   return lockfilePath;
 }
 
-function runChecker(lockfilePath: string): RunResult {
-  const result = spawnSync(process.execPath, [checkerPath, lockfilePath], {
-    encoding: 'utf8',
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
+function runChecker(lockfilePath?: string): RunResult {
+  const result = spawnSync(
+    process.execPath,
+    [checkerPath, ...(lockfilePath ? [lockfilePath] : [])],
+    {
+      encoding: 'utf8',
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
 
   if (result.error) {
     throw result.error;
@@ -59,6 +63,16 @@ describe('package lock optional dependency check', () => {
     fixtureDirectories.push(path.dirname(lockfilePath));
     return lockfilePath;
   }
+
+  it('accepts every package lock in the repository', () => {
+    const result = runChecker();
+
+    expect(result).toMatchObject({
+      status: 0,
+      stderr: ''
+    });
+    expect(result.stdout).toContain('lockfiles');
+  });
 
   it('accepts optional dependencies resolved at the repository root', () => {
     const lockfilePath = fixture({
