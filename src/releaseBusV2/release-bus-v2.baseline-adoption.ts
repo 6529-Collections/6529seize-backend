@@ -618,11 +618,11 @@ function controlsAreSafe(
 function lockIsWhollyFree(lock: ReleaseBusV2LockRecord | undefined): boolean {
   return Boolean(
     lock &&
-      lock.owner_train_id === null &&
-      lock.lease_owner === null &&
-      lock.lease_token === null &&
-      lock.heartbeat_at === null &&
-      lock.expires_at === null
+    lock.owner_train_id === null &&
+    lock.lease_owner === null &&
+    lock.lease_token === null &&
+    lock.heartbeat_at === null &&
+    lock.expires_at === null
   );
 }
 
