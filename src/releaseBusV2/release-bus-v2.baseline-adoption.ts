@@ -2312,11 +2312,7 @@ export class ReleaseBusV2BaselineAdoptionService {
       ctx,
       true
     );
-    if (
-      !operation ||
-      operation.status !== 'PENDING' ||
-      operation.external_id !== null
-    )
+    if (operation?.status !== 'PENDING' || operation.external_id !== null)
       return;
     const manifest = train.manifest_id
       ? await this.repository.findManifest(train.manifest_id, ctx, true)
@@ -2390,7 +2386,7 @@ export class ReleaseBusV2BaselineAdoptionService {
           ctx,
           true
         );
-        if (!failed || !train || train.status !== 'FAILED') return;
+        if (!failed || train?.status !== 'FAILED') return;
         await this.cancelExactUndispatchedOperation(
           intent,
           train,
