@@ -243,6 +243,65 @@ describe('HelpBotAnswerer', () => {
     expect(genericSource.findMatch).not.toHaveBeenCalled();
   });
 
+  it('keeps Stream source links complete and inside the response budget', async () => {
+    const canonicalPath =
+      '/reviews/6529-stream/versions/2026-07-27.1/for-artists#fixed-price-sales';
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          `${'Stream supports fixed-price sales and English auctions. '.repeat(
+            30
+          )}[6529 Stream Review](https://6529.io${canonicalPath}`
+        )
+    };
+    const streamKnowledgeSource: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 100,
+        record: {
+          id: '6529-stream@2026-07-27.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence',
+          linkLabel: '6529 Stream Review',
+          canonicalPath,
+          aliases: ['stream'],
+          keywords: ['stream', 'sale'],
+          facts: ['Fixed-price and auction evidence.'],
+          relatedPaths: [
+            '/reviews/6529-stream/versions/2026-07-27.1/artwork-lifecycle',
+            '/reviews/6529-stream/versions/2026-07-27.1/curation-authorization'
+          ],
+          tags: ['stream'],
+          sourceRefs: []
+        }
+      })
+    };
+
+    const answer = await new HelpBotAnswerer(
+      renderer,
+      new StaticHelpBotKnowledgeSource(TEST_INDEX),
+      undefined,
+      undefined,
+      streamKnowledgeSource
+    ).answer({
+      question: 'what sale methods does Stream support?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer.length).toBeLessThanOrEqual(1200);
+      expect(answer.answer).toContain(
+        `More info: [6529 Stream Review](${BASE_URL}${canonicalPath}) | [Artwork Lifecycle](${BASE_URL}/reviews/6529-stream/versions/2026-07-27.1/artwork-lifecycle)`
+      );
+      expect(answer.answer).not.toContain('curation-authorization');
+      expect(answer.answer).not.toContain(
+        `[6529 Stream Review](${BASE_URL}${canonicalPath}\n`
+      );
+      expect(answer.answer.match(/https:\/\/6529\.io/g)).toHaveLength(2);
+    }
+  });
+
   it('falls back to the concise Stream summary when the exhaustive corpus is unavailable', async () => {
     const index: HelpBotKnowledgeIndex = {
       ...TEST_INDEX,

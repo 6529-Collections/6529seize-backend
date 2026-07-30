@@ -202,6 +202,51 @@ describe('HelpBotBedrockRenderer', () => {
       'If an AMBIGUITY fact is present, clearly ask for the contract'
     );
     expect(prompt).toContain('Mention the review version');
+    expect(prompt).toContain('Keep the answer body under 800 characters');
+    expect(prompt).toContain(
+      'Do not include URLs, Markdown links, or a More info footer'
+    );
+    expect(prompt).not.toContain(
+      'Include this URL exactly once as a Markdown link target'
+    );
+    expect(readBody(send)).toMatchObject({ max_tokens: 320 });
+  });
+
+  it('rejects token-limited answers instead of returning partial text', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: 'A partial answer ending in [6529 Stream Review]('
+            }
+          ],
+          stop_reason: 'max_tokens'
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await expect(
+      renderer.renderAnswer({
+        question: 'what sale methods does Stream support?',
+        record: {
+          ...RECORD,
+          id: '6529-stream@2026-07-27.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence (2026-07-27.1)',
+          linkLabel: '6529 Stream Review',
+          canonicalPath: '/reviews/6529-stream/versions/2026-07-27.1'
+        },
+        canonicalUrl:
+          'https://6529.io/reviews/6529-stream/versions/2026-07-27.1'
+      })
+    ).rejects.toThrow('stopped before completion at max_tokens');
   });
 
   it('omits Stream grounding rules for non-Stream records', async () => {

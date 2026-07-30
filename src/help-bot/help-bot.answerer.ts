@@ -53,8 +53,7 @@ export interface HelpBotNoReliableSource {
 }
 
 export type HelpBotAnswerResult =
-  | HelpBotAnswerSuccess
-  | HelpBotNoReliableSource;
+  HelpBotAnswerSuccess | HelpBotNoReliableSource;
 
 export interface HelpBotLlmRenderer {
   renderAnswer(input: {
@@ -77,6 +76,8 @@ const HELP_BOT_CREDIT_CATEGORY_PATH = `/rep/categories/${encodeURIComponent(
   HELP_BOT_CREDIT_CATEGORY
 )}`;
 const MAX_KNOWLEDGE_SOURCE_LINKS = 3;
+const MAX_STREAM_KNOWLEDGE_SOURCE_LINKS = 2;
+const MAX_RENDERED_ANSWER_CHARACTERS = 1200;
 const ROUTE_METADATA_FACT_PATTERN =
   /\b(?:lives|live|is|are)\s+(?:at|on)\s+\/[a-z0-9/{]/i;
 
@@ -174,7 +175,8 @@ function linkLabelForPath(
 
 function buildKnowledgeSourceLinks(
   record: HelpBotKnowledgeRecord,
-  baseUrl: string
+  baseUrl: string,
+  maxLinks = MAX_KNOWLEDGE_SOURCE_LINKS
 ): HelpBotSourceLink[] {
   const canonicalPath = safeCanonicalPath(record);
   const candidatePaths = [canonicalPath, ...record.relatedPaths];
@@ -194,7 +196,7 @@ function buildKnowledgeSourceLinks(
       label: linkLabelForPath(path, canonicalPath, record.linkLabel),
       url
     });
-    if (links.length >= MAX_KNOWLEDGE_SOURCE_LINKS) {
+    if (links.length >= maxLinks) {
       break;
     }
   }
@@ -325,6 +327,62 @@ function truncateAtNaturalBoundary(value: string, maxLength: number): string {
   return prefix.slice(0, boundary > 0 ? boundary : maxLength).trimEnd();
 }
 
+function truncateStreamProse(value: string, maxLength: number): string {
+  if (maxLength <= 0) {
+    return '';
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const candidate = truncateAtNaturalBoundary(value, maxLength);
+  if (/[.!?]$/.test(candidate)) {
+    return candidate;
+  }
+  if (maxLength === 1) {
+    return '…';
+  }
+  const shortened = truncateAtNaturalBoundary(value, maxLength - 1).replace(
+    /[,:;]$/,
+    ''
+  );
+  return `${shortened}…`;
+}
+
+function stripModelGeneratedStreamLinks(value: string): string {
+  return value
+    .replace(/(?:^|\n+)More info:[^\n]*$/i, '')
+    .replace(/\[([^\]\n]+)\]\((?:https?:\/\/|\/)[^\s)]*\)?/g, '$1')
+    .replace(/https?:\/\/[^\s)]+/g, '')
+    .replace(/\s*\[[^\]\n]*$/, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function composeStreamAnswer(
+  text: string,
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string {
+  const body = stripModelGeneratedStreamLinks(stripHelpBotSelfIntro(text));
+  const links = buildKnowledgeSourceLinks(
+    record,
+    baseUrl,
+    MAX_STREAM_KNOWLEDGE_SOURCE_LINKS
+  );
+  if (!links.length || record.suppressSourceLinks) {
+    return truncateStreamProse(body, MAX_RENDERED_ANSWER_CHARACTERS);
+  }
+  const footer = `More info: ${sourceLinksMarkdown(links)}`;
+  const separator = body ? '\n\n' : '';
+  const bodyBudget = Math.max(
+    0,
+    MAX_RENDERED_ANSWER_CHARACTERS - separator.length - footer.length
+  );
+  const boundedBody = truncateStreamProse(body, bodyBudget);
+  return boundedBody ? `${boundedBody}\n\n${footer}` : footer;
+}
+
 function buildStreamEvidenceAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
@@ -338,12 +396,11 @@ function buildStreamEvidenceAnswer(
   const answer = ambiguity
     ? ambiguity.slice('AMBIGUITY:'.length).trim()
     : summaries.join(' ');
-  const body = truncateAtNaturalBoundary(answer, 820);
-  return ensureKnowledgeMarkdownLinks({
-    text: body || 'See the pinned Stream review evidence for this question.',
+  return composeStreamAnswer(
+    answer || 'See the pinned Stream review evidence for this question.',
     record,
     baseUrl
-  });
+  );
 }
 
 function buildDeterministicAnswer(
@@ -365,12 +422,17 @@ function normalizeRenderedAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
 ): string {
+  if (record.kind === 'public_review_knowledge') {
+    return composeStreamAnswer(text, record, baseUrl);
+  }
   const withUrl = ensureKnowledgeMarkdownLinks({
     text: stripHelpBotSelfIntro(text),
     record,
     baseUrl
   });
-  return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
+  return withUrl.length <= MAX_RENDERED_ANSWER_CHARACTERS
+    ? withUrl
+    : `${withUrl.slice(0, MAX_RENDERED_ANSWER_CHARACTERS - 3)}...`;
 }
 
 function buildPublicDataRecord(): HelpBotKnowledgeRecord {

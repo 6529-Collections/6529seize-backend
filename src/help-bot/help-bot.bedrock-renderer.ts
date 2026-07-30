@@ -20,6 +20,7 @@ interface AnthropicTextBlock {
 
 interface AnthropicResponse {
   readonly content?: AnthropicTextBlock[];
+  readonly stop_reason?: string;
 }
 
 const TONE_GUIDANCE =
@@ -35,7 +36,9 @@ const STREAM_GROUNDING_GUIDANCE = [
   'Distinguish implemented behavior, proposals, audit/readiness state, blockers, and deployment state. Do not collapse them into one status.',
   'Do not infer exact inputs, outputs, caller authorization, selectors, topics, events, errors, deployment facts, or behavior unless the evidence states them.',
   'If an AMBIGUITY fact is present, clearly ask for the contract or complete signature instead of choosing a declaration.',
-  'Mention the review version when the answer depends on implementation or status.'
+  'Mention the review version when the answer depends on implementation or status.',
+  'Keep the answer body under 800 characters.',
+  'Do not include URLs, Markdown links, or a More info footer. The backend appends verified source links separately.'
 ];
 
 function buildPrompt({
@@ -50,17 +53,19 @@ function buildPrompt({
   readonly canonicalUrl: string;
 }): string {
   const factLines = record.facts.map((fact) => `- ${fact}`).join('\n');
-  const streamGrounding =
-    record.kind === 'public_review_knowledge' ? STREAM_GROUNDING_GUIDANCE : [];
+  const isStreamKnowledge = record.kind === 'public_review_knowledge';
+  const streamGrounding = isStreamKnowledge ? STREAM_GROUNDING_GUIDANCE : [];
   const linkGuidance = record.suppressSourceLinks
     ? [
         'Do not include source links unless the provided facts explicitly require one.'
       ]
-    : [
-        MARKDOWN_LINK_GUIDANCE,
-        `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
-        `Use this exact Markdown link label for that URL: ${record.linkLabel}`
-      ];
+    : isStreamKnowledge
+      ? []
+      : [
+          MARKDOWN_LINK_GUIDANCE,
+          `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
+          `Use this exact Markdown link label for that URL: ${record.linkLabel}`
+        ];
   return [
     `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the provided facts.',
@@ -164,6 +169,9 @@ function buildInvokeModelInput(
 
 function parseAnthropicResponse(jsonString: string): string {
   const parsed = JSON.parse(jsonString) as AnthropicResponse;
+  if (parsed.stop_reason === 'max_tokens') {
+    throw new Error('Bedrock answer stopped before completion at max_tokens');
+  }
   const text = parsed.content
     ?.map((block) => (block.type === 'text' ? (block.text ?? '') : ''))
     .join('')
@@ -218,7 +226,9 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly record: HelpBotKnowledgeRecord;
     readonly canonicalUrl: string;
   }): Promise<string> {
-    return this.invokePrompt(buildPrompt(input), 220);
+    const maxTokens =
+      input.record.kind === 'public_review_knowledge' ? 320 : 220;
+    return this.invokePrompt(buildPrompt(input), maxTokens);
   }
 
   public async planPublicDataQuery(input: {
