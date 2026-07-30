@@ -42,8 +42,10 @@ import type {
   ReleaseBusV2TrainStatus
 } from '@/releaseBusV2/release-bus-v2.types';
 
-function dbOptions(ctx: RequestContext) {
-  return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
+function dbOptions(ctx: RequestContext, forceWrite = false) {
+  if (ctx.connection) return { wrappedConnection: ctx.connection };
+  if (forceWrite) return { forcePool: DbPoolName.WRITE };
+  return undefined;
 }
 
 function json(value: unknown): string | null {
@@ -763,6 +765,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async createTrain(
     input: {
+      readonly trainId?: string;
       readonly lane: ReleaseBusV2Lane;
       readonly frontendBaseSha: string;
       readonly backendBaseSha: string;
@@ -778,7 +781,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<ReleaseBusV2TrainRecord> {
-    const id = randomUUID();
+    const id = input.trainId ?? randomUUID();
     const now = Date.now();
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_TRAINS_TABLE}
@@ -1337,12 +1340,13 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async findOperation(
     idempotencyKey: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2OperationRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2OperationRecord>(
       `select * from ${RELEASE_BUS_V2_OPERATIONS_TABLE} where idempotency_key = :idempotencyKey`,
       { idempotencyKey },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -2098,6 +2102,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async appendEvent(
     input: {
+      readonly eventId?: string;
       readonly trainId?: string | null;
       readonly candidateId?: string | null;
       readonly eventType: string;
@@ -2106,18 +2111,64 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
+    const id = input.eventId ?? randomUUID();
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_EVENTS_TABLE}
        (id, train_id, candidate_id, event_type, github_actor, payload_json, created_at)
-       values (:id, :trainId, :candidateId, :eventType, :actor, :payload, :now)`,
+       values (:id, :trainId, :candidateId, :eventType, :actor, :payload, :now)
+       on duplicate key update id = id`,
       {
-        id: randomUUID(),
+        id,
         trainId: input.trainId ?? null,
         candidateId: input.candidateId ?? null,
         eventType: input.eventType,
         actor: input.actor ?? null,
         payload: json(input.payload),
         now: Date.now()
+      },
+      dbOptions(ctx)
+    );
+  }
+
+  public async findEvent(
+    id: string,
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2EventRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2EventRecord>(
+      `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
+       where id = :id${forUpdate ? ' for update' : ''}`,
+      { id },
+      dbOptions(ctx)
+    );
+  }
+
+  public async listEventsByTypes(
+    eventTypes: readonly string[],
+    limit: number,
+    ctx: RequestContext,
+    forUpdate = false,
+    createdAtGte?: number
+  ): Promise<ReleaseBusV2EventRecord[]> {
+    const uniqueTypes = Array.from(new Set(eventTypes));
+    if (uniqueTypes.length === 0 || uniqueTypes.length > 20)
+      throw new Error('Invalid Release Bus v2 event type filter');
+    if (
+      createdAtGte !== undefined &&
+      (!Number.isSafeInteger(createdAtGte) || createdAtGte < 0)
+    )
+      throw new Error('Invalid Release Bus v2 event lower time bound');
+    const boundedLimit = Math.max(1, Math.min(limit, 2000));
+    return this.db.execute<ReleaseBusV2EventRecord>(
+      `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
+       where event_type in (:eventTypes)
+       ${createdAtGte === undefined ? '' : 'and created_at >= :createdAtGte'}
+       order by created_at desc, id desc limit ${boundedLimit}${
+         forUpdate ? ' for update' : ''
+       }`,
+      {
+        eventTypes: uniqueTypes,
+        ...(createdAtGte === undefined ? {} : { createdAtGte })
       },
       dbOptions(ctx)
     );

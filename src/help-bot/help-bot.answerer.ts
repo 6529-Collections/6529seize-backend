@@ -27,6 +27,10 @@ import {
   HELP_BOT_QUESTION_CREDIT_COST,
   HELP_BOT_SIGNUP_CREDIT_GRANT
 } from './help-bot.config';
+import {
+  frontendStreamKnowledgeSource,
+  HelpBotStreamKnowledgeSource
+} from './help-bot-stream-knowledge';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -73,6 +77,8 @@ const HELP_BOT_CREDIT_CATEGORY_PATH = `/rep/categories/${encodeURIComponent(
   HELP_BOT_CREDIT_CATEGORY
 )}`;
 const MAX_KNOWLEDGE_SOURCE_LINKS = 3;
+const MAX_STREAM_KNOWLEDGE_SOURCE_LINKS = 2;
+const MAX_RENDERED_ANSWER_CHARACTERS = 1200;
 const ROUTE_METADATA_FACT_PATTERN =
   /\b(?:lives|live|is|are)\s+(?:at|on)\s+\/[a-z0-9/{]/i;
 
@@ -170,7 +176,8 @@ function linkLabelForPath(
 
 function buildKnowledgeSourceLinks(
   record: HelpBotKnowledgeRecord,
-  baseUrl: string
+  baseUrl: string,
+  maxLinks = MAX_KNOWLEDGE_SOURCE_LINKS
 ): HelpBotSourceLink[] {
   const canonicalPath = safeCanonicalPath(record);
   const candidatePaths = [canonicalPath, ...record.relatedPaths];
@@ -190,7 +197,7 @@ function buildKnowledgeSourceLinks(
       label: linkLabelForPath(path, canonicalPath, record.linkLabel),
       url
     });
-    if (links.length >= MAX_KNOWLEDGE_SOURCE_LINKS) {
+    if (links.length >= maxLinks) {
       break;
     }
   }
@@ -256,10 +263,227 @@ function ensureKnowledgeMarkdownLinks({
     : replaceMoreInfoLine(withCanonicalLink, links);
 }
 
+interface StreamEvidenceSummary {
+  readonly title?: string;
+  readonly scope?: string;
+  readonly classification?: string;
+  readonly summary?: string;
+  readonly text?: string;
+  readonly technical?: {
+    readonly declaration?: {
+      readonly canonicalSignature?: string;
+      readonly displaySignature?: string;
+      readonly inputs?: unknown[];
+      readonly outputs?: unknown[];
+      readonly visibility?: string;
+      readonly stateMutability?: string;
+    };
+  };
+}
+
+function streamEvidenceSummary(fact: string): string | null {
+  try {
+    const evidence = JSON.parse(fact) as StreamEvidenceSummary;
+    const declaration = evidence.technical?.declaration;
+    const technicalSummary = declaration
+      ? [
+          declaration.canonicalSignature ??
+            declaration.displaySignature ??
+            evidence.title,
+          `inputs ${JSON.stringify(declaration.inputs ?? [])}`,
+          `outputs ${JSON.stringify(declaration.outputs ?? [])}`,
+          declaration.visibility,
+          declaration.stateMutability,
+          evidence.scope,
+          evidence.classification
+        ]
+          .filter(Boolean)
+          .join('; ')
+      : null;
+    return `${evidence.title ?? 'Evidence'}: ${
+      technicalSummary ??
+      evidence.summary ??
+      evidence.text ??
+      'See the pinned review evidence.'
+    }`;
+  } catch {
+    return null;
+  }
+}
+
+function truncateAtNaturalBoundary(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const prefix = value.slice(0, maxLength + 1);
+  const sentenceEnd = Math.max(
+    prefix.lastIndexOf('. '),
+    prefix.lastIndexOf('? '),
+    prefix.lastIndexOf('! ')
+  );
+  const boundary =
+    sentenceEnd >= Math.floor(maxLength * 0.6)
+      ? sentenceEnd + 1
+      : prefix.lastIndexOf(' ');
+  return prefix.slice(0, boundary > 0 ? boundary : maxLength).trimEnd();
+}
+
+function truncateStreamProse(value: string, maxLength: number): string {
+  if (maxLength <= 0) {
+    return '';
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const candidate = truncateAtNaturalBoundary(value, maxLength);
+  if (/[.!?]$/.test(candidate)) {
+    return candidate;
+  }
+  if (maxLength === 1) {
+    return '…';
+  }
+  const shortened = truncateAtNaturalBoundary(value, maxLength - 1).replace(
+    /[,:;]$/,
+    ''
+  );
+  return `${shortened}…`;
+}
+
+function startsWithLinkTarget(value: string, index: number): boolean {
+  return (
+    value.startsWith('https://', index) ||
+    value.startsWith('http://', index) ||
+    value[index] === '/'
+  );
+}
+
+function skipUrl(value: string, start: number): number {
+  let index = start;
+  while (
+    index < value.length &&
+    value[index] !== ' ' &&
+    value[index] !== '\t' &&
+    value[index] !== '\n' &&
+    value[index] !== ')'
+  ) {
+    index += 1;
+  }
+  return index;
+}
+
+function stripLinksFromStreamLine(line: string): string {
+  let result = '';
+  let index = 0;
+  while (index < line.length) {
+    if (
+      line.startsWith('https://', index) ||
+      line.startsWith('http://', index)
+    ) {
+      index = skipUrl(line, index);
+      continue;
+    }
+    if (line[index] === '[') {
+      const labelEnd = line.indexOf(']', index + 1);
+      const targetStart = labelEnd + 2;
+      if (
+        labelEnd !== -1 &&
+        line[labelEnd + 1] === '(' &&
+        startsWithLinkTarget(line, targetStart)
+      ) {
+        result += line.slice(index + 1, labelEnd);
+        const targetEnd = line.indexOf(')', targetStart);
+        index = targetEnd === -1 ? line.length : targetEnd + 1;
+        continue;
+      }
+    }
+    result += line[index];
+    index += 1;
+  }
+  return result;
+}
+
+function normalizeStreamWhitespace(value: string): string {
+  let result = '';
+  let previousWasSpace = false;
+  for (const character of value) {
+    if (character === ' ' || character === '\t') {
+      previousWasSpace = true;
+      continue;
+    }
+    if (character === '\n') {
+      result = result.trimEnd();
+      result += '\n';
+      previousWasSpace = false;
+      continue;
+    }
+    if (previousWasSpace && result && !result.endsWith('\n')) {
+      result += ' ';
+    }
+    result += character;
+    previousWasSpace = false;
+  }
+  return result.trim();
+}
+
+function stripModelGeneratedStreamLinks(value: string): string {
+  const lines = value
+    .split('\n')
+    .filter((line) => !line.trimStart().toLowerCase().startsWith('more info:'))
+    .map(stripLinksFromStreamLine);
+  return normalizeStreamWhitespace(lines.join('\n'));
+}
+
+function composeStreamAnswer(
+  text: string,
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string {
+  const body = stripModelGeneratedStreamLinks(stripHelpBotSelfIntro(text));
+  const links = buildKnowledgeSourceLinks(
+    record,
+    baseUrl,
+    MAX_STREAM_KNOWLEDGE_SOURCE_LINKS
+  );
+  if (!links.length || record.suppressSourceLinks) {
+    return truncateStreamProse(body, MAX_RENDERED_ANSWER_CHARACTERS);
+  }
+  const footer = `More info: ${sourceLinksMarkdown(links)}`;
+  const separator = body ? '\n\n' : '';
+  const bodyBudget = Math.max(
+    0,
+    MAX_RENDERED_ANSWER_CHARACTERS - separator.length - footer.length
+  );
+  const boundedBody = truncateStreamProse(body, bodyBudget);
+  return boundedBody ? `${boundedBody}\n\n${footer}` : footer;
+}
+
+function buildStreamEvidenceAnswer(
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string {
+  const ambiguity = record.facts.find((fact) => fact.startsWith('AMBIGUITY:'));
+  const summaries = record.facts
+    .filter((fact) => fact.startsWith('{'))
+    .map(streamEvidenceSummary)
+    .filter((summary): summary is string => !!summary)
+    .slice(0, 3);
+  const answer = ambiguity
+    ? ambiguity.slice('AMBIGUITY:'.length).trim()
+    : summaries.join(' ');
+  return composeStreamAnswer(
+    answer || 'See the pinned Stream review evidence for this question.',
+    record,
+    baseUrl
+  );
+}
+
 function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
 ): string {
+  if (record.kind === 'public_review_knowledge') {
+    return buildStreamEvidenceAnswer(record, baseUrl);
+  }
   return ensureKnowledgeMarkdownLinks({
     text: record.facts.join(' '),
     record,
@@ -272,12 +496,17 @@ function normalizeRenderedAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
 ): string {
+  if (record.kind === 'public_review_knowledge') {
+    return composeStreamAnswer(text, record, baseUrl);
+  }
   const withUrl = ensureKnowledgeMarkdownLinks({
     text: stripHelpBotSelfIntro(text),
     record,
     baseUrl
   });
-  return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
+  return withUrl.length <= MAX_RENDERED_ANSWER_CHARACTERS
+    ? withUrl
+    : `${withUrl.slice(0, MAX_RENDERED_ANSWER_CHARACTERS - 3)}...`;
 }
 
 function buildPublicDataRecord(): HelpBotKnowledgeRecord {
@@ -693,6 +922,7 @@ const PRODUCT_CONTEXT_PATTERNS = [
   /\bnextgen\b/,
   /\brememe(s)?\b/,
   /\bdrop forge\b/,
+  /\bstream\b/,
   /\bsubscription(s)?\b/,
   /\beligibility\b/,
   /\bprofile(s)?\b/,
@@ -1082,7 +1312,7 @@ function buildGenericHelpAnswer(question: string): string | null {
   if (!isGenericHelpRequest(normalizedQuestion)) {
     return null;
   }
-  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
+  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, the Stream review, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
 }
 
 function buildSocialAnswer(question: string): string | null {
@@ -1110,7 +1340,8 @@ export class HelpBotAnswerer {
     private readonly renderer?: HelpBotLlmRenderer | null,
     private readonly knowledgeSource: HelpBotKnowledgeSource = frontendHelpBotKnowledgeSource,
     private readonly publicDataService?: HelpBotPublicDataService | null,
-    private readonly calendarService?: HelpBotCalendarService | null
+    private readonly calendarService?: HelpBotCalendarService | null,
+    private readonly streamKnowledgeSource: HelpBotStreamKnowledgeSource = frontendStreamKnowledgeSource
   ) {}
 
   public async answer(
@@ -1165,6 +1396,11 @@ export class HelpBotAnswerer {
         answer: socialAnswer,
         record: buildSocialRecord()
       };
+    }
+
+    const streamMatch = await this.findStreamKnowledgeMatch(request);
+    if (streamMatch) {
+      return this.answerFromKnowledgeMatch(request, streamMatch);
     }
 
     const expectsCalendarAnswer = isCalendarTimingQuestion(
@@ -1223,6 +1459,13 @@ export class HelpBotAnswerer {
       };
     }
 
+    return this.answerFromKnowledgeMatch(request, match);
+  }
+
+  private async answerFromKnowledgeMatch(
+    request: HelpBotAnswerRequest,
+    match: HelpBotKnowledgeMatch
+  ): Promise<HelpBotAnswerResult> {
     const exactDefinitionMatch = isExactDefinitionMatch(
       request.question,
       match.record
@@ -1289,6 +1532,20 @@ export class HelpBotAnswerer {
       record: answerRecord,
       escalateToTechTeam
     };
+  }
+
+  private async findStreamKnowledgeMatch(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotKnowledgeMatch | null> {
+    try {
+      return await this.streamKnowledgeSource.findMatch(
+        request.question,
+        request.previousBotAnswer
+      );
+    } catch (error) {
+      this.logger.warn('Help bot Stream knowledge source failed closed', error);
+      return null;
+    }
   }
 
   private async answerFromCalendar(

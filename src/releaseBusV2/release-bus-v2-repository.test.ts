@@ -155,6 +155,81 @@ function state(): ReleaseBusV2StagingStateRecord {
 }
 
 describe('ReleaseBusV2Repository', () => {
+  it('persists caller-owned immutable event identities and reads them with a CAS lock', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    const eventId = '10000000-0000-4000-8000-000000000001';
+
+    await repository.appendEvent(
+      {
+        eventId,
+        eventType: 'EXACT_STAGING_BASELINE_ADOPTION_INTENT_PREPARED',
+        actor: 'owner',
+        payload: { contract: 'intent-v1' }
+      },
+      {}
+    );
+    await repository.findEvent(eventId, {}, true);
+    await repository.listEventsByTypes(
+      [
+        'EXACT_STAGING_BASELINE_ADOPTION_INTENT_PREPARED',
+        'EXACT_STAGING_BASELINE_ADOPTION_INTENT_PREPARED',
+        'EXACT_STAGING_BASELINE_ADOPTION_FAILED'
+      ],
+      10_000,
+      {},
+      true,
+      1234
+    );
+
+    expect(db.calls[0]).toMatchObject({
+      params: {
+        id: eventId,
+        eventType: 'EXACT_STAGING_BASELINE_ADOPTION_INTENT_PREPARED',
+        actor: 'owner',
+        payload: JSON.stringify({ contract: 'intent-v1' })
+      }
+    });
+    expect(db.calls[0].sql).toContain('on duplicate key update id = id');
+    expect(db.calls[1].sql).toContain('where id = :id for update');
+    expect(db.calls[2].sql).toContain('created_at >= :createdAtGte');
+    expect(db.calls[2].sql).toContain('limit 2000 for update');
+    expect(db.calls[2].params?.eventTypes).toEqual([
+      'EXACT_STAGING_BASELINE_ADOPTION_INTENT_PREPARED',
+      'EXACT_STAGING_BASELINE_ADOPTION_FAILED'
+    ]);
+    expect(db.calls[2].params?.createdAtGte).toBe(1234);
+  });
+
+  it('uses an exact caller-owned train identity for one-shot adoption', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    const trainId = '10000000-0000-4000-8000-000000000001';
+
+    await repository.createTrain(
+      {
+        trainId,
+        lane: 'STAGING',
+        frontendBaseSha: 'a'.repeat(40),
+        backendBaseSha: 'b'.repeat(40),
+        candidateIds: [],
+        stagingPolicy: 'ADOPT_EXACT_DEPLOYED_BASELINE_V1',
+        initialStatus: 'E2E_RUNNING'
+      },
+      {}
+    );
+
+    expect(db.calls[0]).toMatchObject({
+      params: {
+        id: trainId,
+        lane: 'STAGING',
+        stagingPolicy: 'ADOPT_EXACT_DEPLOYED_BASELINE_V1',
+        initialStatus: 'E2E_RUNNING'
+      }
+    });
+    expect(db.calls[1].params).toEqual({ id: trainId });
+  });
+
   it('reads an acquired lock back from the write pool', async () => {
     const db = new RecordingSqlExecutor();
     const repository = new ReleaseBusV2Repository(() => db);

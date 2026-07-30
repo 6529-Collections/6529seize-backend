@@ -140,6 +140,7 @@ const TDH_UNWEIGHTED_ID = 'network.definitions.tdh-unweighted';
 const TDH_UNBOOSTED_ID = 'network.definitions.tdh-unboosted';
 const NAKAMOTO_SET_ID = 'network.tdh.nakamoto-set';
 const NETWORK_TDH_ID = 'network.tdh';
+const STREAM_REVIEW_ID = 'public-reviews.stream';
 
 const WALLET_COUNT_WORDS = new Map<string, number>([
   ['one', 1],
@@ -643,6 +644,15 @@ function addTdhDefinitionScores(
   }
 }
 
+function addStreamReviewScores(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (/\b(?:6529 )?stream\b/.test(context.normalizedQuestion)) {
+    addRoutedIdScore(scores, STREAM_REVIEW_ID, 20);
+  }
+}
+
 function routedRecordScores(
   normalizedQuestion: string
 ): ReadonlyMap<string, number> {
@@ -655,6 +665,7 @@ function routedRecordScores(
   addConsolidationScores(scores, context);
   addNetworkDefinitionScores(scores, context);
   addTdhDefinitionScores(scores, context);
+  addStreamReviewScores(scores, context);
 
   return scores;
 }
