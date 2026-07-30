@@ -560,6 +560,7 @@ function harness(options?: {
     readRuntimeShas: jest.fn(async () => runtimes),
     readFrontendRuntimeSha: jest.fn(async () => runtimes.frontend),
     readBackendRuntimeSha: jest.fn(async () => runtimes.backend),
+    waitForBackendRuntimeRetry: jest.fn(async () => undefined),
     hasActiveStagingWorkflow: jest.fn(async () => false),
     refContainsCommit: jest.fn(async () => true),
     getWorkflowRunIdentity: jest.fn(
@@ -1006,13 +1007,6 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
         return context.service.recordBackendDeployment(backendInput());
       }
     ],
-    [
-      'backend runtime',
-      (context: Harness) => {
-        context.runtimes.backend = 'f'.repeat(40);
-        return context.service.recordBackendDeployment(backendInput());
-      }
-    ]
   ])(
     'fails moved %s evidence closed with no partial adoption',
     async (_label, act) => {
@@ -1027,6 +1021,46 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
       expect(context.repository.state.row_version).toBe(23);
     }
   );
+
+  it('accepts a transient old backend runtime once the exact deployment converges', async () => {
+    const context = harness();
+    context.deps.readBackendRuntimeSha
+      .mockResolvedValueOnce('f'.repeat(40))
+      .mockResolvedValueOnce(BACKEND_SHA);
+    await prepare(context);
+
+    await expect(
+      context.service.recordBackendDeployment(backendInput())
+    ).resolves.toMatchObject({ outcome: 'RECORDED' });
+    expect(context.deps.readBackendRuntimeSha).toHaveBeenCalledTimes(2);
+    expect(context.deps.waitForBackendRuntimeRetry).toHaveBeenCalledWith(1_000);
+    expect(
+      context.repository.events.some(
+        ({ event_type }) =>
+          event_type === 'EXACT_STAGING_BASELINE_ADOPTION_FAILED'
+      )
+    ).toBe(false);
+  });
+
+  it('fails a persistently mismatched backend runtime closed', async () => {
+    const context = harness();
+    context.runtimes.backend = 'f'.repeat(40);
+    await prepare(context);
+
+    await expect(
+      context.service.recordBackendDeployment(backendInput())
+    ).rejects.toBeInstanceOf(ReleaseBusV2BaselineAdoptionError);
+    expect(context.deps.readBackendRuntimeSha).toHaveBeenCalledTimes(4);
+    expect(context.deps.waitForBackendRuntimeRetry.mock.calls).toEqual([
+      [1_000],
+      [2_000],
+      [4_000]
+    ]);
+    expect(context.repository.trains).toHaveLength(0);
+    expect(context.repository.manifests).toHaveLength(0);
+    expect(context.repository.operations).toHaveLength(0);
+    expect(context.repository.state.row_version).toBe(23);
+  });
 
   it.each([
     [
