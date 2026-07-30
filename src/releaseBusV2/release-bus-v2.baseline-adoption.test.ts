@@ -1322,7 +1322,6 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     expect(context.repository.events).toContainEqual(
       expect.objectContaining({
         train_id: INTENT_ID,
-        operation_id: context.repository.operations[0].id,
         event_type: 'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED',
         actor: 'release-bus-v2',
         payload_json: expect.objectContaining({

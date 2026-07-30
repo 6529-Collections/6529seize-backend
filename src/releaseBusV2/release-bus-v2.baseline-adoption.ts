@@ -2344,7 +2344,6 @@ export class ReleaseBusV2BaselineAdoptionService {
       {
         eventId: undispatchedOperationCancelledEventId(intent.intent_id),
         trainId: train.id,
-        operationId: operation.id,
         eventType: UNDISPATCHED_OPERATION_CANCELLED_EVENT,
         actor,
         payload: {
