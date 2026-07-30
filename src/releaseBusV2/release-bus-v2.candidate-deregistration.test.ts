@@ -332,11 +332,22 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
     );
   });
 
-  it('returns an explicit zero-target preparation as a safe non-executable no-op', async () => {
-    const { service, repository } = harness();
+  it('commits an exact zero-target plan to detach authoritative staging state', async () => {
+    const { service, repository, leases, state } = harness();
     repository.listCandidateDeregistrationTargets.mockResolvedValue([]);
+    repository.commitAllCandidateDeregistration.mockResolvedValue({
+      candidateCount: 0
+    });
+    Object.assign(state, {
+      status: 'CLEAN_MAIN',
+      current_manifest_id: null,
+      clean_main: true,
+      last_transition_train_id: null
+    });
 
-    const plan = await service.prepare('Confirm no active candidate intent');
+    const plan = await service.prepare(
+      'Retire the audited candidate inventory'
+    );
 
     expect(plan).toMatchObject({
       phase: 'PREPARE',
@@ -346,11 +357,29 @@ describe('ReleaseBusV2CandidateDeregistrationService', () => {
     });
     await expect(
       service.execute(executeInput(plan), 'operator')
-    ).rejects.toMatchObject({
-      code: 'CONFLICT'
+    ).resolves.toMatchObject({
+      phase: 'EXECUTE',
+      candidate_count: 0,
+      candidates: [],
+      executed: true,
+      physical_staging_presence: 'UNKNOWN_DETACHED'
     });
-    expect(repository.acquireExactFreeMaintenanceLocks).not.toHaveBeenCalled();
-    expect(repository.commitAllCandidateDeregistration).not.toHaveBeenCalled();
+    expect(repository.acquireExactFreeMaintenanceLocks).toHaveBeenCalledWith(
+      plan.locks,
+      expect.stringMatching(/^deregister:operator:/),
+      expect.any(Number)
+    );
+    expect(repository.commitAllCandidateDeregistration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedCandidates: [],
+        expectedInventorySha256: plan.inventory_sha256,
+        expectedStagingStateRowVersion: plan.staging_state_row_version,
+        maintenanceLeases: leases
+      })
+    );
+    expect(repository.releaseExactMaintenanceLocks).toHaveBeenCalledWith(
+      leases
+    );
   });
 
   it.each([
