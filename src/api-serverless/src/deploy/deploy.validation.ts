@@ -288,6 +288,91 @@ export const ReleaseBusV2CandidateCancelBodySchema = Joi.object({
   expected_row_version: Joi.number().integer().positive().required()
 }).required();
 
+const ReleaseBusV2BaselineAdoptionCandidateSchema = Joi.object({
+  candidate_id: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .required(),
+  repository: ReleaseRepositorySchema.required(),
+  pr_number: Joi.number().integer().positive().strict().required(),
+  head_sha: ReleaseShaSchema.required(),
+  row_version: Joi.number().integer().positive().strict().required()
+}).unknown(false);
+
+const ReleaseBusV2BaselineAdoptionBackendUnitSchema = Joi.object({
+  service: Joi.string()
+    .valid(...DEPLOY_SERVICES)
+    .required(),
+  expected_sha: ReleaseShaSchema.required()
+}).unknown(false);
+
+export const ReleaseBusV2BaselineAdoptionBodySchema = Joi.object({
+  idempotency_key: Joi.string()
+    .guid({ version: ['uuidv4'] })
+    .required(),
+  reason: Joi.string().trim().min(3).max(1000).required(),
+  expires_at: Joi.number().integer().positive().strict().required(),
+  expected_staging_state_row_version: Joi.number()
+    .integer()
+    .positive()
+    .strict()
+    .required(),
+  expected_frontend_ref: Joi.string().valid('1a-staging').required(),
+  expected_frontend_sha: ReleaseShaSchema.required(),
+  expected_frontend_runtime_sha: ReleaseShaSchema.required(),
+  expected_backend_ref: Joi.string().valid('1a-staging').required(),
+  expected_backend_sha: ReleaseShaSchema.required(),
+  expected_backend_runtime_sha: ReleaseShaSchema.required(),
+  required_backend_units: Joi.array()
+    .items(ReleaseBusV2BaselineAdoptionBackendUnitSchema)
+    .min(1)
+    .max(100)
+    .unique('service')
+    .required(),
+  candidates: Joi.array()
+    .items(ReleaseBusV2BaselineAdoptionCandidateSchema)
+    .min(0)
+    .max(500)
+    .unique('candidate_id')
+    .unique(
+      (left, right) =>
+        left.repository === right.repository &&
+        left.pr_number === right.pr_number &&
+        left.head_sha === right.head_sha
+    )
+    .required()
+})
+  .unknown(false)
+  .required();
+
+export const ReleaseBusV2BaselineAutomaticE2EDecisionBodySchema = Joi.object({
+  e2e_workflow_run_id: Joi.string()
+    .pattern(/^[1-9]\d{0,19}$/)
+    .required(),
+  deploy_workflow_run_id: Joi.string()
+    .pattern(/^[1-9]\d{0,19}$/)
+    .required(),
+  deployed_ref: Joi.string().valid('1a-staging').required(),
+  deployed_sha: ReleaseShaSchema.required()
+})
+  .unknown(false)
+  .required();
+
+export const ReleaseBusV2BaselineBackendDeploymentEventBodySchema = Joi.object({
+  environment: Joi.string().valid('staging').required(),
+  service: Joi.string()
+    .valid(...DEPLOY_SERVICES)
+    .required(),
+  workflow_run_id: Joi.string()
+    .pattern(/^[1-9]\d{0,19}$/)
+    .required(),
+  workflow_run_attempt: Joi.number().integer().positive().strict().required(),
+  source_ref: Joi.string().valid('1a-staging').required(),
+  source_sha: ReleaseShaSchema.required(),
+  status: Joi.string().valid('SUCCEEDED', 'FAILED').required()
+})
+  .unknown(false)
+  .required();
+
 export const ReleaseBusV2CandidateListQuerySchema = Joi.object({
   status: Joi.string().valid(...RELEASE_BUS_V2_CANDIDATE_STATUSES),
   limit: Joi.number().integer().min(1).max(500).default(100)

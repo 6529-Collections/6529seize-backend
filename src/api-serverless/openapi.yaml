@@ -8238,6 +8238,113 @@ paths:
               schema:
                 $ref: >-
                   #/components/schemas/ApiReleaseBusV2CandidateDeregistrationError
+  /deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline:
+    post:
+      tags:
+        - Release Bus v2
+      summary: Prepare an exact pending staging baseline-adoption intent
+      description: >-
+        Operator-only audited preparation for a separately coordinated manual
+        freeze. It records an immutable expiring intent with exact frontend and
+        backend staging refs/SHAs, runtime expectations, required backend units,
+        staging-state version, candidate membership, and future E2E operation
+        key. It creates no train, manifest, operation, deployment, ref mutation,
+        or environment lease. Exact deployment events later freeze the real
+        manifest and dispatch the sole expensive manifest-bound E2E.
+      operationId: adoptExactReleaseBusV2StagingBaseline
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiReleaseBusV2BaselineAdoptionRequest"
+      responses:
+        "200":
+          description: >-
+            Idempotently returns the immutable intent and its lifecycle. A
+            manifest and operation exist only after all exact deployment
+            evidence is ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiReleaseBusV2BaselineAdoptionResponse"
+        "400":
+          description: Malformed exact adoption request
+        "409":
+          description: Exact state, drain, ref, runtime, candidate, or lock fence failed
+        "503":
+          description: Safety evidence was unavailable and no adoption was authorized
+  /deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline/automatic-e2e-decision:
+    post:
+      tags:
+        - Release Bus v2
+      summary: Decide whether an automatic staging E2E must run or defer
+      description: >-
+        Workflow-credential endpoint used only by staging-e2e workflow_run. With
+        no pending intent it returns LEGACY. One exact pending intent records
+        frontend deployment/runtime evidence and returns DEFERRED, without
+        running the expensive suite. Stale, expired, moved, malformed, or
+        ambiguous intent evidence fails closed.
+      operationId: decideExactReleaseBusV2BaselineAutomaticE2E
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: >-
+                #/components/schemas/ApiReleaseBusV2BaselineAutomaticE2EDecisionRequest
+      responses:
+        "200":
+          description: Exact legacy-or-deferred decision
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiReleaseBusV2BaselineAutomaticE2EDecisionResponse
+        "400":
+          description: Malformed workflow identity
+        "409":
+          description: Pending intent evidence failed closed
+        "503":
+          description: Exact safety evidence is unavailable
+  /deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline/backend-deployment-event:
+    post:
+      tags:
+        - Release Bus v2
+      summary: Record an exact backend staging deployment event
+      description: >-
+        Workflow-credential callback for the ordinary manual backend deployment
+        workflow. No matching intent is a no-op. Exactly one matching required
+        unit records immutable evidence; the last exact required deployment
+        freezes the manifest and dispatches the sole bound E2E.
+      operationId: recordExactReleaseBusV2BaselineBackendDeployment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: >-
+                #/components/schemas/ApiReleaseBusV2BaselineBackendDeploymentEventRequest
+      responses:
+        "200":
+          description: Exact no-op, recorded, or dispatched result
+          content:
+            application/json:
+              schema:
+                $ref: >-
+                  #/components/schemas/ApiReleaseBusV2BaselineBackendDeploymentEventResponse
+        "400":
+          description: Malformed deployment callback
+        "409":
+          description: Pending intent evidence failed closed
+        "503":
+          description: Exact safety evidence is unavailable
   /subscriptions/consolidation/coverage/{consolidation_key}:
     get:
       tags:
@@ -20261,6 +20368,273 @@ components:
         platform:
           type: string
           description: Optional platform (ios, android, web)
+    ApiReleaseBusV2BaselineAdoptionBackendUnit:
+      type: object
+      additionalProperties: false
+      required:
+        - service
+        - expected_sha
+      properties:
+        service:
+          type: string
+        expected_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+    ApiReleaseBusV2BaselineAdoptionCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - candidate_id
+        - repository
+        - pr_number
+        - head_sha
+        - row_version
+      properties:
+        candidate_id:
+          type: string
+          format: uuid
+        repository:
+          type: string
+          enum:
+            - frontend
+            - backend
+        pr_number:
+          type: integer
+          minimum: 1
+        head_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        row_version:
+          type: integer
+          minimum: 1
+    ApiReleaseBusV2BaselineAdoptionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - idempotency_key
+        - reason
+        - expires_at
+        - expected_staging_state_row_version
+        - expected_frontend_ref
+        - expected_frontend_sha
+        - expected_frontend_runtime_sha
+        - expected_backend_ref
+        - expected_backend_sha
+        - expected_backend_runtime_sha
+        - required_backend_units
+        - candidates
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+          description: >-
+            Caller-generated UUID v4. Reusing it returns the same immutable
+            adoption and never creates or dispatches a second operation.
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 1000
+        expires_at:
+          type: integer
+          format: int64
+        expected_staging_state_row_version:
+          type: integer
+          minimum: 1
+        expected_frontend_ref:
+          type: string
+          enum:
+            - 1a-staging
+        expected_frontend_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        expected_frontend_runtime_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        expected_backend_ref:
+          type: string
+          enum:
+            - 1a-staging
+        expected_backend_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        expected_backend_runtime_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        required_backend_units:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ApiReleaseBusV2BaselineAdoptionBackendUnit"
+        candidates:
+          type: array
+          minItems: 0
+          maxItems: 500
+          uniqueItems: true
+          description: >-
+            Exact known candidate membership for the deployed pair. Empty is a
+            valid explicit membership and still preserves the exact staging SHAs
+            as the base for later cumulative trains.
+          items:
+            $ref: "#/components/schemas/ApiReleaseBusV2BaselineAdoptionCandidate"
+    ApiReleaseBusV2BaselineAdoptionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - adoption_id
+        - intent_identity_sha256
+        - expires_at
+        - manifest_id
+        - manifest_identity_sha256
+        - operation_key
+        - operation_id
+        - workflow_run_id
+        - status
+        - reused
+      properties:
+        adoption_id:
+          type: string
+          format: uuid
+        intent_identity_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        expires_at:
+          type: integer
+          format: int64
+        manifest_id:
+          type: string
+          format: uuid
+          nullable: true
+        manifest_identity_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+          nullable: true
+        operation_key:
+          type: string
+        operation_id:
+          type: string
+          format: uuid
+          nullable: true
+        workflow_run_id:
+          type: string
+          nullable: true
+          pattern: ^[1-9][0-9]{0,19}$
+        status:
+          type: string
+          enum:
+            - WAITING_FOR_DEPLOYMENTS
+            - E2E_RUNNING
+            - STAGING_VALIDATED
+            - FAILED
+        reused:
+          type: boolean
+    ApiReleaseBusV2BaselineAutomaticE2EDecisionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - e2e_workflow_run_id
+        - deploy_workflow_run_id
+        - deployed_ref
+        - deployed_sha
+      properties:
+        e2e_workflow_run_id:
+          type: string
+          pattern: ^[1-9][0-9]{0,19}$
+        deploy_workflow_run_id:
+          type: string
+          pattern: ^[1-9][0-9]{0,19}$
+        deployed_ref:
+          type: string
+          enum:
+            - 1a-staging
+        deployed_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+    ApiReleaseBusV2BaselineAutomaticE2EDecisionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - decision
+        - adoption_id
+        - operation_key
+        - expires_at
+      properties:
+        decision:
+          type: string
+          enum:
+            - LEGACY
+            - DEFERRED
+        adoption_id:
+          type: string
+          format: uuid
+          nullable: true
+        operation_key:
+          type: string
+          nullable: true
+        expires_at:
+          type: integer
+          format: int64
+          nullable: true
+        manifest_ready:
+          type: boolean
+    ApiReleaseBusV2BaselineBackendDeploymentEventRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - environment
+        - service
+        - workflow_run_id
+        - workflow_run_attempt
+        - source_ref
+        - source_sha
+        - status
+      properties:
+        environment:
+          type: string
+          enum:
+            - staging
+        service:
+          type: string
+        workflow_run_id:
+          type: string
+          pattern: ^[1-9][0-9]{0,19}$
+        workflow_run_attempt:
+          type: integer
+          minimum: 1
+        source_ref:
+          type: string
+          enum:
+            - 1a-staging
+        source_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        status:
+          type: string
+          enum:
+            - SUCCEEDED
+            - FAILED
+    ApiReleaseBusV2BaselineBackendDeploymentEventResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - adoption_id
+        - operation_key
+      properties:
+        outcome:
+          type: string
+          enum:
+            - NO_MATCH
+            - RECORDED
+            - E2E_DISPATCHED
+        adoption_id:
+          type: string
+          format: uuid
+          nullable: true
+        operation_key:
+          type: string
+          nullable: true
     ApiReleaseBusV2CandidateDeregistrationCandidateVersion:
       type: object
       additionalProperties: false
@@ -25178,6 +25552,7 @@ components:
           enum:
             - CUMULATIVE_ADMITTED_SET_V1
             - RESTORE_VALIDATED_STAGING_V1
+            - ADOPT_EXACT_DEPLOYED_BASELINE_V1
           nullable: true
         staging_baseline_manifest_id:
           type: string

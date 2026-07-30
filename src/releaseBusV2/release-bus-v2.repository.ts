@@ -763,6 +763,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async createTrain(
     input: {
+      readonly trainId?: string;
       readonly lane: ReleaseBusV2Lane;
       readonly frontendBaseSha: string;
       readonly backendBaseSha: string;
@@ -778,7 +779,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<ReleaseBusV2TrainRecord> {
-    const id = randomUUID();
+    const id = input.trainId ?? randomUUID();
     const now = Date.now();
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_TRAINS_TABLE}
@@ -2098,6 +2099,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async appendEvent(
     input: {
+      readonly eventId?: string;
       readonly trainId?: string | null;
       readonly candidateId?: string | null;
       readonly eventType: string;
@@ -2106,12 +2108,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
+    const id = input.eventId ?? randomUUID();
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_EVENTS_TABLE}
        (id, train_id, candidate_id, event_type, github_actor, payload_json, created_at)
-       values (:id, :trainId, :candidateId, :eventType, :actor, :payload, :now)`,
+       values (:id, :trainId, :candidateId, :eventType, :actor, :payload, :now)
+       on duplicate key update id = id`,
       {
-        id: randomUUID(),
+        id,
         trainId: input.trainId ?? null,
         candidateId: input.candidateId ?? null,
         eventType: input.eventType,
@@ -2119,6 +2123,40 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         payload: json(input.payload),
         now: Date.now()
       },
+      dbOptions(ctx)
+    );
+  }
+
+  public async findEvent(
+    id: string,
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2EventRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2EventRecord>(
+      `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
+       where id = :id${forUpdate ? ' for update' : ''}`,
+      { id },
+      dbOptions(ctx)
+    );
+  }
+
+  public async listEventsByTypes(
+    eventTypes: readonly string[],
+    limit: number,
+    ctx: RequestContext,
+    forUpdate = false
+  ): Promise<ReleaseBusV2EventRecord[]> {
+    const uniqueTypes = Array.from(new Set(eventTypes));
+    if (uniqueTypes.length === 0 || uniqueTypes.length > 20)
+      throw new Error('Invalid Release Bus v2 event type filter');
+    const boundedLimit = Math.max(1, Math.min(limit, 2000));
+    return this.db.execute<ReleaseBusV2EventRecord>(
+      `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
+       where event_type in (:eventTypes)
+       order by created_at desc, id desc limit ${boundedLimit}${
+         forUpdate ? ' for update' : ''
+       }`,
+      { eventTypes: uniqueTypes },
       dbOptions(ctx)
     );
   }

@@ -196,6 +196,73 @@ run IDs. Missing or changed evidence fails the mixed manifest and pauses v2;
 it can never become `STAGING_VALIDATED`. Operator beta emits the existing
 `BETA_STAGING_*` audit events additively.
 
+### Exact deployed-baseline adoption
+
+`POST /deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline` is an
+operator-only, one-shot recovery primitive for a separately coordinated manual
+staging freeze. It is not an ordinary train or a deployment mechanism. Both
+effective lanes must remain independently `OFF` and changeable, `ALL` must be
+unpaused, the existing `staging-environment` lock must be wholly free, and all
+staging trains, operations, deploy workflows, and E2E runs must already be
+drained.
+
+Before moving either staging ref or dispatching either manual deployment, the
+operator prepares an immutable, expiring intent. The request supplies a UUID v4
+idempotency key, expiry, exact authoritative staging-state row version, target
+frontend/backend `1a-staging` refs and SHAs, target runtime SHAs, every required
+backend deployment unit/SHA, and an explicit zero-or-known candidate inventory
+with row versions. Preparation verifies OFF/changeable controls, a drained and
+unlocked staging environment, exact authoritative state and candidate
+identity/membership, then writes only the audited intent event. Target refs and
+runtimes are expected to move later during the frozen deployments, so
+preparation creates no train, manifest, operation, lease, ref mutation, or
+deployment.
+
+Every ordinary manual staging backend deployment sends one authenticated
+terminal callback. A successful callback advances only the unique unexpired
+intent whose backend ref, SHA, unit, GitHub run, attempt and runtime are exact.
+A failed, stale, moved, duplicate-different, or ambiguous callback fails that
+intent closed. With no matching intent, the ordinary manual workflow receives
+`NO_MATCH` and retains its existing behavior.
+
+The normal frontend `Web Deploy - STAGING` success still triggers
+`staging-e2e.yml` through `workflow_run`. Its trusted decision job performs one
+authenticated lookup for the exact upstream deploy run/ref/SHA:
+
+- no active intent returns `LEGACY`, so the existing expensive automatic E2E
+  runs unchanged;
+- one unique exact unexpired intent records exact deployment/runtime evidence
+  and an idempotent `DEFERRED` event, then exits successfully without running
+  the expensive packs;
+- stale, moved, expired, malformed, ambiguous, or identity-mismatched evidence
+  fails the workflow closed without validating or adopting anything.
+
+Whichever exact deployment event completes the required evidence set last
+revalidates the drained controls, state version, target refs, target runtimes,
+candidate membership and staging lock. One transaction then creates the real
+`ADOPT_EXACT_DEPLOYED_BASELINE_V1` train, acquires only the existing staging
+lock, freezes the immutable manifest and creates exactly one `E2E_STAGING`
+operation. The existing operation reconciler dispatches exactly one
+manifest-bound `staging-e2e.yml` `workflow_dispatch`. Workflow concurrency has
+`cancel-in-progress: false`; if the frontend event was last, the bound run
+queues behind the short automatic decision run. There is no polling runner,
+second expensive E2E, synthetic proof train, cancellation, bypass, new shared
+lease protocol, or manual-workflow guard.
+
+Only one exact successful E2E operation, unchanged refs and runtimes, unchanged
+staging state/candidate row versions, unchanged OFF controls, and retained
+staging-lock ownership permit the final transaction. That transaction changes
+the manifest/train to `STAGING_VALIDATED`, CAS-commits the exact pair as
+authoritative `LIVE` staging state (including valid zero-candidate membership),
+and updates only the selected candidates' derived staging evidence/live fields.
+Any stale, malformed, failed, duplicate, or ambiguous evidence fails the
+adoption, releases its staging lock, and leaves authoritative staging state and
+developer/production intent unchanged. Retrying the same idempotency key
+or callback returns the same immutable attempt and cannot dispatch a second
+bound run; a failed attempt is never automatically replaced. This capability
+must be deployed while lanes are OFF, but must not be invoked until the owner
+separately authorizes and holds the brief manual freeze.
+
 ## Production lifecycle
 
 Staging validation never creates production readiness. An operator explicitly
@@ -475,7 +542,8 @@ The new literals fit the existing candidate/status/live-state and singleton
 `varchar` widths; this contract adds no DDL. Do not execute the maintenance
 action during a mixed API/reconciler rollout. Keep both lane controls paused
 until the API, reconciler, generated contracts, and UI all understand
-`DEREGISTERED`, `DETACHED`, and `DETACHED_MANUAL_OWNERSHIP`. An older
+`DEREGISTERED`, `DETACHED`, `DETACHED_MANUAL_OWNERSHIP`, and
+`ADOPT_EXACT_DEPLOYED_BASELINE_V1`. An older
 reconciler cannot claim while the lane controls remain paused, so either
 deployment order is safe during that fenced window; resumption requires exact
 new-runtime parity.

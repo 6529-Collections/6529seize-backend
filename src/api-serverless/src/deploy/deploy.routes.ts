@@ -28,6 +28,9 @@ import {
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateCancelBodySchema,
   ReleaseBusV2CandidateDeregistrationBodySchema,
+  ReleaseBusV2BaselineAdoptionBodySchema,
+  ReleaseBusV2BaselineAutomaticE2EDecisionBodySchema,
+  ReleaseBusV2BaselineBackendDeploymentEventBodySchema,
   ReleaseBusV2CandidateListQuerySchema,
   ReleaseBusV2CurrentStagingRepairBodySchema,
   ReleaseBusV2ManualDeploymentReadinessBodySchema,
@@ -60,6 +63,12 @@ import {
   isReleaseBusV2CandidateDeregistrationError,
   releaseBusV2CandidateDeregistrationService
 } from '@/releaseBusV2/release-bus-v2.candidate-deregistration';
+import {
+  isReleaseBusV2BaselineAdoptionError,
+  releaseBusV2BaselineAdoptionService,
+  type ReleaseBusV2BaselineAutomaticE2EDecisionInput,
+  type ReleaseBusV2BaselineBackendDeploymentEventInput
+} from '@/releaseBusV2/release-bus-v2.baseline-adoption';
 import { releaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.repository';
 import { releaseBusV2Reconciler } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -85,6 +94,11 @@ import {
   ApiReleaseBusV2CandidateDeregistrationResponsePhaseEnum,
   ApiReleaseBusV2CandidateDeregistrationResponsePhysicalStagingPresenceEnum
 } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationResponse';
+import type { ApiReleaseBusV2BaselineAdoptionRequest } from '@/api/generated/models/ApiReleaseBusV2BaselineAdoptionRequest';
+import {
+  ApiReleaseBusV2BaselineAdoptionResponse,
+  ApiReleaseBusV2BaselineAdoptionResponseStatusEnum
+} from '@/api/generated/models/ApiReleaseBusV2BaselineAdoptionResponse';
 
 const logger = Logger.get('DeployRoutes');
 
@@ -1122,6 +1136,113 @@ deployRoutes.post(
 );
 
 deployRoutes.post(
+  '/release-bus-v2/maintenance/adopt-exact-staging-baseline',
+  async (req, res) => {
+    const token = getGitHubTokenOrThrow(req);
+    const actor = await requireOperator(token);
+    const body =
+      getValidatedByJoiOrThrow<ApiReleaseBusV2BaselineAdoptionRequest>(
+        req.body,
+        ReleaseBusV2BaselineAdoptionBodySchema
+      );
+    try {
+      const result = await releaseBusV2BaselineAdoptionService.execute(
+        {
+          ...body,
+          required_backend_units: Array.from(body.required_backend_units),
+          candidates: Array.from(body.candidates)
+        },
+        actor
+      );
+      const status = {
+        WAITING_FOR_DEPLOYMENTS:
+          ApiReleaseBusV2BaselineAdoptionResponseStatusEnum.WaitingForDeployments,
+        E2E_RUNNING:
+          ApiReleaseBusV2BaselineAdoptionResponseStatusEnum.E2ERunning,
+        STAGING_VALIDATED:
+          ApiReleaseBusV2BaselineAdoptionResponseStatusEnum.StagingValidated,
+        FAILED: ApiReleaseBusV2BaselineAdoptionResponseStatusEnum.Failed
+      }[result.status];
+      const response: ApiReleaseBusV2BaselineAdoptionResponse = {
+        ...result,
+        status
+      };
+      setNoStoreHeaders(res);
+      return res.json(response);
+    } catch (error) {
+      if (isReleaseBusV2BaselineAdoptionError(error))
+        throw new CustomApiCompliantException(
+          error.code === 'BAD_REQUEST'
+            ? 400
+            : error.code === 'CONFLICT'
+              ? 409
+              : 503,
+          error.message
+        );
+      throw error;
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/adopt-exact-staging-baseline/automatic-e2e-decision',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2BaselineAutomaticE2EDecisionInput>(
+        req.body,
+        ReleaseBusV2BaselineAutomaticE2EDecisionBodySchema
+      );
+    try {
+      const decision =
+        await releaseBusV2BaselineAdoptionService.decideAutomaticE2E(body);
+      setNoStoreHeaders(res);
+      return res.json(decision);
+    } catch (error) {
+      if (isReleaseBusV2BaselineAdoptionError(error))
+        throw new CustomApiCompliantException(
+          error.code === 'BAD_REQUEST'
+            ? 400
+            : error.code === 'CONFLICT'
+              ? 409
+              : 503,
+          error.message
+        );
+      throw error;
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/maintenance/adopt-exact-staging-baseline/backend-deployment-event',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2BaselineBackendDeploymentEventInput>(
+        req.body,
+        ReleaseBusV2BaselineBackendDeploymentEventBodySchema
+      );
+    try {
+      const result =
+        await releaseBusV2BaselineAdoptionService.recordBackendDeployment(body);
+      setNoStoreHeaders(res);
+      return res.json(result);
+    } catch (error) {
+      if (isReleaseBusV2BaselineAdoptionError(error))
+        throw new CustomApiCompliantException(
+          error.code === 'BAD_REQUEST'
+            ? 400
+            : error.code === 'CONFLICT'
+              ? 409
+              : 503,
+          error.message
+        );
+      throw error;
+    }
+  }
+);
+
+deployRoutes.post(
   '/release-bus-v2/manual-deployment-readiness',
   async (req, res) => {
     requireWorkflowCredential(req);
@@ -1152,7 +1273,9 @@ async function requireV2TrainAutomationAllowed(trainId: string) {
   try {
     const train = await releaseBusV2Repository.findTrain(trainId, {});
     allowed = Boolean(
-      train && (await releaseBusV2Service.isBetaTrainAllowed(train))
+      train &&
+      (train.staging_policy === 'ADOPT_EXACT_DEPLOYED_BASELINE_V1' ||
+        (await releaseBusV2Service.isBetaTrainAllowed(train)))
     );
   } catch {
     allowed = false;
@@ -1216,6 +1339,7 @@ deployRoutes.post('/release-bus-v2/report-progress', async (req, res) => {
   await requireV2TrainAutomationAllowed(body.train_id);
   try {
     const result = await releaseBusV2Operations.reportProgress(body);
+    await releaseBusV2BaselineAdoptionService.handleE2EProgress(body.train_id);
     setNoStoreHeaders(res);
     return res.json(result);
   } catch (error) {

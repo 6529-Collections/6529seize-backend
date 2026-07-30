@@ -1716,6 +1716,9 @@ export class ReleaseBusV2Reconciler {
 
     const activeByLane = (await this.repository.listTrains(100, {}))
       .filter((train) => !TERMINAL_TRAINS.has(train.status))
+      .filter(
+        (train) => train.staging_policy !== 'ADOPT_EXACT_DEPLOYED_BASELINE_V1'
+      )
       .filter((train) => {
         if (train.lane === 'STAGING') return stagingEnabled;
         if (train.lane === 'PRODUCTION') return productionEnabled;
