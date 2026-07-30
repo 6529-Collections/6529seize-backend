@@ -312,6 +312,17 @@ jobs:
               test "$INPUT_RELEASE_NOTE_PUBLISH" = false
             else
               [[ "$INPUT_RELEASE_PULL_REQUEST" =~ ^[1-9][0-9]{0,9}$ ]] || exit 1
+              test -n "$INPUT_RELEASE_GROUP_SERVICES"
+              case ",\${INPUT_RELEASE_GROUP_SERVICES}," in
+                *,"\${INPUT_SERVICE}",*) ;;
+                *)
+                  echo "release_group_services must include the deployed service \${INPUT_SERVICE}" >&2
+                  exit 1
+                  ;;
+              esac
+              if [ "$INPUT_ENVIRONMENT" != prod ]; then
+                test "$INPUT_RELEASE_NOTE_PUBLISH" = false
+              fi
             fi
           fi
           case "$INPUT_EMERGENCY_API_BOOTSTRAP" in

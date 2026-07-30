@@ -1,7 +1,14 @@
+jest.mock('node-fetch', () => ({
+  __esModule: true,
+  default: jest.fn()
+}));
+
 import { AiPrompter } from '@/abusiveness/ai-prompter';
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
+import { CiPipelineAlertService } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { DropsDb } from '@/drops/drops.db';
+import fetch from 'node-fetch';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import {
   AlreadyDeployedReleaseShaError,
@@ -10,6 +17,7 @@ import {
   ReleaseNoteGitHubService
 } from './release-note-github.service';
 import { ReleaseNoteGenerationService } from './release-note-generation.service';
+import { parseReleaseNoteMessage } from '@/releaseNotesGenerationLoop';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529-Collections/6529seize-backend',
@@ -78,10 +86,14 @@ function createDropsRepository(existingDropId: string | null = null): DropsDb {
 describe('ReleaseNoteGenerationService', () => {
   const originalBotProfileId = process.env.CI_PIPELINES_BOT_PROFILE_ID;
   const originalWaveId = process.env.CI_RELEASES_WAVE_ID;
+  const originalProdWaveId = process.env.CI_PIPELINES_PROD_WAVE_ID;
+  const originalGithubToken = process.env.RELEASE_NOTES_GITHUB_TOKEN;
 
   beforeEach(() => {
     process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
     process.env.CI_RELEASES_WAVE_ID = 'releases-wave';
+    process.env.CI_PIPELINES_PROD_WAVE_ID = 'prod-wave';
+    process.env.RELEASE_NOTES_GITHUB_TOKEN = 'github-token';
   });
 
   afterAll(() => {
@@ -95,6 +107,225 @@ describe('ReleaseNoteGenerationService', () => {
     } else {
       process.env.CI_RELEASES_WAVE_ID = originalWaveId;
     }
+    if (originalProdWaveId === undefined) {
+      delete process.env.CI_PIPELINES_PROD_WAVE_ID;
+    } else {
+      process.env.CI_PIPELINES_PROD_WAVE_ID = originalProdWaveId;
+    }
+    if (originalGithubToken === undefined) {
+      delete process.env.RELEASE_NOTES_GITHUB_TOKEN;
+    } else {
+      process.env.RELEASE_NOTES_GITHUB_TOKEN = originalGithubToken;
+    }
+  });
+
+  it('carries frontend run #15 from an accepted CI alert through the exact baseline to a published PR-scoped release note', async () => {
+    const deployedSha = '9d85844ca9c63274083612f211463d31588ae954';
+    let queuedRequest: ReleaseNoteGenerationRequest | null = null;
+    const ciDropCreation = {
+      createDrop: jest.fn().mockResolvedValue({ id: 'ci-drop' }),
+      toggleHideLinkPreview: jest.fn().mockResolvedValue({})
+    };
+    const alertService = new CiPipelineAlertService(
+      ciDropCreation as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest
+          .fn()
+          .mockResolvedValue({ prxt0: 'initiator-profile' })
+      } as unknown as IdentitiesDb,
+      {
+        enqueueBestEffort: jest
+          .fn()
+          .mockImplementation((value: ReleaseNoteGenerationRequest) => {
+            queuedRequest = value;
+            return Promise.resolve('enqueued');
+          })
+      } as any
+    );
+
+    await expect(
+      alertService.postAlert(
+        {
+          repo: '6529seize-frontend',
+          workflow: 'Release Bus - Deploy Frontend Production',
+          status: 'success',
+          title: 'Frontend production deployment complete',
+          triggered_by_github_login: '6529-release-bus[bot]',
+          run_id: '30379747148',
+          run_number: '15',
+          run_url:
+            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/30379747148',
+          sha: deployedSha,
+          branch: 'main',
+          environment: 'prod',
+          service: 'web',
+          release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+          release_operation_key:
+            'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:frontend:a1',
+          contributor_evidence: 'release-bus-operation',
+          contributor_github_logins: ['prxt6529'],
+          release_notes_prompt_path:
+            'ops/release-notes/release-notes.prompt.md',
+          release_group_id: 'frontend:run-15',
+          release_group_services: ['web'],
+          deployed_at: '2026-07-23T11:38:00.000Z'
+        },
+        {}
+      )
+    ).resolves.toEqual({
+      ci_drop: 'accepted',
+      release_note: 'enqueued'
+    });
+    expect(queuedRequest).not.toBeNull();
+
+    const githubResponse = (payload: unknown) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { get: jest.fn().mockReturnValue(null) },
+      json: jest.fn().mockResolvedValue(payload)
+    });
+    const currentRun = {
+      id: 30379747148,
+      name: 'Release Bus - Deploy Frontend Production',
+      display_title: 'Deploy frontend production train',
+      head_sha: deployedSha,
+      head_branch: 'main',
+      run_number: 15,
+      workflow_id: 99,
+      status: 'in_progress',
+      conclusion: null,
+      created_at: '2026-07-23T11:38:00Z',
+      path: '.github/workflows/release-bus-deploy-production.yml@refs/heads/main'
+    };
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(githubResponse(currentRun))
+      .mockResolvedValueOnce(githubResponse({ workflow_runs: [] }))
+      .mockResolvedValueOnce(
+        githubResponse({
+          workflow_runs: [
+            {
+              ...currentRun,
+              id: 30370000000,
+              head_sha: '8'.repeat(40),
+              run_number: 14,
+              status: 'completed',
+              conclusion: 'success',
+              created_at: '2026-07-22T11:38:00Z'
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        githubResponse({
+          commits: [
+            {
+              sha: deployedSha,
+              author: { login: 'prxt6529', type: 'User' },
+              committer: { login: 'web-flow', type: 'User' },
+              commit: {
+                message: 'Restore Release Bus frontend release notes'
+              }
+            }
+          ],
+          total_commits: 1,
+          status: 'ahead'
+        })
+      )
+      .mockResolvedValueOnce(
+        githubResponse([
+          {
+            number: 3498,
+            html_url:
+              'https://github.com/6529-Collections/6529seize-frontend/pull/3498',
+            title: 'Restore Release Bus frontend production release notes',
+            body: 'Restore the reviewed prompt path.',
+            merged_at: '2026-07-23T10:00:00Z',
+            user: { login: 'prxt6529', type: 'User' },
+            base: { ref: 'main' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        githubResponse([
+          {
+            filename: '.github/workflows/release-bus-deploy-production.yml',
+            additions: 1,
+            deletions: 0,
+            changes: 1
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        githubResponse([
+          {
+            sha: deployedSha,
+            author: { login: 'prxt6529', type: 'User' },
+            committer: { login: 'web-flow', type: 'User' }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(
+        githubResponse({
+          type: 'file',
+          encoding: 'base64',
+          content: Buffer.from('Reviewed repository prompt.').toString('base64')
+        })
+      );
+
+    const releaseDropCreation = {
+      createDrop: jest.fn().mockResolvedValue({ id: 'release-note-drop' })
+    };
+    const generationService = new ReleaseNoteGenerationService(
+      new ReleaseNoteGitHubService(),
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [
+              {
+                number: 3498,
+                summary: 'Restored frontend production release notes.'
+              }
+            ]
+          })
+        )
+      } as AiPrompter,
+      releaseDropCreation as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest
+          .fn()
+          .mockResolvedValue({ prxt0: 'contributor-profile' })
+      } as unknown as IdentitiesDb,
+      { prxt6529: 'prxt0' },
+      createDropsRepository()
+    );
+    const parsedRequest = parseReleaseNoteMessage(
+      JSON.stringify(queuedRequest)
+    );
+
+    await expect(
+      generationService.generateAndPost(parsedRequest, {})
+    ).resolves.toBe('published');
+    expect(releaseDropCreation.createDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createDropRequest: expect.objectContaining({
+          parts: [
+            expect.objectContaining({
+              content: expect.stringContaining(
+                'https://github.com/6529-Collections/6529seize-frontend/pull/3498'
+              )
+            })
+          ],
+          mentioned_users: [
+            {
+              mentioned_profile_id: 'contributor-profile',
+              handle_in_content: 'prxt0'
+            }
+          ]
+        })
+      }),
+      expect.any(Object)
+    );
   });
 
   it('renders validated summaries, service labels, PR links, and 6529 mentions', async () => {

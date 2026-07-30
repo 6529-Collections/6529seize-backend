@@ -252,7 +252,6 @@ async function githubApi(repository, path) {
 }
 
 async function validatePullRequestDeploymentEvidence({
-  repository,
   pull,
   pullRequestNumber,
   deployedSha,
@@ -275,15 +274,9 @@ async function validatePullRequestDeploymentEvidence({
       `Open PR #${pullRequestNumber} does not exactly match deployed branch ${branch}`
     );
   }
-  if (!merged || evidenceSha === deployedSha) return;
-
-  const comparison = await githubApi(
-    repository,
-    `/compare/${encodeURIComponent(evidenceSha)}...${encodeURIComponent(deployedSha)}`
-  );
-  if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
+  if (merged && evidenceSha !== deployedSha) {
     throw new Error(
-      `Deployed SHA ${deployedSha} does not contain PR #${pullRequestNumber}`
+      `Merged PR #${pullRequestNumber} does not exactly match deployed SHA ${deployedSha}`
     );
   }
 }
@@ -312,29 +305,14 @@ async function fetchCompletePullRequestPages({
   );
 }
 
-function assertPullRequestAffectsService({
-  files,
+function assertManualServicePlan({
+  releaseGroupServices,
   pullRequestNumber,
   service
 }) {
-  const servicePrefixes =
-    service === 'api'
-      ? [
-          'src/api-serverless/',
-          'src/constants/',
-          'src/entities/',
-          'src/minting-claims/',
-          'src/numbers/',
-          'src/strings/'
-        ]
-      : [`src/${service}/`];
-  if (
-    !files.some((file) =>
-      servicePrefixes.some((prefix) => file.filename?.startsWith(prefix))
-    )
-  ) {
+  if (!releaseGroupServices.includes(service)) {
     throw new Error(
-      `PR #${pullRequestNumber} does not contain changes for ${service}`
+      `PR #${pullRequestNumber} manual service plan does not include ${service}`
     );
   }
 }
@@ -344,22 +322,21 @@ async function deriveManualPullRequestContributors({
   pullRequestNumber,
   deployedSha,
   service,
-  branch
+  branch,
+  releaseGroupServices
 }) {
   const pull = await githubApi(repository, `/pulls/${pullRequestNumber}`);
   await validatePullRequestDeploymentEvidence({
-    repository,
     pull,
     pullRequestNumber,
     deployedSha,
     branch
   });
-  const files = await fetchCompletePullRequestPages({
-    repository,
+  assertManualServicePlan({
+    releaseGroupServices,
     pullRequestNumber,
-    resource: 'files'
+    service
   });
-  assertPullRequestAffectsService({ files, pullRequestNumber, service });
   const commits = await fetchCompletePullRequestPages({
     repository,
     pullRequestNumber,
@@ -574,7 +551,8 @@ if (
       pullRequestNumber,
       deployedSha,
       service: CI_PIPELINES_SERVICE,
-      branch: GITHUB_REF_NAME
+      branch: GITHUB_REF_NAME,
+      releaseGroupServices
     });
     contributorEvidence = releaseContributors.length ? 'manual-pr' : null;
   } catch (error) {

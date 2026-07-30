@@ -436,6 +436,7 @@ run_batch_mode() {
   local environment
   local release_pull_request=''
   local release_note_opt_out='false'
+  local release_group_services=''
   local continue_choice
   local idx
   local selected_output
@@ -461,12 +462,24 @@ run_batch_mode() {
 
   (( ${#selected_services[@]} > 0 )) || die 'No services were selected'
 
+  if [[ "$attribution_mode" == 'pr' ]]; then
+    for allowed_service in "${BATCH_SERVICES[@]}"; do
+      if ! service_is_allowed "$allowed_service" "${selected_services[@]}"; then
+        continue
+      fi
+      if [[ -n "$release_group_services" ]]; then
+        release_group_services+=','
+      fi
+      release_group_services+="$allowed_service"
+    done
+  fi
+
   BATCH_SUCCEEDED=()
   BATCH_FAILED=()
   BATCH_SKIPPED=()
 
   for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
-    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_pull_request" false "$release_note_opt_out" ''; then
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_pull_request" false "$release_note_opt_out" "$release_group_services"; then
       BATCH_SUCCEEDED+=("${selected_services[$idx]}")
       continue
     fi

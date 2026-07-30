@@ -77,29 +77,23 @@ async function runNotifier(
 
 async function runManualEvidenceNotifier({
   pull,
-  files = [{ filename: 'src/api-serverless/src/example.ts' }],
   commits = [
     {
       author: { login: 'Commit-Author', type: 'User' },
       committer: { login: 'Commit-Committer', type: 'User' }
     }
   ],
-  comparison = { status: 'ahead' }
+  notifierOverrides = {}
 }: {
   readonly pull: Record<string, unknown>;
-  readonly files?: readonly Record<string, unknown>[];
   readonly commits?: readonly Record<string, unknown>[];
-  readonly comparison?: Record<string, unknown>;
+  readonly notifierOverrides?: Readonly<Record<string, string>>;
 }): Promise<RunResult> {
   const githubServer = createServer((request, response) => {
     const pathName = request.url ?? '';
     let body: unknown;
     if (pathName.endsWith('/pulls/42')) {
       body = pull;
-    } else if (pathName.includes('/compare/')) {
-      body = comparison;
-    } else if (pathName.includes('/pulls/42/files')) {
-      body = files;
     } else if (pathName.includes('/pulls/42/commits')) {
       body = commits;
     } else {
@@ -121,7 +115,8 @@ async function runManualEvidenceNotifier({
       CI_RELEASE_PULL_REQUEST: '42',
       CI_RELEASE_NOTE_OPT_OUT: 'false',
       GITHUB_TOKEN: 'test-token',
-      GITHUB_API_URL: `http://127.0.0.1:${address.port}`
+      GITHUB_API_URL: `http://127.0.0.1:${address.port}`,
+      ...notifierOverrides
     });
   } finally {
     await new Promise<void>((resolve, reject) =>
@@ -154,7 +149,6 @@ describe('notify-ci-wave release-note metadata', () => {
       environment: 'prod',
       branch: 'main',
       deployedSha: 'a'.repeat(40),
-      changedFile: 'src/constants/example.ts',
       pull: {
         number: 42,
         merged_at: '2026-07-28T12:00:00Z',
@@ -166,7 +160,6 @@ describe('notify-ci-wave release-note metadata', () => {
       environment: 'staging',
       branch: 'feature/manual-staging',
       deployedSha: 'b'.repeat(40),
-      changedFile: 'src/api-serverless/src/example.ts',
       pull: {
         number: 42,
         merged_at: null,
@@ -178,15 +171,13 @@ describe('notify-ci-wave release-note metadata', () => {
       }
     }
   ])(
-    'derives manual backend contributors for $environment from exact PR and service evidence',
-    async ({ environment, branch, deployedSha, changedFile, pull }) => {
+    'derives manual backend contributors for $environment from exact PR and explicit service-plan evidence',
+    async ({ environment, branch, deployedSha, pull }) => {
       const githubServer = createServer((request, response) => {
         const pathName = request.url ?? '';
         let body: unknown;
         if (pathName.endsWith('/pulls/42')) {
           body = pull;
-        } else if (pathName.includes('/pulls/42/files')) {
-          body = [{ filename: changedFile }];
         } else if (pathName.includes('/pulls/42/commits')) {
           body = [
             {
@@ -290,34 +281,34 @@ describe('notify-ci-wave release-note metadata', () => {
       diagnostic: 'Open PR #42 does not exactly match deployed branch main'
     },
     {
-      name: 'a merged PR that is absent from the deployed SHA',
+      name: 'a merged PR whose immutable merge SHA is not the deployed SHA',
       pull: {
         number: 42,
         merged_at: '2026-07-28T12:00:00Z',
         merge_commit_sha: 'b'.repeat(40),
         user: { login: 'PR-Author', type: 'User' }
       },
-      comparison: { status: 'behind' },
-      diagnostic: `Deployed SHA ${'a'.repeat(40)} does not contain PR #42`
+      diagnostic: `Merged PR #42 does not exactly match deployed SHA ${'a'.repeat(40)}`
     },
     {
-      name: 'a PR that does not affect the deployed service',
+      name: 'a manual service plan that omits the deployed service',
       pull: {
         number: 42,
         merged_at: '2026-07-28T12:00:00Z',
         merge_commit_sha: 'a'.repeat(40),
         user: { login: 'PR-Author', type: 'User' }
       },
-      files: [{ filename: 'src/other-service/example.ts' }],
-      diagnostic: 'PR #42 does not contain changes for api'
+      notifierOverrides: {
+        CI_RELEASE_GROUP_SERVICES: 'aggregatedActivityLoop'
+      },
+      diagnostic: 'PR #42 manual service plan does not include api'
     }
   ])(
     'omits manual contributors for $name',
-    async ({ pull, files, comparison, diagnostic }) => {
+    async ({ pull, notifierOverrides, diagnostic }) => {
       const result = await runManualEvidenceNotifier({
         pull,
-        ...(files ? { files } : {}),
-        ...(comparison ? { comparison } : {})
+        ...(notifierOverrides ? { notifierOverrides } : {})
       });
 
       expect(result.code).toBe(0);
@@ -328,6 +319,35 @@ describe('notify-ci-wave release-note metadata', () => {
       expect(result.payload).not.toHaveProperty('contributor_github_logins');
     }
   );
+
+  it('attributes a shared-code PR to every explicitly selected backend service', async () => {
+    const result = await runManualEvidenceNotifier({
+      pull: {
+        number: 42,
+        merged_at: '2026-07-28T12:00:00Z',
+        merge_commit_sha: 'a'.repeat(40),
+        user: { login: 'Shared-Code-Author', type: 'User' }
+      },
+      notifierOverrides: {
+        CI_PIPELINES_SERVICE: 'aggregatedActivityLoop',
+        CI_RELEASE_GROUP_SERVICES: 'aggregatedActivityLoop,api'
+      }
+    });
+
+    expect(result).toMatchObject({
+      code: 0,
+      stderr: '',
+      payload: {
+        service: 'aggregatedActivityLoop',
+        contributor_evidence: 'manual-pr',
+        contributor_github_logins: [
+          'Shared-Code-Author',
+          'Commit-Author',
+          'Commit-Committer'
+        ]
+      }
+    });
+  });
 
   it('excludes explicit non-user account types from manual contributors', async () => {
     const result = await runManualEvidenceNotifier({

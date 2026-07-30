@@ -219,6 +219,25 @@ describe('manual backend deployment contract', () => {
         INPUT_RELEASE_NOTE_GROUPS:
           '[{"release_group_id":"pr-42","release_group_services":["api"],"pull_request_number":42,"publish_release_note":false}]'
       }
+    ],
+    [
+      'a PR-backed operation without an explicit service plan',
+      {
+        INPUT_RELEASE_GROUP_SERVICES: ''
+      }
+    ],
+    [
+      'a service plan that omits the deployed service',
+      {
+        INPUT_RELEASE_GROUP_SERVICES: 'aggregatedActivityLoop'
+      }
+    ],
+    [
+      'a staging publication request',
+      {
+        INPUT_ENVIRONMENT: 'staging',
+        INPUT_RELEASE_NOTE_PUBLISH: 'true'
+      }
     ]
   ])('rejects %s', (_scenario, overrides) => {
     expect(runShell(dispatchValidationScript(), overrides).status).not.toBe(0);
