@@ -933,7 +933,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     context.repository.findTrain.mockImplementation(
       async (
         id: string,
-        _ctx: unknown,
+        _ctx?: unknown,
         forUpdate = false,
         forceWrite = false
       ) =>
@@ -942,7 +942,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
           : undefined
     );
     context.repository.findManifest.mockImplementation(
-      async (id: string, _ctx: unknown, forceWrite = false) =>
+      async (id: string, _ctx?: unknown, forceWrite = false) =>
         forceWrite
           ? context.repository.manifests.find((item) => item.id === id)
           : undefined
