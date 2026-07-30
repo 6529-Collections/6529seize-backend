@@ -1457,6 +1457,20 @@ export function candidateStatusMutationCandidates(
     : relevantCandidates(context);
 }
 
+export function candidateEvidenceCandidates(
+  context: TrainContext,
+  repository?: ReleaseBusV2Repository
+): ReleaseBusV2CandidateRecord[] {
+  const candidates =
+    context.train.lane === 'STAGING' &&
+    context.train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
+      ? stagingStatusCandidates(context)
+      : relevantCandidates(context);
+  return repository
+    ? candidates.filter((candidate) => candidate.repository === repository)
+    : candidates;
+}
+
 export function stagingDeploymentCandidates(
   context: TrainContext,
   repository?: ReleaseBusV2Repository
@@ -2295,7 +2309,10 @@ export class ReleaseBusV2Reconciler {
       >
     > = [];
     for (const repository of ['frontend', 'backend'] as const) {
-      const repositoryCandidates = relevantCandidates(context, repository);
+      const repositoryCandidates = candidateEvidenceCandidates(
+        context,
+        repository
+      );
       if (repositoryCandidates.length === 0) continue;
       try {
         candidateEvidenceSelection(repositoryCandidates, null);
@@ -2459,6 +2476,10 @@ export class ReleaseBusV2Reconciler {
   ): Promise<PreparedRepository> {
     const train = context.train;
     const candidates = relevantCandidates(context, repository);
+    const evidenceCandidates = candidateEvidenceCandidates(
+      context,
+      repository
+    );
     const deployCandidates = stagingDeploymentCandidates(context, repository);
     const releaseParentSha = cumulativeStagingReleaseParent(
       context,
@@ -2493,7 +2514,7 @@ export class ReleaseBusV2Reconciler {
         : null;
     const releaseFastCandidate = releaseParentSha ? null : fastCandidate;
     const evidenceSelection = candidateEvidenceSelectionForPreparation(
-      candidates,
+      evidenceCandidates,
       releaseFastCandidate?.id ?? null
     );
     let initialComposedSha: string | null | undefined = null;

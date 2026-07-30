@@ -37,6 +37,7 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => ({
 
 import {
   backendGraph,
+  candidateEvidenceCandidates,
   candidateEvidenceSelection,
   preparedArtifactDeployBinding,
   ReleaseBusV2Reconciler
@@ -261,6 +262,55 @@ describe('whole-repository candidate evidence modes', () => {
         null
       )
     ).toThrow('no complete exact PR CI policy evidence');
+  });
+
+  it('requires fresh evidence only from NEW candidates in a cumulative staging train', () => {
+    const fresh = candidate('fresh', 'frontend', null);
+    const carried = {
+      ...candidate('carried', 'frontend', null),
+      pr_evidence_json: null,
+      status: 'PRODUCTION_DEPLOYED' as const,
+      current_train_id: null
+    };
+    const cumulative = train('train-1', {
+      lane: 'STAGING',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest'
+    });
+    const selected = candidateEvidenceCandidates(
+      {
+        train: cumulative,
+        memberships: [
+          {
+            id: 'membership-fresh',
+            train_id: cumulative.id,
+            candidate_id: fresh.id,
+            sequence: 1,
+            disposition: 'INCLUDED',
+            candidate_role: 'NEW',
+            created_at: 1
+          },
+          {
+            id: 'membership-carried',
+            train_id: cumulative.id,
+            candidate_id: carried.id,
+            sequence: 2,
+            disposition: 'INCLUDED',
+            candidate_role: 'CARRY_FORWARD',
+            created_at: 1
+          }
+        ],
+        candidates: [fresh, carried],
+        dependencies: []
+      },
+      'frontend'
+    );
+
+    expect(selected).toEqual([fresh]);
+    expect(candidateEvidenceSelection(selected, null)).toMatchObject({
+      mode: 'strict-aggregate',
+      aggregateDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+    });
   });
 });
 
