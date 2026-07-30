@@ -562,6 +562,55 @@ describe('backend PR CI policy bundle contract', () => {
   });
 });
 
+describe('frontend PR CI policy bundle contract', () => {
+  it('matches the exact 157-line producer inventory', () => {
+    const inventory = releaseBusPrCiPolicyInventory('frontend', true);
+    const packagePolicy = inventory.packages.find(
+      ({ path: packagePath }) => packagePath === 'package.json'
+    );
+    const fixture = policyFixture(
+      'frontend',
+      true,
+      TRUSTED_WORKFLOW_BLOBS.frontend.modern
+    );
+
+    expect(inventory.paths).toHaveLength(76);
+    expect(inventory.paths).toEqual(
+      expect.arrayContaining([
+        '.github/workflows/build-upload-deploy-prod.yml',
+        '.github/workflows/deploy-staging.yml',
+        '__tests__/scripts/manual-deploy-routing-guard.test.ts',
+        '__tests__/scripts/public-review-artifact-workflows.test.ts',
+        'ops/scripts/verify-deployment-version.cjs',
+        'scripts/notify-ci-wave.mjs'
+      ])
+    );
+    expect(packagePolicy?.scriptKeys).toHaveLength(51);
+    expect(packagePolicy?.scriptKeys).toContain(
+      'test:e2e:production:home-readonly'
+    );
+    expect(packagePolicy?.fieldKeys).toHaveLength(30);
+    expect(packagePolicy?.fieldKeys).toContain('devDependencies.yaml');
+    expect(
+      fixture.bundle.toString('utf8').split('\n').filter(Boolean)
+    ).toHaveLength(157);
+    const frozenProducerInventory = [
+      ...inventory.paths.map((policyPath) => `file\t${policyPath}\n`),
+      ...(packagePolicy?.scriptKeys.map((key) => `package-script\t${key}\n`) ??
+        []),
+      ...(packagePolicy?.fieldKeys.map((key) => `package-field\t${key}\n`) ??
+        [])
+    ]
+      .sort((left, right) =>
+        Buffer.compare(Buffer.from(left), Buffer.from(right))
+      )
+      .join('');
+    expect(
+      createHash('sha256').update(frozenProducerInventory).digest('hex')
+    ).toBe('c5c3cea8f46b8bbd278d13a32cc31fff8bac548444ba8923f7247346c18128bf');
+  });
+});
+
 describe('GitHub immutable release refs', () => {
   const ref = 'release-bus-v2/staging-train-train-id-frontend';
   const exactSha = 'a'.repeat(40);

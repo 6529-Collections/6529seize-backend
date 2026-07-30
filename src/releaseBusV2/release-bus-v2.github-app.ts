@@ -312,6 +312,8 @@ const BACKEND_PACKAGE_POLICY = {
 const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   '.github/6529bot.yml',
   '.github/workflows/app-pr-ci.yml',
+  '.github/workflows/build-upload-deploy-prod.yml',
+  '.github/workflows/deploy-staging.yml',
   '.github/workflows/production-e2e.yml',
   '.github/workflows/release-bus-deploy-production.yml',
   '.github/workflows/release-bus-deploy-staging.yml',
@@ -323,8 +325,10 @@ const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   '__tests__/scripts/deployment-bus.test.ts',
   '__tests__/scripts/e2e-packs.test.ts',
   '__tests__/scripts/lint-package-json.test.ts',
+  '__tests__/scripts/manual-deploy-routing-guard.test.ts',
   '__tests__/scripts/package-public-review-artifacts.test.ts',
   '__tests__/scripts/pr-ci-policy-bundle.test.ts',
+  '__tests__/scripts/public-review-artifact-workflows.test.ts',
   '__tests__/scripts/release-bus-artifact-compatibility.test.ts',
   '__tests__/scripts/release-bus-install-dependencies.test.ts',
   '__tests__/scripts/release-bus-performance-contract.test.ts',
@@ -351,6 +355,7 @@ const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   'ops/scripts/release-bus-status.mjs',
   'ops/scripts/release-bus-status.test.ts',
   'ops/scripts/testing-strategy.cjs',
+  'ops/scripts/verify-deployment-version.cjs',
   'ops/testing-strategy/mutation-endpoint-registry.json',
   'ops/testing-strategy/mutation-endpoint-registry.v1.schema.json',
   'ops/testing-strategy/validation-manifest.v1.schema.json',
@@ -363,6 +368,7 @@ const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   'scripts/enforce-package-manager.cjs',
   'scripts/generate-openapi.cjs',
   'scripts/lint-package-json.cjs',
+  'scripts/notify-ci-wave.mjs',
   'scripts/package-public-review-artifacts.cjs',
   'scripts/pr-ci-policy-bundle.cjs',
   'scripts/release-bus-install-dependencies.cjs',
@@ -419,6 +425,7 @@ const FRONTEND_PACKAGE_POLICY = {
       'test:e2e:production:admin-guards-readonly',
       'test:e2e:production:collections-readonly',
       'test:e2e:production:delegation-readonly',
+      'test:e2e:production:home-readonly',
       'test:e2e:production:media-readonly',
       'test:e2e:production:network-open-data-readonly',
       'test:e2e:production:profile-deep-links-readonly',
@@ -477,7 +484,8 @@ const FRONTEND_PACKAGE_POLICY = {
       'devDependencies.prettier',
       'devDependencies.ts-jest',
       'devDependencies.typescript',
-      'devDependencies.typescript-eslint'
+      'devDependencies.typescript-eslint',
+      'devDependencies.yaml'
     ]
   }
 } as const;
