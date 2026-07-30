@@ -2,7 +2,7 @@
 
 This file intentionally changes no runtime behavior. It gives the bounded
 operator-only activation proof one exact green merge-tree while its explicit
-deploy plan selects only the backend `releaseBus` unit. The proof exercises
+deploy plan selects only the backend `api` unit. The proof exercises
 non-force staging-ref advancement, an environment-bound artifact, manifest-
 bound staging E2E, and a fresh production composition without redeploying an
 unchanged frontend.
