@@ -200,7 +200,7 @@ const ReleaseBusV2CandidateDeregistrationCandidateVersionSchema = Joi.object({
     .guid({ version: ['uuidv4'] })
     .required(),
   row_version: Joi.number().integer().positive().strict().required()
-}).required();
+});
 
 const ReleaseBusV2CandidateDeregistrationControlVersionSchema = Joi.object({
   scope: Joi.string()
@@ -240,7 +240,7 @@ export const ReleaseBusV2CandidateDeregistrationBodySchema = Joi.object({
       otherwise: Joi.forbidden()
     }),
   expected_candidates: Joi.array()
-    .items(ReleaseBusV2CandidateDeregistrationCandidateVersionSchema.optional())
+    .items(ReleaseBusV2CandidateDeregistrationCandidateVersionSchema)
     .min(0)
     .max(500)
     .unique('id')

@@ -121,6 +121,18 @@ describe('Release Bus v2 validation', () => {
         phase: 'EXECUTE',
         reason: 'Retire the audited candidate inventory',
         ...exact,
+        expected_candidates: [null]
+      },
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact,
+        expected_candidates: [{}]
+      },
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact,
         expected_controls: exact.expected_controls.slice(1)
       },
       {
