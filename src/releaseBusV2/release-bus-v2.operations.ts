@@ -827,7 +827,11 @@ export class ReleaseBusV2Operations {
         // dispatch while the workflow is not yet discoverable.
         await this.update(operation, { status: 'DISPATCHED', result: null });
         operation =
-          (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+          (await this.repository.findOperation(
+            spec.idempotencyKey,
+            {},
+            true
+          )) ??
           operation;
         await releaseBusGitHubApp.dispatchWorkflow(
           spec.repository,
