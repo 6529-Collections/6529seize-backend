@@ -315,7 +315,7 @@ function exactSha(value: unknown, description: string): string {
 }
 
 function operationKey(intentId: string): string {
-  return `rb2:${intentId}:baseline-adoption-e2e:staging:a1`;
+  return `rb2:${intentId}:baseline-adoption-e2e:staging`;
 }
 
 function failureEventId(intentId: string): string {

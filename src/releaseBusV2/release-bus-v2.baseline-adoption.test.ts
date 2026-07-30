@@ -728,7 +728,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
 
   it.each([
     'Staging E2E [automatic]',
-    `Staging E2E [rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1:a1]`
+    `Staging E2E [rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1]`
   ])('accepts the real trusted GitHub run.name %s', async (name) => {
     const context = harness();
     Object.assign(context.identities[FRONTEND_E2E_RUN_ID], {
@@ -751,6 +751,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     'Staging E2E [automatic]-lookalike',
     'Staging E2E [release-bus:train:e2e:a1]',
     'Staging E2E [rb2:train:e2e:a0]',
+    `Staging E2E [rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1:a1]`,
     `Staging E2E [rb2:${'x'.repeat(176)}:a1]`
   ])('rejects the lookalike or untrusted GitHub run.name %s', async (name) => {
     const context = harness();
@@ -785,6 +786,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
       expect(context.repository.state.row_version).toBe(23);
       expect(context.repository.operations[0]).toMatchObject({
         operation_type: 'E2E_STAGING',
+        idempotency_key: `rb2:${INTENT_ID}:baseline-adoption-e2e:staging`,
         expected_sha: FRONTEND_SHA,
         max_attempts: 1,
         status: 'DISPATCHED',
@@ -792,6 +794,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
       });
       expect(context.operations.reconcileWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
+          idempotencyKey: `rb2:${INTENT_ID}:baseline-adoption-e2e:staging`,
           workflow: 'staging-e2e.yml',
           ref: '1a-staging',
           artifactDigest: context.repository.manifests[0].identity_sha256,
