@@ -3235,6 +3235,10 @@ describe('Release Bus v2 offline acceptance harness', () => {
       expect(state.repository.trains.get(exactTrain.id)).toMatchObject({
         status: 'FAILED',
         failure_class: 'CONTROL_PLANE',
+        failure_message:
+          scenario === 'malformed success evidence'
+            ? 'backend staging-ref workflow returned malformed terminal evidence'
+            : 'staging-ref callback failed closed',
         completed_at: expect.any(Number)
       });
       expect(

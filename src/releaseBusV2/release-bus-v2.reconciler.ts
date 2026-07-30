@@ -186,6 +186,14 @@ class StagingRefMovedError extends Error {
   }
 }
 
+class StagingRefWorkflowError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'StagingRefWorkflowError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 function isGitHubInfrastructureError(error: unknown): error is Error {
   const infrastructureType: unknown = ReleaseBusGitHubInfrastructureError;
   return (
@@ -1753,6 +1761,10 @@ export class ReleaseBusV2Reconciler {
         }
         if (error instanceof StagingRefMovedError) {
           await this.failStagingForRefDrift(train, error.message);
+          continue;
+        }
+        if (error instanceof StagingRefWorkflowError) {
+          await this.failTrain(train, 'CONTROL_PLANE', error.message);
           continue;
         }
         if (isGitHubInfrastructureError(error)) {
@@ -4874,11 +4886,11 @@ export class ReleaseBusV2Reconciler {
       typeof result.summary.changed !== 'boolean'
     )
       // This is a terminal workflow protocol failure, not evidence that the
-      // shared ref moved. The runOnce boundary deliberately routes this plain
-      // error through failTrain(CONTROL_PLANE): STAGING alone pauses, candidate
+      // shared ref moved. The runOnce boundary explicitly routes this error
+      // through failTrain(CONTROL_PLANE): STAGING alone pauses, candidate
       // intent is retained, and the lease releases only after all exact
       // operations are terminal.
-      throw new Error(
+      throw new StagingRefWorkflowError(
         `${repository} staging-ref workflow returned malformed terminal evidence`
       );
   }
@@ -4925,7 +4937,7 @@ export class ReleaseBusV2Reconciler {
       );
     // The workflow is terminal and the ref is still within exact intent, so
     // this is a lane-local control-plane failure rather than ref drift.
-    throw new Error(
+    throw new StagingRefWorkflowError(
       operation.failure_message ??
         `${repository} staging-ref workflow failed closed`
     );
