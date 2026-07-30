@@ -55,17 +55,20 @@ function buildPrompt({
   const factLines = record.facts.map((fact) => `- ${fact}`).join('\n');
   const isStreamKnowledge = record.kind === 'public_review_knowledge';
   const streamGrounding = isStreamKnowledge ? STREAM_GROUNDING_GUIDANCE : [];
-  const linkGuidance = record.suppressSourceLinks
-    ? [
-        'Do not include source links unless the provided facts explicitly require one.'
-      ]
-    : isStreamKnowledge
-      ? []
-      : [
-          MARKDOWN_LINK_GUIDANCE,
-          `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
-          `Use this exact Markdown link label for that URL: ${record.linkLabel}`
-        ];
+  let linkGuidance: readonly string[];
+  if (record.suppressSourceLinks) {
+    linkGuidance = [
+      'Do not include source links unless the provided facts explicitly require one.'
+    ];
+  } else if (isStreamKnowledge) {
+    linkGuidance = [];
+  } else {
+    linkGuidance = [
+      MARKDOWN_LINK_GUIDANCE,
+      `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
+      `Use this exact Markdown link label for that URL: ${record.linkLabel}`
+    ];
+  }
   return [
     `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the provided facts.',
@@ -167,9 +170,12 @@ function buildInvokeModelInput(
   };
 }
 
-function parseAnthropicResponse(jsonString: string): string {
+function parseAnthropicResponse(
+  jsonString: string,
+  rejectTokenLimitedResponse: boolean
+): string {
   const parsed = JSON.parse(jsonString) as AnthropicResponse;
-  if (parsed.stop_reason === 'max_tokens') {
+  if (rejectTokenLimitedResponse && parsed.stop_reason === 'max_tokens') {
     throw new Error('Bedrock answer stopped before completion at max_tokens');
   }
   const text = parsed.content
@@ -226,9 +232,14 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly record: HelpBotKnowledgeRecord;
     readonly canonicalUrl: string;
   }): Promise<string> {
-    const maxTokens =
-      input.record.kind === 'public_review_knowledge' ? 320 : 220;
-    return this.invokePrompt(buildPrompt(input), maxTokens);
+    const isStreamKnowledge = input.record.kind === 'public_review_knowledge';
+    const maxTokens = isStreamKnowledge ? 320 : 220;
+    return this.invokePrompt(
+      buildPrompt(input),
+      maxTokens,
+      undefined,
+      isStreamKnowledge
+    );
   }
 
   public async planPublicDataQuery(input: {
@@ -264,7 +275,8 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
   private async invokePrompt(
     prompt: string,
     maxTokens: number,
-    externalSignal?: AbortSignal
+    externalSignal?: AbortSignal,
+    rejectTokenLimitedResponse = false
   ): Promise<string> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -286,7 +298,10 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
       if (!response.body) {
         throw new Error('Unexpected empty response body from Bedrock');
       }
-      return parseAnthropicResponse(new TextDecoder().decode(response.body));
+      return parseAnthropicResponse(
+        new TextDecoder().decode(response.body),
+        rejectTokenLimitedResponse
+      );
     } finally {
       clearTimeout(timeout);
       externalSignal?.removeEventListener('abort', abortFromExternalSignal);

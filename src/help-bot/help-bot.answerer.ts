@@ -53,7 +53,8 @@ export interface HelpBotNoReliableSource {
 }
 
 export type HelpBotAnswerResult =
-  HelpBotAnswerSuccess | HelpBotNoReliableSource;
+  | HelpBotAnswerSuccess
+  | HelpBotNoReliableSource;
 
 export interface HelpBotLlmRenderer {
   renderAnswer(input: {
@@ -348,15 +349,88 @@ function truncateStreamProse(value: string, maxLength: number): string {
   return `${shortened}…`;
 }
 
+function startsWithLinkTarget(value: string, index: number): boolean {
+  return (
+    value.startsWith('https://', index) ||
+    value.startsWith('http://', index) ||
+    value[index] === '/'
+  );
+}
+
+function skipUrl(value: string, start: number): number {
+  let index = start;
+  while (
+    index < value.length &&
+    value[index] !== ' ' &&
+    value[index] !== '\t' &&
+    value[index] !== '\n' &&
+    value[index] !== ')'
+  ) {
+    index += 1;
+  }
+  return index;
+}
+
+function stripLinksFromStreamLine(line: string): string {
+  let result = '';
+  let index = 0;
+  while (index < line.length) {
+    if (
+      line.startsWith('https://', index) ||
+      line.startsWith('http://', index)
+    ) {
+      index = skipUrl(line, index);
+      continue;
+    }
+    if (line[index] === '[') {
+      const labelEnd = line.indexOf(']', index + 1);
+      const targetStart = labelEnd + 2;
+      if (
+        labelEnd !== -1 &&
+        line[labelEnd + 1] === '(' &&
+        startsWithLinkTarget(line, targetStart)
+      ) {
+        result += line.slice(index + 1, labelEnd);
+        const targetEnd = line.indexOf(')', targetStart);
+        index = targetEnd === -1 ? line.length : targetEnd + 1;
+        continue;
+      }
+    }
+    result += line[index];
+    index += 1;
+  }
+  return result;
+}
+
+function normalizeStreamWhitespace(value: string): string {
+  let result = '';
+  let previousWasSpace = false;
+  for (const character of value) {
+    if (character === ' ' || character === '\t') {
+      previousWasSpace = true;
+      continue;
+    }
+    if (character === '\n') {
+      result = result.trimEnd();
+      result += '\n';
+      previousWasSpace = false;
+      continue;
+    }
+    if (previousWasSpace && result && !result.endsWith('\n')) {
+      result += ' ';
+    }
+    result += character;
+    previousWasSpace = false;
+  }
+  return result.trim();
+}
+
 function stripModelGeneratedStreamLinks(value: string): string {
-  return value
-    .replace(/(?:^|\n+)More info:[^\n]*$/i, '')
-    .replace(/\[([^\]\n]+)\]\((?:https?:\/\/|\/)[^\s)]*\)?/g, '$1')
-    .replace(/https?:\/\/[^\s)]+/g, '')
-    .replace(/\s*\[[^\]\n]*$/, '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
+  const lines = value
+    .split('\n')
+    .filter((line) => !line.trimStart().toLowerCase().startsWith('more info:'))
+    .map(stripLinksFromStreamLine);
+  return normalizeStreamWhitespace(lines.join('\n'));
 }
 
 function composeStreamAnswer(

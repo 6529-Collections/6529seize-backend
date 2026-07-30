@@ -249,6 +249,30 @@ describe('HelpBotBedrockRenderer', () => {
     ).rejects.toThrow('stopped before completion at max_tokens');
   });
 
+  it('preserves token-limited responses for non-Stream records', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [{ type: 'text', text: 'TDH is Total Days Held.' }],
+          stop_reason: 'max_tokens'
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await expect(
+      renderer.renderAnswer({
+        question: 'what is TDH?',
+        record: RECORD,
+        canonicalUrl: 'https://6529.io/network/tdh'
+      })
+    ).resolves.toBe('TDH is Total Days Held.');
+  });
+
   it('omits Stream grounding rules for non-Stream records', async () => {
     const send = jest.fn().mockResolvedValue({
       body: Buffer.from(
