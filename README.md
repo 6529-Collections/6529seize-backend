@@ -10,7 +10,7 @@ This is a 2-part repository for
 
 This repo includes a `.envrc` for `direnv`.
 
-It is only used for repo-local shell helpers. Right now it adds the repo `bin/` directory to your `PATH`, which makes commands like `ghruns` and `ghdeploy` available anywhere inside this repository.
+It is only used for repo-local shell helpers. Right now it adds the repo `bin/` directory to your `PATH`, which makes commands like `npm`, `ghruns`, and `ghdeploy` available anywhere inside this repository. The local `npm` wrapper runs the version pinned in `package.json` through Corepack; it does not replace your machine-wide npm.
 
 It does not load `.env.local` and it does not set `NODE_ENV`.
 
@@ -169,9 +169,14 @@ See [docs/staging-db-local-sync.md](docs/staging-db-local-sync.md) for setup, AW
 
 ### 1.1 Install
 
+```bash
+corepack npm ci
 ```
-npm i
-```
+
+Use `corepack npm install <package>` only when intentionally changing
+dependencies or regenerating `package-lock.json`. With this repo's `direnv`
+setup active, the shorter `npm ci` and `npm install <package>` forms use the
+same pinned Corepack wrapper.
 
 ### 1.2 Build
 
@@ -233,9 +238,9 @@ PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend
 
 ### 2.1 Install
 
-```
+```bash
 cd src/api-serverless
-npm i
+corepack npm ci
 ```
 
 ### 2.2 Build

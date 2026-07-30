@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if ! command -v corepack >/dev/null 2>&1; then
+  echo "corepack is required to run the npm version pinned by package.json." >&2
+  exit 1
+fi
+
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+exec corepack npm "$@"

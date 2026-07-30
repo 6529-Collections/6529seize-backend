@@ -20,6 +20,8 @@ jobs:
           cache: 'npm'
       - name: Check package manager discipline
         run: node scripts/check-package-manager.mjs
+      - name: Check package lock completeness
+        run: node scripts/check-package-lock.mjs
       - name: Activate pinned npm via Corepack
         shell: bash
         env:

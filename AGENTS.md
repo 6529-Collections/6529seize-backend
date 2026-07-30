@@ -89,7 +89,7 @@ This is the 6529 SEIZE Backend repository, a Web3 NFT platform backend that hand
 
 ```bash
 # Install dependencies
-npm i
+corepack npm ci
 
 # Build the project (includes tests)
 npm run build
