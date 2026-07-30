@@ -1146,6 +1146,33 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     expect(mockManualDeploymentAuthorize).not.toHaveBeenCalled();
   });
 
+  it('accepts an exact artifact-free leased staging-ref authorization payload', async () => {
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:advance-staging:release:backend:a1`,
+      workflow_run_id: '30510086016',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'staging',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: null
+    };
+
+    const response = await post('/deploy/release-bus-v2/authorize', body);
+
+    expect(response.status).toBe(200);
+    expect(mockV2Authorize).toHaveBeenCalledWith({
+      ...body,
+      source_ref: null,
+      candidate_evidence_mode: null,
+      aggregate_candidate_evidence_digest: null,
+      reuse_artifact_run_id: null,
+      reuse_artifact_name: null,
+      reuse_artifact_digest: null
+    });
+  });
+
   it('accepts only a complete strict aggregate for an orchestration authorization', async () => {
     const body = {
       train_id: TRAIN_ID,

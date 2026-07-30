@@ -520,6 +520,22 @@ export const ReleaseBusV2AuthorizationBodySchema = Joi.object({
         ? value
         : helpers.error('any.invalid');
     }
+    const isExactStagingRefAdvance =
+      value.environment === 'staging' &&
+      keySegments.length === 6 &&
+      keySegments[0] === 'rb2' &&
+      keySegments[1] === value.train_id &&
+      keySegments[2] === 'advance-staging' &&
+      ['release', 'rollback'].includes(keySegments[3]) &&
+      keySegments[4] === value.repository &&
+      /^a[1-9]\d{0,8}$/.test(keySegments[5]);
+    if (isExactStagingRefAdvance) {
+      return value.service === null &&
+        value.artifact_run_id === null &&
+        value.artifact_digest === null
+        ? value
+        : helpers.error('any.invalid');
+    }
     return value.artifact_run_id !== null && value.artifact_digest !== null
       ? value
       : helpers.error('any.invalid');
