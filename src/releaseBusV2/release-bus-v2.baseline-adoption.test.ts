@@ -887,12 +887,18 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     expect(conflict.repository.trains).toHaveLength(0);
   });
 
-  it('verifies newly inserted immutable evidence through the writer when the replica is stale', async () => {
+  it('freezes from newly inserted immutable evidence through the writer when the replica is stale', async () => {
     const context = harness();
     await prepare(context);
+    await context.service.recordBackendDeployment(backendInput());
     context.repository.findEvent.mockImplementation(
-      async (id: string, ctx?: { connection?: unknown }) =>
-        ctx?.connection
+      async (
+        id: string,
+        ctx?: { connection?: unknown },
+        _forUpdate = false,
+        forceWrite = false
+      ) =>
+        ctx?.connection || forceWrite
           ? context.repository.events.find((item) => item.id === id)
           : undefined
     );
@@ -901,7 +907,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
       context.service.decideAutomaticE2E(automaticInput())
     ).resolves.toMatchObject({
       decision: 'DEFERRED',
-      manifest_ready: false
+      manifest_ready: true
     });
     expect(
       context.repository.events.filter(({ event_type }) =>
@@ -917,6 +923,49 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
           event_type === 'EXACT_STAGING_BASELINE_ADOPTION_FAILED'
       )
     ).toBe(false);
+    expect(context.dispatchCount()).toBe(1);
+  });
+
+  it('dispatches from the writer when the frozen train and manifest are not yet visible on a replica', async () => {
+    const context = harness();
+    await prepare(context);
+    await context.service.recordBackendDeployment(backendInput());
+    context.repository.findTrain.mockImplementation(
+      async (
+        id: string,
+        _ctx?: unknown,
+        forUpdate = false,
+        forceWrite = false
+      ) =>
+        forUpdate || forceWrite
+          ? context.repository.trains.find((item) => item.id === id)
+          : undefined
+    );
+    context.repository.findManifest.mockImplementation(
+      async (id: string, _ctx?: unknown, forceWrite = false) =>
+        forceWrite
+          ? context.repository.manifests.find((item) => item.id === id)
+          : undefined
+    );
+
+    await expect(
+      context.service.decideAutomaticE2E(automaticInput())
+    ).resolves.toMatchObject({
+      decision: 'DEFERRED',
+      manifest_ready: true
+    });
+    expect(context.repository.findTrain).toHaveBeenCalledWith(
+      INTENT_ID,
+      {},
+      false,
+      true
+    );
+    expect(context.repository.findManifest).toHaveBeenCalledWith(
+      context.repository.manifests[0].id,
+      {},
+      true
+    );
+    expect(context.dispatchCount()).toBe(1);
   });
 
   it('fails ambiguous and malformed intent lookup closed without partial adoption', async () => {
