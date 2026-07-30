@@ -20,6 +20,7 @@ import {
   normalizeDeployPlan,
   topologicalOrder
 } from '@/releaseBusV2/release-bus-v2.service';
+import { releaseBusGitHubApp } from '@/releaseBusV2/release-bus-v2.github-app';
 import type {
   ReleaseBusV2CandidateRecord,
   ReleaseBusV2FailureClass,
@@ -255,6 +256,11 @@ describe('Release Bus v2 deterministic orchestration', () => {
   });
 
   it('records rollback failure under the authoritative staging row lock before pausing', async () => {
+    jest
+      .spyOn(releaseBusGitHubApp, 'resolveRefIfExists')
+      .mockImplementation(async (repository) =>
+        repository === 'frontend' ? 'f'.repeat(40) : 'b'.repeat(40)
+      );
     const train: ReleaseBusV2TrainRecord = {
       id: 'train-rollback-failed',
       lane: 'STAGING',

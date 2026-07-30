@@ -895,6 +895,13 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
+    if (
+      input.frontendSha !== input.frontendStagingRefSha ||
+      input.backendSha !== input.backendStagingRefSha
+    )
+      throw new Error(
+        'Validated staging runtime SHAs must equal their exact staging ref SHAs'
+      );
     const now = Date.now();
     const admitted = Array.from(new Set(input.admittedCandidateIds));
     const newCandidates = new Set(input.newCandidateIds);

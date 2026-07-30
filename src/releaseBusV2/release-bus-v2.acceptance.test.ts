@@ -884,6 +884,66 @@ function operation(
   };
 }
 
+type StagingRefWorkflowSpec = {
+  readonly idempotencyKey: string;
+  readonly trainId: string;
+  readonly operationType: string;
+  readonly repository: 'frontend' | 'backend';
+  readonly workflow: string;
+  readonly ref: string;
+  readonly environment: string;
+  readonly service: string | null;
+  readonly expectedSha: string;
+  readonly artifactDigest: string | null;
+  readonly inputs: Readonly<Record<string, string>>;
+  readonly maxAttempts: number;
+};
+
+function stagingRefWorkflowOperation(
+  spec: StagingRefWorkflowSpec,
+  runId: string,
+  changed: boolean
+): ReleaseBusV2OperationRecord {
+  return {
+    ...operation(
+      spec.trainId,
+      spec.operationType,
+      spec.repository,
+      runId,
+      spec.service
+    ),
+    id: `${spec.trainId}-${spec.operationType}-${spec.repository}`,
+    idempotency_key: spec.idempotencyKey,
+    environment: 'staging',
+    expected_sha: spec.expectedSha,
+    artifact_digest: null,
+    request_json: {
+      workflow: spec.workflow,
+      ref: spec.ref,
+      workflow_control_sha: 'f'.repeat(40),
+      inputs: spec.inputs
+    },
+    result_json: {
+      phase: 'advance_staging_ref',
+      status: 'SUCCEEDED',
+      failure_class: null,
+      failure_phase: null,
+      retryable: false,
+      summary: {
+        ref: '1a-staging',
+        phase: spec.inputs.phase,
+        expected_old_sha: spec.inputs.expected_old_sha,
+        release_sha: spec.expectedSha,
+        observed_sha: spec.expectedSha,
+        changed
+      },
+      stages: [],
+      jest: null,
+      backend_evidence: null
+    }
+  };
+}
+
 function preparedArtifactOperation(
   trainId: string,
   repository: 'frontend' | 'backend',
@@ -1181,6 +1241,24 @@ class InMemoryAcceptanceRepository {
 
   public async listControls(): Promise<ReleaseBusV2ControlRecord[]> {
     return Array.from(this.controls.values());
+  }
+
+  public async setControl(
+    scope: ReleaseBusV2ControlRecord['scope'],
+    paused: boolean,
+    reason: string | null,
+    actor: string | null
+  ): Promise<void> {
+    const current = this.controls.get(scope);
+    if (!current) throw new Error(`Missing ${scope} control`);
+    this.controls.set(scope, {
+      ...current,
+      paused,
+      reason,
+      github_actor: actor,
+      updated_at: current.updated_at + 1,
+      row_version: current.row_version + 1
+    });
   }
 
   public async executeNativeQueriesInTransaction<T>(
@@ -1837,7 +1915,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
   const previousBetaAllowlist = process.env.RELEASE_BUS_V2_BETA_ALLOWLIST;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     mockImmutableRefs.clear();
     mockCreateRef.mockImplementation(
       async (repository: string, ref: string, sha: string) => {
@@ -2058,6 +2136,199 @@ describe('Release Bus v2 offline acceptance harness', () => {
         trainId: 'train-1'
       })
     );
+  });
+
+  it('fails the first CLEAN_MAIN cumulative train locally, preserves intent, and holds its lease until dispatched work is terminal', async () => {
+    const state = harness('SUCCEEDED');
+    const active = train('train-1', {
+      status: 'DEPLOYING',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: null,
+      staging_transition_json: {
+        new_candidate_ids: ['backend-candidate'],
+        carried_candidate_ids: ['frontend-candidate'],
+        removed_candidate_ids: []
+      },
+      failure_class: 'INFRASTRUCTURE',
+      failure_message: 'staging API deploy failed'
+    });
+    state.repository.trains.set(active.id, active);
+    state.repository.memberships.splice(
+      0,
+      state.repository.memberships.length,
+      ...state.repository.memberships.map((membership) => ({
+        ...membership,
+        candidate_role:
+          membership.candidate_id === 'backend-candidate'
+            ? ('NEW' as const)
+            : ('CARRY_FORWARD' as const)
+      }))
+    );
+    state.repository.stagingState = {
+      ...state.repository.stagingState,
+      status: 'CLEAN_MAIN',
+      current_manifest_id: null,
+      last_validated_manifest_id: null,
+      frontend_sha: FRONTEND_SHA,
+      backend_sha: BACKEND_SHA,
+      frontend_staging_ref_sha: FRONTEND_SHA,
+      backend_staging_ref_sha: BACKEND_SHA,
+      clean_main: true,
+      last_transition_train_id: null
+    };
+    const runningOperation: ReleaseBusV2OperationRecord = {
+      ...operation(active.id, 'DEPLOY_BACKEND_API', 'backend', '501', 'api'),
+      id: 'running-staging-api',
+      idempotency_key: `rb2:${active.id}:deploy:backend:api`,
+      environment: 'staging',
+      status: 'RUNNING',
+      completed_at: null,
+      request_json: {
+        workflow: 'deploy.yml',
+        ref: active.backend_composed_sha,
+        inputs: {
+          release_train_id: active.id,
+          expected_sha: active.backend_composed_sha
+        }
+      }
+    };
+    state.repository.operations.splice(
+      0,
+      state.repository.operations.length,
+      runningOperation
+    );
+    await state.repository.acquireLock(
+      'staging-environment',
+      active.id,
+      `train:${active.id}`
+    );
+    mockReconcileWorkflow.mockResolvedValue(runningOperation);
+    const productionBefore = structuredClone(
+      state.repository.controls.get('PRODUCTION')
+    );
+    const allBefore = structuredClone(state.repository.controls.get('ALL'));
+    const carriedBefore = structuredClone(
+      state.repository.candidates.get('frontend-candidate')
+    );
+    const privateReconciler = state.reconciler as unknown as {
+      beginCumulativeStagingRollback(
+        train: ReleaseBusV2TrainRecord,
+        failureClass: 'INFRASTRUCTURE',
+        message: string
+      ): Promise<void>;
+      releaseTerminalEnvironmentLocks(): Promise<void>;
+    };
+
+    await privateReconciler.beginCumulativeStagingRollback(
+      active,
+      'INFRASTRUCTURE',
+      'staging API deploy failed'
+    );
+
+    expect(state.repository.trains.get(active.id)).toMatchObject({
+      status: 'STAGING_ROLLBACK_FAILED',
+      failure_class: 'CONTROL_PLANE',
+      completed_at: expect.any(Number)
+    });
+    expect(state.repository.stagingState).toMatchObject({
+      status: 'ROLLBACK_FAILED',
+      current_manifest_id: null,
+      last_validated_manifest_id: null,
+      frontend_staging_ref_sha: FRONTEND_SHA,
+      backend_staging_ref_sha: BACKEND_SHA,
+      clean_main: false,
+      last_transition_train_id: active.id
+    });
+    expect(state.repository.candidates.get('backend-candidate')).toMatchObject({
+      status: 'READY_FOR_STAGING',
+      current_train_id: null
+    });
+    expect(state.repository.candidates.get('frontend-candidate')).toEqual(
+      carriedBefore
+    );
+    expect(state.repository.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          trainId: active.id,
+          eventType: 'CUMULATIVE_STAGING_CLEAN_MAIN_RECOVERY_REQUIRED'
+        }),
+        expect.objectContaining({
+          trainId: active.id,
+          eventType: 'CUMULATIVE_STAGING_ROLLBACK_FAILED'
+        })
+      ])
+    );
+    expect(state.repository.controls.get('STAGING')).toMatchObject({
+      paused: true,
+      github_actor: 'release-bus-v2'
+    });
+    expect(state.repository.controls.get('PRODUCTION')).toEqual(
+      productionBefore
+    );
+    expect(state.repository.controls.get('ALL')).toEqual(allBefore);
+    expect(state.repository.lock.owner_train_id).toBe(active.id);
+
+    state.repository.operations[0] = {
+      ...runningOperation,
+      status: 'SUCCEEDED',
+      completed_at: Date.now(),
+      row_version: runningOperation.row_version + 1
+    };
+    await privateReconciler.releaseTerminalEnvironmentLocks();
+
+    expect(state.repository.lock.owner_train_id).toBeNull();
+    expect(state.repository.events).toContainEqual(
+      expect.objectContaining({
+        trainId: active.id,
+        eventType: 'TERMINAL_ENVIRONMENT_LOCK_RELEASED'
+      })
+    );
+  });
+
+  it('retries a manual staging-ref drift row-version race without changing either lane or ALL', async () => {
+    const state = harness('SUCCEEDED');
+    const active = train('train-1', {
+      status: 'WAITING_FOR_ENVIRONMENT',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest'
+    });
+    state.repository.trains.set(active.id, active);
+    const controlsBefore = structuredClone(
+      Array.from(state.repository.controls.entries())
+    );
+    const candidatesBefore = structuredClone(
+      Array.from(state.repository.candidates.entries())
+    );
+    const trainBefore = structuredClone(state.repository.trains.get(active.id));
+    const stagingBefore = structuredClone(state.repository.stagingState);
+    const eventsBefore = structuredClone(state.repository.events);
+    jest
+      .spyOn(state.repository, 'updateStagingState')
+      .mockResolvedValueOnce(false);
+    const privateReconciler = state.reconciler as unknown as {
+      failStagingForRefDrift(
+        train: ReleaseBusV2TrainRecord,
+        message: string
+      ): Promise<void>;
+    };
+
+    await expect(
+      privateReconciler.failStagingForRefDrift(
+        active,
+        'staging ref changed concurrently'
+      )
+    ).resolves.toBeUndefined();
+
+    expect(Array.from(state.repository.controls.entries())).toEqual(
+      controlsBefore
+    );
+    expect(Array.from(state.repository.candidates.entries())).toEqual(
+      candidatesBefore
+    );
+    expect(state.repository.trains.get(active.id)).toEqual(trainBefore);
+    expect(state.repository.stagingState).toEqual(stagingBefore);
+    expect(state.repository.events).toEqual(eventsBefore);
+    expect(state.service.setPaused).not.toHaveBeenCalled();
   });
 
   it('reconciles a stranded terminal main operation before releasing its lock', async () => {
@@ -2718,18 +2989,20 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRef.mockImplementation(async (repository: string) =>
       refs.get(repository)
     );
-    mockUpdateRef.mockImplementation(
-      async (
-        repository: string,
-        ref: string,
-        expectedOldSha: string,
-        newSha: string
-      ) => {
-        expect(ref).toBe('1a-staging');
-        expect(refs.get(repository)).toBe(expectedOldSha);
-        refs.set(repository, newSha);
-      }
-    );
+    let runId = 900;
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+      const spec = rawSpec as StagingRefWorkflowSpec;
+      expect(spec.workflow).toBe('release-bus-v2-advance-staging-ref.yml');
+      expect(refs.get(spec.repository)).toBe(spec.inputs.expected_old_sha);
+      refs.set(spec.repository, spec.expectedSha);
+      const completed = stagingRefWorkflowOperation(
+        spec,
+        String((runId += 1)),
+        true
+      );
+      state.repository.operations.push(completed);
+      return completed;
+    });
     const context = {
       train: exactTrain,
       memberships: [...state.repository.memberships],
@@ -2743,17 +3016,32 @@ describe('Release Bus v2 offline acceptance harness', () => {
       }
     ).advanceStagingOrQualification(context);
 
-    expect(mockUpdateRef.mock.calls).toEqual([
-      ['backend', '1a-staging', backendBase, BACKEND_SHA],
-      ['frontend', '1a-staging', frontendBase, FRONTEND_SHA]
-    ]);
+    expect(mockUpdateRef).not.toHaveBeenCalled();
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
+    expect(
+      mockReconcileWorkflow.mock.calls.map(
+        ([spec]) => (spec as StagingRefWorkflowSpec).inputs
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          expected_old_sha: backendBase,
+          expected_sha: BACKEND_SHA,
+          phase: 'release'
+        }),
+        expect.objectContaining({
+          expected_old_sha: frontendBase,
+          expected_sha: FRONTEND_SHA,
+          phase: 'release'
+        })
+      ])
+    );
     expect(refs).toEqual(
       new Map([
         ['frontend', FRONTEND_SHA],
         ['backend', BACKEND_SHA]
       ])
     );
-    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
     expect(state.repository.trains.get(exactTrain.id)?.status).toBe(
       'DEPLOYING'
     );
@@ -2816,17 +3104,15 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRef.mockImplementation(async (repository: string) =>
       refs.get(repository)
     );
-    mockUpdateRef.mockImplementation(
-      async (
-        repository: string,
-        _ref: string,
-        expectedOldSha: string,
-        newSha: string
-      ) => {
-        expect(refs.get(repository)).toBe(expectedOldSha);
-        refs.set(repository, newSha);
-      }
-    );
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+      const spec = rawSpec as StagingRefWorkflowSpec;
+      expect(spec.repository).toBe('backend');
+      expect(refs.get(spec.repository)).toBe(spec.inputs.expected_old_sha);
+      refs.set(spec.repository, spec.expectedSha);
+      const completed = stagingRefWorkflowOperation(spec, '901', true);
+      state.repository.operations.push(completed);
+      return completed;
+    });
     const context = {
       train: exactTrain,
       memberships: [...state.repository.memberships],
@@ -2857,12 +3143,18 @@ describe('Release Bus v2 offline acceptance harness', () => {
       }
     ).advanceStagingOrQualification(context);
 
-    expect(mockUpdateRef).toHaveBeenCalledTimes(1);
-    expect(mockUpdateRef).toHaveBeenCalledWith(
-      'backend',
-      '1a-staging',
-      backendBase,
-      BACKEND_SHA
+    expect(mockUpdateRef).not.toHaveBeenCalled();
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockReconcileWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationType: 'ADVANCE_STAGING_RELEASE_BACKEND',
+        expectedSha: BACKEND_SHA,
+        inputs: expect.objectContaining({
+          expected_old_sha: backendBase,
+          expected_sha: BACKEND_SHA,
+          phase: 'release'
+        })
+      })
     );
     expect(refs.get('frontend')).toBe(frontendBase);
   });
@@ -2914,7 +3206,11 @@ describe('Release Bus v2 offline acceptance harness', () => {
     };
     mockResolveRefIfExists.mockImplementation(
       async (repository: string, ref: string) =>
-        ref === '1a-staging' ? refs.get(repository) : null
+        ref === '1a-staging'
+          ? refs.get(repository)
+          : repository === 'frontend'
+            ? '3'.repeat(40)
+            : '4'.repeat(40)
     );
     mockResolveRef.mockImplementation(
       async (repository: string, ref: string) =>
@@ -2924,9 +3220,33 @@ describe('Release Bus v2 offline acceptance harness', () => {
             : exactTrain.backend_base_sha
           : refs.get(repository)
     );
-    mockUpdateRef.mockImplementation(async (repository: string) => {
-      refs.set(repository, backendDrift);
-      throw new Error('non-fast-forward staging update rejected');
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+      const spec = rawSpec as StagingRefWorkflowSpec;
+      refs.set(spec.repository, backendDrift);
+      const failed: ReleaseBusV2OperationRecord = {
+        ...stagingRefWorkflowOperation(spec, '901', false),
+        status: 'FAILED',
+        failure_class: 'INTERACTION',
+        failure_message: 'staging_ref_moved failed',
+        completed_at: Date.now(),
+        result_json: {
+          phase: 'advance_staging_ref',
+          status: 'FAILED',
+          failure_class: 'INTERACTION',
+          failure_phase: 'staging_ref_moved',
+          retryable: false,
+          summary: {
+            ref: '1a-staging',
+            phase: 'release',
+            expected_old_sha: backendBase,
+            release_sha: BACKEND_SHA,
+            observed_sha: backendDrift,
+            changed: false
+          }
+        }
+      };
+      state.repository.operations.push(failed);
+      return failed;
     });
     await expect(
       state.reconciler.runOnce('acceptance-moved-staging-cas')
@@ -2936,7 +3256,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       advanced: []
     });
 
-    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockUpdateRef).not.toHaveBeenCalled();
     expect(state.repository.stagingState).toEqual(
       expect.objectContaining({
         status: 'ROLLBACK_FAILED',
@@ -2972,7 +3293,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(state.repository.operations).toContainEqual(
       expect.objectContaining({
         operation_type: 'ADVANCE_STAGING_RELEASE_BACKEND',
-        status: 'CANCELLED',
+        status: 'FAILED',
         failure_class: 'INTERACTION'
       })
     );
@@ -2987,12 +3308,23 @@ describe('Release Bus v2 offline acceptance harness', () => {
     });
     state.repository.trains.set(exactTrain.id, exactTrain);
     let currentSha = baseSha;
-    const infrastructureError = new Error('GitHub returned 503');
-    infrastructureError.name = 'ReleaseBusGitHubInfrastructureError';
-    mockUpdateRef
-      .mockRejectedValueOnce(infrastructureError)
-      .mockImplementationOnce(async () => {
+    mockReconcileWorkflow
+      .mockImplementationOnce(async (rawSpec) => {
+        const spec = rawSpec as StagingRefWorkflowSpec;
+        return {
+          ...stagingRefWorkflowOperation(spec, '901', false),
+          status: 'RETRY_WAIT',
+          external_id: '901',
+          failure_class: 'INFRASTRUCTURE',
+          failure_message: 'staging_ref_transport failed',
+          next_retry_at: Date.now() + 1_000,
+          completed_at: null
+        };
+      })
+      .mockImplementationOnce(async (rawSpec) => {
+        const spec = rawSpec as StagingRefWorkflowSpec;
         currentSha = targetSha;
+        return stagingRefWorkflowOperation(spec, '902', true);
       });
     mockResolveRef.mockImplementation(async () => currentSha);
     const advance = () =>
@@ -3005,7 +3337,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
             baseSha: string,
             targetSha: string,
             phase: 'release'
-          ): Promise<void>;
+          ): Promise<boolean>;
         }
       ).advanceStagingRef(
         exactTrain,
@@ -3016,33 +3348,10 @@ describe('Release Bus v2 offline acceptance harness', () => {
         'release'
       );
 
-    await expect(advance()).rejects.toThrow('GitHub returned 503');
-    expect(
-      state.repository.operations.find(
-        ({ operation_type }) =>
-          operation_type === 'ADVANCE_STAGING_RELEASE_BACKEND'
-      )
-    ).toEqual(
-      expect.objectContaining({
-        status: 'PENDING',
-        failure_class: null,
-        completed_at: null
-      })
-    );
-
-    await expect(advance()).resolves.toBeUndefined();
-    expect(mockUpdateRef).toHaveBeenCalledTimes(2);
-    expect(
-      state.repository.operations.find(
-        ({ operation_type }) =>
-          operation_type === 'ADVANCE_STAGING_RELEASE_BACKEND'
-      )
-    ).toEqual(
-      expect.objectContaining({
-        status: 'SUCCEEDED',
-        external_id: targetSha
-      })
-    );
+    await expect(advance()).resolves.toBe(false);
+    await expect(advance()).resolves.toBe(true);
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
+    expect(mockUpdateRef).not.toHaveBeenCalled();
   });
 
   it('re-verifies an already-applied staging CAS before recording success', async () => {
@@ -3055,6 +3364,13 @@ describe('Release Bus v2 offline acceptance harness', () => {
     });
     state.repository.trains.set(exactTrain.id, exactTrain);
     mockResolveRef.mockResolvedValue(movedSha);
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) =>
+      stagingRefWorkflowOperation(
+        rawSpec as StagingRefWorkflowSpec,
+        '901',
+        false
+      )
+    );
 
     await expect(
       (
@@ -3066,7 +3382,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
             baseSha: string,
             targetSha: string,
             phase: 'release'
-          ): Promise<void>;
+          ): Promise<boolean>;
         }
       ).advanceStagingRef(
         exactTrain,
@@ -3081,18 +3397,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
     );
 
     expect(mockUpdateRef).not.toHaveBeenCalled();
-    expect(
-      state.repository.operations.find(
-        ({ operation_type }) =>
-          operation_type === 'ADVANCE_STAGING_RELEASE_BACKEND'
-      )
-    ).toEqual(
-      expect.objectContaining({
-        status: 'PENDING',
-        external_id: null,
-        completed_at: null
-      })
-    );
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('self-drains a crash after staging CAS without repeating the ref mutation', async () => {
@@ -3128,27 +3433,6 @@ describe('Release Bus v2 offline acceptance harness', () => {
             : 'CARRY_FORWARD'
       }))
     );
-    state.repository.operations.push({
-      ...operation(
-        exactTrain.id,
-        'ADVANCE_STAGING_RELEASE_BACKEND',
-        'backend',
-        'unused'
-      ),
-      id: 'stranded-staging-cas',
-      idempotency_key: `rb2:${exactTrain.id}:advance-staging:release:backend`,
-      environment: 'staging',
-      expected_sha: BACKEND_SHA,
-      artifact_digest: null,
-      external_id: null,
-      status: 'PENDING',
-      request_json: {
-        ref: '1a-staging',
-        expected_old_sha: backendBase,
-        phase: 'release'
-      },
-      completed_at: null
-    });
     const refs = new Map([
       ['frontend', frontendBase],
       // GitHub accepted the CAS before the worker crashed, but the durable
@@ -3161,6 +3445,15 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRef.mockImplementation(async (repository: string) =>
       refs.get(repository)
     );
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+      const completed = stagingRefWorkflowOperation(
+        rawSpec as StagingRefWorkflowSpec,
+        '901',
+        false
+      );
+      state.repository.operations.push(completed);
+      return completed;
+    });
     const context = {
       train: exactTrain,
       memberships: [...state.repository.memberships],
@@ -3177,15 +3470,15 @@ describe('Release Bus v2 offline acceptance harness', () => {
     expect(mockUpdateRef).not.toHaveBeenCalled();
     expect(state.repository.operations).toContainEqual(
       expect.objectContaining({
-        id: 'stranded-staging-cas',
+        operation_type: 'ADVANCE_STAGING_RELEASE_BACKEND',
         status: 'SUCCEEDED',
-        external_id: BACKEND_SHA
+        external_id: '901'
       })
     );
     expect(state.repository.trains.get(exactTrain.id)?.status).toBe(
       'DEPLOYING'
     );
-    expect(mockReconcileWorkflow).not.toHaveBeenCalled();
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('rolls staging refs forward from the failed release to immutable restore commits', async () => {
@@ -3213,18 +3506,19 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRef.mockImplementation(async (repository: string) =>
       refs.get(repository)
     );
-    mockUpdateRef.mockImplementation(
-      async (
-        repository: string,
-        ref: string,
-        expectedOldSha: string,
-        newSha: string
-      ) => {
-        expect(ref).toBe('1a-staging');
-        expect(refs.get(repository)).toBe(expectedOldSha);
-        refs.set(repository, newSha);
-      }
-    );
+    let runId = 910;
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+      const spec = rawSpec as StagingRefWorkflowSpec;
+      expect(refs.get(spec.repository)).toBe(spec.inputs.expected_old_sha);
+      refs.set(spec.repository, spec.expectedSha);
+      const completed = stagingRefWorkflowOperation(
+        spec,
+        String((runId += 1)),
+        true
+      );
+      state.repository.operations.push(completed);
+      return completed;
+    });
     const context = {
       train: exactTrain,
       memberships: [...state.repository.memberships],
@@ -3238,7 +3532,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
           input: typeof context,
           frontendReleaseSha: string,
           backendReleaseSha: string
-        ): Promise<void>;
+        ): Promise<boolean>;
       }
     ).advanceCumulativeRollbackRefs(
       context,
@@ -3246,10 +3540,26 @@ describe('Release Bus v2 offline acceptance harness', () => {
       backendRestoreRelease
     );
 
-    expect(mockUpdateRef.mock.calls).toEqual([
-      ['backend', '1a-staging', BACKEND_SHA, backendRestoreRelease],
-      ['frontend', '1a-staging', FRONTEND_SHA, frontendRestoreRelease]
-    ]);
+    expect(mockUpdateRef).not.toHaveBeenCalled();
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
+    expect(
+      mockReconcileWorkflow.mock.calls.map(
+        ([spec]) => (spec as StagingRefWorkflowSpec).inputs
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          expected_old_sha: BACKEND_SHA,
+          expected_sha: backendRestoreRelease,
+          phase: 'rollback'
+        }),
+        expect.objectContaining({
+          expected_old_sha: FRONTEND_SHA,
+          expected_sha: frontendRestoreRelease,
+          phase: 'rollback'
+        })
+      ])
+    );
     expect(state.repository.operations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3284,27 +3594,6 @@ describe('Release Bus v2 offline acceptance harness', () => {
         candidate_role: 'NEW'
       }))
     );
-    state.repository.operations.push({
-      ...operation(
-        exactTrain.id,
-        'ADVANCE_STAGING_ROLLBACK_BACKEND',
-        'backend',
-        'unused'
-      ),
-      id: 'stranded-rollback-cas',
-      idempotency_key: `rb2:${exactTrain.id}:advance-staging:rollback:backend`,
-      environment: 'staging',
-      expected_sha: backendRestoreRelease,
-      artifact_digest: null,
-      external_id: null,
-      status: 'PENDING',
-      request_json: {
-        ref: '1a-staging',
-        expected_old_sha: BACKEND_SHA,
-        phase: 'rollback'
-      },
-      completed_at: null
-    });
     const refs = new Map([
       ['frontend', FRONTEND_SHA],
       ['backend', backendRestoreRelease]
@@ -3312,17 +3601,21 @@ describe('Release Bus v2 offline acceptance harness', () => {
     mockResolveRef.mockImplementation(async (repository: string) =>
       refs.get(repository)
     );
-    mockUpdateRef.mockImplementation(
-      async (
-        repository: string,
-        _ref: string,
-        expectedOldSha: string,
-        newSha: string
-      ) => {
-        expect(refs.get(repository)).toBe(expectedOldSha);
-        refs.set(repository, newSha);
+    mockReconcileWorkflow.mockImplementation(async (rawSpec) => {
+      const spec = rawSpec as StagingRefWorkflowSpec;
+      const changed = refs.get(spec.repository) !== spec.expectedSha;
+      if (changed) {
+        expect(refs.get(spec.repository)).toBe(spec.inputs.expected_old_sha);
+        refs.set(spec.repository, spec.expectedSha);
       }
-    );
+      const completed = stagingRefWorkflowOperation(
+        spec,
+        spec.repository === 'backend' ? '911' : '912',
+        changed
+      );
+      state.repository.operations.push(completed);
+      return completed;
+    });
     const context = {
       train: exactTrain,
       memberships: [...state.repository.memberships],
@@ -3336,7 +3629,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
           input: typeof context,
           frontendReleaseSha: string,
           backendReleaseSha: string
-        ): Promise<void>;
+        ): Promise<boolean>;
       }
     ).advanceCumulativeRollbackRefs(
       context,
@@ -3344,24 +3637,25 @@ describe('Release Bus v2 offline acceptance harness', () => {
       backendRestoreRelease
     );
 
-    expect(mockUpdateRef).toHaveBeenCalledTimes(1);
-    expect(mockUpdateRef).toHaveBeenCalledWith(
-      'frontend',
-      '1a-staging',
-      FRONTEND_SHA,
-      frontendRestoreRelease
-    );
+    expect(mockUpdateRef).not.toHaveBeenCalled();
+    expect(mockReconcileWorkflow).toHaveBeenCalledTimes(2);
     expect(state.repository.operations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'stranded-rollback-cas',
+          operation_type: 'ADVANCE_STAGING_ROLLBACK_BACKEND',
           status: 'SUCCEEDED',
-          external_id: backendRestoreRelease
+          external_id: '911',
+          result_json: expect.objectContaining({
+            summary: expect.objectContaining({ changed: false })
+          })
         }),
         expect.objectContaining({
           operation_type: 'ADVANCE_STAGING_ROLLBACK_FRONTEND',
           status: 'SUCCEEDED',
-          external_id: frontendRestoreRelease
+          external_id: '912',
+          result_json: expect.objectContaining({
+            summary: expect.objectContaining({ changed: true })
+          })
         })
       ])
     );
@@ -4171,7 +4465,10 @@ describe('Release Bus v2 offline acceptance harness', () => {
     const expectedRunIds = new Set(
       state.repository.operations
         .map(({ external_id }) => external_id)
-        .filter((runId): runId is string => runId !== null)
+        .filter(
+          (runId): runId is string =>
+            runId !== null && /^[1-9][0-9]{0,19}$/.test(runId)
+        )
     );
     expect(mockHasStagingRunSince).toHaveBeenCalledTimes(2);
     for (const [, , ignoredRunIds] of mockHasStagingRunSince.mock.calls) {
@@ -5234,6 +5531,18 @@ describe('Release Bus v2 offline acceptance harness', () => {
       status: 'PREFLIGHTING',
       staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
       staging_baseline_manifest_id: 'baseline-manifest',
+      staging_transition_json: {
+        actor: 'acceptance',
+        requested_at: 1,
+        baseline_state_version: 1,
+        baseline_manifest_id: 'baseline-manifest',
+        baseline_frontend_sha: FRONTEND_SHA,
+        baseline_backend_sha: BACKEND_SHA,
+        observed_frontend_staging_sha: FRONTEND_SHA,
+        observed_backend_staging_sha: BACKEND_SHA,
+        new_candidate_ids: ['backend-candidate', 'frontend-candidate'],
+        carried_candidate_ids: ['carried-frontend']
+      },
       frontend_artifact_digest: null,
       backend_artifact_digest: null
     });
@@ -5338,6 +5647,18 @@ describe('Release Bus v2 offline acceptance harness', () => {
       status: 'PREFLIGHTING',
       staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
       staging_baseline_manifest_id: 'baseline-manifest',
+      staging_transition_json: {
+        actor: 'acceptance',
+        requested_at: 1,
+        baseline_state_version: 1,
+        baseline_manifest_id: 'baseline-manifest',
+        baseline_frontend_sha: FRONTEND_SHA,
+        baseline_backend_sha: BACKEND_SHA,
+        observed_frontend_staging_sha: FRONTEND_SHA,
+        observed_backend_staging_sha: BACKEND_SHA,
+        new_candidate_ids: ['backend-a', 'backend-b', 'backend-c'],
+        carried_candidate_ids: []
+      },
       frontend_artifact_digest: null,
       backend_artifact_digest: null
     });
@@ -6988,6 +7309,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       ...state.repository.candidates.get('frontend-candidate')!,
       current_train_id: exactTrain.id,
       pr_evidence_json: {
+        ...state.repository.candidates.get('frontend-candidate')!
+          .pr_evidence_json!,
         base_sha: exactTrain.frontend_base_sha!,
         merge_sha: FRONTEND_SHA,
         checks_run_id: '100',

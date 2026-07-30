@@ -2626,9 +2626,7 @@ export class ReleaseBusV2Reconciler {
         release_train_id: train.id,
         release_train_revision: '1',
         operation_key: 'replaced-by-reconciler',
-        source_ref: releaseFastCandidate
-          ? releaseFastCandidate.branch_name
-          : releaseBusV2Branch(train, repository),
+        source_ref: releaseBusV2Branch(train, repository),
         expected_sha: composedSha,
         deploy_units: JSON.stringify(graph?.units ?? []),
         ...(repository === 'backend'
@@ -3326,10 +3324,6 @@ export class ReleaseBusV2Reconciler {
     failureClass: ReleaseBusV2FailureClass,
     message: string
   ): Promise<void> {
-    if (!train.staging_baseline_manifest_id)
-      throw new Error(
-        'Cumulative staging failure has no last validated manifest to restore'
-      );
     if (train.manifest_id)
       await this.repository.updateManifestStatus(
         train.manifest_id,
@@ -3337,6 +3331,54 @@ export class ReleaseBusV2Reconciler {
         null,
         {}
       );
+    if (!train.staging_baseline_manifest_id) {
+      const current = await this.repository.findTrain(train.id, {});
+      if (!current || TERMINAL_TRAINS.has(current.status)) return;
+      const context = await this.loadContext(current);
+      const transition = parseStoredJson<ReleaseBusV2StagingTransition>(
+        current.staging_transition_json
+      );
+      const newCandidateIds = new Set(
+        transition?.new_candidate_ids ??
+          context.memberships
+            .filter(({ candidate_role }) => candidate_role === 'NEW')
+            .map(({ candidate_id }) => candidate_id)
+      );
+      const newCandidates = context.candidates.filter(({ id }) =>
+        newCandidateIds.has(id)
+      );
+      await this.updateCandidateStatuses(
+        newCandidates,
+        'READY_FOR_STAGING',
+        null,
+        false
+      );
+      await this.repository.appendEvent(
+        {
+          trainId: current.id,
+          eventType: 'CUMULATIVE_STAGING_CLEAN_MAIN_RECOVERY_REQUIRED',
+          actor: 'release-bus-v2',
+          payload: {
+            failed_manifest_id: current.manifest_id,
+            failure_class: failureClass,
+            failure_message: message,
+            requeued_new_candidate_ids: newCandidates.map(({ id }) => id),
+            recovery_policy: 'SERIALIZED_MANUAL_STAGING_RECOVERY'
+          }
+        },
+        {}
+      );
+      await this.failCumulativeStagingRollback(
+        context,
+        `The first cumulative train failed after staging mutation without a validated baseline to restore: ${message}`
+      );
+      await this.publishCandidateStatuses(
+        newCandidates,
+        'error',
+        'First cumulative staging release needs serialized recovery; exact candidate intent was retained'
+      );
+      return;
+    }
     await this.repository.appendEvent(
       {
         trainId: train.id,
@@ -3699,7 +3741,7 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext,
     frontendReleaseSha: string,
     backendReleaseSha: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     const train = context.train;
     const selected = (['backend', 'frontend'] as const).filter(
       (repository) =>
@@ -3731,15 +3773,19 @@ export class ReleaseBusV2Reconciler {
       throw new StagingRefMovedError(
         `${invalid.repository} 1a-staging moved outside rollback intent ${invalid.baseSha} -> ${invalid.targetSha}`
       );
-    for (const item of current)
-      await this.advanceStagingRef(
-        train,
-        item.repository,
-        item.observedSha,
-        item.baseSha!,
-        item.targetSha,
-        'rollback'
-      );
+    const ready = await Promise.all(
+      current.map((item) =>
+        this.advanceStagingRef(
+          train,
+          item.repository,
+          item.observedSha,
+          item.baseSha!,
+          item.targetSha,
+          'rollback'
+        )
+      )
+    );
+    return ready.every(Boolean);
   }
 
   private async createCumulativeRollbackManifest(
@@ -3891,11 +3937,12 @@ export class ReleaseBusV2Reconciler {
       ) ?? null;
     const frontendReleaseSha = frontendPreparation.composedSha;
     const backendReleaseSha = backendPreparation.composedSha;
-    await this.advanceCumulativeRollbackRefs(
+    const rollbackRefsReady = await this.advanceCumulativeRollbackRefs(
       context,
       frontendReleaseSha,
       backendReleaseSha
     );
+    if (!rollbackRefsReady) return;
     const deployed = await this.reconcileCumulativeRollbackDeployments(
       context,
       frontendArtifact,
@@ -4115,6 +4162,10 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext,
     message: string
   ): Promise<void> {
+    const [frontendStagingRefSha, backendStagingRefSha] = await Promise.all([
+      releaseBusGitHubApp.resolveRefIfExists('frontend', '1a-staging'),
+      releaseBusGitHubApp.resolveRefIfExists('backend', '1a-staging')
+    ]);
     await this.repository.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx = { connection };
@@ -4191,8 +4242,8 @@ export class ReleaseBusV2Reconciler {
                 lastValidatedManifestId: state.last_validated_manifest_id,
                 frontendSha: null,
                 backendSha: null,
-                frontendStagingRefSha: state.frontend_staging_ref_sha,
-                backendStagingRefSha: state.backend_staging_ref_sha,
+                frontendStagingRefSha,
+                backendStagingRefSha,
                 cleanMain: false,
                 lastTransitionTrainId: train.id
               },
@@ -4456,12 +4507,14 @@ export class ReleaseBusV2Reconciler {
       if (
         train.lane === 'STAGING' &&
         train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
-      )
-        await this.advanceCumulativeStagingRefs(
+      ) {
+        const stagingRefsReady = await this.advanceCumulativeStagingRefs(
           context,
           afterLock,
           environmentBinding
         );
+        if (!stagingRefsReady) return;
+      }
     }
     const sourceTrainId = train.parent_train_id ?? train.id;
     if (['PREPARED', 'WAITING_FOR_ENVIRONMENT'].includes(train.status)) {
@@ -4679,7 +4732,7 @@ export class ReleaseBusV2Reconciler {
     context: TrainContext,
     snapshot: StagingIdleSnapshot,
     binding: StagingEnvironmentBinding
-  ): Promise<void> {
+  ): Promise<boolean> {
     const selected = (['backend', 'frontend'] as const)
       .filter(
         (repository) =>
@@ -4703,14 +4756,125 @@ export class ReleaseBusV2Reconciler {
       throw new StagingRefMovedError(
         `${invalid.repository} 1a-staging moved from expected ${invalid.baseSha} to ${invalid.observedSha}; exact train ${context.train.id} was not deployed`
       );
-    for (const item of selected)
-      await this.advanceStagingRef(
-        context.train,
-        item.repository,
-        item.observedSha,
-        item.baseSha!,
-        item.targetSha,
-        'release'
+    const ready = await Promise.all(
+      selected.map((item) =>
+        this.advanceStagingRef(
+          context.train,
+          item.repository,
+          item.observedSha,
+          item.baseSha!,
+          item.targetSha,
+          'release'
+        )
+      )
+    );
+    return ready.every(Boolean);
+  }
+
+  private stagingRefWorkflowSpec(
+    train: ReleaseBusV2TrainRecord,
+    repository: ReleaseBusV2Repository,
+    baseSha: string,
+    targetSha: string,
+    phase: 'release' | 'rollback'
+  ): ReleaseBusV2WorkflowSpec {
+    return {
+      idempotencyKey: operationKey(
+        train.id,
+        `advance-staging:${phase}:${repository}`
+      ),
+      trainId: train.id,
+      operationType: `ADVANCE_STAGING_${phase.toUpperCase()}_${repository.toUpperCase()}`,
+      repository,
+      workflow: 'release-bus-v2-advance-staging-ref.yml',
+      ref: 'main',
+      environment: 'staging',
+      service: null,
+      expectedSha: targetSha,
+      artifactDigest: null,
+      inputs: {
+        release_train_id: train.id,
+        release_train_revision: '1',
+        operation_key: 'replaced-by-reconciler',
+        expected_old_sha: baseSha,
+        expected_sha: targetSha,
+        phase
+      },
+      maxAttempts: 3
+    };
+  }
+
+  private async recordUndispatchedStagingRefDrift(
+    train: ReleaseBusV2TrainRecord,
+    repository: ReleaseBusV2Repository,
+    baseSha: string,
+    targetSha: string,
+    observedSha: string | null,
+    phase: 'release' | 'rollback'
+  ): Promise<never> {
+    const spec = this.stagingRefWorkflowSpec(
+      train,
+      repository,
+      baseSha,
+      targetSha,
+      phase
+    );
+    const operation = await this.repository.getOrCreateOperation(
+      {
+        idempotencyKey: spec.idempotencyKey,
+        trainId: spec.trainId,
+        operationType: spec.operationType,
+        repository: spec.repository,
+        service: spec.service,
+        environment: spec.environment,
+        expectedSha: spec.expectedSha,
+        artifactDigest: spec.artifactDigest,
+        request: {
+          workflow: spec.workflow,
+          ref: spec.ref,
+          inputs: spec.inputs
+        },
+        maxAttempts: spec.maxAttempts
+      },
+      {}
+    );
+    return this.rejectStagingRefDrift(
+      operation,
+      repository,
+      baseSha,
+      observedSha,
+      phase,
+      'before'
+    );
+  }
+
+  private assertStagingRefWorkflowResult(
+    operation: ReleaseBusV2OperationRecord,
+    repository: ReleaseBusV2Repository,
+    baseSha: string,
+    targetSha: string,
+    phase: 'release' | 'rollback'
+  ): void {
+    const result = parseStoredJson<{
+      summary?: {
+        ref?: unknown;
+        phase?: unknown;
+        expected_old_sha?: unknown;
+        release_sha?: unknown;
+        observed_sha?: unknown;
+        changed?: unknown;
+      };
+    }>(operation.result_json);
+    if (
+      result?.summary?.ref !== '1a-staging' ||
+      result.summary.phase !== phase ||
+      result.summary.expected_old_sha !== baseSha ||
+      result.summary.release_sha !== targetSha ||
+      result.summary.observed_sha !== targetSha ||
+      typeof result.summary.changed !== 'boolean'
+    )
+      throw new Error(
+        `${repository} staging-ref workflow returned malformed terminal evidence`
       );
   }
 
@@ -4721,56 +4885,42 @@ export class ReleaseBusV2Reconciler {
     baseSha: string,
     targetSha: string,
     phase: 'release' | 'rollback'
-  ): Promise<void> {
-    const key = operationKey(
-      train.id,
-      `advance-staging:${phase}:${repository}`
-    );
-    const operation = await this.repository.getOrCreateOperation(
-      {
-        idempotencyKey: key,
-        trainId: train.id,
-        operationType: `ADVANCE_STAGING_${phase.toUpperCase()}_${repository.toUpperCase()}`,
-        repository,
-        service: null,
-        environment: 'staging',
-        expectedSha: targetSha,
-        artifactDigest: null,
-        request: {
-          ref: '1a-staging',
-          expected_old_sha: baseSha,
-          phase
-        },
-        maxAttempts: 3
-      },
-      {}
-    );
-    if (operation.status === 'SUCCEEDED')
-      return this.verifyCompletedStagingRef(repository, targetSha, phase);
+  ): Promise<boolean> {
     if (observedSha !== baseSha && observedSha !== targetSha)
-      return this.rejectStagingRefDrift(
-        operation,
+      return this.recordUndispatchedStagingRefDrift(
+        train,
         repository,
         baseSha,
+        targetSha,
         observedSha,
-        phase,
-        'before'
+        phase
       );
-    if (observedSha === baseSha)
-      await this.attemptStagingRefCas(
+    const operation = await releaseBusV2Operations.reconcileWorkflow(
+      this.stagingRefWorkflowSpec(train, repository, baseSha, targetSha, phase)
+    );
+    if (operation.status === 'SUCCEEDED') {
+      this.assertStagingRefWorkflowResult(
         operation,
         repository,
         baseSha,
         targetSha,
         phase
       );
-    else await this.verifyCompletedStagingRef(repository, targetSha, phase);
-    await this.recordStagingRefSuccess(
-      operation,
+      await this.verifyCompletedStagingRef(repository, targetSha, phase);
+      return true;
+    }
+    if (!TERMINAL_OPERATIONS.has(operation.status)) return false;
+    const current = await releaseBusGitHubApp.resolveRefIfExists(
       repository,
-      baseSha,
-      targetSha,
-      phase
+      '1a-staging'
+    );
+    if (current !== baseSha && current !== targetSha)
+      throw new StagingRefMovedError(
+        `${repository} 1a-staging moved from ${baseSha} to ${current} during exact ${phase} workflow`
+      );
+    throw new Error(
+      operation.failure_message ??
+        `${repository} staging-ref workflow failed closed`
     );
   }
 
@@ -4833,93 +4983,6 @@ export class ReleaseBusV2Reconciler {
     throw new StagingRefMovedError(
       `${repository} 1a-staging moved from ${baseSha} to ${observedSha} ${timing} exact ${phase} CAS`
     );
-  }
-
-  private async attemptStagingRefCas(
-    operation: ReleaseBusV2OperationRecord,
-    repository: ReleaseBusV2Repository,
-    baseSha: string,
-    targetSha: string,
-    phase: 'release' | 'rollback'
-  ): Promise<void> {
-    try {
-      await releaseBusGitHubApp.updateRef(
-        repository,
-        '1a-staging',
-        baseSha,
-        targetSha
-      );
-      return;
-    } catch (error) {
-      let afterFailure: string;
-      try {
-        afterFailure = await releaseBusGitHubApp.resolveRef(
-          repository,
-          '1a-staging'
-        );
-      } catch (resolveError) {
-        // Preserve the write as first cause when transport failed before GitHub
-        // could prove whether the exact CAS applied.
-        if (isGitHubInfrastructureError(error)) throw error;
-        throw resolveError;
-      }
-      if (afterFailure === targetSha) return;
-      if (afterFailure !== baseSha)
-        return this.rejectStagingRefDrift(
-          operation,
-          repository,
-          baseSha,
-          afterFailure,
-          phase,
-          'during'
-        );
-      if (isGitHubInfrastructureError(error)) throw error;
-      const message =
-        error instanceof Error
-          ? error.message
-          : `Failed to advance ${repository} 1a-staging`;
-      await this.terminalizeStagingRefOperation(
-        operation,
-        repository,
-        'FAILED',
-        'CONTROL_PLANE',
-        message
-      );
-      // An unchanged ref is not drift. The caller handles a deterministic
-      // rejection as a control-plane failure/rollback without falsely raising
-      // STAGING_REF_DRIFT_DETECTED.
-      throw error;
-    }
-  }
-
-  private async recordStagingRefSuccess(
-    operation: ReleaseBusV2OperationRecord,
-    repository: ReleaseBusV2Repository,
-    baseSha: string,
-    targetSha: string,
-    phase: 'release' | 'rollback'
-  ): Promise<void> {
-    if (
-      !(await this.repository.updateOperation(
-        operation.id,
-        operation.row_version,
-        {
-          status: 'SUCCEEDED',
-          externalId: targetSha,
-          result: {
-            ref: '1a-staging',
-            base_sha: baseSha,
-            release_sha: targetSha,
-            phase
-          },
-          completedAt: Date.now()
-        },
-        {}
-      ))
-    )
-      throw new Error(
-        `${repository} staging-ref operation changed concurrently`
-      );
   }
 
   private async captureStagingIdleSnapshot(fence?: {
@@ -5217,17 +5280,14 @@ export class ReleaseBusV2Reconciler {
     const operations = await this.repository.listOperations(trainId, {});
     const runIds = new Set(
       operations
-        .filter(({ operation_type }) => !isStagingRefOperation(operation_type))
         .map(({ external_id }) => external_id)
-        .filter((runId): runId is string => runId !== null)
+        .filter(
+          (runId): runId is string =>
+            runId !== null && /^[1-9][0-9]{0,19}$/.test(runId)
+        )
     );
     const previousAttempts = operations.flatMap((operation) => {
-      if (
-        operation.attempt <= 1 ||
-        operation.repository === null ||
-        isStagingRefOperation(operation.operation_type)
-      )
-        return [];
+      if (operation.attempt <= 1 || operation.repository === null) return [];
       const request = parseStoredJson<{ workflow?: unknown }>(
         operation.request_json
       );
@@ -6899,52 +6959,53 @@ export class ReleaseBusV2Reconciler {
       releaseBusGitHubApp.resolveRefIfExists('frontend', '1a-staging'),
       releaseBusGitHubApp.resolveRefIfExists('backend', '1a-staging')
     ]);
-    await this.repository.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctx = { connection };
-        const state = await this.repository.getStagingState(ctx, true);
-        if (
-          state.status !== 'ROLLBACK_FAILED' ||
-          state.last_transition_train_id !== current.id
-        ) {
+    const driftRecorded =
+      await this.repository.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx = { connection };
+          const state = await this.repository.getStagingState(ctx, true);
           if (
-            !(await this.repository.updateStagingState(
-              state.row_version,
-              {
-                status: 'ROLLBACK_FAILED',
-                currentManifestId: null,
-                lastValidatedManifestId: state.last_validated_manifest_id,
-                frontendSha: null,
-                backendSha: null,
-                frontendStagingRefSha: frontendStagingSha,
-                backendStagingRefSha: backendStagingSha,
-                cleanMain: false,
-                lastTransitionTrainId: current.id
-              },
-              ctx
-            ))
-          )
-            throw new Error(
-              'Authoritative staging state changed while recording ref drift'
-            );
+            state.status !== 'ROLLBACK_FAILED' ||
+            state.last_transition_train_id !== current.id
+          ) {
+            if (
+              !(await this.repository.updateStagingState(
+                state.row_version,
+                {
+                  status: 'ROLLBACK_FAILED',
+                  currentManifestId: null,
+                  lastValidatedManifestId: state.last_validated_manifest_id,
+                  frontendSha: null,
+                  backendSha: null,
+                  frontendStagingRefSha: frontendStagingSha,
+                  backendStagingRefSha: backendStagingSha,
+                  cleanMain: false,
+                  lastTransitionTrainId: current.id
+                },
+                ctx
+              ))
+            )
+              return false;
+          }
+          await this.repository.appendEvent(
+            {
+              trainId: current.id,
+              eventType: 'STAGING_REF_DRIFT_DETECTED',
+              actor: 'release-bus-v2',
+              payload: {
+                failure_message: message,
+                frontend_staging_sha: frontendStagingSha,
+                backend_staging_sha: backendStagingSha,
+                deployment_started: deploymentStarted,
+                recover_with: 'SERIALIZED_MANUAL_STAGING_RECOVERY'
+              }
+            },
+            ctx
+          );
+          return true;
         }
-        await this.repository.appendEvent(
-          {
-            trainId: current.id,
-            eventType: 'STAGING_REF_DRIFT_DETECTED',
-            actor: 'release-bus-v2',
-            payload: {
-              failure_message: message,
-              frontend_staging_sha: frontendStagingSha,
-              backend_staging_sha: backendStagingSha,
-              deployment_started: deploymentStarted,
-              recover_with: 'SERIALIZED_MANUAL_STAGING_RECOVERY'
-            }
-          },
-          ctx
-        );
-      }
-    );
+      );
+    if (!driftRecorded) return;
     await this.updateCandidateStatuses(
       statusCandidates,
       'READY_FOR_STAGING',

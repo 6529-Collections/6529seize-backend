@@ -902,7 +902,7 @@ describe('Release Bus v2 cumulative admitted staging', () => {
     );
   });
 
-  it('fences stale validation before it can overwrite a newer authoritative live manifest', async () => {
+  it('rejects runtime/ref mismatch before it can overwrite authoritative staging state', async () => {
     const statements: string[] = [];
     const db = {
       execute: async (sql: string) => {
@@ -929,10 +929,10 @@ describe('Release Bus v2 cumulative admitted staging', () => {
         },
         {}
       )
-    ).rejects.toThrow('Authoritative staging state changed');
-    expect(statements).toHaveLength(1);
-    expect(statements[0]).toContain('release_bus_v2_staging_state');
-    expect(statements[0]).not.toContain('staging_live_state');
+    ).rejects.toThrow(
+      'Validated staging runtime SHAs must equal their exact staging ref SHAs'
+    );
+    expect(statements).toHaveLength(0);
   });
 
   it('rejects overlapping NEW and removed sets before any staging mutation', async () => {
@@ -954,8 +954,8 @@ describe('Release Bus v2 cumulative admitted staging', () => {
           manifestId: 'overlap-manifest',
           frontendSha: 'a'.repeat(40),
           backendSha: 'b'.repeat(40),
-          frontendStagingRefSha: 'c'.repeat(40),
-          backendStagingRefSha: 'd'.repeat(40),
+          frontendStagingRefSha: 'a'.repeat(40),
+          backendStagingRefSha: 'b'.repeat(40),
           admittedCandidateIds: ['candidate-a'],
           removedCandidateIds: ['candidate-a'],
           newCandidateIds: ['candidate-a']

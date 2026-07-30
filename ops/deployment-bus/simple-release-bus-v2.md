@@ -119,10 +119,15 @@ register backend first and declare it as the frontend prerequisite.
    carry-forward-only repository must already have `composed_sha` equal to that
    exact ref or the train fails before any ref advance or deployment dispatch.
 6. Before any deployment dispatch, each affected `1a-staging` ref advances to
-   the immutable release commit through a non-force compare-and-swap from its
-   recorded base. Unaffected repositories do not move. A stale base, moved ref,
-   or CAS conflict starts no train deployment, records exact drift, and pauses
-   only staging for serialized recovery.
+   the immutable release commit through a dedicated operation-owned workflow.
+   It authorizes the exact train/attempt before its first ref read, proves the
+   recorded base is an ancestor of the immutable target, performs an exact
+   leased fast-forward, and reports the observed target SHA. The workflow uses
+   its repository `GITHUB_TOKEN`, preventing this Release Bus-owned ref update
+   from recursively triggering the legacy staging deploy/E2E chain. Unaffected
+   repositories do not move. A stale base, moved ref, non-fast-forward target,
+   or lease conflict starts no train deployment, records exact drift, and
+   pauses only staging for serialized recovery.
 7. Independent backend DAG frontier units deploy concurrently; dependency edges
    serialize only required units. Dependent frontend deploys after backend.
 8. The controller persists `STAGING_DEPLOYED` with exact SHAs, artifact
@@ -133,15 +138,26 @@ register backend first and declare it as the frontend prerequisite.
     deployed-runtime evidence, the manifest, and E2E produces
     `STAGING_VALIDATED`.
 
-Ref-advance operations are durable. A crash after GitHub accepts a CAS but
-before the operation or train transition is stored re-reads the ref, records
-the completed mutation, and continues with the same deployment idempotency
-keys. A post-CAS deploy or E2E failure never validates the failed manifest.
-Rollback composes a new immutable restore commit whose first parent is the
-failed staging release and whose tree is the last validated release,
-CAS-advances `1a-staging` forward, redeploys that exact commit, and requires
-rollback E2E before releasing the staging lock. Recovery never force-pushes a
-shared ref backward or loses the failed train's durable intent.
+Ref-advance operations are durable and independently keyed per repository and
+attempt, so backend and frontend ref operations may share one DAG frontier
+without sharing a concurrency identity. A crash after GitHub accepts a leased
+fast-forward but before the operation or train transition is stored re-reads
+the ref, records the completed mutation, and continues with the same deployment
+idempotency keys. A post-advance deploy or E2E failure never validates the
+failed manifest. Rollback composes a new immutable restore commit whose first
+parent is the failed staging release and whose tree is the last validated
+release, advances `1a-staging` forward, redeploys that exact commit, and
+requires rollback E2E before releasing the staging lock. Recovery never
+rewrites shared-ref history or loses the failed train's durable intent.
+
+If the first cumulative train fails after staging mutation while the
+authoritative state is `CLEAN_MAIN`, there is no historical manifest to guess
+as a rollback target. The train becomes a staging-only recovery-required
+failure, only its NEW candidates return to `READY_FOR_STAGING`, carry-forward
+intent remains unchanged, and the staging lease remains held until every
+already-dispatched operation is terminal. A concurrent staging-state
+row-version change is retried optimistically and may not pause `ALL` or mutate
+production.
 
 Before every further preparation or environment operation, an active staging
 train rechecks every NEW PR head. If a head moved or a newer exact registration
