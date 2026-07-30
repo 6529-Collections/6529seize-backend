@@ -659,7 +659,8 @@ export class ReleaseBusV2Operations {
       ) {
         const current = await this.repository.findOperation(
           spec.idempotencyKey,
-          {}
+          {},
+          true
         );
         if (current) return current;
       }
@@ -672,7 +673,8 @@ export class ReleaseBusV2Operations {
   ): Promise<ReleaseBusV2OperationRecord> {
     const existing = await this.repository.findOperation(
       spec.idempotencyKey,
-      {}
+      {},
+      true
     );
     const existingRequest = existing
       ? exactStoredWorkflowRequest(existing.request_json)
@@ -739,7 +741,11 @@ export class ReleaseBusV2Operations {
             operation.failure_message ?? 'Infrastructure retry budget exhausted'
         });
         return (
-          (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+          (await this.repository.findOperation(
+            spec.idempotencyKey,
+            {},
+            true
+          )) ??
           operation
         );
       }
@@ -754,7 +760,11 @@ export class ReleaseBusV2Operations {
         completedAt: null
       });
       operation =
-        (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+        (await this.repository.findOperation(
+          spec.idempotencyKey,
+          {},
+          true
+        )) ??
         operation;
     }
 
@@ -789,7 +799,11 @@ export class ReleaseBusV2Operations {
         {}
       );
       return (
-        (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+        (await this.repository.findOperation(
+          spec.idempotencyKey,
+          {},
+          true
+        )) ??
         operation
       );
     }
@@ -817,7 +831,11 @@ export class ReleaseBusV2Operations {
         // attempt key, so an eventually indexed run wins over a duplicate.
         await this.update(operation, { status: 'PENDING', result: null });
         return (
-          (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+          (await this.repository.findOperation(
+            spec.idempotencyKey,
+            {},
+            true
+          )) ??
           operation
         );
       }
@@ -881,13 +899,17 @@ export class ReleaseBusV2Operations {
         result: transportRetryState(operation.result_json) ? null : undefined
       });
       operation =
-        (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+        (await this.repository.findOperation(
+          spec.idempotencyKey,
+          {},
+          true
+        )) ??
         operation;
     }
     if (run.status !== 'completed') return operation;
 
     const latest =
-      (await this.repository.findOperation(spec.idempotencyKey, {})) ??
+      (await this.repository.findOperation(spec.idempotencyKey, {}, true)) ??
       operation;
     if (['SUCCEEDED', 'FAILED', 'RETRY_WAIT'].includes(latest.status))
       return latest;
@@ -908,7 +930,8 @@ export class ReleaseBusV2Operations {
       completedAt: retry ? null : Date.now()
     });
     return (
-      (await this.repository.findOperation(spec.idempotencyKey, {})) ?? latest
+      (await this.repository.findOperation(spec.idempotencyKey, {}, true)) ??
+      latest
     );
   }
 
@@ -918,7 +941,11 @@ export class ReleaseBusV2Operations {
     const { idempotencyKey, attempt } = parseAttemptOperationKey(
       input.operation_key
     );
-    const operation = await this.repository.findOperation(idempotencyKey, {});
+    const operation = await this.repository.findOperation(
+      idempotencyKey,
+      {},
+      true
+    );
     if (
       !operation ||
       operation.train_id !== input.train_id ||
@@ -1023,7 +1050,11 @@ export class ReleaseBusV2Operations {
     const { idempotencyKey, attempt } = parseAttemptOperationKey(
       input.operation_key
     );
-    const operation = await this.repository.findOperation(idempotencyKey, {});
+    const operation = await this.repository.findOperation(
+      idempotencyKey,
+      {},
+      true
+    );
     if (
       !operation ||
       operation.train_id !== input.train_id ||
@@ -1135,7 +1166,11 @@ export class ReleaseBusV2Operations {
       completedAt: exhausted ? Date.now() : null
     });
     return (
-      (await this.repository.findOperation(operation.idempotency_key, {})) ??
+      (await this.repository.findOperation(
+        operation.idempotency_key,
+        {},
+        true
+      )) ??
       operation
     );
   }
