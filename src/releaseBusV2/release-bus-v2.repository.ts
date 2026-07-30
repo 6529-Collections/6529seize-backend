@@ -43,11 +43,9 @@ import type {
 } from '@/releaseBusV2/release-bus-v2.types';
 
 function dbOptions(ctx: RequestContext, forceWrite = false) {
-  return ctx.connection
-    ? { wrappedConnection: ctx.connection }
-    : forceWrite
-      ? { forcePool: DbPoolName.WRITE }
-      : undefined;
+  if (ctx.connection) return { wrappedConnection: ctx.connection };
+  if (forceWrite) return { forcePool: DbPoolName.WRITE };
+  return undefined;
 }
 
 function json(value: unknown): string | null {

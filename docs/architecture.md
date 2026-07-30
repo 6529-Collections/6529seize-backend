@@ -605,6 +605,13 @@ backend DAG frontiers run concurrently; only shared environment mutation plus
 E2E ownership is serialized. Operation keys, workflow titles, workflow
 authorization, SHA/artifact checks, row versions, and callback identity make
 retries and duplicate reconciliation idempotent.
+Operation reads normally use the read pool. When reconciliation has just
+CAS-written a dispatch reservation and must decide whether it may call GitHub,
+it rereads that immutable operation from the writer pool. An explicit
+transaction connection already identifies the writer and takes precedence over
+pool selection. Only an authoritative `DISPATCHED` reservation permits the
+external dispatch; missing or concurrently advanced state fails closed without
+dispatching.
 
 For cumulative staging, each affected repository's immutable release commit
 has the recorded `1a-staging` head as its first parent and the composed
