@@ -54,6 +54,7 @@ const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const RUN_ID_PATTERN = /^[1-9]\d{0,19}$/;
 const UNIT_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+const OPERATION_ATTEMPT_SUFFIX_PATTERN = /^a[1-9]\d{0,8}$/;
 const RELEASE_BUS_OPERATION_ATTEMPT_PATTERN =
   /^rb2:[A-Za-z0-9:._-]+:a[1-9]\d{0,8}$/;
 
@@ -718,10 +719,12 @@ function assertFrontendWorkflowIdentities(
 function isTrustedStagingE2EWorkflowName(value: string): boolean {
   const match = /^Staging E2E \[([A-Za-z0-9:._-]+)\]$/.exec(value);
   const identity = match?.[1] ?? '';
+  const segments = identity.split(':');
   return (
     identity === 'automatic' ||
     (identity.length <= 180 &&
-      RELEASE_BUS_OPERATION_ATTEMPT_PATTERN.test(identity))
+      RELEASE_BUS_OPERATION_ATTEMPT_PATTERN.test(identity) &&
+      !OPERATION_ATTEMPT_SUFFIX_PATTERN.test(segments.at(-2) ?? ''))
   );
 }
 
