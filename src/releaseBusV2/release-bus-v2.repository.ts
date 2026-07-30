@@ -42,8 +42,10 @@ import type {
   ReleaseBusV2TrainStatus
 } from '@/releaseBusV2/release-bus-v2.types';
 
-function dbOptions(ctx: RequestContext) {
-  return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
+function dbOptions(ctx: RequestContext, forceWrite = false) {
+  if (ctx.connection) return { wrappedConnection: ctx.connection };
+  if (forceWrite) return { forcePool: DbPoolName.WRITE };
+  return undefined;
 }
 
 function json(value: unknown): string | null {
@@ -1338,12 +1340,13 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async findOperation(
     idempotencyKey: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2OperationRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2OperationRecord>(
       `select * from ${RELEASE_BUS_V2_OPERATIONS_TABLE} where idempotency_key = :idempotencyKey`,
       { idempotencyKey },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
