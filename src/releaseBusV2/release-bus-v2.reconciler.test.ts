@@ -20,6 +20,7 @@ import {
   normalizeDeployPlan,
   topologicalOrder
 } from '@/releaseBusV2/release-bus-v2.service';
+import { releaseBusGitHubApp } from '@/releaseBusV2/release-bus-v2.github-app';
 import type {
   ReleaseBusV2CandidateRecord,
   ReleaseBusV2FailureClass,
@@ -57,7 +58,80 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
-  it('omits removal candidates from composition but redeploys their exact runtime units', () => {
+  it('fails closed when a rollback baseline candidate identity cannot be resolved', async () => {
+    const stagingTrain: ReleaseBusV2TrainRecord = {
+      id: 'train-unresolvable-baseline',
+      lane: 'STAGING',
+      status: 'STAGING_ROLLING_BACK',
+      frontend_base_sha: '1'.repeat(40),
+      backend_base_sha: '2'.repeat(40),
+      frontend_composed_sha: '3'.repeat(40),
+      backend_composed_sha: '4'.repeat(40),
+      frontend_artifact_digest: null,
+      backend_artifact_digest: null,
+      manifest_id: 'failed-manifest',
+      parent_train_id: null,
+      qualification_identity_sha256: null,
+      qualification_train_id: null,
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1',
+      staging_baseline_manifest_id: 'baseline-manifest',
+      staging_transition_json: null,
+      failure_class: 'CONTROL_PLANE',
+      failure_message: 'rollback required',
+      recovery_message: null,
+      phase_started_at: 1,
+      completed_at: null,
+      created_at: 1,
+      updated_at: 1,
+      row_version: 1
+    };
+    const repository = {
+      findManifest: jest.fn(async () => ({
+        id: 'baseline-manifest',
+        train_id: 'baseline-train',
+        lane: 'STAGING',
+        identity_sha256: '5'.repeat(64),
+        status: 'STAGING_VALIDATED',
+        frontend_sha: '6'.repeat(40),
+        backend_sha: '7'.repeat(40),
+        frontend_artifact_digest: null,
+        backend_artifact_digest: null,
+        e2e_run_id: '123',
+        manifest_json: {
+          candidates: [
+            {
+              repository: 'backend',
+              pr_number: 1880,
+              head_sha: '8'.repeat(40)
+            }
+          ]
+        },
+        deployed_at: 1,
+        validated_at: 2,
+        created_at: 1,
+        updated_at: 2
+      }))
+    };
+    const reconciler = new ReleaseBusV2Reconciler(
+      repository as never,
+      {} as never
+    ) as unknown as {
+      cumulativeRollbackBaseline(context: unknown): Promise<unknown>;
+    };
+
+    await expect(
+      reconciler.cumulativeRollbackBaseline({
+        train: stagingTrain,
+        memberships: [],
+        candidates: [],
+        dependencies: []
+      })
+    ).rejects.toThrow(
+      'Cumulative rollback baseline manifest baseline-manifest has an unresolvable candidate identity'
+    );
+  });
+
+  it('keeps carried candidates in composition without spuriously redeploying their runtime units', () => {
     const carried = candidate('carried', 'a'.repeat(40));
     const removed = {
       ...candidate('removed', 'b'.repeat(40)),
@@ -116,10 +190,7 @@ describe('Release Bus v2 deterministic orchestration', () => {
     };
 
     expect(relevantCandidates(context)).toEqual([carried]);
-    expect(stagingDeploymentCandidates(context, 'backend')).toEqual([
-      carried,
-      removed
-    ]);
+    expect(stagingDeploymentCandidates(context, 'backend')).toEqual([removed]);
   });
 
   it('uses the bounded legacy preparation bridge when transition-only work has no source candidate', () => {
@@ -258,6 +329,11 @@ describe('Release Bus v2 deterministic orchestration', () => {
   });
 
   it('records rollback failure under the authoritative staging row lock before pausing', async () => {
+    jest
+      .spyOn(releaseBusGitHubApp, 'resolveRefIfExists')
+      .mockImplementation(async (repository) =>
+        repository === 'frontend' ? 'f'.repeat(40) : 'b'.repeat(40)
+      );
     const train: ReleaseBusV2TrainRecord = {
       id: 'train-rollback-failed',
       lane: 'STAGING',
