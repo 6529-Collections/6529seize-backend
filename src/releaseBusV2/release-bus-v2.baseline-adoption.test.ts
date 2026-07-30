@@ -484,9 +484,9 @@ function frontendE2EIdentity() {
     event: 'workflow_run',
     headBranch: 'main',
     headSha: FRONTEND_SHA,
-    name: 'Staging E2E',
+    name: 'Staging E2E [automatic]',
     path: '.github/workflows/staging-e2e.yml',
-    displayTitle: 'Staging E2E',
+    displayTitle: 'Staging E2E [automatic]',
     status: 'in_progress'
   };
 }
@@ -723,6 +723,48 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     expect(context.repository.trains).toHaveLength(0);
     expect(context.repository.operations).toHaveLength(0);
     expect(context.operations.reconcileWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'Staging E2E [automatic]',
+    `Staging E2E [rb2:${INTENT_ID}:baseline-adoption-e2e:staging:a1:a1]`
+  ])('accepts the real trusted GitHub run.name %s', async (name) => {
+    const context = harness();
+    Object.assign(context.identities[FRONTEND_E2E_RUN_ID], {
+      name,
+      displayTitle: name
+    });
+    await prepare(context);
+    await expect(
+      context.service.decideAutomaticE2E(automaticInput())
+    ).resolves.toMatchObject({
+      decision: 'DEFERRED',
+      adoption_id: INTENT_ID,
+      manifest_ready: false
+    });
+  });
+
+  it.each([
+    'Staging E2E',
+    'Staging E2E [Automatic]',
+    'Staging E2E [automatic]-lookalike',
+    'Staging E2E [release-bus:train:e2e:a1]',
+    'Staging E2E [rb2:train:e2e:a0]',
+    `Staging E2E [rb2:${'x'.repeat(176)}:a1]`
+  ])('rejects the lookalike or untrusted GitHub run.name %s', async (name) => {
+    const context = harness();
+    Object.assign(context.identities[FRONTEND_E2E_RUN_ID], {
+      name,
+      displayTitle: name
+    });
+    await prepare(context);
+    await expect(
+      context.service.decideAutomaticE2E(automaticInput())
+    ).rejects.toBeInstanceOf(ReleaseBusV2BaselineAdoptionError);
+    expect(context.repository.trains).toHaveLength(0);
+    expect(context.repository.manifests).toHaveLength(0);
+    expect(context.repository.operations).toHaveLength(0);
+    expect(context.repository.state.row_version).toBe(23);
   });
 
   it.each(['frontend', 'backend'] as const)(
