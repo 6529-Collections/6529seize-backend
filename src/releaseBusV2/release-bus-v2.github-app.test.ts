@@ -76,7 +76,8 @@ const TRUSTED_WORKFLOW_BLOBS = {
   },
   frontend: {
     legacy: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
-    modern: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3'
+    previous: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
+    modern: '4c5c20889cb10e860c4190ddcd78b1078249e7b4'
   }
 } as const;
 
@@ -559,6 +560,57 @@ describe('backend PR CI policy bundle contract', () => {
         ({ path: packagePath }) => packagePath === 'package.json'
       )?.fieldKeys
     ).toContain('devDependencies.@types/jest');
+  });
+});
+
+describe('frontend PR CI policy bundle contract', () => {
+  it('matches the exact 159-line producer inventory', () => {
+    const inventory = releaseBusPrCiPolicyInventory('frontend', true);
+    const packagePolicy = inventory.packages.find(
+      ({ path: packagePath }) => packagePath === 'package.json'
+    );
+    const fixture = policyFixture(
+      'frontend',
+      true,
+      TRUSTED_WORKFLOW_BLOBS.frontend.modern
+    );
+
+    expect(inventory.paths).toHaveLength(78);
+    expect(inventory.paths).toEqual(
+      expect.arrayContaining([
+        '.github/workflows/build-upload-deploy-prod.yml',
+        '.github/workflows/deploy-staging.yml',
+        '.github/workflows/release-bus-v2-advance-staging-ref.yml',
+        '__tests__/scripts/manual-deploy-routing-guard.test.ts',
+        '__tests__/scripts/public-review-artifact-workflows.test.ts',
+        '__tests__/scripts/release-bus-v2-advance-staging-ref-workflow.test.ts',
+        'ops/scripts/verify-deployment-version.cjs',
+        'scripts/notify-ci-wave.mjs'
+      ])
+    );
+    expect(packagePolicy?.scriptKeys).toHaveLength(51);
+    expect(packagePolicy?.scriptKeys).toContain(
+      'test:e2e:production:home-readonly'
+    );
+    expect(packagePolicy?.fieldKeys).toHaveLength(30);
+    expect(packagePolicy?.fieldKeys).toContain('devDependencies.yaml');
+    expect(
+      fixture.bundle.toString('utf8').split('\n').filter(Boolean)
+    ).toHaveLength(159);
+    const frozenProducerInventory = [
+      ...inventory.paths.map((policyPath) => `file\t${policyPath}\n`),
+      ...(packagePolicy?.scriptKeys.map((key) => `package-script\t${key}\n`) ??
+        []),
+      ...(packagePolicy?.fieldKeys.map((key) => `package-field\t${key}\n`) ??
+        [])
+    ]
+      .sort((left, right) =>
+        Buffer.compare(Buffer.from(left), Buffer.from(right))
+      )
+      .join('');
+    expect(
+      createHash('sha256').update(frozenProducerInventory).digest('hex')
+    ).toBe('edd544d3ace9482410ad0ebb38d41b0f8d5d979ba92b6e2b3bb2c2ed8582f8fa');
   });
 });
 
@@ -1411,6 +1463,57 @@ describe('GitHub staging idle handshake', () => {
       fetchMock.mockReset();
     }
   });
+
+  it.each([
+    [
+      'frontend',
+      'Release Bus v2 - Advance Frontend Staging Ref',
+      '.github/workflows/release-bus-v2-advance-staging-ref.yml'
+    ],
+    [
+      'backend',
+      'Release Bus v2 - Advance Backend Staging Ref',
+      '.github/workflows/release-bus-v2-advance-staging-ref.yml'
+    ]
+  ] as const)(
+    'classifies an unowned %s staging-ref workflow as shared staging mutation',
+    async (repository, name, workflowPath) => {
+      const app = new ReleaseBusGitHubApp();
+      (
+        app as unknown as {
+          cachedToken: { value: string; expiresAt: number };
+        }
+      ).cachedToken = {
+        value: 'test-token',
+        expiresAt: Date.now() + 120_000
+      };
+      const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+      const since = Date.parse('2026-07-23T13:22:00Z');
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 102,
+                name,
+                path: workflowPath,
+                display_title: name,
+                created_at: '2026-07-23T13:22:20Z'
+              }
+            ]
+          })
+        )
+      );
+
+      try {
+        await expect(
+          app.hasStagingMutationOrE2ERunSince(repository, since)
+        ).resolves.toBe(true);
+      } finally {
+        fetchMock.mockReset();
+      }
+    }
+  );
 
   it('excludes a date-filter result created before the fence window', async () => {
     const app = new ReleaseBusGitHubApp();

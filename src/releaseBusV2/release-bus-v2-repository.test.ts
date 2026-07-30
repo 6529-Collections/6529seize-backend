@@ -608,6 +608,102 @@ describe('ReleaseBusV2Repository', () => {
     );
   });
 
+  it('atomically detaches CLEAN_MAIN with an exact empty inventory and no candidate mutation', async () => {
+    const db = new RecordingSqlExecutor();
+    const repository = new ReleaseBusV2Repository(() => db);
+    const controls = controlRows();
+    const stagingState = {
+      ...state(),
+      status: 'CLEAN_MAIN' as const,
+      current_manifest_id: null,
+      clean_main: true,
+      last_transition_train_id: null
+    };
+    const { locks, leases } = acquiredLocks();
+    jest
+      .spyOn(repository, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (callback) =>
+        callback({ connection: {} } as never)
+      );
+    jest.spyOn(repository, 'listControls').mockResolvedValue(controls);
+    jest.spyOn(repository, 'listLocks').mockResolvedValue(locks);
+    jest.spyOn(repository, 'listActiveTrains').mockResolvedValue([]);
+    jest
+      .spyOn(repository, 'listNonterminalOperationsForLanes')
+      .mockResolvedValue([]);
+    jest.spyOn(repository, 'getStagingState').mockResolvedValue(stagingState);
+    const listCandidateDeregistrationScope = jest
+      .spyOn(repository, 'listCandidateDeregistrationScope')
+      .mockResolvedValue([]);
+    const updateCandidate = jest.spyOn(repository, 'updateCandidate');
+    const updateStagingState = jest
+      .spyOn(repository, 'updateStagingState')
+      .mockResolvedValue(true);
+    const appendEvent = jest
+      .spyOn(repository, 'appendEvent')
+      .mockResolvedValue(undefined);
+    const emptyInventorySha256 = releaseBusV2CandidateInventoryDigest([]);
+
+    await expect(
+      repository.commitAllCandidateDeregistration({
+        deregistrationId: 'empty-deregistration-id',
+        actor: 'operator',
+        reason: 'Detach the exact empty candidate inventory',
+        expectedControls: controls.map(({ scope, paused, row_version }) => ({
+          scope,
+          paused: Boolean(paused),
+          row_version
+        })),
+        maintenanceLeases: leases,
+        expectedStagingStateRowVersion: stagingState.row_version,
+        expectedCandidates: [],
+        expectedInventorySha256: emptyInventorySha256,
+        observedFrontendStagingSha: 'a'.repeat(40),
+        observedBackendStagingSha: 'b'.repeat(40)
+      })
+    ).resolves.toEqual({ candidateCount: 0 });
+
+    expect(listCandidateDeregistrationScope).toHaveBeenCalledWith(
+      expect.objectContaining({ connection: expect.anything() }),
+      true
+    );
+    expect(updateCandidate).not.toHaveBeenCalled();
+    expect(updateStagingState).toHaveBeenCalledWith(
+      stagingState.row_version,
+      {
+        status: 'DETACHED_MANUAL_OWNERSHIP',
+        currentManifestId: null,
+        lastValidatedManifestId: stagingState.last_validated_manifest_id,
+        frontendSha: null,
+        backendSha: null,
+        frontendStagingRefSha: null,
+        backendStagingRefSha: null,
+        cleanMain: false,
+        lastTransitionTrainId: null
+      },
+      expect.objectContaining({ connection: expect.anything() })
+    );
+    expect(appendEvent).toHaveBeenCalledTimes(1);
+    expect(appendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANDIDATE_INVENTORY_LOGICALLY_DEREGISTERED',
+        actor: 'operator',
+        payload: expect.objectContaining({
+          deregistration_id: 'empty-deregistration-id',
+          candidate_count: 0,
+          inventory_sha256: emptyInventorySha256,
+          previous_staging_state: expect.objectContaining({
+            status: 'CLEAN_MAIN',
+            row_version: stagingState.row_version,
+            clean_main: true
+          }),
+          immutable_history_preserved: true
+        })
+      }),
+      expect.objectContaining({ connection: expect.anything() })
+    );
+  });
+
   it('aborts the transaction before any candidate mutation when the inventory CAS is stale', async () => {
     const db = new RecordingSqlExecutor();
     const repository = new ReleaseBusV2Repository(() => db);

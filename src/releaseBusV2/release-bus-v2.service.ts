@@ -3440,6 +3440,69 @@ export class ReleaseBusV2Service {
             !['LIVE', 'CLEAN_MAIN'].includes(stagingState.status)
           )
             return null;
+          if (
+            stagingState &&
+            stagingIdentity?.frontendSha &&
+            stagingIdentity.backendSha &&
+            // stagingIdentity is the exact pair of 1a-staging ref heads that
+            // the reconciler resolved for this claim. The historical field
+            // names predate cumulative staging; this compares ref to ref, not
+            // a separately sampled deployment runtime.
+            (stagingState.frontend_staging_ref_sha !==
+              stagingIdentity.frontendSha ||
+              stagingState.backend_staging_ref_sha !==
+                stagingIdentity.backendSha)
+          ) {
+            const message =
+              'Manual/shared-ref drift changed 1a-staging outside the authoritative validated staging identity';
+            if (
+              !(await this.repository.updateStagingState(
+                stagingState.row_version,
+                {
+                  status: 'ROLLBACK_FAILED',
+                  currentManifestId: null,
+                  lastValidatedManifestId:
+                    stagingState.last_validated_manifest_id,
+                  frontendSha: null,
+                  backendSha: null,
+                  frontendStagingRefSha: stagingIdentity.frontendSha,
+                  backendStagingRefSha: stagingIdentity.backendSha,
+                  cleanMain: false,
+                  lastTransitionTrainId: stagingState.last_transition_train_id
+                },
+                ctx
+              ))
+            )
+              throw new Error(
+                'Authoritative staging state changed while recording manual ref drift'
+              );
+            await this.repository.setControl(
+              'STAGING',
+              true,
+              message,
+              'release-bus-v2',
+              ctx
+            );
+            await this.repository.appendEvent(
+              {
+                eventType: 'STAGING_REF_DRIFT_DETECTED',
+                actor: 'release-bus-v2',
+                payload: {
+                  expected_frontend_staging_sha:
+                    stagingState.frontend_staging_ref_sha,
+                  expected_backend_staging_sha:
+                    stagingState.backend_staging_ref_sha,
+                  observed_frontend_staging_sha: stagingIdentity.frontendSha,
+                  observed_backend_staging_sha: stagingIdentity.backendSha,
+                  current_manifest_id: stagingState.current_manifest_id,
+                  production_evidence_preserved: true,
+                  recover_with: 'SERIALIZED_MANUAL_STAGING_RECOVERY'
+                }
+              },
+              ctx
+            );
+            return null;
+          }
           await this.refreshDependencyHolds(lane, ctx, betaAllowlist);
           const readyCandidateScan = await this.repository.listCandidates(
             lane === 'PRODUCTION'
