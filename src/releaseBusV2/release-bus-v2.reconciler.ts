@@ -1952,7 +1952,11 @@ export class ReleaseBusV2Reconciler {
   private async loadContext(
     train: ReleaseBusV2TrainRecord
   ): Promise<TrainContext> {
-    const memberships = await this.repository.listTrainCandidates(train.id, {});
+    const memberships = await this.repository.listTrainCandidates(
+      train.id,
+      {},
+      true
+    );
     const candidates = (
       await Promise.all(
         memberships.map((membership) =>
@@ -1973,7 +1977,8 @@ export class ReleaseBusV2Reconciler {
       candidates,
       dependencies: await this.repository.listDependencies(
         candidates.map(({ id }) => id),
-        {}
+        {},
+        true
       )
     };
   }

@@ -469,7 +469,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listDependencies(
     candidateIds: readonly string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2DependencyRecord[]> {
     const ids = Array.from(new Set(candidateIds));
     if (ids.length === 0) return [];
@@ -479,7 +480,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_BUS_V2_CANDIDATE_DEPENDENCIES_TABLE}
        where candidate_id in (:ids)`,
       { ids },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
