@@ -114,6 +114,23 @@ describe('MentionAliasesService', () => {
     );
   });
 
+  it('rejects the owner as a member on create and update', async () => {
+    const { db } = createDb();
+    const service = new MentionAliasesService(db as any);
+    const input = {
+      alias: 'frens',
+      member_profile_ids: ['owner-1', 'profile-2']
+    };
+
+    await expect(service.create('owner-1', input)).rejects.toThrow(
+      "You can't add yourself to a Quick Tag."
+    );
+    await expect(service.update('owner-1', 'alias-1', input)).rejects.toThrow(
+      "You can't add yourself to a Quick Tag."
+    );
+    expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
   it('translates a concurrent duplicate insert into a bad request', async () => {
     const { db } = createDb();
     db.insertAlias.mockRejectedValue({ code: 'ER_DUP_ENTRY' });
