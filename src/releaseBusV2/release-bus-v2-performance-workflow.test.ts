@@ -388,7 +388,9 @@ printf '200'
         INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
         INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
         INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
-        INPUT_RELEASE_NOTE_OPT_OUT: 'false'
+        INPUT_RELEASE_NOTE_OPT_OUT: 'false',
+        INPUT_RELEASE_PULL_REQUEST: '1861',
+        INPUT_RELEASE_GROUP_SERVICES: 'api'
       })
     ).not.toThrow();
   });
