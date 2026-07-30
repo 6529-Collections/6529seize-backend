@@ -20,6 +20,7 @@ interface AnthropicTextBlock {
 
 interface AnthropicResponse {
   readonly content?: AnthropicTextBlock[];
+  readonly stop_reason?: string;
 }
 
 const TONE_GUIDANCE =
@@ -35,7 +36,9 @@ const STREAM_GROUNDING_GUIDANCE = [
   'Distinguish implemented behavior, proposals, audit/readiness state, blockers, and deployment state. Do not collapse them into one status.',
   'Do not infer exact inputs, outputs, caller authorization, selectors, topics, events, errors, deployment facts, or behavior unless the evidence states them.',
   'If an AMBIGUITY fact is present, clearly ask for the contract or complete signature instead of choosing a declaration.',
-  'Mention the review version when the answer depends on implementation or status.'
+  'Mention the review version when the answer depends on implementation or status.',
+  'Keep the answer body under 800 characters.',
+  'Do not include URLs, Markdown links, or a More info footer. The backend appends verified source links separately.'
 ];
 
 function buildPrompt({
@@ -50,17 +53,22 @@ function buildPrompt({
   readonly canonicalUrl: string;
 }): string {
   const factLines = record.facts.map((fact) => `- ${fact}`).join('\n');
-  const streamGrounding =
-    record.kind === 'public_review_knowledge' ? STREAM_GROUNDING_GUIDANCE : [];
-  const linkGuidance = record.suppressSourceLinks
-    ? [
-        'Do not include source links unless the provided facts explicitly require one.'
-      ]
-    : [
-        MARKDOWN_LINK_GUIDANCE,
-        `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
-        `Use this exact Markdown link label for that URL: ${record.linkLabel}`
-      ];
+  const isStreamKnowledge = record.kind === 'public_review_knowledge';
+  const streamGrounding = isStreamKnowledge ? STREAM_GROUNDING_GUIDANCE : [];
+  let linkGuidance: readonly string[];
+  if (record.suppressSourceLinks) {
+    linkGuidance = [
+      'Do not include source links unless the provided facts explicitly require one.'
+    ];
+  } else if (isStreamKnowledge) {
+    linkGuidance = [];
+  } else {
+    linkGuidance = [
+      MARKDOWN_LINK_GUIDANCE,
+      `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
+      `Use this exact Markdown link label for that URL: ${record.linkLabel}`
+    ];
+  }
   return [
     `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the provided facts.',
@@ -162,8 +170,14 @@ function buildInvokeModelInput(
   };
 }
 
-function parseAnthropicResponse(jsonString: string): string {
+function parseAnthropicResponse(
+  jsonString: string,
+  rejectTokenLimitedResponse: boolean
+): string {
   const parsed = JSON.parse(jsonString) as AnthropicResponse;
+  if (rejectTokenLimitedResponse && parsed.stop_reason === 'max_tokens') {
+    throw new Error('Bedrock answer stopped before completion at max_tokens');
+  }
   const text = parsed.content
     ?.map((block) => (block.type === 'text' ? (block.text ?? '') : ''))
     .join('')
@@ -218,7 +232,14 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly record: HelpBotKnowledgeRecord;
     readonly canonicalUrl: string;
   }): Promise<string> {
-    return this.invokePrompt(buildPrompt(input), 220);
+    const isStreamKnowledge = input.record.kind === 'public_review_knowledge';
+    const maxTokens = isStreamKnowledge ? 320 : 220;
+    return this.invokePrompt(
+      buildPrompt(input),
+      maxTokens,
+      undefined,
+      isStreamKnowledge
+    );
   }
 
   public async planPublicDataQuery(input: {
@@ -254,7 +275,8 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
   private async invokePrompt(
     prompt: string,
     maxTokens: number,
-    externalSignal?: AbortSignal
+    externalSignal?: AbortSignal,
+    rejectTokenLimitedResponse = false
   ): Promise<string> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -276,7 +298,10 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
       if (!response.body) {
         throw new Error('Unexpected empty response body from Bedrock');
       }
-      return parseAnthropicResponse(new TextDecoder().decode(response.body));
+      return parseAnthropicResponse(
+        new TextDecoder().decode(response.body),
+        rejectTokenLimitedResponse
+      );
     } finally {
       clearTimeout(timeout);
       externalSignal?.removeEventListener('abort', abortFromExternalSignal);
