@@ -20520,7 +20520,12 @@ components:
           pattern: ^[a-f0-9]{64}$
         expected_candidates:
           type: array
-          minItems: 1
+          description: >-
+            The exact active-intent inventory from PREPARE. An empty inventory
+            remains executable to atomically detach authoritative staging
+            ownership; every control, lock, workflow, ref, state-version, and
+            digest fence still applies.
+          minItems: 0
           maxItems: 500
           uniqueItems: true
           items:

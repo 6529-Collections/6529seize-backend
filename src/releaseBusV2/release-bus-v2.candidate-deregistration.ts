@@ -303,11 +303,6 @@ export class ReleaseBusV2CandidateDeregistrationService {
       const before = await this.readReadySnapshot();
       const plan = this.plan(reason, before);
       this.assertExpectedPlan(plan, input);
-      if (plan.candidate_count === 0)
-        throw new ReleaseBusV2CandidateDeregistrationError(
-          'CONFLICT',
-          'Candidate deregistration preparation is a safe no-op because no active candidate intent exists'
-        );
       return this.executePreparedPlan(plan, input, actor, reason);
     });
   }

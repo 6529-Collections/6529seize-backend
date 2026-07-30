@@ -601,6 +601,22 @@ E2E ownership is serialized. Operation keys, workflow titles, workflow
 authorization, SHA/artifact checks, row versions, and callback identity make
 retries and duplicate reconciliation idempotent.
 
+For cumulative staging, each affected repository's immutable release commit
+has the recorded `1a-staging` head as its first parent and the composed
+candidate tree as its second parent. After preparation and the staging fence,
+the reconciler advances only affected `1a-staging` refs through dedicated,
+operation-owned workflows before deployment. Each workflow authorizes the
+exact train/attempt before reading or mutating the ref, proves the recorded
+old SHA is an ancestor of the immutable target, applies an exact leased
+fast-forward, and reports the observed postcondition. It uses the workflow
+`GITHUB_TOKEN`, so this Release Bus-owned branch advance cannot recursively
+start the legacy staging deployment workflow. Branch heads, deployed runtime,
+manifest identity, and E2E inputs therefore describe the same combined state.
+A retry observes a completed ref operation and continues idempotently; an
+unexpected ref move fails closed and pauses only the staging lane. Rollback
+uses the same forward-only pattern with an immutable restore commit instead of
+rewinding a shared ref.
+
 Each staging reconcile rechecks every mutable NEW candidate against its open
 PR's current exact head, including candidates already building or deploying.
 Once a newer registered/current head supersedes a candidate, no additional

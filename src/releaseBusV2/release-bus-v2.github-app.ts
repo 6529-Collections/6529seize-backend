@@ -205,6 +205,11 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
       from: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',
       to: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: '2dcada8aac190b3e9c4fc13d64de06f4d945fbc3',
+      to: '4c5c20889cb10e860c4190ddcd78b1078249e7b4',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ]
 };
@@ -219,6 +224,7 @@ const LEGACY_PR_CI_WORKFLOW_BLOBS: Readonly<
 const BACKEND_PR_CI_GATE_POLICY_FILES = new Set([
   '.github/workflows/deploy.yml',
   '.github/workflows/on-pull-request.yml',
+  '.github/workflows/release-bus-v2-advance-staging-ref.yml',
   '.github/workflows/release-bus-v2-preflight.yml',
   '.prettierignore',
   '.prettierrc',
@@ -237,6 +243,7 @@ const BACKEND_PR_CI_GATE_POLICY_FILES = new Set([
   'src/api-serverless/tsconfig.json',
   'src/api-serverless/tsconfig.paths.json',
   'src/config/deploy-services.json',
+  'src/releaseBusV2/release-bus-v2-advance-staging-ref-workflow.test.ts',
   'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts',
   'src/tests/_setup/globalSetup.ts',
   'src/tests/_setup/globalTeardown.ts',
@@ -312,9 +319,12 @@ const BACKEND_PACKAGE_POLICY = {
 const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   '.github/6529bot.yml',
   '.github/workflows/app-pr-ci.yml',
+  '.github/workflows/build-upload-deploy-prod.yml',
+  '.github/workflows/deploy-staging.yml',
   '.github/workflows/production-e2e.yml',
   '.github/workflows/release-bus-deploy-production.yml',
   '.github/workflows/release-bus-deploy-staging.yml',
+  '.github/workflows/release-bus-v2-advance-staging-ref.yml',
   '.github/workflows/release-bus-v2-compose.yml',
   '.github/workflows/release-bus-v2-preflight.yml',
   '.github/workflows/staging-e2e.yml',
@@ -323,11 +333,14 @@ const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   '__tests__/scripts/deployment-bus.test.ts',
   '__tests__/scripts/e2e-packs.test.ts',
   '__tests__/scripts/lint-package-json.test.ts',
+  '__tests__/scripts/manual-deploy-routing-guard.test.ts',
   '__tests__/scripts/package-public-review-artifacts.test.ts',
   '__tests__/scripts/pr-ci-policy-bundle.test.ts',
+  '__tests__/scripts/public-review-artifact-workflows.test.ts',
   '__tests__/scripts/release-bus-artifact-compatibility.test.ts',
   '__tests__/scripts/release-bus-install-dependencies.test.ts',
   '__tests__/scripts/release-bus-performance-contract.test.ts',
+  '__tests__/scripts/release-bus-v2-advance-staging-ref-workflow.test.ts',
   '__tests__/scripts/release-bus-v2-compose-workflow.test.ts',
   '__tests__/scripts/sync-agent-files.test.ts',
   '__tests__/scripts/sync-e2e-manifest.test.ts',
@@ -351,6 +364,7 @@ const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   'ops/scripts/release-bus-status.mjs',
   'ops/scripts/release-bus-status.test.ts',
   'ops/scripts/testing-strategy.cjs',
+  'ops/scripts/verify-deployment-version.cjs',
   'ops/testing-strategy/mutation-endpoint-registry.json',
   'ops/testing-strategy/mutation-endpoint-registry.v1.schema.json',
   'ops/testing-strategy/validation-manifest.v1.schema.json',
@@ -363,6 +377,7 @@ const FRONTEND_PR_CI_GATE_POLICY_FILES = new Set([
   'scripts/enforce-package-manager.cjs',
   'scripts/generate-openapi.cjs',
   'scripts/lint-package-json.cjs',
+  'scripts/notify-ci-wave.mjs',
   'scripts/package-public-review-artifacts.cjs',
   'scripts/pr-ci-policy-bundle.cjs',
   'scripts/release-bus-install-dependencies.cjs',
@@ -419,6 +434,7 @@ const FRONTEND_PACKAGE_POLICY = {
       'test:e2e:production:admin-guards-readonly',
       'test:e2e:production:collections-readonly',
       'test:e2e:production:delegation-readonly',
+      'test:e2e:production:home-readonly',
       'test:e2e:production:media-readonly',
       'test:e2e:production:network-open-data-readonly',
       'test:e2e:production:profile-deep-links-readonly',
@@ -477,7 +493,8 @@ const FRONTEND_PACKAGE_POLICY = {
       'devDependencies.prettier',
       'devDependencies.ts-jest',
       'devDependencies.typescript',
-      'devDependencies.typescript-eslint'
+      'devDependencies.typescript-eslint',
+      'devDependencies.yaml'
     ]
   }
 } as const;
@@ -521,6 +538,14 @@ function trustedWorkflowTransition(
   );
 }
 
+function trustedGatePolicyBundleRollout(from: string, to: string) {
+  return {
+    from,
+    to,
+    expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+  } as const;
+}
+
 const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   Record<
     ReleaseBusV2Repository,
@@ -532,38 +557,56 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   >
 > = {
   backend: [
-    {
-      from: '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
-      to: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: 'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
-      to: '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
-      to: '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
-      to: 'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    },
-    {
-      from: 'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
-      to: '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
+    trustedGatePolicyBundleRollout(
+      '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143',
+      'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01'
+    ),
+    trustedGatePolicyBundleRollout(
+      'bc475e20c610d288cdea01ceb174b19ea42ba4ba0b5ef1ebcd2da803eb0a3d01',
+      '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d'
+    ),
+    trustedGatePolicyBundleRollout(
+      '0fdcdf7948686e52a42417b43c5901a2dc94992898d4b38413a8596efae4673d',
+      '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b'
+    ),
+    trustedGatePolicyBundleRollout(
+      '1d88969f7f3fa8aa33a2b6095a83e72f5e2ec7f43c5992ac491d3c0a59b57d1b',
+      'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1'
+    ),
+    trustedGatePolicyBundleRollout(
+      'eb94c911d5f3a129ed84d3283f86c3fa837cc1634fcf720348df510a3dde79a1',
+      '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f'
+    ),
+    trustedGatePolicyBundleRollout(
+      '431000672af70d63d55aa05855811850e4ae73693a66409c9c120e0f20e7ca0f',
+      '9726b0045dd826249544782a3effde02a867136378d45ece0e19e745343e36d4'
+    ),
+    trustedGatePolicyBundleRollout(
+      '9726b0045dd826249544782a3effde02a867136378d45ece0e19e745343e36d4',
+      'b472c7d71fd8cb54f427770514329ddd3c26b757bc4f6c12c401be2f9e1cb006'
+    ),
+    trustedGatePolicyBundleRollout(
+      'b472c7d71fd8cb54f427770514329ddd3c26b757bc4f6c12c401be2f9e1cb006',
+      '4f9386ed9f15315b6359f56e21477b7a62a65d496c97aae0cd4b8b5b05d784d3'
+    )
   ],
   frontend: [
-    {
-      from: '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8',
-      to: '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
-      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
-    }
+    trustedGatePolicyBundleRollout(
+      '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8',
+      '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d'
+    ),
+    trustedGatePolicyBundleRollout(
+      '543fd807192a3a60ba1dbfc1096945caf8186298feae0e621989cb112b1c3c2d',
+      '8f8e4348f8b95957ed17c707839199f1aa1902ea151c637066e5a33ce7ec6379'
+    ),
+    trustedGatePolicyBundleRollout(
+      '8f8e4348f8b95957ed17c707839199f1aa1902ea151c637066e5a33ce7ec6379',
+      'bc2a2fcb35b23e541c32fe6a7f4cab1a6e1efaba0fb3beea62566b908ed53087'
+    ),
+    trustedGatePolicyBundleRollout(
+      'bc2a2fcb35b23e541c32fe6a7f4cab1a6e1efaba0fb3beea62566b908ed53087',
+      '96c6272a4c41862304ea2834d6d605c37938783ddcc8811010149025970c5aa2'
+    )
   ]
 };
 
@@ -2015,6 +2058,14 @@ export class ReleaseBusGitHubApp {
     repository: ReleaseBusV2Repository,
     run: GitHubRun
   ): boolean {
+    if (
+      run.path === '.github/workflows/release-bus-v2-advance-staging-ref.yml' ||
+      [
+        'Release Bus v2 - Advance Frontend Staging Ref',
+        'Release Bus v2 - Advance Backend Staging Ref'
+      ].includes(run.name)
+    )
+      return true;
     if (repository === 'backend') {
       return this.isBackendDeploymentRun(run, 'staging');
     }

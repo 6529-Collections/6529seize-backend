@@ -99,6 +99,14 @@ describe('Release Bus v2 validation', () => {
         ...exact
       }).error
     ).toBeUndefined();
+    expect(
+      ReleaseBusV2CandidateDeregistrationBodySchema.validate({
+        phase: 'EXECUTE',
+        reason: 'Detach the exact empty candidate inventory',
+        ...exact,
+        expected_candidates: []
+      }).error
+    ).toBeUndefined();
     for (const invalid of [
       {
         phase: 'EXECUTE',
@@ -108,6 +116,18 @@ describe('Release Bus v2 validation', () => {
           exact.expected_candidates[0],
           exact.expected_candidates[0]
         ]
+      },
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact,
+        expected_candidates: [null]
+      },
+      {
+        phase: 'EXECUTE',
+        reason: 'Retire the audited candidate inventory',
+        ...exact,
+        expected_candidates: [{}]
       },
       {
         phase: 'EXECUTE',
@@ -253,6 +273,49 @@ describe('Release Bus v2 validation', () => {
         artifact_run_id: null
       }).error
     ).toBeDefined();
+  });
+
+  it('allows only exact artifact-free leased staging-ref operations', () => {
+    const trainId = '8af60034-9741-4b9d-bb1c-80b483f75455';
+    const authorization = {
+      train_id: trainId,
+      operation_key: `rb2:${trainId}:advance-staging:release:backend:a1`,
+      workflow_run_id: '30510086016',
+      artifact_run_id: null,
+      repository: 'backend',
+      environment: 'staging',
+      service: null,
+      expected_sha: 'a'.repeat(40),
+      artifact_digest: null
+    };
+
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate(authorization).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2AuthorizationBodySchema.validate({
+        ...authorization,
+        operation_key: `rb2:${trainId}:advance-staging:rollback:frontend:a1`,
+        repository: 'frontend'
+      }).error
+    ).toBeUndefined();
+    for (const invalid of [
+      {
+        ...authorization,
+        operation_key: `rb2:${trainId}:advance-staging:release:frontend:a1`
+      },
+      {
+        ...authorization,
+        operation_key: `rb2:${trainId}:advance-staging:release:backend:a1`,
+        environment: 'prod'
+      },
+      { ...authorization, service: 'api' },
+      { ...authorization, artifact_run_id: '30509992351' },
+      { ...authorization, artifact_digest: 'b'.repeat(64) }
+    ])
+      expect(
+        ReleaseBusV2AuthorizationBodySchema.validate(invalid).error
+      ).toBeDefined();
   });
 
   it('accepts an exact backend PR candidate with an acyclic deploy plan', () => {
