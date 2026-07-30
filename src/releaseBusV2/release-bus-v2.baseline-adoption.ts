@@ -53,6 +53,8 @@ const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const RUN_ID_PATTERN = /^[1-9]\d{0,19}$/;
 const UNIT_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+const RELEASE_BUS_OPERATION_ATTEMPT_PATTERN =
+  /^rb2:[A-Za-z0-9:._-]+:a[1-9]\d{0,8}$/;
 
 export type ReleaseBusV2BaselineAdoptionCandidate = {
   readonly candidate_id: string;
@@ -687,7 +689,7 @@ function assertFrontendWorkflowIdentities(
     e2e.conclusion !== null ||
     e2e.event !== 'workflow_run' ||
     e2e.path !== '.github/workflows/staging-e2e.yml' ||
-    e2e.name !== 'Staging E2E' ||
+    !isTrustedStagingE2EWorkflowName(e2e.name) ||
     deploy.status !== 'completed' ||
     deploy.conclusion !== 'success' ||
     !['push', 'workflow_dispatch'].includes(deploy.event) ||
@@ -700,6 +702,16 @@ function assertFrontendWorkflowIdentities(
       'CONFLICT',
       'Automatic E2E does not bind the exact successful staging deployment'
     );
+}
+
+function isTrustedStagingE2EWorkflowName(value: string): boolean {
+  const match = /^Staging E2E \[([A-Za-z0-9:._-]+)\]$/.exec(value);
+  const identity = match?.[1] ?? '';
+  return (
+    identity === 'automatic' ||
+    (identity.length <= 180 &&
+      RELEASE_BUS_OPERATION_ATTEMPT_PATTERN.test(identity))
+  );
 }
 
 function assertBackendWorkflowIdentity(
