@@ -1009,7 +1009,7 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
         context.refs.backend = 'f'.repeat(40);
         return context.service.recordBackendDeployment(backendInput());
       }
-    ],
+    ]
   ])(
     'fails moved %s evidence closed with no partial adoption',
     async (_label, act) => {
