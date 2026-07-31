@@ -1189,12 +1189,7 @@ export function reconcileTransactionTokenCounts(
   const receiptCounts = new Map<string, bigint>();
   const receiptEdgesByKey = new Map<string, NftTransferEdge>();
   extractNftTransferEdges(receipt)
-    .filter(
-      (edge) =>
-        contracts.has(edge.contract.toLowerCase()) &&
-        // Asset Transfers excludes zero-value transfers for this query.
-        edge.amount > BigInt(0)
-    )
+    .filter((edge) => contracts.has(edge.contract.toLowerCase()))
     .forEach((edge) => {
       const key = getNftTransferKey(
         edge.from,
@@ -1225,9 +1220,9 @@ export function reconcileTransactionTokenCounts(
       row.contract,
       row.token_id
     );
-    const tokenCount = receiptCounts.get(key) ?? BigInt(0);
+    const tokenCount = receiptCounts.get(key);
 
-    if (tokenCount <= BigInt(0)) {
+    if (tokenCount === undefined) {
       throw new Error(
         `No matching NFT transfer log for ${row.transaction} ${row.contract} token ${row.token_id}`
       );
