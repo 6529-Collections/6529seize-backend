@@ -42,8 +42,10 @@ import type {
   ReleaseBusV2TrainStatus
 } from '@/releaseBusV2/release-bus-v2.types';
 
-function dbOptions(ctx: RequestContext) {
-  return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
+function dbOptions(ctx: RequestContext, forceWrite = false) {
+  if (ctx.connection) return { wrappedConnection: ctx.connection };
+  if (forceWrite) return { forcePool: DbPoolName.WRITE };
+  return undefined;
 }
 
 function json(value: unknown): string | null {
@@ -303,25 +305,27 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     repository: ReleaseBusV2RepositoryName,
     prNumber: number,
     headSha: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2CandidateRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE}
        where repository = :repository and pr_number = :prNumber and head_sha = :headSha`,
       { repository, prNumber, headSha },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
   public async findCandidateById(
     id: string,
     ctx: RequestContext,
-    forUpdate = false
+    forUpdate = false,
+    forceWrite = false
   ): Promise<ReleaseBusV2CandidateRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2CandidateRecord>(
       `select * from ${RELEASE_BUS_V2_CANDIDATES_TABLE} where id = :id${forUpdate ? ' for update' : ''}`,
       { id },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -359,7 +363,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       },
       dbOptions(ctx)
     );
-    const created = await this.findCandidateById(id, ctx);
+    const created = await this.findCandidateById(id, ctx, false, true);
     if (!created)
       throw new Error('Release Bus v2 candidate insert was not visible');
     return created;
@@ -465,7 +469,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listDependencies(
     candidateIds: readonly string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2DependencyRecord[]> {
     const ids = Array.from(new Set(candidateIds));
     if (ids.length === 0) return [];
@@ -475,7 +480,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_BUS_V2_CANDIDATE_DEPENDENCIES_TABLE}
        where candidate_id in (:ids)`,
       { ids },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -725,12 +730,13 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   public async findTrain(
     id: string,
     ctx: RequestContext,
-    forUpdate = false
+    forUpdate = false,
+    forceWrite = false
   ): Promise<ReleaseBusV2TrainRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2TrainRecord>(
       `select * from ${RELEASE_BUS_V2_TRAINS_TABLE} where id = :id${forUpdate ? ' for update' : ''}`,
       { id },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -763,6 +769,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async createTrain(
     input: {
+      readonly trainId?: string;
       readonly lane: ReleaseBusV2Lane;
       readonly frontendBaseSha: string;
       readonly backendBaseSha: string;
@@ -778,7 +785,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<ReleaseBusV2TrainRecord> {
-    const id = randomUUID();
+    const id = input.trainId ?? randomUUID();
     const now = Date.now();
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_TRAINS_TABLE}
@@ -823,7 +830,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         dbOptions(ctx)
       );
     }
-    const train = await this.findTrain(id, ctx);
+    const train = await this.findTrain(id, ctx, false, true);
     if (!train) throw new Error('Release Bus v2 train insert was not visible');
     return train;
   }
@@ -1068,7 +1075,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       .digest('hex');
     const existing = await this.findQualificationTrain(
       input.parentTrainId,
-      ctx
+      ctx,
+      true
     );
     if (
       existing &&
@@ -1093,7 +1101,11 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       { id, ...input, qualificationIdentitySha256, now },
       dbOptions(ctx)
     );
-    const train = await this.findQualificationTrain(input.parentTrainId, ctx);
+    const train = await this.findQualificationTrain(
+      input.parentTrainId,
+      ctx,
+      true
+    );
     if (!train)
       throw new Error(
         'Release Bus v2 qualification train insert was not visible'
@@ -1118,19 +1130,20 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         dbOptions(ctx)
       );
     }
-    await this.assertQualificationTrain(train, input, ctx);
+    await this.assertQualificationTrain(train, input, ctx, true);
     return train;
   }
 
   private async findQualificationTrain(
     parentTrainId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2TrainRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2TrainRecord>(
       `select * from ${RELEASE_BUS_V2_TRAINS_TABLE}
        where parent_train_id = :parentTrainId limit 1`,
       { parentTrainId },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -1146,7 +1159,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       readonly backendArtifactDigest: string | null;
       readonly candidateIds: readonly string[];
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<void> {
     const immutableMatches =
       train.lane === 'PRODUCTION_QUALIFICATION' &&
@@ -1157,7 +1171,9 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       train.backend_composed_sha === input.backendComposedSha &&
       train.frontend_artifact_digest === input.frontendArtifactDigest &&
       train.backend_artifact_digest === input.backendArtifactDigest;
-    const candidateIds = (await this.listTrainCandidates(train.id, ctx))
+    const candidateIds = (
+      await this.listTrainCandidates(train.id, ctx, forceWrite)
+    )
       .sort((left, right) => left.sequence - right.sequence)
       .map(({ candidate_id }) => candidate_id);
     if (
@@ -1171,13 +1187,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listTrainCandidates(
     trainId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2TrainCandidateRecord[]> {
     return this.db.execute<ReleaseBusV2TrainCandidateRecord>(
       `select * from ${RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE}
        where train_id = :trainId order by sequence asc`,
       { trainId },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -1265,7 +1282,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<ReleaseBusV2OperationRecord> {
-    const existing = await this.findOperation(input.idempotencyKey, ctx);
+    const existing = await this.findOperation(input.idempotencyKey, ctx, true);
     if (existing) {
       this.assertOperationIdentity(existing, input);
       return existing;
@@ -1297,7 +1314,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
       },
       dbOptions(ctx)
     );
-    const created = await this.findOperation(input.idempotencyKey, ctx);
+    const created = await this.findOperation(input.idempotencyKey, ctx, true);
     if (!created)
       throw new Error('Release Bus v2 operation insert was not visible');
     this.assertOperationIdentity(created, input);
@@ -1337,19 +1354,21 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async findOperation(
     idempotencyKey: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2OperationRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2OperationRecord>(
       `select * from ${RELEASE_BUS_V2_OPERATIONS_TABLE} where idempotency_key = :idempotencyKey`,
       { idempotencyKey },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
   public async listOperations(
     trainId: string,
     ctx: RequestContext,
-    forUpdate = false
+    forUpdate = false,
+    forceWrite = false
   ): Promise<ReleaseBusV2OperationRecord[]> {
     return this.db.execute<ReleaseBusV2OperationRecord>(
       `select * from ${RELEASE_BUS_V2_OPERATIONS_TABLE}
@@ -1357,7 +1376,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
          forUpdate ? ' for update' : ''
        }`,
       { trainId },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -1594,12 +1613,13 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async listLocks(
     ctx: RequestContext,
-    forUpdate = false
+    forUpdate = false,
+    forceWrite = false
   ): Promise<ReleaseBusV2LockRecord[]> {
     return this.db.execute<ReleaseBusV2LockRecord>(
       `select * from ${RELEASE_BUS_V2_LOCKS_TABLE} order by name asc${forUpdate ? ' for update' : ''}`,
       {},
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -1609,7 +1629,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
   ): Promise<ReleaseBusV2ManifestRecord> {
     const existing = await this.findManifestByIdentity(
       input.identity_sha256,
-      ctx
+      ctx,
+      true
     );
     if (existing) {
       this.assertManifestIdentity(existing, input);
@@ -1645,7 +1666,8 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
     const created = await this.findManifestByIdentity(
       input.identity_sha256,
-      ctx
+      ctx,
+      true
     );
     if (!created)
       throw new Error('Release Bus v2 manifest insert was not visible');
@@ -1676,23 +1698,25 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async findManifestByIdentity(
     identitySha256: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2ManifestRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2ManifestRecord>(
       `select * from ${RELEASE_BUS_V2_MANIFESTS_TABLE} where identity_sha256 = :identitySha256`,
       { identitySha256 },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
   public async findManifest(
     id: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forceWrite = false
   ): Promise<ReleaseBusV2ManifestRecord | null> {
     return this.db.oneOrNull<ReleaseBusV2ManifestRecord>(
       `select * from ${RELEASE_BUS_V2_MANIFESTS_TABLE} where id = :id`,
       { id },
-      dbOptions(ctx)
+      dbOptions(ctx, forceWrite)
     );
   }
 
@@ -2098,6 +2122,7 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
 
   public async appendEvent(
     input: {
+      readonly eventId?: string;
       readonly trainId?: string | null;
       readonly candidateId?: string | null;
       readonly eventType: string;
@@ -2106,12 +2131,14 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
+    const id = input.eventId ?? randomUUID();
     await this.db.execute(
       `insert into ${RELEASE_BUS_V2_EVENTS_TABLE}
        (id, train_id, candidate_id, event_type, github_actor, payload_json, created_at)
-       values (:id, :trainId, :candidateId, :eventType, :actor, :payload, :now)`,
+       values (:id, :trainId, :candidateId, :eventType, :actor, :payload, :now)
+       on duplicate key update id = id`,
       {
-        id: randomUUID(),
+        id,
         trainId: input.trainId ?? null,
         candidateId: input.candidateId ?? null,
         eventType: input.eventType,
@@ -2120,6 +2147,52 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
         now: Date.now()
       },
       dbOptions(ctx)
+    );
+  }
+
+  public async findEvent(
+    id: string,
+    ctx: RequestContext,
+    forUpdate = false,
+    forceWrite = false
+  ): Promise<ReleaseBusV2EventRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2EventRecord>(
+      `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
+       where id = :id${forUpdate ? ' for update' : ''}`,
+      { id },
+      dbOptions(ctx, forceWrite)
+    );
+  }
+
+  public async listEventsByTypes(
+    eventTypes: readonly string[],
+    limit: number,
+    ctx: RequestContext,
+    forUpdate = false,
+    createdAtGte?: number,
+    forceWrite = false
+  ): Promise<ReleaseBusV2EventRecord[]> {
+    const uniqueTypes = Array.from(new Set(eventTypes));
+    if (uniqueTypes.length === 0 || uniqueTypes.length > 20)
+      throw new Error('Invalid Release Bus v2 event type filter');
+    if (
+      createdAtGte !== undefined &&
+      (!Number.isSafeInteger(createdAtGte) || createdAtGte < 0)
+    )
+      throw new Error('Invalid Release Bus v2 event lower time bound');
+    const boundedLimit = Math.max(1, Math.min(limit, 2000));
+    return this.db.execute<ReleaseBusV2EventRecord>(
+      `select * from ${RELEASE_BUS_V2_EVENTS_TABLE}
+       where event_type in (:eventTypes)
+       ${createdAtGte === undefined ? '' : 'and created_at >= :createdAtGte'}
+       order by created_at desc, id desc limit ${boundedLimit}${
+         forUpdate ? ' for update' : ''
+       }`,
+      {
+        eventTypes: uniqueTypes,
+        ...(createdAtGte === undefined ? {} : { createdAtGte })
+      },
+      dbOptions(ctx, forceWrite)
     );
   }
 

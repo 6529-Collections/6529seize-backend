@@ -117,7 +117,13 @@ function repositoryFor(initial: ReleaseBusV2OperationRecord) {
   return {
     repository: {
       appendEvent: jest.fn(async () => undefined),
-      findOperation: jest.fn(async () => current),
+      findOperation: jest.fn(
+        async (
+          _key: string,
+          _ctx: unknown,
+          _forceWrite = false
+        ): Promise<ReleaseBusV2OperationRecord | null> => current
+      ),
       getOrCreateOperation: jest.fn(async () => current),
       updateOperation
     },
@@ -218,6 +224,123 @@ describe('Release Bus v2 exact operation callbacks', () => {
       failure_class: null
     });
     expect(state.repository.appendEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the writer-reserved dispatch when the read replica is stale', async () => {
+    const staleReplica = operation({
+      external_id: null,
+      status: 'PENDING',
+      idempotency_key: 'rb2:train-id:e2e:staging',
+      operation_type: 'E2E_STAGING',
+      repository: 'frontend',
+      environment: 'staging'
+    });
+    const state = repositoryFor(staleReplica);
+    state.repository.findOperation.mockImplementation(
+      async (_key: string, _ctx: unknown, forceWrite = false) =>
+        forceWrite ? state.current() : staleReplica
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    const reconciled = await service.reconcileWorkflow({
+      idempotencyKey: staleReplica.idempotency_key,
+      trainId: staleReplica.train_id,
+      operationType: staleReplica.operation_type,
+      repository: 'frontend',
+      workflow: 'staging-e2e.yml',
+      ref: '1a-staging',
+      environment: 'staging',
+      service: null,
+      expectedSha: staleReplica.expected_sha!,
+      artifactDigest: null,
+      inputs: {}
+    });
+
+    expect(reconciled.status).toBe('DISPATCHED');
+    expect(state.repository.findOperation).toHaveBeenCalledWith(
+      staleReplica.idempotency_key,
+      {},
+      true
+    );
+    expect(mockDispatchWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'PENDING',
+    'RUNNING',
+    'RETRY_WAIT',
+    'SUCCEEDED',
+    'FAILED',
+    'CANCELLED'
+  ] as const)(
+    'does not dispatch when the writer has advanced the reservation to %s',
+    async (writerStatus) => {
+      const staleReplica = operation({
+        external_id: null,
+        status: 'PENDING'
+      });
+      const state = repositoryFor(staleReplica);
+      state.repository.findOperation.mockImplementation(
+        async (_key: string, _ctx: unknown, forceWrite = false) =>
+          forceWrite
+            ? operation({
+                ...state.current(),
+                status: writerStatus,
+                row_version: state.current().row_version + 1
+              })
+            : staleReplica
+      );
+      mockFindWorkflowRun.mockResolvedValue(null);
+      const service = new ReleaseBusV2Operations(state.repository as never);
+
+      const reconciled = await service.reconcileWorkflow({
+        idempotencyKey: staleReplica.idempotency_key,
+        trainId: staleReplica.train_id,
+        operationType: staleReplica.operation_type,
+        repository: 'frontend',
+        workflow: 'staging-e2e.yml',
+        ref: '1a-staging',
+        environment: 'staging',
+        service: null,
+        expectedSha: staleReplica.expected_sha!,
+        artifactDigest: null,
+        inputs: {}
+      });
+
+      expect(reconciled.status).toBe(writerStatus);
+      expect(mockDispatchWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it('fails closed when the writer cannot see the dispatch reservation', async () => {
+    const pending = operation({ external_id: null, status: 'PENDING' });
+    const state = repositoryFor(pending);
+    state.repository.findOperation.mockImplementation(
+      async (_key: string, _ctx: unknown, forceWrite = false) =>
+        forceWrite ? null : pending
+    );
+    mockFindWorkflowRun.mockResolvedValue(null);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+
+    await expect(
+      service.reconcileWorkflow({
+        idempotencyKey: pending.idempotency_key,
+        trainId: pending.train_id,
+        operationType: pending.operation_type,
+        repository: 'frontend',
+        workflow: 'staging-e2e.yml',
+        ref: '1a-staging',
+        environment: 'staging',
+        service: null,
+        expectedSha: pending.expected_sha!,
+        artifactDigest: null,
+        inputs: {}
+      })
+    ).rejects.toThrow(
+      'Release Bus v2 dispatch reservation was not visible on the writer'
+    );
+    expect(mockDispatchWorkflow).not.toHaveBeenCalled();
   });
 
   it('continues an old-producer preflight with its immutable stored request after the reconciler upgrade', async () => {
