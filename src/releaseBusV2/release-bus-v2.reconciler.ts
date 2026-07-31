@@ -548,6 +548,13 @@ export function candidateEvidenceSelectionForPreparation(
     : candidateEvidenceSelection(candidates, singleFastCandidateId);
 }
 
+export function rollbackEvidenceSelectionForPreparation(): CandidateEvidenceSelection {
+  // A rollback rebuilds the exact SHA of an already STAGING_VALIDATED
+  // manifest. Its historical candidates are identity/audit data, not fresh
+  // composition inputs, and may predate the current PR evidence schema.
+  return candidateEvidenceSelectionForPreparation([], null);
+}
+
 function artifactEnvironmentForTrain(
   train: ReleaseBusV2TrainRecord
 ): 'staging' | 'production' {
@@ -3654,14 +3661,7 @@ export class ReleaseBusV2Reconciler {
       repository,
       branch
     );
-    const evidenceSelection = candidateEvidenceSelectionForPreparation(
-      context.candidates.filter(
-        (candidate) =>
-          baseline.candidateIds.includes(candidate.id) &&
-          candidate.repository === repository
-      ),
-      null
-    );
+    const evidenceSelection = rollbackEvidenceSelectionForPreparation();
     const operation = await releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(train.id, `rollback:prepare:${repository}`),
       trainId: train.id,
