@@ -24,6 +24,7 @@ import {
 import type { RequestContext } from '@/request.context';
 import type {
   ReleaseBusV2CandidateRecord,
+  ReleaseBusV2CandidateStatus,
   ReleaseBusV2OperationRecord,
   ReleaseBusV2Repository,
   ReleaseBusV2StagingStateRecord,
@@ -60,6 +61,16 @@ const UNIT_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 const OPERATION_ATTEMPT_SUFFIX_PATTERN = /^a[1-9]\d{0,8}$/;
 const RELEASE_BUS_OPERATION_ATTEMPT_PATTERN =
   /^rb2:[A-Za-z0-9:._-]+:a[1-9]\d{0,8}$/;
+// Keep this set synchronized with every production-lifecycle candidate status.
+const PRODUCTION_CANDIDATE_STATUSES = new Set<ReleaseBusV2CandidateStatus>([
+  'READY_FOR_PRODUCTION',
+  'READY_FOR_CANDIDATE_EVIDENCE_PRODUCTION',
+  'WAITING_FOR_PRODUCTION_REPLAN',
+  'PRODUCTION_IN_TRAIN',
+  'PRODUCTION_BUILDING_OR_QUALIFYING',
+  'PRODUCTION_DEPLOYING',
+  'PRODUCTION_DEPLOYED'
+]);
 
 export type ReleaseBusV2BaselineAdoptionCandidate = {
   readonly candidate_id: string;
@@ -673,6 +684,17 @@ function sameCandidate(
     candidate.head_sha === expected.head_sha &&
     candidate.row_version === expected.row_version
   );
+}
+
+function adoptedCandidateStatus(
+  candidate: ReleaseBusV2CandidateRecord
+): ReleaseBusV2CandidateStatus {
+  const hasProductionLifecycle =
+    candidate.production_requested_at !== null ||
+    candidate.production_requested_by !== null ||
+    candidate.production_selection_id !== null ||
+    PRODUCTION_CANDIDATE_STATUSES.has(candidate.status);
+  return hasProductionLifecycle ? candidate.status : 'STAGING_VALIDATED';
 }
 
 function exactPreparedIntent(
@@ -2154,7 +2176,7 @@ export class ReleaseBusV2BaselineAdoptionService {
               candidate.id,
               candidate.row_version,
               {
-                status: candidate.status,
+                status: adoptedCandidateStatus(candidate),
                 stagingValidatedTrainId: train.id,
                 stagingValidatedManifestId: manifest.id,
                 stagingLiveState: 'LIVE',
