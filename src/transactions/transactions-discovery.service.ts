@@ -234,7 +234,6 @@ export class TransactionsDiscoveryService {
     return {
       category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
       contractAddresses: [contract],
-      excludeZeroValue: true,
       order: SortingOrder.ASCENDING,
       withMetadata: true,
       maxCount: 150,

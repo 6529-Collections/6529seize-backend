@@ -230,7 +230,26 @@ describe('reconcileTransactionTokenCounts', () => {
     expect(row.token_count).toBe(1);
   });
 
-  it('ignores zero-value receipt edges excluded by the Alchemy query', () => {
+  it('preserves supported zero-value ERC1155 initialization transfers', () => {
+    const row = makeTransaction(529, 0);
+    row.from_address = ZERO_ADDRESS;
+    const receipt: ReceiptLike = {
+      logs: [
+        makeLog('TransferSingle', [
+          FROM,
+          ZERO_ADDRESS,
+          TO,
+          BigInt(529),
+          BigInt(0)
+        ])
+      ]
+    };
+
+    expect(reconcileTransactionTokenCounts([row], receipt)).toBe(0);
+    expect(row.token_count).toBe(0);
+  });
+
+  it('fails closed when Alchemy omits a supported zero-value transfer', () => {
     const row = makeTransaction(473, 1);
     const receipt: ReceiptLike = {
       logs: [
@@ -239,7 +258,9 @@ describe('reconcileTransactionTokenCounts', () => {
       ]
     };
 
-    expect(reconcileTransactionTokenCounts([row], receipt)).toBe(0);
+    expect(() => reconcileTransactionTokenCounts([row], receipt)).toThrow(
+      'No Alchemy transaction row for receipt transfer'
+    );
     expect(row.token_count).toBe(1);
   });
 
