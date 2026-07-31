@@ -10,6 +10,7 @@ jest.mock('@/ens', () => ({
 const CONTRACT = '0x1111111111111111111111111111111111111111';
 const FROM = '0x2222222222222222222222222222222222222222';
 const TO = '0x3333333333333333333333333333333333333333';
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const HASH = `0x${'a'.repeat(64)}`;
 
 function makeErc1155Transfer(
@@ -176,8 +177,7 @@ describe('TransactionsDiscoveryService', () => {
     const initializationTransfer = makeErc1155Transfer('event-1', [
       { tokenId: '0x211', value: '0x0' }
     ]);
-    initializationTransfer.from =
-      '0x0000000000000000000000000000000000000000';
+    initializationTransfer.from = ZERO_ADDRESS;
     const {
       service,
       batchUpsertTransactions,
@@ -187,9 +187,7 @@ describe('TransactionsDiscoveryService', () => {
 
     await service.getAndSaveTransactionsForContract(CONTRACT, 1, 1);
 
-    expect(getAssetTransfers).toHaveBeenCalledWith(
-      expect.not.objectContaining({ excludeZeroValue: true })
-    );
+    expect(getAssetTransfers.mock.calls[0][0].excludeZeroValue).toBeUndefined();
     expect(enhanceTransactionValues.mock.calls[0][0]).toEqual([
       expect.objectContaining({
         from_address: initializationTransfer.from,
