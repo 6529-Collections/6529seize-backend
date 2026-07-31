@@ -14,6 +14,7 @@ import {
   releaseBusV2Branch,
   ReleaseBusV2Reconciler,
   relevantCandidates,
+  rollbackEvidenceSelectionForPreparation,
   stagingDeploymentCandidates
 } from '@/releaseBusV2/release-bus-v2.reconciler';
 import {
@@ -234,6 +235,14 @@ describe('Release Bus v2 deterministic orchestration', () => {
 
   it('uses the bounded legacy preparation bridge when transition-only work has no source candidate', () => {
     expect(candidateEvidenceSelectionForPreparation([], null)).toEqual({
+      mode: 'legacy-whole-train',
+      aggregateDigest: null,
+      singular: null
+    });
+  });
+
+  it('does not requalify historical candidate evidence when rebuilding a validated rollback baseline', () => {
+    expect(rollbackEvidenceSelectionForPreparation()).toEqual({
       mode: 'legacy-whole-train',
       aggregateDigest: null,
       singular: null
