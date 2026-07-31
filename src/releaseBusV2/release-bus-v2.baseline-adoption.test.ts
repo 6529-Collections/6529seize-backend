@@ -1495,6 +1495,32 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     }
   );
 
+  it(
+    'promotes an adopted staging-ready candidate so the scheduler does not deploy it again',
+    async () => {
+      const context = harness({ withCandidate: true });
+      Object.assign(context.repository.candidates[0], {
+        status: 'READY_FOR_STAGING',
+        production_requested_at: null,
+        production_requested_by: null,
+        production_selection_id: null,
+        hold_reason: null
+      });
+      await prepare(context, true);
+      await freeze(context);
+      succeedBoundE2E(context);
+      await context.service.handleE2EProgress(INTENT_ID);
+      expect(context.repository.candidates[0]).toMatchObject({
+        status: 'STAGING_VALIDATED',
+        current_train_id: null,
+        staging_validated_train_id: INTENT_ID,
+        staging_live_state: 'LIVE',
+        production_requested_at: null,
+        production_selection_id: null
+      });
+    }
+  );
+
   it('never acquires or mutates independent production ownership', async () => {
     const context = harness({ productionBusy: true });
     const productionBefore = structuredClone(context.repository.locks[0]);
