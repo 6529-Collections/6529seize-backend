@@ -83,9 +83,7 @@ describe('Release Bus v2 staging ref advancement workflow', () => {
     );
     expect(workflow).toContain('elif [ "$CHECKOUT_OUTCOME" != success ]; then');
     expect(workflow).toContain('failure_phase=checkout');
-    expect(workflow).toContain(
-      'if (.retryable | type) == "boolean" then'
-    );
+    expect(workflow).toContain('if (.retryable | type) == "boolean" then');
     expect(workflow).toContain('(.retryable | tostring)');
     expect(workflow).not.toContain('jq -er .retryable "$result"');
     expect(workflow.match(/--connect-timeout 10/g)).toHaveLength(2);
