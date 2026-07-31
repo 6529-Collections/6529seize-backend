@@ -9,7 +9,7 @@ type RunResult = {
   readonly stdout: string;
 };
 
-const checkerPath = path.join(process.cwd(), 'scripts/check-package-lock.mjs');
+const checkerPath = path.join(__dirname, 'check-package-lock.mjs');
 
 function writeLockfile(
   packages: Record<string, Record<string, unknown>>
