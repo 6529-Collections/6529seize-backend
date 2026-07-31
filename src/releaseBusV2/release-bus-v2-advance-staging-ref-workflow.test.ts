@@ -1,3 +1,4 @@
+import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
 import path from 'path';
 import YAML from 'yaml';
@@ -89,4 +90,39 @@ describe('Release Bus v2 staging ref advancement workflow', () => {
     expect(workflow.match(/--connect-timeout 10/g)).toHaveLength(2);
     expect(workflow.match(/--max-time 60/g)).toHaveLength(2);
   });
+
+  it.each([true, false])(
+    'reports retryable=%s as a JSON boolean',
+    (retryable) => {
+      const extracted = spawnSync(
+        'jq',
+        [
+          '-er',
+          'if (.retryable | type) == "boolean" then (.retryable | tostring) else error("retryable must be a boolean") end'
+        ],
+        {
+          input: JSON.stringify({ retryable }),
+          encoding: 'utf8'
+        }
+      );
+
+      expect(extracted.status).toBe(0);
+      expect(extracted.stdout.trim()).toBe(String(retryable));
+
+      const payload = spawnSync(
+        'jq',
+        [
+          '-cn',
+          '--argjson',
+          'retryable',
+          extracted.stdout.trim(),
+          '{retryable:$retryable}'
+        ],
+        { encoding: 'utf8' }
+      );
+
+      expect(payload.status).toBe(0);
+      expect(JSON.parse(payload.stdout)).toEqual({ retryable });
+    }
+  );
 });
