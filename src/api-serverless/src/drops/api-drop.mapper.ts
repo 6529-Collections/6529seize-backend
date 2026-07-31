@@ -499,6 +499,8 @@ export class ApiDropMapper {
       apiDrop.mentioned_users = apiMentions;
     }
     if (mentionedGroups.length) {
+      // This represents global tokens in the current rendered content. It is
+      // not notification-delivery history and can therefore change on edit.
       apiDrop.mentioned_groups = mentionedGroups;
     }
     const apiMentionedWaves = mentionedWaves.map<ApiMentionedWaveV2>(
