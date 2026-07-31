@@ -6,7 +6,9 @@
 
 - every transfer must have a non-blank Alchemy `uniqueId`;
 - token counts must agree with the transaction receipt; and
-- every mapped NFT transfer must have a matching receipt log with a safe count.
+- every mapped NFT transfer must have a matching receipt log with a safe count;
+  legitimate zero-value ERC-1155 initialization transfers remain indexed with
+  `token_count = 0`.
 
 A failed verification rejects the whole batch. This deliberately prevents the
 contract checkpoint from advancing past an unverified transfer. Skipping or

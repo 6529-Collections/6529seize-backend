@@ -168,8 +168,42 @@ describe('TransactionsDiscoveryService', () => {
     getAssetTransfers.mock.calls.forEach(([params]) => {
       expect(params.order).toBe('asc');
       expect(params.toBlock).toBe('0x3');
-      expect(params.excludeZeroValue).toBe(true);
+      expect(params.excludeZeroValue).toBeUndefined();
     });
+  });
+
+  it('discovers and saves supported zero-value ERC1155 initialization transfers', async () => {
+    const initializationTransfer = makeErc1155Transfer('event-1', [
+      { tokenId: '0x211', value: '0x0' }
+    ]);
+    initializationTransfer.from =
+      '0x0000000000000000000000000000000000000000';
+    const {
+      service,
+      batchUpsertTransactions,
+      enhanceTransactionValues,
+      getAssetTransfers
+    } = createService([[initializationTransfer]]);
+
+    await service.getAndSaveTransactionsForContract(CONTRACT, 1, 1);
+
+    expect(getAssetTransfers).toHaveBeenCalledWith(
+      expect.not.objectContaining({ excludeZeroValue: true })
+    );
+    expect(enhanceTransactionValues.mock.calls[0][0]).toEqual([
+      expect.objectContaining({
+        from_address: initializationTransfer.from,
+        token_id: 529,
+        token_count: 0
+      })
+    ]);
+    expect(batchUpsertTransactions.mock.calls[0][0]).toEqual([
+      expect.objectContaining({
+        from_address: initializationTransfer.from,
+        token_id: 529,
+        token_count: 0
+      })
+    ]);
   });
 
   it('uses Alchemy indexed state when tailing the chain', async () => {
