@@ -59,6 +59,45 @@ function candidate(
 }
 
 describe('Release Bus v2 deterministic orchestration', () => {
+  it('loads train membership and dependency edges from the writer', async () => {
+    const train = {
+      id: 'train-writer-context'
+    } as ReleaseBusV2TrainRecord;
+    const selected = candidate('candidate-writer-context', 'a'.repeat(40));
+    const memberships = [
+      {
+        train_id: train.id,
+        candidate_id: selected.id,
+        sequence: 1,
+        disposition: 'INCLUDED'
+      }
+    ];
+    const listTrainCandidates = jest.fn(async () => memberships);
+    const findCandidateById = jest.fn(async () => selected);
+    const listDependencies = jest.fn(async () => []);
+    const reconciler = new ReleaseBusV2Reconciler(
+      {
+        listTrainCandidates,
+        findCandidateById,
+        listDependencies
+      } as never,
+      {} as never
+    ) as unknown as {
+      loadContext(train: ReleaseBusV2TrainRecord): Promise<unknown>;
+    };
+
+    await reconciler.loadContext(train);
+
+    expect(listTrainCandidates).toHaveBeenCalledWith(train.id, {}, true);
+    expect(findCandidateById).toHaveBeenCalledWith(
+      selected.id,
+      {},
+      false,
+      true
+    );
+    expect(listDependencies).toHaveBeenCalledWith([selected.id], {}, true);
+  });
+
   it('fails closed when a rollback baseline candidate identity cannot be resolved', async () => {
     const stagingTrain: ReleaseBusV2TrainRecord = {
       id: 'train-unresolvable-baseline',

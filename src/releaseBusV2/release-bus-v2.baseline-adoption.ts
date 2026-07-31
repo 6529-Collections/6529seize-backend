@@ -21,6 +21,7 @@ import {
   type ReleaseBusV2ManifestRecord,
   type ReleaseBusV2Repository as ReleaseBusV2RepositoryClass
 } from '@/releaseBusV2/release-bus-v2.repository';
+import type { RequestContext } from '@/request.context';
 import type {
   ReleaseBusV2CandidateRecord,
   ReleaseBusV2OperationRecord,
@@ -38,6 +39,8 @@ const BACKEND_VERIFIED_EVENT = 'EXACT_STAGING_BASELINE_BACKEND_UNIT_VERIFIED';
 const DEFERRED_EVENT = 'EXACT_STAGING_BASELINE_AUTOMATIC_E2E_DEFERRED';
 const FROZEN_EVENT = 'EXACT_STAGING_BASELINE_MANIFEST_FROZEN';
 const ADOPTED_EVENT = 'EXACT_STAGING_BASELINE_ADOPTED';
+const UNDISPATCHED_OPERATION_CANCELLED_EVENT =
+  'EXACT_STAGING_BASELINE_UNDISPATCHED_E2E_CANCELLED';
 const INTENT_EVENT_TYPES = [
   PREPARED_EVENT,
   FAILED_EVENT,
@@ -329,6 +332,12 @@ function failureEventId(intentId: string): string {
 
 function frozenEventId(intentId: string): string {
   return deterministicUuid(`baseline-adoption:${intentId}:frozen`);
+}
+
+function undispatchedOperationCancelledEventId(intentId: string): string {
+  return deterministicUuid(
+    `baseline-adoption:${intentId}:undispatched-operation-cancelled`
+  );
 }
 
 function frontendEvidenceEventId(intentId: string): string {
@@ -768,7 +777,12 @@ export class ReleaseBusV2BaselineAdoptionService {
   ): Promise<ReleaseBusV2BaselineAdoptionResult> {
     return this.failClosed(async () => {
       const existingById = UUID_V4_PATTERN.test(rawInput.idempotency_key)
-        ? await this.repository.findEvent(rawInput.idempotency_key, {})
+        ? await this.repository.findEvent(
+            rawInput.idempotency_key,
+            {},
+            false,
+            true
+          )
         : null;
       const input = normalizedInput(
         rawInput,
@@ -805,15 +819,20 @@ export class ReleaseBusV2BaselineAdoptionService {
             'CONFLICT',
             'Baseline adoption idempotency key has a different immutable intent'
           );
-        if (
+        const failed = await this.repository.findEvent(
+          failureEventId(exact.intent_id),
+          {},
+          false,
+          true
+        );
+        if (failed) await this.recoverFailedUndispatchedOperation(exact, actor);
+        else if (
           exact.expires_at <= this.deps.now() &&
           !(await this.repository.findEvent(
             frozenEventId(exact.intent_id),
-            {}
-          )) &&
-          !(await this.repository.findEvent(
-            failureEventId(exact.intent_id),
-            {}
+            {},
+            false,
+            true
           ))
         )
           await this.failIntent(
@@ -1144,14 +1163,19 @@ export class ReleaseBusV2BaselineAdoptionService {
 
   public async handleE2EProgress(trainId: string): Promise<void> {
     return this.failClosed(async () => {
-      const train = await this.repository.findTrain(trainId, {});
+      const train = await this.repository.findTrain(trainId, {}, false, true);
       if (!train || train.staging_policy !== ADOPTION_POLICY) return;
       if (['STAGING_VALIDATED', 'FAILED', 'CANCELLED'].includes(train.status))
         return;
       const manifest = train.manifest_id
-        ? await this.repository.findManifest(train.manifest_id, {})
+        ? await this.repository.findManifest(train.manifest_id, {}, true)
         : null;
-      const operations = await this.repository.listOperations(train.id, {});
+      const operations = await this.repository.listOperations(
+        train.id,
+        {},
+        false,
+        true
+      );
       const e2e = operations.filter(
         ({ operation_type }) => operation_type === 'E2E_STAGING'
       );
@@ -1307,7 +1331,8 @@ export class ReleaseBusV2BaselineAdoptionService {
       2000,
       {},
       false,
-      this.deps.now() - INTENT_MAX_TTL_MS
+      this.deps.now() - INTENT_MAX_TTL_MS,
+      true
     );
     if (events.length >= 2000)
       throw new ReleaseBusV2BaselineAdoptionError(
@@ -1348,7 +1373,7 @@ export class ReleaseBusV2BaselineAdoptionService {
   private async preparedIntent(
     intentId: string
   ): Promise<PreparedIntent | null> {
-    const event = await this.repository.findEvent(intentId, {});
+    const event = await this.repository.findEvent(intentId, {}, false, true);
     return event ? exactPreparedIntent(event) : null;
   }
 
@@ -1400,8 +1425,18 @@ export class ReleaseBusV2BaselineAdoptionService {
     readonly backend: readonly BackendEvidence[];
   }> {
     const [frontendEvent, deferredEvent] = await Promise.all([
-      this.repository.findEvent(frontendEvidenceEventId(intent.intent_id), {}),
-      this.repository.findEvent(deferredEventId(intent.intent_id), {})
+      this.repository.findEvent(
+        frontendEvidenceEventId(intent.intent_id),
+        {},
+        false,
+        true
+      ),
+      this.repository.findEvent(
+        deferredEventId(intent.intent_id),
+        {},
+        false,
+        true
+      )
     ]);
     const frontend = frontendEvent
       ? parseStoredJson<FrontendEvidence>(frontendEvent.payload_json)
@@ -1449,7 +1484,9 @@ export class ReleaseBusV2BaselineAdoptionService {
     for (const unit of intent.required_backend_units) {
       const event = await this.repository.findEvent(
         backendEvidenceEventId(intent.intent_id, unit.service),
-        {}
+        {},
+        false,
+        true
       );
       if (!event) continue;
       const payload = parseStoredJson<BackendEvidence>(event.payload_json);
@@ -1483,7 +1520,9 @@ export class ReleaseBusV2BaselineAdoptionService {
     this.assertUnexpired(intent);
     const existingFrozen = await this.repository.findEvent(
       frozenEventId(intent.intent_id),
-      {}
+      {},
+      false,
+      true
     );
     if (existingFrozen) {
       await this.ensureBoundE2EDispatched(intent);
@@ -1508,7 +1547,9 @@ export class ReleaseBusV2BaselineAdoptionService {
     } catch (error) {
       const raced = await this.repository.findEvent(
         frozenEventId(intent.intent_id),
-        {}
+        {},
+        false,
+        true
       );
       if (!raced) throw error;
     }
@@ -1866,9 +1907,14 @@ export class ReleaseBusV2BaselineAdoptionService {
   private async ensureBoundE2EDispatched(
     intent: PreparedIntent
   ): Promise<void> {
-    const train = await this.repository.findTrain(intent.intent_id, {});
+    const train = await this.repository.findTrain(
+      intent.intent_id,
+      {},
+      false,
+      true
+    );
     const manifest = train?.manifest_id
-      ? await this.repository.findManifest(train.manifest_id, {})
+      ? await this.repository.findManifest(train.manifest_id, {}, true)
       : null;
     if (!train || !manifest)
       throw new ReleaseBusV2BaselineAdoptionError(
@@ -2234,14 +2280,133 @@ export class ReleaseBusV2BaselineAdoptionService {
             },
             ctx
           );
+          if (current)
+            await this.cancelExactUndispatchedOperation(
+              intent,
+              current,
+              message,
+              'release-bus-v2',
+              ctx
+            );
           return current?.id ?? null;
         }
       );
     if (failedTrainId) await this.releaseOwnedStagingLock(failedTrainId);
   }
 
+  private async cancelExactUndispatchedOperation(
+    intent: PreparedIntent,
+    train: ReleaseBusV2TrainRecord,
+    message: string,
+    actor: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const operation = await this.repository.findOperation(
+      intent.operation_key,
+      ctx,
+      true
+    );
+    if (operation?.status !== 'PENDING' || operation.external_id !== null)
+      return;
+    const manifest = train.manifest_id
+      ? await this.repository.findManifest(train.manifest_id, ctx, true)
+      : null;
+    if (
+      !manifest ||
+      !this.isExactBoundOperation(
+        train,
+        manifest,
+        operation,
+        intent.operation_key
+      )
+    )
+      throw new Error(
+        'Failed baseline-adoption operation identity is ambiguous'
+      );
+    const completedAt = this.deps.now();
+    if (
+      !(await this.repository.updateOperation(
+        operation.id,
+        operation.row_version,
+        {
+          status: 'CANCELLED',
+          failureClass: 'CONTROL_PLANE',
+          failureMessage: message,
+          completedAt
+        },
+        ctx
+      ))
+    )
+      throw new Error(
+        'Failed baseline-adoption operation changed concurrently'
+      );
+    await this.repository.appendEvent(
+      {
+        eventId: undispatchedOperationCancelledEventId(intent.intent_id),
+        trainId: train.id,
+        eventType: UNDISPATCHED_OPERATION_CANCELLED_EVENT,
+        actor,
+        payload: {
+          intent_id: intent.intent_id,
+          intent_identity_sha256: intent.intent_identity_sha256,
+          operation_id: operation.id,
+          operation_key: operation.idempotency_key,
+          previous_status: 'PENDING',
+          operation_status: 'CANCELLED',
+          dispatch_reservation_observed: false,
+          external_workflow_run_observed: false,
+          failure_message: message
+        }
+      },
+      ctx
+    );
+  }
+
+  private async recoverFailedUndispatchedOperation(
+    intent: PreparedIntent,
+    actor: string
+  ): Promise<void> {
+    try {
+      await this.repository.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx = { connection };
+          const failed = await this.repository.findEvent(
+            failureEventId(intent.intent_id),
+            ctx,
+            true
+          );
+          const train = await this.repository.findTrain(
+            intent.intent_id,
+            ctx,
+            true
+          );
+          if (!failed || train?.status !== 'FAILED') return;
+          await this.cancelExactUndispatchedOperation(
+            intent,
+            train,
+            'Cancelled an exact undispatched E2E operation after its baseline-adoption train failed closed',
+            actor,
+            ctx
+          );
+        }
+      );
+    } catch (error) {
+      this.logger.error(
+        '[BASELINE_ADOPTION] failed undispatched operation recovery deferred',
+        {
+          intent_id: intent.intent_id,
+          error_fingerprint_sha256: sha256(
+            error instanceof Error
+              ? { name: error.name, message: error.message }
+              : { type: typeof error }
+          )
+        }
+      );
+    }
+  }
+
   private async releaseOwnedStagingLock(trainId: string): Promise<void> {
-    const lock = (await this.repository.listLocks({})).find(
+    const lock = (await this.repository.listLocks({}, false, true)).find(
       ({ name }) => name === 'staging-environment'
     );
     if (lock?.owner_train_id === trainId && lock.lease_token)
@@ -2258,14 +2423,21 @@ export class ReleaseBusV2BaselineAdoptionService {
   ): Promise<ReleaseBusV2BaselineAdoptionResult> {
     const failed = await this.repository.findEvent(
       failureEventId(intent.intent_id),
-      {}
+      {},
+      false,
+      true
     );
-    const train = await this.repository.findTrain(intent.intent_id, {});
+    const train = await this.repository.findTrain(
+      intent.intent_id,
+      {},
+      false,
+      true
+    );
     const manifest = train?.manifest_id
-      ? await this.repository.findManifest(train.manifest_id, {})
+      ? await this.repository.findManifest(train.manifest_id, {}, true)
       : null;
     const operation = train
-      ? await this.repository.findOperation(intent.operation_key, {})
+      ? await this.repository.findOperation(intent.operation_key, {}, true)
       : null;
     return {
       adoption_id: intent.intent_id,
