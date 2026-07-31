@@ -122,6 +122,42 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     expect(match?.record.id).toBe('network.definitions');
   });
 
+  it.each(['what is stream?', 'what is 6529 stream?'])(
+    'routes %s to the Stream summary instead of an alphabetically earlier FAQ',
+    async (question) => {
+      const source = new FrontendHelpBotKnowledgeSource(async () =>
+        response({
+          schema_version: 1,
+          generated_at: '2026-07-27T00:00:00.000Z',
+          commit_sha: 'test',
+          base_url: 'https://6529.io',
+          records: [
+            {
+              id: 'about.faq',
+              title: 'About FAQ',
+              canonical_path: '/about/faq',
+              aliases: ['6529'],
+              keywords: ['6529', 'stream'],
+              facts: ['Generic FAQ facts.']
+            },
+            {
+              id: 'public-reviews.stream',
+              title: '6529 Stream',
+              canonical_path: '/reviews/6529-stream',
+              aliases: ['stream', '6529 stream', 'stream contract'],
+              keywords: ['stream', 'contract', 'review'],
+              facts: ['Stream is a public contract review.']
+            }
+          ]
+        })
+      );
+
+      const match = await source.findMatch(question);
+
+      expect(match?.record.id).toBe('public-reviews.stream');
+    }
+  );
+
   it('does not generate unsafe trailing-s singular variants', async () => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
       response({

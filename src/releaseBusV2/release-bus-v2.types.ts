@@ -118,7 +118,8 @@ export type ReleaseBusV2ManifestStatus =
 
 export const RELEASE_BUS_V2_STAGING_POLICIES = [
   'CUMULATIVE_ADMITTED_SET_V1',
-  'RESTORE_VALIDATED_STAGING_V1'
+  'RESTORE_VALIDATED_STAGING_V1',
+  'ADOPT_EXACT_DEPLOYED_BASELINE_V1'
 ] as const;
 export type ReleaseBusV2StagingPolicy =
   (typeof RELEASE_BUS_V2_STAGING_POLICIES)[number];
@@ -269,6 +270,10 @@ export type ReleaseBusV2StagingStateRecord = {
 export type ReleaseBusV2StagingTransition = {
   readonly actor: string;
   readonly reason?: string;
+  readonly baseline_adoption_idempotency_key?: string;
+  readonly baseline_adoption_intent_identity_sha256?: string;
+  readonly baseline_adoption_expires_at?: number;
+  readonly baseline_adoption_required_backend_units?: readonly string[];
   readonly requested_at: number;
   readonly baseline_state_version: number;
   readonly baseline_manifest_id: string | null;

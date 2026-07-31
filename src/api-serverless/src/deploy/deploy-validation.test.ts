@@ -1,6 +1,9 @@
 import {
   DeployDispatchBodySchema,
   ReleaseBusV2CandidateActionBodySchema,
+  ReleaseBusV2BaselineAdoptionBodySchema,
+  ReleaseBusV2BaselineAutomaticE2EDecisionBodySchema,
+  ReleaseBusV2BaselineBackendDeploymentEventBodySchema,
   ReleaseBusV2CandidateBodySchema,
   ReleaseBusV2CandidateDeregistrationBodySchema,
   ReleaseBusV2ManualDeploymentReadinessBodySchema,
@@ -57,6 +60,135 @@ describe('deploy.validation', () => {
 });
 
 describe('Release Bus v2 validation', () => {
+  it('requires an exact zero-or-known-membership baseline adoption identity', () => {
+    const exact = {
+      idempotency_key: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      reason: 'Adopt the exact deployed staging pair',
+      expires_at: Date.now() + 30 * 60 * 1000,
+      expected_staging_state_row_version: 23,
+      expected_frontend_ref: '1a-staging',
+      expected_frontend_sha: 'a'.repeat(40),
+      expected_frontend_runtime_sha: 'a'.repeat(40),
+      expected_backend_ref: '1a-staging',
+      expected_backend_sha: 'b'.repeat(40),
+      expected_backend_runtime_sha: 'b'.repeat(40),
+      required_backend_units: [
+        { service: 'api', expected_sha: 'b'.repeat(40) }
+      ],
+      candidates: []
+    };
+    expect(
+      ReleaseBusV2BaselineAdoptionBodySchema.validate(exact).error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2BaselineAdoptionBodySchema.validate({
+        ...exact,
+        candidates: [
+          {
+            candidate_id: '7af60034-9741-4b9d-bb1c-80b483f75455',
+            repository: 'frontend',
+            pr_number: 42,
+            head_sha: 'c'.repeat(40),
+            row_version: 7
+          }
+        ]
+      }).error
+    ).toBeUndefined();
+    for (const invalid of [
+      { ...exact, expected_staging_state_row_version: '23' },
+      { ...exact, expected_frontend_runtime_sha: 'z'.repeat(40) },
+      { ...exact, expected_frontend_ref: 'main' },
+      { ...exact, required_backend_units: [] },
+      {
+        ...exact,
+        required_backend_units: [
+          { service: 'not-a-service', expected_sha: 'b'.repeat(40) }
+        ]
+      },
+      {
+        ...exact,
+        required_backend_units: [
+          { service: 'releaseBus', expected_sha: 'b'.repeat(40) }
+        ]
+      },
+      { ...exact, candidates: [null] },
+      {
+        ...exact,
+        candidates: [
+          {
+            candidate_id: '7af60034-9741-4b9d-bb1c-80b483f75455',
+            repository: 'frontend',
+            pr_number: 42,
+            head_sha: 'c'.repeat(40),
+            row_version: 7
+          },
+          {
+            candidate_id: '6af60034-9741-4b9d-bb1c-80b483f75455',
+            repository: 'frontend',
+            pr_number: 42,
+            head_sha: 'c'.repeat(40),
+            row_version: 8
+          }
+        ]
+      },
+      { ...exact, extra: true }
+    ])
+      expect(
+        ReleaseBusV2BaselineAdoptionBodySchema.validate(invalid).error
+      ).toBeDefined();
+  });
+
+  it('requires exact workflow identities for automatic defer and backend deployment events', () => {
+    const automatic = {
+      e2e_workflow_run_id: '91000',
+      deploy_workflow_run_id: '92000',
+      deployed_ref: '1a-staging',
+      deployed_sha: 'a'.repeat(40)
+    };
+    expect(
+      ReleaseBusV2BaselineAutomaticE2EDecisionBodySchema.validate(automatic)
+        .error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2BaselineAutomaticE2EDecisionBodySchema.validate({
+        ...automatic,
+        deployed_ref: 'main'
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2BaselineAutomaticE2EDecisionBodySchema.validate({
+        ...automatic,
+        e2e_workflow_run_id: '0'
+      }).error
+    ).toBeDefined();
+
+    const backend = {
+      environment: 'staging',
+      service: 'api',
+      workflow_run_id: '93000',
+      workflow_run_attempt: 1,
+      source_ref: '1a-staging',
+      source_sha: 'b'.repeat(40),
+      status: 'SUCCEEDED'
+    };
+    expect(
+      ReleaseBusV2BaselineBackendDeploymentEventBodySchema.validate(backend)
+        .error
+    ).toBeUndefined();
+    expect(
+      ReleaseBusV2BaselineBackendDeploymentEventBodySchema.validate({
+        ...backend,
+        status: 'RUNNING'
+      }).error
+    ).toBeDefined();
+    expect(
+      ReleaseBusV2BaselineBackendDeploymentEventBodySchema.validate({
+        ...backend,
+        service: 'unknown'
+      }).error
+    ).toBeDefined();
+  });
+
   it('separates read-only deregistration preparation from strict exact execution', () => {
     const candidateId = '8af60034-9741-4b9d-bb1c-80b483f75455';
     const exact = {

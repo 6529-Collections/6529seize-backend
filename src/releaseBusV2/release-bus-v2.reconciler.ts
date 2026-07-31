@@ -1457,6 +1457,20 @@ export function candidateStatusMutationCandidates(
     : relevantCandidates(context);
 }
 
+export function candidateEvidenceCandidates(
+  context: TrainContext,
+  repository?: ReleaseBusV2Repository
+): ReleaseBusV2CandidateRecord[] {
+  const candidates =
+    context.train.lane === 'STAGING' &&
+    context.train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
+      ? stagingStatusCandidates(context)
+      : relevantCandidates(context);
+  return repository
+    ? candidates.filter((candidate) => candidate.repository === repository)
+    : candidates;
+}
+
 export function stagingDeploymentCandidates(
   context: TrainContext,
   repository?: ReleaseBusV2Repository
@@ -1716,6 +1730,9 @@ export class ReleaseBusV2Reconciler {
 
     const activeByLane = (await this.repository.listTrains(100, {}))
       .filter((train) => !TERMINAL_TRAINS.has(train.status))
+      .filter(
+        (train) => train.staging_policy !== 'ADOPT_EXACT_DEPLOYED_BASELINE_V1'
+      )
       .filter((train) => {
         if (train.lane === 'STAGING') return stagingEnabled;
         if (train.lane === 'PRODUCTION') return productionEnabled;
@@ -1899,7 +1916,12 @@ export class ReleaseBusV2Reconciler {
     let current = initial;
     for (let transition = 0; transition < 12; transition += 1) {
       await this.advance(current);
-      const refreshed = await this.repository.findTrain(current.id, {});
+      const refreshed = await this.repository.findTrain(
+        current.id,
+        {},
+        false,
+        true
+      );
       if (!refreshed || TERMINAL_TRAINS.has(refreshed.status)) return;
       if (refreshed.row_version === current.row_version) return;
       current = refreshed;
@@ -1930,11 +1952,20 @@ export class ReleaseBusV2Reconciler {
   private async loadContext(
     train: ReleaseBusV2TrainRecord
   ): Promise<TrainContext> {
-    const memberships = await this.repository.listTrainCandidates(train.id, {});
+    const memberships = await this.repository.listTrainCandidates(
+      train.id,
+      {},
+      true
+    );
     const candidates = (
       await Promise.all(
         memberships.map((membership) =>
-          this.repository.findCandidateById(membership.candidate_id, {})
+          this.repository.findCandidateById(
+            membership.candidate_id,
+            {},
+            false,
+            true
+          )
         )
       )
     ).filter((candidate): candidate is ReleaseBusV2CandidateRecord =>
@@ -1946,7 +1977,8 @@ export class ReleaseBusV2Reconciler {
       candidates,
       dependencies: await this.repository.listDependencies(
         candidates.map(({ id }) => id),
-        {}
+        {},
+        true
       )
     };
   }
@@ -2051,7 +2083,8 @@ export class ReleaseBusV2Reconciler {
         const refreshed =
           (await this.repository.findOperation(
             operation.idempotency_key,
-            {}
+            {},
+            true
           )) ?? operation;
         if (operationMayStillBeRunning(refreshed))
           return { id: operation.id, stillRunning: true };
@@ -2102,7 +2135,12 @@ export class ReleaseBusV2Reconciler {
         'release-bus-v2-reconciler',
         train.id
       );
-    const currentTrain = await this.repository.findTrain(train.id, {});
+    const currentTrain = await this.repository.findTrain(
+      train.id,
+      {},
+      false,
+      true
+    );
     if (!currentTrain || TERMINAL_TRAINS.has(currentTrain.status)) return true;
     const refreshed = await this.loadContext(currentTrain);
     const superseded = stagingStatusCandidates(refreshed).filter(
@@ -2169,7 +2207,7 @@ export class ReleaseBusV2Reconciler {
       return true;
     }
     await this.replanSupersededStagingCandidates(refreshed, message);
-    const latest = await this.repository.findTrain(train.id, {});
+    const latest = await this.repository.findTrain(train.id, {}, false, true);
     if (latest && !TERMINAL_TRAINS.has(latest.status))
       await this.transitionTrain(latest, {
         status: 'CANCELLED',
@@ -2201,7 +2239,12 @@ export class ReleaseBusV2Reconciler {
     const returned: ReleaseBusV2CandidateRecord[] = [];
     const blocked: ReleaseBusV2CandidateRecord[] = [];
     for (const candidate of mutable) {
-      const current = await this.repository.findCandidateById(candidate.id, {});
+      const current = await this.repository.findCandidateById(
+        candidate.id,
+        {},
+        false,
+        true
+      );
       if (!current || current.status === 'CANCELLED') continue;
       const superseded = supersededIds.has(candidate.id);
       const dependencyBlocked = !superseded && blockedIds.has(candidate.id);
@@ -2292,7 +2335,10 @@ export class ReleaseBusV2Reconciler {
       >
     > = [];
     for (const repository of ['frontend', 'backend'] as const) {
-      const repositoryCandidates = relevantCandidates(context, repository);
+      const repositoryCandidates = candidateEvidenceCandidates(
+        context,
+        repository
+      );
       if (repositoryCandidates.length === 0) continue;
       try {
         candidateEvidenceSelection(repositoryCandidates, null);
@@ -2344,7 +2390,9 @@ export class ReleaseBusV2Reconciler {
     ]);
     const currentAfterPreparation = await this.repository.findTrain(
       train.id,
-      {}
+      {},
+      false,
+      true
     );
     if (
       currentAfterPreparation &&
@@ -2456,6 +2504,7 @@ export class ReleaseBusV2Reconciler {
   ): Promise<PreparedRepository> {
     const train = context.train;
     const candidates = relevantCandidates(context, repository);
+    const evidenceCandidates = candidateEvidenceCandidates(context, repository);
     const deployCandidates = stagingDeploymentCandidates(context, repository);
     const releaseParentSha = cumulativeStagingReleaseParent(
       context,
@@ -2490,7 +2539,7 @@ export class ReleaseBusV2Reconciler {
         : null;
     const releaseFastCandidate = releaseParentSha ? null : fastCandidate;
     const evidenceSelection = candidateEvidenceSelectionForPreparation(
-      candidates,
+      evidenceCandidates,
       releaseFastCandidate?.id ?? null
     );
     let initialComposedSha: string | null | undefined = null;
@@ -2724,7 +2773,12 @@ export class ReleaseBusV2Reconciler {
     const returnedCandidates: ReleaseBusV2CandidateRecord[] = [];
 
     for (const candidate of relevantCandidates(context)) {
-      const current = await this.repository.findCandidateById(candidate.id, {});
+      const current = await this.repository.findCandidateById(
+        candidate.id,
+        {},
+        false,
+        true
+      );
       if (
         !current ||
         ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
@@ -2853,7 +2907,12 @@ export class ReleaseBusV2Reconciler {
     const blocked: ReleaseBusV2CandidateRecord[] = [];
     const returned: ReleaseBusV2CandidateRecord[] = [];
     for (const candidate of mutable) {
-      const current = await this.repository.findCandidateById(candidate.id, {});
+      const current = await this.repository.findCandidateById(
+        candidate.id,
+        {},
+        false,
+        true
+      );
       if (
         !current ||
         ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
@@ -2950,7 +3009,12 @@ export class ReleaseBusV2Reconciler {
         'Independent repository candidate returned to the next staging train'
       )
     ]);
-    const current = await this.repository.findTrain(context.train.id, {});
+    const current = await this.repository.findTrain(
+      context.train.id,
+      {},
+      false,
+      true
+    );
     if (current && !TERMINAL_TRAINS.has(current.status))
       await this.transitionTrain(current, {
         status: 'FAILED',
@@ -3227,7 +3291,9 @@ export class ReleaseBusV2Reconciler {
       for (const candidate of newCandidates) {
         const current = await this.repository.findCandidateById(
           candidate.id,
-          {}
+          {},
+          false,
+          true
         );
         if (!current) continue;
         await this.repository.updateCandidate(
@@ -3292,7 +3358,12 @@ export class ReleaseBusV2Reconciler {
           : 'DEPENDENCY_EXCLUDED',
         {}
       );
-      const current = await this.repository.findCandidateById(candidate.id, {});
+      const current = await this.repository.findCandidateById(
+        candidate.id,
+        {},
+        false,
+        true
+      );
       if (
         !current ||
         ['SUPERSEDED', 'CANCELLED', 'DEREGISTERED'].includes(current.status)
@@ -3344,7 +3415,12 @@ export class ReleaseBusV2Reconciler {
         {}
       );
     if (!train.staging_baseline_manifest_id) {
-      const current = await this.repository.findTrain(train.id, {});
+      const current = await this.repository.findTrain(
+        train.id,
+        {},
+        false,
+        true
+      );
       if (!current || TERMINAL_TRAINS.has(current.status)) return;
       const context = await this.loadContext(current);
       const transition = parseStoredJson<ReleaseBusV2StagingTransition>(
@@ -4100,7 +4176,12 @@ export class ReleaseBusV2Reconciler {
           null,
           false
         );
-      const current = await this.repository.findTrain(train.id, {});
+      const current = await this.repository.findTrain(
+        train.id,
+        {},
+        false,
+        true
+      );
       if (current && !TERMINAL_TRAINS.has(current.status))
         await this.transitionTrain(current, {
           status: 'FAILED',
@@ -4137,7 +4218,7 @@ export class ReleaseBusV2Reconciler {
         null,
         false
       );
-    const current = await this.repository.findTrain(train.id, {});
+    const current = await this.repository.findTrain(train.id, {}, false, true);
     if (!current) throw new Error('Rollback train disappeared');
     if (TERMINAL_TRAINS.has(current.status)) {
       await this.releaseTerminalEnvironmentLocks();
@@ -5117,7 +5198,12 @@ export class ReleaseBusV2Reconciler {
           (left, right) => Number(left.created_at) - Number(right.created_at)
         );
       for (const qualification of qualifications) {
-        const current = await this.repository.findTrain(qualification.id, {});
+        const current = await this.repository.findTrain(
+          qualification.id,
+          {},
+          false,
+          true
+        );
         if (
           !current ||
           current.lane !== 'PRODUCTION_QUALIFICATION' ||
@@ -5860,7 +5946,8 @@ export class ReleaseBusV2Reconciler {
       ))
     )
       throw new Error(`${repository} main operation changed concurrently`);
-    operation = (await this.repository.findOperation(key, {})) ?? operation;
+    operation =
+      (await this.repository.findOperation(key, {}, true)) ?? operation;
   }
 
   private async reconcileDeployments(
@@ -6382,7 +6469,12 @@ export class ReleaseBusV2Reconciler {
     if (!manifestId) throw new Error('Staging validation has no manifest');
     const statusCandidates = stagingStatusCandidates(context);
     for (const candidate of statusCandidates) {
-      const current = await this.repository.findCandidateById(candidate.id, {});
+      const current = await this.repository.findCandidateById(
+        candidate.id,
+        {},
+        false,
+        true
+      );
       if (!current || candidateUnavailableForTrainUpdate(current, candidate))
         continue;
       await this.repository.updateCandidate(
@@ -6564,7 +6656,12 @@ export class ReleaseBusV2Reconciler {
     publishStatus = true
   ): Promise<void> {
     for (const candidate of candidates) {
-      const current = await this.repository.findCandidateById(candidate.id, {});
+      const current = await this.repository.findCandidateById(
+        candidate.id,
+        {},
+        false,
+        true
+      );
       if (
         !current ||
         candidateUnavailableForTrainUpdate(current, candidate) ||
@@ -6626,7 +6723,7 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     fields: Parameters<ReleaseBusV2RepositoryClass['updateTrain']>[2]
   ): Promise<void> {
-    const current = await this.repository.findTrain(train.id, {});
+    const current = await this.repository.findTrain(train.id, {}, false, true);
     if (!current) throw new Error('Release Bus v2 train disappeared');
     if (
       !(await this.repository.updateTrain(
@@ -6665,7 +6762,7 @@ export class ReleaseBusV2Reconciler {
   }
 
   private async releaseTerminalEnvironmentLocks(): Promise<void> {
-    const locks = await this.repository.listLocks({});
+    const locks = await this.repository.listLocks({}, false, true);
     for (const lock of locks) {
       if (
         !lock.owner_train_id ||
@@ -6673,9 +6770,19 @@ export class ReleaseBusV2Reconciler {
         !['staging-environment', 'production-environment'].includes(lock.name)
       )
         continue;
-      const train = await this.repository.findTrain(lock.owner_train_id, {});
+      const train = await this.repository.findTrain(
+        lock.owner_train_id,
+        {},
+        false,
+        true
+      );
       if (!train || !TERMINAL_TRAINS.has(train.status)) continue;
-      let operations = await this.repository.listOperations(train.id, {});
+      let operations = await this.repository.listOperations(
+        train.id,
+        {},
+        false,
+        true
+      );
       for (const operation of operations) {
         if (!operationMayStillBeRunning(operation)) continue;
         let request: {
@@ -6734,7 +6841,12 @@ export class ReleaseBusV2Reconciler {
             {}
           );
       }
-      operations = await this.repository.listOperations(train.id, {});
+      operations = await this.repository.listOperations(
+        train.id,
+        {},
+        false,
+        true
+      );
       for (const operation of operations) {
         if (
           operation.status !== 'PENDING' ||
@@ -6813,7 +6925,12 @@ export class ReleaseBusV2Reconciler {
             {}
           );
       }
-      operations = await this.repository.listOperations(train.id, {});
+      operations = await this.repository.listOperations(
+        train.id,
+        {},
+        false,
+        true
+      );
       if (
         operations.some(
           (operation) => !TERMINAL_OPERATIONS.has(operation.status)
@@ -6850,7 +6967,7 @@ export class ReleaseBusV2Reconciler {
     failureClass: ReleaseBusV2FailureClass,
     message: string
   ): Promise<void> {
-    const current = await this.repository.findTrain(train.id, {});
+    const current = await this.repository.findTrain(train.id, {}, false, true);
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const context = await this.loadContext(current);
     // PRODUCTION_DEPLOYING is entered only after advanceProductionRefs has
@@ -6965,7 +7082,7 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     message: string
   ): Promise<void> {
-    const current = await this.repository.findTrain(train.id, {});
+    const current = await this.repository.findTrain(train.id, {}, false, true);
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const context = await this.loadContext(current);
     const statusCandidates = stagingStatusCandidates(context);
@@ -7062,7 +7179,7 @@ export class ReleaseBusV2Reconciler {
     train: ReleaseBusV2TrainRecord,
     message: string
   ): Promise<void> {
-    const current = await this.repository.findTrain(train.id, {});
+    const current = await this.repository.findTrain(train.id, {}, false, true);
     if (!current || TERMINAL_TRAINS.has(current.status)) return;
     const previous =
       current.failure_class === 'INFRASTRUCTURE'
@@ -7116,7 +7233,7 @@ export class ReleaseBusV2Reconciler {
     const candidates = (
       await Promise.all(
         result.candidateIds.map((candidateId) =>
-          this.repository.findCandidateById(candidateId, {})
+          this.repository.findCandidateById(candidateId, {}, false, true)
         )
       )
     ).filter((candidate): candidate is ReleaseBusV2CandidateRecord =>
@@ -7138,7 +7255,9 @@ export class ReleaseBusV2Reconciler {
       candidates.map(async (candidate) => {
         const current = await this.repository.findCandidateById(
           candidate.id,
-          {}
+          {},
+          false,
+          true
         );
         if (
           !current ||

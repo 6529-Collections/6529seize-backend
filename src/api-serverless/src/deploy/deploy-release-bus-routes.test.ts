@@ -34,6 +34,10 @@ const mockRecoverUnsatisfiableProductionQualifications = jest.fn();
 const mockRepairCurrentStagingManifestCandidates = jest.fn();
 const mockCandidateDeregistrationPrepare = jest.fn();
 const mockCandidateDeregistrationExecute = jest.fn();
+const mockBaselineAdoptionExecute = jest.fn();
+const mockBaselineAdoptionAutomaticDecision = jest.fn();
+const mockBaselineAdoptionBackendEvent = jest.fn();
+const mockBaselineAdoptionHandleE2EProgress = jest.fn();
 
 class MockReleaseBusV2ProductionSelectionError extends Error {
   public constructor(
@@ -82,6 +86,16 @@ class MockReleaseBusV2CandidateDeregistrationError extends Error {
   ) {
     super(message);
     this.name = 'ReleaseBusV2CandidateDeregistrationError';
+  }
+}
+
+class MockReleaseBusV2BaselineAdoptionError extends Error {
+  public constructor(
+    public readonly code: 'BAD_REQUEST' | 'CONFLICT' | 'UNAVAILABLE',
+    message: string
+  ) {
+    super(message);
+    this.name = 'ReleaseBusV2BaselineAdoptionError';
   }
 }
 
@@ -202,6 +216,24 @@ jest.mock('@/releaseBusV2/release-bus-v2.candidate-deregistration', () => ({
   }
 }));
 
+jest.mock('@/releaseBusV2/release-bus-v2.baseline-adoption', () => ({
+  isReleaseBusV2BaselineAdoptionError: (error: unknown) =>
+    error instanceof Error &&
+    error.name === 'ReleaseBusV2BaselineAdoptionError' &&
+    ['BAD_REQUEST', 'CONFLICT', 'UNAVAILABLE'].includes(
+      String((error as { code?: unknown }).code)
+    ),
+  releaseBusV2BaselineAdoptionService: {
+    execute: (...args: unknown[]) => mockBaselineAdoptionExecute(...args),
+    decideAutomaticE2E: (...args: unknown[]) =>
+      mockBaselineAdoptionAutomaticDecision(...args),
+    recordBackendDeployment: (...args: unknown[]) =>
+      mockBaselineAdoptionBackendEvent(...args),
+    handleE2EProgress: (...args: unknown[]) =>
+      mockBaselineAdoptionHandleE2EProgress(...args)
+  }
+}));
+
 import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'node:http';
 import {
@@ -214,6 +246,7 @@ const WORKFLOW_TOKEN = 'release-bus-workflow-token';
 const TRAIN_ID = '123e4567-e89b-42d3-a456-426614174000';
 const RESET_ID = '123e4567-e89b-42d3-a456-426614174001';
 const SHA = 'a'.repeat(40);
+const BOUND_E2E_RUN_ID = '94000';
 
 function createTestApp() {
   const app = express();
@@ -300,6 +333,10 @@ function expectNoReleaseMutation(): void {
     mockV2InvalidateBranch,
     mockCandidateDeregistrationPrepare,
     mockCandidateDeregistrationExecute,
+    mockBaselineAdoptionExecute,
+    mockBaselineAdoptionAutomaticDecision,
+    mockBaselineAdoptionBackendEvent,
+    mockBaselineAdoptionHandleE2EProgress,
     mockLambdaSend
   ]) {
     expect(mutation).not.toHaveBeenCalled();
@@ -428,6 +465,27 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       body: {
         phase: 'PREPARE',
         reason: 'Adversarial authorization test'
+      },
+      unrelatedStatus: 403
+    },
+    {
+      name: 'exact staging baseline adoption',
+      path: '/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline',
+      body: {
+        idempotency_key: '8af60034-9741-4b9d-bb1c-80b483f75455',
+        reason: 'Adversarial authorization test',
+        expires_at: Date.now() + 30 * 60 * 1000,
+        expected_staging_state_row_version: 23,
+        expected_frontend_ref: '1a-staging',
+        expected_frontend_sha: SHA,
+        expected_frontend_runtime_sha: SHA,
+        expected_backend_ref: '1a-staging',
+        expected_backend_sha: 'b'.repeat(40),
+        expected_backend_runtime_sha: 'b'.repeat(40),
+        required_backend_units: [
+          { service: 'api', expected_sha: 'b'.repeat(40) }
+        ],
+        candidates: []
       },
       unrelatedStatus: 403
     },
@@ -656,6 +714,29 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       deregistration_id: RESET_ID,
       physical_staging_presence: 'UNKNOWN_DETACHED'
     });
+    mockBaselineAdoptionExecute.mockResolvedValue({
+      adoption_id: TRAIN_ID,
+      manifest_id: RESET_ID,
+      manifest_identity_sha256: 'd'.repeat(64),
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
+      operation_id: candidateId,
+      workflow_run_id: null,
+      status: 'E2E_RUNNING',
+      reused: false
+    });
+    mockBaselineAdoptionAutomaticDecision.mockResolvedValue({
+      decision: 'DEFERRED',
+      adoption_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
+      expires_at: Date.now() + 30 * 60 * 1000,
+      manifest_ready: false
+    });
+    mockBaselineAdoptionBackendEvent.mockResolvedValue({
+      outcome: 'RECORDED',
+      adoption_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`
+    });
+    mockBaselineAdoptionHandleE2EProgress.mockResolvedValue(undefined);
   });
 
   afterAll(() => {
@@ -1200,6 +1281,87 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     });
   });
 
+  it('allows only the exact adoption operation callback to finish while normal OFF automation stays disabled', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    mockV2IsBetaTrainAllowed.mockResolvedValue(false);
+    mockV2FindTrain.mockResolvedValue({
+      id: TRAIN_ID,
+      staging_policy: 'ADOPT_EXACT_DEPLOYED_BASELINE_V1'
+    });
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
+      workflow_run_id: '12345',
+      artifact_run_id: null,
+      repository: 'frontend',
+      environment: 'staging',
+      service: null,
+      expected_sha: SHA,
+      artifact_digest: 'd'.repeat(64)
+    };
+
+    const response = await post('/deploy/release-bus-v2/authorize', body);
+
+    expect(response.status).toBe(200);
+    expect(mockV2Authorize).toHaveBeenCalledWith(expect.objectContaining(body));
+    expect(mockV2IsBetaTrainAllowed).not.toHaveBeenCalled();
+  });
+
+  it('advances baseline adoption only after the exact bound progress callback is persisted', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    mockV2FindTrain.mockResolvedValue({
+      id: TRAIN_ID,
+      staging_policy: 'ADOPT_EXACT_DEPLOYED_BASELINE_V1'
+    });
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:baseline-adoption-e2e:staging:a1`,
+      workflow_run_id: BOUND_E2E_RUN_ID,
+      phase: 'staging-e2e',
+      status: 'SUCCEEDED'
+    };
+
+    const response = await post('/deploy/release-bus-v2/report-progress', body);
+
+    expect(response.status).toBe(200);
+    expect(mockV2ReportProgress).toHaveBeenCalledWith(
+      expect.objectContaining(body)
+    );
+    expect(mockBaselineAdoptionHandleE2EProgress).toHaveBeenCalledWith(
+      TRAIN_ID
+    );
+    expect(mockV2ReportProgress.mock.invocationCallOrder[0]).toBeLessThan(
+      mockBaselineAdoptionHandleE2EProgress.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('does not invoke adoption handling for an ordinary OFF-mode train progress callback', async () => {
+    process.env.RELEASE_BUS_V2_MODE = 'OFF';
+    mockV2IsBetaTrainAllowed.mockResolvedValue(true);
+    mockV2FindTrain.mockResolvedValue({
+      id: TRAIN_ID,
+      staging_policy: 'CUMULATIVE'
+    });
+    mockBaselineAdoptionHandleE2EProgress.mockRejectedValue(
+      new Error('adoption subsystem unavailable')
+    );
+    const body = {
+      train_id: TRAIN_ID,
+      operation_key: `rb2:${TRAIN_ID}:e2e:staging:a1`,
+      workflow_run_id: BOUND_E2E_RUN_ID,
+      phase: 'staging-e2e',
+      status: 'SUCCEEDED'
+    };
+
+    const response = await post('/deploy/release-bus-v2/report-progress', body);
+
+    expect(response.status).toBe(200);
+    expect(mockV2ReportProgress).toHaveBeenCalledWith(
+      expect.objectContaining(body)
+    );
+    expect(mockBaselineAdoptionHandleE2EProgress).not.toHaveBeenCalled();
+  });
+
   it('accepts only a complete strict-single evidence identity for orchestration', async () => {
     const body = {
       train_id: TRAIN_ID,
@@ -1382,6 +1544,138 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       error: 'PRODUCTION must remain paused'
     });
   });
+
+  it('starts an operator-authenticated exact staging baseline adoption', async () => {
+    const body = {
+      idempotency_key: '8af60034-9741-4b9d-bb1c-80b483f75455',
+      reason: 'Adopt the exact deployed staging pair',
+      expires_at: Date.now() + 30 * 60 * 1000,
+      expected_staging_state_row_version: 23,
+      expected_frontend_ref: '1a-staging',
+      expected_frontend_sha: SHA,
+      expected_frontend_runtime_sha: SHA,
+      expected_backend_ref: '1a-staging',
+      expected_backend_sha: 'b'.repeat(40),
+      expected_backend_runtime_sha: 'b'.repeat(40),
+      required_backend_units: [
+        { service: 'api', expected_sha: 'b'.repeat(40) }
+      ],
+      candidates: [
+        {
+          candidate_id: candidateId,
+          repository: 'frontend',
+          pr_number: 321,
+          head_sha: SHA,
+          row_version: 4
+        }
+      ]
+    };
+    const response = await post(
+      '/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline',
+      body
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.cacheControl).toContain('no-store');
+    expect(mockBaselineAdoptionExecute).toHaveBeenCalledWith(body, 'developer');
+    expect(response.body).toMatchObject({
+      adoption_id: TRAIN_ID,
+      manifest_id: RESET_ID,
+      status: 'E2E_RUNNING',
+      reused: false
+    });
+  });
+
+  it('authenticates the automatic frontend decision and exact backend deployment event with the workflow credential', async () => {
+    const automatic = {
+      e2e_workflow_run_id: '91000',
+      deploy_workflow_run_id: '92000',
+      deployed_ref: '1a-staging',
+      deployed_sha: SHA
+    };
+    const automaticResponse = await post(
+      '/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline/automatic-e2e-decision',
+      automatic
+    );
+    expect(automaticResponse.status).toBe(200);
+    expect(mockBaselineAdoptionAutomaticDecision).toHaveBeenCalledWith(
+      automatic
+    );
+    expect(automaticResponse.body).toMatchObject({
+      decision: 'DEFERRED',
+      manifest_ready: false
+    });
+
+    const backend = {
+      environment: 'staging',
+      service: 'api',
+      workflow_run_id: '93000',
+      workflow_run_attempt: 1,
+      source_ref: '1a-staging',
+      source_sha: 'b'.repeat(40),
+      status: 'SUCCEEDED'
+    };
+    const backendResponse = await post(
+      '/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline/backend-deployment-event',
+      backend
+    );
+    expect(backendResponse.status).toBe(200);
+    expect(mockBaselineAdoptionBackendEvent).toHaveBeenCalledWith(backend);
+    expect(backendResponse.body).toMatchObject({ outcome: 'RECORDED' });
+
+    for (const [path, body] of [
+      [
+        '/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline/automatic-e2e-decision',
+        automatic
+      ],
+      [
+        '/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline/backend-deployment-event',
+        backend
+      ]
+    ] as const) {
+      const unauthorized = await requestJson('POST', path, body);
+      expect(unauthorized.status).toBe(401);
+    }
+  });
+
+  it.each([
+    ['BAD_REQUEST', 400],
+    ['CONFLICT', 409],
+    ['UNAVAILABLE', 503]
+  ] as const)(
+    'maps baseline adoption %s failures without exposing an untyped mutation',
+    async (code, expectedStatus) => {
+      mockBaselineAdoptionExecute.mockRejectedValue(
+        new MockReleaseBusV2BaselineAdoptionError(
+          code,
+          'Exact adoption safety fence failed'
+        )
+      );
+      const response = await post(
+        '/deploy/release-bus-v2/maintenance/adopt-exact-staging-baseline',
+        {
+          idempotency_key: '8af60034-9741-4b9d-bb1c-80b483f75455',
+          reason: 'Adopt the exact deployed staging pair',
+          expires_at: Date.now() + 30 * 60 * 1000,
+          expected_staging_state_row_version: 23,
+          expected_frontend_ref: '1a-staging',
+          expected_frontend_sha: SHA,
+          expected_frontend_runtime_sha: SHA,
+          expected_backend_ref: '1a-staging',
+          expected_backend_sha: 'b'.repeat(40),
+          expected_backend_runtime_sha: 'b'.repeat(40),
+          required_backend_units: [
+            { service: 'api', expected_sha: 'b'.repeat(40) }
+          ],
+          candidates: []
+        }
+      );
+      expect(response.status).toBe(expectedStatus);
+      expect(response.body).toMatchObject({
+        error: 'Exact adoption safety fence failed'
+      });
+    }
+  );
 
   it('prepares a read-only exact candidate deregistration inventory for an operator', async () => {
     const response = await post(
