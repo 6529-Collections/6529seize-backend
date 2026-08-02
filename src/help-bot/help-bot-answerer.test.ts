@@ -243,6 +243,85 @@ describe('HelpBotAnswerer', () => {
     expect(genericSource.findMatch).not.toHaveBeenCalled();
   });
 
+  it('renders exact Stream development status without giving the LLM factual latitude', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest.fn().mockResolvedValue('There are 1,536 bytes left.')
+    };
+    const streamKnowledgeSource: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 400,
+        record: {
+          id: '6529-stream@2026-08-01.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence',
+          linkLabel: '6529 Stream Review',
+          canonicalPath: '/reviews/6529-stream#development-update',
+          aliases: ['stream'],
+          keywords: ['stream', 'development'],
+          facts: [
+            JSON.stringify({
+              id: 'status:latest-development',
+              kind: 'development_status',
+              title: 'Latest Stream development update',
+              structured: {
+                checkedAt: '2026-08-01T00:00:00.000Z',
+                headline: 'The permanent Core now meets its size target.',
+                recentlyCompleted: [
+                  {
+                    text: `The permanent Core fits within Ethereum's contract-size limit with 5,579 bytes of headroom.`
+                  }
+                ],
+                workingOn: [],
+                beforeLaunch: [
+                  {
+                    text: 'Run the public testnet rehearsal and publish the verified addresses and source.'
+                  },
+                  {
+                    text: 'Complete an independent external audit and retest every accepted fix.'
+                  },
+                  {
+                    text: 'Approve the final settings, deployment records, and operating rehearsals.'
+                  }
+                ]
+              }
+            })
+          ],
+          relatedPaths: [],
+          tags: ['stream', 'development_status'],
+          sourceRefs: []
+        }
+      })
+    };
+
+    const answer = await new HelpBotAnswerer(
+      renderer,
+      new StaticHelpBotKnowledgeSource(TEST_INDEX),
+      undefined,
+      undefined,
+      streamKnowledgeSource
+    ).answer({
+      question:
+        'According to the current Stream development update, what is the contract-size headroom and what remains before launch?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toContain('5,579 bytes of headroom');
+      expect(answer.answer).toContain(
+        'Run the public testnet rehearsal and publish the verified addresses and source.'
+      );
+      expect(answer.answer).toContain(
+        'Complete an independent external audit and retest every accepted fix.'
+      );
+      expect(answer.answer).toContain(
+        'Approve the final settings, deployment records, and operating rehearsals.'
+      );
+      expect(answer.answer).not.toContain('1,536');
+    }
+    expect(renderer.renderAnswer).not.toHaveBeenCalled();
+  });
+
   it('keeps Stream source links complete and inside the response budget', async () => {
     const canonicalPath =
       '/reviews/6529-stream/versions/2026-07-27.1/for-artists#fixed-price-sales';

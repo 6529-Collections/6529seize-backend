@@ -540,13 +540,19 @@ function parseEvidenceShard(
     const kind = readString(record?.kind);
     const title = readString(record?.title);
     const canonicalPath = readString(record?.canonicalPath);
+    const reviewRoot = `/reviews/${REVIEW_ID}`;
     if (
       !record ||
       !id ||
       !category ||
       !kind ||
       !title ||
-      !canonicalPath?.startsWith(`/reviews/${REVIEW_ID}/`)
+      !canonicalPath ||
+      !(
+        canonicalPath === reviewRoot ||
+        canonicalPath.startsWith(`${reviewRoot}/`) ||
+        canonicalPath.startsWith(`${reviewRoot}#`)
+      )
     ) {
       return null;
     }
@@ -791,6 +797,29 @@ function queryIntent(
       tokens(question).size <= 1,
     contextualFollowUp
   };
+}
+
+function asksLatestDevelopmentStatus(question: string): boolean {
+  const normalized = splitSearchText(question).replace(/\s+/g, ' ').trim();
+  if (
+    /\b(?:pinned|snapshot|reviewed source|source commit|candidate snapshot)\b/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+  const statusContext =
+    /\b(?:latest|current|today|daily|development|progress|checked|update)\b/.test(
+      normalized
+    ) &&
+    /\b(?:status|development|progress|update|headroom|launch|working|completed|finished|remain|remaining|size)\b/.test(
+      normalized
+    );
+  const exactDevelopmentFact =
+    /\b(?:headroom|before launch|working on|recently completed|what remains|size target)\b/.test(
+      normalized
+    );
+  return statusContext || exactDevelopmentFact;
 }
 
 function extractedExactQueryKeys(question: string): string[] {
@@ -1196,12 +1225,53 @@ function selectedTechnicalFacts(record: StreamEvidenceRecord): unknown {
   };
 }
 
+function selectedDevelopmentStatusItems(value: unknown): unknown[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value
+    .map((entry) => {
+      const item = asObject(entry);
+      if (!item) {
+        return null;
+      }
+      return {
+        id: readString(item.id),
+        text: readString(item.text),
+        evidencePath: readString(item.evidencePath)
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry);
+}
+
+function selectedStructuredFacts(record: StreamEvidenceRecord): unknown {
+  if (record.kind !== 'development_status') {
+    return record.structured;
+  }
+  const structured = asObject(record.structured);
+  if (!structured) {
+    return undefined;
+  }
+  return {
+    checkedAt: readString(structured.checkedAt),
+    state: readString(structured.state),
+    headline: readString(structured.headline),
+    summary: readString(structured.summary),
+    evidenceSummary: structured.evidenceSummary,
+    recentlyCompleted: selectedDevelopmentStatusItems(
+      structured.recentlyCompleted
+    ),
+    workingOn: selectedDevelopmentStatusItems(structured.workingOn),
+    beforeLaunch: selectedDevelopmentStatusItems(structured.beforeLaunch)
+  };
+}
+
 function formatEvidenceRecord(
   record: StreamEvidenceRecord,
   index: number
 ): string {
   const provenance = asObject(record.provenance);
-  const structured = record.structured;
+  const structured = selectedStructuredFacts(record);
   const evidenceStates = Array.isArray(record.evidenceStates)
     ? record.evidenceStates
     : undefined;
@@ -1222,6 +1292,7 @@ function formatEvidenceRecord(
     canonicalPath: record.canonicalPath,
     sourceLink: record.sourceLink,
     sourcePath: readString(provenance?.sourcePath),
+    sourceCommit: readString(provenance?.sourceCommit),
     lineRange: asObject(provenance?.range)
   };
   let serialized = JSON.stringify(canonicalize(payload));
@@ -1322,6 +1393,7 @@ function evidencePacketRecord(
     relatedPaths,
     tags: [
       'stream',
+      selection.primary.kind,
       manifest.publication.lifecycleState.toLowerCase(),
       manifest.publication.auditStatus.toLowerCase(),
       manifest.publication.deploymentStatus.toLowerCase()
@@ -1369,6 +1441,41 @@ export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSour
         : directExact;
     if (!intent.explicitlyStreamScoped && exact.length === 0) {
       return null;
+    }
+    if (
+      intent.explicitlyStreamScoped &&
+      asksLatestDevelopmentStatus(question)
+    ) {
+      const latestDevelopment = corpus.catalog.find(
+        (record) => record.kind === 'development_status'
+      );
+      if (!latestDevelopment) {
+        return null;
+      }
+      try {
+        const [primary] = await this.loadRecords(corpus, [latestDevelopment]);
+        if (!primary) {
+          return null;
+        }
+        return {
+          score: 400,
+          record: evidencePacketRecord(
+            {
+              records: [primary],
+              primary,
+              score: 400,
+              ambiguity: null
+            },
+            corpus.manifest
+          )
+        };
+      } catch (error) {
+        this.logger.warn(
+          'Could not load the latest Stream development status',
+          error
+        );
+        return null;
+      }
     }
     const fuzzy = fuzzyMatches(question, corpus, intent);
     const initial = selectInitialCandidates(exact, fuzzy);
