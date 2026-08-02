@@ -1240,8 +1240,7 @@ function selectedDevelopmentStatusItems(value: unknown): unknown[] | undefined {
       }
       return {
         id: readString(item.id),
-        text: readString(item.text),
-        evidencePath: readString(item.evidencePath)
+        text: readString(item.text)
       };
     })
     .filter((entry): entry is NonNullable<typeof entry> => !!entry);
@@ -1269,10 +1268,32 @@ function selectedStructuredFacts(record: StreamEvidenceRecord): unknown {
   };
 }
 
+function formatDevelopmentStatusEvidence(
+  record: StreamEvidenceRecord,
+  index: number
+): string {
+  const provenance = asObject(record.provenance);
+  return JSON.stringify(
+    canonicalize({
+      evidence: index,
+      id: record.id,
+      category: record.category,
+      kind: record.kind,
+      title: record.title,
+      structured: selectedStructuredFacts(record),
+      canonicalPath: record.canonicalPath,
+      sourceCommit: readString(provenance?.sourceCommit)
+    })
+  );
+}
+
 function formatEvidenceRecord(
   record: StreamEvidenceRecord,
   index: number
 ): string {
+  if (record.kind === 'development_status') {
+    return formatDevelopmentStatusEvidence(record, index);
+  }
   const provenance = asObject(record.provenance);
   const structured = selectedStructuredFacts(record);
   const evidenceStates = Array.isArray(record.evidenceStates)

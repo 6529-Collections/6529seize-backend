@@ -466,8 +466,7 @@ function addDevelopmentStatusFixture(fixture: Fixture): Fixture {
   const developmentEvidence = {
     ...developmentCatalog,
     canonicalPath: `/reviews/${REVIEW_ID}#development-update`,
-    summary:
-      'The permanent Core now meets its size target. Stream is being prepared for external audit and launch evidence.',
+    summary: 'Development status narrative '.repeat(120),
     provenance: {
       reviewVersion: VERSION,
       sourceCommit: '5021c8060950c3fef995271e674ed4b2007fee6d',
@@ -648,6 +647,10 @@ describe('FrontendStreamKnowledgeSource', () => {
     expect(match?.record.tags).toContain('development_status');
     expect(match?.record.facts.join('\n')).toContain('5,579 bytes');
     expect(structured.beforeLaunch).toHaveLength(3);
+    expect(evidence[0]?.structuredExcerpt).toBeUndefined();
+    expect(JSON.stringify(evidence[0]).length).toBeLessThanOrEqual(
+      STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_RECORD_CHARACTERS
+    );
     expect(match?.record.facts.join('\n')).not.toContain('RISK-SIZE-001');
     expect(match?.record.facts.join('\n')).not.toContain('424 bytes');
     expect(match?.record.facts.join('\n')).not.toContain('1,576 bytes');
