@@ -366,6 +366,12 @@ function appendNumberedStatusItems(
   items.forEach((item, index) => lines.push(`${index + 1}. ${item}`));
 }
 
+function isContractSizeStatusQuestion(question: string): boolean {
+  return /\b(?:headroom|bytecode|contract[ -]size|size target)\b/.test(
+    question
+  );
+}
+
 function buildStreamDevelopmentStatusAnswer(
   question: string,
   record: HelpBotKnowledgeRecord,
@@ -378,9 +384,8 @@ function buildStreamDevelopmentStatusAnswer(
   }
   const normalizedQuestion = question.toLowerCase();
   const wantsCompleted =
-    /\b(?:completed|finished|done|headroom|bytecode|contract[ -]size|size target)\b/.test(
-      normalizedQuestion
-    );
+    /\b(?:completed|finished|done)\b/.test(normalizedQuestion) ||
+    isContractSizeStatusQuestion(normalizedQuestion);
   const wantsWorking = /\b(?:working|in progress|progress|underway)\b/.test(
     normalizedQuestion
   );
@@ -398,16 +403,19 @@ function buildStreamDevelopmentStatusAnswer(
   if (!specificQuestion && structured.headline) {
     lines.push(structured.headline);
   }
+  const substantiveLineStart = lines.length;
 
   const completed = developmentStatusTexts(structured.recentlyCompleted);
-  const completedItems =
-    /\b(?:headroom|bytecode|contract[ -]size|size target)\b/.test(
-      normalizedQuestion
-    )
-      ? completed.filter((item) =>
-          /\b(?:headroom|contract-size|size limit)\b/i.test(item)
-        )
-      : completed;
+  const matchingCompletedItems = isContractSizeStatusQuestion(
+    normalizedQuestion
+  )
+    ? completed.filter((item) =>
+        /\b(?:headroom|contract-size|size limit)\b/i.test(item)
+      )
+    : completed;
+  const completedItems = matchingCompletedItems.length
+    ? matchingCompletedItems
+    : completed;
   if (wantsCompleted) {
     appendNumberedStatusItems(lines, 'Recently completed', completedItems);
   }
@@ -424,6 +432,24 @@ function buildStreamDevelopmentStatusAnswer(
       'Before launch',
       developmentStatusTexts(structured.beforeLaunch)
     );
+  }
+  if (lines.length === substantiveLineStart) {
+    if (structured.headline) {
+      lines.push(structured.headline);
+    }
+    appendNumberedStatusItems(
+      lines,
+      'Work in progress',
+      developmentStatusTexts(structured.workingOn)
+    );
+    appendNumberedStatusItems(
+      lines,
+      'Before launch',
+      developmentStatusTexts(structured.beforeLaunch)
+    );
+  }
+  if (!lines.length) {
+    return null;
   }
   return composeStreamAnswer(lines.join('\n'), record, baseUrl);
 }

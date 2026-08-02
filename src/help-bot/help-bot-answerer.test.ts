@@ -268,7 +268,7 @@ describe('HelpBotAnswerer', () => {
                 headline: 'The permanent Core now meets its size target.',
                 recentlyCompleted: [
                   {
-                    text: `The permanent Core fits within Ethereum's contract-size limit with 5,579 bytes of headroom.`
+                    text: 'The permanent Core is 5,579 bytes under the EIP-170 limit.'
                   }
                 ],
                 workingOn: [],
@@ -307,7 +307,7 @@ describe('HelpBotAnswerer', () => {
 
     expect(answer.type).toBe('ANSWER');
     if (answer.type === 'ANSWER') {
-      expect(answer.answer).toContain('5,579 bytes of headroom');
+      expect(answer.answer).toContain('5,579 bytes under the EIP-170 limit');
       expect(answer.answer).toContain(
         'Run the public testnet rehearsal and publish the verified addresses and source.'
       );
