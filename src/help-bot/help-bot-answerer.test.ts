@@ -322,6 +322,59 @@ describe('HelpBotAnswerer', () => {
     expect(renderer.renderAnswer).not.toHaveBeenCalled();
   });
 
+  it('fails closed without the LLM when an exact Stream status packet is oversized', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest.fn().mockResolvedValue('Invented status')
+    };
+    const streamKnowledgeSource: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 400,
+        record: {
+          id: '6529-stream@2026-08-01.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence',
+          linkLabel: '6529 Stream Review',
+          canonicalPath: '/reviews/6529-stream#development-update',
+          aliases: ['stream'],
+          keywords: ['stream', 'development'],
+          facts: [
+            JSON.stringify({
+              id: 'status:latest-development',
+              kind: 'development_status',
+              structured: {
+                checkedAt: '2026-08-01T00:00:00.000Z',
+                exactStatusUnavailable: true
+              }
+            })
+          ],
+          relatedPaths: [],
+          tags: ['stream', 'development_status'],
+          sourceRefs: []
+        }
+      })
+    };
+
+    const answer = await new HelpBotAnswerer(
+      renderer,
+      new StaticHelpBotKnowledgeSource(TEST_INDEX),
+      undefined,
+      undefined,
+      streamKnowledgeSource
+    ).answer({
+      question: 'what is the current Stream contract-size headroom?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toContain(
+        'could not fit in the verified evidence packet'
+      );
+      expect(answer.answer).not.toContain('Invented status');
+    }
+    expect(renderer.renderAnswer).not.toHaveBeenCalled();
+  });
+
   it('keeps Stream source links complete and inside the response budget', async () => {
     const canonicalPath =
       '/reviews/6529-stream/versions/2026-07-27.1/for-artists#fixed-price-sales';
