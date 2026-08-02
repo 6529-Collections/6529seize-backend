@@ -264,6 +264,7 @@ function ensureKnowledgeMarkdownLinks({
 }
 
 interface StreamEvidenceSummary {
+  readonly kind?: string;
   readonly title?: string;
   readonly scope?: string;
   readonly classification?: string;
@@ -278,6 +279,21 @@ interface StreamEvidenceSummary {
       readonly visibility?: string;
       readonly stateMutability?: string;
     };
+  };
+}
+
+interface StreamDevelopmentStatusItem {
+  readonly text?: string;
+}
+
+interface StreamDevelopmentStatusEvidence extends StreamEvidenceSummary {
+  readonly structured?: {
+    readonly checkedAt?: string;
+    readonly exactStatusUnavailable?: boolean;
+    readonly headline?: string;
+    readonly recentlyCompleted?: readonly StreamDevelopmentStatusItem[];
+    readonly workingOn?: readonly StreamDevelopmentStatusItem[];
+    readonly beforeLaunch?: readonly StreamDevelopmentStatusItem[];
   };
 }
 
@@ -309,6 +325,141 @@ function streamEvidenceSummary(fact: string): string | null {
   } catch {
     return null;
   }
+}
+
+function streamDevelopmentStatusEvidence(
+  record: HelpBotKnowledgeRecord
+): StreamDevelopmentStatusEvidence | null {
+  if (!record.tags.includes('development_status')) {
+    return null;
+  }
+  for (const fact of record.facts) {
+    if (!fact.startsWith('{')) {
+      continue;
+    }
+    try {
+      const evidence = JSON.parse(fact) as StreamDevelopmentStatusEvidence;
+      if (evidence.kind === 'development_status' && evidence.structured) {
+        return evidence;
+      }
+    } catch {
+      // Ignore non-evidence facts.
+    }
+  }
+  return null;
+}
+
+function developmentStatusTexts(
+  items: readonly StreamDevelopmentStatusItem[] | undefined
+): string[] {
+  return (items ?? []).map((item) => item.text?.trim() ?? '').filter(Boolean);
+}
+
+function appendNumberedStatusItems(
+  lines: string[],
+  label: string,
+  items: readonly string[]
+): void {
+  if (!items.length) {
+    return;
+  }
+  lines.push(`${label}:`);
+  items.forEach((item, index) => lines.push(`${index + 1}. ${item}`));
+}
+
+function isContractSizeStatusQuestion(question: string): boolean {
+  return /\b(?:headroom|bytecode|contract[ -]size|size target)\b/.test(
+    question
+  );
+}
+
+function buildStreamDevelopmentStatusAnswer(
+  question: string,
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string | null {
+  const evidence = streamDevelopmentStatusEvidence(record);
+  const structured = evidence?.structured;
+  if (!structured) {
+    return null;
+  }
+  if (structured.exactStatusUnavailable) {
+    return composeStreamAnswer(
+      'The exact current Stream development status could not fit in the verified evidence packet. Please use the linked development update for the complete figures and checklist.',
+      record,
+      baseUrl
+    );
+  }
+  const normalizedQuestion = question.toLowerCase();
+  const wantsCompleted =
+    /\b(?:completed|finished|done)\b/.test(normalizedQuestion) ||
+    isContractSizeStatusQuestion(normalizedQuestion);
+  const wantsWorking = /\b(?:working|in progress|progress|underway)\b/.test(
+    normalizedQuestion
+  );
+  const wantsBeforeLaunch =
+    /\b(?:before launch|launch|remain|remaining|still needed|left to do)\b/.test(
+      normalizedQuestion
+    );
+  const specificQuestion = wantsCompleted || wantsWorking || wantsBeforeLaunch;
+  const lines: string[] = [];
+  if (structured.checkedAt) {
+    lines.push(
+      `The latest checked Stream development update is dated ${structured.checkedAt.slice(0, 10)}.`
+    );
+  }
+  if (!specificQuestion && structured.headline) {
+    lines.push(structured.headline);
+  }
+  const substantiveLineStart = lines.length;
+
+  const completed = developmentStatusTexts(structured.recentlyCompleted);
+  const matchingCompletedItems = isContractSizeStatusQuestion(
+    normalizedQuestion
+  )
+    ? completed.filter((item) =>
+        /\b(?:headroom|contract-size|size limit)\b/i.test(item)
+      )
+    : completed;
+  const completedItems = matchingCompletedItems.length
+    ? matchingCompletedItems
+    : completed;
+  if (wantsCompleted) {
+    appendNumberedStatusItems(lines, 'Recently completed', completedItems);
+  }
+  if (wantsWorking || !specificQuestion) {
+    appendNumberedStatusItems(
+      lines,
+      'Work in progress',
+      developmentStatusTexts(structured.workingOn)
+    );
+  }
+  if (wantsBeforeLaunch || !specificQuestion) {
+    appendNumberedStatusItems(
+      lines,
+      'Before launch',
+      developmentStatusTexts(structured.beforeLaunch)
+    );
+  }
+  if (lines.length === substantiveLineStart) {
+    if (structured.headline) {
+      lines.push(structured.headline);
+    }
+    appendNumberedStatusItems(
+      lines,
+      'Work in progress',
+      developmentStatusTexts(structured.workingOn)
+    );
+    appendNumberedStatusItems(
+      lines,
+      'Before launch',
+      developmentStatusTexts(structured.beforeLaunch)
+    );
+  }
+  if (!lines.length) {
+    return null;
+  }
+  return composeStreamAnswer(lines.join('\n'), record, baseUrl);
 }
 
 function truncateAtNaturalBoundary(value: string, maxLength: number): string {
@@ -1488,6 +1639,20 @@ export class HelpBotAnswerer {
 
     const maybeWithWeakCaveat = (answer: string) =>
       escalateToTechTeam ? appendWeakMatchPrefix(answer) : answer;
+
+    const developmentStatusAnswer = buildStreamDevelopmentStatusAnswer(
+      request.question,
+      answerRecord,
+      request.baseUrl
+    );
+    if (developmentStatusAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: maybeWithWeakCaveat(developmentStatusAnswer),
+        record: answerRecord,
+        escalateToTechTeam
+      };
+    }
 
     if (!this.renderer) {
       return {
