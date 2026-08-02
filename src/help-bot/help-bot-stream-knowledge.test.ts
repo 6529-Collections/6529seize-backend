@@ -437,6 +437,123 @@ function buildFixture(version = VERSION): Fixture {
   return { files, fetcher };
 }
 
+function addDevelopmentStatusFixture(fixture: Fixture): Fixture {
+  const prefix = `/review-data/${REVIEW_ID}/versions/${VERSION}/knowledge`;
+  const searchPath = `${prefix}/search-index.json`;
+  const shardPath = `${prefix}/records/000.json`;
+  const manifestPath = `${prefix}/manifest.json`;
+  const searchIndex = JSON.parse(fixture.files.get(searchPath)!) as {
+    records: Array<Record<string, unknown>>;
+  };
+  const shard = JSON.parse(fixture.files.get(shardPath)!) as {
+    records: Array<Record<string, unknown>>;
+  };
+  const manifest = JSON.parse(fixture.files.get(manifestPath)!) as Record<
+    string,
+    unknown
+  >;
+  const developmentCatalog = {
+    id: 'status:latest-development',
+    category: 'status',
+    kind: 'development_status',
+    title: 'Latest Stream development update',
+    name: 'latest development status',
+    aliases: ['stream development', 'stream progress'],
+    searchText:
+      'latest current development progress headroom working on before launch',
+    recordShard: 0
+  };
+  const developmentEvidence = {
+    ...developmentCatalog,
+    canonicalPath: `/reviews/${REVIEW_ID}#development-update`,
+    summary:
+      'The permanent Core now meets its size target. Stream is being prepared for external audit and launch evidence.',
+    provenance: {
+      reviewVersion: VERSION,
+      sourceCommit: '5021c8060950c3fef995271e674ed4b2007fee6d',
+      sourcePath: 'config/public-reviews/6529-stream.development-status.json'
+    },
+    structured: {
+      checkedAt: '2026-08-01T00:00:00.000Z',
+      state: 'PRE_AUDIT_DEVELOPMENT',
+      headline:
+        'The permanent Core now meets its size target. Stream is being prepared for external audit and launch evidence.',
+      summary: 'Development has continued since the reviewed snapshot.',
+      recentlyCompleted: [
+        {
+          id: 'permanent-core-size',
+          text: `The permanent Core fits within Ethereum's contract-size limit with 5,579 bytes of headroom.`,
+          evidencePath: 'release-artifacts/latest/bytecode-release-proof.json'
+        }
+      ],
+      workingOn: [
+        {
+          id: 'launch-configuration',
+          text: 'Confirming the exact contract set, permissions, settings, and connections for launch.',
+          evidencePath: 'docs/release-readiness.md'
+        }
+      ],
+      beforeLaunch: [
+        {
+          id: 'public-testnet-rehearsal',
+          text: 'Run the public testnet rehearsal and publish the verified addresses and source.',
+          evidencePath: 'release-artifacts/latest/public-beta-evidence.json'
+        },
+        {
+          id: 'external-audit',
+          text: 'Complete an independent external audit and retest every accepted fix.',
+          evidencePath: 'docs/audit-package.md'
+        },
+        {
+          id: 'launch-records',
+          text: 'Approve the final settings, deployment records, and operating rehearsals.',
+          evidencePath: 'docs/release-readiness.md'
+        }
+      ]
+    },
+    relationships: { relatedEditorialIds: [] }
+  };
+  const staleRiskCatalog = {
+    id: 'risk:current-implementation-and-readiness:RISK-SIZE-001',
+    category: 'status',
+    kind: 'risk_register_entry',
+    title: 'Historical contract size snapshot',
+    name: 'contract size',
+    aliases: ['contract size', 'headroom'],
+    searchText:
+      'contract size headroom launch blocker reviewed version historical snapshot 424 bytes',
+    recordShard: 0
+  };
+  const staleRiskEvidence = {
+    ...staleRiskCatalog,
+    canonicalPath: `/reviews/${REVIEW_ID}/versions/${VERSION}/current-implementation-and-readiness`,
+    summary:
+      'The reviewed snapshot had 424 bytes of EIP-170 headroom and was 1,576 bytes below the release gate.',
+    provenance: { reviewVersion: VERSION, sourceCommit: COMMIT },
+    relationships: { relatedEditorialIds: [] }
+  };
+  searchIndex.records.push(developmentCatalog, staleRiskCatalog);
+  shard.records.push(developmentEvidence, staleRiskEvidence);
+  const searchText = JSON.stringify(searchIndex);
+  const shardText = JSON.stringify(shard);
+  const searchManifest = manifest.searchIndex as Record<string, unknown>;
+  searchManifest.sha256 = sha256(searchText);
+  searchManifest.recordCount = searchIndex.records.length;
+  const shardManifest = (
+    manifest.recordShards as Array<Record<string, unknown>>
+  )[0]!;
+  shardManifest.sha256 = sha256(shardText);
+  shardManifest.recordCount = shard.records.length;
+  (manifest.counts as Record<string, unknown>).total =
+    searchIndex.records.length;
+  delete manifest.knowledgeSha256;
+  manifest.knowledgeSha256 = sha256(stableJson(manifest));
+  fixture.files.set(searchPath, searchText);
+  fixture.files.set(shardPath, shardText);
+  fixture.files.set(manifestPath, JSON.stringify(manifest));
+  return fixture;
+}
+
 describe('FrontendStreamKnowledgeSource', () => {
   it('canonicalizes object keys with frontend-compatible code-unit ordering', () => {
     expect(
@@ -510,6 +627,58 @@ describe('FrontendStreamKnowledgeSource', () => {
     expect(firstEvidence.id).toBe(id);
     expect(match?.record.facts.join('\n')).toContain(VERSION);
     expect(match?.record.facts.join('\n')).toContain(COMMIT);
+  });
+
+  it('isolates the latest development update from historical snapshot status', async () => {
+    const fixture = addDevelopmentStatusFixture(buildFixture());
+    const source = new FrontendStreamKnowledgeSource(fixture.fetcher, BASE_URL);
+
+    const match = await source.findMatch(
+      'According to the current Stream development update, what is the contract-size headroom and what remains before launch?'
+    );
+    const evidence = (match?.record.facts ?? [])
+      .filter((fact) => fact.startsWith('{'))
+      .map((fact) => JSON.parse(fact) as Record<string, unknown>);
+    const structured = evidence[0]?.structured as {
+      readonly beforeLaunch?: readonly unknown[];
+    };
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]?.id).toBe('status:latest-development');
+    expect(match?.record.tags).toContain('development_status');
+    expect(match?.record.facts.join('\n')).toContain('5,579 bytes');
+    expect(structured.beforeLaunch).toHaveLength(3);
+    expect(match?.record.facts.join('\n')).not.toContain('RISK-SIZE-001');
+    expect(match?.record.facts.join('\n')).not.toContain('424 bytes');
+    expect(match?.record.facts.join('\n')).not.toContain('1,576 bytes');
+  });
+
+  it.each([
+    'what was the Stream headroom in the pinned snapshot?',
+    'what remains before launch for the reviewed Stream version?'
+  ])(
+    'keeps historical status questions on snapshot evidence: %s',
+    async (question) => {
+      const fixture = addDevelopmentStatusFixture(buildFixture());
+      const source = new FrontendStreamKnowledgeSource(
+        fixture.fetcher,
+        BASE_URL
+      );
+
+      const match = await source.findMatch(question);
+
+      expect(match?.record.facts.join('\n')).toContain('RISK-SIZE-001');
+      expect(match?.record.facts.join('\n')).not.toContain(
+        'status:latest-development'
+      );
+    }
+  );
+
+  it('does not route an unscoped headroom question into Stream', async () => {
+    const fixture = addDevelopmentStatusFixture(buildFixture());
+    const source = new FrontendStreamKnowledgeSource(fixture.fetcher, BASE_URL);
+
+    await expect(source.findMatch('what is the headroom?')).resolves.toBeNull();
   });
 
   it.each([

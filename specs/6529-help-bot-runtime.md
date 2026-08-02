@@ -16,7 +16,8 @@ backend answer path, and uses a Bedrock renderer for natural wording with a
 deterministic fallback if the model call fails or times out. It also supports a
 frontend calendar API mode for Meme Card drop timing plus a bounded public-data
 query mode for aggregate questions that are better answered from backend
-database rows than from static frontend docs.
+database rows than from static frontend docs. Stream questions use the
+frontend-published, versioned Stream review corpus described below.
 
 ## 2. Product Behavior
 
@@ -156,14 +157,32 @@ facts into the answer context. Fetches use the hardcoded five-second timeout so
 a slow index endpoint fails into the technical-failure reply path instead of
 stalling the worker.
 
-### 4.2 Future docs chunking and RAG
+### 4.2 Versioned Stream review corpus
+
+The frontend publishes the complete generated Stream review corpus under
+`/review-data/6529-stream/`, including a version manifest, a bounded search
+catalog, and checksummed evidence shards. The backend validates the published
+identity and checksums, selects a small query-relevant evidence packet, and
+never sends the whole corpus to Bedrock.
+
+The latest daily development update is a separate `development_status` record.
+Questions about current progress, contract-size headroom, work in progress, or
+items remaining before launch select only that record. Historical risk and
+readiness records describe the pinned review snapshot and must not be mixed into
+an answer about the current development update. The backend projects the exact
+status fields into the answer and bypasses Bedrock for those facts so figures
+and checklist items cannot be rewritten or invented. Its provenance commit is
+the separately checked development commit, while the manifest source commit
+continues to identify the pinned review snapshot.
+
+### 4.3 Future docs chunking and RAG
 
 The frontend index can later include generated chunks from frontend `ops/docs`,
 route metadata, component help metadata, embeddings, and eval coverage. That
 future phase should keep curated records as the higher-confidence source for
 canonical facts and URLs.
 
-### 4.3 Backend-owned business-rule records
+### 4.4 Backend-owned business-rule records
 
 The frontend owns product navigation and UI knowledge. The backend may add
 backend-owned records later for business rules that are not safe to infer from
@@ -178,7 +197,7 @@ Those records should be short, curated records or generated summaries from
 backend docs and tests. Raw code lookup should happen offline during indexing or
 authoring, not during a user request.
 
-### 4.4 Backend-owned public data query mode
+### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
 frontend help index. Examples:
@@ -234,7 +253,7 @@ slightly warmer wording, and formal questions should stay formal, but tone never
 overrides the source facts, refusal boundaries, no-reliable-source behavior, or
 technical-failure behavior. Deterministic fallback answers remain neutral.
 
-### 4.5 Frontend-owned Memes calendar API mode
+### 4.6 Frontend-owned Memes calendar API mode
 
 Meme Card drop timing is frontend-owned because the Memes calendar helper owns
 the cadence, historic phases, skip/extra/reschedule overrides, and mint window
@@ -256,7 +275,7 @@ The backend validates the response shape before wording an answer. Calendar API
 timeouts, non-2xx responses, or invalid response bodies use the technical-failure
 reply path instead of guessing from stale static knowledge.
 
-### 4.6 Agent maintenance contract
+### 4.7 Agent maintenance contract
 
 Future agents must treat the help bot corpus as part of the user-facing product
 surface. When a backend change adds or changes behavior that users may ask
@@ -282,7 +301,7 @@ If a backend change is user-visible but intentionally should not be answerable
 by the bot yet, the PR should say why and whether a follow-up corpus update is
 needed.
 
-### 4.7 Retrieval model
+### 4.8 Retrieval model
 
 The bot should not depend on a predefined list of questions. It should retrieve
 records and chunks by:
