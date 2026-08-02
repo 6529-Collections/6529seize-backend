@@ -1273,16 +1273,34 @@ function formatDevelopmentStatusEvidence(
   index: number
 ): string {
   const provenance = asObject(record.provenance);
+  const identity = {
+    evidence: index,
+    id: record.id,
+    category: record.category,
+    kind: record.kind,
+    title: record.title,
+    canonicalPath: record.canonicalPath,
+    sourceCommit: readString(provenance?.sourceCommit)
+  };
+  const serialized = JSON.stringify(
+    canonicalize({
+      ...identity,
+      structured: selectedStructuredFacts(record)
+    })
+  );
+  if (serialized.length <= MAX_EVIDENCE_RECORD_CHARACTERS) {
+    return serialized;
+  }
+  const structured = asObject(record.structured);
   return JSON.stringify(
     canonicalize({
-      evidence: index,
-      id: record.id,
-      category: record.category,
-      kind: record.kind,
-      title: record.title,
-      structured: selectedStructuredFacts(record),
-      canonicalPath: record.canonicalPath,
-      sourceCommit: readString(provenance?.sourceCommit)
+      ...identity,
+      structured: {
+        checkedAt: readString(structured?.checkedAt),
+        exactStatusUnavailable: true,
+        headline:
+          bounded(readString(structured?.headline) ?? '', 300) || undefined
+      }
     })
   );
 }

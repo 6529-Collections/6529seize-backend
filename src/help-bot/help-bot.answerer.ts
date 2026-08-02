@@ -289,6 +289,7 @@ interface StreamDevelopmentStatusItem {
 interface StreamDevelopmentStatusEvidence extends StreamEvidenceSummary {
   readonly structured?: {
     readonly checkedAt?: string;
+    readonly exactStatusUnavailable?: boolean;
     readonly headline?: string;
     readonly recentlyCompleted?: readonly StreamDevelopmentStatusItem[];
     readonly workingOn?: readonly StreamDevelopmentStatusItem[];
@@ -381,6 +382,13 @@ function buildStreamDevelopmentStatusAnswer(
   const structured = evidence?.structured;
   if (!structured) {
     return null;
+  }
+  if (structured.exactStatusUnavailable) {
+    return composeStreamAnswer(
+      'The exact current Stream development status could not fit in the verified evidence packet. Please use the linked development update for the complete figures and checklist.',
+      record,
+      baseUrl
+    );
   }
   const normalizedQuestion = question.toLowerCase();
   const wantsCompleted =

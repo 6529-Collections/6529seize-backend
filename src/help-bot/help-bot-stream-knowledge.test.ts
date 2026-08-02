@@ -437,7 +437,10 @@ function buildFixture(version = VERSION): Fixture {
   return { files, fetcher };
 }
 
-function addDevelopmentStatusFixture(fixture: Fixture): Fixture {
+function addDevelopmentStatusFixture(
+  fixture: Fixture,
+  oversizedStructuredStatus = false
+): Fixture {
   const prefix = `/review-data/${REVIEW_ID}/versions/${VERSION}/knowledge`;
   const searchPath = `${prefix}/search-index.json`;
   const shardPath = `${prefix}/records/000.json`;
@@ -466,7 +469,8 @@ function addDevelopmentStatusFixture(fixture: Fixture): Fixture {
   const developmentEvidence = {
     ...developmentCatalog,
     canonicalPath: `/reviews/${REVIEW_ID}#development-update`,
-    summary: 'Development status narrative '.repeat(120),
+    summary:
+      'The permanent Core now meets its size target. Stream is being prepared for external audit and launch evidence.',
     provenance: {
       reviewVersion: VERSION,
       sourceCommit: '5021c8060950c3fef995271e674ed4b2007fee6d',
@@ -477,7 +481,9 @@ function addDevelopmentStatusFixture(fixture: Fixture): Fixture {
       state: 'PRE_AUDIT_DEVELOPMENT',
       headline:
         'The permanent Core now meets its size target. Stream is being prepared for external audit and launch evidence.',
-      summary: 'Development has continued since the reviewed snapshot.',
+      summary: oversizedStructuredStatus
+        ? 'Development status narrative '.repeat(120)
+        : 'Development has continued since the reviewed snapshot.',
       recentlyCompleted: [
         {
           id: 'permanent-core-size',
@@ -654,6 +660,26 @@ describe('FrontendStreamKnowledgeSource', () => {
     expect(match?.record.facts.join('\n')).not.toContain('RISK-SIZE-001');
     expect(match?.record.facts.join('\n')).not.toContain('424 bytes');
     expect(match?.record.facts.join('\n')).not.toContain('1,576 bytes');
+  });
+
+  it('fails closed inside the record budget when structured status is oversized', async () => {
+    const fixture = addDevelopmentStatusFixture(buildFixture(), true);
+    const source = new FrontendStreamKnowledgeSource(fixture.fetcher, BASE_URL);
+
+    const match = await source.findMatch('what is the current Stream status?');
+    const fact = match?.record.facts.find((entry) => entry.startsWith('{'));
+    const evidence = JSON.parse(fact ?? '{}') as {
+      readonly structured?: {
+        readonly exactStatusUnavailable?: boolean;
+        readonly beforeLaunch?: readonly unknown[];
+      };
+    };
+
+    expect(fact?.length).toBeLessThanOrEqual(
+      STREAM_KNOWLEDGE_TESTING.MAX_EVIDENCE_RECORD_CHARACTERS
+    );
+    expect(evidence.structured?.exactStatusUnavailable).toBe(true);
+    expect(evidence.structured?.beforeLaunch).toBeUndefined();
   });
 
   it.each([
