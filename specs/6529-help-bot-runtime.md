@@ -171,7 +171,9 @@ items remaining before launch select only that record. Historical risk and
 readiness records describe the pinned review snapshot and must not be mixed into
 an answer about the current development update. The backend projects the exact
 status fields into the answer and bypasses Bedrock for those facts so figures
-and checklist items cannot be rewritten or invented.
+and checklist items cannot be rewritten or invented. Its provenance commit is
+the separately checked development commit, while the manifest source commit
+continues to identify the pinned review snapshot.
 
 ### 4.3 Future docs chunking and RAG
 

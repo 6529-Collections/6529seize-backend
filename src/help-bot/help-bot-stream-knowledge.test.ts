@@ -520,7 +520,8 @@ function addDevelopmentStatusFixture(fixture: Fixture): Fixture {
     title: 'Historical contract size snapshot',
     name: 'contract size',
     aliases: ['contract size', 'headroom'],
-    searchText: 'contract size headroom launch blocker 424 bytes',
+    searchText:
+      'contract size headroom launch blocker reviewed version historical snapshot 424 bytes',
     recordShard: 0
   };
   const staleRiskEvidence = {
@@ -650,6 +651,34 @@ describe('FrontendStreamKnowledgeSource', () => {
     expect(match?.record.facts.join('\n')).not.toContain('RISK-SIZE-001');
     expect(match?.record.facts.join('\n')).not.toContain('424 bytes');
     expect(match?.record.facts.join('\n')).not.toContain('1,576 bytes');
+  });
+
+  it.each([
+    'what was the Stream headroom in the pinned snapshot?',
+    'what remains before launch for the reviewed Stream version?'
+  ])(
+    'keeps historical status questions on snapshot evidence: %s',
+    async (question) => {
+      const fixture = addDevelopmentStatusFixture(buildFixture());
+      const source = new FrontendStreamKnowledgeSource(
+        fixture.fetcher,
+        BASE_URL
+      );
+
+      const match = await source.findMatch(question);
+
+      expect(match?.record.facts.join('\n')).toContain('RISK-SIZE-001');
+      expect(match?.record.facts.join('\n')).not.toContain(
+        'status:latest-development'
+      );
+    }
+  );
+
+  it('does not route an unscoped headroom question into Stream', async () => {
+    const fixture = addDevelopmentStatusFixture(buildFixture());
+    const source = new FrontendStreamKnowledgeSource(fixture.fetcher, BASE_URL);
+
+    await expect(source.findMatch('what is the headroom?')).resolves.toBeNull();
   });
 
   it.each([

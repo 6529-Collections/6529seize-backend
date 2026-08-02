@@ -799,13 +799,16 @@ function queryIntent(
   };
 }
 
+function asksHistoricalSnapshotStatus(question: string): boolean {
+  const normalized = splitSearchText(question).replace(/\s+/g, ' ').trim();
+  return /\b(?:pinned|snapshot|historical|reviewed|review version|source commit|candidate snapshot)\b/.test(
+    normalized
+  );
+}
+
 function asksLatestDevelopmentStatus(question: string): boolean {
   const normalized = splitSearchText(question).replace(/\s+/g, ' ').trim();
-  if (
-    /\b(?:pinned|snapshot|reviewed source|source commit|candidate snapshot)\b/.test(
-      normalized
-    )
-  ) {
+  if (asksHistoricalSnapshotStatus(question)) {
     return false;
   }
   const statusContext =
@@ -1446,10 +1449,8 @@ export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSour
       intent.explicitlyStreamScoped &&
       asksLatestDevelopmentStatus(question)
     ) {
-      const latestDevelopment = corpus.catalog.find(
-        (record) => record.kind === 'development_status'
-      );
-      if (!latestDevelopment) {
+      const latestDevelopment = corpus.byId.get('status:latest-development');
+      if (latestDevelopment?.kind !== 'development_status') {
         return null;
       }
       try {
@@ -1477,8 +1478,15 @@ export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSour
         return null;
       }
     }
+    const historicalSnapshotQuestion = asksHistoricalSnapshotStatus(question);
+    const eligibleExact = historicalSnapshotQuestion
+      ? exact.filter((match) => match.record.kind !== 'development_status')
+      : exact;
     const fuzzy = fuzzyMatches(question, corpus, intent);
-    const initial = selectInitialCandidates(exact, fuzzy);
+    const eligibleFuzzy = historicalSnapshotQuestion
+      ? fuzzy.filter((match) => match.record.kind !== 'development_status')
+      : fuzzy;
+    const initial = selectInitialCandidates(eligibleExact, eligibleFuzzy);
     if (initial.length === 0) {
       return null;
     }
@@ -1486,8 +1494,8 @@ export class FrontendStreamKnowledgeSource implements HelpBotStreamKnowledgeSour
       question,
       corpus,
       initial,
-      exact,
-      fuzzy
+      eligibleExact,
+      eligibleFuzzy
     );
     if (!selection) {
       return null;
