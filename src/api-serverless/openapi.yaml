@@ -1766,6 +1766,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiCompetitionError"
+  /deploy/hub/session:
+    get:
+      tags:
+        - Deploy Hub
+      summary: Validate the caller's GitHub deployment-operator identity
+      operationId: getDeployHubSession
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Authenticated Deploy Hub operator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDeployHubSession"
+        "401":
+          description: Missing or invalid GitHub token
+        "403":
+          description: Deployment-operator permission is required
   /distribution_phases/{contract}/{nft_id}:
     get:
       tags:
@@ -15736,6 +15755,15 @@ components:
           type: array
           items:
             type: string
+    ApiDeployHubSession:
+      type: object
+      additionalProperties: false
+      required:
+        - login
+      properties:
+        login:
+          type: string
+          minLength: 1
     ApiDistributionAirdropsCsvUploadRequest:
       type: object
       required:

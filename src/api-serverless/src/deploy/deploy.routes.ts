@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { asyncRouter } from '@/api/async.router';
+import deployHubRoutes from '@/api/deploy/deploy-hub.routes';
 import {
   canDeployServiceToEnvironment,
   getDeployServiceConfigs
@@ -183,6 +184,7 @@ function requireWorkflowCredential(req: Request): void {
 }
 
 const deployRoutes = asyncRouter();
+deployRoutes.use('/hub', deployHubRoutes);
 const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION });
 
 function parseReleaseBusV2WorkflowRequest(

@@ -530,6 +530,15 @@ Important details:
 
 ## Deployment Model
 
+The existing `seizeAPI` Lambda also owns Deploy Hub's small HTTP boundary under
+`/deploy/hub`. Deploy Hub reuses the current deploy tools' GitHub Bearer-token
+model: the API resolves GitHub `/user`, checks the existing deployment-operator
+team, and checks repository write permission on each later mutation route.
+The API does not store tokens or deployment state and does not add another
+Lambda, database, queue, callback service, or scheduler. Task 7 begins with the
+read-only `/deploy/hub/session` authentication check; canonical workflow
+dispatch and observation remain separately gated adapter work.
+
 Simple Release Bus v2 is an additive MySQL-backed control plane shared by the
 production API and the production-region `releaseBusV2Reconciler` Lambda. Nine
 versioned tables store immutable candidates, dependency edges, staging and

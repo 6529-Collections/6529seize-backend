@@ -143,6 +143,7 @@ export * from '../models/ApiCurationDrop';
 export * from '../models/ApiCurationDropsPage';
 export * from '../models/ApiDecentralizedMediaProtocol';
 export * from '../models/ApiDecentralizedMediaResolution';
+export * from '../models/ApiDeployHubSession';
 export * from '../models/ApiDistributionAirdropsCsvUploadRequest';
 export * from '../models/ApiDistributionAirdropsUploadResponse';
 export * from '../models/ApiDmDropsUnreadCount';
@@ -763,6 +764,7 @@ import { ApiCurationDrop                                 } from '../models/ApiCu
 import { ApiCurationDropsPage } from '../models/ApiCurationDropsPage';
 import { ApiDecentralizedMediaProtocol } from '../models/ApiDecentralizedMediaProtocol';
 import { ApiDecentralizedMediaResolution          } from '../models/ApiDecentralizedMediaResolution';
+import { ApiDeployHubSession } from '../models/ApiDeployHubSession';
 import { ApiDistributionAirdropsCsvUploadRequest } from '../models/ApiDistributionAirdropsCsvUploadRequest';
 import { ApiDistributionAirdropsUploadResponse } from '../models/ApiDistributionAirdropsUploadResponse';
 import { ApiDmDropsUnreadCount } from '../models/ApiDmDropsUnreadCount';
@@ -1553,6 +1555,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCurationDrop": ApiCurationDrop,
     "ApiCurationDropsPage": ApiCurationDropsPage,
     "ApiDecentralizedMediaResolution": ApiDecentralizedMediaResolution,
+    "ApiDeployHubSession": ApiDeployHubSession,
     "ApiDistributionAirdropsCsvUploadRequest": ApiDistributionAirdropsCsvUploadRequest,
     "ApiDistributionAirdropsUploadResponse": ApiDistributionAirdropsUploadResponse,
     "ApiDmDropsUnreadCount": ApiDmDropsUnreadCount,
