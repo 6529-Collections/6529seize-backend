@@ -37,15 +37,13 @@ export class HelpBotDropWriterService {
       waveId,
       replyToDropId,
       interactionId,
-      message,
-      mentionedHandles = []
+      message
     }: {
       readonly botProfileId: string;
       readonly waveId: string;
       readonly replyToDropId: string;
       readonly interactionId: string;
       readonly message: string;
-      readonly mentionedHandles?: string[];
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -67,7 +65,9 @@ export class HelpBotDropWriterService {
         }
       ],
       referenced_nfts: [],
-      mentioned_users: mentionedHandles.map((handle) => ({ handle })),
+      // CreateOrUpdateDropUseCase derives @devs6529 group metadata and
+      // recipients from part content, so no individual mention is needed.
+      mentioned_users: [],
       mentioned_waves: [],
       metadata: [
         {

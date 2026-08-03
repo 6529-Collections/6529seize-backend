@@ -9,23 +9,20 @@ import {
   HELP_BOT_PROFILE_SETUP_CREDIT_GRANT,
   HELP_BOT_QUESTION_CREDIT_COST,
   HELP_BOT_SIGNUP_CREDIT_GRANT,
-  HELP_BOT_TECH_TEAM_HANDLES_ENV,
+  HELP_BOT_TECH_TEAM_MENTION,
   buildHelpBotNoReliableSourceReply,
   getHelpBotCreditGrantAmount,
-  getHelpBotTechTeamMentionHandles,
   isHelpBotCreditCategory,
   resolveHelpBotBaseUrl
 } from './help-bot.config';
 
 describe('help bot config', () => {
   const previousEnv = {
-    creditGrant: process.env[HELP_BOT_CREDIT_GRANT_ENV],
-    techTeamHandles: process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV]
+    creditGrant: process.env[HELP_BOT_CREDIT_GRANT_ENV]
   };
 
   afterEach(() => {
     restoreEnv(HELP_BOT_CREDIT_GRANT_ENV, previousEnv.creditGrant);
-    restoreEnv(HELP_BOT_TECH_TEAM_HANDLES_ENV, previousEnv.techTeamHandles);
   });
 
   it('uses the canonical help6529 trigger handle', () => {
@@ -62,12 +59,10 @@ describe('help bot config', () => {
     );
   });
 
-  it('omits tech team mentions when the env var is missing', () => {
-    delete process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV];
-
-    expect(getHelpBotTechTeamMentionHandles()).toEqual([]);
+  it('uses the global developer mention for no-reliable-source escalation', () => {
+    expect(HELP_BOT_TECH_TEAM_MENTION).toBe('@devs6529');
     expect(buildHelpBotNoReliableSourceReply()).toBe(
-      HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY
+      `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm flagging this so the tech team can double-check: @devs6529`
     );
   });
 
@@ -82,26 +77,6 @@ describe('help bot config', () => {
     expect(isHelpBotCreditCategory('Help6529 Credits')).toBe(true);
     expect(isHelpBotCreditCategory(' help6529 credits ')).toBe(true);
     expect(isHelpBotCreditCategory('General')).toBe(false);
-  });
-
-  it('normalizes, filters, and dedupes tech team handles', () => {
-    process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] =
-      ' @Alice ,bob,alice,bad handle,@carol ';
-
-    expect(getHelpBotTechTeamMentionHandles()).toEqual([
-      'Alice',
-      'bob',
-      'carol'
-    ]);
-    expect(buildHelpBotNoReliableSourceReply()).toBe(
-      `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm flagging this so the tech team can double-check: @[Alice] @[bob] @[carol]`
-    );
-  });
-
-  it('accepts semicolon-separated tech team handles for compatibility', () => {
-    process.env[HELP_BOT_TECH_TEAM_HANDLES_ENV] = 'dev-team;@support';
-
-    expect(getHelpBotTechTeamMentionHandles()).toEqual(['dev-team', 'support']);
   });
 
   it('uses the staging frontend help index base URL in development', () => {
