@@ -5,6 +5,8 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const PINNED_PACKAGE_MANAGER = 'npm@10.9.8';
+const DIRECT_PACKAGE_MANAGER_COMMAND =
+  /(?:^|(?:&&|\|\||;)\s*)(?:corepack\s+npm|npm|npx|pnpm|yarn|bun)(?=\s|$)/;
 const FORBIDDEN_FILES = new Set([
   'yarn.lock',
   'pnpm-lock.yaml',
@@ -86,6 +88,9 @@ for (const file of packageJsonFiles) {
     manifest.scripts,
     expectedPreinstall
   );
+  const directPackageManagerScripts = getDirectPackageManagerScripts(
+    manifest.scripts
+  );
   const hasCommandGuard = unguardedScripts.length === 0;
 
   if (fix && (!hasPinnedPackageManager || !hasCommandGuard)) {
@@ -97,17 +102,14 @@ for (const file of packageJsonFiles) {
       `${JSON.stringify(manifest, null, 2).replaceAll('\n', eol)}${eol}`
     );
     console.log(`fixed: ${file}`);
-    continue;
-  }
-
-  if (!hasPinnedPackageManager) {
+  } else if (!hasPinnedPackageManager) {
     errors.push(
       `${file}: "packageManager" must be "${PINNED_PACKAGE_MANAGER}" (found ${JSON.stringify(
         manifest.packageManager ?? null
       )}). From the repository root, run: 6529 run package-manager:fix`
     );
   }
-  if (!hasCommandGuard) {
+  if (!fix && !hasCommandGuard) {
     errors.push(
       `${file}: every package script must start with ${JSON.stringify(
         `${expectedPreinstall} && `
@@ -116,6 +118,16 @@ for (const file of packageJsonFiles) {
       )}. Unguarded: ${unguardedScripts.join(
         ', '
       )}. From the repository root, run: 6529 run package-manager:fix`
+    );
+  }
+  if (directPackageManagerScripts.length > 0) {
+    const wrapperPath = path
+      .relative(path.dirname(absolutePath), path.join(repoRoot, 'bin', '6529'))
+      .replaceAll(path.sep, '/');
+    errors.push(
+      `${file}: package scripts must route package-manager operations through ${wrapperPath}. Direct package-manager commands: ${directPackageManagerScripts.join(
+        ', '
+      )}. Replace npm/corepack/npx calls with ${wrapperPath} commands.`
     );
   }
 }
@@ -132,11 +144,29 @@ function getUnguardedScripts(scripts, expectedGuard) {
     return ['<missing scripts>'];
   }
   const guardPrefix = `${expectedGuard} && `;
-  return Object.entries(scripts)
+  const unguardedScripts = Object.entries(scripts)
     .filter(([name, command]) =>
       name === 'preinstall'
         ? command !== expectedGuard
         : typeof command !== 'string' || !command.startsWith(guardPrefix)
+    )
+    .map(([name]) => name);
+  if (!Object.hasOwn(scripts, 'preinstall')) {
+    unguardedScripts.push('preinstall');
+  }
+  return unguardedScripts.sort((a, b) => a.localeCompare(b));
+}
+
+function getDirectPackageManagerScripts(scripts) {
+  if (!scripts || typeof scripts !== 'object') {
+    return [];
+  }
+  return Object.entries(scripts)
+    .filter(
+      ([name, command]) =>
+        name !== 'preinstall' &&
+        typeof command === 'string' &&
+        DIRECT_PACKAGE_MANAGER_COMMAND.test(command)
     )
     .map(([name]) => name)
     .sort((a, b) => a.localeCompare(b));
@@ -237,5 +267,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-  `Package manager check passed: ${packageJsonFiles.length} package.json files pinned to ${PINNED_PACKAGE_MANAGER}, with every package script guarded by 6529 and no stray lockfiles.`
+  `Package manager check passed: ${packageJsonFiles.length} package.json files pinned to ${PINNED_PACKAGE_MANAGER}, with every package script guarded by 6529, package operations routed through 6529, and no stray lockfiles.`
 );

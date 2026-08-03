@@ -259,7 +259,8 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - **Routes** (`*.routes.ts`) - Define endpoints and validation
 - **API Services** (`*.api.service.ts`) - Business logic for API endpoints
 - **DB Services** (`*.db.ts` in `src/`) - Database access layer extending `LazyDbAccessCompatibleService`
-- **Generated Models** (`generated/models/`) - TypeScript API response models
+- **Generated API** (`generated/models/`, `generated/routes/`) - TypeScript API
+  models plus generated route wiring and operation types
 
 ### Database Layer
 
@@ -434,9 +435,14 @@ The API (`src/api-serverless/src/`) is an Express application with:
 
 - API endpoints are described in `openapi.yaml` file.
 - Any time you change this file run `cd src/api-serverless && 6529 run generate:openapi`
-- This will generate response models to `src/api-serverless/src/generated/models`, but only response models and POST/DELETE request bodies, not routes and query param models.
-- Routes themselves are manually created into `api-serverless` into files ending with `.routes.ts` and are wired in `app.ts` file.
-- Generated API models are used in those routes. For query param based requests, types are created manually.
+- `generate:openapi` runs `restructure-openapi` and then `generate`. The latter
+  refreshes models under `src/api-serverless/src/generated/models` and generated
+  route wiring plus operation types under
+  `src/api-serverless/src/generated/routes`.
+- Prefer `x-6529-router` generated routes for new endpoints. Manual `.routes.ts`
+  files are legacy/escape-hatch wiring for route shapes the generator does not
+  support.
+- Generated API models and operation types must be used by generated handlers.
 
 ### Imports and path aliases
 
@@ -450,8 +456,14 @@ Use path aliases for **new** imports where applicable. Do not change existing im
 All API request/response types must be defined via OpenAPI and the generated models. Do not hand-roll response types for API endpoints unless explicitly asked not to.
 
 1. **Define in OpenAPI**: Add the endpoint and its request/response schemas in `src/api-serverless/openapi.yaml` (paths and `components/schemas`).
-2. **Generate**: From `src/api-serverless` run `6529 run generate:openapi`. This creates/updates types under `src/api-serverless/src/generated/models/`.
-3. **Use in routes**: Import from `@/api/generated/models/...` (or `../generated/models/...`) and use the generated classes for responses (and for POST/PUT bodies where applicable). Map your DB/service output to the generated model shape (e.g. snake_case properties) before returning.
+2. **Generate**: From `src/api-serverless` run `6529 run generate:openapi`.
+   This runs `restructure-openapi` and `generate`, refreshing models under
+   `src/api-serverless/src/generated/models/` and generated routes plus
+   operation types under `src/api-serverless/src/generated/routes/`.
+3. **Use generated types**: Import models from `@/api/generated/models/...` and
+   operation request/query/path/body/response types from
+   `@/api/generated/routes/operations`. Map DB/service output to the generated
+   model shape (for example, snake_case properties) before returning.
 
 # Database schema and migrations
 

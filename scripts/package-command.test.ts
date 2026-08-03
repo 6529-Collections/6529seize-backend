@@ -80,6 +80,17 @@ printf 'arg=%s\\n' "$@"
     };
   }
 
+  function createPackageManagerFixture(manifest: object): void {
+    const directory = mkdtempSync(
+      path.join(repoRoot, 'package-manager-fixture-')
+    );
+    temporaryDirectories.push(directory);
+    writeFileSync(
+      path.join(directory, 'package.json'),
+      `${JSON.stringify(manifest, null, 2)}\n`
+    );
+  }
+
   it.each([
     ['npm', ['ci'], '6529 ci'],
     ['npm', ['run', 'build'], '6529 run build'],
@@ -264,5 +275,40 @@ printf 'arg=%s\\n' "$@"
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('58 package.json files');
     expect(result.stdout).toContain('guarded by 6529');
+  });
+
+  it('rejects a package manifest whose scripts omit preinstall', () => {
+    createPackageManagerFixture({
+      name: 'missing-preinstall-fixture',
+      packageManager: 'npm@10.9.8',
+      scripts: {}
+    });
+
+    const result = run(process.execPath, [
+      path.join(repoRoot, 'scripts', 'check-package-manager.mjs')
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Unguarded: preinstall');
+  });
+
+  it('rejects nested package-manager commands that bypass 6529', () => {
+    const guard = 'node ../scripts/require-6529-command.cjs';
+    createPackageManagerFixture({
+      name: 'direct-package-manager-fixture',
+      packageManager: 'npm@10.9.8',
+      scripts: {
+        preinstall: guard,
+        build: `${guard} && npm ci`
+      }
+    });
+
+    const result = run(process.execPath, [
+      path.join(repoRoot, 'scripts', 'check-package-manager.mjs')
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Direct package-manager commands: build');
+    expect(result.stderr).toContain('../bin/6529');
   });
 });

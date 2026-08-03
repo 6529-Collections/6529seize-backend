@@ -21,11 +21,13 @@ Use this workflow for API contract, route, handler, and generated-model changes.
        import: "@/api/some-feature/get-something.handler"
        name: handleGetSomething
    ```
-4. After editing OpenAPI, run both commands from `src/api-serverless`:
+4. After editing OpenAPI, run the composite generator from `src/api-serverless`:
    ```bash
    6529 run generate:openapi
    ```
-   `6529 run generate:openapi` runs both generation stages.
+   `6529 run generate:openapi` runs `restructure-openapi` and then `generate`.
+   The `generate` stage refreshes models plus generated routes and operation
+   types under `src/api-serverless/src/generated`.
 5. Treat `src/api-serverless/src/generated` as generated-only; never edit it manually.
 6. Implement handler/service logic after generated types exist, then verify the contract matches OpenAPI.
 
