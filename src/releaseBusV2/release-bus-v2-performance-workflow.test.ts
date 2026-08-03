@@ -2182,7 +2182,8 @@ exit 1
       const packageJson = JSON.parse(read(`src/${unit}/package.json`)) as {
         scripts?: Record<string, string>;
       };
-      expect(packageJson.scripts?.build).toContain('npm ci ');
+      expect(packageJson.scripts?.build).toContain('../../bin/6529 ci ');
+      expect(packageJson.scripts?.build).not.toContain('npm ci ');
       expect(packageJson.scripts?.build).not.toContain('npm i ');
     }
     expect(

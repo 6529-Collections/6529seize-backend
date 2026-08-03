@@ -354,6 +354,10 @@ const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
     trustedGatePolicyPathRollout(
       'a34aa7dcd99197c76cba0868e280f8941a364124',
       'bf173c6d90fbfac1671cf6e22c6d6a032d2b97f6'
+    ),
+    trustedGatePolicyPathRollout(
+      'a34aa7dcd99197c76cba0868e280f8941a364124',
+      'db7cc3cc15c3c766aa26f944192124b874fd5810'
     )
   ],
   'scripts/generate-deploy-config.mjs': [
@@ -378,6 +382,10 @@ const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
     trustedGatePolicyPathRollout(
       '992a0cecbef0316786ab1b22de102901855505fd',
       '9c4f650863c0a53250548fa3e02d97a547e0e87f'
+    ),
+    trustedGatePolicyPathRollout(
+      '992a0cecbef0316786ab1b22de102901855505fd',
+      '0ba2ad1b8b8ed24ddf8ff80b891749728f7600f6'
     )
   ]
 };
@@ -724,6 +732,10 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     trustedGatePolicyBundleRollout(
       '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f',
       'ed8e0bd5f1f34433b2b262a7ae3cc3be7c8d05625b901d90eabf745abbea44d7'
+    ),
+    trustedGatePolicyBundleRollout(
+      '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f',
+      '2a79efe36915440f8bc7f4844a354a8cb28e01a2c415f2009af1b3e343215219'
     )
   ],
   frontend: [
