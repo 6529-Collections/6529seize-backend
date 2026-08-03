@@ -12,6 +12,7 @@ import { env } from '@/env';
 import { identitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { PROFILE_HANDLE_REGEX } from '@/constants';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 
@@ -19,8 +20,6 @@ const logger = Logger.get('SUBSCRIPTION_WAVE_NOTIFIER');
 
 const SUBSCRIPTIONS_WAVE_ID_ENV = 'SUBSCRIPTIONS_WAVE_ID';
 const SUBSCRIPTIONS_BOT_PROFILE_ID_ENV = 'SUBSCRIPTIONS_BOT_PROFILE_ID';
-const SUBSCRIPTIONS_ADMIN_HANDLES_ENV = 'SUBSCRIPTIONS_ADMIN_HANDLES';
-
 function sanitizeMentionHandle(handle: string): string {
   const trimmed = handle.trim();
   const bracketMention = /^@?\[([^\]]+)]$/.exec(trimmed);
@@ -44,23 +43,8 @@ function normalizeMentionHandles(handles: string[]): string[] {
   return normalizedHandles;
 }
 
-export function getSubscriptionAdminHandles(): string[] {
-  const rawHandles = env.getStringOrNull(SUBSCRIPTIONS_ADMIN_HANDLES_ENV);
-  if (!rawHandles) {
-    return [];
-  }
-  return normalizeMentionHandles(rawHandles.split(/[;,]/));
-}
-
-function buildMentionLine(handles: string[]): string {
-  return handles.map((handle) => `@[${handle}]`).join(' ');
-}
-
-function withMentions(message: string, handles: string[]): string {
-  if (!handles.length) {
-    return message;
-  }
-  return `${message}\n\n${buildMentionLine(handles)}`;
+function withDeveloperMention(message: string): string {
+  return `${message}\n\n${DEVS_6529_MENTION}`;
 }
 
 function buildSubscriptionsUrl(seizeDomain: string, wallet: string): string {
@@ -104,13 +88,11 @@ export function buildDailySubscriptionsWaveMessage({
 }
 
 export function buildProcessedTopUpWaveMessage({
-  hash,
-  adminHandles
+  hash
 }: {
   hash: string;
-  adminHandles: string[];
 }): string {
-  return withMentions(`⚠️ Top up ${hash} already processed`, adminHandles);
+  return withDeveloperMention(`⚠️ Top up ${hash} already processed`);
 }
 
 export function buildSubscriptionTopUpWaveMessage({
@@ -143,64 +125,55 @@ export function buildSubscriptionTopUpWaveMessage({
 
 export function buildNoSubscriptionFoundWaveMessage({
   airdropAddress,
-  transactionLink,
-  adminHandles
+  transactionLink
 }: {
   airdropAddress: string;
   transactionLink: string;
-  adminHandles: string[];
 }): string {
-  return withMentions(
+  return withDeveloperMention(
     [
       '🚨 No subscription found for airdrop address:',
       '',
       airdropAddress,
       '',
       buildTransactionLine(transactionLink)
-    ].join('\n'),
-    adminHandles
+    ].join('\n')
   );
 }
 
 export function buildNoBalanceFoundWaveMessage({
   consolidationKey,
-  transactionLink,
-  adminHandles
+  transactionLink
 }: {
   consolidationKey: string;
   transactionLink: string;
-  adminHandles: string[];
 }): string {
-  return withMentions(
+  return withDeveloperMention(
     [
       '🚨 No balance found for consolidation key:',
       '',
       consolidationKey,
       '',
       buildTransactionLine(transactionLink)
-    ].join('\n'),
-    adminHandles
+    ].join('\n')
   );
 }
 
 export function buildInsufficientBalanceWaveMessage({
   consolidationKey,
-  transactionLink,
-  adminHandles
+  transactionLink
 }: {
   consolidationKey: string;
   transactionLink: string;
-  adminHandles: string[];
 }): string {
-  return withMentions(
+  return withDeveloperMention(
     [
       '🚨 Insufficient balance for consolidation key:',
       '',
       consolidationKey,
       '',
       buildTransactionLine(transactionLink)
-    ].join('\n'),
-    adminHandles
+    ].join('\n')
   );
 }
 
@@ -258,6 +231,9 @@ async function postSubscriptionWaveDropBestEffort({
               }
             ],
             referenced_nfts: [],
+            // CreateOrUpdateDropUseCase derives global group metadata and
+            // recipients from part content. This list is only for dynamic
+            // person-specific mentions such as the top-up profile.
             mentioned_users: normalizedMentionedUsers.map((handle) => ({
               handle
             })),
@@ -323,10 +299,8 @@ export async function sendDailySubscriptionsWaveUpdate(params: {
 export async function sendProcessedTopUpWaveWarning(
   hash: string
 ): Promise<void> {
-  const adminHandles = getSubscriptionAdminHandles();
   await postSubscriptionWaveDropBestEffort({
-    message: buildProcessedTopUpWaveMessage({ hash, adminHandles }),
-    mentionedUsers: adminHandles
+    message: buildProcessedTopUpWaveMessage({ hash })
   });
 }
 
@@ -358,14 +332,11 @@ export async function sendNoSubscriptionFoundWaveWarning({
   airdropAddress: string;
   transactionLink: string;
 }): Promise<void> {
-  const adminHandles = getSubscriptionAdminHandles();
   await postSubscriptionWaveDropBestEffort({
     message: buildNoSubscriptionFoundWaveMessage({
       airdropAddress,
-      transactionLink,
-      adminHandles
-    }),
-    mentionedUsers: adminHandles
+      transactionLink
+    })
   });
 }
 
@@ -376,14 +347,11 @@ export async function sendNoBalanceFoundWaveError({
   consolidationKey: string;
   transactionLink: string;
 }): Promise<void> {
-  const adminHandles = getSubscriptionAdminHandles();
   await postSubscriptionWaveDropBestEffort({
     message: buildNoBalanceFoundWaveMessage({
       consolidationKey,
-      transactionLink,
-      adminHandles
-    }),
-    mentionedUsers: adminHandles
+      transactionLink
+    })
   });
 }
 
@@ -394,13 +362,10 @@ export async function sendInsufficientBalanceWaveError({
   consolidationKey: string;
   transactionLink: string;
 }): Promise<void> {
-  const adminHandles = getSubscriptionAdminHandles();
   await postSubscriptionWaveDropBestEffort({
     message: buildInsufficientBalanceWaveMessage({
       consolidationKey,
-      transactionLink,
-      adminHandles
-    }),
-    mentionedUsers: adminHandles
+      transactionLink
+    })
   });
 }

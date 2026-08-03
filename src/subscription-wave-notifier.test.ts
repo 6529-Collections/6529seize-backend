@@ -29,8 +29,8 @@ import {
   buildNoSubscriptionFoundWaveMessage,
   buildProcessedTopUpWaveMessage,
   buildSubscriptionTopUpWaveMessage,
-  getSubscriptionAdminHandles,
   sendDailySubscriptionsWaveUpdate,
+  sendProcessedTopUpWaveWarning,
   sendSubscriptionTopUpWaveUpdate
 } from './subscription-wave-notifier';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
@@ -46,7 +46,6 @@ import { setSqlExecutor } from '@/sql-executor';
 
 describe('subscription wave notifier message formatting', () => {
   const originalEnv = {
-    SUBSCRIPTIONS_ADMIN_HANDLES: process.env.SUBSCRIPTIONS_ADMIN_HANDLES,
     SUBSCRIPTIONS_WAVE_ID: process.env.SUBSCRIPTIONS_WAVE_ID,
     SUBSCRIPTIONS_BOT_PROFILE_ID: process.env.SUBSCRIPTIONS_BOT_PROFILE_ID
   };
@@ -62,7 +61,6 @@ describe('subscription wave notifier message formatting', () => {
   });
 
   afterEach(() => {
-    restoreEnv('SUBSCRIPTIONS_ADMIN_HANDLES', originalEnv);
     restoreEnv('SUBSCRIPTIONS_WAVE_ID', originalEnv);
     restoreEnv('SUBSCRIPTIONS_BOT_PROFILE_ID', originalEnv);
   });
@@ -83,24 +81,12 @@ describe('subscription wave notifier message formatting', () => {
     );
   });
 
-  it('parses optional admin handles from comma or semicolon separated env', () => {
-    process.env.SUBSCRIPTIONS_ADMIN_HANDLES =
-      ' @[admin1] ; @admin2, admin3 ,, @admin1, bad-handle, xx ';
-
-    expect(getSubscriptionAdminHandles()).toEqual([
-      'admin1',
-      'admin2',
-      'admin3'
-    ]);
-  });
-
-  it('adds admin mentions to already processed top-up warnings', () => {
+  it('adds the global developer mention to already processed top-up warnings', () => {
     expect(
       buildProcessedTopUpWaveMessage({
-        hash: '0xabc',
-        adminHandles: ['admin1', 'admin2']
+        hash: '0xabc'
       })
-    ).toBe('⚠️ Top up 0xabc already processed\n\n@[admin1] @[admin2]');
+    ).toBe('⚠️ Top up 0xabc already processed\n\n@devs6529');
   });
 
   it('builds normal top-up posts with an optional profile mention', () => {
@@ -125,15 +111,13 @@ describe('subscription wave notifier message formatting', () => {
     );
   });
 
-  it('builds admin-tagged redemption issue posts', () => {
-    const adminHandles = ['admin1', 'admin2'];
+  it('builds developer-tagged redemption issue posts', () => {
     const transactionLink = 'https://etherscan.io/tx/0xabc';
 
     expect(
       buildNoSubscriptionFoundWaveMessage({
         airdropAddress: '0xairdrop',
-        transactionLink,
-        adminHandles
+        transactionLink
       })
     ).toBe(
       [
@@ -143,14 +127,13 @@ describe('subscription wave notifier message formatting', () => {
         '',
         `Transaction: [Etherscan](${transactionLink})`,
         '',
-        '@[admin1] @[admin2]'
+        '@devs6529'
       ].join('\n')
     );
     expect(
       buildNoBalanceFoundWaveMessage({
         consolidationKey: '0xkey',
-        transactionLink,
-        adminHandles
+        transactionLink
       })
     ).toBe(
       [
@@ -160,14 +143,13 @@ describe('subscription wave notifier message formatting', () => {
         '',
         `Transaction: [Etherscan](${transactionLink})`,
         '',
-        '@[admin1] @[admin2]'
+        '@devs6529'
       ].join('\n')
     );
     expect(
       buildInsufficientBalanceWaveMessage({
         consolidationKey: '0xkey',
-        transactionLink,
-        adminHandles
+        transactionLink
       })
     ).toBe(
       [
@@ -177,7 +159,7 @@ describe('subscription wave notifier message formatting', () => {
         '',
         `Transaction: [Etherscan](${transactionLink})`,
         '',
-        '@[admin1] @[admin2]'
+        '@devs6529'
       ].join('\n')
     );
   });
@@ -250,6 +232,28 @@ describe('subscription wave notifier message formatting', () => {
       { connection: { connection: 'connection' } }
     );
     expect(sendIdentityPushNotifications).toHaveBeenCalledWith([1, 2]);
+  });
+
+  it('posts developer alerts as a global mention without individual mentioned users', async () => {
+    process.env.SUBSCRIPTIONS_WAVE_ID = 'wave-1';
+    process.env.SUBSCRIPTIONS_BOT_PROFILE_ID = 'profile-1';
+    (identitiesDb.getIdentityByProfileId as jest.Mock).mockResolvedValue({
+      handle: 'subbot',
+      primary_address: '0xbot'
+    });
+    (createOrUpdateDrop.execute as jest.Mock).mockResolvedValue({
+      drop_id: 'drop-1',
+      pending_push_notification_ids: []
+    });
+
+    await sendProcessedTopUpWaveWarning('0xabc');
+
+    const dropModel = (createOrUpdateDrop.execute as jest.Mock).mock
+      .calls[0][0];
+    expect(dropModel.parts[0].content).toBe(
+      '⚠️ Top up 0xabc already processed\n\n@devs6529'
+    );
+    expect(dropModel.mentioned_users).toEqual([]);
   });
 
   it('skips posting when the bot profile cannot supply an author identity', async () => {

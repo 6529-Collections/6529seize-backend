@@ -19,6 +19,7 @@ import {
   isGithubContributorLogin
 } from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
 
@@ -68,7 +69,6 @@ interface MentionedProfile {
 
 interface AlertMentions {
   readonly triggeredBy: MentionedProfile | null;
-  readonly failureCc: MentionedProfile[];
   readonly all: MentionedProfile[];
 }
 
@@ -142,33 +142,6 @@ function normalizeReleaseNoteGroup(
     pullRequestNumber,
     publishReleaseNote: group.publish_release_note
   };
-}
-
-export function parseProfileHandles(value: string | null): string[] {
-  if (!value) {
-    return [];
-  }
-  const seenNormalizedHandles = new Set<string>();
-  return value
-    .split(',')
-    .map((handle) => normalizeConfiguredHandle(handle))
-    .filter((handle) => {
-      const normalizedHandle = handle.toLowerCase();
-      if (!handle || seenNormalizedHandles.has(normalizedHandle)) {
-        return false;
-      }
-      seenNormalizedHandles.add(normalizedHandle);
-      return true;
-    });
-}
-
-export function normalizeConfiguredHandle(value: string): string {
-  const trimmed = value.trim();
-  const bracketMention = /^@\[([^\]]+)\]$/.exec(trimmed);
-  if (bracketMention) {
-    return bracketMention[1].trim();
-  }
-  return trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
 }
 
 export function normalizeTargetEnvironment(value: string | null | undefined) {
@@ -472,25 +445,10 @@ export class CiPipelineAlertService {
       );
     }
 
-    const failureHandles =
-      request.status === 'failure'
-        ? parseProfileHandles(
-            env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES')
-          )
-        : [];
-    const handlesToResolve = [
-      ...(triggeredByHandle ? [triggeredByHandle] : []),
-      ...failureHandles
-    ].filter(
-      (handle, index, handles) =>
-        handles.findIndex(
-          (candidate) => candidate.toLowerCase() === handle.toLowerCase()
-        ) === index
-    );
+    const handlesToResolve = triggeredByHandle ? [triggeredByHandle] : [];
     if (!handlesToResolve.length) {
       return {
         triggeredBy: null,
-        failureCc: [],
         all: []
       };
     }
@@ -516,26 +474,10 @@ export class CiPipelineAlertService {
       );
     }
 
-    const missingHandles = failureHandles.filter(
-      (handle) => !mentionsByNormalizedHandle.has(handle.toLowerCase())
-    );
-    if (missingHandles.length) {
-      this.logger.warn(
-        `Skipping CI pipeline alert mentions with missing profiles: ${missingHandles.join(', ')}`
-      );
-    }
-    const failureCc = failureHandles
-      .map((handle) => mentionsByNormalizedHandle.get(handle.toLowerCase()))
-      .filter((mention): mention is MentionedProfile => !!mention);
-    // Profile IDs collapse handle aliases while preserving initiator-first order.
-    const all = [...(triggeredBy ? [triggeredBy] : []), ...failureCc].filter(
-      (mention, index, mentions) =>
-        mentions.findIndex(
-          (candidate) => candidate.profileId === mention.profileId
-        ) === index
-    );
-
-    return { triggeredBy, failureCc, all };
+    return {
+      triggeredBy,
+      all: triggeredBy ? [triggeredBy] : []
+    };
   }
 
   private resolveWaveId(request: CiPipelineAlertRequest): string {
@@ -575,6 +517,8 @@ export class CiPipelineAlertService {
         mentioned_profile_id: mention.profileId,
         handle_in_content: mention.handle
       })),
+      // CreateOrUpdateDropUseCase derives global group metadata and recipients
+      // from part content; mentioned_users remains for initiator attribution.
       mentioned_groups: [],
       referenced_nfts: [],
       metadata: [],
@@ -588,12 +532,8 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     mentions: AlertMentions
   ): string {
-    const failureMentionHandles = mentions.failureCc
-      .map((mention) => '@[' + mention.handle + ']')
-      .join(' ');
-    const failureMentionLines = failureMentionHandles
-      ? ['', `cc ${failureMentionHandles}`]
-      : [];
+    const failureMentionLines =
+      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
