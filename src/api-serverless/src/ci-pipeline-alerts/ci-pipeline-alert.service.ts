@@ -516,6 +516,8 @@ export class CiPipelineAlertService {
         mentioned_profile_id: mention.profileId,
         handle_in_content: mention.handle
       })),
+      // CreateOrUpdateDropUseCase derives global group metadata and recipients
+      // from part content; mentioned_users remains for initiator attribution.
       mentioned_groups: [],
       referenced_nfts: [],
       metadata: [],

@@ -232,6 +232,9 @@ async function postSubscriptionWaveDropBestEffort({
               }
             ],
             referenced_nfts: [],
+            // CreateOrUpdateDropUseCase derives global group metadata and
+            // recipients from part content. This list is only for dynamic
+            // person-specific mentions such as the top-up profile.
             mentioned_users: normalizedMentionedUsers.map((handle) => ({
               handle
             })),

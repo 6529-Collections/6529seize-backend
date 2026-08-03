@@ -11,6 +11,8 @@ jest.mock('@/identities/identities.db', () => ({
 }));
 
 import fc from 'fast-check';
+import { normalizeDropGroupMentions } from '@/drops/create-or-update-drop.use-case';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import {
   CiPipelineAlertService,
   formatMarkdownLink,
@@ -200,6 +202,11 @@ describe('CiPipelineAlertService', () => {
         })
       })
     );
+    const createDropRequest =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(
+      normalizeDropGroupMentions({ parts: createDropRequest.parts })
+    ).toEqual([DropGroupMention.DEVS_6529]);
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
   });
 

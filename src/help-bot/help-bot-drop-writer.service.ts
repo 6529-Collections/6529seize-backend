@@ -65,6 +65,8 @@ export class HelpBotDropWriterService {
         }
       ],
       referenced_nfts: [],
+      // CreateOrUpdateDropUseCase derives @devs6529 group metadata and
+      // recipients from part content, so no individual mention is needed.
       mentioned_users: [],
       mentioned_waves: [],
       metadata: [
