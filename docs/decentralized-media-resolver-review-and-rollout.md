@@ -240,8 +240,8 @@ Backend verification completed:
 - Focused no-Docker Jest run passed.
 - Root TypeScript check passed.
 - ESLint equivalent passed in this Windows environment.
-- Standard `npm test` is blocked locally by Docker credential helper setup for Testcontainers.
-- Standard `npm run lint` has a PowerShell environment assignment issue locally; equivalent ESLint command was used.
+- Standard `6529 run test` is blocked locally by Docker credential helper setup for Testcontainers.
+- Standard `6529 run lint` has a PowerShell environment assignment issue locally; equivalent ESLint command was used.
 
 Frontend verification completed:
 
@@ -403,4 +403,3 @@ Remaining direct gateway references should be either:
 2. Frontend PR: consume central FE resolver and contract files.
 
 The frontend PR should not be deployed before the backend API and `media.6529.io` infrastructure are verified.
-

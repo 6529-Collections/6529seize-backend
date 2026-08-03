@@ -22,10 +22,26 @@ const SKIPPED_DIRECTORIES = new Set([
   'build',
   'coverage'
 ]);
+const REQUIRED_COMMAND_FILES = [
+  'bin/6529',
+  'bin/bun',
+  'bin/corepack',
+  'bin/npm',
+  'bin/npx',
+  'bin/pnpm',
+  'bin/yarn',
+  'scripts/bootstrap-6529-command.sh',
+  'scripts/require-6529-command.cjs'
+];
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
+);
+const commandGuardPath = path.join(
+  repoRoot,
+  'scripts',
+  'require-6529-command.cjs'
 );
 const fix = process.argv.includes('--fix');
 
@@ -35,6 +51,17 @@ const strayLockfiles = [];
 collectFiles(repoRoot);
 
 const errors = [];
+
+for (const file of REQUIRED_COMMAND_FILES) {
+  const absolutePath = path.join(repoRoot, file);
+  if (!fs.existsSync(absolutePath)) {
+    errors.push(`${file}: required 6529 command file is missing`);
+    continue;
+  }
+  if ((fs.statSync(absolutePath).mode & 0o111) === 0) {
+    errors.push(`${file}: required 6529 command file is not executable`);
+  }
+}
 
 for (const file of strayLockfiles) {
   errors.push(
@@ -52,19 +79,82 @@ for (const file of packageJsonFiles) {
     errors.push(`${file}: not valid JSON`);
     continue;
   }
-  if (manifest.packageManager === PINNED_PACKAGE_MANAGER) {
+  const expectedPreinstall = getExpectedPreinstall(absolutePath);
+  const hasPinnedPackageManager =
+    manifest.packageManager === PINNED_PACKAGE_MANAGER;
+  const unguardedScripts = getUnguardedScripts(
+    manifest.scripts,
+    expectedPreinstall
+  );
+  const hasCommandGuard = unguardedScripts.length === 0;
+
+  if (fix && (!hasPinnedPackageManager || !hasCommandGuard)) {
+    manifest.packageManager = PINNED_PACKAGE_MANAGER;
+    manifest.scripts = guardScripts(manifest.scripts, expectedPreinstall);
+    const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+    fs.writeFileSync(
+      absolutePath,
+      `${JSON.stringify(manifest, null, 2).replaceAll('\n', eol)}${eol}`
+    );
+    console.log(`fixed: ${file}`);
     continue;
   }
-  if (fix) {
-    fs.writeFileSync(absolutePath, setPackageManager(raw));
-    console.log(`fixed: ${file}`);
-  } else {
+
+  if (!hasPinnedPackageManager) {
     errors.push(
       `${file}: "packageManager" must be "${PINNED_PACKAGE_MANAGER}" (found ${JSON.stringify(
         manifest.packageManager ?? null
-      )}). Run: node scripts/check-package-manager.mjs --fix`
+      )}). From the repository root, run: 6529 run package-manager:fix`
     );
   }
+  if (!hasCommandGuard) {
+    errors.push(
+      `${file}: every package script must start with ${JSON.stringify(
+        `${expectedPreinstall} && `
+      )}; preinstall must equal ${JSON.stringify(
+        expectedPreinstall
+      )}. Unguarded: ${unguardedScripts.join(
+        ', '
+      )}. From the repository root, run: 6529 run package-manager:fix`
+    );
+  }
+}
+
+function getExpectedPreinstall(packageJsonPath) {
+  const relativeGuardPath = path
+    .relative(path.dirname(packageJsonPath), commandGuardPath)
+    .replaceAll(path.sep, '/');
+  return `node ${relativeGuardPath}`;
+}
+
+function getUnguardedScripts(scripts, expectedGuard) {
+  if (!scripts || typeof scripts !== 'object') {
+    return ['<missing scripts>'];
+  }
+  const guardPrefix = `${expectedGuard} && `;
+  return Object.entries(scripts)
+    .filter(([name, command]) =>
+      name === 'preinstall'
+        ? command !== expectedGuard
+        : typeof command !== 'string' || !command.startsWith(guardPrefix)
+    )
+    .map(([name]) => name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function guardScripts(scripts, expectedGuard) {
+  const guardedScripts = { preinstall: expectedGuard };
+  const guardPrefix = `${expectedGuard} && `;
+  for (const [name, command] of Object.entries(scripts ?? {})) {
+    if (name === 'preinstall') {
+      continue;
+    }
+    guardedScripts[name] =
+      typeof command === 'string' && command.startsWith(guardPrefix)
+        ? command
+        : `${guardPrefix}${command}`;
+  }
+  return guardedScripts;
 }
 
 function collectFiles(directory) {
@@ -134,27 +224,6 @@ function isGitignored(relativePath, isDirectory) {
   );
 }
 
-function setPackageManager(raw) {
-  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
-  const existingKey = /"packageManager"\s*:\s*"[^"]*"/;
-  if (existingKey.test(raw)) {
-    return raw.replace(
-      existingKey,
-      `"packageManager": "${PINNED_PACKAGE_MANAGER}"`
-    );
-  }
-  const indentMatch = raw.match(/^([ \t]+)"/m);
-  const indent = indentMatch ? indentMatch[1] : '  ';
-  const closingIndex = raw.lastIndexOf('}');
-  const head = raw.slice(0, closingIndex).replace(/\s*$/, '');
-  const needsComma = !head.endsWith('{');
-  return (
-    head +
-    `${needsComma ? ',' : ''}${eol}${indent}"packageManager": "${PINNED_PACKAGE_MANAGER}"${eol}` +
-    raw.slice(closingIndex)
-  );
-}
-
 if (errors.length > 0) {
   console.error(
     `Package manager check failed (${errors.length} problem${
@@ -168,5 +237,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-  `Package manager check passed: ${packageJsonFiles.length} package.json files pinned to ${PINNED_PACKAGE_MANAGER}, no stray lockfiles.`
+  `Package manager check passed: ${packageJsonFiles.length} package.json files pinned to ${PINNED_PACKAGE_MANAGER}, with every package script guarded by 6529 and no stray lockfiles.`
 );

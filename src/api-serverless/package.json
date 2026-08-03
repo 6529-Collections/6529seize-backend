@@ -4,14 +4,15 @@
   "description": "Serverless aws-nodejs-typescript template",
   "main": "serverless.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "NODE_ENV=local nodemon",
-    "restructure-openapi": "ts-node restructure-openapi.ts",
-    "generate": "rm -rf dist && rm -rf tmp_gen_outp && node ./node_modules/@openapitools/openapi-generator-cli/main generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && node -e \"const fs=require('fs'); const p='src/generated/models/all.ts'; if (fs.existsSync(p)) fs.unlinkSync(p);\" && ts-node generate-openapi-routes.ts",
-    "generate:openapi": "npm run restructure-openapi && npm run generate",
-    "prebuild": "npm run generate",
-    "build": "node esbuild.config.mjs && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
-    "postbuild": "cd dist && zip -r index.zip *"
+    "preinstall": "node ../../scripts/require-6529-command.cjs",
+    "test": "node ../../scripts/require-6529-command.cjs && echo \"Error: no test specified\" && exit 1",
+    "dev": "node ../../scripts/require-6529-command.cjs && NODE_ENV=local nodemon",
+    "restructure-openapi": "node ../../scripts/require-6529-command.cjs && ts-node restructure-openapi.ts",
+    "generate": "node ../../scripts/require-6529-command.cjs && rm -rf dist && rm -rf tmp_gen_outp && node ./node_modules/@openapitools/openapi-generator-cli/main generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && node -e \"const fs=require('fs'); const p='src/generated/models/all.ts'; if (fs.existsSync(p)) fs.unlinkSync(p);\" && ts-node generate-openapi-routes.ts",
+    "generate:openapi": "node ../../scripts/require-6529-command.cjs && npm run restructure-openapi && npm run generate",
+    "prebuild": "node ../../scripts/require-6529-command.cjs && npm run generate",
+    "build": "node ../../scripts/require-6529-command.cjs && node esbuild.config.mjs && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
+    "postbuild": "node ../../scripts/require-6529-command.cjs && cd dist && zip -r index.zip *"
   },
   "dependencies": {
     "@aws-sdk/client-managedblockchain": "^3.980.0",

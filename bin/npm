@@ -2,10 +2,76 @@
 
 set -euo pipefail
 
-if ! command -v corepack >/dev/null 2>&1; then
-  echo "corepack is required to run the npm version pinned by package.json." >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${SEIZE_6529_COMMAND:-0}" != "1" ]]; then
+  echo "Direct npm usage is blocked in this repository." >&2
+  case "${1:-}" in
+    ci)
+      echo "Use \`6529 ci\` from the package directory." >&2
+      ;;
+    i|install)
+      echo "Use \`6529 ci\` for a frozen install." >&2
+      echo "Use \`6529 add <package>\` to change dependencies intentionally." >&2
+      ;;
+    run)
+      echo "Use \`6529 run ${2:-<script>}\` from the package directory." >&2
+      ;;
+    test|start|stop|restart)
+      echo "Use \`6529 run ${1}\` from the package directory." >&2
+      ;;
+    exec)
+      binary="${2:-<binary>}"
+      if [[ "$binary" == "--" ]]; then
+        binary="${3:-<binary>}"
+      fi
+      echo "Use \`6529 exec $binary\` from the package directory." >&2
+      ;;
+    audit)
+      if [[ "${2:-}" == "fix" ]]; then
+        echo "Use \`6529 audit:fix\`." >&2
+      else
+        echo "Use \`6529 audit\`." >&2
+      fi
+      ;;
+    uninstall|remove|rm)
+      echo "Use \`6529 remove <package>\`." >&2
+      ;;
+    update)
+      echo "Use \`6529 update [package]\`." >&2
+      ;;
+    view)
+      echo "Use \`6529 view ${2:-<package>}\`." >&2
+      ;;
+    ls|list)
+      echo "Use \`6529 ls\`." >&2
+      ;;
+    *)
+      echo "Use the \`6529\` wrapper instead." >&2
+      echo "Examples:" >&2
+      echo "  6529 ci" >&2
+      echo "  6529 run build" >&2
+      echo "  6529 audit" >&2
+      ;;
+  esac
+  echo "If \`6529\` is unavailable, run \`./bin/6529 bootstrap\` from the repository root." >&2
+  exit 1
+fi
+
+clean_path=""
+IFS=':' read -r -a path_parts <<< "${PATH:-}"
+for part in "${path_parts[@]}"; do
+  if [[ -z "$part" || "$part" == "$SCRIPT_DIR" ]]; then
+    continue
+  fi
+  clean_path="${clean_path:+${clean_path}:}${part}"
+done
+
+REAL_COREPACK="$(PATH="$clean_path" command -v corepack 2>/dev/null || true)"
+if [[ -z "$REAL_COREPACK" ]]; then
+  echo "Corepack is required to run the npm version pinned by package.json." >&2
   exit 1
 fi
 
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-exec corepack npm "$@"
+exec "$REAL_COREPACK" npm "$@"

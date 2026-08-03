@@ -4,8 +4,10 @@ import path from 'node:path';
 
 const root = process.cwd();
 const LEGACY_BACKEND_WORKFLOW_BLOB = '0cc8865dbb869b5156b46cc45e8581b259052916';
-const PRODUCER_BACKEND_WORKFLOW_BLOB =
+const PREVIOUS_BACKEND_WORKFLOW_BLOB =
   'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40';
+const PRODUCER_BACKEND_WORKFLOW_BLOB =
+  '926a915a4b9c62b76f169de4e4b6b6eaa4196d35';
 const LEGACY_FRONTEND_WORKFLOW_BLOB =
   'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c';
 const PREVIOUS_FRONTEND_WORKFLOW_BLOB =
@@ -16,8 +18,10 @@ const BRIDGE_POLICY_DIGEST =
   '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143';
 const PREVIOUS_PRODUCER_POLICY_DIGEST =
   '9964af459f06d3d79d02157f2bd69200448a2722728a7d81cd360dd17b5a6a87';
-const PRODUCER_POLICY_DIGEST =
+const INTERMEDIATE_PRODUCER_POLICY_DIGEST =
   '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f';
+const PRODUCER_POLICY_DIGEST =
+  'ed8e0bd5f1f34433b2b262a7ae3cc3be7c8d05625b901d90eabf745abbea44d7';
 const FRONTEND_BRIDGE_POLICY_DIGEST =
   '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8';
 const FRONTEND_PRODUCER_POLICY_DIGEST =
@@ -37,6 +41,7 @@ describe('Release Bus PR CI producer bridge', () => {
   it('preauthorizes only the frozen backend and frontend producer workflows', () => {
     for (const expected of [
       LEGACY_BACKEND_WORKFLOW_BLOB,
+      PREVIOUS_BACKEND_WORKFLOW_BLOB,
       PRODUCER_BACKEND_WORKFLOW_BLOB,
       LEGACY_FRONTEND_WORKFLOW_BLOB,
       PREVIOUS_FRONTEND_WORKFLOW_BLOB,
@@ -49,6 +54,7 @@ describe('Release Bus PR CI producer bridge', () => {
     for (const expected of [
       BRIDGE_POLICY_DIGEST,
       PREVIOUS_PRODUCER_POLICY_DIGEST,
+      INTERMEDIATE_PRODUCER_POLICY_DIGEST,
       PRODUCER_POLICY_DIGEST,
       FRONTEND_BRIDGE_POLICY_DIGEST,
       FRONTEND_PRODUCER_POLICY_DIGEST
@@ -65,9 +71,18 @@ describe('Release Bus PR CI producer bridge', () => {
     };
     if (workflowBlob === LEGACY_BACKEND_WORKFLOW_BLOB) {
       const modernOnly = new Set([
+        'bin/6529',
+        'bin/bun',
+        'bin/corepack',
+        'bin/npm',
+        'bin/npx',
+        'bin/pnpm',
+        'bin/yarn',
+        'scripts/bootstrap-6529-command.sh',
         'scripts/pr-ci-policy-bundle.cjs',
         'scripts/release-bus-backend-package-strategies.mjs',
         'scripts/release-bus-package-backend.mjs',
+        'scripts/require-6529-command.cjs',
         'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts'
       ]);
       expect(

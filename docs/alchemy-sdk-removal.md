@@ -215,8 +215,8 @@ validation.
 
 ## Verification checklist for reviewers
 
-1. `npm run build` at root and under `src/api-serverless` completes cleanly.
-2. `npm test` — `src/alchemy-sdk.test.ts` covers the wrapper.
+1. `6529 run build` at root and under `src/api-serverless` completes cleanly.
+2. `6529 run test -- src/alchemy-sdk.test.ts` covers the wrapper.
 3. Spot-check `rememesLoop` in staging: `getContractMetadata` and
    `getNftMetadata` should return the same JSON shape as before.
 4. Spot-check `nextgenContractLoop` in staging: `getAssetTransfers` pagination

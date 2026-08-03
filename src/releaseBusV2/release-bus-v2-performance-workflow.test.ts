@@ -74,7 +74,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     ])
       expect(preflight).not.toContain(forbidden);
     expect(preflight).toContain('Install frozen shared dependencies once');
-    expect(preflight).toContain('test "$(npm --version)" = "10.9.8"');
+    expect(preflight).toContain('test "$(./bin/6529 npm:version)" = "10.9.8"');
     expect(preflight).toContain('release-bus-package-backend.mjs');
   });
 
@@ -762,7 +762,7 @@ esac
     expect(steps[test].run).toContain('--shard="$shard/4"');
     expect(steps[test].run).toContain('jest --maxWorkers=2');
     expect(steps[test].run).toContain('diff -u complete.sorted shards.sorted');
-    expect(steps[test].run).toContain('npm run ci:assert-source-clean');
+    expect(steps[test].run).toContain('./bin/6529 run ci:assert-source-clean');
     expect(build).toBeGreaterThan(test);
     expect(bind).toBeGreaterThan(build);
     expect(steps[bind].run).toContain('"backend-test-and-typecheck"');
@@ -1308,9 +1308,18 @@ esac
     };
     if (legacyPullRequestCi) {
       const modernOnly = new Set([
+        'bin/6529',
+        'bin/bun',
+        'bin/corepack',
+        'bin/npm',
+        'bin/npx',
+        'bin/pnpm',
+        'bin/yarn',
+        'scripts/bootstrap-6529-command.sh',
         'scripts/pr-ci-policy-bundle.cjs',
         'scripts/release-bus-backend-package-strategies.mjs',
         'scripts/release-bus-package-backend.mjs',
+        'scripts/require-6529-command.cjs',
         'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts'
       ]);
       const bridge = policy.buildPolicyBundle({
@@ -1344,10 +1353,9 @@ esac
       'package-field\tpackage.json#devDependencies.yaml\t"2.9.0"\n'
     );
     const pullRequest = read('.github/workflows/on-pull-request.yml');
-    expect(pullRequest).toContain('corepack install');
-    expect(pullRequest).toContain('resolved="$(npm --version)"');
+    expect(pullRequest).toContain('resolved="$(./bin/6529 npm:version)"');
     expect(pullRequest).toContain(
-      'Corepack did not activate the pinned npm (expected ${expected}, got ${resolved})'
+      'The 6529 wrapper did not resolve the pinned npm (expected ${expected}, got ${resolved})'
     );
   });
 

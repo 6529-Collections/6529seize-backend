@@ -4,11 +4,12 @@
   "description": "",
   "main": "index.ts",
   "scripts": {
-    "prebuild": "rm -rf dist && ls ../../ffmpeg-installer.js && node ../../ffmpeg-installer.js",
-    "build": "esbuild index.ts --bundle --external:sharp --external:imagescript --sourcemap --platform=node --target=es2020 --outfile=dist/index.js && mkdir dist/native_modules && cp -r node_modules/sharp dist/native_modules/sharp/ && cp -r node_modules dist/node_modules",
-    "postbuild": "cp rememes.csv dist && cd dist && zip -r index.zip *",
-    "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
-    "sls-deploy:staging": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
+    "preinstall": "node ../../scripts/require-6529-command.cjs",
+    "prebuild": "node ../../scripts/require-6529-command.cjs && rm -rf dist && ls ../../ffmpeg-installer.js && node ../../ffmpeg-installer.js",
+    "build": "node ../../scripts/require-6529-command.cjs && esbuild index.ts --bundle --external:sharp --external:imagescript --sourcemap --platform=node --target=es2020 --outfile=dist/index.js && mkdir dist/native_modules && cp -r node_modules/sharp dist/native_modules/sharp/ && cp -r node_modules dist/node_modules",
+    "postbuild": "node ../../scripts/require-6529-command.cjs && cp rememes.csv dist && cd dist && zip -r index.zip *",
+    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
+    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
   },
   "author": "",
   "license": "ISC",

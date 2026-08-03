@@ -198,6 +198,11 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
       from: '0cc8865dbb869b5156b46cc45e8581b259052916',
       to: 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40',
+      to: '926a915a4b9c62b76f169de4e4b6b6eaa4196d35',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
   frontend: [
@@ -228,12 +233,21 @@ const BACKEND_PR_CI_GATE_POLICY_FILES = new Set([
   '.github/workflows/release-bus-v2-preflight.yml',
   '.prettierignore',
   '.prettierrc',
+  'bin/6529',
+  'bin/bun',
+  'bin/corepack',
+  'bin/npm',
+  'bin/npx',
+  'bin/pnpm',
+  'bin/yarn',
   'eslint.config.mjs',
   'jest.config.ts',
   'scripts/assert-pr-ci-source-clean.mjs',
+  'scripts/bootstrap-6529-command.sh',
   'scripts/check-package-manager.mjs',
   'scripts/generate-deploy-config.mjs',
   'scripts/pr-ci-policy-bundle.cjs',
+  'scripts/require-6529-command.cjs',
   'scripts/release-bus-backend-package-strategies.mjs',
   'scripts/release-bus-package-backend.mjs',
   'src/.prettierrc',
@@ -262,9 +276,111 @@ type TrustedGatePolicyTransition = {
   readonly expiresAt: number;
 };
 
+function trustedGatePolicyPathRollout(
+  from: string | null,
+  to: string
+): TrustedGatePolicyTransition {
+  return {
+    from,
+    to,
+    expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+  };
+}
+
 const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
   Record<string, readonly TrustedGatePolicyTransition[]>
-> = {};
+> = {
+  '.github/workflows/deploy.yml': [
+    trustedGatePolicyPathRollout(
+      '997c61f57f40f94bc4e1cc2be81ed3d61ba00f09',
+      '6daafbc30b25d0c2b41317023bd7e035707d945e'
+    )
+  ],
+  '.github/workflows/release-bus-v2-preflight.yml': [
+    trustedGatePolicyPathRollout(
+      'c4954075f196aea05149ee0efdc51c0adc726b3f',
+      '4a782bedd9d9435104d16661c37402db1a70cbda'
+    )
+  ],
+  'bin/6529': [
+    trustedGatePolicyPathRollout(
+      null,
+      'a6c6fd34faabd8a5efc1d25478572629e1f18ed0'
+    )
+  ],
+  'bin/bun': [
+    trustedGatePolicyPathRollout(
+      null,
+      'c91d473b2c5672a1df5509015a93a9ff3b4f6236'
+    )
+  ],
+  'bin/corepack': [
+    trustedGatePolicyPathRollout(
+      null,
+      'b2d1d8537bb0b947583ba6207a00526ed70ef396'
+    )
+  ],
+  'bin/npm': [
+    trustedGatePolicyPathRollout(
+      null,
+      '0c839d86a949c04bdb8dfb3a2001cf3ff020cee4'
+    )
+  ],
+  'bin/npx': [
+    trustedGatePolicyPathRollout(
+      null,
+      '3bcda39150ce18617dff02f340b44fa572fc61ea'
+    )
+  ],
+  'bin/pnpm': [
+    trustedGatePolicyPathRollout(
+      null,
+      '7e68e043f8c506cfee0861d79bf6369a78c51af8'
+    )
+  ],
+  'bin/yarn': [
+    trustedGatePolicyPathRollout(
+      null,
+      '0f0fee15dc9d55007c98793b2905c97e4cc6d64b'
+    )
+  ],
+  'scripts/bootstrap-6529-command.sh': [
+    trustedGatePolicyPathRollout(
+      null,
+      '60c8987bf815719adce446f9a0218fdb552344e2'
+    )
+  ],
+  'scripts/check-package-manager.mjs': [
+    trustedGatePolicyPathRollout(
+      'a34aa7dcd99197c76cba0868e280f8941a364124',
+      'bf173c6d90fbfac1671cf6e22c6d6a032d2b97f6'
+    )
+  ],
+  'scripts/generate-deploy-config.mjs': [
+    trustedGatePolicyPathRollout(
+      '4ce90709eb815dae11dfd11e34b501ea793a41c1',
+      '1409355f5c30f974ef4009db96b4b3394cbb68bf'
+    )
+  ],
+  'scripts/pr-ci-policy-bundle.cjs': [
+    trustedGatePolicyPathRollout(
+      'db4e552b7d9e0c3e860c4d050d125177c7c058a0',
+      '05189645b25cba86b6bd94362fc45fa458a7af5c'
+    )
+  ],
+  'scripts/require-6529-command.cjs': [
+    trustedGatePolicyPathRollout(
+      null,
+      '4ce0660a66bd27982493ff91a7b8c0576a1cd137'
+    )
+  ],
+  'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts': [
+    trustedGatePolicyPathRollout(
+      '992a0cecbef0316786ab1b22de102901855505fd',
+      '9c4f650863c0a53250548fa3e02d97a547e0e87f'
+    )
+  ]
+};
 
 const BACKEND_PACKAGE_POLICY = {
   'package.json': {
@@ -600,6 +716,14 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     trustedGatePolicyBundleRollout(
       '9964af459f06d3d79d02157f2bd69200448a2722728a7d81cd360dd17b5a6a87',
       '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f'
+    ),
+    trustedGatePolicyBundleRollout(
+      '9964af459f06d3d79d02157f2bd69200448a2722728a7d81cd360dd17b5a6a87',
+      'ed8e0bd5f1f34433b2b262a7ae3cc3be7c8d05625b901d90eabf745abbea44d7'
+    ),
+    trustedGatePolicyBundleRollout(
+      '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f',
+      'ed8e0bd5f1f34433b2b262a7ae3cc3be7c8d05625b901d90eabf745abbea44d7'
     )
   ],
   frontend: [

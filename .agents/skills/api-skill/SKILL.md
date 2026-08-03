@@ -23,16 +23,16 @@ Use this workflow for API contract, route, handler, and generated-model changes.
    ```
 4. After editing OpenAPI, run both commands from `src/api-serverless`:
    ```bash
-   npm run restructure-openapi && npm run generate
+   6529 run generate:openapi
    ```
-   `npm run generate:openapi` is equivalent when available.
+   `6529 run generate:openapi` runs both generation stages.
 5. Treat `src/api-serverless/src/generated` as generated-only; never edit it manually.
 6. Implement handler/service logic after generated types exist, then verify the contract matches OpenAPI.
 
 ## Generated Routes
 
 1. Add or update the OpenAPI operation with `operationId`, params, request/response schemas, and `x-6529-router`.
-2. It is OK if the handler file does not exist yet. `npm run generate` writes the configured handler import/name into generated code; TypeScript fails until the handler is implemented.
+2. It is OK if the handler file does not exist yet. `6529 run generate` writes the configured handler import/name into generated code; TypeScript fails until the handler is implemented.
 3. Implement the handler at the exact `x-6529-router.handler.import` path and export the exact configured `name`.
 4. Import generated operation request/query/path/body/response types from `@/api/generated/routes/operations` and generated models from `@/api/generated/models/...`.
 5. Do not add duplicate manual `.routes.ts` wiring or app wiring for generated endpoints. The generated router is already mounted in `src/api-serverless/src/app.ts`.
@@ -100,7 +100,7 @@ x-6529-router:
 - [ ] Added `x-6529-router.enabled: true` for new generated endpoints.
 - [ ] Added `x-6529-router.cache` only when request caching is required.
 - [ ] Declared the final handler import/name in `x-6529-router.handler`.
-- [ ] Ran `cd src/api-serverless && npm run restructure-openapi && npm run generate`.
+- [ ] Ran `cd src/api-serverless && 6529 run generate:openapi`.
 - [ ] Did not manually edit `src/api-serverless/src/generated/*`.
 - [ ] Used generated operation types and generated models.
 - [ ] Added Joi validation.
