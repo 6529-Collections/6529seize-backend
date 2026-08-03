@@ -1742,7 +1742,9 @@ describeWithSeed(
     it('infers next drop timestamp from recent chat drops when no cooldown row exists', async () => {
       const currentMillisSpy = jest
         .spyOn(Time, 'currentMillis')
-        .mockReturnValue(recentDropTimestamp + Time.minutes(1).toMillis());
+        .mockReturnValue(
+          recentDropTimestamp + Math.floor(slowModeCooldownMs / 2)
+        );
       try {
         await expect(
           repo.findWaveChatDropCooldownsByWaveIds(

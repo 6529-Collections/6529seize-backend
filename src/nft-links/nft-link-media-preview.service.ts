@@ -67,6 +67,8 @@ const PREVIEW_VARIANTS = Object.freeze([
 ]);
 
 const FETCH_USER_AGENT = '6529-nft-link-media-preview/0.1';
+// Keep this as a typed, non-inlinable value so esbuild does not bundle sharp
+// into unrelated services that never render NFT link previews.
 const SHARP_MODULE_NAME: string = 'sharp';
 
 export class NftLinkMediaPreviewService {
@@ -632,8 +634,6 @@ export class NftLinkMediaPreviewService {
   private getSharpModule(): typeof import('sharp').default {
     if (!this.sharpModule) {
       try {
-        // Keep the lazy module name indirect so unrelated esbuild bundles and
-        // API startup do not require sharp/native binaries.
         this.sharpModule = require(
           SHARP_MODULE_NAME
         ) as typeof import('sharp').default;
