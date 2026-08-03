@@ -19,6 +19,7 @@ import {
   isGithubContributorLogin
 } from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
 
@@ -532,7 +533,7 @@ export class CiPipelineAlertService {
     mentions: AlertMentions
   ): string {
     const failureMentionLines =
-      request.status === 'failure' ? ['', 'cc @devs6529'] : [];
+      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);

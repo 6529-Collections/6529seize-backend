@@ -1,4 +1,5 @@
 import { env } from '@/env';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 import {
   DEFAULT_HELP_BOT_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId,
@@ -44,7 +45,7 @@ export const HELP_BOT_SPAM_REACTION = ':no_entry:';
 export const HELP_BOT_INSUFFICIENT_CREDITS_REACTION = ':low_battery:';
 export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
-export const HELP_BOT_TECH_TEAM_MENTION = '@devs6529';
+export const HELP_BOT_TECH_TEAM_MENTION = DEVS_6529_MENTION;
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
 export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE = `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}.`;
 export const HELP_BOT_CREDIT_GRANT_ENV = 'HELP_BOT_CREDIT_GRANT';

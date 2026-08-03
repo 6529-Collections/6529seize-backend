@@ -12,6 +12,7 @@ import { env } from '@/env';
 import { identitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { PROFILE_HANDLE_REGEX } from '@/constants';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 
@@ -19,8 +20,6 @@ const logger = Logger.get('SUBSCRIPTION_WAVE_NOTIFIER');
 
 const SUBSCRIPTIONS_WAVE_ID_ENV = 'SUBSCRIPTIONS_WAVE_ID';
 const SUBSCRIPTIONS_BOT_PROFILE_ID_ENV = 'SUBSCRIPTIONS_BOT_PROFILE_ID';
-const DEVELOPER_MENTION = '@devs6529';
-
 function sanitizeMentionHandle(handle: string): string {
   const trimmed = handle.trim();
   const bracketMention = /^@?\[([^\]]+)]$/.exec(trimmed);
@@ -45,7 +44,7 @@ function normalizeMentionHandles(handles: string[]): string[] {
 }
 
 function withDeveloperMention(message: string): string {
-  return `${message}\n\n${DEVELOPER_MENTION}`;
+  return `${message}\n\n${DEVS_6529_MENTION}`;
 }
 
 function buildSubscriptionsUrl(seizeDomain: string, wallet: string): string {

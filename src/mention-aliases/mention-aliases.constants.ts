@@ -1,3 +1,5 @@
+import { DEVS_6529_MENTION_TOKEN } from '@/constants/mentions';
+
 export const MENTION_ALIAS_MIN_LENGTH = 3;
 export const MENTION_ALIAS_MAX_LENGTH = 15;
 export const MAX_MENTION_ALIASES_PER_PROFILE = 20;
@@ -22,7 +24,7 @@ export const RESERVED_MENTION_ALIASES = new Set([
   'developer',
   'developers',
   '6529devs',
-  'devs6529'
+  DEVS_6529_MENTION_TOKEN
 ]);
 
 export function normalizeMentionAlias(value: string): string {
