@@ -530,6 +530,18 @@ Important details:
 
 ## Deployment Model
 
+Repository package execution has a single command boundary. Developers,
+agents, CI, release preflight, and generated deployment workflows invoke the
+repo-local `6529` wrapper instead of npm, npx, or Corepack directly. The
+wrapper resolves the npm version pinned by the current package through
+Corepack, marks authorized child processes, and keeps root, API, and
+independently packaged Lambda installs on their own committed lockfiles. PATH
+shims reject direct package-manager commands, while a lifecycle guard in every
+package manifest also rejects installs and package scripts that bypass those
+shims. Bootstrap or `direnv` exposes the command only inside this repository
+tree; it does not alter the machine-wide npm installation. See
+[`docs/package-commands.md`](package-commands.md) for the command contract.
+
 Simple Release Bus v2 is an additive MySQL-backed control plane shared by the
 production API and the production-region `releaseBusV2Reconciler` Lambda. Nine
 versioned tables store immutable candidates, dependency edges, staging and

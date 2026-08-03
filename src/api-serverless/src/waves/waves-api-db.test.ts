@@ -1740,21 +1740,30 @@ describeWithSeed(
   ],
   () => {
     it('infers next drop timestamp from recent chat drops when no cooldown row exists', async () => {
-      await expect(
-        repo.findWaveChatDropCooldownsByWaveIds(
-          {
-            profileId: author.profile_id!,
-            waveIds: [slowModeWave.id]
-          },
-          ctx
-        )
-      ).resolves.toEqual({
-        [slowModeWave.id]: expect.objectContaining({
-          wave_id: slowModeWave.id,
-          profile_id: author.profile_id!,
-          next_drop_timestamp: recentDropTimestamp + slowModeCooldownMs
-        })
-      });
+      const currentMillisSpy = jest
+        .spyOn(Time, 'currentMillis')
+        .mockReturnValue(
+          recentDropTimestamp + Math.floor(slowModeCooldownMs / 2)
+        );
+      try {
+        await expect(
+          repo.findWaveChatDropCooldownsByWaveIds(
+            {
+              profileId: author.profile_id!,
+              waveIds: [slowModeWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual({
+          [slowModeWave.id]: expect.objectContaining({
+            wave_id: slowModeWave.id,
+            profile_id: author.profile_id!,
+            next_drop_timestamp: recentDropTimestamp + slowModeCooldownMs
+          })
+        });
+      } finally {
+        currentMillisSpy.mockRestore();
+      }
     });
   }
 );

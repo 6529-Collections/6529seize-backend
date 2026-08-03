@@ -67,11 +67,14 @@ const PREVIEW_VARIANTS = Object.freeze([
 ]);
 
 const FETCH_USER_AGENT = '6529-nft-link-media-preview/0.1';
+// Keep this as a typed, non-inlinable value so esbuild does not bundle sharp
+// into unrelated services that never render NFT link previews.
+const SHARP_MODULE_NAME: string = 'sharp';
 
 export class NftLinkMediaPreviewService {
   private readonly logger = Logger.get(this.constructor.name);
   private s3Client: S3Client | null = null;
-  private sharpModule: typeof import('sharp') | null = null;
+  private sharpModule: typeof import('sharp').default | null = null;
 
   constructor(
     private readonly nftLinksDb: NftLinksDb,
@@ -628,12 +631,12 @@ export class NftLinkMediaPreviewService {
     };
   }
 
-  private getSharpModule(): typeof import('sharp') {
+  private getSharpModule(): typeof import('sharp').default {
     if (!this.sharpModule) {
       try {
-        // Lazy-load sharp so API startup (which imports enqueue-only logic)
-        // does not require sharp/native binaries.
-        this.sharpModule = require('sharp') as typeof import('sharp');
+        this.sharpModule = require(
+          SHARP_MODULE_NAME
+        ) as typeof import('sharp').default;
       } catch (e: any) {
         throw new Error(
           `Failed to load sharp in NFT link media preview processor: ${e?.message ?? e}`
