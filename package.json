@@ -73,7 +73,7 @@
     "ts-jest-mocker": "^0.5.0",
     "ts-node": "^10.9.1",
     "tsconfig-paths": "^4.2.0",
-    "typeorm": "^0.3.28",
+    "typeorm": "^0.3.31",
     "typescript": "^5.0.4",
     "typescript-eslint": "^8.32.1",
     "yaml": "2.9.0"
@@ -133,7 +133,7 @@
     "passport-jwt": "^4.0.1",
     "pdf-lib": "^1.17.1",
     "redis": "^4.7.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "short-uuid": "^6.0.0",
     "siwe": "^3.0.0",
     "slugify": "^1.6.6",
@@ -141,13 +141,15 @@
     "zod": "^3.25.76"
   },
   "overrides": {
+    "adm-zip": "0.6.0",
     "serverless": {
-      "tar": "7.5.16",
+      "tar": "7.5.22",
       "ws": "8.21.0"
     },
     "@serverless/platform-client": {
       "ws": "8.21.0"
     },
+    "brace-expansion": "5.0.9",
     "uuid": "11.1.1",
     "discord.js": {
       "undici": "6.27.0"
@@ -157,12 +159,6 @@
     },
     "http-proxy-agent": {
       "@tootallnate/once": "3.0.1"
-    },
-    "minimatch@3": {
-      "brace-expansion": "^2.0.2"
-    },
-    "minimatch@5": {
-      "brace-expansion": "^2.0.2"
     }
   },
   "packageManager": "npm@10.9.8"
