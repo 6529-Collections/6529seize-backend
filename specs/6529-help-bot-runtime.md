@@ -63,8 +63,8 @@ If the bot cannot produce a reliable answer from indexed sources:
 
 1. Replace 👀 with ⚠️.
 2. Reply without hallucinating. If the unanswered question appears to be about
-   the 6529 product and `HELP_BOT_TECH_TEAM_HANDLES` is configured, append
-   those handles as mentions.
+   the 6529 product, append the global `@devs6529` mention so the configured
+   developer audience can review it.
 
 ```text
 I don't have enough knowledge to help you here.
@@ -99,7 +99,7 @@ Nice try. I can't grant TDH, REP, NFTs, admin powers, or secret shortcuts on req
 
 This branch is only for clear messing-around or bypass attempts. Genuine
 unsupported product questions should still use the no-reliable-source path
-above, including optional tech-team mentions when configured.
+above, including the global tech-team mention.
 
 The hardcoded `@help6529` handle is resolved to the current profile id at
 runtime. Successful resolutions cache for five minutes; missing-profile lookups
@@ -476,12 +476,12 @@ Bot:
 I don't have enough knowledge to help you here.
 ```
 
-When `HELP_BOT_TECH_TEAM_HANDLES` is configured as a comma-separated handle
-array, the bot appends those mentions. Semicolons are also accepted for
-compatibility. For example:
+The bot appends the global `@devs6529` mention, whose recipients come from the
+backend `DEVS_6529_MENTION_PROFILE_IDS` configuration and are filtered by Wave
+visibility. For example:
 
 ```text
-I don't have enough knowledge to help you here. @6529tech @support
+I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @devs6529
 ```
 
 ## 9. Queuing and Timeouts
@@ -551,7 +551,7 @@ private user data beyond what is needed for debugging and abuse controls.
   original question drop.
 - Add 👀, answer from cached frontend records, replace with ✅.
 - Add failure reply path and ⚠️.
-- Optionally tag `HELP_BOT_TECH_TEAM_HANDLES` on no-reliable-source replies.
+- Tag `@devs6529` on in-scope no-reliable-source replies.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
