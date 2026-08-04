@@ -156,10 +156,50 @@ describe('ReleaseBusV2ManualDeploymentGuard', () => {
     expect(deps.resolveRef).toHaveBeenCalledWith('backend', '1a-staging');
     expect(deps.hasActiveStagingMutationOrE2ERun).toHaveBeenCalledWith(
       'backend',
-      ['12345']
+      ['12345'],
+      true
     );
     expect(deps.hasActiveStagingMutationOrE2ERun).toHaveBeenCalledWith(
       'frontend',
+      []
+    );
+  });
+
+  it('lets GitHub concurrency own overlap between manual backend staging deploys', async () => {
+    const { guard, deps } = setup('STAGING');
+    deps.hasActiveStagingMutationOrE2ERun.mockImplementation(
+      async (repository, _ignoredRunIds, ignoreManualBackendDeployments) =>
+        repository === 'backend' && !ignoreManualBackendDeployments
+    );
+
+    await expect(
+      guard.assertDispatchReady('staging', 'backend')
+    ).resolves.toBeUndefined();
+    expect(deps.hasActiveStagingMutationOrE2ERun).toHaveBeenCalledWith(
+      'backend',
+      [],
+      true
+    );
+    expect(deps.hasActiveStagingMutationOrE2ERun).toHaveBeenCalledWith(
+      'frontend',
+      []
+    );
+  });
+
+  it('keeps frontend staging readiness environment-wide', async () => {
+    const { guard, deps } = setup('STAGING');
+    deps.hasActiveStagingMutationOrE2ERun.mockImplementation(
+      async (repository) => repository === 'backend'
+    );
+
+    await expect(
+      guard.assertDispatchReady('staging', 'frontend')
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('active mutation or E2E')
+    });
+    expect(deps.hasActiveStagingMutationOrE2ERun).toHaveBeenCalledWith(
+      'backend',
       []
     );
   });

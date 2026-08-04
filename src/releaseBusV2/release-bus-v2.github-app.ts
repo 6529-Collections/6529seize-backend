@@ -600,6 +600,10 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     trustedGatePolicyBundleRollout(
       '9964af459f06d3d79d02157f2bd69200448a2722728a7d81cd360dd17b5a6a87',
       '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f'
+    ),
+    trustedGatePolicyBundleRollout(
+      '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f',
+      'a0653c919a148e37efb08ce27d59856fde334065d0f13d99a11ce40ef1ef9379'
     )
   ],
   frontend: [
@@ -2015,12 +2019,18 @@ export class ReleaseBusGitHubApp {
 
   public async hasActiveStagingMutationOrE2ERun(
     repository: ReleaseBusV2Repository,
-    ignoredRunIds: readonly string[] = []
+    ignoredRunIds: readonly string[] = [],
+    ignoreManualBackendDeployments = false
   ): Promise<boolean> {
     return this.hasActiveWorkflowRun(
       repository,
       'staging mutation or E2E',
-      (run) => this.isStagingMutationOrE2ERun(repository, run),
+      (run) =>
+        this.isStagingMutationOrE2ERun(
+          repository,
+          run,
+          ignoreManualBackendDeployments
+        ),
       ignoredRunIds
     );
   }
@@ -2068,7 +2078,8 @@ export class ReleaseBusGitHubApp {
 
   private isStagingMutationOrE2ERun(
     repository: ReleaseBusV2Repository,
-    run: GitHubRun
+    run: GitHubRun,
+    ignoreManualBackendDeployments = false
   ): boolean {
     if (
       run.path === '.github/workflows/release-bus-v2-advance-staging-ref.yml' ||
@@ -2079,7 +2090,15 @@ export class ReleaseBusGitHubApp {
     )
       return true;
     if (repository === 'backend') {
-      return this.isBackendDeploymentRun(run, 'staging');
+      const backendDeployment = this.isBackendDeploymentRun(run, 'staging');
+      return (
+        backendDeployment &&
+        !(
+          ignoreManualBackendDeployments &&
+          typeof run.display_title === 'string' &&
+          run.display_title.endsWith(' [manual]')
+        )
+      );
     }
     const paths = [
       '.github/workflows/deploy-staging.yml',

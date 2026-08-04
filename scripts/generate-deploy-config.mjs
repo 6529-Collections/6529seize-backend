@@ -186,11 +186,11 @@ permissions:
   actions: read
   contents: read
 
-# The workflow-level control mutex keeps each manual environment globally
-# serial. Release Bus v2 operations use their exact operation
-# key here, then share the job-level environment/service mutex with every mode.
+# Manual staging is scoped by service so unrelated services can proceed.
+# Release Bus operation keys and manual production retain their existing
+# control lanes; the job-level service mutex remains the final service guard.
 concurrency:
-  group: deploy-control-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || 'manual' }}
+  group: deploy-control-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || github.event.inputs.environment == 'prod' && 'manual' || format('manual-{0}', github.event.inputs.service) }}
   cancel-in-progress: false
 
 env:

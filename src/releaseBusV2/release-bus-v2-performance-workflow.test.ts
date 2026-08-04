@@ -84,6 +84,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
       jobs: Record<
         string,
         {
+          concurrency: { group: string; 'cancel-in-progress': boolean };
           steps: Array<{
             name?: string;
             if?: string;
@@ -181,9 +182,37 @@ describe('Release Bus v2 backend critical-path contract', () => {
     );
     expect(deploy).not.toContain('Authorize immutable Release Bus operation');
     expect(JSON.stringify(steps[checkout])).toContain('github.sha');
-    expect(parsed.concurrency.group).toContain("|| 'manual'");
-    expect(parsed.concurrency.group).not.toContain('manual-production');
+    expect(parsed.concurrency.group).toBe(
+      "deploy-control-${{ github.event.inputs.environment }}-${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || github.event.inputs.environment == 'prod' && 'manual' || format('manual-{0}', github.event.inputs.service) }}"
+    );
     expect(parsed.concurrency['cancel-in-progress']).toBe(false);
+
+    const controlGroup = (
+      environment: 'staging' | 'prod',
+      service: string,
+      operationKey = ''
+    ) =>
+      `deploy-control-${environment}-${
+        operationKey ||
+        (environment === 'prod' ? 'manual' : `manual-${service}`)
+      }`;
+    expect(controlGroup('staging', 'api')).toBe(
+      'deploy-control-staging-manual-api'
+    );
+    expect(controlGroup('staging', 'aggregatedActivityLoop')).toBe(
+      'deploy-control-staging-manual-aggregatedActivityLoop'
+    );
+    expect(controlGroup('prod', 'api')).toBe('deploy-control-prod-manual');
+    expect(controlGroup('staging', 'api', 'rb2-operation-123')).toBe(
+      'deploy-control-staging-rb2-operation-123'
+    );
+
+    expect(parsed.jobs['build-and-deploy'].concurrency.group).toBe(
+      'deploy-service-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}'
+    );
+    expect(
+      parsed.jobs['build-and-deploy'].concurrency['cancel-in-progress']
+    ).toBe(false);
   });
 
   it('emits one terminal event for an exact manual staging backend deployment without guarding ordinary workflows', () => {

@@ -408,7 +408,7 @@ deployRoutes.post('/ui/dispatch', async (req, res) => {
     );
   }
   await releaseBusV2ManualDeploymentGuard
-    .assertDispatchReady(body.environment)
+    .assertDispatchReady(body.environment, body.target)
     .catch((error: unknown) => {
       if (isReleaseBusV2ManualDeploymentError(error))
         throw new CustomApiCompliantException(

@@ -87,7 +87,8 @@ export type ReleaseBusV2ManualDeploymentDependencies = {
   ) => Promise<string>;
   readonly hasActiveStagingMutationOrE2ERun: (
     repository: ReleaseBusV2Repository,
-    ignoredRunIds?: readonly string[]
+    ignoredRunIds?: readonly string[],
+    ignoreManualBackendDeployments?: boolean
   ) => Promise<boolean>;
   readonly hasActiveProductionMutationOrE2ERun: (
     repository: ReleaseBusV2Repository,
@@ -106,10 +107,15 @@ const dependencies: ReleaseBusV2ManualDeploymentDependencies = {
     releaseBusGitHubApp.getWorkflowRunIdentity(repository, workflowRunId),
   resolveRef: (repository, ref) =>
     releaseBusGitHubApp.resolveRef(repository, ref),
-  hasActiveStagingMutationOrE2ERun: (repository, ignoredRunIds) =>
+  hasActiveStagingMutationOrE2ERun: (
+    repository,
+    ignoredRunIds,
+    ignoreManualBackendDeployments
+  ) =>
     releaseBusGitHubApp.hasActiveStagingMutationOrE2ERun(
       repository,
-      ignoredRunIds
+      ignoredRunIds,
+      ignoreManualBackendDeployments
     ),
   hasActiveProductionMutationOrE2ERun: (repository, ignoredRunIds) =>
     releaseBusGitHubApp.hasActiveProductionMutationOrE2ERun(
@@ -231,16 +237,19 @@ export class ReleaseBusV2ManualDeploymentGuard {
   }
 
   public async assertDispatchReady(
-    environment: ReleaseBusV2ManualDeploymentEnvironment
+    environment: ReleaseBusV2ManualDeploymentEnvironment,
+    repository: ReleaseBusV2Repository
   ): Promise<void> {
-    return this.failClosed(() => this.assertLaneReady(environment));
+    return this.failClosed(() =>
+      this.assertLaneReady(environment, { repository })
+    );
   }
 
   private async assertLaneReady(
     environment: ReleaseBusV2ManualDeploymentEnvironment,
     currentRun?: {
       readonly repository: ReleaseBusV2Repository;
-      readonly workflowRunId: string;
+      readonly workflowRunId?: string;
     }
   ): Promise<void> {
     const mode = this.deps.getMode();
@@ -256,19 +265,26 @@ export class ReleaseBusV2ManualDeploymentGuard {
 
     const lanes = targetTrainLanes(environment);
     const ignoredRunIds = (repository: ReleaseBusV2Repository) =>
-      currentRun?.repository === repository ? [currentRun.workflowRunId] : [];
+      currentRun?.repository === repository && currentRun.workflowRunId
+        ? [currentRun.workflowRunId]
+        : [];
     const activeWorkflow = (
       repository: ReleaseBusV2Repository
-    ): Promise<boolean> =>
-      environment === 'staging'
-        ? this.deps.hasActiveStagingMutationOrE2ERun(
-            repository,
-            ignoredRunIds(repository)
-          )
-        : this.deps.hasActiveProductionMutationOrE2ERun(
-            repository,
-            ignoredRunIds(repository)
-          );
+    ): Promise<boolean> => {
+      if (environment !== 'staging')
+        return this.deps.hasActiveProductionMutationOrE2ERun(
+          repository,
+          ignoredRunIds(repository)
+        );
+      const ignored = ignoredRunIds(repository);
+      if (repository === 'backend' && currentRun?.repository === 'backend')
+        return this.deps.hasActiveStagingMutationOrE2ERun(
+          repository,
+          ignored,
+          true
+        );
+      return this.deps.hasActiveStagingMutationOrE2ERun(repository, ignored);
+    };
     const [
       locks,
       activeTrains,

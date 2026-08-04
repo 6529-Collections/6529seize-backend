@@ -100,10 +100,10 @@ metadata and finalize signal unless the candidate explicitly opts out.
 2. Re-fetch immediately before pushing. If a shared ref moved, recompute from
    the new head. Never force-push.
 3. Merge the development branch into current `1a-staging`. Deploy required
-   backend units in DAG order through `Deploy a service`. Dispatch exactly one
-   service at a time and wait for exact success before dispatching the next;
-   shared workflow concurrency can cancel sibling runs, even for independent
-   DAG-frontier units.
+   backend units in DAG order through `Deploy a service`. Wait for dependencies
+   such as `dbMigrations` before `api`; independent backend staging services may
+   run concurrently. The same service queues, and manual production remains
+   globally serialized.
 4. For coupled work, verify required backend units before merging/deploying
    frontend.
 5. Record exact deployed frontend/backend SHAs before E2E and freeze staging

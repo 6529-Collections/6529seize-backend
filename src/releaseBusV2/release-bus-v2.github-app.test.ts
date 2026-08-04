@@ -1386,6 +1386,67 @@ describe('GitHub staging idle handshake', () => {
     }
   });
 
+  it('lets Actions concurrency own active manual backend staging deploys', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 12345,
+                name: 'Deploy a service',
+                path: '.github/workflows/deploy.yml',
+                display_title: 'Deploy nftsLoop to staging [manual]',
+                status: 'queued'
+              }
+            ]
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ workflow_runs: [] }))
+      );
+
+    try {
+      await expect(
+        app.hasActiveStagingMutationOrE2ERun('backend', [], true)
+      ).resolves.toBe(false);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('still detects Release Bus staging mutations when manual deploys are ignored', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workflow_runs: [
+            {
+              id: 12345,
+              name: 'Deploy a service',
+              path: '.github/workflows/deploy.yml',
+              display_title:
+                'Deploy api to staging train train-1 [rb2:train-1:deploy:api:a1]',
+              status: 'queued'
+            }
+          ]
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.hasActiveStagingMutationOrE2ERun('backend', [], true)
+      ).resolves.toBe(true);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
   it('detects a completed staging deploy after the handshake and ignores exact train runs', async () => {
     const app = new ReleaseBusGitHubApp();
     (
