@@ -1,4 +1,5 @@
 import { env } from '@/env';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 import {
   DEFAULT_HELP_BOT_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId,
@@ -44,7 +45,7 @@ export const HELP_BOT_SPAM_REACTION = ':no_entry:';
 export const HELP_BOT_INSUFFICIENT_CREDITS_REACTION = ':low_battery:';
 export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
-export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
+export const HELP_BOT_TECH_TEAM_MENTION = DEVS_6529_MENTION;
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
 export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE = `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}.`;
 export const HELP_BOT_CREDIT_GRANT_ENV = 'HELP_BOT_CREDIT_GRANT';
@@ -76,14 +77,6 @@ export const HELP_BOT_INSUFFICIENT_CREDITS_REPLY = `You need at least 1 Help6529
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';
 
-function normalizeMentionHandle(handle: string): string | null {
-  const normalized = handle.trim().replace(/^@/, '').trim();
-  if (!/^[a-z0-9][a-z0-9_-]{0,99}$/i.test(normalized)) {
-    return null;
-  }
-  return normalized;
-}
-
 export function isHelpBotCreditCategory(
   category: string | null | undefined
 ): boolean {
@@ -92,31 +85,6 @@ export function isHelpBotCreditCategory(
   );
 }
 
-export function getHelpBotTechTeamMentionHandles(): string[] {
-  const seen = new Set<string>();
-  const handles: string[] = [];
-  const rawHandles = env.getStringOrNull(HELP_BOT_TECH_TEAM_HANDLES_ENV);
-  for (const rawHandle of rawHandles?.split(/[;,]/) ?? []) {
-    const handle = normalizeMentionHandle(rawHandle);
-    if (!handle) {
-      continue;
-    }
-    const key = handle.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    handles.push(handle);
-  }
-  return handles;
-}
-
-export function buildHelpBotNoReliableSourceReply(
-  mentionedHandles: readonly string[] = getHelpBotTechTeamMentionHandles()
-): string {
-  if (!mentionedHandles.length) {
-    return HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY;
-  }
-  const mentions = mentionedHandles.map((handle) => `@[${handle}]`).join(' ');
-  return `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm flagging this so the tech team can double-check: ${mentions}`;
+export function buildHelpBotNoReliableSourceReply(): string {
+  return `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm flagging this so the tech team can double-check: ${HELP_BOT_TECH_TEAM_MENTION}`;
 }

@@ -11,14 +11,14 @@ jest.mock('@/identities/identities.db', () => ({
 }));
 
 import fc from 'fast-check';
+import { normalizeDropGroupMentions } from '@/drops/create-or-update-drop.use-case';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import {
   CiPipelineAlertService,
   formatMarkdownLink,
   isVerifiedReleaseBusAlert,
-  normalizeConfiguredHandle,
   normalizeContributorGithubLogins,
   normalizeTargetEnvironment,
-  parseProfileHandles,
   truncate
 } from './ci-pipeline-alert.service';
 
@@ -52,24 +52,18 @@ describe('CiPipelineAlertService', () => {
     originalEnv = {
       CI_PIPELINES_STAGING_WAVE_ID: process.env.CI_PIPELINES_STAGING_WAVE_ID,
       CI_PIPELINES_PROD_WAVE_ID: process.env.CI_PIPELINES_PROD_WAVE_ID,
-      CI_PIPELINES_BOT_PROFILE_ID: process.env.CI_PIPELINES_BOT_PROFILE_ID,
-      CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES:
-        process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES
+      CI_PIPELINES_BOT_PROFILE_ID: process.env.CI_PIPELINES_BOT_PROFILE_ID
     };
     process.env.CI_PIPELINES_STAGING_WAVE_ID = 'staging-wave';
     process.env.CI_PIPELINES_PROD_WAVE_ID = 'prod-wave';
     process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
-    process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES =
-      '@prxt0, @alice, @[Bob], alice, missing';
     dropCreationApiService = {
       createDrop: jest.fn().mockResolvedValue({ id: 'drop-1' }),
       toggleHideLinkPreview: jest.fn().mockResolvedValue({})
     };
     identitiesRepository = {
       getIdsByHandles: jest.fn().mockResolvedValue({
-        prxt0: 'profile-initiator',
-        ALICE: 'profile-1',
-        Bob: 'profile-2'
+        prxt0: 'profile-initiator'
       })
     };
     releaseNotesQueue = {
@@ -120,56 +114,6 @@ describe('CiPipelineAlertService', () => {
         expect(formatMarkdownLink(label, url)).toBe(
           `[${escapedLabel}](${url})`
         );
-      })
-    );
-  });
-
-  it('normalizes arbitrary configured profile handles', () => {
-    const handleCharacters =
-      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split(
-        ''
-      );
-    const handleArbitrary = fc
-      .array(fc.constantFrom(...handleCharacters), {
-        minLength: 1,
-        maxLength: 30
-      })
-      .map((chars) => chars.join(''));
-
-    fc.assert(
-      fc.property(handleArbitrary, (handle) => {
-        expect(normalizeConfiguredHandle(` @${handle} `)).toBe(handle);
-        expect(normalizeConfiguredHandle(` @[${handle}] `)).toBe(handle);
-      })
-    );
-  });
-
-  it('dedupes arbitrary configured profile handles case-insensitively', () => {
-    const handleCharacters =
-      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split(
-        ''
-      );
-    const handleArbitrary = fc
-      .array(fc.constantFrom(...handleCharacters), {
-        minLength: 1,
-        maxLength: 20
-      })
-      .map((chars) => chars.join(''));
-
-    fc.assert(
-      fc.property(fc.array(handleArbitrary, { maxLength: 20 }), (handles) => {
-        const input = handles
-          .flatMap((handle) => [` @${handle} `, ` @[${handle.toUpperCase()}] `])
-          .join(',');
-        const parsedHandles = parseProfileHandles(input);
-        const normalizedHandles = parsedHandles.map((handle) =>
-          handle.toLowerCase()
-        );
-
-        expect(new Set(normalizedHandles).size).toBe(parsedHandles.length);
-        for (const parsedHandle of parsedHandles) {
-          expect(parsedHandle).not.toMatch(/^@/);
-        }
       })
     );
   });
@@ -228,7 +172,7 @@ describe('CiPipelineAlertService', () => {
     }
   );
 
-  it('posts failures with configured profile mentions', async () => {
+  it('posts failures with the global developer mention and preserves initiator attribution', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
@@ -238,10 +182,7 @@ describe('CiPipelineAlertService', () => {
     await service.postAlert(baseRequest, ctx as any);
 
     expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
-      'prxt0',
-      'alice',
-      'Bob',
-      'missing'
+      'prxt0'
     ]);
     expect(dropCreationApiService.createDrop).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -256,14 +197,6 @@ describe('CiPipelineAlertService', () => {
             {
               mentioned_profile_id: 'profile-initiator',
               handle_in_content: 'prxt0'
-            },
-            {
-              mentioned_profile_id: 'profile-1',
-              handle_in_content: 'ALICE'
-            },
-            {
-              mentioned_profile_id: 'profile-2',
-              handle_in_content: 'Bob'
             }
           ],
           parts: [
@@ -281,7 +214,7 @@ describe('CiPipelineAlertService', () => {
                   'Initiated by: @[prxt0]',
                   'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)',
                   '',
-                  'cc @[prxt0] @[ALICE] @[Bob]'
+                  'cc @devs6529'
                 ].join('\n')
               )
             })
@@ -294,6 +227,11 @@ describe('CiPipelineAlertService', () => {
         })
       })
     );
+    const createDropRequest =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(
+      normalizeDropGroupMentions({ parts: createDropRequest.parts })
+    ).toEqual([DropGroupMention.DEVS_6529]);
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
   });
 

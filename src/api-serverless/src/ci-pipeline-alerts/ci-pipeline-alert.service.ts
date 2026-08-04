@@ -19,6 +19,7 @@ import {
   isHumanGithubContributorLogin
 } from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
 
@@ -47,10 +48,7 @@ export interface CiPipelineAlertRequest {
   readonly release_operation_key?: string | null;
   readonly contributor_github_logins?: string[];
   readonly contributor_evidence?:
-    | 'release-bus-operation'
-    | 'manual-pr'
-    | 'manual-range'
-    | null;
+    'release-bus-operation' | 'manual-pr' | 'manual-range' | null;
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
@@ -78,7 +76,6 @@ interface AlertMentions {
     readonly githubLogin: string;
     readonly profile: MentionedProfile | null;
   }>;
-  readonly failureCc: MentionedProfile[];
   readonly all: MentionedProfile[];
 }
 
@@ -158,33 +155,6 @@ function normalizeReleaseNoteGroup(
     pullRequestNumber,
     publishReleaseNote: group.publish_release_note
   };
-}
-
-export function parseProfileHandles(value: string | null): string[] {
-  if (!value) {
-    return [];
-  }
-  const seenNormalizedHandles = new Set<string>();
-  return value
-    .split(',')
-    .map((handle) => normalizeConfiguredHandle(handle))
-    .filter((handle) => {
-      const normalizedHandle = handle.toLowerCase();
-      if (!handle || seenNormalizedHandles.has(normalizedHandle)) {
-        return false;
-      }
-      seenNormalizedHandles.add(normalizedHandle);
-      return true;
-    });
-}
-
-export function normalizeConfiguredHandle(value: string): string {
-  const trimmed = value.trim();
-  const bracketMention = /^@\[([^\]]+)\]$/.exec(trimmed);
-  if (bracketMention) {
-    return bracketMention[1].trim();
-  }
-  return trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
 }
 
 export function normalizeTargetEnvironment(value: string | null | undefined) {
@@ -629,20 +599,13 @@ export class CiPipelineAlertService {
       );
     }
 
-    const failureHandles =
-      request.status === 'failure'
-        ? parseProfileHandles(
-            env.getStringOrNull('CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES')
-          )
-        : [];
     const contributorGithubLogins = verifiedContributorGithubLogins(request);
     const contributorHandles = contributorGithubLogins
       .map((login) => GITHUB_TO_6529_HANDLES[login.toLowerCase()])
       .filter((handle): handle is string => Boolean(handle));
     const handlesToResolve = [
       ...(triggeredByHandle ? [triggeredByHandle] : []),
-      ...contributorHandles,
-      ...failureHandles
+      ...contributorHandles
     ].filter(
       (handle, index, handles) =>
         handles.findIndex(
@@ -656,7 +619,6 @@ export class CiPipelineAlertService {
           githubLogin,
           profile: null
         })),
-        failureCc: [],
         all: []
       };
     }
@@ -682,17 +644,6 @@ export class CiPipelineAlertService {
       );
     }
 
-    const missingHandles = failureHandles.filter(
-      (handle) => !mentionsByNormalizedHandle.has(handle.toLowerCase())
-    );
-    if (missingHandles.length) {
-      this.logger.warn(
-        `Skipping CI pipeline alert mentions with missing profiles: ${missingHandles.join(', ')}`
-      );
-    }
-    const failureCc = failureHandles
-      .map((handle) => mentionsByNormalizedHandle.get(handle.toLowerCase()))
-      .filter((mention): mention is MentionedProfile => !!mention);
     const contributors = contributorGithubLogins.map((githubLogin) => {
       const mappedHandle = GITHUB_TO_6529_HANDLES[githubLogin.toLowerCase()];
       return {
@@ -707,8 +658,7 @@ export class CiPipelineAlertService {
       ...(triggeredBy ? [triggeredBy] : []),
       ...contributors
         .map(({ profile }) => profile)
-        .filter((profile): profile is MentionedProfile => !!profile),
-      ...failureCc
+        .filter((profile): profile is MentionedProfile => !!profile)
     ].filter(
       (mention, index, mentions) =>
         mentions.findIndex(
@@ -716,7 +666,7 @@ export class CiPipelineAlertService {
         ) === index
     );
 
-    return { triggeredBy, contributors, failureCc, all };
+    return { triggeredBy, contributors, all };
   }
 
   private resolveWaveId(request: CiPipelineAlertRequest): string {
@@ -756,6 +706,8 @@ export class CiPipelineAlertService {
         mentioned_profile_id: mention.profileId,
         handle_in_content: mention.handle
       })),
+      // CreateOrUpdateDropUseCase derives global group metadata and recipients
+      // from part content; mentioned_users remains for initiator attribution.
       mentioned_groups: [],
       referenced_nfts: [],
       metadata: [],
@@ -769,12 +721,8 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     mentions: AlertMentions
   ): string {
-    const failureMentionHandles = mentions.failureCc
-      .map((mention) => '@[' + mention.handle + ']')
-      .join(' ');
-    const failureMentionLines = failureMentionHandles
-      ? ['', `cc ${failureMentionHandles}`]
-      : [];
+    const failureMentionLines =
+      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);

@@ -85,7 +85,13 @@ import {
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
-import { CLOUDFRONT_LINK, UUID_REGEX, WALLET_REGEX } from '@/constants';
+import {
+  CLOUDFRONT_LINK,
+  DEVS_6529_MENTION,
+  DEVS_6529_MENTION_TOKEN,
+  UUID_REGEX,
+  WALLET_REGEX
+} from '@/constants';
 import { getAlchemyInstance } from '@/alchemy';
 import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
@@ -117,7 +123,7 @@ const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
   [DropGroupMention.CONTRIBUTORS]: 'contributors',
   [DropGroupMention.ADMINS]: 'admins',
-  [DropGroupMention.DEVS_6529]: 'devs6529'
+  [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN
 };
 
 function createGroupMentionPattern(token: string): RegExp {
@@ -2023,7 +2029,7 @@ export class CreateOrUpdateDropUseCase {
     this.nextMissingDeveloperMentionWarningAt =
       now + MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS;
     this.logger.warn(
-      '[@devs6529 is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]'
+      `[${DEVS_6529_MENTION} is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]`
     );
   }
 
