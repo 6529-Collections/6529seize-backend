@@ -21,8 +21,9 @@
   controls. Never bypass them. Use `release-bus-v2-fast-off.mjs` only for an
   emergency hard stop.
 - In manual fallback, dispatch backend `Deploy a service` workflows one at a
-  time and wait for exact success before starting the next. Shared concurrency
-  can cancel sibling service runs, including independent DAG-frontier units.
+  time and wait for exact success before starting the next. The current manual
+  readiness gate remains environment-wide even though workflow concurrency is
+  scoped to one environment/service pair.
 - For coupled work, declare backend dependencies and preserve backend-before-
   frontend ordering. Within v2, only independent backend DAG frontier units run
   together.

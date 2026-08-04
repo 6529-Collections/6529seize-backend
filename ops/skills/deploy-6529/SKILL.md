@@ -101,9 +101,9 @@ metadata and finalize signal unless the candidate explicitly opts out.
    the new head. Never force-push.
 3. Merge the development branch into current `1a-staging`. Deploy required
    backend units in DAG order through `Deploy a service`. Dispatch exactly one
-   service at a time and wait for exact success before dispatching the next;
-   shared workflow concurrency can cancel sibling runs, even for independent
-   DAG-frontier units.
+   service at a time and wait for exact success before dispatching the next.
+   The current manual readiness gate remains environment-wide even though the
+   workflow concurrency key is scoped to the selected service.
 4. For coupled work, verify required backend units before merging/deploying
    frontend.
 5. Record exact deployed frontend/backend SHAs before E2E and freeze staging
