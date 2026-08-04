@@ -60,12 +60,15 @@ const PACKAGE_POLICIES = Object.freeze({
   'package.json': Object.freeze({
     scriptKeys: Object.freeze([
       'build',
+      'build:ci',
       'ci:assert-source-clean',
       'format:check',
       'generate:deploy-config',
       'lint:check',
       'postbuild',
+      'postbuild:ci',
       'prebuild',
+      'prebuild:ci',
       'pretest',
       'test'
     ]),

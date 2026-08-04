@@ -764,8 +764,21 @@ esac
     expect(steps[test].run).toContain('diff -u complete.sorted shards.sorted');
     expect(steps[test].run).toContain('./bin/6529 run ci:assert-source-clean');
     expect(build).toBeGreaterThan(test);
+    expect(steps[build].run).toBe('./bin/6529 run build:ci');
     expect(bind).toBeGreaterThan(build);
     expect(steps[bind].run).toContain('"backend-test-and-typecheck"');
+  });
+
+  it('keeps local builds comprehensive while CI does not repeat Jest', () => {
+    const packageJson = JSON.parse(read('package.json')) as {
+      scripts?: Record<string, string>;
+    };
+    const scripts = packageJson.scripts ?? {};
+
+    expect(scripts.build).toContain('jest');
+    expect(scripts['build:ci']).not.toContain('jest');
+    expect(scripts['prebuild:ci']).toBe(scripts.prebuild);
+    expect(scripts['postbuild:ci']).toBe(scripts.postbuild);
   });
 
   it('isolates secret-bearing authorization and reporting from candidate-controlled code', () => {

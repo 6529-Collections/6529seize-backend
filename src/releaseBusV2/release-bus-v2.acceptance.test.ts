@@ -7846,7 +7846,7 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'utf8'
     );
     expect(pullRequestWorkflow).toContain('./bin/6529 run lint:check');
-    expect(pullRequestWorkflow).toContain('./bin/6529 run build');
+    expect(pullRequestWorkflow).toContain('./bin/6529 run build:ci');
     const pullRequestWorkflowBlob = execFileSync(
       'git',
       ['hash-object', '.github/workflows/on-pull-request.yml'],
@@ -7856,7 +7856,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       '0cc8865dbb869b5156b46cc45e8581b259052916',
       'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40',
       '62286a15945df10e89faa8e19d88fcd7dd1d8585',
-      '926a915a4b9c62b76f169de4e4b6b6eaa4196d35'
+      '926a915a4b9c62b76f169de4e4b6b6eaa4196d35',
+      'af4314e0eff6b4110edddf8da8747216b2014b10'
     ]).toContain(pullRequestWorkflowBlob);
     if (pullRequestWorkflowBlob !== '0cc8865dbb869b5156b46cc45e8581b259052916')
       expect(pullRequestWorkflow).toContain('exact-merge-tree-pr-ci-v1');
