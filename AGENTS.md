@@ -22,8 +22,8 @@
   emergency hard stop.
 - In manual fallback, dispatch backend `Deploy a service` workflows one at a
   time and wait for exact success before starting the next. The current manual
-  readiness gate remains environment-wide even though workflow concurrency is
-  scoped to one environment/service pair.
+  readiness gate remains environment-wide. Manual staging workflow concurrency
+  is service-scoped, while manual production remains globally serialized.
 - For coupled work, declare backend dependencies and preserve backend-before-
   frontend ordering. Within v2, only independent backend DAG frontier units run
   together.

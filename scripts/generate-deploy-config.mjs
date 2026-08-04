@@ -186,10 +186,11 @@ permissions:
   actions: read
   contents: read
 
-# Each environment/service pair is one mutation lane. The same service waits,
-# while unrelated services and the other environment remain independent.
+# Manual staging is scoped by service so unrelated services can proceed.
+# Release Bus operation keys and manual production retain their existing
+# control lanes; the job-level service mutex remains the final service guard.
 concurrency:
-  group: deploy-service-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.service }}
+  group: deploy-control-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || github.event.inputs.environment == 'prod' && 'manual' || format('manual-{0}', github.event.inputs.service) }}
   cancel-in-progress: false
 
 env:
@@ -216,6 +217,9 @@ jobs:
   build-and-deploy:
     name: Build and deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-service-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.service }}
+      cancel-in-progress: false
     env:
       INPUT_ENVIRONMENT: \${{ github.event.inputs.environment }}
       INPUT_SERVICE: \${{ github.event.inputs.service }}
@@ -597,10 +601,11 @@ jobs:
           assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" release-bus-deploy-production.yml
           assert_workflow_exists "$GITHUB_REPOSITORY_OWNER/6529seize-frontend" production-e2e.yml
 
-          # The emergency compatibility path must remain globally exclusive in
-          # production even though normal deploy concurrency is service-scoped.
-          # This guard rejects any other active backend or frontend production
-          # mutation before the break-glass deployment receives credentials.
+          # The workflow-level deploy-control-prod-manual concurrency group
+          # serializes every backend manual production service. With the
+          # PRODUCTION lane OFF, no Release Bus train can claim production.
+          # Frontend production workflows reject while this backend run is
+          # active; this guard rejects any frontend production run already active.
           assert_no_active_production_runs backend "$GITHUB_REPOSITORY"
           assert_no_active_production_runs frontend "$GITHUB_REPOSITORY_OWNER/6529seize-frontend"
           EMERGENCY_API_BOOTSTRAP_GUARD

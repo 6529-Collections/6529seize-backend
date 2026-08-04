@@ -84,6 +84,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
       jobs: Record<
         string,
         {
+          concurrency: { group: string; 'cancel-in-progress': boolean };
           steps: Array<{
             name?: string;
             if?: string;
@@ -181,11 +182,22 @@ describe('Release Bus v2 backend critical-path contract', () => {
     );
     expect(deploy).not.toContain('Authorize immutable Release Bus operation');
     expect(JSON.stringify(steps[checkout])).toContain('github.sha');
-    expect(parsed.concurrency.group).toBe(
-      'deploy-service-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}'
+    expect(parsed.concurrency.group).toContain(
+      "github.event.inputs.operation_key != ''"
+    );
+    expect(parsed.concurrency.group).toContain(
+      "github.event.inputs.environment == 'prod' && 'manual'"
+    );
+    expect(parsed.concurrency.group).toContain(
+      "format('manual-{0}', github.event.inputs.service)"
     );
     expect(parsed.concurrency['cancel-in-progress']).toBe(false);
-    expect(parsed.jobs['build-and-deploy']).not.toHaveProperty('concurrency');
+    expect(parsed.jobs['build-and-deploy'].concurrency.group).toBe(
+      'deploy-service-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}'
+    );
+    expect(
+      parsed.jobs['build-and-deploy'].concurrency['cancel-in-progress']
+    ).toBe(false);
   });
 
   it('emits one terminal event for an exact manual staging backend deployment without guarding ordinary workflows', () => {
@@ -666,7 +678,7 @@ esac
       );
       expect(authorize).toContain('.total_count');
       expect(authorize).toContain(
-        'normal deploy concurrency is service-scoped'
+        'deploy-control-prod-manual concurrency group'
       );
       expect(() =>
         execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
