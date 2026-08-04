@@ -86,7 +86,7 @@ jobs:
           diff -u complete.sorted shards.sorted
           ./bin/6529 run ci:assert-source-clean
       - name: Build backend
-        run: ./bin/6529 run build
+        run: ./bin/6529 run build:ci
       - name: Build API
         run: pushd src/api-serverless && ../../bin/6529 run build && popd
       - name: Bind exact PR merge-tree CI evidence

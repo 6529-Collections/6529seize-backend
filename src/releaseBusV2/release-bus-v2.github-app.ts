@@ -203,6 +203,11 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
       from: 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40',
       to: '926a915a4b9c62b76f169de4e4b6b6eaa4196d35',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: '926a915a4b9c62b76f169de4e4b6b6eaa4196d35',
+      to: 'af4314e0eff6b4110edddf8da8747216b2014b10',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
   frontend: [
@@ -370,6 +375,10 @@ const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
     trustedGatePolicyPathRollout(
       'db4e552b7d9e0c3e860c4d050d125177c7c058a0',
       '05189645b25cba86b6bd94362fc45fa458a7af5c'
+    ),
+    trustedGatePolicyPathRollout(
+      '05189645b25cba86b6bd94362fc45fa458a7af5c',
+      'fed7fab77a8e5084208ba246705fb269b8792863'
     )
   ],
   'scripts/require-6529-command.cjs': [
@@ -386,6 +395,10 @@ const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
     trustedGatePolicyPathRollout(
       '992a0cecbef0316786ab1b22de102901855505fd',
       '0ba2ad1b8b8ed24ddf8ff80b891749728f7600f6'
+    ),
+    trustedGatePolicyPathRollout(
+      '0ba2ad1b8b8ed24ddf8ff80b891749728f7600f6',
+      '1051fd62354405dae6bd53600de34b2de3197e7f'
     )
   ]
 };
@@ -394,12 +407,15 @@ const BACKEND_PACKAGE_POLICY = {
   'package.json': {
     scriptKeys: [
       'build',
+      'build:ci',
       'ci:assert-source-clean',
       'format:check',
       'generate:deploy-config',
       'lint:check',
       'postbuild',
+      'postbuild:ci',
       'prebuild',
+      'prebuild:ci',
       'pretest',
       'test'
     ],
@@ -736,6 +752,10 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     trustedGatePolicyBundleRollout(
       '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f',
       '2a79efe36915440f8bc7f4844a354a8cb28e01a2c415f2009af1b3e343215219'
+    ),
+    trustedGatePolicyBundleRollout(
+      '2a79efe36915440f8bc7f4844a354a8cb28e01a2c415f2009af1b3e343215219',
+      '0f6bffeb37b72f67a69e8fc8d4077caf0bfb2d5f4d36af6d287f51d3cc924244'
     )
   ],
   frontend: [

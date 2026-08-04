@@ -60,6 +60,13 @@ Examples from the repository root:
 6529 run migrate-local:up
 ```
 
+`6529 run build` remains the comprehensive developer build: it generates the
+deploy configuration, runs the full Jest suite, compiles the backend, and
+copies runtime assets. The PR workflow runs those same tests separately with
+its controlled shard inventory, then uses the internal `6529 run build:ci`
+lifecycle to compile and copy assets without running Jest a second time.
+Developers should normally use `6529 run build`, not `build:ci`.
+
 The API has its own package and lockfile, so run API commands from its package
 directory:
 
