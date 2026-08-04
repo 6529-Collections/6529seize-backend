@@ -2269,7 +2269,7 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(mockManualDispatchReady).toHaveBeenCalledWith('staging');
+    expect(mockManualDispatchReady).toHaveBeenCalledWith('staging', 'backend');
     expect(mockDispatchDeploy).toHaveBeenCalledTimes(1);
   });
 
@@ -2303,8 +2303,14 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       expect(allowed.status).toBe(200);
       expect(blocked.status).toBe(409);
       expect(mockDispatchDeploy).toHaveBeenCalledTimes(1);
-      expect(mockManualDispatchReady).toHaveBeenCalledWith(allowedEnvironment);
-      expect(mockManualDispatchReady).toHaveBeenCalledWith(blockedEnvironment);
+      expect(mockManualDispatchReady).toHaveBeenCalledWith(
+        allowedEnvironment,
+        'backend'
+      );
+      expect(mockManualDispatchReady).toHaveBeenCalledWith(
+        blockedEnvironment,
+        'backend'
+      );
       expect(mockV2SetPaused).not.toHaveBeenCalled();
       expect(mockV2AppendEvent).not.toHaveBeenCalled();
     }

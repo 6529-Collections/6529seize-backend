@@ -739,9 +739,10 @@ they are the safe direction, not compensated back to enabled automation.
    lanes report `OFF`;
 2. allow any already-dispatched exact operation to reach a safe terminal state;
 3. verify no v2 train owns staging or production;
-4. after each target drain gate, use the serialized manual fallback,
-   dispatching backend `Deploy a service` workflows one at a time while the
-   current manual readiness gate remains environment-wide;
+4. after each target drain gate, use the manual fallback, deploying dependent
+   backend services in order while allowing known-independent staging services
+   to run concurrently; the same service still queues and production remains
+   globally serialized;
 5. preserve v2 rows and immutable manifests for diagnosis.
 
 Never cancel another actor's shared workflow or force-push a shared ref.

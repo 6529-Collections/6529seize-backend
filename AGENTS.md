@@ -20,10 +20,10 @@
 - Raw mode and `ALL` are internal emergency fences, not normal routing or UI
   controls. Never bypass them. Use `release-bus-v2-fast-off.mjs` only for an
   emergency hard stop.
-- In manual fallback, dispatch backend `Deploy a service` workflows one at a
-  time and wait for exact success before starting the next. The current manual
-  readiness gate remains environment-wide. Manual staging workflow concurrency
-  is service-scoped, while manual production remains globally serialized.
+- In manual fallback, deploy dependencies in order and wait where required,
+  such as `dbMigrations` before `api`. Independent backend staging services may
+  run concurrently; the same service queues. Manual production remains
+  globally serialized.
 - For coupled work, declare backend dependencies and preserve backend-before-
   frontend ordering. Within v2, only independent backend DAG frontier units run
   together.
