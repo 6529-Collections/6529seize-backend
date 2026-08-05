@@ -3655,7 +3655,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           latestReadTimestamp: param.latestReadTimestamp,
           latestReadSerialNo
         },
-        { wrappedConnection: ctx.connection }
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
       );
     } finally {
       ctx.timer?.stop(timerLabel);
