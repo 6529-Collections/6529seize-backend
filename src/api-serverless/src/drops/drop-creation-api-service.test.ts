@@ -312,10 +312,12 @@ describe('DropCreationApiService.createDrop', () => {
         })
     };
     const wavesApiDb = {
-      findDmUnreadConversationStates: jest.fn().mockImplementation(async () => {
-        order.push('unread-state-read');
-        return [dmUnreadState];
-      })
+      findDmUnreadConversationStatesForIdentities: jest
+        .fn()
+        .mockImplementation(async () => {
+          order.push('unread-state-read');
+          return [dmUnreadState];
+        })
     };
     const service = new DropCreationApiService(
       dropsService as never,
@@ -342,8 +344,10 @@ describe('DropCreationApiService.createDrop', () => {
       { timer: undefined } as never
     );
 
-    expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
-      { identityId: 'reader-profile', waveIds: ['wave-1'] },
+    expect(
+      wavesApiDb.findDmUnreadConversationStatesForIdentities
+    ).toHaveBeenCalledWith(
+      { identityIds: ['reader-profile'], waveIds: ['wave-1'] },
       expect.objectContaining({ timer: undefined })
     );
     expect(

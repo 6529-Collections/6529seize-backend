@@ -154,6 +154,7 @@ type UnreadDmDropsCountRow = {
 };
 
 type DmUnreadConversationStateRow = {
+  reader_id: string;
   wave_id: string;
   unread_count: number | string;
   first_unread_drop_serial_no: number | string | null;
@@ -3511,42 +3512,50 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const latestReadSerialNo = Number(targetDrop.serial_no);
       const latestReadTimestamp = Number(targetDrop.created_at);
       await this.db.execute(
-        `update ${WAVE_READER_METRICS_TABLE} reader
-         set reader.latest_read_serial_no = coalesce(
-           reader.latest_read_serial_no,
-           (
-             select max(legacy_drop.serial_no)
-             from ${DROPS_TABLE} legacy_drop
-             where legacy_drop.wave_id = reader.wave_id
-               and legacy_drop.created_at <= reader.latest_read_timestamp
-           ),
-           0
-         )
-         where reader.wave_id = :waveId
-           and reader.reader_id = :readerId`,
-        { waveId: param.waveId, readerId: param.readerId },
-        { wrappedConnection: ctx.connection }
-      );
-      await this.db.execute(
         `insert into ${WAVE_READER_METRICS_TABLE}
            (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
          values
            (:waveId, :readerId, :latestReadTimestamp, :latestReadSerialNo, 1)
          on duplicate key update
            unread_state_version = unread_state_version +
-             if(:latestReadSerialNo > coalesce(latest_read_serial_no, 0), 1, 0),
-           latest_read_timestamp = greatest(latest_read_timestamp, :latestReadTimestamp),
+             if(
+               :latestReadSerialNo > coalesce(
+                 latest_read_serial_no,
+                 (
+                   select max(legacy_drop.serial_no)
+                   from ${DROPS_TABLE} legacy_drop
+                   where legacy_drop.wave_id = ${WAVE_READER_METRICS_TABLE}.wave_id
+                     and legacy_drop.created_at <= ${WAVE_READER_METRICS_TABLE}.latest_read_timestamp
+                 ),
+                 0
+               ),
+               1,
+               0
+             ),
            latest_read_serial_no = greatest(
-             coalesce(latest_read_serial_no, 0),
+             coalesce(
+               latest_read_serial_no,
+               (
+                 select max(legacy_drop.serial_no)
+                 from ${DROPS_TABLE} legacy_drop
+                 where legacy_drop.wave_id = ${WAVE_READER_METRICS_TABLE}.wave_id
+                   and legacy_drop.created_at <= ${WAVE_READER_METRICS_TABLE}.latest_read_timestamp
+               ),
+               0
+             ),
              :latestReadSerialNo
-           )`,
+           ),
+           latest_read_timestamp = greatest(latest_read_timestamp, :latestReadTimestamp)`,
         {
           waveId: param.waveId,
           readerId: param.readerId,
           latestReadTimestamp,
           latestReadSerialNo
         },
-        { wrappedConnection: ctx.connection }
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
       );
     } finally {
       ctx.timer?.stop(timerLabel);
@@ -3571,6 +3580,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     try {
       const params: Record<string, string | number> = {
         waveId: param.waveId,
+        // Preserve the legacy contract: a reader without metrics starts with
+        // the event that creates their row, not the wave's full history.
         latestReadTimestamp: Math.max(0, param.dropCreatedAt - 1),
         latestReadSerialNo: Math.max(0, param.dropSerialNo - 1)
       };
@@ -3864,13 +3875,47 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<ApiDmUnreadConversationState[]> {
+    return await this.findDmUnreadConversationStatesForReaders(
+      {
+        identityIds: [param.identityId],
+        eligibleGroups: param.eligibleGroups,
+        waveIds: param.waveIds
+      },
+      ctx
+    );
+  }
+
+  async findDmUnreadConversationStatesForIdentities(
+    param: {
+      identityIds: string[];
+      waveIds?: string[];
+    },
+    ctx: RequestContext
+  ): Promise<ApiDmUnreadConversationState[]> {
+    return await this.findDmUnreadConversationStatesForReaders(param, ctx);
+  }
+
+  private async findDmUnreadConversationStatesForReaders(
+    param: {
+      identityIds: string[];
+      eligibleGroups?: string[];
+      waveIds?: string[];
+    },
+    ctx: RequestContext
+  ): Promise<ApiDmUnreadConversationState[]> {
+    const identityIds = Array.from(
+      new Set(param.identityIds.filter((identityId) => !!identityId))
+    );
+    if (!identityIds.length) {
+      return [];
+    }
     const waveIds = param.waveIds
       ? Array.from(new Set(param.waveIds.filter((waveId) => !!waveId)))
       : undefined;
     if (waveIds?.length === 0) {
       return [];
     }
-    const timerLabel = `${this.constructor.name}->findDmUnreadConversationStates`;
+    const timerLabel = `${this.constructor.name}->findDmUnreadConversationStatesForReaders`;
     ctx.timer?.start(timerLabel);
     try {
       const waveFilter = waveIds ? 'and w.id in (:waveIds)' : '';
@@ -3904,15 +3949,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             and w.is_direct_message = true
            left join ${WAVES_TABLE} parent
              on parent.id = w.parent_wave_id
-           where r.reader_id = :identityId
+           where r.reader_id in (:identityIds)
              ${waveFilter}
              ${visibilityFilter}
          )
-         select state.wave_id,
+         select state.reader_id,
+                state.wave_id,
                 sum(
                   case
                     when state.muted = false
-                     and d.author_id != :identityId
+                     and d.author_id != state.reader_id
                      and im.id is null
                      and d.serial_no > state.latest_read_serial_no
                     then 1
@@ -3922,7 +3968,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 min(
                   case
                     when state.muted = false
-                     and d.author_id != :identityId
+                     and d.author_id != state.reader_id
                      and im.id is null
                      and d.serial_no > state.latest_read_serial_no
                     then d.serial_no
@@ -3936,13 +3982,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          left join ${DROPS_TABLE} d
            on d.wave_id = state.wave_id
          left join ${IDENTITY_MUTES_TABLE} im
-           on im.muter_id = :identityId
+           on im.muter_id = state.reader_id
           and im.muted_identity_id = d.author_id
-         group by state.wave_id,
+         group by state.reader_id,
+                  state.wave_id,
                   state.latest_read_serial_no,
                   state.unread_state_version`,
         {
-          identityId: param.identityId,
+          identityIds,
           eligibleGroups: param.eligibleGroups ?? [],
           waveIds: waveIds ?? []
         },
@@ -3952,7 +3999,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       );
       return rows.map((row) => ({
-        profile_id: param.identityId,
+        profile_id: row.reader_id,
         wave_id: row.wave_id,
         unread_count: Number(row.unread_count),
         first_unread_drop_serial_no: this.toNullableNumber(

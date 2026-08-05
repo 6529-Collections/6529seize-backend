@@ -56,6 +56,7 @@ import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
 import { Logger } from '@/logging';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -678,6 +679,15 @@ router.post(
     const newTimestamp = drop.created_at - 1;
     const wave = await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE);
     if (wave?.is_direct_message) {
+      const groupsUserIsEligibleFor =
+        await userGroupsService.getGroupsUserIsEligibleFor(identityId, timer);
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor,
+        message: `Wave ${waveId} not found.`,
+        wavesApiDb,
+        ctx: { timer, authenticationContext }
+      });
       await wavesApiDb.setDirectMessageUnreadFromSerial(
         {
           waveId,

@@ -66,6 +66,7 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 
 interface DropReactedNotificationAdditionalContextV2 {
   reaction: string;
@@ -156,15 +157,29 @@ export class NotificationsApiService {
     readThroughSerialNo?: number
   ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    await this.identityNotificationsDb.markWaveNotificationsAsRead(
-      waveId,
-      identityId,
-      ctx
-    );
     const wave = await this.wavesApiDb.findById(
       waveId,
       ctx.connection,
       DbPoolName.WRITE
+    );
+    if (wave?.is_direct_message) {
+      const groupsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          identityId,
+          ctx.timer
+        );
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor,
+        message: `Wave ${waveId} not found.`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+    }
+    await this.identityNotificationsDb.markWaveNotificationsAsRead(
+      waveId,
+      identityId,
+      ctx
     );
     if (wave?.is_direct_message) {
       await this.wavesApiDb.markDirectMessageReadThroughSerial(

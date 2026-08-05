@@ -1822,6 +1822,49 @@ describeWithSeed(
       ]);
     });
 
+    it('reads authoritative DM state for multiple recipients in one query', async () => {
+      await repo.recordDirectMessageUnreadDrop(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          recipientIds: [
+            unreadReader.profile_id!,
+            mutedUnreadReader.profile_id!
+          ],
+          dropSerialNo: 35,
+          dropCreatedAt: 1999
+        },
+        ctx
+      );
+
+      const states = await repo.findDmUnreadConversationStatesForIdentities(
+        {
+          identityIds: [
+            unreadReader.profile_id!,
+            mutedUnreadReader.profile_id!
+          ],
+          waveIds: [dmUnreadSummaryWave.id]
+        },
+        ctx
+      );
+
+      expect(states).toHaveLength(2);
+      expect(states.map((state) => state.profile_id).sort()).toEqual(
+        [unreadReader.profile_id!, mutedUnreadReader.profile_id!].sort()
+      );
+      expect(states).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            profile_id: unreadReader.profile_id!,
+            wave_id: dmUnreadSummaryWave.id
+          }),
+          expect.objectContaining({
+            profile_id: mutedUnreadReader.profile_id!,
+            wave_id: dmUnreadSummaryWave.id
+          })
+        ])
+      );
+    });
+
     it('advances DM reads monotonically through the requested serial', async () => {
       await repo.markDirectMessageReadThroughSerial(
         {

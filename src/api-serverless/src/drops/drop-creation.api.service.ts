@@ -214,16 +214,11 @@ export class DropCreationApiService {
       return;
     }
     try {
-      const states = (
-        await Promise.all(
-          recipientIds.map((identityId) =>
-            this.wavesApiDb.findDmUnreadConversationStates(
-              { identityId, waveIds: [waveId] },
-              ctx
-            )
-          )
-        )
-      ).flat();
+      const states =
+        await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
+          { identityIds: recipientIds, waveIds: [waveId] },
+          ctx
+        );
       await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
     } catch (error) {
       this.logger.error(
