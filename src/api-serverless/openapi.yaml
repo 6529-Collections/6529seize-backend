@@ -14938,11 +14938,10 @@ components:
       properties:
         content:
           type: string
-          maxLength: 25000
           description: >-
             Runtime validation allows at most 25,000 JavaScript UTF-16 code
             units and 65,535 UTF-8 bytes for this part. The byte limit is
-            additional to maxLength and is enforced by the API.
+            enforced independently by the API.
           x-6529-max-utf16-code-units: 25000
           x-6529-max-utf8-bytes: 65535
           nullable: true
@@ -16187,12 +16186,6 @@ components:
           format: int64
         content:
           type: string
-          maxLength: 25000
-          description: >-
-            Content is returned only when it satisfies the API's 25,000
-            JavaScript UTF-16-code-unit and 65,535 UTF-8-byte per-part limits.
-          x-6529-max-utf16-code-units: 25000
-          x-6529-max-utf8-bytes: 65535
           nullable: true
         media:
           type: array
@@ -16228,12 +16221,6 @@ components:
           minimum: 1
         content:
           type: string
-          maxLength: 25000
-          description: >-
-            Runtime validation allows at most 25,000 JavaScript UTF-16 code
-            units and 65,535 UTF-8 bytes for this part.
-          x-6529-max-utf16-code-units: 25000
-          x-6529-max-utf8-bytes: 65535
         media:
           type: array
           items:

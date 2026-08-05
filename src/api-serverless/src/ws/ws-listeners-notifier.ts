@@ -153,6 +153,7 @@ export function serializeDropMessageForRecipient(
   const refData = {
     drop_id: inputDrop.id,
     wave_id: inputDrop.wave.id,
+    author_id: inputDrop.author.id,
     serial_no: inputDrop.serial_no,
     update_type: updateType,
     ...(reason !== undefined && updateType === WsMessageType.DROP_UPDATE
@@ -161,6 +162,7 @@ export function serializeDropMessageForRecipient(
   } satisfies {
     drop_id: string;
     wave_id: string;
+    author_id: string;
     serial_no: number;
     update_type: DropUpdateRefType;
     reason?: string;

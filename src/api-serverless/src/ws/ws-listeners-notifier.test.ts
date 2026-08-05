@@ -187,6 +187,7 @@ describe('WsListenersNotifier', () => {
         data: {
           drop_id: 'drop-1',
           wave_id: 'wave-1',
+          author_id: 'author-1',
           serial_no: 42,
           update_type: updateType
         }
@@ -215,6 +216,7 @@ describe('WsListenersNotifier', () => {
       data: {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_UPDATE,
         reason: 'POLL_RESPONSE'
@@ -241,6 +243,7 @@ describe('WsListenersNotifier', () => {
       data: {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_RATING_UPDATE
       }
@@ -250,6 +253,7 @@ describe('WsListenersNotifier', () => {
       data: {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_REACTION_UPDATE
       }
@@ -300,6 +304,7 @@ describe('WsListenersNotifier', () => {
       data: {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_UPDATE
       }

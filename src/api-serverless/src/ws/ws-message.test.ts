@@ -38,6 +38,7 @@ describe('ws-message', () => {
       dropUpdateRefMessage({
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_UPDATE
       })
@@ -46,6 +47,7 @@ describe('ws-message', () => {
       data: {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_UPDATE
       }
@@ -57,6 +59,7 @@ describe('ws-message', () => {
       dropUpdateRefMessage({
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_UPDATE,
         reason: DROP_UPDATE_REASON_POLL_RESPONSE
@@ -66,6 +69,7 @@ describe('ws-message', () => {
       data: {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
+        author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_UPDATE,
         reason: DROP_UPDATE_REASON_POLL_RESPONSE

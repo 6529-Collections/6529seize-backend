@@ -62,6 +62,7 @@ export function dropUpdateMessage(
 export interface DropUpdateRefMessageData {
   readonly drop_id: string;
   readonly wave_id: string;
+  readonly author_id: string;
   readonly serial_no: number;
   readonly update_type: DropUpdateRefType;
   readonly reason?: string;
