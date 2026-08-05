@@ -15,12 +15,7 @@ import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmentReference';
 import { ApiCreateDropPollRequest } from '../generated/models/ApiCreateDropPollRequest';
 import { Time } from '@/time';
-import {
-  getDropContentLimitViolation,
-  DROP_PART_MAX_UTF16_CODE_UNITS,
-  DROP_PART_MAX_UTF8_BYTES,
-  DROP_TOTAL_MAX_UTF16_CODE_UNITS
-} from '@/drops/drop-content-limits';
+import { getDropContentLimitViolation } from '@/drops/drop-content-limits';
 
 export {
   DROP_PART_MAX_UTF16_CODE_UNITS,

@@ -139,13 +139,15 @@ export function serializeDropMessageForRecipient(
   reason?: string
 ): string {
   const recipientDrop = removeDropsAuthRequestContext(inputDrop, creditLeft);
-  const fullMessage = JSON.stringify(
-    updateType === WsMessageType.DROP_UPDATE
-      ? dropUpdateMessage(recipientDrop, reason)
-      : updateType === WsMessageType.DROP_RATING_UPDATE
-        ? dropRatingUpdateMessage(recipientDrop)
-        : dropReactionUpdateMessage(recipientDrop)
-  );
+  let fullMessage: string;
+  if (updateType === WsMessageType.DROP_UPDATE) {
+    fullMessage = JSON.stringify(dropUpdateMessage(recipientDrop, reason));
+  } else if (updateType === WsMessageType.DROP_RATING_UPDATE) {
+    fullMessage = JSON.stringify(dropRatingUpdateMessage(recipientDrop));
+  } else {
+    fullMessage = JSON.stringify(dropReactionUpdateMessage(recipientDrop));
+  }
+
   if (Buffer.byteLength(fullMessage, 'utf8') <= DROP_UPDATE_MAX_UTF8_BYTES) {
     return fullMessage;
   }
