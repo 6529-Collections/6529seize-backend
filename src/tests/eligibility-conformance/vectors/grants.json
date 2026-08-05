@@ -1,0 +1,128 @@
+[
+  {
+    "name": "grant-all-mode-any-token",
+    "dimension": "grants",
+    "description": "ALL-mode grant with ANY_TOKEN matching: owning any token in the grant's partition qualifies (spec §8).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "grants": [
+      { "id": "grant-owned", "token_mode": "ALL" },
+      { "id": "grant-unowned", "token_mode": "ALL" }
+    ],
+    "external_ownership": [
+      { "grant": "grant-owned", "token_id": "99", "owner": "subject" }
+    ],
+    "groups": [
+      {
+        "id": "g-owned-partition",
+        "is_beneficiary_of_grant_id": "grant-owned",
+        "is_beneficiary_of_grant_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-unowned-partition",
+        "is_beneficiary_of_grant_id": "grant-unowned",
+        "is_beneficiary_of_grant_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-owned-partition"] }
+  },
+  {
+    "name": "grant-include-mode-any-token",
+    "dimension": "grants",
+    "description": "INCLUDE-mode grant with ANY_TOKEN matching: only tokens in the grant's token set count; other tokens in the same partition do not (spec §8).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "grants": [
+      { "id": "grant-hit", "token_mode": "INCLUDE", "tokens": ["1", "2"] },
+      { "id": "grant-miss", "token_mode": "INCLUDE", "tokens": ["7"] }
+    ],
+    "external_ownership": [
+      { "grant": "grant-hit", "token_id": "1", "owner": "subject" },
+      { "grant": "grant-hit", "token_id": "3", "owner": "subject" },
+      { "grant": "grant-miss", "token_id": "8", "owner": "subject" }
+    ],
+    "groups": [
+      {
+        "id": "g-owns-granted-token",
+        "is_beneficiary_of_grant_id": "grant-hit",
+        "is_beneficiary_of_grant_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-owns-only-ungranted-token",
+        "is_beneficiary_of_grant_id": "grant-miss",
+        "is_beneficiary_of_grant_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-owns-granted-token"] }
+  },
+  {
+    "name": "grant-include-mode-all-tokens",
+    "dimension": "grants",
+    "description": "INCLUDE-mode grant with ALL_TOKENS matching requires owning every distinct token in the grant's token set (spec §8).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "grants": [
+      { "id": "grant-full", "token_mode": "INCLUDE", "tokens": ["10", "11"] },
+      { "id": "grant-partial", "token_mode": "INCLUDE", "tokens": ["10", "11", "12"] }
+    ],
+    "external_ownership": [
+      { "grant": "grant-full", "token_id": "10", "owner": "subject" },
+      { "grant": "grant-full", "token_id": "11", "owner": "subject" },
+      { "grant": "grant-partial", "token_id": "10", "owner": "subject" },
+      { "grant": "grant-partial", "token_id": "11", "owner": "subject" }
+    ],
+    "groups": [
+      {
+        "id": "g-owns-all",
+        "is_beneficiary_of_grant_id": "grant-full",
+        "is_beneficiary_of_grant_match_mode": "ALL_TOKENS"
+      },
+      {
+        "id": "g-owns-two-of-three",
+        "is_beneficiary_of_grant_id": "grant-partial",
+        "is_beneficiary_of_grant_match_mode": "ALL_TOKENS"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-owns-all"] }
+  },
+  {
+    "name": "grant-all-mode-all-tokens-matches-nobody",
+    "dimension": "grants",
+    "description": "ALL_TOKENS matching over an ALL-mode (whole partition) grant matches nobody on both engines, even a partition token holder (spec §8).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "grants": [{ "id": "grant-all-mode", "token_mode": "ALL" }],
+    "external_ownership": [
+      { "grant": "grant-all-mode", "token_id": "99", "owner": "subject" }
+    ],
+    "groups": [
+      {
+        "id": "g-all-tokens-over-all-mode",
+        "is_beneficiary_of_grant_id": "grant-all-mode",
+        "is_beneficiary_of_grant_match_mode": "ALL_TOKENS"
+      }
+    ],
+    "expected": { "eligible_group_ids": [] }
+  },
+  {
+    "name": "grant-status-not-granted",
+    "dimension": "grants",
+    "description": "Only GRANTED grants qualify anybody; a PENDING grant matches nobody even for a granted-token owner (spec §8).",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "grants": [
+      { "id": "grant-pending", "token_mode": "INCLUDE", "status": "PENDING", "tokens": ["1"] }
+    ],
+    "external_ownership": [
+      { "grant": "grant-pending", "token_id": "1", "owner": "subject" }
+    ],
+    "groups": [
+      {
+        "id": "g-pending-grant",
+        "is_beneficiary_of_grant_id": "grant-pending",
+        "is_beneficiary_of_grant_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": [] }
+  }
+]
