@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { DROPS_TABLE } from '@/constants';
+import path from 'node:path';
+import { DROPS_TABLE, IDENTITY_NOTIFICATIONS_TABLE } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { sqlExecutor } from '@/sql-executor';
@@ -127,6 +128,63 @@ describeWithSeed(
           unread_only: false
         })
       ).resolves.toEqual([]);
+    });
+
+    it('repairs an existing notification whose group ID was truncated to 50 characters', async () => {
+      const truncatedVisibilityId = GROUP_DM_VISIBILITY_ID.slice(0, 50);
+      expect(truncatedVisibilityId).toHaveLength(50);
+
+      const insertedIds = await repo.insertManyNotifications([
+        {
+          identity_id: recipient.profile_id!,
+          additional_identity_id: author.profile_id!,
+          related_drop_id: drop.id,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.ALL_DROPS,
+          additional_data: {},
+          visibility_group_id: truncatedVisibilityId,
+          wave_id: wave.id
+        }
+      ]);
+      expect(insertedIds).toHaveLength(1);
+
+      const migration = require(
+        path.resolve(
+          process.cwd(),
+          'migrations/20260805094245-widen-identity-notification-visibility-group-id.js'
+        )
+      ) as {
+        setup: (
+          options: { dbmigrate: object; Promise: PromiseConstructor },
+          seedLink?: unknown
+        ) => void;
+        up: (db: {
+          runSql: (sql: string) => Promise<unknown>;
+        }) => Promise<void>;
+      };
+      migration.setup({ dbmigrate: {}, Promise });
+      await migration.up({
+        runSql: async (sql: string) => {
+          const statements = sql
+            .split(';')
+            .map((statement) => statement.trim())
+            .filter((statement) => statement.length > 0);
+          for (const statement of statements) {
+            await sqlExecutor.execute(statement);
+          }
+        }
+      });
+
+      await expect(
+        sqlExecutor.oneOrNull<{ visibility_group_id: string }>(
+          `SELECT visibility_group_id
+           FROM ${IDENTITY_NOTIFICATIONS_TABLE}
+           WHERE id = :id`,
+          { id: insertedIds[0] }
+        )
+      ).resolves.toEqual({ visibility_group_id: GROUP_DM_VISIBILITY_ID });
     });
   }
 );

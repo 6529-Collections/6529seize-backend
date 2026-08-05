@@ -37,6 +37,8 @@ exports.up = function (db) {
 };
 
 exports.down = function (db) {
+  // Intentionally irreversible: narrowing would truncate repaired IDs again,
+  // and the backfill cannot reconstruct the prior corrupted values safely.
   return Promise.resolve();
 };
 
