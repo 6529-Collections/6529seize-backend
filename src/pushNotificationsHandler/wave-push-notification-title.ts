@@ -1,3 +1,5 @@
+import { formatSignedLocaleNumber } from '@/pushNotificationsHandler/drop-vote-push-notification-text';
+
 export type WavePushNotificationContext = {
   readonly kind: 'wave' | 'dm' | 'group-dm';
   readonly label: string;
@@ -15,6 +17,30 @@ const normalizeHandle = (handle: string | null | undefined): string | null => {
   const trimmed = handle?.trim();
   return trimmed ? trimmed.toLowerCase() : null;
 };
+
+function getUniqueParticipantHandles(
+  participantHandles: readonly (string | null)[]
+): string[] {
+  const handlesByNormalizedHandle = new Map<string, string>();
+  participantHandles.forEach((handle) => {
+    const trimmedHandle = handle?.trim();
+    const normalizedHandle = normalizeHandle(trimmedHandle);
+    if (trimmedHandle && normalizedHandle) {
+      handlesByNormalizedHandle.set(normalizedHandle, trimmedHandle);
+    }
+  });
+  return Array.from(handlesByNormalizedHandle.values());
+}
+
+function getMessageVerb(context: WavePushNotificationContext): string {
+  if (context.kind === 'wave') {
+    return 'posted';
+  }
+  if (context.kind === 'dm') {
+    return 'messaged you';
+  }
+  return 'messaged';
+}
 
 export function buildWavePushNotificationContext({
   waveName,
@@ -35,16 +61,8 @@ export function buildWavePushNotificationContext({
 
   const normalizedActorHandle = normalizeHandle(actorHandle);
   const normalizedRecipientHandle = normalizeHandle(recipientHandle);
-  const uniqueParticipantHandles = Array.from(
-    new Map(
-      participantHandles.flatMap((handle) => {
-        const normalized = normalizeHandle(handle);
-        return normalized && handle?.trim()
-          ? [[normalized, handle.trim()] as const]
-          : [];
-      })
-    ).values()
-  );
+  const uniqueParticipantHandles =
+    getUniqueParticipantHandles(participantHandles);
 
   if (uniqueParticipantHandles.length <= 2) {
     return { kind: 'dm', label: 'DM' };
@@ -82,12 +100,7 @@ export function buildWavePushNotificationTitle({
 }): string {
   switch (action.type) {
     case 'message': {
-      const verb =
-        context.kind === 'wave'
-          ? 'posted'
-          : context.kind === 'dm'
-            ? 'messaged you'
-            : 'messaged';
+      const verb = getMessageVerb(context);
       return `${actorHandle} ${verb} · ${context.label}`;
     }
     case 'reply':
@@ -106,6 +119,29 @@ export function buildWavePushNotificationTitle({
         ? `${actorHandle} added you · ${context.label}`
         : `${actorHandle} invited you · ${context.label}`;
   }
+}
+
+export function buildAllDropsPushNotificationTitle({
+  actorHandle,
+  vote,
+  context
+}: {
+  readonly actorHandle: string;
+  readonly vote: unknown;
+  readonly context: WavePushNotificationContext;
+}): string {
+  const parsedVote = vote === null || vote === undefined ? null : Number(vote);
+  if (parsedVote !== null && Number.isFinite(parsedVote)) {
+    return appendWavePushNotificationContext(
+      `${actorHandle} rated a drop: ${formatSignedLocaleNumber(parsedVote)}`,
+      context
+    );
+  }
+  return buildWavePushNotificationTitle({
+    actorHandle,
+    action: { type: 'message' },
+    context
+  });
 }
 
 export function appendWavePushNotificationContext(

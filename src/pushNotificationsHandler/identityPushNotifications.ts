@@ -56,6 +56,7 @@ import {
 import { buildSubscriptionCoveragePushNotificationData } from '@/pushNotificationsHandler/subscription-coverage-push-notification';
 import {
   appendWavePushNotificationContext,
+  buildAllDropsPushNotificationTitle,
   buildWavePushNotificationContext,
   buildWavePushNotificationTitle
 } from '@/pushNotificationsHandler/wave-push-notification-title';
@@ -1249,23 +1250,12 @@ async function handleAllDrops(
     targetProfile
   );
   const additionalData = extractAdditionalData(notification);
-  const isRating = typeof additionalData.vote === 'number';
   const actorHandle = getIdentityDisplayHandle(additionalEntity);
-
-  let title;
-  if (isRating) {
-    const vote = Number(additionalData.vote);
-    title = appendWavePushNotificationContext(
-      `${actorHandle} rated a drop: ${formatSignedLocaleNumber(vote)}`,
-      wavePresentation.context
-    );
-  } else {
-    title = buildWavePushNotificationTitle({
-      actorHandle,
-      action: { type: 'message' },
-      context: wavePresentation.context
-    });
-  }
+  const title = buildAllDropsPushNotificationTitle({
+    actorHandle,
+    vote: additionalData.vote,
+    context: wavePresentation.context
+  });
 
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);

@@ -1,5 +1,6 @@
 import {
   appendWavePushNotificationContext,
+  buildAllDropsPushNotificationTitle,
   buildWavePushNotificationContext,
   buildWavePushNotificationTitle
 } from './wave-push-notification-title';
@@ -118,4 +119,31 @@ describe('wave push notification titles', () => {
       )
     ).toBe('userA boosted your drop 🔥 · WaveName');
   });
+
+  it.each([
+    [42, 'userA rated a drop: +42 · WaveName'],
+    ['42', 'userA rated a drop: +42 · WaveName'],
+    ['-12', 'userA rated a drop: -12 · WaveName']
+  ])('formats numeric rating value %p as a rating', (vote, expected) => {
+    expect(
+      buildAllDropsPushNotificationTitle({
+        actorHandle: 'userA',
+        vote,
+        context: waveContext
+      })
+    ).toBe(expected);
+  });
+
+  it.each([null, undefined, 'not-a-number'])(
+    'formats non-rating value %p as a message',
+    (vote) => {
+      expect(
+        buildAllDropsPushNotificationTitle({
+          actorHandle: 'userA',
+          vote,
+          context: waveContext
+        })
+      ).toBe('userA posted · WaveName');
+    }
+  );
 });
