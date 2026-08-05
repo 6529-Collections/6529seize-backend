@@ -16,6 +16,20 @@ import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmen
 import { ApiCreateDropPollRequest } from '../generated/models/ApiCreateDropPollRequest';
 import { Time } from '@/time';
 
+/**
+ * Drop content limits are measured in the same representations used by the
+ * runtime and storage boundaries:
+ *
+ * - JavaScript `string.length` for UTF-16 code units.
+ * - Node's UTF-8 byte length for the encoded value sent to MySQL.
+ *
+ * These are application limits. The DropPart entity remains a MySQL TEXT
+ * column; no schema change is required or permitted for this contract.
+ */
+export const DROP_PART_MAX_UTF16_CODE_UNITS = 25_000;
+export const DROP_PART_MAX_UTF8_BYTES = 65_535;
+export const DROP_TOTAL_MAX_UTF16_CODE_UNITS = 50_000;
+
 function parseSerialNos(value: string, helpers: Joi.CustomHelpers): number[] {
   const parts = value.split(',').map((part) => part.trim());
   const serialNos = parts.map((part) => Number(part));
@@ -158,6 +172,56 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
     .default([])
 });
 
+function validateDropParts(
+  parts: ApiCreateDropPart[],
+  helpers: Joi.CustomHelpers
+): ApiCreateDropPart[] | Joi.ErrorReport {
+  let totalUtf16CodeUnits = 0;
+
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    const part = parts[partIndex];
+    const content = part.content ?? '';
+    const utf16CodeUnits = content.length;
+    if (utf16CodeUnits > DROP_PART_MAX_UTF16_CODE_UNITS) {
+      return helpers.error('dropPart.contentUtf16Max', {
+        limit: DROP_PART_MAX_UTF16_CODE_UNITS,
+        partIndex: partIndex + 1
+      });
+    }
+
+    const utf8Bytes = Buffer.byteLength(content, 'utf8');
+    if (utf8Bytes > DROP_PART_MAX_UTF8_BYTES) {
+      return helpers.error('dropPart.contentUtf8Max', {
+        limit: DROP_PART_MAX_UTF8_BYTES,
+        partIndex: partIndex + 1
+      });
+    }
+
+    totalUtf16CodeUnits += utf16CodeUnits;
+    if (totalUtf16CodeUnits > DROP_TOTAL_MAX_UTF16_CODE_UNITS) {
+      return helpers.error('dropParts.totalUtf16Max', {
+        limit: DROP_TOTAL_MAX_UTF16_CODE_UNITS
+      });
+    }
+  }
+
+  return parts;
+}
+
+const DropPartsSchema = Joi.array()
+  .required()
+  .items(NewDropPartSchema)
+  .min(1)
+  .custom(validateDropParts)
+  .messages({
+    'dropPart.contentUtf16Max':
+      'drop part {{#partIndex}} content must be at most {{#limit}} UTF-16 code units',
+    'dropPart.contentUtf8Max':
+      'drop part {{#partIndex}} content must be at most {{#limit}} UTF-8 bytes',
+    'dropParts.totalUtf16Max':
+      'total content across all drop parts must be at most {{#limit}} UTF-16 code units'
+  });
+
 const NewDropPollSchema: Joi.ObjectSchema<ApiCreateDropPollRequest> =
   Joi.object<ApiCreateDropPollRequest>({
     options: Joi.array()
@@ -185,7 +249,7 @@ const baseDropFieldsValidators = {
     .empty('')
     .default(null)
     .allow(null),
-  parts: Joi.array().required().items(NewDropPartSchema).min(1),
+  parts: DropPartsSchema,
   referenced_nfts: Joi.array()
     .optional()
     .items(NftSchema)

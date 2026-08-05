@@ -37,6 +37,15 @@ export const HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS = 5000;
 export const HELP_BOT_PUBLIC_DATA_MAX_ROWS = 10;
 export const HELP_BOT_KNOWLEDGE_VERSION = 'frontend-help-index-v1';
 export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
+
+/**
+ * help_bot_interactions.question remains a MySQL TEXT column. Keep the
+ * derived question at or below TEXT's 65,535 UTF-8-byte limit so a long Storm
+ * mentioning @help6529 cannot turn a successful drop into a persistence
+ * failure. This is a fail-safe for the secondary help-bot path, not a drop
+ * content limit.
+ */
+export const HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES = 65_535;
 export const HELP_BOT_ANSWERING_LEASE_MS = 180_000;
 export const HELP_BOT_SEEN_REACTION = ':eyes:';
 export const HELP_BOT_SUCCESS_REACTION = ':white_check_mark:';

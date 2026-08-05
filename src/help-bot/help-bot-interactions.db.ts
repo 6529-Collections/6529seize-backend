@@ -9,6 +9,7 @@ import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
 import {
   HELP_BOT_ANSWERING_LEASE_MS,
+  HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES,
   HELP_BOT_KNOWLEDGE_VERSION
 } from './help-bot.config';
 
@@ -56,6 +57,14 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
     request: InsertHelpBotInteractionRequest,
     ctx: RequestContext
   ): Promise<InsertHelpBotInteractionResult> {
+    if (
+      Buffer.byteLength(request.question, 'utf8') >
+      HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES
+    ) {
+      throw new Error(
+        `Help bot interaction question exceeds ${HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES} UTF-8 bytes`
+      );
+    }
     if (!ctx.connection) {
       return await this.executeNativeQueriesInTransaction((connection) =>
         this.insertSeen(request, { ...ctx, connection })

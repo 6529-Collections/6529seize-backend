@@ -11,6 +11,10 @@ import {
   dropRatingUpdateMessage,
   dropReactionUpdateMessage,
   dropUpdateMessage,
+  dropUpdateRefMessage,
+  DROP_UPDATE_MAX_UTF8_BYTES,
+  DropUpdateRefType,
+  WsMessageType,
   nftLinkUpdatedMessage,
   identityNotificationsChangedMessage,
   userIsTypingMessage
@@ -28,6 +32,177 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+
+const scalarForLog = (value: unknown): string =>
+  typeof value === 'string' ||
+  typeof value === 'number' ||
+  typeof value === 'boolean'
+    ? String(value)
+    : 'unknown';
+
+const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
+  `drop_id=${scalarForLog(drop.id)} wave_id=${scalarForLog(
+    drop.wave?.id
+  )} serial_no=${scalarForLog(drop.serial_no)}`;
+
+const normalizedErrorForLog = (error: unknown): string => {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    const value = error as Record<string, unknown>;
+    const metadata = Object.fromEntries(
+      ['name', 'message', 'code', 'status', 'statusCode']
+        .filter((key) => {
+          const candidate = value[key];
+          return (
+            typeof candidate === 'string' ||
+            typeof candidate === 'number' ||
+            typeof candidate === 'boolean'
+          );
+        })
+        .map((key) => [key, value[key]])
+    );
+    return Object.keys(metadata).length
+      ? JSON.stringify(metadata)
+      : 'Unknown error';
+  }
+  return 'Unknown error';
+};
+
+const logDropNotificationFailure = (
+  logger: Logger,
+  operation: string,
+  drop: ApiDrop,
+  error: unknown
+): void => {
+  logger.error(
+    `${operation} websocket notification failed: ${dropNotificationIdentityForLog(
+      drop
+    )} error=${normalizedErrorForLog(error)}`
+  );
+};
+
+function removeDropsAuthRequestContext(
+  drop: ApiDrop | ApiDropWithoutWave,
+  creditLeft: number
+): ApiDrop {
+  const modifiedDrop: ApiDrop = JSON.parse(JSON.stringify(drop));
+  const maybeWave = (drop as ApiDrop).wave;
+  const modifiedWave = maybeWave ? { ...maybeWave } : undefined;
+  if (modifiedWave) {
+    (modifiedWave as any).authenticated_user_eligible_to_vote = undefined;
+    (modifiedWave as any).authenticated_user_eligible_to_participate =
+      undefined;
+    (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
+    (modifiedWave as any).authenticated_user_admin = undefined;
+    (modifiedWave as any).credit_left = creditLeft;
+    (modifiedDrop.wave as any) = modifiedWave;
+    (modifiedDrop.author as any).subscribed_actions = undefined;
+    (modifiedDrop as any).context_profile_context = undefined;
+  }
+  if (modifiedDrop.poll?.anonymous) {
+    modifiedDrop.poll.voted = [];
+  }
+  for (const part of modifiedDrop.parts) {
+    if (part.quoted_drop?.drop) {
+      part.quoted_drop.drop = removeDropsAuthRequestContext(
+        part.quoted_drop.drop,
+        creditLeft
+      );
+    }
+  }
+  if (modifiedDrop.reply_to?.drop) {
+    modifiedDrop.reply_to.drop = removeDropsAuthRequestContext(
+      modifiedDrop.reply_to.drop,
+      creditLeft
+    );
+  }
+  return modifiedDrop;
+}
+
+/**
+ * Serializes the exact recipient-scoped message that will be sent. The byte
+ * check intentionally happens after auth-context removal, credit injection,
+ * anonymous-poll redaction, and reason inclusion so a recipient's payload
+ * cannot cross the application ceiling unexpectedly.
+ */
+type DropMessageType = DropUpdateRefType;
+
+export function serializeDropMessageForRecipient(
+  inputDrop: ApiDrop,
+  creditLeft: number,
+  updateType: DropMessageType,
+  reason?: string
+): string {
+  const recipientDrop = removeDropsAuthRequestContext(inputDrop, creditLeft);
+  const fullMessage = JSON.stringify(
+    updateType === WsMessageType.DROP_UPDATE
+      ? dropUpdateMessage(recipientDrop, reason)
+      : updateType === WsMessageType.DROP_RATING_UPDATE
+        ? dropRatingUpdateMessage(recipientDrop)
+        : dropReactionUpdateMessage(recipientDrop)
+  );
+  if (Buffer.byteLength(fullMessage, 'utf8') <= DROP_UPDATE_MAX_UTF8_BYTES) {
+    return fullMessage;
+  }
+
+  const refData = {
+    drop_id: inputDrop.id,
+    wave_id: inputDrop.wave.id,
+    serial_no: inputDrop.serial_no,
+    update_type: updateType,
+    ...(reason !== undefined && updateType === WsMessageType.DROP_UPDATE
+      ? { reason }
+      : {})
+  } satisfies {
+    drop_id: string;
+    wave_id: string;
+    serial_no: number;
+    update_type: DropUpdateRefType;
+    reason?: string;
+  };
+
+  return JSON.stringify(dropUpdateRefMessage(refData));
+}
+
+export function serializeDropUpdateForRecipient(
+  inputDrop: ApiDrop,
+  creditLeft: number,
+  reason?: string
+): string {
+  return serializeDropMessageForRecipient(
+    inputDrop,
+    creditLeft,
+    WsMessageType.DROP_UPDATE,
+    reason
+  );
+}
+
+export function serializeDropRatingUpdateForRecipient(
+  inputDrop: ApiDrop,
+  creditLeft: number
+): string {
+  return serializeDropMessageForRecipient(
+    inputDrop,
+    creditLeft,
+    WsMessageType.DROP_RATING_UPDATE
+  );
+}
+
+export function serializeDropReactionUpdateForRecipient(
+  inputDrop: ApiDrop,
+  creditLeft: number
+): string {
+  return serializeDropMessageForRecipient(
+    inputDrop,
+    creditLeft,
+    WsMessageType.DROP_REACTION_UPDATE
+  );
+}
 
 export class WsListenersNotifier {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -103,24 +278,16 @@ export class WsListenersNotifier {
         onlineProfiles.map(({ connectionId, profileId }) =>
           this.appWebSockets.send({
             connectionId,
-            message: JSON.stringify(
-              dropUpdateMessage(
-                this.removeDropsAuthRequestContext(
-                  inputDrop,
-                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-                ),
-                reason
-              )
+            message: serializeDropUpdateForRecipient(
+              inputDrop,
+              profileId === null ? 0 : (creditLefts[profileId] ?? 0),
+              reason
             )
           })
         )
       );
     } catch (e) {
-      this.logger.error(
-        `Sending data to websockets failed. Params: ${JSON.stringify(
-          inputDrop
-        )}. Error: ${JSON.stringify(e)}`
-      );
+      logDropNotificationFailure(this.logger, 'DROP_UPDATE', inputDrop, e);
     }
 
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDrop`);
@@ -148,23 +315,15 @@ export class WsListenersNotifier {
         onlineProfiles.map(({ connectionId, profileId }) =>
           this.appWebSockets.send({
             connectionId,
-            message: JSON.stringify(
-              dropRatingUpdateMessage(
-                this.removeDropsAuthRequestContext(
-                  drop,
-                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-                )
-              )
+            message: serializeDropRatingUpdateForRecipient(
+              drop,
+              profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           })
         )
       );
     } catch (e) {
-      this.logger.error(
-        `Sending data to websockets failed. Params: ${JSON.stringify(
-          drop
-        )}. Error: ${JSON.stringify(e)}`
-      );
+      logDropNotificationFailure(this.logger, 'DROP_RATING_UPDATE', drop, e);
     }
 
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
@@ -192,23 +351,15 @@ export class WsListenersNotifier {
         onlineProfiles.map(({ connectionId, profileId }) =>
           this.appWebSockets.send({
             connectionId,
-            message: JSON.stringify(
-              dropReactionUpdateMessage(
-                this.removeDropsAuthRequestContext(
-                  drop,
-                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-                )
-              )
+            message: serializeDropReactionUpdateForRecipient(
+              drop,
+              profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           })
         )
       );
     } catch (e) {
-      this.logger.error(
-        `Sending data to websockets failed. Params: ${JSON.stringify(
-          drop
-        )}. Error: ${JSON.stringify(e)}`
-      );
+      logDropNotificationFailure(this.logger, 'DROP_REACTION_UPDATE', drop, e);
     }
   }
 
@@ -339,44 +490,6 @@ export class WsListenersNotifier {
       )
     );
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropDelete`);
-  }
-
-  private removeDropsAuthRequestContext(
-    drop: ApiDrop | ApiDropWithoutWave,
-    creditLeft: number
-  ): ApiDrop {
-    const modifiedDrop: ApiDrop = JSON.parse(JSON.stringify(drop));
-    const maybeWave = (drop as ApiDrop).wave;
-    const modifiedWave = maybeWave ? { ...maybeWave } : undefined;
-    if (modifiedWave) {
-      (modifiedWave as any).authenticated_user_eligible_to_vote = undefined;
-      (modifiedWave as any).authenticated_user_eligible_to_participate =
-        undefined;
-      (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
-      (modifiedWave as any).authenticated_user_admin = undefined;
-      (modifiedWave as any).credit_left = creditLeft;
-      (modifiedDrop.wave as any) = modifiedWave;
-      (modifiedDrop.author as any).subscribed_actions = undefined;
-      (modifiedDrop as any).context_profile_context = undefined;
-    }
-    if (modifiedDrop.poll?.anonymous) {
-      modifiedDrop.poll.voted = [];
-    }
-    for (const part of modifiedDrop.parts) {
-      if (part.quoted_drop?.drop) {
-        part.quoted_drop.drop = this.removeDropsAuthRequestContext(
-          part.quoted_drop.drop,
-          creditLeft
-        );
-      }
-    }
-    if (modifiedDrop.reply_to?.drop) {
-      modifiedDrop.reply_to.drop = this.removeDropsAuthRequestContext(
-        modifiedDrop.reply_to.drop,
-        creditLeft
-      );
-    }
-    return modifiedDrop;
   }
 
   async notifyAboutAttachmentStatusUpdate(
