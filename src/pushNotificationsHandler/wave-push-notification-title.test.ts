@@ -123,7 +123,9 @@ describe('wave push notification titles', () => {
   it.each([
     [42, 'userA rated a drop: +42 · WaveName'],
     ['42', 'userA rated a drop: +42 · WaveName'],
-    ['-12', 'userA rated a drop: -12 · WaveName']
+    ['-12', 'userA rated a drop: -12 · WaveName'],
+    [0, 'userA rated a drop: 0 · WaveName'],
+    ['0', 'userA rated a drop: 0 · WaveName']
   ])('formats numeric rating value %p as a rating', (vote, expected) => {
     expect(
       buildAllDropsPushNotificationTitle({
@@ -134,7 +136,7 @@ describe('wave push notification titles', () => {
     ).toBe(expected);
   });
 
-  it.each([null, undefined, 'not-a-number'])(
+  it.each([null, undefined, 'not-a-number', '', '  ', false])(
     'formats non-rating value %p as a message',
     (vote) => {
       expect(

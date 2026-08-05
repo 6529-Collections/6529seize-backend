@@ -42,6 +42,17 @@ function getMessageVerb(context: WavePushNotificationContext): string {
   return 'messaged';
 }
 
+function parseRatingVote(value: unknown): number | null {
+  if (
+    typeof value !== 'number' &&
+    (typeof value !== 'string' || value.trim() === '')
+  ) {
+    return null;
+  }
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
 export function buildWavePushNotificationContext({
   waveName,
   isDirectMessage,
@@ -130,8 +141,8 @@ export function buildAllDropsPushNotificationTitle({
   readonly vote: unknown;
   readonly context: WavePushNotificationContext;
 }): string {
-  const parsedVote = vote === null || vote === undefined ? null : Number(vote);
-  if (parsedVote !== null && Number.isFinite(parsedVote)) {
+  const parsedVote = parseRatingVote(vote);
+  if (parsedVote !== null) {
     return appendWavePushNotificationContext(
       `${actorHandle} rated a drop: ${formatSignedLocaleNumber(parsedVote)}`,
       context
