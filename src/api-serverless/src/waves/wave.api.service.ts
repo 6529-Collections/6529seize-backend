@@ -111,6 +111,10 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
+import {
+  wsListenersNotifier as defaultWsListenersNotifier,
+  WsListenersNotifier
+} from '@/api/ws/ws-listeners-notifier';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -143,7 +147,8 @@ export class WaveApiService {
     private readonly metricsRecorder: MetricsRecorder,
     private readonly curationsDb: CurationsDb,
     private readonly dropsDb: DropsDb,
-    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb
+    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb,
+    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier
   ) {}
 
   private getRequiredTimer(
@@ -2171,13 +2176,15 @@ export class WaveApiService {
 
   async muteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
     let readerId: string | null = null;
+    let isDirectMessage = false;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        await this.assertWaveExistsForAuthenticatedUser(
+        const wave = await this.assertWaveExistsForAuthenticatedUser(
           waveId,
           ctxWithConnection
         );
+        isDirectMessage = wave.is_direct_message === true;
         const actingAsId = ctx.authenticationContext?.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
@@ -2204,18 +2211,23 @@ export class WaveApiService {
         identityId: readerId,
         waveId
       });
+      if (isDirectMessage) {
+        await this.broadcastDmUnreadState(readerId, waveId, ctx);
+      }
     }
   }
 
   async unmuteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
     let readerId: string | null = null;
+    let isDirectMessage = false;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        await this.assertWaveExistsForAuthenticatedUser(
+        const wave = await this.assertWaveExistsForAuthenticatedUser(
           waveId,
           ctxWithConnection
         );
+        isDirectMessage = wave.is_direct_message === true;
         const actingAsId = ctx.authenticationContext?.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
@@ -2242,13 +2254,32 @@ export class WaveApiService {
         identityId: readerId,
         waveId
       });
+      if (isDirectMessage) {
+        await this.broadcastDmUnreadState(readerId, waveId, ctx);
+      }
+    }
+  }
+
+  private async broadcastDmUnreadState(
+    identityId: string,
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const state = (
+      await this.wavesApiDb.findDmUnreadConversationStates(
+        { identityId, waveIds: [waveId] },
+        ctx
+      )
+    )[0];
+    if (state) {
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged([state]);
     }
   }
 
   private async assertWaveExistsForAuthenticatedUser(
     waveId: string,
     ctx: RequestContext
-  ) {
+  ): Promise<WaveEntity> {
     const waveEntity = await this.wavesApiDb.findWaveById(
       waveId,
       ctx.connection
@@ -2272,6 +2303,7 @@ export class WaveApiService {
       wavesApiDb: this.wavesApiDb,
       ctx
     });
+    return waveEntity;
   }
 }
 

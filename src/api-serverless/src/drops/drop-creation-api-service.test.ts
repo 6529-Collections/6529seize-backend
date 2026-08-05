@@ -260,6 +260,104 @@ describe('DropCreationApiService.createDrop', () => {
     }
   );
 
+  it('broadcasts the writer-authoritative unread state after a direct-message drop commits', async () => {
+    const connection = {} as any;
+    const order: string[] = [];
+    const dmUnreadState = {
+      profile_id: 'reader-profile',
+      wave_id: 'wave-1',
+      unread_count: 1,
+      first_unread_drop_serial_no: 42,
+      latest_drop_serial_no: 42,
+      latest_read_serial_no: 41,
+      version: 7
+    };
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(
+        async (callback: (connection: unknown) => Promise<unknown>) => {
+          const result = await callback(connection);
+          order.push('committed');
+          return result;
+        }
+      )
+    };
+    const dropsMappers = {
+      createDropApiToUseCaseModel: jest.fn().mockReturnValue({
+        wave_id: 'wave-1',
+        drop_type: DropType.CHAT
+      })
+    };
+    const createOrUpdateDrop = {
+      preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+      execute: jest.fn().mockImplementation(async () => {
+        order.push('drop-written');
+        return {
+          drop_id: 'drop-1',
+          pending_push_notification_ids: [],
+          dm_unread_recipient_ids: ['reader-profile']
+        };
+      })
+    };
+    const dropsService = {
+      findDropByIdOrThrow: jest.fn().mockResolvedValue({ id: 'drop-1' })
+    };
+    const wsListenersNotifier = {
+      notifyAboutDropUpdate: jest.fn().mockImplementation(async () => {
+        order.push('drop-broadcast');
+      }),
+      notifyAboutDmUnreadStateChanged: jest
+        .fn()
+        .mockImplementation(async () => {
+          order.push('unread-broadcast');
+        })
+    };
+    const wavesApiDb = {
+      findDmUnreadConversationStates: jest.fn().mockImplementation(async () => {
+        order.push('unread-state-read');
+        return [dmUnreadState];
+      })
+    };
+    const service = new DropCreationApiService(
+      dropsService as never,
+      dropsDb as never,
+      dropsMappers as never,
+      createOrUpdateDrop as never,
+      {} as never,
+      wsListenersNotifier as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
+      wavesApiDb as never
+    );
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+
+    await service.createDrop(
+      {
+        createDropRequest: {} as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile'
+      },
+      { timer: undefined } as never
+    );
+
+    expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
+      { identityId: 'reader-profile', waveIds: ['wave-1'] },
+      expect.objectContaining({ timer: undefined })
+    );
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).toHaveBeenCalledWith([dmUnreadState]);
+    expect(order).toEqual([
+      'drop-written',
+      'committed',
+      'drop-broadcast',
+      'unread-state-read',
+      'unread-broadcast'
+    ]);
+  });
+
   it('waits for pending push notifications to be enqueued before resolving', async () => {
     const connection = {} as any;
     let resolvePush!: () => void;

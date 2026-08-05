@@ -49,6 +49,10 @@ import {
   waveDropMetricsRefreshService,
   WaveDropMetricsDirtyRefreshReason
 } from '@/drops/wave-drop-metrics-refresh.service';
+import {
+  wavesApiDb as defaultWavesApiDb,
+  WavesApiDb
+} from '@/api/waves/waves.api.db';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -74,7 +78,8 @@ export class DropCreationApiService {
     private readonly wsListenersNotifier: WsListenersNotifier,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
-    private readonly dropPollsApiService: DropPollsApiService
+    private readonly dropPollsApiService: DropPollsApiService,
+    private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb
   ) {}
 
   public async createDrop(
@@ -109,7 +114,7 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
-    const { drop, pendingPushNotificationIds } =
+    const { drop, pendingPushNotificationIds, dmUnreadRecipientIds } =
       await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           return await this.createDropWithGivenConnection(
@@ -131,6 +136,11 @@ export class DropCreationApiService {
     });
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
+    await this.notifyDmUnreadStateChanged({
+      waveId: createModel.wave_id,
+      recipientIds: dmUnreadRecipientIds,
+      ctx
+    });
     return drop;
   }
 
@@ -148,8 +158,12 @@ export class DropCreationApiService {
     },
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ): Promise<{ drop: ApiDrop; pendingPushNotificationIds: number[] }> {
-    const { drop_id, pending_push_notification_ids } =
+  ): Promise<{
+    drop: ApiDrop;
+    pendingPushNotificationIds: number[];
+    dmUnreadRecipientIds: string[];
+  }> {
+    const { drop_id, pending_push_notification_ids, dm_unread_recipient_ids } =
       await this.createOrUpdateDrop.execute(model, false, {
         timer,
         connection,
@@ -182,8 +196,41 @@ export class DropCreationApiService {
     );
     return {
       drop,
-      pendingPushNotificationIds: pending_push_notification_ids
+      pendingPushNotificationIds: pending_push_notification_ids,
+      dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
     };
+  }
+
+  private async notifyDmUnreadStateChanged({
+    waveId,
+    recipientIds,
+    ctx
+  }: {
+    waveId: string;
+    recipientIds: string[];
+    ctx: RequestContext;
+  }): Promise<void> {
+    if (!recipientIds.length) {
+      return;
+    }
+    try {
+      const states = (
+        await Promise.all(
+          recipientIds.map((identityId) =>
+            this.wavesApiDb.findDmUnreadConversationStates(
+              { identityId, waveIds: [waveId] },
+              ctx
+            )
+          )
+        )
+      ).flat();
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast DM unread state for wave ${waveId}`,
+        error
+      );
+    }
   }
 
   public async deleteDropById(
