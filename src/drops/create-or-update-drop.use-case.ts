@@ -287,10 +287,6 @@ export class CreateOrUpdateDropUseCase {
     return dropId;
   }
 
-  private getAllDropsNotificationsSubscribersLimit(): number {
-    return env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
-  }
-
   private normalizeMentionedGroups(
     model: CreateOrUpdateDropModel
   ): CreateOrUpdateDropModel {
@@ -2206,11 +2202,7 @@ export class CreateOrUpdateDropUseCase {
     const notificationMentionedGroups = groupMentionNotificationsEnabled
       ? model.mentioned_groups
       : [];
-    const [
-      followerRecipients,
-      waveSubscribersCount,
-      relationshipNotifications
-    ] = await Promise.all([
+    const [followerRecipients, relationshipNotifications] = await Promise.all([
       this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
@@ -2219,7 +2211,6 @@ export class CreateOrUpdateDropUseCase {
         },
         connection
       ),
-      this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection),
       this.resolveDropRelationshipNotifications(
         { model },
         { timer, connection }
@@ -2266,16 +2257,13 @@ export class CreateOrUpdateDropUseCase {
         .map((recipient) => recipient.identity_id)
     ]);
     const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
-    const allDropsSubscriberIds =
-      waveSubscribersCount < this.getAllDropsNotificationsSubscribersLimit()
-        ? followerRecipients
-            .filter(
-              (recipient) =>
-                recipient.subscribed_to_all_drops &&
-                !mentionedIdentityIdsSet.has(recipient.identity_id)
-            )
-            .map((recipient) => recipient.identity_id)
-        : [];
+    const allDropsSubscriberIds = followerRecipients
+      .filter(
+        (recipient) =>
+          recipient.subscribed_to_all_drops &&
+          !mentionedIdentityIdsSet.has(recipient.identity_id)
+      )
+      .map((recipient) => recipient.identity_id);
 
     const pendingPushNotificationIds =
       await this.userNotifier.notifyWaveDropCreatedRecipients(

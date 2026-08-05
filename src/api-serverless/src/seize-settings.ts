@@ -46,6 +46,8 @@ function authSettings(): ApiAuthSettings {
 export const seizeSettings = (): ApiSeizeSettings => {
   const rememes_submission_tdh_threshold =
     env.getIntOrNull('REMEMED_SUBMISSION_TDH_THRESHOLD') ?? 6942;
+  // Retained for backwards-compatible API responses. All-message
+  // subscriptions no longer enforce this value.
   const all_drops_notifications_subscribers_limit =
     env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
 

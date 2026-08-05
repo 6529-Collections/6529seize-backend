@@ -1152,8 +1152,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
-  it('skips all-drops notifications once the wave reaches the subscriber cap', async () => {
-    jest.spyOn(env, 'getIntOrNull').mockReturnValue(15);
+  it('sends all-drops notifications regardless of the wave follower count', async () => {
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
@@ -1174,7 +1173,6 @@ describe('CreateOrUpdateDropUseCase', () => {
             has_group_mention: true
           }
         ]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(15),
       findMutedWaveReaders: jest.fn().mockResolvedValue(['direct-muted'])
     };
     const userNotifier = {
@@ -1202,10 +1200,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       )
     ).resolves.toEqual([101]);
 
-    expect(identitySubscriptionsDb.countWaveSubscribers).toHaveBeenCalledWith(
-      'wave-1',
-      {}
-    );
     expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
       {
         waveId: 'wave-1',
@@ -1214,7 +1208,7 @@ describe('CreateOrUpdateDropUseCase', () => {
         replyNotification: null,
         quoteNotifications: [],
         mentionedIdentityIds: ['direct-1', 'group-mention-1', 'both-1'],
-        allDropsSubscriberIds: []
+        allDropsSubscriberIds: ['all-drops-1']
       },
       null,
       { timer: undefined, connection: {} }
@@ -1229,7 +1223,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1291,7 +1284,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1343,7 +1335,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1442,7 +1433,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1494,8 +1484,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
-  it('keeps all-drops notifications below the subscriber cap while deduplicating @all mentions', async () => {
-    jest.spyOn(env, 'getIntOrNull').mockReturnValue(15);
+  it('deduplicates all-drops subscribers who are also mentioned by @all', async () => {
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
@@ -1516,7 +1505,6 @@ describe('CreateOrUpdateDropUseCase', () => {
             has_group_mention: true
           }
         ]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(14),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1564,7 +1552,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userGroupsService = {
@@ -1745,7 +1732,6 @@ describe('CreateOrUpdateDropUseCase', () => {
             has_group_mention: false
           }
         ]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(20),
       findMutedWaveReaders: jest.fn().mockResolvedValue(['follower-2'])
     };
     const userNotifier = {
