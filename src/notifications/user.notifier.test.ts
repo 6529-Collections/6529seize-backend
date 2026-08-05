@@ -143,6 +143,108 @@ describe('UserNotifier notifyWaveDropCreatedRecipients', () => {
       {}
     );
   });
+
+  it('queues all-message, reply, and mention notifications in a three-person private DM', async () => {
+    const insertedBatches: unknown[][] = [];
+    const identityNotificationsDb = {
+      findIdentitiesNotifiedForDropCreation: jest.fn().mockResolvedValue([]),
+      insertManyNotifications: jest
+        .fn()
+        .mockImplementation(async (notifications: unknown[]) => {
+          insertedBatches.push(notifications);
+          return notifications.map(
+            (_, index) => insertedBatches.length * 10 + index
+          );
+        })
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+    const connection = {} as any;
+    const visibilityGroupId = 'dm-phoebeumzz-prxt0-notprxt0';
+
+    await expect(
+      notifier.notifyWaveDropCreatedRecipients(
+        {
+          waveId: 'group-dm-wave',
+          dropId: 'normal-message',
+          relatedIdentityId: 'prxt0',
+          replyNotification: null,
+          quoteNotifications: [],
+          mentionedIdentityIds: [],
+          allDropsSubscriberIds: ['phoebeumzz', 'notprxt0']
+        },
+        visibilityGroupId,
+        { connection }
+      )
+    ).resolves.toEqual([10, 11]);
+
+    await expect(
+      notifier.notifyWaveDropCreatedRecipients(
+        {
+          waveId: 'group-dm-wave',
+          dropId: 'reply-message',
+          relatedIdentityId: 'prxt0',
+          replyNotification: {
+            reply_drop_id: 'reply-message',
+            reply_drop_author_id: 'prxt0',
+            replied_drop_id: 'phoebe-message',
+            replied_drop_part: 1,
+            replied_drop_author_id: 'phoebeumzz',
+            wave_id: 'group-dm-wave'
+          },
+          quoteNotifications: [],
+          mentionedIdentityIds: [],
+          allDropsSubscriberIds: []
+        },
+        visibilityGroupId,
+        { connection }
+      )
+    ).resolves.toEqual([20]);
+
+    await expect(
+      notifier.notifyWaveDropCreatedRecipients(
+        {
+          waveId: 'group-dm-wave',
+          dropId: 'mention-message',
+          relatedIdentityId: 'prxt0',
+          replyNotification: null,
+          quoteNotifications: [],
+          mentionedIdentityIds: ['notprxt0'],
+          allDropsSubscriberIds: []
+        },
+        visibilityGroupId,
+        { connection }
+      )
+    ).resolves.toEqual([30]);
+
+    expect(insertedBatches).toEqual([
+      [
+        expect.objectContaining({
+          identity_id: 'phoebeumzz',
+          cause: IdentityNotificationCause.ALL_DROPS,
+          visibility_group_id: visibilityGroupId
+        }),
+        expect.objectContaining({
+          identity_id: 'notprxt0',
+          cause: IdentityNotificationCause.ALL_DROPS,
+          visibility_group_id: visibilityGroupId
+        })
+      ],
+      [
+        expect.objectContaining({
+          identity_id: 'phoebeumzz',
+          cause: IdentityNotificationCause.DROP_REPLIED,
+          visibility_group_id: visibilityGroupId
+        })
+      ],
+      [
+        expect.objectContaining({
+          identity_id: 'notprxt0',
+          cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+          visibility_group_id: visibilityGroupId
+        })
+      ]
+    ]);
+  });
 });
 
 describe('UserNotifier notifyOfSubscriptionCoverage', () => {

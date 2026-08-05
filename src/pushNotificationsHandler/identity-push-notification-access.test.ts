@@ -101,6 +101,37 @@ describe('IdentityPushNotificationAccess', () => {
     expect(dataSourceSupplier).not.toHaveBeenCalled();
   });
 
+  it.each([
+    IdentityNotificationCause.ALL_DROPS,
+    IdentityNotificationCause.DROP_REPLIED,
+    IdentityNotificationCause.IDENTITY_MENTIONED
+  ])(
+    'authorizes %s push content through private three-person DM membership',
+    async (cause) => {
+      const { access, groupsService, wavesDb } = createAccess({
+        eligibleGroupIds: ['dm-phoebeumzz-prxt0-notprxt0']
+      });
+
+      await expect(
+        access.canRecipientReadRelatedContent(
+          createNotification({
+            identity_id: 'phoebeumzz',
+            cause,
+            visibility_group_id: 'dm-phoebeumzz-prxt0-notprxt0'
+          })
+        )
+      ).resolves.toBe(true);
+
+      expect(groupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+        'phoebeumzz'
+      );
+      expect(wavesDb.findWavesByIds).toHaveBeenCalledWith(
+        ['wave-1'],
+        ['dm-phoebeumzz-prxt0-notprxt0']
+      );
+    }
+  );
+
   it('allows a public wave without eligible groups', async () => {
     const { access, groupsService, wavesDb } = createAccess({
       eligibleGroupIds: [],

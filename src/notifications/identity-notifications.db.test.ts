@@ -249,6 +249,34 @@ describe('IdentityNotificationsDb', () => {
     );
   });
 
+  it('uses private DM membership and wave mute state when reading the notification feed', async () => {
+    const db = {
+      execute: jest.fn().mockResolvedValue([])
+    };
+    const repo = new IdentityNotificationsDb(() => db as any);
+
+    await repo.findNotifications({
+      identity_id: 'phoebeumzz',
+      id_less_than: null,
+      limit: 20,
+      eligible_group_ids: ['dm-phoebeumzz-prxt0-notprxt0'],
+      cause: null,
+      cause_exclude: null,
+      unread_only: false
+    });
+
+    const [sql, params] = db.execute.mock.calls[0];
+    expect(sql).toContain('OR n.visibility_group_id IN (:eligible_group_ids)');
+    expect(sql).toContain('AND COALESCE(r.muted, FALSE) = FALSE');
+    expect(sql).toContain('AND m.id IS NULL');
+    expect(params).toEqual(
+      expect.objectContaining({
+        identity_id: 'phoebeumzz',
+        eligible_group_ids: ['dm-phoebeumzz-prxt0-notprxt0']
+      })
+    );
+  });
+
   it('finds only recipients already notified about a drop creation', async () => {
     const db = {
       execute: jest
