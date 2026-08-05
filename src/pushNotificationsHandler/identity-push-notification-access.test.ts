@@ -109,7 +109,9 @@ describe('IdentityPushNotificationAccess', () => {
     'authorizes %s push content through private three-person DM membership',
     async (cause) => {
       const { access, groupsService, wavesDb } = createAccess({
-        eligibleGroupIds: ['dm-phoebeumzz-prxt0-notprxt0']
+        eligibleGroupIds: [
+          'dm-prxt0-prxt0bot-phoebeumzz-kcZmGt9vcKHMvmKJkobfH5'
+        ]
       });
 
       await expect(
@@ -117,7 +119,8 @@ describe('IdentityPushNotificationAccess', () => {
           createNotification({
             identity_id: 'phoebeumzz',
             cause,
-            visibility_group_id: 'dm-phoebeumzz-prxt0-notprxt0'
+            visibility_group_id:
+              'dm-prxt0-prxt0bot-phoebeumzz-kcZmGt9vcKHMvmKJkobfH5'
           })
         )
       ).resolves.toBe(true);
@@ -127,7 +130,7 @@ describe('IdentityPushNotificationAccess', () => {
       );
       expect(wavesDb.findWavesByIds).toHaveBeenCalledWith(
         ['wave-1'],
-        ['dm-phoebeumzz-prxt0-notprxt0']
+        ['dm-prxt0-prxt0bot-phoebeumzz-kcZmGt9vcKHMvmKJkobfH5']
       );
     }
   );
