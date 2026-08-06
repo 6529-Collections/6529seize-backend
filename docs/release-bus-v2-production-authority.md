@@ -39,14 +39,14 @@ hard-expiry, control epoch, and lock row version. It never contains
 
 The routes are:
 
-| Route                                                           | Purpose                                                                                                                                                                                                                                                 |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /deploy/release-bus-v2/production-authority/prepare`      | Trusted external-controller reservation after authoritative drain. Creates short-lived `PREPARED` state with no workflow binding and no selection digest.                                                                                               |
-| `POST /deploy/release-bus-v2/production-authority/acquire-bind` | GitHub first-job path. Independently verifies the exact in-progress deploy workflow run and atomically acquires the shared DB lock plus a `BOUND` authority. Use this when the run already exists.                                                      |
-| `POST /deploy/release-bus-v2/production-authority/bind`         | Binds a pre-dispatch `PREPARED` row to the exact in-progress run after the same identity and drain checks.                                                                                                                                              |
-| `POST /deploy/release-bus-v2/production-authority/reauthorize`  | Immediate pre-AWS check. Requires the exact deploy run/attempt, current control epoch, protected-main ancestry, live lease, and a lowercase 64-hex `selection_digest`; the first successful call freezes that digest. Later calls must match it.        |
-| `POST /deploy/release-bus-v2/production-authority/complete`     | Releases success only when the original deployment is independently re-read as terminal success, the current control epoch still matches, and the selected digest, trusted completion run ID/attempt, and lowercase 64-hex evidence digest match.       |
-| `POST /deploy/release-bus-v2/production-authority/fail`         | Releases a bound operation only from exact terminal GitHub failure evidence. Backend failures identify the bound `Deploy a service` run; frontend failures identify either the bound `Web Deploy - PROD` run or its exact automatic Production E2E run. |
+| Route                                                           | Purpose                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /deploy/release-bus-v2/production-authority/prepare`      | Trusted external-controller reservation after authoritative drain. Creates short-lived `PREPARED` state with no workflow binding and no selection digest.                                                                                                                                                         |
+| `POST /deploy/release-bus-v2/production-authority/acquire-bind` | GitHub first-job path. Independently verifies the exact in-progress deploy workflow run and atomically acquires the shared DB lock plus a `BOUND` authority. Use this when the run already exists.                                                                                                                |
+| `POST /deploy/release-bus-v2/production-authority/bind`         | Binds a pre-dispatch `PREPARED` row to the exact in-progress run after the same identity and drain checks.                                                                                                                                                                                                        |
+| `POST /deploy/release-bus-v2/production-authority/reauthorize`  | Immediate pre-AWS check. Requires the exact deploy run/attempt, current control epoch, protected-main ancestry, live lease, and a lowercase 64-hex `selection_digest`; the first successful call freezes that digest. Later calls must match it.                                                                  |
+| `POST /deploy/release-bus-v2/production-authority/complete`     | Releases success only when the original deployment is independently re-read as terminal success, the current control epoch still matches, and the selected digest, trusted completion run ID/attempt, and lowercase 64-hex evidence digest match.                                                                 |
+| `POST /deploy/release-bus-v2/production-authority/fail`         | Idempotently releases a bound operation only from an isolated completion callback that has reread the exact terminal failure. The request carries the bound run/attempt as qualifier evidence, a digest of the bounded canonical failure file, the null-or-frozen selection digest, and a bounded failure reason. |
 
 Completion additionally requires:
 
@@ -153,10 +153,11 @@ selection record containing the service, frozen target SHA, run ID/attempt,
 package path, package byte count, and package SHA-256. It sends only that
 selection digest to `reauthorize` immediately before the AWS credential step.
 The workflow stores only non-secret authority state in the runner temp
-directory. It uploads one bounded success evidence JSON artifact and never
-calls `complete` from the deploy workflow. Failure calls `fail` with null
-selection before reauthorization, or the exact frozen digest afterward, and
-uploads a bounded non-secret state artifact for callback recovery.
+directory. It uploads one bounded success evidence JSON artifact and never calls
+`complete` or `fail` from the deploy workflow. On any terminal failure after the
+first-job lease exists, it preserves one bounded canonical failure JSON file as
+an artifact for callback recovery. That artifact is evidence only; it cannot
+release the authority by itself.
 
 `.github/workflows/release-bus-v2-production-authority-completion.yml` is the
 isolated `workflow_run` callback. It rereads the exact completed backend run,
@@ -166,8 +167,12 @@ attempt, target SHA, and display title. Only the title
 staging, Release Bus, manual-title, and unrelated runs are ignored. Success
 requires the exact evidence artifact and calls `complete` with the deployment
 run itself as qualifier plus its immutable evidence digest. Terminal failure
-uses the exact failure-state artifact and calls `fail`; if cancellation occurs
-before that artifact can be uploaded, the authority remains fail-closed and
+uses the exact failure-state artifact, computes its lowercase SHA-256 digest,
+and calls `fail` only after sending the bound deploy run/attempt as both the
+workflow identity and terminal qualifier, the exact null-or-frozen selection
+digest, and a reason derived from the terminal conclusion. The API independently
+rereads that completed run and rejects any mismatch. If cancellation occurs
+before the artifact can be uploaded, the authority remains fail-closed and
 expires rather than accepting an unbound release.
 
 ## Schema deployment

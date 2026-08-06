@@ -72,7 +72,7 @@ jobs:
           operation_id="backend-prod-$service-$DEPLOY_RUN_ID"
           conclusion="$(jq -er '.conclusion' "$run_file")"
           case "$conclusion" in
-            success|failure|cancelled|timed_out|action_required|stale|neutral|skipped|startup_failure) ;;
+            success|failure|cancelled|timed_out|action_required|stale|startup_failure) ;;
             *) echo 'Unexpected completed workflow conclusion' >&2; exit 1 ;;
           esac
           target_sha="$(jq -er '.head_sha' "$run_file")"
@@ -281,6 +281,10 @@ jobs:
             exit 1
           fi
           test ! -L "$state_file"
+          mapfile -t failure_files < <(find authority-failure -type f -printf '%P\n' | LC_ALL=C sort)
+          test "${#failure_files[@]}" = 1
+          test "${failure_files[0]}" = backend-production-authority-failure.json
+          test "$(stat -c '%s' "$state_file")" -ge 1
           test "$(stat -c '%s' "$state_file")" -le 65536
           jq -e \
             --arg operation_id "$OPERATION_ID" \
@@ -303,11 +307,18 @@ jobs:
               (.selection_digest | type == "string" and test("^[a-f0-9]{64}$")))' \
             "$state_file" > /dev/null
           selection_json="$(jq -c '.selection_digest' "$state_file")"
-          if [ "$CONCLUSION" = cancelled ]; then
-            reason_code=ABORTED
-          else
-            reason_code=WORKFLOW_FAILED
-          fi
+          evidence_digest="$(sha256sum "$state_file" | cut -d' ' -f1)"
+          [[ "$evidence_digest" =~ ^[a-f0-9]{64}$ ]]
+          case "$CONCLUSION" in
+            cancelled) reason_code=ABORTED ;;
+            failure|timed_out|action_required|stale|startup_failure)
+              reason_code=WORKFLOW_FAILED
+              ;;
+            *)
+              echo "Unsupported terminal workflow conclusion: $CONCLUSION" >&2
+              exit 1
+              ;;
+          esac
           payload="$(jq -cn \
             --arg operation_id "$OPERATION_ID" \
             --arg controller_identity backend-production-workflow \
@@ -318,12 +329,18 @@ jobs:
             --arg workflow_run_id "$DEPLOY_RUN_ID" \
             --argjson workflow_run_attempt "$DEPLOY_RUN_ATTEMPT" \
             --argjson selection_digest "$selection_json" \
+            --arg qualifier_workflow_run_id "$DEPLOY_RUN_ID" \
+            --argjson qualifier_workflow_run_attempt "$DEPLOY_RUN_ATTEMPT" \
+            --arg evidence_digest "$evidence_digest" \
             --arg reason_code "$reason_code" \
             '{operation_id:$operation_id,controller_identity:$controller_identity,
               repository:$repository,environment:$environment,service:$service,
               target_sha:$target_sha,workflow_run_id:$workflow_run_id,
               workflow_run_attempt:$workflow_run_attempt,
-              selection_digest:$selection_digest,reason_code:$reason_code}')"
+              selection_digest:$selection_digest,
+              qualifier_workflow_run_id:$qualifier_workflow_run_id,
+              qualifier_workflow_run_attempt:$qualifier_workflow_run_attempt,
+              evidence_digest:$evidence_digest,reason_code:$reason_code}')"
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
           http_status="$(curl --silent --show-error \

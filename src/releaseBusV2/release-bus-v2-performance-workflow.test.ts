@@ -144,7 +144,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(productionSelectionAuthorization).toBe(aws - 1);
     expect(productionEvidence).toBeGreaterThan(deployStep);
     expect(productionEvidenceUpload).toBe(productionEvidence + 1);
-    expect(productionFailure).toBe(productionEvidenceUpload + 1);
+    expect(productionFailure).toBe(-1);
     expect(deployStep).toBeGreaterThan(aws);
     for (const step of steps.slice(0, authorize)) {
       expect(step.uses).toBeUndefined();
@@ -227,9 +227,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(steps[productionEvidenceUpload]?.uses).toContain(
       'actions/upload-artifact@'
     );
-    expect(steps[productionFailure]?.run).toContain(
-      '/production-authority/fail'
-    );
+    expect(deploy).not.toContain('/production-authority/fail');
     expect(deploy).not.toContain('/production-authority/complete');
   });
 

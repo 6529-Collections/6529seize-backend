@@ -47,11 +47,11 @@ describe('backend production authority workflow integration', () => {
     const evidenceUpload = index(
       'Upload backend production authority evidence'
     );
-    const failure = index(
+    const inlineFailure = index(
       'Fail backend production authority after workflow failure'
     );
     const failureState = index(
-      'Preserve backend production authority failure state'
+      'Preserve bounded backend production authority failure evidence'
     );
     const failureStateUpload = index(
       'Upload backend production authority failure state'
@@ -63,8 +63,8 @@ describe('backend production authority workflow integration', () => {
     expect(reauthorize).toBe(aws - 1);
     expect(evidence).toBeGreaterThan(aws);
     expect(evidenceUpload).toBe(evidence + 1);
-    expect(failure).toBe(evidenceUpload + 1);
-    expect(failureState).toBe(failure + 1);
+    expect(inlineFailure).toBe(-1);
+    expect(failureState).toBe(evidenceUpload + 1);
     expect(failureStateUpload).toBe(failureState + 1);
     expect(parsed['run-name']).toContain("format('backend-prod-{0}-{1}'");
 
@@ -114,12 +114,10 @@ describe('backend production authority workflow integration', () => {
       '${{ runner.temp }}/backend-production-authority-evidence.json'
     );
 
-    const failureScript = steps[failure]?.run ?? '';
-    expect(failureScript).toContain('/production-authority/fail');
-    expect(failureScript).toContain(
-      '--argjson selection_digest "$selection_json"'
+    expect(before).not.toContain('/production-authority/fail');
+    expect(before).not.toContain(
+      'Fail backend production authority after workflow failure'
     );
-    expect(failureScript).not.toContain('lease_token');
     expect(JSON.stringify(steps[failureStateUpload])).toContain(
       'backend-production-authority-failure-${{ github.run_id }}'
     );
@@ -185,6 +183,21 @@ describe('backend production authority workflow integration', () => {
     );
     expect(source).toContain('/production-authority/complete');
     expect(source).toContain('/production-authority/fail');
+    expect(source).toContain(
+      '--arg qualifier_workflow_run_id "$DEPLOY_RUN_ID"'
+    );
+    expect(source).toContain(
+      '--argjson qualifier_workflow_run_attempt "$DEPLOY_RUN_ATTEMPT"'
+    );
+    expect(source).toContain(
+      'evidence_digest="$(sha256sum "$state_file" | cut -d\' \' -f1)"'
+    );
+    expect(source).toContain('reason_code=WORKFLOW_FAILED');
+    expect(source).toContain(
+      'failure|timed_out|action_required|stale|startup_failure'
+    );
+    expect(source).not.toContain('|neutral|');
+    expect(source).not.toContain('|skipped|');
     expect(source).toContain(
       '["completed", "lock_row_version", "operation_id", "reused", "status"]'
     );
