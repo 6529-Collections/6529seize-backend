@@ -439,6 +439,20 @@ The API (`src/api-serverless/src/`) is an Express application with:
   refreshes models under `src/api-serverless/src/generated/models` and generated
   route wiring plus operation types under
   `src/api-serverless/src/generated/routes`.
+- Every change to `src/api-serverless/openapi.yaml` must also be propagated to
+  `6529seize-frontend` in the same task, even when no frontend call site changes.
+  Direct copy is valid only from the task's backend worktree on the backend
+  feature branch containing the final spec: copy
+  `src/api-serverless/openapi.yaml` to the frontend worktree's root
+  `openapi.yaml`. If that backend worktree is unavailable, first commit and push
+  the final spec, then run `bash scripts/refresh-api.sh <backend_feature_branch>`
+  from the frontend worktree. The argument must be the exact backend branch
+  containing the OpenAPI change, never the frontend branch. Never omit it for
+  unmerged feature work: omission defaults to backend `main`, which may not
+  contain the change. Then run `6529 run generate` in the frontend repo and
+  commit its `openapi.yaml` and `generated/` changes. Do not report the backend
+  OpenAPI work complete while this frontend synchronization is missing; if it
+  cannot be completed, report it as an explicit blocker.
 - Prefer `x-6529-router` generated routes for new endpoints. Manual `.routes.ts`
   files are legacy/escape-hatch wiring for route shapes the generator does not
   support.
@@ -460,7 +474,11 @@ All API request/response types must be defined via OpenAPI and the generated mod
    This runs `restructure-openapi` and `generate`, refreshing models under
    `src/api-serverless/src/generated/models/` and generated routes plus
    operation types under `src/api-serverless/src/generated/routes/`.
-3. **Use generated types**: Import models from `@/api/generated/models/...` and
+3. **Synchronize frontend**: Propagate the final backend `openapi.yaml` to the
+   frontend and run frontend `6529 run generate`, following the mandatory
+   cross-repository procedure under **API schemas** above. Commit the frontend
+   spec and generated artifacts in the same task.
+4. **Use generated types**: Import models from `@/api/generated/models/...` and
    operation request/query/path/body/response types from
    `@/api/generated/routes/operations`. Map DB/service output to the generated
    model shape (for example, snake_case properties) before returning.
