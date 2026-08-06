@@ -877,7 +877,6 @@ describe('NotificationsApiService wave notification preferences', () => {
     const identitySubscriptionsDb = {
       executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
       getWaveSubscriptionState: jest.fn().mockResolvedValue(subscriptionState),
-      countWaveSubscribersForUpdate: jest.fn().mockResolvedValue(0),
       subscribeToAllDrops: jest.fn().mockResolvedValue(undefined),
       unsubscribeFromAllDrops: jest.fn().mockResolvedValue(undefined)
     };
@@ -935,9 +934,6 @@ describe('NotificationsApiService wave notification preferences', () => {
       'wave-1',
       connection
     );
-    expect(
-      identitySubscriptionsDb.countWaveSubscribersForUpdate
-    ).toHaveBeenCalledWith('wave-1', connection);
   });
 
   it('replaces enabled group notifications for followers', async () => {
@@ -985,7 +981,7 @@ describe('NotificationsApiService wave notification preferences', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('skips the cap check when the user is already subscribed', async () => {
+  it('does not resubscribe when the user is already subscribed', async () => {
     const { service, identitySubscriptionsDb } = createService({
       subscriptionState: {
         is_following: true,
@@ -1003,9 +999,6 @@ describe('NotificationsApiService wave notification preferences', () => {
       enabled_group_notifications: [ApiDropGroupMention.All]
     });
 
-    expect(
-      identitySubscriptionsDb.countWaveSubscribersForUpdate
-    ).not.toHaveBeenCalled();
     expect(identitySubscriptionsDb.subscribeToAllDrops).not.toHaveBeenCalled();
   });
 
@@ -1026,9 +1019,6 @@ describe('NotificationsApiService wave notification preferences', () => {
       enabled_group_notifications: []
     });
 
-    expect(
-      identitySubscriptionsDb.countWaveSubscribersForUpdate
-    ).not.toHaveBeenCalled();
     expect(identitySubscriptionsDb.subscribeToAllDrops).not.toHaveBeenCalled();
   });
 

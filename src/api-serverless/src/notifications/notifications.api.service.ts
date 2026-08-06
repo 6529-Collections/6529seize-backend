@@ -3,7 +3,6 @@ import { AuthenticationContext } from '../../../auth-context';
 import { collections } from '../../../collections';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { enums } from '../../../enums';
-import { BadRequestException } from '../../../exceptions';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
@@ -27,7 +26,6 @@ import {
   reactionsDb as defaultReactionsDb,
   ReactionsDb
 } from '@/api/drops/reactions.db';
-import { seizeSettings } from '@/api/seize-settings';
 import {
   apiWaveOverviewMapper as defaultApiWaveOverviewMapper,
   ApiWaveOverviewMapper
@@ -1176,18 +1174,6 @@ export class NotificationsApiService {
           subscriptionState.is_following &&
           !subscriptionState.subscribed_to_all_drops
         ) {
-          const waveMembersCount =
-            await this.identitySubscriptionsDb.countWaveSubscribersForUpdate(
-              waveId,
-              connection
-            );
-          const subscribersLimit =
-            seizeSettings().all_drops_notifications_subscribers_limit;
-          if (waveMembersCount >= subscribersLimit) {
-            throw new BadRequestException(
-              `Wave has too many subscribers (${waveMembersCount}). Max is ${subscribersLimit}.`
-            );
-          }
           await this.identitySubscriptionsDb.subscribeToAllDrops(
             identityId,
             waveId,
