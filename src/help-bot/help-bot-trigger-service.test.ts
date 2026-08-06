@@ -3,6 +3,7 @@ import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import {
   HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
   HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
+  HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES,
   HELP_BOT_SEEN_REACTION,
   HELP_BOT_SPAM_REACTION
 } from './help-bot.config';
@@ -169,6 +170,46 @@ describe('HelpBotTriggerService', () => {
       {
         createDropRequest: createRequest('@help6529 what is tdh'),
         createdDrop: createDrop({ id: 'drop-1' }),
+        authorProfileId: 'user-profile'
+      },
+      {} as never
+    );
+
+    expect(interactionsDb.insertSeen).not.toHaveBeenCalled();
+    expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+  });
+
+  it('skips an oversized derived question without touching help-bot persistence', async () => {
+    const { service, interactionsDb, sqs } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    const repeatedBmpText = '漢'.repeat(21_830);
+    const request = createRequest('');
+    request.parts = [
+      {
+        content: `@help6529 what is tdh ${repeatedBmpText}`,
+        media: []
+      },
+      {
+        content: repeatedBmpText,
+        media: []
+      }
+    ];
+
+    expect(
+      Buffer.byteLength(
+        request.parts.map((part) => part.content ?? '').join('\n'),
+        'utf8'
+      )
+    ).toBeGreaterThan(HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES);
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: request,
+        createdDrop: createDrop({ id: 'oversized-help-drop' }),
         authorProfileId: 'user-profile'
       },
       {} as never

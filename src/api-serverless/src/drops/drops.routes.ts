@@ -195,14 +195,6 @@ router.post(
         'Each drop part must have content, media, or attachments'
       );
     }
-    const contentLength = newDrop.parts
-      .map((part) => part.content ?? '')
-      .join('').length;
-    if (contentLength > 32768) {
-      throw new BadRequestException(
-        'Total content length of all parts must be less than 32768 characters'
-      );
-    }
     await assertDropIsCorrectlySigned(apiRequest, authorProfileId);
     const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
