@@ -70,7 +70,7 @@ Apply this skill any time work involves database schema, queries, repositories, 
 2. Avoid db-migrate for schema changes unless the user explicitly asks for a migration; schema/table changes should normally come from TypeORM entities and `dbMigrationsLoop` sync.
 3. Create migrations with:
    ```bash
-   npm run migrate:new migration-name
+   6529 run migrate:new migration-name
    ```
 4. Edit files created under `migrations/`.
 5. Delete the generated `.down.sql` file and leave `exports.down` present as a no-op; do not implement revert logic.
@@ -96,4 +96,4 @@ Place DB/repository tests next to the file under test and name them with lowerca
 - [ ] Used typed query methods and table constants in SQL.
 - [ ] Used db-migrate only for explicit data/view migration work and left `exports.down` as a no-op.
 - [ ] Added or updated focused tests for changed DB behavior.
-- [ ] Ran `npm run lint`.
+- [ ] Ran `6529 run lint`.
