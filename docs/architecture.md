@@ -643,14 +643,12 @@ frontend authority, and an unrelated or mismatched backend run cannot release
 the backend authority. The DB lease token remains persisted server-side and is
 never part of an API response or workflow output.
 
-The authority schema is deployed explicitly, not through an assumption that
-TypeORM synchronization is enabled. Apply
-`migrations/20260806170000-create-release-bus-v2-production-authority.js`
-before deploying API/workflow code that calls these routes; verify the table and
-indexes on the writer database, then deploy the compatible backend and workflow
-consumers. Drain callers before a rollback; the migration's down direction
-renames the table to a retained `retired_` name rather than deleting lease or
-audit history.
+The authority schema follows the repository's entities-first contract. Deploy
+`dbMigrationsLoop` with the new entity before deploying the API or workflow
+callers, and verify the table plus its unique operation and indexed status keys
+on the writer database. Drain callers before a rollback and retain the authority
+table as audit history; do not drop it while any operation may still reference
+the lease record.
 
 For cumulative staging, each affected repository's immutable release commit
 has the recorded `1a-staging` head as its first parent and the composed

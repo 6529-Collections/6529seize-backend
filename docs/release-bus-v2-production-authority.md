@@ -111,12 +111,10 @@ and does not receive or expose the server-side token.
 
 ## Schema deployment
 
-Apply `migrations/20260806170000-create-release-bus-v2-production-authority.js`
-to the writer database before deploying code or workflows that call these
-routes. Verify table creation and the unique operation/indexed status keys, then
-deploy the backend and compatible workflow callers. TypeORM entity registration
-is for runtime metadata and local development only; production must not depend
-on `synchronize` creating this table. Before rollback, drain callers and ensure
-no authority is active; migration down renames the table to
-`retired_release_bus_v2_production_authorities` so lease/audit history is
-retained rather than deleted.
+Deploy `dbMigrationsLoop` with the registered authority entity before deploying
+the API or workflow callers. Its normal TypeORM synchronization creates the
+table and indexes under the repository's entities-first schema contract. Verify
+the table, unique operation key, and indexed status fields on the writer
+database before deploying `api`. Before rollback, drain callers and ensure no
+authority is active; retain the authority table as audit history rather than
+dropping it.
