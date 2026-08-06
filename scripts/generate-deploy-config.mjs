@@ -1524,50 +1524,6 @@ jobs:
           path: \${{ runner.temp }}/backend-production-authority-evidence.json
           if-no-files-found: error
           retention-days: 7
-      - name: Preserve bounded backend production authority failure evidence
-        if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
-        shell: bash
-        env:
-          JOB_STATUS: \${{ job.status }}
-        run: |
-          set -euo pipefail
-          if [ "$JOB_STATUS" = success ]; then
-            exit 0
-          fi
-          state_file="$RUNNER_TEMP/backend-production-authority-state.json"
-          failure_file="$RUNNER_TEMP/backend-production-authority-failure.json"
-          if [ ! -f "$state_file" ]; then
-            exit 0
-          fi
-          jq -e \
-            'type == "object" and
-             (keys_unsorted | sort) == [
-               "controller_identity", "environment", "operation_id", "repository",
-               "schema_version", "selection_digest", "service", "state_type",
-               "target_sha", "workflow_run_attempt", "workflow_run_id"
-             ] and
-             .schema_version == 1 and
-             .state_type == "backend-production-authority-state-v1" and
-             .controller_identity == "backend-production-workflow" and
-             .repository == "backend" and .environment == "prod" and
-             (.operation_id | type == "string" and test("^backend-prod-[A-Za-z0-9]+-[1-9][0-9]{0,19}$")) and
-             (.service | type == "string" and test("^[A-Za-z0-9]+$")) and
-             (.target_sha | type == "string" and test("^[a-f0-9]{40}$")) and
-             (.workflow_run_id | type == "string" and test("^[1-9][0-9]{0,19}$")) and
-             (.workflow_run_attempt | type == "number" and . >= 1 and . <= 1000000) and
-             (.selection_digest == null or
-              (.selection_digest | type == "string" and test("^[a-f0-9]{64}$")))' \
-            "$state_file" > /dev/null
-          cp -- "$state_file" "$failure_file"
-      - name: Upload backend production authority failure state
-        if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod' && job.status != 'success'
-        continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: backend-production-authority-failure-\${{ github.run_id }}
-          path: \${{ runner.temp }}/backend-production-authority-failure.json
-          if-no-files-found: ignore
-          retention-days: 7
       - name: Report structured Release Bus deployment result
         if: always() && github.event.inputs.operation_key != ''
         shell: bash
@@ -1781,6 +1737,51 @@ jobs:
           CI_RELEASE_NOTE_GROUPS: \${{ github.event.inputs.release_note_groups }}
           CI_RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
         run: node scripts/notify-ci-wave.mjs
+
+      - name: Preserve bounded backend production authority failure evidence
+        if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        shell: bash
+        env:
+          JOB_STATUS: \${{ job.status }}
+        run: |
+          set -euo pipefail
+          if [ "$JOB_STATUS" = success ]; then
+            exit 0
+          fi
+          state_file="$RUNNER_TEMP/backend-production-authority-state.json"
+          failure_file="$RUNNER_TEMP/backend-production-authority-failure.json"
+          if [ ! -f "$state_file" ]; then
+            exit 0
+          fi
+          jq -e \
+            'type == "object" and
+             (keys_unsorted | sort) == [
+               "controller_identity", "environment", "operation_id", "repository",
+               "schema_version", "selection_digest", "service", "state_type",
+               "target_sha", "workflow_run_attempt", "workflow_run_id"
+             ] and
+             .schema_version == 1 and
+             .state_type == "backend-production-authority-state-v1" and
+             .controller_identity == "backend-production-workflow" and
+             .repository == "backend" and .environment == "prod" and
+             (.operation_id | type == "string" and test("^backend-prod-[A-Za-z0-9]+-[1-9][0-9]{0,19}$")) and
+             (.service | type == "string" and test("^[A-Za-z0-9]+$")) and
+             (.target_sha | type == "string" and test("^[a-f0-9]{40}$")) and
+             (.workflow_run_id | type == "string" and test("^[1-9][0-9]{0,19}$")) and
+             (.workflow_run_attempt | type == "number" and . >= 1 and . <= 1000000) and
+             (.selection_digest == null or
+              (.selection_digest | type == "string" and test("^[a-f0-9]{64}$")))' \
+            "$state_file" > /dev/null
+          cp -- "$state_file" "$failure_file"
+      - name: Upload backend production authority failure state
+        if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod' && job.status != 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-production-authority-failure-\${{ github.run_id }}
+          path: \${{ runner.temp }}/backend-production-authority-failure.json
+          if-no-files-found: ignore
+          retention-days: 7
 `;
 }
 

@@ -56,6 +56,8 @@ describe('backend production authority workflow integration', () => {
     const failureStateUpload = index(
       'Upload backend production authority failure state'
     );
+    const successNotification = index('Notify about success');
+    const successWaveNotification = index('Notify CI wave about success');
 
     expect(validation).toBe(0);
     expect(acquire).toBe(1);
@@ -64,7 +66,8 @@ describe('backend production authority workflow integration', () => {
     expect(evidence).toBeGreaterThan(aws);
     expect(evidenceUpload).toBe(evidence + 1);
     expect(inlineFailure).toBe(-1);
-    expect(failureState).toBe(evidenceUpload + 1);
+    expect(failureState).toBeGreaterThan(successNotification);
+    expect(failureState).toBeGreaterThan(successWaveNotification);
     expect(failureStateUpload).toBe(failureState + 1);
     expect(parsed['run-name']).toContain("format('backend-prod-{0}-{1}'");
 
@@ -205,7 +208,8 @@ describe('backend production authority workflow integration', () => {
       '["failed", "lock_row_version", "operation_id", "reused", "status"]'
     );
     expect(source).not.toContain('lease_token');
-    expect(source).not.toContain('--retry');
+    expect(source.match(/--retry 4 --retry-all-errors/g)).toHaveLength(2);
+    expect(source.match(/--retry-max-time 300/g)).toHaveLength(2);
     expect(source).not.toContain('Production E2E');
 
     const identity = parsed.jobs.complete.steps[0]?.run ?? '';
