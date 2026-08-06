@@ -165,17 +165,17 @@ describeWithSeed(
         }) => Promise<void>;
       };
       migration.setup({ dbmigrate: {}, Promise });
+      const executedStatements: string[] = [];
       await migration.up({
         runSql: async (sql: string) => {
-          const statements = sql
-            .split(';')
-            .map((statement) => statement.trim())
-            .filter((statement) => statement.length > 0);
-          for (const statement of statements) {
-            await sqlExecutor.execute(statement);
-          }
+          executedStatements.push(sql);
+          await sqlExecutor.execute(sql);
         }
       });
+
+      expect(executedStatements).toHaveLength(2);
+      expect(executedStatements[0]).toMatch(/^ALTER TABLE/);
+      expect(executedStatements[1]).toMatch(/^UPDATE identity_notifications/);
 
       await expect(
         sqlExecutor.oneOrNull<{ visibility_group_id: string }>(
