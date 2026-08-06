@@ -85,11 +85,11 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 
 ## Validation
 
-- Run `npm run lint` after changes; fix all errors and warnings.
-- Use `npm test` for broad behavior changes, and `npm test path/to/file.test.ts` for focused test runs.
-- Use `npm run build` for TypeScript, generated deploy config, entity, shared-library, loop, or deploy-sensitive changes.
-- For API contract changes, run `cd src/api-serverless && npm run restructure-openapi && npm run generate`; use `npm run build` in `src/api-serverless` when API packaging or generated API output is affected.
-- For deploy config changes, edit `src/config/deploy-services.json`, run `npm run generate:deploy-config`, and commit the generated `.github/workflows/deploy.yml` change.
+- Run `6529 run lint` after changes; fix all errors and warnings.
+- Use `6529 run test` for broad behavior changes, and `6529 run test -- path/to/file.test.ts` for focused test runs.
+- Use `6529 run build` for TypeScript, generated deploy config, entity, shared-library, loop, or deploy-sensitive changes.
+- For API contract changes, run `cd src/api-serverless && 6529 run generate:openapi`; this runs `restructure-openapi` and `generate` and refreshes generated models, routes, and operation types. Use `6529 run build` in `src/api-serverless` when API packaging or generated API output is affected.
+- For deploy config changes, edit `src/config/deploy-services.json`, run `6529 run generate:deploy-config`, and commit the generated `.github/workflows/deploy.yml` change.
 - The pull-request workflow verifies generated deploy config, generated API models/routes, lint, format, root build, and API build.
 
 ## Deployment Gates

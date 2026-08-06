@@ -30,18 +30,18 @@ Use this workflow for metrics based on `metric_rollup_hour` and exposed through 
 5. Wire the recorder after the primary action succeeds. Pass the existing `RequestContext` so timers and transactions are preserved.
 6. Expose the metric only where needed:
    - update `src/api-serverless/openapi.yaml` response schemas for summary, series, or mint metrics
-   - run `cd src/api-serverless && npm run restructure-openapi && npm run generate`
+   - run `cd src/api-serverless && 6529 run generate:openapi`
    - update `CommunityMetricsService` aggregation and mapping
    - update `community-metrics.routes.ts` only when route validation or query behavior changes
 7. Add or update tests next to the changed code. Prefer focused service/DB tests; use `src/profiles/abusiveness-check.db.test.ts` as the pattern for DB/repository tests.
-8. Run `npm run lint` from the repo root after changes.
+8. Run `6529 run lint` from the repo root after changes.
 
 ## Backfills
 
 Do not create a migration by default. If the user explicitly asks for historical data or the feature would be misleading without it, create a data-only backfill migration:
 
 ```bash
-npm run migrate:new backfill-metric-name-metric
+6529 run migrate:new backfill-metric-name-metric
 ```
 
 Write SQL in the `up` migration only, delete the generated `.down.sql`, and leave the JS `down()` implementation as a no-op. The repo is entities-first for schema/table changes: prefer TypeORM entities plus `dbMigrationsLoop` sync, and avoid schema migrations unless the user explicitly asks for one. Reserve migrations primarily for one-off data backfills or rare view changes.
@@ -64,4 +64,4 @@ Write SQL in the `up` migration only, delete the generated `.down.sql`, and leav
 - [ ] OpenAPI schema updated and generated types refreshed when API output changes.
 - [ ] Aggregation logic added to `CommunityMetricsService`.
 - [ ] Tests cover recording and exposed aggregation behavior.
-- [ ] `npm run lint` passes.
+- [ ] `6529 run lint` passes.

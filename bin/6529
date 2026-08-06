@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+export COREPACK_ENABLE_DOWNLOAD_PROMPT="0"
+export SEIZE_6529_COMMAND="1"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+print_usage() {
+  cat <<'EOF'
+Usage:
+  6529 <command> [args...]
+
+Common commands:
+  6529 bootstrap          Enable the repo-scoped 6529 command for future shells
+  6529 ci                 Install the current package from package-lock.json
+  6529 add <package>      Add or update a dependency intentionally
+  6529 remove <package>   Remove a dependency intentionally
+  6529 update [package]   Update dependencies intentionally
+  6529 audit              Report dependency vulnerabilities
+  6529 audit:fix          Apply non-breaking npm audit fixes
+  6529 run <script>       Run a package.json script
+  6529 exec <binary>      Run a local package binary
+  6529 npm:version        Print the npm version resolved through Corepack
+
+The command operates on package.json in the current directory.
+EOF
+}
+
+clean_path=""
+IFS=':' read -r -a path_parts <<< "${PATH:-}"
+for part in "${path_parts[@]}"; do
+  if [[ -z "$part" || "$part" == "$SCRIPT_DIR" ]]; then
+    continue
+  fi
+  clean_path="${clean_path:+${clean_path}:}${part}"
+done
+
+resolve_real_corepack() {
+  local resolved=""
+  resolved="$(PATH="$clean_path" command -v corepack 2>/dev/null || true)"
+  if [[ -z "$resolved" ]]; then
+    echo "Corepack is required to run the npm version pinned by package.json." >&2
+    exit 1
+  fi
+  printf '%s' "$resolved"
+}
+
+command_name="${1:-}"
+if [[ -z "$command_name" ]]; then
+  print_usage
+  exit 1
+fi
+shift
+
+case "$command_name" in
+  bootstrap)
+    exec bash "$REPO_ROOT/scripts/bootstrap-6529-command.sh" "$@"
+    ;;
+  help|-h|--help)
+    print_usage
+    exit 0
+    ;;
+esac
+
+current_directory="$(pwd -P)"
+case "${current_directory}/" in
+  "${REPO_ROOT}/"*) ;;
+  *)
+    echo "The 6529 command is scoped to $REPO_ROOT." >&2
+    exit 1
+    ;;
+esac
+
+if [[ ! -f "$current_directory/package.json" ]]; then
+  echo "No package.json found in $current_directory." >&2
+  echo "Run the command from the repository root or a packaged service directory." >&2
+  exit 1
+fi
+
+REAL_COREPACK="$(resolve_real_corepack)"
+export PATH="$SCRIPT_DIR${clean_path:+:$clean_path}"
+
+case "$command_name" in
+  ci)
+    for argument in "$@"; do
+      if [[ "$argument" != -* ]]; then
+        echo "\`6529 ci\` accepts npm ci options only, not package names." >&2
+        echo "Use \`6529 add <package>\` to change dependencies." >&2
+        exit 1
+      fi
+    done
+    exec "$REAL_COREPACK" npm ci "$@"
+    ;;
+  i|install)
+    echo "Direct install-style commands are intentionally unavailable." >&2
+    echo "Use \`6529 ci\` for a frozen install or \`6529 add <package>\` to change dependencies." >&2
+    exit 1
+    ;;
+  add)
+    if [[ "$#" -eq 0 ]]; then
+      echo "Usage: \`6529 add <package>\`" >&2
+      exit 1
+    fi
+    exec "$REAL_COREPACK" npm install "$@"
+    ;;
+  remove|rm|uninstall)
+    if [[ "$#" -eq 0 ]]; then
+      echo "Usage: \`6529 remove <package>\`" >&2
+      exit 1
+    fi
+    exec "$REAL_COREPACK" npm uninstall "$@"
+    ;;
+  update)
+    exec "$REAL_COREPACK" npm update "$@"
+    ;;
+  audit)
+    exec "$REAL_COREPACK" npm audit "$@"
+    ;;
+  audit:fix)
+    exec "$REAL_COREPACK" npm audit fix "$@"
+    ;;
+  run)
+    if [[ "$#" -eq 0 ]]; then
+      echo "Usage: \`6529 run <script>\`" >&2
+      exit 1
+    fi
+    exec "$REAL_COREPACK" npm run "$@"
+    ;;
+  exec)
+    if [[ "$#" -eq 0 ]]; then
+      echo "Usage: \`6529 exec <binary>\`" >&2
+      exit 1
+    fi
+    exec "$REAL_COREPACK" npm exec -- "$@"
+    ;;
+  npm:version)
+    exec "$REAL_COREPACK" npm --version
+    ;;
+  version|-v|--version)
+    echo "The 6529 wrapper does not currently publish its own version." >&2
+    echo "Use \`6529 npm:version\` to print the npm version resolved through Corepack." >&2
+    exit 1
+    ;;
+  explain|fund|outdated|prune|dedupe|ls|list|view)
+    exec "$REAL_COREPACK" npm "$command_name" "$@"
+    ;;
+  test|start|stop|restart)
+    echo "Use \`6529 run $command_name\` for package.json scripts." >&2
+    exit 1
+    ;;
+  *)
+    echo "Unsupported 6529 command: $command_name" >&2
+    print_usage >&2
+    exit 1
+    ;;
+esac
