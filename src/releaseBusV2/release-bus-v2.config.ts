@@ -352,4 +352,17 @@ export function deriveReleaseBusV2LaneStates(
 }
 
 export const RELEASE_BUS_V2_LOCK_TTL_MS = 5 * 60 * 1000;
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LOCK_NAME =
+  'production-environment';
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES = [
+  'frontend-production-workflow',
+  'backend-production-workflow',
+  'deploy-hub'
+] as const;
+// The 130-minute renewal exceeds the 22-minute deploy ceiling plus the
+// 90-minute Production E2E timeout by 18 minutes; the 150-minute hard cap
+// adds 38 minutes of absolute headroom over those configured windows.
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LEASE_TTL_MS = 130 * 60 * 1000;
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_UNBOUND_TTL_MS = 5 * 60 * 1000;
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_HARD_TTL_MS = 150 * 60 * 1000;
 export const RELEASE_BUS_V2_MAX_CANDIDATES = 50;

@@ -543,7 +543,7 @@ tree; it does not alter the machine-wide npm installation. See
 [`docs/package-commands.md`](package-commands.md) for the command contract.
 
 Simple Release Bus v2 is an additive MySQL-backed control plane shared by the
-production API and the production-region `releaseBusV2Reconciler` Lambda. Nine
+production API and the production-region `releaseBusV2Reconciler` Lambda. Ten
 versioned tables store immutable candidates, dependency edges, staging and
 production trains, memberships, exact operations, environment/scheduler locks,
 manifests, controls, and events. The reconciler has reserved concurrency one
@@ -624,6 +624,33 @@ transaction connection already identifies the writer and takes precedence over
 pool selection. Only an authoritative `DISPATCHED` reservation permits the
 external dispatch; missing or concurrently advanced state fails closed without
 dispatching.
+
+One-click production workflows use the production authority ledger described in
+[`docs/release-bus-v2-production-authority.md`](release-bus-v2-production-authority.md).
+Frontend and backend operations intentionally share the existing
+`production-environment` lock and production control epoch. A GitHub entry
+point verifies its exact in-progress run before atomically acquiring that lock
+and a `BOUND` authority; an external controller may instead create a short-lived
+unbound `PREPARED` row before dispatch. Artifact discovery is deliberately
+after prepare/bind: only immediate pre-mutation reauthorization freezes the
+selection digest. Completion additionally requires repository-specific trusted
+evidence: a frontend authority needs the exact successful Production E2E run
+(bound by persisted deploy ID/title, not by E2E head SHA) and isolated verifier
+digest, while a backend authority needs the exact successful deploy-bound
+`Deploy a service` run (including service/title/path, repository, attempt, and
+target SHA) plus its evidence digest. Deploy success alone cannot release a
+frontend authority, and an unrelated or mismatched backend run cannot release
+the backend authority. The DB lease token remains persisted server-side and is
+never part of an API response or workflow output.
+
+The authority schema is deployed explicitly, not through an assumption that
+TypeORM synchronization is enabled. Apply
+`migrations/20260806170000-create-release-bus-v2-production-authority.js`
+before deploying API/workflow code that calls these routes; verify the table and
+indexes on the writer database, then deploy the compatible backend and workflow
+consumers. Drain callers before a rollback; the migration's down direction
+renames the table to a retained `retired_` name rather than deleting lease or
+audit history.
 
 For cumulative staging, each affected repository's immutable release commit
 has the recorded `1a-staging` head as its first parent and the composed

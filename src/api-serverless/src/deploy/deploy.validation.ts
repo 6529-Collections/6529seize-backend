@@ -11,6 +11,7 @@ import {
   RELEASE_BUS_V2_FAILURE_CLASSES,
   RELEASE_BUS_V2_REPOSITORIES
 } from '@/releaseBusV2/release-bus-v2.types';
+import { RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES } from '@/releaseBusV2/release-bus-v2.config';
 
 const GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -459,6 +460,128 @@ export const ReleaseBusV2ManualDeploymentReadinessBodySchema = Joi.object({
   })
   .unknown(false)
   .required();
+
+const ReleaseBusV2ProductionAuthorityIdentityFields = {
+  operation_id: Joi.string()
+    .pattern(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,179}$/)
+    .required(),
+  controller_identity: Joi.string()
+    .valid(...RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES)
+    .required(),
+  repository: ReleaseRepositorySchema.required(),
+  environment: Joi.valid('prod').required(),
+  service: Joi.when('repository', {
+    is: 'frontend',
+    then: Joi.valid('frontend').required(),
+    otherwise: Joi.string()
+      .valid(...DEPLOY_SERVICES)
+      .required()
+  }),
+  target_sha: ReleaseShaSchema.required(),
+  selection_digest: Joi.valid(null).default(null)
+};
+
+const ReleaseBusV2ProductionAuthorityIdentitySchema = Joi.object(
+  ReleaseBusV2ProductionAuthorityIdentityFields
+)
+  .custom((value, helpers) => {
+    if (
+      value.repository === 'backend' &&
+      !canDeployServiceToEnvironment(value.service, value.environment)
+    )
+      return helpers.error('any.invalid');
+    if (
+      value.repository === 'frontend' &&
+      !['frontend-production-workflow', 'deploy-hub'].includes(
+        value.controller_identity
+      )
+    )
+      return helpers.error('any.invalid');
+    if (
+      value.repository === 'backend' &&
+      !['backend-production-workflow', 'deploy-hub'].includes(
+        value.controller_identity
+      )
+    )
+      return helpers.error('any.invalid');
+    return value;
+  })
+  .unknown(false)
+  .required();
+
+export const ReleaseBusV2ProductionAuthorityPrepareBodySchema =
+  ReleaseBusV2ProductionAuthorityIdentitySchema;
+
+export const ReleaseBusV2ProductionAuthorityBindBodySchema =
+  ReleaseBusV2ProductionAuthorityIdentitySchema.keys({
+    workflow_run_id: Joi.string()
+      .pattern(/^[1-9]\d{0,19}$/)
+      .required(),
+    workflow_run_attempt: Joi.number()
+      .integer()
+      .positive()
+      .max(1_000_000)
+      .strict()
+      .required()
+  })
+    .unknown(false)
+    .required();
+
+export const ReleaseBusV2ProductionAuthorityAcquireBindBodySchema =
+  ReleaseBusV2ProductionAuthorityBindBodySchema;
+
+export const ReleaseBusV2ProductionAuthorityReauthorizeBodySchema =
+  ReleaseBusV2ProductionAuthorityBindBodySchema.keys({
+    selection_digest: Joi.string()
+      .lowercase()
+      .pattern(/^[a-f0-9]{64}$/)
+      .required()
+  })
+    .unknown(false)
+    .required();
+
+export const ReleaseBusV2ProductionAuthorityCompleteBodySchema =
+  ReleaseBusV2ProductionAuthorityReauthorizeBodySchema.keys({
+    qualifier_workflow_run_id: Joi.string()
+      .pattern(/^[1-9]\d{0,19}$/)
+      .required(),
+    qualifier_workflow_run_attempt: Joi.number()
+      .integer()
+      .positive()
+      .max(1_000_000)
+      .strict()
+      .required(),
+    evidence_digest: Joi.string()
+      .lowercase()
+      .pattern(/^[a-f0-9]{64}$/)
+      .required()
+  })
+    .unknown(false)
+    .required();
+
+export const ReleaseBusV2ProductionAuthorityFailBodySchema =
+  ReleaseBusV2ProductionAuthorityBindBodySchema.keys({
+    selection_digest: Joi.alternatives()
+      .try(
+        Joi.string()
+          .lowercase()
+          .pattern(/^[a-f0-9]{64}$/),
+        Joi.valid(null)
+      )
+      .default(null),
+    reason_code: Joi.string()
+      .valid(
+        'AWS_MUTATION_FAILED',
+        'WORKFLOW_FAILED',
+        'ABORTED',
+        'CONTROL_REVOKED',
+        'LEASE_EXPIRED',
+        'LEASE_LOST'
+      )
+      .required()
+  })
+    .unknown(false)
+    .required();
 
 const releaseBusAuthorizationFields = () => ({
   train_id: Joi.string()

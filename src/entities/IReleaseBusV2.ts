@@ -7,6 +7,7 @@ import {
   RELEASE_BUS_V2_LOCKS_TABLE,
   RELEASE_BUS_V2_MANIFESTS_TABLE,
   RELEASE_BUS_V2_OPERATIONS_TABLE,
+  RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE,
   RELEASE_BUS_V2_STAGING_STATE_TABLE,
   RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE,
   RELEASE_BUS_V2_TRAINS_TABLE
@@ -18,7 +19,11 @@ import type {
   ReleaseBusV2FailureClass,
   ReleaseBusV2Lane,
   ReleaseBusV2ManifestStatus,
+  ReleaseBusV2Mode,
   ReleaseBusV2OperationStatus,
+  ReleaseBusV2ProductionAuthorityDenialCode,
+  ReleaseBusV2ProductionAuthorityFailureCode,
+  ReleaseBusV2ProductionAuthorityStatus,
   ReleaseBusV2ProductionQualificationPolicy,
   ReleaseBusV2Repository,
   ReleaseBusV2StagingLiveState,
@@ -220,6 +225,69 @@ export class ReleaseBusV2OperationEntity {
   @Column({ type: 'json', nullable: true }) readonly result_json!: unknown;
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly started_at!: number | null;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly completed_at!: number | null;
+  @Column({ type: 'bigint' }) readonly created_at!: number;
+  @Column({ type: 'bigint' }) readonly updated_at!: number;
+  @Column({ type: 'int', default: 1 }) readonly row_version!: number;
+}
+
+@Entity(RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE)
+@Index('uq_release_bus_v2_production_authority_operation', ['operation_id'], {
+  unique: true
+})
+@Index('idx_release_bus_v2_production_authority_status', [
+  'status',
+  'lease_expires_at'
+])
+export class ReleaseBusV2ProductionAuthorityEntity {
+  @PrimaryColumn({ type: 'varchar', length: 36 }) readonly id!: string;
+  @Column({ type: 'varchar', length: 180 }) readonly operation_id!: string;
+  @Column({ type: 'varchar', length: 100 })
+  readonly controller_identity!: string;
+  @Column({ type: 'varchar', length: 16 })
+  readonly repository!: ReleaseBusV2Repository;
+  @Column({ type: 'varchar', length: 16 }) readonly environment!: 'prod';
+  @Column({ type: 'varchar', length: 100 }) readonly service!: string;
+  @Column({ type: 'char', length: 40 }) readonly target_sha!: string;
+  @Column({ type: 'char', length: 64, nullable: true, default: null })
+  readonly selection_digest!: string | null;
+  @Column({ type: 'varchar', length: 20, nullable: true, default: null })
+  readonly workflow_run_id!: string | null;
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly workflow_run_attempt!: number | null;
+  @Column({ type: 'varchar', length: 20, nullable: true, default: null })
+  readonly qualifier_workflow_run_id!: string | null;
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly qualifier_workflow_run_attempt!: number | null;
+  @Column({ type: 'char', length: 64, nullable: true, default: null })
+  readonly evidence_digest!: string | null;
+  @Column({ type: 'varchar', length: 32 })
+  readonly status!: ReleaseBusV2ProductionAuthorityStatus;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly lease_owner!: string | null;
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly lease_token!: string | null;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly lease_expires_at!: number | null;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly hard_expires_at!: number | null;
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly lock_row_version!: number | null;
+  @Column({ type: 'int' }) readonly control_epoch_all!: number;
+  @Column({ type: 'int' }) readonly control_epoch_production!: number;
+  @Column({ type: 'varchar', length: 16 })
+  readonly control_mode!: ReleaseBusV2Mode;
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  readonly denial_code!: ReleaseBusV2ProductionAuthorityDenialCode | null;
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly denial_observed_all_epoch!: number | null;
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly denial_observed_production_epoch!: number | null;
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  readonly denial_observed_mode!: ReleaseBusV2Mode | null;
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  readonly failure_code!: ReleaseBusV2ProductionAuthorityFailureCode | null;
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly completed_at!: number | null;
   @Column({ type: 'bigint' }) readonly created_at!: number;

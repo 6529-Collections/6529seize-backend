@@ -38,6 +38,12 @@ const mockBaselineAdoptionExecute = jest.fn();
 const mockBaselineAdoptionAutomaticDecision = jest.fn();
 const mockBaselineAdoptionBackendEvent = jest.fn();
 const mockBaselineAdoptionHandleE2EProgress = jest.fn();
+const mockProductionAuthorityPrepare = jest.fn();
+const mockProductionAuthorityPrepareAndBind = jest.fn();
+const mockProductionAuthorityBind = jest.fn();
+const mockProductionAuthorityReauthorize = jest.fn();
+const mockProductionAuthorityComplete = jest.fn();
+const mockProductionAuthorityFail = jest.fn();
 
 class MockReleaseBusV2ProductionSelectionError extends Error {
   public constructor(
@@ -96,6 +102,19 @@ class MockReleaseBusV2BaselineAdoptionError extends Error {
   ) {
     super(message);
     this.name = 'ReleaseBusV2BaselineAdoptionError';
+  }
+}
+
+class MockReleaseBusV2ProductionAuthorityError extends Error {
+  public readonly name = 'ReleaseBusV2ProductionAuthorityError';
+
+  public constructor(
+    public readonly code: 'CONFLICT' | 'UNAVAILABLE',
+    message: string,
+    public readonly reason_code = 'AUTHORITY_UNAVAILABLE',
+    public readonly observed_epoch: unknown = null
+  ) {
+    super(message);
   }
 }
 
@@ -195,6 +214,24 @@ jest.mock('@/releaseBusV2/release-bus-v2.manual-deployment', () => ({
   }
 }));
 
+jest.mock('@/releaseBusV2/release-bus-v2.production-authority', () => ({
+  ReleaseBusV2ProductionAuthorityError:
+    MockReleaseBusV2ProductionAuthorityError,
+  isReleaseBusV2ProductionAuthorityError: (error: unknown) =>
+    error instanceof Error &&
+    error.name === 'ReleaseBusV2ProductionAuthorityError',
+  releaseBusV2ProductionAuthorityService: {
+    prepare: (...args: unknown[]) => mockProductionAuthorityPrepare(...args),
+    prepareAndBind: (...args: unknown[]) =>
+      mockProductionAuthorityPrepareAndBind(...args),
+    bind: (...args: unknown[]) => mockProductionAuthorityBind(...args),
+    reauthorize: (...args: unknown[]) =>
+      mockProductionAuthorityReauthorize(...args),
+    complete: (...args: unknown[]) => mockProductionAuthorityComplete(...args),
+    fail: (...args: unknown[]) => mockProductionAuthorityFail(...args)
+  }
+}));
+
 jest.mock('@/releaseBusV2/release-bus-v2.reconciler', () => ({
   releaseBusV2Reconciler: {
     recoverUnsatisfiableProductionQualifications: (...args: unknown[]) =>
@@ -247,6 +284,27 @@ const TRAIN_ID = '123e4567-e89b-42d3-a456-426614174000';
 const RESET_ID = '123e4567-e89b-42d3-a456-426614174001';
 const SHA = 'a'.repeat(40);
 const BOUND_E2E_RUN_ID = '94000';
+const AUTHORITY_BODY = {
+  operation_id: 'frontend-prod-one-click-1',
+  controller_identity: 'frontend-production-workflow',
+  repository: 'frontend',
+  environment: 'prod',
+  service: 'frontend',
+  target_sha: SHA,
+  selection_digest: null
+} as const;
+const AUTHORITY_BIND_BODY = {
+  ...AUTHORITY_BODY,
+  workflow_run_id: '12345',
+  workflow_run_attempt: 1
+} as const;
+const AUTHORITY_COMPLETE_BODY = {
+  ...AUTHORITY_BIND_BODY,
+  selection_digest: 'b'.repeat(64),
+  qualifier_workflow_run_id: '54321',
+  qualifier_workflow_run_attempt: 2,
+  evidence_digest: 'c'.repeat(64)
+} as const;
 
 function createTestApp() {
   const app = express();
@@ -337,6 +395,12 @@ function expectNoReleaseMutation(): void {
     mockBaselineAdoptionAutomaticDecision,
     mockBaselineAdoptionBackendEvent,
     mockBaselineAdoptionHandleE2EProgress,
+    mockProductionAuthorityPrepare,
+    mockProductionAuthorityPrepareAndBind,
+    mockProductionAuthorityBind,
+    mockProductionAuthorityReauthorize,
+    mockProductionAuthorityComplete,
+    mockProductionAuthorityFail,
     mockLambdaSend
   ]) {
     expect(mutation).not.toHaveBeenCalled();
@@ -520,6 +584,42 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       unrelatedStatus: 401
     },
     {
+      name: 'production authority prepare',
+      path: '/deploy/release-bus-v2/production-authority/prepare',
+      body: AUTHORITY_BODY,
+      unrelatedStatus: 401
+    },
+    {
+      name: 'production authority acquire-bind',
+      path: '/deploy/release-bus-v2/production-authority/acquire-bind',
+      body: AUTHORITY_BIND_BODY,
+      unrelatedStatus: 401
+    },
+    {
+      name: 'production authority bind',
+      path: '/deploy/release-bus-v2/production-authority/bind',
+      body: AUTHORITY_BIND_BODY,
+      unrelatedStatus: 401
+    },
+    {
+      name: 'production authority reauthorization',
+      path: '/deploy/release-bus-v2/production-authority/reauthorize',
+      body: AUTHORITY_COMPLETE_BODY,
+      unrelatedStatus: 401
+    },
+    {
+      name: 'production authority completion',
+      path: '/deploy/release-bus-v2/production-authority/complete',
+      body: AUTHORITY_COMPLETE_BODY,
+      unrelatedStatus: 401
+    },
+    {
+      name: 'production authority failure',
+      path: '/deploy/release-bus-v2/production-authority/fail',
+      body: { ...AUTHORITY_COMPLETE_BODY, reason_code: 'WORKFLOW_FAILED' },
+      unrelatedStatus: 401
+    },
+    {
       name: 'workflow progress report',
       path: '/deploy/release-bus-v2/report-progress',
       body: {
@@ -585,6 +685,54 @@ describe('Release Bus v2 route authorization and exact actions', () => {
       ...(authorization as Record<string, unknown>)
     }));
     mockManualDispatchReady.mockResolvedValue(undefined);
+    mockProductionAuthorityPrepare.mockResolvedValue({
+      ...AUTHORITY_BODY,
+      status: 'PREPARED',
+      workflow_run_id: null,
+      workflow_run_attempt: null,
+      lease_expires_at: Date.now() + 300_000,
+      hard_expires_at: Date.now() + 7_200_000,
+      control_epoch: { all: 1, production: 1, mode: 'PRODUCTION' },
+      lock_row_version: 2,
+      prepared: true,
+      authorized: false,
+      reused: false
+    });
+    const boundAuthorityResponse = {
+      ...AUTHORITY_BIND_BODY,
+      status: 'BOUND',
+      selection_digest: null,
+      lease_expires_at: Date.now() + 1_800_000,
+      hard_expires_at: Date.now() + 7_200_000,
+      control_epoch: { all: 1, production: 1, mode: 'PRODUCTION' },
+      lock_row_version: 3,
+      bound: true,
+      authorized: true,
+      reused: false
+    };
+    mockProductionAuthorityPrepareAndBind.mockResolvedValue(
+      boundAuthorityResponse
+    );
+    mockProductionAuthorityBind.mockResolvedValue(boundAuthorityResponse);
+    mockProductionAuthorityReauthorize.mockResolvedValue({
+      ...boundAuthorityResponse,
+      ...AUTHORITY_COMPLETE_BODY,
+      selection_digest: AUTHORITY_COMPLETE_BODY.selection_digest
+    });
+    mockProductionAuthorityComplete.mockResolvedValue({
+      operation_id: AUTHORITY_COMPLETE_BODY.operation_id,
+      status: 'COMPLETED',
+      completed: true,
+      reused: false,
+      lock_row_version: 4
+    });
+    mockProductionAuthorityFail.mockResolvedValue({
+      operation_id: AUTHORITY_COMPLETE_BODY.operation_id,
+      status: 'FAILED',
+      failed: true,
+      reused: false,
+      lock_row_version: 5
+    });
     mockV2ListCandidates.mockResolvedValue([v2Candidate]);
     mockV2ListTrains.mockResolvedValue([]);
     mockV2ListManifests.mockResolvedValue([]);
@@ -2195,6 +2343,85 @@ describe('Release Bus v2 route authorization and exact actions', () => {
     });
     expect(mockManualDeploymentAuthorize).toHaveBeenCalledWith(body);
     expect(mockV2Authorize).not.toHaveBeenCalled();
+  });
+
+  it('keeps selection absent at prepare and delegates the atomic acquire-bind path', async () => {
+    const prepareResponse = await post(
+      '/deploy/release-bus-v2/production-authority/prepare',
+      AUTHORITY_BODY
+    );
+    expect(prepareResponse.status).toBe(200);
+    expect(mockProductionAuthorityPrepare).toHaveBeenCalledWith(AUTHORITY_BODY);
+    expect(prepareResponse.body).not.toHaveProperty('lease_token');
+
+    const acquireResponse = await post(
+      '/deploy/release-bus-v2/production-authority/acquire-bind',
+      AUTHORITY_BIND_BODY
+    );
+    expect(acquireResponse.status).toBe(200);
+    expect(mockProductionAuthorityPrepareAndBind).toHaveBeenCalledWith(
+      AUTHORITY_BIND_BODY
+    );
+    expect(acquireResponse.body).not.toHaveProperty('lease_token');
+  });
+
+  it('requires selected and isolated evidence for completion', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/production-authority/complete',
+      AUTHORITY_BIND_BODY
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockProductionAuthorityComplete).not.toHaveBeenCalled();
+  });
+
+  it('passes the immutable selection and E2E evidence identity to completion', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/production-authority/complete',
+      AUTHORITY_COMPLETE_BODY
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockProductionAuthorityComplete).toHaveBeenCalledWith(
+      AUTHORITY_COMPLETE_BODY
+    );
+    expect(response.body).not.toHaveProperty('lease_token');
+  });
+
+  it('allows a preselection failure to release without inventing a selection digest', async () => {
+    const response = await post(
+      '/deploy/release-bus-v2/production-authority/fail',
+      { ...AUTHORITY_BIND_BODY, reason_code: 'WORKFLOW_FAILED' }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockProductionAuthorityFail).toHaveBeenCalledWith({
+      ...AUTHORITY_BIND_BODY,
+      reason_code: 'WORKFLOW_FAILED'
+    });
+  });
+
+  it('returns persisted machine-readable authority denials', async () => {
+    mockProductionAuthorityPrepare.mockRejectedValue(
+      new MockReleaseBusV2ProductionAuthorityError(
+        'CONFLICT',
+        'The production lane is unavailable',
+        'ACTIVE_WORKFLOW',
+        { all: 4, production: 7, mode: 'PRODUCTION' }
+      )
+    );
+    const response = await post(
+      '/deploy/release-bus-v2/production-authority/prepare',
+      AUTHORITY_BODY
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      authorized: false,
+      operation_id: AUTHORITY_BODY.operation_id,
+      reason_code: 'ACTIVE_WORKFLOW',
+      observed_epoch: { all: 4, production: 7, mode: 'PRODUCTION' }
+    });
   });
 
   it.each([
