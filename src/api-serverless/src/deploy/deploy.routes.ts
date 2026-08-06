@@ -68,7 +68,6 @@ import {
 import {
   isReleaseBusV2ProductionAuthorityError,
   releaseBusV2ProductionAuthorityService,
-  type ReleaseBusV2ProductionAuthorityAcquireBoundInput,
   type ReleaseBusV2ProductionAuthorityBindInput,
   type ReleaseBusV2ProductionAuthorityCompleteInput,
   type ReleaseBusV2ProductionAuthorityFailureInput,
@@ -1322,7 +1321,7 @@ deployRoutes.post(
   async (req, res) => {
     requireWorkflowCredential(req);
     const body =
-      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityAcquireBoundInput>(
+      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityBindInput>(
         req.body,
         ReleaseBusV2ProductionAuthorityAcquireBindBodySchema
       );

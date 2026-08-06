@@ -122,15 +122,11 @@ const defaultDependencies: ReleaseBusV2ProductionAuthorityDependencies = {
     )
 };
 
-type ReleaseBusV2ProductionAuthorityUnselectedIdentity =
-  ReleaseBusV2ProductionAuthorityIdentity & { readonly selection_digest: null };
 export type ReleaseBusV2ProductionAuthorityPrepareInput =
-  ReleaseBusV2ProductionAuthorityUnselectedIdentity;
+  ReleaseBusV2ProductionAuthorityIdentity & { readonly selection_digest: null };
 export type ReleaseBusV2ProductionAuthorityBindInput =
-  ReleaseBusV2ProductionAuthorityUnselectedIdentity &
+  ReleaseBusV2ProductionAuthorityPrepareInput &
     ReleaseBusV2ProductionAuthorityBinding;
-export type ReleaseBusV2ProductionAuthorityAcquireBoundInput =
-  ReleaseBusV2ProductionAuthorityBindInput;
 export type ReleaseBusV2ProductionAuthorityFailureInput = Omit<
   ReleaseBusV2ProductionAuthorityReauthorizeInput,
   'selection_digest'
@@ -211,13 +207,16 @@ export class ReleaseBusV2ProductionAuthorityError extends Error {
 export function isReleaseBusV2ProductionAuthorityError(
   error: unknown
 ): error is ReleaseBusV2ProductionAuthorityError {
+  const code =
+    error instanceof Error
+      ? (error as Error & { readonly code?: unknown }).code
+      : undefined;
   return (
     error instanceof ReleaseBusV2ProductionAuthorityError ||
     (error instanceof Error &&
       error.name === 'ReleaseBusV2ProductionAuthorityError' &&
-      ['CONFLICT', 'UNAVAILABLE'].includes(
-        String((error as { code?: unknown }).code)
-      ))
+      typeof code === 'string' &&
+      ['CONFLICT', 'UNAVAILABLE'].includes(code))
   );
 }
 
@@ -487,7 +486,7 @@ export class ReleaseBusV2ProductionAuthorityService {
    * BOUND authority row are acquired in one database transaction.
    */
   public async prepareAndBind(
-    input: ReleaseBusV2ProductionAuthorityAcquireBoundInput
+    input: ReleaseBusV2ProductionAuthorityBindInput
   ): Promise<ReleaseBusV2ProductionAuthorityBindResponse> {
     this.assertIdentityInput(input);
     this.assertUnselectedInput(input);
@@ -524,106 +523,14 @@ export class ReleaseBusV2ProductionAuthorityService {
     const id = randomUUID();
     const owner = authorityOwner(id);
     const bound = await this.deps.repository.executeNativeQueriesInTransaction(
-      async (connection: ConnectionWrapper<unknown>) => {
-        const ctx: RequestContext = { connection };
-        const race = await this.deps.repository.findProductionAuthority(
-          input.operation_id,
-          ctx,
-          true
-        );
-        if (race) {
-          this.assertRecordIdentity(race, input);
-          if (race.status === 'BOUND') {
-            this.assertBoundInput(race, input);
-            return this.expired(race)
-              ? this.expireInTransaction(race, 'LEASE_EXPIRED', ctx)
-              : race;
-          }
-          if (isTerminal(race.status)) return race;
-          if (race.status !== 'PREPARED')
-            return this.denyExistingInTransaction(
-              race,
-              preflight.epoch,
-              'AUTHORITY_NOT_BOUND',
-              ctx
-            );
-        }
-        const controls = await this.controlSnapshot(ctx, true);
-        if (!sameEpoch(preflight.epoch, controls.epoch))
-          return race
-            ? this.denyExistingInTransaction(
-                race,
-                controls.epoch,
-                'CONTROL_EPOCH_CHANGED',
-                ctx
-              )
-            : this.createDeniedInTransaction(
-                input,
-                controls.epoch,
-                'CONTROL_EPOCH_CHANGED',
-                ctx
-              );
-        const drain = await this.databaseDrain(ctx, true);
-        const denial = this.databaseDenial(drain, this.now(), race ?? null);
-        if (denial)
-          return race
-            ? this.denyExistingInTransaction(race, controls.epoch, denial, ctx)
-            : this.createDeniedInTransaction(
-                input,
-                controls.epoch,
-                denial,
-                ctx
-              );
-        if (race)
-          return this.bindInTransaction(race, input, controls.epoch, ctx);
-        const lock = this.productionLock(drain.locks);
-        if (!lock)
-          throw new ReleaseBusV2ProductionAuthorityError(
-            'UNAVAILABLE',
-            'Production authority lock is unavailable',
-            'AUTHORITY_UNAVAILABLE',
-            controls.epoch
-          );
-        if (lockIsActive(lock, this.now()))
-          return this.createDeniedInTransaction(
-            input,
-            controls.epoch,
-            'ENVIRONMENT_LOCK_HELD',
-            ctx
-          );
-        const lease = await this.deps.repository.acquireLock(
-          RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LOCK_NAME,
-          null,
+      (connection: ConnectionWrapper<unknown>) =>
+        this.acquireBoundInTransaction(
+          input,
+          preflight.epoch,
+          id,
           owner,
-          RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LEASE_TTL_MS,
-          ctx
-        );
-        if (!lease?.lease_token || lease.expires_at === null)
-          return this.createDeniedInTransaction(
-            input,
-            controls.epoch,
-            'ENVIRONMENT_LOCK_HELD',
-            ctx
-          );
-        return this.deps.repository.createProductionAuthority(
-          this.insertRecord(
-            input,
-            controls.epoch,
-            {
-              id,
-              status: 'BOUND',
-              lease_owner: owner,
-              lease_token: lease.lease_token,
-              lease_expires_at: lease.expires_at,
-              hard_expires_at:
-                this.now() + RELEASE_BUS_V2_PRODUCTION_AUTHORITY_HARD_TTL_MS,
-              lock_row_version: lease.row_version
-            },
-            input
-          ),
-          ctx
-        );
-      }
+          connection
+        )
     );
     return this.bindResponse(bound, false);
   }
@@ -903,6 +810,151 @@ export class ReleaseBusV2ProductionAuthorityService {
       completed,
       status,
       completed.status === status
+    );
+  }
+
+  private async acquireBoundInTransaction(
+    input: ReleaseBusV2ProductionAuthorityBindInput,
+    preflightEpoch: ReleaseBusV2ControlEpoch,
+    id: string,
+    owner: string,
+    connection: ConnectionWrapper<unknown>
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord> {
+    const ctx: RequestContext = { connection };
+    const race = await this.deps.repository.findProductionAuthority(
+      input.operation_id,
+      ctx,
+      true
+    );
+    const raceResolution = await this.resolveAcquireRace(
+      race,
+      input,
+      preflightEpoch,
+      ctx
+    );
+    if (raceResolution) return raceResolution;
+
+    const controls = await this.controlSnapshot(ctx, true);
+    if (!sameEpoch(preflightEpoch, controls.epoch))
+      return this.denyRaceOrCreateInTransaction(
+        race,
+        input,
+        controls.epoch,
+        'CONTROL_EPOCH_CHANGED',
+        ctx
+      );
+
+    const drain = await this.databaseDrain(ctx, true);
+    const denial = this.databaseDenial(drain, this.now(), race);
+    if (denial)
+      return this.denyRaceOrCreateInTransaction(
+        race,
+        input,
+        controls.epoch,
+        denial,
+        ctx
+      );
+    if (race) return this.bindInTransaction(race, input, controls.epoch, ctx);
+    return this.createBoundInTransaction(
+      input,
+      controls.epoch,
+      drain,
+      id,
+      owner,
+      ctx
+    );
+  }
+
+  private async resolveAcquireRace(
+    race: ReleaseBusV2ProductionAuthorityRecord | null,
+    input: ReleaseBusV2ProductionAuthorityBindInput,
+    epoch: ReleaseBusV2ControlEpoch,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord | null> {
+    if (!race) return null;
+    this.assertRecordIdentity(race, input);
+    if (race.status === 'BOUND') {
+      this.assertBoundInput(race, input);
+      return this.expired(race)
+        ? this.expireInTransaction(race, 'LEASE_EXPIRED', ctx)
+        : race;
+    }
+    if (isTerminal(race.status)) return race;
+    if (race.status === 'PREPARED') return null;
+    return this.denyExistingInTransaction(
+      race,
+      epoch,
+      'AUTHORITY_NOT_BOUND',
+      ctx
+    );
+  }
+
+  private denyRaceOrCreateInTransaction(
+    race: ReleaseBusV2ProductionAuthorityRecord | null,
+    input: ReleaseBusV2ProductionAuthorityBindInput,
+    epoch: ReleaseBusV2ControlEpoch,
+    denial: ReleaseBusV2ProductionAuthorityDenialCode,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord> {
+    return race
+      ? this.denyExistingInTransaction(race, epoch, denial, ctx)
+      : this.createDeniedInTransaction(input, epoch, denial, ctx);
+  }
+
+  private async createBoundInTransaction(
+    input: ReleaseBusV2ProductionAuthorityBindInput,
+    epoch: ReleaseBusV2ControlEpoch,
+    drain: DatabaseDrain,
+    id: string,
+    owner: string,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord> {
+    const lock = this.productionLock(drain.locks);
+    if (!lock)
+      throw new ReleaseBusV2ProductionAuthorityError(
+        'UNAVAILABLE',
+        'Production authority lock is unavailable',
+        'AUTHORITY_UNAVAILABLE',
+        epoch
+      );
+    if (lockIsActive(lock, this.now()))
+      return this.createDeniedInTransaction(
+        input,
+        epoch,
+        'ENVIRONMENT_LOCK_HELD',
+        ctx
+      );
+    const lease = await this.deps.repository.acquireLock(
+      RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LOCK_NAME,
+      null,
+      owner,
+      RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LEASE_TTL_MS,
+      ctx
+    );
+    if (!lease?.lease_token || lease.expires_at === null)
+      return this.createDeniedInTransaction(
+        input,
+        epoch,
+        'ENVIRONMENT_LOCK_HELD',
+        ctx
+      );
+    return this.deps.repository.createProductionAuthority(
+      this.insertRecord(
+        input,
+        epoch,
+        {
+          id,
+          status: 'BOUND',
+          lease_owner: owner,
+          lease_token: lease.lease_token,
+          lease_expires_at: lease.expires_at,
+          hard_expires_at:
+            this.now() + RELEASE_BUS_V2_PRODUCTION_AUTHORITY_HARD_TTL_MS,
+          lock_row_version: lease.row_version
+        },
+        input
+      ),
+      ctx
     );
   }
 
