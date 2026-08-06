@@ -28,20 +28,25 @@ The immutable prepare/bind identity is:
 `controller_identity` is restricted to the approved frontend workflow, backend
 workflow, or `deploy-hub`, with repository-specific combinations enforced.
 `target_sha` must be reachable from that repository's protected `main` history.
+The actor recorded on the bound deployment run must be an active member of the
+configured `RELEASE_BUS_OPERATOR_TEAM` or an organization administrator. The
+automated qualification run is not required to be an organization operator;
+its authorization comes from its exact workflow path, repository, branch,
+title, attempt, and terminal evidence.
 The response contains the non-secret `operation_id`, state, lease expiry,
 hard-expiry, control epoch, and lock row version. It never contains
 `lease_token`.
 
 The routes are:
 
-| Route                                                           | Purpose                                                                                                                                                                                                                                          |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST /deploy/release-bus-v2/production-authority/prepare`      | Trusted external-controller reservation after authoritative drain. Creates short-lived `PREPARED` state with no workflow binding and no selection digest.                                                                                        |
-| `POST /deploy/release-bus-v2/production-authority/acquire-bind` | GitHub first-job path. Independently verifies the exact in-progress deploy workflow run and atomically acquires the shared DB lock plus a `BOUND` authority. Use this when the run already exists.                                               |
-| `POST /deploy/release-bus-v2/production-authority/bind`         | Binds a pre-dispatch `PREPARED` row to the exact in-progress run after the same identity and drain checks.                                                                                                                                       |
-| `POST /deploy/release-bus-v2/production-authority/reauthorize`  | Immediate pre-AWS check. Requires the exact deploy run/attempt, current control epoch, protected-main ancestry, live lease, and a lowercase 64-hex `selection_digest`; the first successful call freezes that digest. Later calls must match it. |
-| `POST /deploy/release-bus-v2/production-authority/complete`     | Releases success only when the deploy binding is accompanied by the selected digest, the repository-specific trusted completion run ID/attempt, and lowercase 64-hex evidence digest.                                                            |
-| `POST /deploy/release-bus-v2/production-authority/fail`         | Idempotently releases a bound operation with a bounded failure reason. Its selection is null when the owner fails before discovery, or the exact frozen digest afterward; it does not claim production E2E success.                              |
+| Route                                                           | Purpose                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /deploy/release-bus-v2/production-authority/prepare`      | Trusted external-controller reservation after authoritative drain. Creates short-lived `PREPARED` state with no workflow binding and no selection digest.                                                                                               |
+| `POST /deploy/release-bus-v2/production-authority/acquire-bind` | GitHub first-job path. Independently verifies the exact in-progress deploy workflow run and atomically acquires the shared DB lock plus a `BOUND` authority. Use this when the run already exists.                                                      |
+| `POST /deploy/release-bus-v2/production-authority/bind`         | Binds a pre-dispatch `PREPARED` row to the exact in-progress run after the same identity and drain checks.                                                                                                                                              |
+| `POST /deploy/release-bus-v2/production-authority/reauthorize`  | Immediate pre-AWS check. Requires the exact deploy run/attempt, current control epoch, protected-main ancestry, live lease, and a lowercase 64-hex `selection_digest`; the first successful call freezes that digest. Later calls must match it.        |
+| `POST /deploy/release-bus-v2/production-authority/complete`     | Releases success only when the original deployment is independently re-read as terminal success, the current control epoch still matches, and the selected digest, trusted completion run ID/attempt, and lowercase 64-hex evidence digest match.       |
+| `POST /deploy/release-bus-v2/production-authority/fail`         | Releases a bound operation only from exact terminal GitHub failure evidence. Backend failures identify the bound `Deploy a service` run; frontend failures identify either the bound `Web Deploy - PROD` run or its exact automatic Production E2E run. |
 
 Completion additionally requires:
 
@@ -77,6 +82,13 @@ repository `6529-Collections/6529seize-backend`, and exact display title
 required and immutable. In both cases the backend persists qualifier run,
 attempt, and digest and rejects later changes.
 
+Failure callbacks use the same terminal identity rules. An in-progress run, an
+arbitrary run ID, a foreign repository, or a mismatched attempt cannot release
+the lease. A frontend automatic E2E failure is accepted only after the bound
+deployment has independently been shown to have completed successfully; the
+E2E identity must also carry the exact bound title and target SHA. The failure
+evidence is persisted with the terminal record.
+
 ## State and invariants
 
 `PREPARED` has a five-minute unbound lease. A bound lease renews for 130 minutes
@@ -106,15 +118,22 @@ loss, qualifier identity failure, and evidence mismatch are fail-closed. The
 caller must react to the denial; there is no timed blind retry contract.
 
 The existing `/deploy/release-bus-v2/manual-deployment-readiness` route remains
-unchanged for manual fallback. It is not a substitute for the authority lease
-and does not receive or expose the server-side token.
+unchanged for readiness evidence. The manual-fallback race is resolved by the
+separate workflow integration that makes every manual production caller acquire
+this same authority lease; the API does not add a second manual lease or accept
+a caller-supplied token. The route therefore remains a readiness contract, not
+a substitute for the authority lease, and it does not receive or expose the
+server-side token.
 
 ## Schema deployment
 
-Deploy `dbMigrationsLoop` with the registered authority entity before deploying
-the API or workflow callers. Its normal TypeORM synchronization creates the
-table and indexes under the repository's entities-first schema contract. Verify
-the table, unique operation key, and indexed status fields on the writer
-database before deploying `api`. Before rollback, drain callers and ensure no
-authority is active; retain the authority table as audit history rather than
-dropping it.
+Roll out the API-only contract in this order: deploy `dbMigrationsLoop` first,
+then deploy `api`, and only then enable or update workflow consumers. The
+registered authority entity is synchronized by the normal TypeORM
+entities-first path; there is intentionally no standalone migration file in
+this rollout. Verify the table, unique operation key, and indexed status fields
+on the writer database before deploying `api`. Before rollback, drain callers
+and ensure no authority is active; retain the authority table as audit history
+rather than dropping it. Frontend and workflow generated clients must be
+regenerated and checked as a later consumer step against the published
+OpenAPI contract.

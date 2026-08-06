@@ -11,7 +11,10 @@ import {
   RELEASE_BUS_V2_FAILURE_CLASSES,
   RELEASE_BUS_V2_REPOSITORIES
 } from '@/releaseBusV2/release-bus-v2.types';
-import { RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES } from '@/releaseBusV2/release-bus-v2.config';
+import {
+  RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES,
+  RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES_BY_REPOSITORY
+} from '@/releaseBusV2/release-bus-v2.config';
 
 const GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -491,17 +494,9 @@ const ReleaseBusV2ProductionAuthorityIdentitySchema = Joi.object(
     )
       return helpers.error('any.invalid');
     if (
-      value.repository === 'frontend' &&
-      !['frontend-production-workflow', 'deploy-hub'].includes(
-        value.controller_identity
-      )
-    )
-      return helpers.error('any.invalid');
-    if (
-      value.repository === 'backend' &&
-      !['backend-production-workflow', 'deploy-hub'].includes(
-        value.controller_identity
-      )
+      !RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES_BY_REPOSITORY[
+        value.repository as 'frontend' | 'backend'
+      ].includes(value.controller_identity)
     )
       return helpers.error('any.invalid');
     return value;
@@ -540,22 +535,26 @@ export const ReleaseBusV2ProductionAuthorityReauthorizeBodySchema =
     .unknown(false)
     .required();
 
+const ReleaseBusV2ProductionAuthorityTerminalEvidenceFields = {
+  qualifier_workflow_run_id: Joi.string()
+    .pattern(/^[1-9]\d{0,19}$/)
+    .required(),
+  qualifier_workflow_run_attempt: Joi.number()
+    .integer()
+    .positive()
+    .max(1_000_000)
+    .strict()
+    .required(),
+  evidence_digest: Joi.string()
+    .lowercase()
+    .pattern(/^[a-f0-9]{64}$/)
+    .required()
+};
+
 export const ReleaseBusV2ProductionAuthorityCompleteBodySchema =
-  ReleaseBusV2ProductionAuthorityReauthorizeBodySchema.keys({
-    qualifier_workflow_run_id: Joi.string()
-      .pattern(/^[1-9]\d{0,19}$/)
-      .required(),
-    qualifier_workflow_run_attempt: Joi.number()
-      .integer()
-      .positive()
-      .max(1_000_000)
-      .strict()
-      .required(),
-    evidence_digest: Joi.string()
-      .lowercase()
-      .pattern(/^[a-f0-9]{64}$/)
-      .required()
-  })
+  ReleaseBusV2ProductionAuthorityReauthorizeBodySchema.keys(
+    ReleaseBusV2ProductionAuthorityTerminalEvidenceFields
+  )
     .unknown(false)
     .required();
 
@@ -580,6 +579,7 @@ export const ReleaseBusV2ProductionAuthorityFailBodySchema =
       )
       .required()
   })
+    .keys(ReleaseBusV2ProductionAuthorityTerminalEvidenceFields)
     .unknown(false)
     .required();
 

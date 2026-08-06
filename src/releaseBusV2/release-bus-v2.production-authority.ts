@@ -3,7 +3,9 @@ import { canDeployServiceToEnvironment } from '@/api/deploy/deploy.config';
 import {
   deriveReleaseBusV2LaneStates,
   getReleaseBusV2Mode,
+  RELEASE_BUS_OPERATOR_TEAM,
   RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES,
+  RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES_BY_REPOSITORY,
   RELEASE_BUS_V2_PRODUCTION_AUTHORITY_HARD_TTL_MS,
   RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LEASE_TTL_MS,
   RELEASE_BUS_V2_PRODUCTION_AUTHORITY_LOCK_NAME,
@@ -33,6 +35,7 @@ import type {
   ReleaseBusV2ProductionAuthorityRecord,
   ReleaseBusV2ProductionAuthoritySelectionState,
   ReleaseBusV2ProductionAuthorityStatus,
+  ReleaseBusV2ProductionAuthorityTerminalEvidence,
   ReleaseBusV2Lane,
   ReleaseBusV2Repository
 } from '@/releaseBusV2/release-bus-v2.types';
@@ -41,6 +44,7 @@ type AuthorityRepository = Pick<
   ReleaseBusV2RepositoryStore,
   | 'executeNativeQueriesInTransaction'
   | 'findProductionAuthority'
+  | 'findProductionAuthorityById'
   | 'createProductionAuthority'
   | 'updateProductionAuthority'
   | 'acquireLock'
@@ -78,6 +82,7 @@ export type ReleaseBusV2ProductionAuthorityDependencies = {
     forUpdate?: boolean
   ) => Promise<readonly unknown[]>;
   readonly getWorkflowRunIdentity: WorkflowRunIdentityReader;
+  readonly isOrganizationOperator: (actor: string) => Promise<boolean>;
   readonly resolveRef: (
     repository: ReleaseBusV2Repository,
     ref: string
@@ -111,6 +116,11 @@ const defaultDependencies: ReleaseBusV2ProductionAuthorityDependencies = {
     ),
   getWorkflowRunIdentity: (repository, workflowRunId) =>
     releaseBusGitHubApp.getWorkflowRunIdentity(repository, workflowRunId),
+  isOrganizationOperator: (actor) =>
+    releaseBusGitHubApp.isOrganizationOperator(
+      actor,
+      RELEASE_BUS_OPERATOR_TEAM
+    ),
   resolveRef: (repository, ref) =>
     releaseBusGitHubApp.resolveRef(repository, ref),
   refContainsCommit: (repository, ref, commitSha) =>
@@ -133,7 +143,7 @@ export type ReleaseBusV2ProductionAuthorityFailureInput = Omit<
 > & {
   readonly selection_digest: string | null;
   readonly reason_code: ReleaseBusV2ProductionAuthorityFailureCode;
-};
+} & ReleaseBusV2ProductionAuthorityTerminalEvidence;
 export type ReleaseBusV2ProductionAuthorityCompleteInput =
   ReleaseBusV2ProductionAuthorityCompletionInput;
 
@@ -238,7 +248,7 @@ type Preflight = {
 };
 
 type CompletionEvidence = Pick<
-  ReleaseBusV2ProductionAuthorityCompletionInput,
+  ReleaseBusV2ProductionAuthorityTerminalEvidence,
   | 'qualifier_workflow_run_id'
   | 'qualifier_workflow_run_attempt'
   | 'evidence_digest'
@@ -255,6 +265,14 @@ const CONTROLLER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const CONTROLLER_IDENTITIES = new Set<string>(
   RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES
 );
+const FAILED_WORKFLOW_CONCLUSIONS = new Set([
+  'failure',
+  'cancelled',
+  'timed_out',
+  'action_required',
+  'startup_failure',
+  'stale'
+]);
 
 function epochFromControls(
   mode: ReleaseBusV2Mode,
@@ -680,6 +698,7 @@ export class ReleaseBusV2ProductionAuthorityService {
         'Production authority is not bound to a deployment workflow run',
         'AUTHORITY_NOT_BOUND'
       );
+    await this.verifyCompletedDeploymentBinding(input);
     const qualifierIdentity = await this.qualifierWorkflowIdentity(
       input,
       current.repository
@@ -709,7 +728,12 @@ export class ReleaseBusV2ProductionAuthorityService {
   public async fail(
     input: ReleaseBusV2ProductionAuthorityFailureInput
   ): Promise<ReleaseBusV2ProductionAuthorityCompletionResponse> {
-    return this.finish(input, 'FAILED', input.reason_code);
+    this.assertFailureInput(input);
+    const current = await this.requireRecord(input);
+    this.assertRecordIdentity(current, input);
+    this.assertBoundInput(current, input);
+    await this.verifyFailureEvidence(input, current);
+    return this.finish(input, 'FAILED', input.reason_code, input);
   }
 
   private async finish(
@@ -757,6 +781,21 @@ export class ReleaseBusV2ProductionAuthorityService {
           if (isTerminal(locked.status)) return locked;
           if (locked.status !== 'BOUND')
             return this.expireInTransaction(locked, 'AUTHORITY_NOT_BOUND', ctx);
+          if (status === 'COMPLETED') {
+            const controls = await this.controlSnapshot(ctx, true);
+            const boundEpoch: ReleaseBusV2ControlEpoch = {
+              all: locked.control_epoch_all,
+              production: locked.control_epoch_production,
+              mode: locked.control_mode
+            };
+            if (!sameEpoch(boundEpoch, controls.epoch))
+              return this.denyExistingInTransaction(
+                locked,
+                controls.epoch,
+                'CONTROL_EPOCH_CHANGED',
+                ctx
+              );
+          }
           if (this.expired(locked))
             return this.expireInTransaction(locked, 'LEASE_EXPIRED', ctx);
           const lock = this.productionLock(
@@ -1065,6 +1104,8 @@ export class ReleaseBusV2ProductionAuthorityService {
       throw error;
     }
     const drain = await this.databaseDrain({}, false);
+    const denial = this.databaseDenial(drain, this.now(), current);
+    if (denial) return { epoch: controls.epoch, denial };
     const activeRunIds = (
       repository: ReleaseBusV2Repository
     ): readonly string[] =>
@@ -1081,8 +1122,6 @@ export class ReleaseBusV2ProductionAuthorityService {
         activeRunIds('frontend')
       )
     ]);
-    const denial = this.databaseDenial(drain, this.now(), current);
-    if (denial) return { epoch: controls.epoch, denial };
     if (backendActive || frontendActive)
       return { epoch: controls.epoch, denial: 'ACTIVE_WORKFLOW' };
     return { epoch: controls.epoch, denial: null };
@@ -1132,14 +1171,32 @@ export class ReleaseBusV2ProductionAuthorityService {
     identity: ReleaseBusWorkflowRunIdentity,
     input: ReleaseBusV2ProductionAuthorityWorkflowInput
   ): void {
+    this.assertDeploymentIdentity(identity, input, 'in_progress');
+  }
+
+  private assertDeploymentIdentity(
+    identity: ReleaseBusWorkflowRunIdentity,
+    input: ReleaseBusV2ProductionAuthorityWorkflowInput,
+    expectedStatus: 'in_progress' | 'completed',
+    expectedConclusion: 'success' | 'failure' = 'success',
+    reason: Extract<
+      ReleaseBusV2ProductionAuthorityDenialCode,
+      'WORKFLOW_IDENTITY_MISMATCH' | 'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+    > = 'WORKFLOW_IDENTITY_MISMATCH'
+  ): void {
     const expectedHeadRepository =
       input.repository === 'frontend'
         ? FRONTEND_HEAD_REPOSITORY
         : BACKEND_HEAD_REPOSITORY;
     const common =
       identity.attempt === input.workflow_run_attempt &&
-      identity.status === 'in_progress' &&
-      identity.conclusion === null &&
+      identity.status === expectedStatus &&
+      (expectedStatus === 'in_progress'
+        ? identity.conclusion === null
+        : expectedConclusion === 'success'
+          ? identity.conclusion === 'success'
+          : FAILED_WORKFLOW_CONCLUSIONS.has(identity.conclusion ?? '')) &&
+      identity.repository === expectedHeadRepository &&
       identity.headRepository === expectedHeadRepository &&
       identity.headBranch === MAIN_REF &&
       identity.headSha === input.target_sha;
@@ -1148,7 +1205,8 @@ export class ReleaseBusV2ProductionAuthorityService {
         ? common &&
           identity.event === 'workflow_dispatch' &&
           identity.path === '.github/workflows/build-upload-deploy-prod.yml' &&
-          identity.name === 'Web Deploy - PROD'
+          identity.name === 'Web Deploy - PROD' &&
+          identity.displayTitle === 'Web Deploy - PROD'
         : common &&
           identity.event === 'workflow_dispatch' &&
           identity.path === '.github/workflows/deploy.yml' &&
@@ -1158,18 +1216,50 @@ export class ReleaseBusV2ProductionAuthorityService {
     if (!valid)
       throw this.conflict(
         'GitHub workflow identity does not match the prepared production authority',
-        'WORKFLOW_IDENTITY_MISMATCH'
+        reason
       );
   }
 
   private async verifyWorkflowBinding(
     input: ReleaseBusV2ProductionAuthorityWorkflowInput
   ): Promise<void> {
-    this.assertRunIdentity(await this.workflowIdentity(input), input);
+    const identity = await this.workflowIdentity(input);
+    this.assertRunIdentity(identity, input);
+    await this.assertApprovedOperator(identity);
+  }
+
+  private async verifyCompletedDeploymentBinding(
+    input: ReleaseBusV2ProductionAuthorityWorkflowInput
+  ): Promise<void> {
+    const identity = await this.workflowIdentity(input);
+    this.assertDeploymentIdentity(identity, input, 'completed');
+    await this.assertApprovedOperator(identity);
+  }
+
+  private async assertApprovedOperator(
+    identity: ReleaseBusWorkflowRunIdentity
+  ): Promise<void> {
+    let approved = false;
+    try {
+      approved = await this.deps.isOrganizationOperator(identity.actor);
+    } catch {
+      throw new ReleaseBusV2ProductionAuthorityError(
+        'UNAVAILABLE',
+        'GitHub workflow operator authorization could not be read',
+        'AUTHORITY_UNAVAILABLE'
+      );
+    }
+    if (!approved)
+      throw this.conflict(
+        'GitHub workflow actor is not an approved production operator',
+        'WORKFLOW_IDENTITY_MISMATCH'
+      );
   }
 
   private async qualifierWorkflowIdentity(
-    input: ReleaseBusV2ProductionAuthorityCompleteInput,
+    input:
+      | ReleaseBusV2ProductionAuthorityCompleteInput
+      | ReleaseBusV2ProductionAuthorityFailureInput,
     repository: ReleaseBusV2Repository
   ): Promise<ReleaseBusWorkflowRunIdentity> {
     try {
@@ -1199,6 +1289,7 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.status === 'completed' &&
       identity.conclusion === 'success' &&
       identity.event === 'workflow_dispatch' &&
+      identity.repository === FRONTEND_HEAD_REPOSITORY &&
       identity.headRepository === FRONTEND_HEAD_REPOSITORY &&
       identity.headBranch === MAIN_REF &&
       identity.path === '.github/workflows/production-e2e.yml' &&
@@ -1208,6 +1299,85 @@ export class ReleaseBusV2ProductionAuthorityService {
     if (!valid)
       throw this.conflict(
         'Production E2E workflow identity or result is not trusted',
+        'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+      );
+  }
+
+  private assertProductionE2EFailureIdentity(
+    identity: ReleaseBusWorkflowRunIdentity,
+    input: ReleaseBusV2ProductionAuthorityFailureInput,
+    deployWorkflowRunId: string
+  ): void {
+    const valid =
+      identity.attempt === input.qualifier_workflow_run_attempt &&
+      identity.status === 'completed' &&
+      FAILED_WORKFLOW_CONCLUSIONS.has(identity.conclusion ?? '') &&
+      identity.event === 'workflow_dispatch' &&
+      identity.repository === FRONTEND_HEAD_REPOSITORY &&
+      identity.headRepository === FRONTEND_HEAD_REPOSITORY &&
+      identity.headBranch === MAIN_REF &&
+      identity.headSha === input.target_sha &&
+      identity.path === '.github/workflows/production-e2e.yml' &&
+      identity.name === 'Production E2E' &&
+      identity.displayTitle ===
+        `Production E2E automatic ${deployWorkflowRunId}`;
+    if (!valid)
+      throw this.conflict(
+        'Production E2E workflow identity or failure result is not trusted',
+        'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+      );
+  }
+
+  private async verifyFailureEvidence(
+    input: ReleaseBusV2ProductionAuthorityFailureInput,
+    current: ReleaseBusV2ProductionAuthorityRecord
+  ): Promise<void> {
+    if (
+      current.workflow_run_id === null ||
+      current.workflow_run_attempt === null
+    )
+      throw this.conflict(
+        'Production authority is not bound to a deployment workflow run',
+        'AUTHORITY_NOT_BOUND'
+      );
+
+    const isBoundDeployment =
+      input.qualifier_workflow_run_id === current.workflow_run_id &&
+      input.qualifier_workflow_run_attempt === current.workflow_run_attempt;
+    if (current.repository === 'backend' || isBoundDeployment) {
+      if (
+        input.qualifier_workflow_run_id !== current.workflow_run_id ||
+        input.qualifier_workflow_run_attempt !== current.workflow_run_attempt
+      )
+        throw this.conflict(
+          'Failure evidence does not identify the bound deployment run',
+          'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+        );
+      const identity = await this.workflowIdentity(input);
+      this.assertDeploymentIdentity(
+        identity,
+        input,
+        'completed',
+        'failure',
+        'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+      );
+      await this.assertApprovedOperator(identity);
+      return;
+    }
+
+    await this.verifyCompletedDeploymentBinding(input);
+    const qualifierIdentity = await this.qualifierWorkflowIdentity(
+      input,
+      current.repository
+    );
+    this.assertProductionE2EFailureIdentity(
+      qualifierIdentity,
+      input,
+      current.workflow_run_id
+    );
+    if (current.repository !== 'frontend')
+      throw this.conflict(
+        'Only frontend authorities accept a Production E2E failure qualifier',
         'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
       );
   }
@@ -1225,6 +1395,7 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.status === 'completed' &&
       identity.conclusion === 'success' &&
       identity.event === 'workflow_dispatch' &&
+      identity.repository === BACKEND_HEAD_REPOSITORY &&
       identity.headRepository === BACKEND_HEAD_REPOSITORY &&
       identity.headBranch === MAIN_REF &&
       identity.headSha === input.target_sha &&
@@ -1547,16 +1718,27 @@ export class ReleaseBusV2ProductionAuthorityService {
     ctx: RequestContext = {},
     forUpdate = false
   ): Promise<ReleaseBusV2ProductionAuthorityRecord> {
-    return this.requireRecordById(input.operation_id, ctx, forUpdate);
+    const record = await this.deps.repository.findProductionAuthority(
+      input.operation_id,
+      ctx,
+      forUpdate,
+      Boolean(ctx.connection)
+    );
+    if (!record)
+      throw this.conflict(
+        'Production authority operation was not found',
+        'AUTHORITY_NOT_FOUND'
+      );
+    return record;
   }
 
   private async requireRecordById(
-    operationId: string,
+    id: string,
     ctx: RequestContext,
     forUpdate: boolean
   ): Promise<ReleaseBusV2ProductionAuthorityRecord> {
-    const record = await this.deps.repository.findProductionAuthority(
-      operationId,
+    const record = await this.deps.repository.findProductionAuthorityById(
+      id,
       ctx,
       forUpdate,
       Boolean(ctx.connection)
@@ -1583,12 +1765,9 @@ export class ReleaseBusV2ProductionAuthorityService {
       (input.repository === 'backend' &&
         !canDeployServiceToEnvironment(input.service, input.environment)) ||
       (input.repository === 'frontend' && input.service !== 'frontend') ||
-      (input.repository === 'backend' &&
-        input.controller_identity !== 'deploy-hub' &&
-        input.controller_identity !== 'backend-production-workflow') ||
-      (input.repository === 'frontend' &&
-        input.controller_identity !== 'deploy-hub' &&
-        input.controller_identity !== 'frontend-production-workflow')
+      !RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES_BY_REPOSITORY[
+        input.repository
+      ].includes(input.controller_identity)
     )
       throw this.conflict(
         'Production authority identity is invalid',
@@ -1671,6 +1850,26 @@ export class ReleaseBusV2ProductionAuthorityService {
     input: ReleaseBusV2ProductionAuthorityCompleteInput
   ): void {
     this.assertSelectionDigest(input);
+    this.assertTerminalEvidence(input);
+  }
+
+  private assertFailureInput(
+    input: ReleaseBusV2ProductionAuthorityFailureInput
+  ): void {
+    if (
+      input.selection_digest !== null &&
+      !DIGEST_PATTERN.test(input.selection_digest)
+    )
+      throw this.conflict(
+        'Failure selection digest must be a lowercase SHA-256 digest',
+        'SELECTION_DIGEST_MISMATCH'
+      );
+    this.assertTerminalEvidence(input);
+  }
+
+  private assertTerminalEvidence(
+    input: ReleaseBusV2ProductionAuthorityTerminalEvidence
+  ): void {
     if (
       !/^[1-9]\d{0,19}$/.test(input.qualifier_workflow_run_id) ||
       !Number.isInteger(input.qualifier_workflow_run_attempt) ||
@@ -1679,7 +1878,7 @@ export class ReleaseBusV2ProductionAuthorityService {
       !DIGEST_PATTERN.test(input.evidence_digest)
     )
       throw this.conflict(
-        'Production completion evidence is invalid',
+        'Terminal workflow evidence is invalid',
         'EVIDENCE_DIGEST_MISMATCH'
       );
   }

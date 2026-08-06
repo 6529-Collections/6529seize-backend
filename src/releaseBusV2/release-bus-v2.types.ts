@@ -175,12 +175,15 @@ export type ReleaseBusV2ProductionAuthorityReauthorizeInput =
       readonly selection_digest: string;
     };
 
+export type ReleaseBusV2ProductionAuthorityTerminalEvidence = {
+  readonly qualifier_workflow_run_id: string;
+  readonly qualifier_workflow_run_attempt: number;
+  readonly evidence_digest: string;
+};
+
 export type ReleaseBusV2ProductionAuthorityCompletionInput =
-  ReleaseBusV2ProductionAuthorityReauthorizeInput & {
-    readonly qualifier_workflow_run_id: string;
-    readonly qualifier_workflow_run_attempt: number;
-    readonly evidence_digest: string;
-  };
+  ReleaseBusV2ProductionAuthorityReauthorizeInput &
+    ReleaseBusV2ProductionAuthorityTerminalEvidence;
 
 export type ReleaseBusV2ProductionAuthorityRecord =
   ReleaseBusV2ProductionAuthorityIdentity &

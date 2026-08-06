@@ -64,6 +64,9 @@ function failureInput(
   return {
     ...DEPLOY_INPUT,
     selection_digest,
+    qualifier_workflow_run_id: DEPLOY_INPUT.workflow_run_id,
+    qualifier_workflow_run_attempt: DEPLOY_INPUT.workflow_run_attempt,
+    evidence_digest: EVIDENCE_DIGEST,
     reason_code: 'WORKFLOW_FAILED',
     ...overrides
   };
@@ -77,6 +80,7 @@ function deployIdentity(
     attempt: DEPLOY_INPUT.workflow_run_attempt,
     conclusion: null,
     event: 'workflow_dispatch',
+    repository: '6529-Collections/6529seize-frontend',
     headRepository: '6529-Collections/6529seize-frontend',
     headBranch: 'main',
     headSha: TARGET_SHA,
@@ -96,6 +100,7 @@ function e2eIdentity(
     attempt: COMPLETE_INPUT.qualifier_workflow_run_attempt,
     conclusion: 'success',
     event: 'workflow_dispatch',
+    repository: '6529-Collections/6529seize-frontend',
     headRepository: '6529-Collections/6529seize-frontend',
     headBranch: 'main',
     headSha: TARGET_SHA,
@@ -115,6 +120,7 @@ function backendIdentity(
     attempt: BACKEND_DEPLOY_INPUT.workflow_run_attempt,
     conclusion: 'success',
     event: 'workflow_dispatch',
+    repository: '6529-Collections/6529seize-backend',
     headRepository: '6529-Collections/6529seize-backend',
     headBranch: 'main',
     headSha: TARGET_SHA,
@@ -126,7 +132,7 @@ function backendIdentity(
   };
 }
 
-function controlRecords() {
+function controlRecords(productionRowVersion = 2) {
   return [
     {
       scope: 'ALL' as const,
@@ -150,7 +156,7 @@ function controlRecords() {
       reason: 'manual production lane',
       github_actor: null,
       updated_at: 1,
-      row_version: 2
+      row_version: productionRowVersion
     }
   ];
 }
@@ -176,14 +182,20 @@ function setup() {
   };
   let nextLockToken = 1;
   let backendRunCompleted = false;
+  let productionRowVersion = 2;
 
-  const deployRunIdentity = deployIdentity();
+  let deployRunIdentity = deployIdentity();
   const deps: ReleaseBusV2ProductionAuthorityDependencies = {
     repository: {
       executeNativeQueriesInTransaction: async (
         callback: (connection: { connection: unknown }) => Promise<unknown>
       ) => callback({ connection: {} }),
-      findProductionAuthority: jest.fn(async () => clone(authority)),
+      findProductionAuthority: jest.fn(async (operationId: string) =>
+        authority?.operation_id === operationId ? clone(authority) : null
+      ),
+      findProductionAuthorityById: jest.fn(async (id: string) =>
+        authority?.id === id ? clone(authority) : null
+      ),
       createProductionAuthority: jest.fn(async (input) => {
         authority = {
           ...input,
@@ -250,13 +262,13 @@ function setup() {
         };
         return true;
       }),
-      listControls: jest.fn(async () => controlRecords()),
+      listControls: jest.fn(async () => controlRecords(productionRowVersion)),
       listLocks: jest.fn(async () => [clone(lock)]),
       listActiveTrains: jest.fn(async () => []),
       listNonterminalOperationsForLanes: jest.fn(async () => [])
     } as unknown as ReleaseBusV2ProductionAuthorityDependencies['repository'],
     getMode: () => 'PRODUCTION',
-    listControls: jest.fn(async () => controlRecords()),
+    listControls: jest.fn(async () => controlRecords(productionRowVersion)),
     listLocks: jest.fn(async () => [clone(lock)]),
     listActiveTrains: jest.fn(async () => []),
     listNonterminalOperationsForLanes: jest.fn(async () => []),
@@ -272,6 +284,7 @@ function setup() {
     resolveRef: jest.fn(async () => TARGET_SHA),
     refContainsCommit: jest.fn(async () => true),
     hasActiveProductionMutationOrE2ERun: jest.fn(async () => false),
+    isOrganizationOperator: jest.fn(async () => true),
     now: () => now
   };
 
@@ -283,7 +296,11 @@ function setup() {
     setNow: (value: number) => {
       now = value;
     },
+    setProductionEpoch: (value: number) => {
+      productionRowVersion = value;
+    },
     setDeployIdentity: (identity: ReleaseBusWorkflowRunIdentity) => {
+      deployRunIdentity = identity;
       (deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
         async (repository: string, runId: string) => {
           if (repository === 'backend')
@@ -294,9 +311,21 @@ function setup() {
             );
           return runId === COMPLETE_INPUT.qualifier_workflow_run_id
             ? e2eIdentity()
-            : identity;
+            : deployRunIdentity;
         }
       );
+    },
+    setDeployCompleted: () => {
+      deployRunIdentity = deployIdentity({
+        status: 'completed',
+        conclusion: 'success'
+      });
+    },
+    setDeployFailed: (conclusion: 'failure' | 'cancelled' = 'failure') => {
+      deployRunIdentity = deployIdentity({
+        status: 'completed',
+        conclusion
+      });
     },
     setBackendCompleted: () => {
       backendRunCompleted = true;
@@ -367,6 +396,36 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     expect(getAuthority()).toBeNull();
   });
 
+  it('rejects a deploy actor who is not an organization operator', async () => {
+    const { service, deps, getAuthority } = setup();
+    (deps.isOrganizationOperator as jest.Mock).mockResolvedValue(false);
+
+    await expect(
+      service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null })
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      reason_code: 'WORKFLOW_IDENTITY_MISMATCH'
+    });
+    expect(getAuthority()).toBeNull();
+    expect(deps.hasActiveProductionMutationOrE2ERun).not.toHaveBeenCalled();
+  });
+
+  it('checks database denials before querying GitHub active-run state', async () => {
+    const { service, deps } = setup();
+    (deps.listActiveTrains as jest.Mock).mockResolvedValue([
+      { lane: 'PRODUCTION' }
+    ]);
+
+    await expect(
+      service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null })
+    ).resolves.toMatchObject({
+      status: 'DENIED',
+      authorized: false,
+      reason_code: 'ACTIVE_TRAIN'
+    });
+    expect(deps.hasActiveProductionMutationOrE2ERun).not.toHaveBeenCalled();
+  });
+
   it('does not allow prepare or acquire-bind to freeze selection early', async () => {
     const { service } = setup();
 
@@ -411,9 +470,39 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     expect(getLock()).toMatchObject({ lease_token: 'server-token-1' });
   });
 
+  it('denies completion when the control epoch changes inside the terminal transaction', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...DEPLOY_INPUT,
+      selection_digest: null
+    });
+    await setupState.service.reauthorize({
+      ...DEPLOY_INPUT,
+      selection_digest: SELECTION_DIGEST
+    });
+    setupState.setDeployCompleted();
+    setupState.setProductionEpoch(3);
+
+    await expect(
+      setupState.service.complete(COMPLETE_INPUT)
+    ).resolves.toMatchObject({
+      status: 'DENIED',
+      completed: false,
+      reason_code: 'CONTROL_EPOCH_CHANGED'
+    });
+    expect(setupState.getAuthority()).toMatchObject({
+      status: 'DENIED',
+      denial_code: 'CONTROL_EPOCH_CHANGED',
+      lease_token: null
+    });
+    expect(setupState.getLock()).toMatchObject({ lease_token: null });
+  });
+
   it('allows the owning controller to fail before selection discovery and releases its lease', async () => {
-    const { service, getAuthority, getLock } = setup();
+    const setupState = setup();
+    const { service, getAuthority, getLock } = setupState;
     await service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null });
+    setupState.setDeployFailed();
 
     const result = await service.fail(failureInput(null));
 
@@ -426,13 +515,147 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     expect(getLock()).toMatchObject({ lease_token: null });
   });
 
-  it('rejects a null failure selection after the selection has been frozen', async () => {
+  it('rejects an in-progress failure callback without terminal GitHub evidence', async () => {
     const { service, getAuthority, getLock } = setup();
+    await service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null });
+
+    await expect(service.fail(failureInput(null))).rejects.toMatchObject({
+      code: 'CONFLICT',
+      reason_code: 'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+    });
+    expect(getAuthority()).toMatchObject({ status: 'BOUND' });
+    expect(getLock()).toMatchObject({ lease_token: 'server-token-1' });
+  });
+
+  it('accepts an exact terminal failed frontend deployment as failure evidence', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...DEPLOY_INPUT,
+      selection_digest: null
+    });
+    setupState.setDeployFailed();
+
+    await expect(
+      setupState.service.fail(failureInput(null))
+    ).resolves.toMatchObject({ status: 'FAILED', failed: true });
+  });
+
+  it('accepts an exact terminal failed backend deployment as failure evidence', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...BACKEND_DEPLOY_INPUT,
+      selection_digest: null
+    });
+    setupState.setBackendCompleted();
+    (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockResolvedValue(
+      backendIdentity({ conclusion: 'failure' })
+    );
+
+    await expect(
+      setupState.service.fail({
+        ...BACKEND_DEPLOY_INPUT,
+        selection_digest: null,
+        qualifier_workflow_run_id: BACKEND_DEPLOY_INPUT.workflow_run_id,
+        qualifier_workflow_run_attempt:
+          BACKEND_DEPLOY_INPUT.workflow_run_attempt,
+        evidence_digest: EVIDENCE_DIGEST,
+        reason_code: 'WORKFLOW_FAILED'
+      })
+    ).resolves.toMatchObject({ status: 'FAILED', failed: true });
+  });
+
+  it('accepts a failed automatic frontend E2E only after a successful bound deployment', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...DEPLOY_INPUT,
+      selection_digest: null
+    });
+    setupState.setDeployCompleted();
+    (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
+      async (_repository: string, runId: string) =>
+        runId === COMPLETE_INPUT.qualifier_workflow_run_id
+          ? e2eIdentity({ conclusion: 'failure' })
+          : deployIdentity({ status: 'completed', conclusion: 'success' })
+    );
+
+    await expect(
+      setupState.service.fail(
+        failureInput(null, {
+          qualifier_workflow_run_id: COMPLETE_INPUT.qualifier_workflow_run_id,
+          qualifier_workflow_run_attempt:
+            COMPLETE_INPUT.qualifier_workflow_run_attempt
+        })
+      )
+    ).resolves.toMatchObject({ status: 'FAILED', failed: true });
+  });
+
+  it('rejects a failed automatic E2E for a foreign deployed target', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...DEPLOY_INPUT,
+      selection_digest: null
+    });
+    setupState.setDeployCompleted();
+    (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
+      async (_repository: string, runId: string) =>
+        runId === COMPLETE_INPUT.qualifier_workflow_run_id
+          ? e2eIdentity({ conclusion: 'failure', headSha: 'e'.repeat(40) })
+          : deployIdentity({ status: 'completed', conclusion: 'success' })
+    );
+
+    await expect(
+      setupState.service.fail(
+        failureInput(null, {
+          qualifier_workflow_run_id: COMPLETE_INPUT.qualifier_workflow_run_id,
+          qualifier_workflow_run_attempt:
+            COMPLETE_INPUT.qualifier_workflow_run_attempt
+        })
+      )
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      reason_code: 'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+    });
+    expect(setupState.getAuthority()).toMatchObject({ status: 'BOUND' });
+  });
+
+  it('rejects a failed automatic E2E when the bound deployment is not successful', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...DEPLOY_INPUT,
+      selection_digest: null
+    });
+    setupState.setDeployFailed();
+    (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
+      async (_repository: string, runId: string) =>
+        runId === COMPLETE_INPUT.qualifier_workflow_run_id
+          ? e2eIdentity({ conclusion: 'failure' })
+          : deployIdentity({ status: 'completed', conclusion: 'failure' })
+    );
+
+    await expect(
+      setupState.service.fail(
+        failureInput(null, {
+          qualifier_workflow_run_id: COMPLETE_INPUT.qualifier_workflow_run_id,
+          qualifier_workflow_run_attempt:
+            COMPLETE_INPUT.qualifier_workflow_run_attempt
+        })
+      )
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      reason_code: 'WORKFLOW_IDENTITY_MISMATCH'
+    });
+    expect(setupState.getAuthority()).toMatchObject({ status: 'BOUND' });
+  });
+
+  it('rejects a null failure selection after the selection has been frozen', async () => {
+    const setupState = setup();
+    const { service, getAuthority, getLock } = setupState;
     await service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null });
     await service.reauthorize({
       ...DEPLOY_INPUT,
       selection_digest: SELECTION_DIGEST
     });
+    setupState.setDeployFailed();
 
     await expect(service.fail(failureInput(null))).rejects.toMatchObject({
       code: 'CONFLICT',
@@ -452,6 +675,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       ...DEPLOY_INPUT,
       selection_digest: SELECTION_DIGEST
     });
+    wrongSelectionState.setDeployFailed();
     await expect(
       wrongSelectionState.service.fail(failureInput(OTHER_EVIDENCE_DIGEST))
     ).rejects.toMatchObject({
@@ -468,6 +692,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       ...DEPLOY_INPUT,
       selection_digest: SELECTION_DIGEST
     });
+    exactState.setDeployFailed();
     await expect(
       exactState.service.fail(failureInput(SELECTION_DIGEST))
     ).resolves.toMatchObject({ status: 'FAILED', failed: true });
@@ -553,12 +778,13 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       ...DEPLOY_INPUT,
       selection_digest: SELECTION_DIGEST
     });
+    setupState.setDeployCompleted();
     const e2eOverride = override as Partial<ReleaseBusWorkflowRunIdentity>;
     (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
       async (_repository: string, runId: string) =>
         runId === COMPLETE_INPUT.qualifier_workflow_run_id
           ? e2eIdentity(e2eOverride)
-          : deployIdentity()
+          : deployIdentity({ status: 'completed', conclusion: 'success' })
     );
 
     await expect(
@@ -580,11 +806,12 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       ...DEPLOY_INPUT,
       selection_digest: SELECTION_DIGEST
     });
+    setupState.setDeployCompleted();
     (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
       async (_repository: string, runId: string) =>
         runId === COMPLETE_INPUT.qualifier_workflow_run_id
           ? e2eIdentity({ displayTitle: 'Production E2E automatic 999' })
-          : deployIdentity()
+          : deployIdentity({ status: 'completed', conclusion: 'success' })
     );
 
     await expect(
@@ -606,12 +833,13 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       ...DEPLOY_INPUT,
       selection_digest: SELECTION_DIGEST
     });
+    setupState.setDeployCompleted();
     (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
       async (repository: string, runId: string) =>
         repository === 'frontend' &&
         runId === COMPLETE_INPUT.qualifier_workflow_run_id
           ? e2eIdentity({ headSha: 'e'.repeat(40) })
-          : deployIdentity()
+          : deployIdentity({ status: 'completed', conclusion: 'success' })
     );
 
     await expect(
@@ -620,12 +848,14 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
   });
 
   it('accepts the exact deploy-bound E2E title, persists evidence, and releases the lock', async () => {
-    const { service, getAuthority, getLock } = setup();
+    const setupState = setup();
+    const { service, getAuthority, getLock } = setupState;
     await service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null });
     await service.reauthorize({
       ...DEPLOY_INPUT,
       selection_digest: SELECTION_DIGEST
     });
+    setupState.setDeployCompleted();
 
     const result = await service.complete(COMPLETE_INPUT);
     expect(result).toMatchObject({
@@ -716,7 +946,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       setupState.service.complete(BACKEND_COMPLETE_INPUT)
     ).rejects.toMatchObject({
       code: 'CONFLICT',
-      reason_code: 'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH'
+      reason_code: 'WORKFLOW_IDENTITY_MISMATCH'
     });
     expect(setupState.getAuthority()).toMatchObject({ status: 'BOUND' });
   });

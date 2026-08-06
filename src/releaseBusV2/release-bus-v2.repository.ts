@@ -1409,6 +1409,20 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async findProductionAuthorityById(
+    id: string,
+    ctx: RequestContext,
+    forUpdate = false,
+    forceWrite = false
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2ProductionAuthorityRecord>(
+      `select * from ${RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE}
+       where id = :id${forUpdate ? ' for update' : ''}`,
+      { id },
+      dbOptions(ctx, forceWrite)
+    );
+  }
+
   public async createProductionAuthority(
     input: Omit<
       ReleaseBusV2ProductionAuthorityRecord,

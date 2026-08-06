@@ -305,6 +305,13 @@ const AUTHORITY_COMPLETE_BODY = {
   qualifier_workflow_run_attempt: 2,
   evidence_digest: 'c'.repeat(64)
 } as const;
+const AUTHORITY_FAILURE_BODY = {
+  ...AUTHORITY_BIND_BODY,
+  qualifier_workflow_run_id: AUTHORITY_BIND_BODY.workflow_run_id,
+  qualifier_workflow_run_attempt: AUTHORITY_BIND_BODY.workflow_run_attempt,
+  evidence_digest: 'c'.repeat(64),
+  reason_code: 'WORKFLOW_FAILED'
+} as const;
 
 function createTestApp() {
   const app = express();
@@ -2391,14 +2398,62 @@ describe('Release Bus v2 route authorization and exact actions', () => {
   it('allows a preselection failure to release without inventing a selection digest', async () => {
     const response = await post(
       '/deploy/release-bus-v2/production-authority/fail',
-      { ...AUTHORITY_BIND_BODY, reason_code: 'WORKFLOW_FAILED' }
+      AUTHORITY_FAILURE_BODY
     );
 
     expect(response.status).toBe(200);
-    expect(mockProductionAuthorityFail).toHaveBeenCalledWith({
-      ...AUTHORITY_BIND_BODY,
-      reason_code: 'WORKFLOW_FAILED'
+    expect(mockProductionAuthorityFail).toHaveBeenCalledWith(
+      AUTHORITY_FAILURE_BODY
+    );
+  });
+
+  it('returns an unavailable authority as a 503 machine-readable denial', async () => {
+    mockProductionAuthorityPrepare.mockRejectedValue(
+      new MockReleaseBusV2ProductionAuthorityError(
+        'UNAVAILABLE',
+        'The authority store is unavailable',
+        'AUTHORITY_UNAVAILABLE'
+      )
+    );
+    const response = await post(
+      '/deploy/release-bus-v2/production-authority/prepare',
+      AUTHORITY_BODY
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      authorized: false,
+      operation_id: AUTHORITY_BODY.operation_id,
+      reason_code: 'AUTHORITY_UNAVAILABLE'
     });
+  });
+
+  it('returns the full persisted denial record with HTTP 409', async () => {
+    const denied = {
+      ...AUTHORITY_BODY,
+      status: 'DENIED',
+      workflow_run_id: null,
+      workflow_run_attempt: null,
+      selection_digest: null,
+      lease_expires_at: null,
+      hard_expires_at: null,
+      control_epoch: { all: 4, production: 7, mode: 'PRODUCTION' },
+      lock_row_version: 8,
+      prepared: false,
+      authorized: false,
+      reused: false,
+      reason_code: 'ACTIVE_TRAIN',
+      observed_epoch: { all: 4, production: 7, mode: 'PRODUCTION' }
+    };
+    mockProductionAuthorityPrepare.mockResolvedValue(denied);
+
+    const response = await post(
+      '/deploy/release-bus-v2/production-authority/prepare',
+      AUTHORITY_BODY
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual(denied);
   });
 
   it('returns persisted machine-readable authority denials', async () => {

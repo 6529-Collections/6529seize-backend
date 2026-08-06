@@ -1193,6 +1193,9 @@ describe('GitHub workflow operation identity', () => {
           html_url: 'https://github.com/example/actions/runs/12345',
           event: 'workflow_dispatch',
           repository: { full_name: '6529-Collections/6529seize-backend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-backend'
+          },
           actor: { login: '6529-release-bus[bot]' }
         })
       )
@@ -1206,6 +1209,8 @@ describe('GitHub workflow operation identity', () => {
         attempt: 2,
         conclusion: null,
         event: 'workflow_dispatch',
+        repository: '6529-Collections/6529seize-backend',
+        headRepository: '6529-Collections/6529seize-backend',
         headBranch: 'main',
         headSha: 'a'.repeat(40),
         status: 'in_progress'

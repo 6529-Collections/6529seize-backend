@@ -59,6 +59,10 @@ function input(
 function identity(
   value: ReleaseBusV2ManualDeploymentAuthorizationInput = input()
 ) {
+  const repository =
+    value.repository === 'frontend'
+      ? '6529-Collections/6529seize-frontend'
+      : '6529-Collections/6529seize-backend';
   if (value.repository === 'frontend') {
     const staging = value.environment === 'staging';
     return {
@@ -66,6 +70,8 @@ function identity(
       attempt: value.workflow_run_attempt,
       conclusion: null,
       event: staging ? 'push' : 'workflow_dispatch',
+      repository,
+      headRepository: repository,
       headBranch: value.source_ref,
       headSha: value.source_sha,
       name: staging ? 'Web Deploy - STAGING' : 'Web Deploy - PROD',
@@ -81,6 +87,8 @@ function identity(
     attempt: value.workflow_run_attempt,
     conclusion: null,
     event: 'workflow_dispatch',
+    repository,
+    headRepository: repository,
     headBranch: value.source_ref,
     headSha: value.source_sha,
     name: 'Deploy a service',

@@ -359,6 +359,13 @@ export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES = [
   'backend-production-workflow',
   'deploy-hub'
 ] as const;
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_CONTROLLER_IDENTITIES_BY_REPOSITORY: Record<
+  ReleaseBusV2Repository,
+  readonly string[]
+> = {
+  frontend: ['frontend-production-workflow', 'deploy-hub'],
+  backend: ['backend-production-workflow', 'deploy-hub']
+};
 // The 130-minute renewal exceeds the 22-minute deploy ceiling plus the
 // 90-minute Production E2E timeout by 18 minutes; the 150-minute hard cap
 // adds 38 minutes of absolute headroom over those configured windows.
