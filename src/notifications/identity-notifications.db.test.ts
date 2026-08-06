@@ -1,4 +1,5 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
+import { SqlExecutor } from '@/sql-executor';
 import { IdentityNotificationsDb } from './identity-notifications.db';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 
@@ -250,10 +251,10 @@ describe('IdentityNotificationsDb', () => {
   });
 
   it('uses private DM membership and wave mute state when reading the notification feed', async () => {
-    const db = {
+    const db: Partial<SqlExecutor> = {
       execute: jest.fn().mockResolvedValue([])
     };
-    const repo = new IdentityNotificationsDb(() => db as any);
+    const repo = new IdentityNotificationsDb(() => db as SqlExecutor);
 
     await repo.findNotifications({
       identity_id: 'phoebeumzz',
@@ -265,7 +266,8 @@ describe('IdentityNotificationsDb', () => {
       unread_only: false
     });
 
-    const [sql, params] = db.execute.mock.calls[0];
+    const execute = jest.mocked(db.execute!);
+    const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain('OR n.visibility_group_id IN (:eligible_group_ids)');
     expect(sql).toContain('AND COALESCE(r.muted, FALSE) = FALSE');
     expect(sql).toContain('AND m.id IS NULL');

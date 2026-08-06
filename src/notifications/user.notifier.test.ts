@@ -1,5 +1,10 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
+import {
+  IdentityNotificationsDb,
+  NewIdentityNotification
+} from '@/notifications/identity-notifications.db';
 import { UserNotifier } from '@/notifications/user.notifier';
+import { ConnectionWrapper } from '@/sql-executor';
 
 describe('UserNotifier notifyWaveDropCreatedRecipients', () => {
   afterEach(() => {
@@ -145,20 +150,27 @@ describe('UserNotifier notifyWaveDropCreatedRecipients', () => {
   });
 
   it('queues all-message, reply, and mention notifications in a three-person private DM', async () => {
-    const insertedBatches: unknown[][] = [];
-    const identityNotificationsDb = {
+    const insertedBatches: NewIdentityNotification[][] = [];
+    const identityNotificationsDb: Pick<
+      IdentityNotificationsDb,
+      'findIdentitiesNotifiedForDropCreation' | 'insertManyNotifications'
+    > = {
       findIdentitiesNotifiedForDropCreation: jest.fn().mockResolvedValue([]),
       insertManyNotifications: jest
         .fn()
-        .mockImplementation(async (notifications: unknown[]) => {
-          insertedBatches.push(notifications);
-          return notifications.map(
-            (_, index) => insertedBatches.length * 10 + index
-          );
-        })
+        .mockImplementation(
+          async (notifications: NewIdentityNotification[]) => {
+            insertedBatches.push(notifications);
+            return notifications.map(
+              (_, index) => insertedBatches.length * 10 + index
+            );
+          }
+        )
     };
-    const notifier = new UserNotifier(identityNotificationsDb as any);
-    const connection = {} as any;
+    const notifier = new UserNotifier(
+      identityNotificationsDb as IdentityNotificationsDb
+    );
+    const connection: ConnectionWrapper<unknown> = { connection: {} };
     const visibilityGroupId = 'dm-phoebeumzz-prxt0-notprxt0';
 
     await expect(
