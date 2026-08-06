@@ -81,7 +81,6 @@ interface WavePresentation {
 interface WavePresentationSource {
   readonly waveName: string;
   readonly isDirectMessage: boolean;
-  readonly participantHandles: readonly (string | null)[];
   readonly participantCount: number;
   readonly picture: string | null;
 }
@@ -123,7 +122,7 @@ function createWavePresentationResolver(): WavePresentationResolver {
     Promise<WavePresentationSource>
   >();
 
-  return async (notification, additionalEntity, targetProfile) => {
+  return async (notification) => {
     const cacheKey = JSON.stringify([
       notification.wave_id,
       notification.identity_id
@@ -146,10 +145,7 @@ function createWavePresentationResolver(): WavePresentationResolver {
       context: buildWavePushNotificationContext({
         waveName: source.waveName,
         isDirectMessage: source.isDirectMessage,
-        participantHandles: source.participantHandles,
-        participantCount: source.participantCount,
-        actorHandle: getIdentityDisplayHandle(additionalEntity),
-        recipientHandle: getIdentityDisplayHandle(targetProfile)
+        participantCount: source.participantCount
       }),
       picture: source.picture
     };
@@ -1305,8 +1301,6 @@ async function loadWavePresentationSourceForRecipient(
   return {
     waveName: display?.name ?? wave.name,
     isDirectMessage: wave.is_direct_message === true,
-    participantHandles:
-      display?.contributors?.map((contributor) => contributor.handle) ?? [],
     participantCount:
       display?.participantCount ?? display?.contributors?.length ?? 0,
     picture: resolveWavePictureOverride(wave.picture, display)
