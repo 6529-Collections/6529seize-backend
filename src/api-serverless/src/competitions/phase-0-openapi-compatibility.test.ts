@@ -17,6 +17,16 @@ const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([
   'schema ApiNotificationV2.properties.related_identity'
 ]);
 
+const ACCEPTED_REMOVED_REQUIRED_FIELDS: Readonly<Record<string, string[]>> = {
+  'schema ApiSeizeSettings.required': [
+    'all_drops_notifications_subscribers_limit'
+  ]
+};
+
+const ACCEPTED_REMOVED_SCHEMA_PROPERTIES = new Set([
+  'schema ApiSeizeSettings.properties.all_drops_notifications_subscribers_limit'
+]);
+
 const ACCEPTED_REMOVED_RESPONSE_MAX_LENGTHS = new Set([
   'schema ApiDropPart.properties.content.maxLength',
   'schema ApiDropPartV2.properties.content.maxLength'
@@ -45,7 +55,13 @@ function assertSchemaCompatible(
   if (Array.isArray(baseline)) {
     expect(Array.isArray(current)).toBe(true);
     const acceptedAdditions = ACCEPTED_ADDITIVE_ENUM_EXTENSIONS[location] ?? [];
-    expect(current).toEqual([...baseline, ...acceptedAdditions]);
+    const acceptedRemovals = new Set(
+      ACCEPTED_REMOVED_REQUIRED_FIELDS[location] ?? []
+    );
+    expect(current).toEqual([
+      ...baseline.filter((value) => !acceptedRemovals.has(value)),
+      ...acceptedAdditions
+    ]);
     return;
   }
   if (baseline === null || typeof baseline !== 'object') {
@@ -79,11 +95,16 @@ function assertSchemaCompatible(
       for (const [property, schema] of Object.entries(
         baselineValue as JsonObject
       )) {
+        const propertyLocation = `${location}.properties.${property}`;
+        if (ACCEPTED_REMOVED_SCHEMA_PROPERTIES.has(propertyLocation)) {
+          expect(currentProperties).not.toHaveProperty(property);
+          continue;
+        }
         expect(currentProperties).toHaveProperty(property);
         assertSchemaCompatible(
           schema,
           currentProperties[property],
-          `${location}.properties.${property}`
+          propertyLocation
         );
       }
       continue;
