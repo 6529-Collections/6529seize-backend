@@ -47,7 +47,7 @@ export class IdentityNotificationEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly read_at!: number | null;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly visibility_group_id!: string | null;
 
   @Index()
