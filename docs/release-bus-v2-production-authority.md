@@ -64,12 +64,14 @@ frontend repository and requires the exact `workflow_dispatch` run identity:
 head repository `6529-Collections/6529seize-frontend`, path
 `.github/workflows/production-e2e.yml`, name `Production E2E`, and display title
 `Production E2E automatic <deploy_workflow_run_id>` where the deploy ID is the
-authority's persisted bound run. It also requires `main`, the requested
-attempt, `completed`, and `success`; its head SHA may be a later protected-main
-descendant because the workflow is dispatched from current `main`. The
-workflow's resolver and immutable completion artifact, represented by the
-evidence digest, prove the deployed target. The evidence digest is the
-immutable digest emitted by that workflow after its isolated verifier succeeds.
+authority's persisted bound run. It also requires actor
+`github-actions[bot]`, `main`, the requested attempt, `completed`, and
+`success`; a human-dispatched, automatic-looking run is not accepted. Its head
+SHA may be a later protected-main descendant because the workflow is dispatched
+from current `main`. The workflow's resolver and immutable completion artifact,
+represented by the evidence digest, prove the deployed target. The evidence
+digest is the immutable digest emitted by that workflow after its isolated
+verifier succeeds.
 
 For a backend authority, the qualifier is the already-bound deployment run
 itself: `qualifier_workflow_run_id` must equal the persisted deployment run ID
@@ -86,8 +88,10 @@ Failure callbacks use the same terminal identity rules. An in-progress run, an
 arbitrary run ID, a foreign repository, or a mismatched attempt cannot release
 the lease. A frontend automatic E2E failure is accepted only after the bound
 deployment has independently been shown to have completed successfully; the
-E2E identity must also carry the exact bound title and target SHA. The failure
-evidence is persisted with the terminal record.
+E2E identity must also carry the exact bound title, automatic actor, and
+protected-main identity. Its head SHA may be a later protected-main descendant,
+with the original deployment run and immutable failure evidence binding the
+deployed target. The failure evidence is persisted with the terminal record.
 
 ## State and invariants
 

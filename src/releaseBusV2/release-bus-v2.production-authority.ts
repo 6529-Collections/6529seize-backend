@@ -1289,6 +1289,7 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.status === 'completed' &&
       identity.conclusion === 'success' &&
       identity.event === 'workflow_dispatch' &&
+      identity.actor === 'github-actions[bot]' &&
       identity.repository === FRONTEND_HEAD_REPOSITORY &&
       identity.headRepository === FRONTEND_HEAD_REPOSITORY &&
       identity.headBranch === MAIN_REF &&
@@ -1313,10 +1314,10 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.status === 'completed' &&
       FAILED_WORKFLOW_CONCLUSIONS.has(identity.conclusion ?? '') &&
       identity.event === 'workflow_dispatch' &&
+      identity.actor === 'github-actions[bot]' &&
       identity.repository === FRONTEND_HEAD_REPOSITORY &&
       identity.headRepository === FRONTEND_HEAD_REPOSITORY &&
       identity.headBranch === MAIN_REF &&
-      identity.headSha === input.target_sha &&
       identity.path === '.github/workflows/production-e2e.yml' &&
       identity.name === 'Production E2E' &&
       identity.displayTitle ===

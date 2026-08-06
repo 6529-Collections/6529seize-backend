@@ -96,7 +96,7 @@ function e2eIdentity(
   overrides: Partial<ReleaseBusWorkflowRunIdentity> = {}
 ): ReleaseBusWorkflowRunIdentity {
   return {
-    actor: 'github-actions',
+    actor: 'github-actions[bot]',
     attempt: COMPLETE_INPUT.qualifier_workflow_run_attempt,
     conclusion: 'success',
     event: 'workflow_dispatch',
@@ -589,7 +589,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     ).resolves.toMatchObject({ status: 'FAILED', failed: true });
   });
 
-  it('rejects a failed automatic E2E for a foreign deployed target', async () => {
+  it('accepts a failed automatic E2E from a later protected-main SHA', async () => {
     const setupState = setup();
     await setupState.service.prepareAndBind({
       ...DEPLOY_INPUT,
@@ -600,6 +600,31 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       async (_repository: string, runId: string) =>
         runId === COMPLETE_INPUT.qualifier_workflow_run_id
           ? e2eIdentity({ conclusion: 'failure', headSha: 'e'.repeat(40) })
+          : deployIdentity({ status: 'completed', conclusion: 'success' })
+    );
+
+    await expect(
+      setupState.service.fail(
+        failureInput(null, {
+          qualifier_workflow_run_id: COMPLETE_INPUT.qualifier_workflow_run_id,
+          qualifier_workflow_run_attempt:
+            COMPLETE_INPUT.qualifier_workflow_run_attempt
+        })
+      )
+    ).resolves.toMatchObject({ status: 'FAILED', failed: true });
+  });
+
+  it('rejects a human-dispatched automatic-looking E2E failure', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...DEPLOY_INPUT,
+      selection_digest: null
+    });
+    setupState.setDeployCompleted();
+    (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
+      async (_repository: string, runId: string) =>
+        runId === COMPLETE_INPUT.qualifier_workflow_run_id
+          ? e2eIdentity({ actor: 'developer', conclusion: 'failure' })
           : deployIdentity({ status: 'completed', conclusion: 'success' })
     );
 
@@ -767,7 +792,8 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
 
   it.each([
     ['wrong E2E path', { path: '.github/workflows/deploy.yml' }],
-    ['wrong E2E attempt', { attempt: 3 }]
+    ['wrong E2E attempt', { attempt: 3 }],
+    ['human E2E actor', { actor: 'developer' }]
   ] as const)('rejects %s before completion', async (_label, override) => {
     const setupState = setup();
     await setupState.service.prepareAndBind({

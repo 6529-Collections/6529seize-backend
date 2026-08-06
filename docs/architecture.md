@@ -126,44 +126,44 @@ flowchart TD
 
 ### Scheduled Lambdas (EventBridge)
 
-| Lambda                                   | Purpose                                                                                                      |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                           |
-| `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                              |
-| `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                    |
-| `nftHistoryLoop`                         | Maintain ownership history.                                                                                  |
-| `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                 |
-| `nextgenContractLoop`                    | Index NextGen contract events.                                                                               |
-| `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                    |
-| `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                      |
-| `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                     |
-| `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                             |
-| `tdhLoop`                                | Calculate TDH and publish TDH completion.                                                                    |
-| `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                              |
-| `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                            |
-| `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                               |
-| `marketStatsLoop`                        | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.                                               |
-| `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                             |
-| `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                             |
-| `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                  |
-| `waveDropMetricsRefreshLoop`             | Scheduled fallback that drains dirty drop metric refresh requests.                                           |
-| `waveScoreRefreshLoop`                   | Scheduled fallback that drains dirty Wave Score refresh requests.                                            |
-| `xTdhGrantsReviewerLoop`                 | Review xTDH grants.                                                                                          |
-| `subscriptionsDaily`                     | Process daily subscription work and own the shared Serverless deployment stack for subscription reconciliation. |
+| Lambda                                   | Purpose                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
+| `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                                                                                     |
+| `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                                                                           |
+| `nftHistoryLoop`                         | Maintain ownership history.                                                                                                                                         |
+| `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                                                                        |
+| `nextgenContractLoop`                    | Index NextGen contract events.                                                                                                                                      |
+| `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                                                                           |
+| `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                                                                             |
+| `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                                                                            |
+| `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                                                                                    |
+| `tdhLoop`                                | Calculate TDH and publish TDH completion.                                                                                                                           |
+| `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
+| `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
+| `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
+| `marketStatsLoop`                        | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.                                                                                                      |
+| `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                                                                                    |
+| `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                                                                                    |
+| `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                                                                         |
+| `waveDropMetricsRefreshLoop`             | Scheduled fallback that drains dirty drop metric refresh requests.                                                                                                  |
+| `waveScoreRefreshLoop`                   | Scheduled fallback that drains dirty Wave Score refresh requests.                                                                                                   |
+| `xTdhGrantsReviewerLoop`                 | Review xTDH grants.                                                                                                                                                 |
+| `subscriptionsDaily`                     | Process daily subscription work and own the shared Serverless deployment stack for subscription reconciliation.                                                     |
 | `subscriptionCoverageReconciliationLoop` | Reconcile projected subscription coverage from durable dirty keys every minute and run an hourly full sweep as a separate Lambda in the `subscriptionsDaily` stack. |
-| `subscriptionsTopUpLoop`                 | Process subscription top-ups.                                                                                |
-| `discoverEnsLoop`                        | Discover ENS names.                                                                                          |
-| `refreshEnsLoop`                         | Refresh known ENS names.                                                                                     |
-| `ethPriceLoop`                           | Snapshot ETH price every five minutes.                                                                       |
-| `mintAnnouncementsLoop`                  | Publish mint announcements.                                                                                  |
-| `artCurationNftWatchLoop`                | Watch curated NFT state.                                                                                     |
-| `rememesLoop`                            | Refresh rememes S3 files and metadata.                                                                       |
-| `royaltiesLoop`                          | Refresh royalty state.                                                                                       |
-| `dbDumpsDaily`                           | Create daily database dumps.                                                                                 |
-| `nextgenMediaUploader`                   | Upload NextGen media.                                                                                        |
-| `nextgenMediaImageResolutions`           | Generate NextGen image resolutions.                                                                          |
-| `releaseBusV2Reconciler`                 | Claim and reconcile exact Simple Release Bus v2 trains.                                                      |
-| `releaseBusCleaner`                      | Remove expired temporary v2 release branches that no active train owns.                                      |
+| `subscriptionsTopUpLoop`                 | Process subscription top-ups.                                                                                                                                       |
+| `discoverEnsLoop`                        | Discover ENS names.                                                                                                                                                 |
+| `refreshEnsLoop`                         | Refresh known ENS names.                                                                                                                                            |
+| `ethPriceLoop`                           | Snapshot ETH price every five minutes.                                                                                                                              |
+| `mintAnnouncementsLoop`                  | Publish mint announcements.                                                                                                                                         |
+| `artCurationNftWatchLoop`                | Watch curated NFT state.                                                                                                                                            |
+| `rememesLoop`                            | Refresh rememes S3 files and metadata.                                                                                                                              |
+| `royaltiesLoop`                          | Refresh royalty state.                                                                                                                                              |
+| `dbDumpsDaily`                           | Create daily database dumps.                                                                                                                                        |
+| `nextgenMediaUploader`                   | Upload NextGen media.                                                                                                                                               |
+| `nextgenMediaImageResolutions`           | Generate NextGen image resolutions.                                                                                                                                 |
+| `releaseBusV2Reconciler`                 | Claim and reconcile exact Simple Release Bus v2 trains.                                                                                                             |
+| `releaseBusCleaner`                      | Remove expired temporary v2 release branches that no active train owns.                                                                                             |
 
 `transactionsLoop` receipt verification fails closed and raises per-function
 error alarms. See the [transactions ingestion runbook](transactions-loop-ingestion-runbook.md)
@@ -643,12 +643,13 @@ frontend authority, and an unrelated or mismatched backend run cannot release
 the backend authority. The DB lease token remains persisted server-side and is
 never part of an API response or workflow output.
 
-The authority schema follows the repository's entities-first contract. Deploy
-`dbMigrationsLoop` with the new entity before deploying the API or workflow
-callers, and verify the table plus its unique operation and indexed status keys
-on the writer database. Drain callers before a rollback and retain the authority
-table as audit history; do not drop it while any operation may still reference
-the lease record.
+The authority schema follows the repository's entities-first contract. For the
+API-only rollout, deploy `dbMigrationsLoop` first and `api` second, then verify
+the table plus its unique operation and indexed status keys on the writer
+database. Workflow consumers are merged later and are not deployed in this
+rollout. Drain callers before a rollback and retain the authority table as audit
+history; do not drop it while any operation may still reference the lease
+record.
 
 For cumulative staging, each affected repository's immutable release commit
 has the recorded `1a-staging` head as its first parent and the composed
