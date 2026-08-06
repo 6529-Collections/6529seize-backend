@@ -279,7 +279,7 @@ Before returning text fields:
 When implemented:
 
 1. Add schemas and generated routes in `src/api-serverless/openapi.yaml`.
-2. Run `cd src/api-serverless && npm run generate`.
+2. Run `cd src/api-serverless && 6529 run generate:openapi`.
 3. Implement thin handlers under `src/api-serverless/src/og-metadata/`.
 4. Keep normalization and media selection in shared helpers.
 5. Add tests next to the implementation with filenames ending in `.test.ts`.

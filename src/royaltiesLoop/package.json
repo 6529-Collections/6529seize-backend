@@ -4,11 +4,12 @@
   "description": "",
   "main": "index.ts",
   "scripts": {
-    "prebuild": "rm -rf dist",
-    "build": "esbuild index.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
-    "postbuild": "cd dist && zip -r index.zip index.js* *.csv",
-    "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
-    "sls-deploy:staging": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
+    "preinstall": "node ../../scripts/require-6529-command.cjs",
+    "prebuild": "node ../../scripts/require-6529-command.cjs && rm -rf dist",
+    "build": "node ../../scripts/require-6529-command.cjs && esbuild index.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
+    "postbuild": "node ../../scripts/require-6529-command.cjs && cd dist && zip -r index.zip index.js* *.csv",
+    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
+    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
   },
   "author": "",
   "license": "ISC",

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${SEIZE_6529_COMMAND:-0}" != "1" ]]; then
+  echo "Direct npx usage is blocked in this repository." >&2
+  echo "Use \`6529 exec ${1:-<binary>}\` instead." >&2
+  echo "If \`6529\` is unavailable, run \`./bin/6529 bootstrap\` from the repository root." >&2
+  exit 1
+fi
+
+clean_path=""
+IFS=':' read -r -a path_parts <<< "${PATH:-}"
+for part in "${path_parts[@]}"; do
+  if [[ -z "$part" || "$part" == "$SCRIPT_DIR" ]]; then
+    continue
+  fi
+  clean_path="${clean_path:+${clean_path}:}${part}"
+done
+
+REAL_COREPACK="$(PATH="$clean_path" command -v corepack 2>/dev/null || true)"
+if [[ -z "$REAL_COREPACK" ]]; then
+  echo "Corepack is required to execute local package binaries." >&2
+  exit 1
+fi
+
+exec "$REAL_COREPACK" npm exec -- "$@"
