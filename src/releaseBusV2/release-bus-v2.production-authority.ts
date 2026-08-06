@@ -1188,14 +1188,20 @@ export class ReleaseBusV2ProductionAuthorityService {
       input.repository === 'frontend'
         ? FRONTEND_HEAD_REPOSITORY
         : BACKEND_HEAD_REPOSITORY;
+    let conclusionMatches: boolean;
+    if (expectedStatus === 'in_progress') {
+      conclusionMatches = identity.conclusion === null;
+    } else if (expectedConclusion === 'success') {
+      conclusionMatches = identity.conclusion === 'success';
+    } else {
+      conclusionMatches = FAILED_WORKFLOW_CONCLUSIONS.has(
+        identity.conclusion ?? ''
+      );
+    }
     const common =
       identity.attempt === input.workflow_run_attempt &&
       identity.status === expectedStatus &&
-      (expectedStatus === 'in_progress'
-        ? identity.conclusion === null
-        : expectedConclusion === 'success'
-          ? identity.conclusion === 'success'
-          : FAILED_WORKFLOW_CONCLUSIONS.has(identity.conclusion ?? '')) &&
+      conclusionMatches &&
       identity.repository === expectedHeadRepository &&
       identity.headRepository === expectedHeadRepository &&
       identity.headBranch === MAIN_REF &&
