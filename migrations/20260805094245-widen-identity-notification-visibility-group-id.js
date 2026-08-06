@@ -32,7 +32,19 @@ exports.up = function (db) {
       resolve(data);
     });
   }).then(function (data) {
-    return db.runSql(data);
+    var statements = data
+      .split(';')
+      .map(function (statement) {
+        return statement.trim();
+      })
+      .filter(function (statement) {
+        return statement.length > 0;
+      });
+    return statements.reduce(function (promiseChain, statement) {
+      return promiseChain.then(function () {
+        return db.runSql(statement);
+      });
+    }, Promise.resolve());
   });
 };
 
