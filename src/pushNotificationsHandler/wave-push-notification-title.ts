@@ -57,12 +57,14 @@ export function buildWavePushNotificationContext({
   waveName,
   isDirectMessage,
   participantHandles,
+  participantCount,
   actorHandle,
   recipientHandle
 }: {
   readonly waveName: string;
   readonly isDirectMessage: boolean;
   readonly participantHandles: readonly (string | null)[];
+  readonly participantCount: number;
   readonly actorHandle: string;
   readonly recipientHandle: string | null;
 }): WavePushNotificationContext {
@@ -75,7 +77,7 @@ export function buildWavePushNotificationContext({
   const uniqueParticipantHandles =
     getUniqueParticipantHandles(participantHandles);
 
-  if (uniqueParticipantHandles.length <= 2) {
+  if (participantCount <= 2) {
     return { kind: 'dm', label: 'DM' };
   }
 

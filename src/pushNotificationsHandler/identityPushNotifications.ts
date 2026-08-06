@@ -82,6 +82,7 @@ interface WavePresentationSource {
   readonly waveName: string;
   readonly isDirectMessage: boolean;
   readonly participantHandles: readonly (string | null)[];
+  readonly participantCount: number;
   readonly picture: string | null;
 }
 
@@ -146,6 +147,7 @@ function createWavePresentationResolver(): WavePresentationResolver {
         waveName: source.waveName,
         isDirectMessage: source.isDirectMessage,
         participantHandles: source.participantHandles,
+        participantCount: source.participantCount,
         actorHandle: getIdentityDisplayHandle(additionalEntity),
         recipientHandle: getIdentityDisplayHandle(targetProfile)
       }),
@@ -1305,6 +1307,8 @@ async function loadWavePresentationSourceForRecipient(
     isDirectMessage: wave.is_direct_message === true,
     participantHandles:
       display?.contributors?.map((contributor) => contributor.handle) ?? [],
+    participantCount:
+      display?.participantCount ?? display?.contributors?.length ?? 0,
     picture: resolveWavePictureOverride(wave.picture, display)
   };
 }

@@ -66,6 +66,7 @@ describe('wave push notification titles', () => {
         waveName: 'WaveName',
         isDirectMessage: false,
         participantHandles: [],
+        participantCount: 0,
         actorHandle: 'userA',
         recipientHandle: 'userB'
       })
@@ -78,6 +79,7 @@ describe('wave push notification titles', () => {
         waveName: 'DM - userA / userB',
         isDirectMessage: true,
         participantHandles: ['userA', 'userB'],
+        participantCount: 2,
         actorHandle: 'userA',
         recipientHandle: 'userB'
       })
@@ -90,10 +92,27 @@ describe('wave push notification titles', () => {
         waveName: 'DM - userA / userB / userC',
         isDirectMessage: true,
         participantHandles: ['userA', 'userB', 'userC'],
+        participantCount: 3,
         actorHandle: 'USERA',
         recipientHandle: 'userb'
       })
     ).toEqual(groupDmContext);
+  });
+
+  it('uses group DM when a three-person conversation has a missing handle', () => {
+    expect(
+      buildWavePushNotificationContext({
+        waveName: 'Three-person DM',
+        isDirectMessage: true,
+        participantHandles: ['userA', 'userB', null],
+        participantCount: 3,
+        actorHandle: 'userA',
+        recipientHandle: 'userB'
+      })
+    ).toEqual({
+      kind: 'group-dm',
+      label: 'Group DM'
+    });
   });
 
   it('truncates larger group DM context to one handle and a count', () => {
@@ -102,6 +121,7 @@ describe('wave push notification titles', () => {
         waveName: 'Large DM',
         isDirectMessage: true,
         participantHandles: ['userA', 'userB', 'userC', 'userD', 'userE'],
+        participantCount: 5,
         actorHandle: 'userA',
         recipientHandle: 'userB'
       })
