@@ -275,19 +275,24 @@ cd src/api-serverless
 6529 run generate:openapi
 ```
 
-Then, from a `6529seize-frontend` worktree, copy the final backend spec to
-frontend `openapi.yaml` and regenerate the frontend client:
+If the task's backend worktree is locally available on the backend feature
+branch containing the final spec, copy that exact spec to the frontend
+worktree's root `openapi.yaml` and regenerate the frontend client:
 
 ```bash
 cp <backend_worktree>/src/api-serverless/openapi.yaml openapi.yaml
 6529 run generate
 ```
 
-If the backend worktree is not locally available, push the exact backend branch
-and use `bash scripts/refresh-api.sh <backend_branch_name>` from the frontend
-worktree before running `6529 run generate`. Commit the frontend `openapi.yaml`
-and `generated/` changes. Treat an unfinished frontend synchronization as a
-blocker, not as completed backend OpenAPI work.
+If that backend worktree is not locally available, commit and push the final
+spec, then run
+`bash scripts/refresh-api.sh <backend_feature_branch>` from the frontend
+worktree before `6529 run generate`. Pass the exact backend feature branch that
+contains the OpenAPI change, never the frontend branch. Do not omit the argument
+for unmerged feature work: omission defaults to backend `main`, which may not
+contain the change. Commit the frontend `openapi.yaml` and `generated/` changes.
+Treat an unfinished frontend synchronization as a blocker, not as completed
+backend OpenAPI work.
 
 ### 2.3 Environment
 
