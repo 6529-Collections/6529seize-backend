@@ -15,6 +15,13 @@ import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmentReference';
 import { ApiCreateDropPollRequest } from '../generated/models/ApiCreateDropPollRequest';
 import { Time } from '@/time';
+import { getDropContentLimitViolation } from '@/drops/drop-content-limits';
+
+export {
+  DROP_PART_MAX_UTF16_CODE_UNITS,
+  DROP_PART_MAX_UTF8_BYTES,
+  DROP_TOTAL_MAX_UTF16_CODE_UNITS
+} from '@/drops/drop-content-limits';
 
 function parseSerialNos(value: string, helpers: Joi.CustomHelpers): number[] {
   const parts = value.split(',').map((part) => part.trim());
@@ -158,6 +165,47 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
     .default([])
 });
 
+function validateDropParts(
+  parts: ApiCreateDropPart[],
+  helpers: Joi.CustomHelpers
+): ApiCreateDropPart[] | Joi.ErrorReport {
+  const violation = getDropContentLimitViolation(parts);
+  if (violation) {
+    switch (violation.kind) {
+      case 'part-utf16':
+        return helpers.error('dropPart.contentUtf16Max', {
+          limit: violation.limit,
+          partIndex: violation.partIndex
+        });
+      case 'part-utf8':
+        return helpers.error('dropPart.contentUtf8Max', {
+          limit: violation.limit,
+          partIndex: violation.partIndex
+        });
+      case 'total-utf16':
+        return helpers.error('dropParts.totalUtf16Max', {
+          limit: violation.limit
+        });
+    }
+  }
+
+  return parts;
+}
+
+const DropPartsSchema = Joi.array()
+  .required()
+  .items(NewDropPartSchema)
+  .min(1)
+  .custom(validateDropParts)
+  .messages({
+    'dropPart.contentUtf16Max':
+      'drop part {{#partIndex}} content must be at most {{#limit}} UTF-16 code units',
+    'dropPart.contentUtf8Max':
+      'drop part {{#partIndex}} content must be at most {{#limit}} UTF-8 bytes',
+    'dropParts.totalUtf16Max':
+      'total content across all drop parts must be at most {{#limit}} UTF-16 code units'
+  });
+
 const NewDropPollSchema: Joi.ObjectSchema<ApiCreateDropPollRequest> =
   Joi.object<ApiCreateDropPollRequest>({
     options: Joi.array()
@@ -185,7 +233,7 @@ const baseDropFieldsValidators = {
     .empty('')
     .default(null)
     .allow(null),
-  parts: Joi.array().required().items(NewDropPartSchema).min(1),
+  parts: DropPartsSchema,
   referenced_nfts: Joi.array()
     .optional()
     .items(NftSchema)

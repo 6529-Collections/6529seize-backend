@@ -180,6 +180,31 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
   }
 
+  it('rejects oversized content before an update can delete existing rows', async () => {
+    const deleteDropUseCase = { execute: jest.fn() };
+    const useCase = createUseCaseWithMocks({ deleteDropUseCase });
+
+    await expect(
+      useCase.execute(
+        createChatDropModel({
+          drop_id: 'drop-1',
+          parts: [
+            {
+              content: 'a'.repeat(25_001),
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        false,
+        { connection: {} as any }
+      )
+    ).rejects.toThrow(
+      'drop part 1 content must be at most 25000 UTF-16 code units'
+    );
+    expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
+  });
+
   it('does not increment inserted-drop metrics when editing a drop', async () => {
     const dropsDb = {
       findDropById: jest.fn().mockResolvedValue({

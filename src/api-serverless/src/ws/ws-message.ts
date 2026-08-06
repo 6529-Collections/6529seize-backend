@@ -6,6 +6,7 @@ import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnread
 
 export enum WsMessageType {
   DROP_UPDATE = 'DROP_UPDATE',
+  DROP_UPDATE_REF = 'DROP_UPDATE_REF',
   DROP_DELETE = 'DROP_DELETE',
   DROP_RATING_UPDATE = 'DROP_RATING_UPDATE',
   DROP_REACTION_UPDATE = 'DROP_REACTION_UPDATE',
@@ -31,6 +32,21 @@ export interface WsMessage<MESSAGE_DATA> {
 export const DROP_UPDATE_REASON_POLL_RESPONSE = 'POLL_RESPONSE';
 export const DROP_UPDATE_REASON_MEDIA_STATUS = 'MEDIA_STATUS';
 
+/**
+ * Application ceiling for serialized drop updates. API Gateway permits a
+ * 32 KiB WebSocket frame; keeping full updates below 28 KiB leaves room for
+ * transport/protocol evolution. The decision is made after recipient-specific
+ * mutation and UTF-8 serialization. Oversized updates use DROP_UPDATE_REF so
+ * clients can refetch the canonical drop instead of receiving a truncated or
+ * rejected frame.
+ */
+export const DROP_UPDATE_MAX_UTF8_BYTES = 28 * 1024;
+
+export type DropUpdateRefType =
+  | WsMessageType.DROP_UPDATE
+  | WsMessageType.DROP_RATING_UPDATE
+  | WsMessageType.DROP_REACTION_UPDATE;
+
 export function dropUpdateMessage(
   data: ApiDrop,
   reason?: string
@@ -43,6 +59,24 @@ export function dropUpdateMessage(
     message.reason = reason;
   }
   return message;
+}
+
+export interface DropUpdateRefMessageData {
+  readonly drop_id: string;
+  readonly wave_id: string;
+  readonly author_id: string;
+  readonly serial_no: number;
+  readonly update_type: DropUpdateRefType;
+  readonly reason?: string;
+}
+
+export function dropUpdateRefMessage(
+  data: DropUpdateRefMessageData
+): WsMessage<DropUpdateRefMessageData> {
+  return {
+    type: WsMessageType.DROP_UPDATE_REF,
+    data
+  };
 }
 
 export function dropRatingUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {

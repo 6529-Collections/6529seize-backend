@@ -4,6 +4,10 @@ import {
   DropPartIdentifierModel,
   DropReferencedNftModel
 } from './create-or-update-drop.model';
+import {
+  formatDropContentLimitViolation,
+  getDropContentLimitViolation
+} from './drop-content-limits';
 import { Time, Timer } from '@/time';
 import { ConnectionWrapper } from '@/sql-executor';
 import { dropsDb, DropsDb } from './drops.db';
@@ -271,6 +275,15 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropMediaUploadsDb: DropMediaUploadsDb
   ) {}
 
+  private assertDropContentLimits(
+    parts: readonly CreateOrUpdateDropPartModel[]
+  ): void {
+    const violation = getDropContentLimitViolation(parts);
+    if (violation) {
+      throw new BadRequestException(formatDropContentLimitViolation(violation));
+    }
+  }
+
   private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
     const authorId = model.author_id;
     if (!authorId) {
@@ -327,6 +340,7 @@ export class CreateOrUpdateDropUseCase {
     dm_unread_recipient_ids: string[];
   }> {
     let resolvedModel = sanitizeDropStructuredFields(model);
+    this.assertDropContentLimits(resolvedModel.parts);
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
     let authorId = resolvedModel.author_id;
     if (!authorId) {
@@ -449,6 +463,7 @@ export class CreateOrUpdateDropUseCase {
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
+    this.assertDropContentLimits(model.parts);
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
@@ -1557,6 +1572,7 @@ export class CreateOrUpdateDropUseCase {
     // Keep this guard at the persistence boundary too; this method can be
     // reused independently of execute() and the normalization is idempotent.
     const model = this.normalizeMentionedGroups(inputModel);
+    this.assertDropContentLimits(model.parts);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
