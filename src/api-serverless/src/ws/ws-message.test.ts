@@ -2,6 +2,7 @@ import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import {
   DROP_UPDATE_REASON_POLL_RESPONSE,
   dropUpdateMessage,
+  dropUpdateRefMessage,
   identityNotificationsChangedMessage,
   notificationIdentitiesSyncedMessage,
   WsMessageType
@@ -29,6 +30,50 @@ describe('ws-message', () => {
       type: WsMessageType.DROP_UPDATE,
       data: { id: 'drop-1' },
       reason: 'POLL_RESPONSE'
+    });
+  });
+
+  it('builds the additive stable-reference message without mutable content', () => {
+    expect(
+      dropUpdateRefMessage({
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        serial_no: 42,
+        update_type: WsMessageType.DROP_UPDATE
+      })
+    ).toEqual({
+      type: WsMessageType.DROP_UPDATE_REF,
+      data: {
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        serial_no: 42,
+        update_type: WsMessageType.DROP_UPDATE
+      }
+    });
+  });
+
+  it('preserves a source update reason without carrying content', () => {
+    expect(
+      dropUpdateRefMessage({
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        serial_no: 42,
+        update_type: WsMessageType.DROP_UPDATE,
+        reason: DROP_UPDATE_REASON_POLL_RESPONSE
+      })
+    ).toEqual({
+      type: WsMessageType.DROP_UPDATE_REF,
+      data: {
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        serial_no: 42,
+        update_type: WsMessageType.DROP_UPDATE,
+        reason: DROP_UPDATE_REASON_POLL_RESPONSE
+      }
     });
   });
 
