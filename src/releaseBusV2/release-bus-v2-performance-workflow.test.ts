@@ -15,6 +15,13 @@ import YAML from 'yaml';
 
 const root = process.cwd();
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
+const toBashPath = (value: string) =>
+  value
+    .replace(
+      /^([A-Za-z]):[\\/]/,
+      (_, drive: string) => `/mnt/${drive.toLowerCase()}/`
+    )
+    .replace(/\\/g, '/');
 const LEGACY_PR_CI_WORKFLOW_BLOB = '0cc8865dbb869b5156b46cc45e8581b259052916';
 
 describe('Release Bus v2 backend critical-path contract', () => {
@@ -110,10 +117,20 @@ describe('Release Bus v2 backend critical-path contract', () => {
     const aws = steps.findIndex(
       ({ name }) => name === 'Configure AWS credentials'
     );
-    const emergencyRevalidation = steps.findIndex(
+    const productionSelectionAuthorization = steps.findIndex(
       ({ name }) =>
         name ===
-        'Revalidate emergency API bootstrap immediately before cloud credentials'
+        'Reauthorize exact backend production selection immediately before cloud credentials'
+    );
+    const productionEvidence = steps.findIndex(
+      ({ name }) => name === 'Create backend production authority evidence'
+    );
+    const productionEvidenceUpload = steps.findIndex(
+      ({ name }) => name === 'Upload backend production authority evidence'
+    );
+    const productionFailure = steps.findIndex(
+      ({ name }) =>
+        name === 'Fail backend production authority after workflow failure'
     );
     const deployStep = steps.findIndex(({ name }) => name === 'Deploy API');
 
@@ -124,7 +141,10 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(setupNode).toBeGreaterThan(checkout);
     expect(setupNode).toBeGreaterThan(verifySource);
     expect(aws).toBeGreaterThan(setupNode);
-    expect(emergencyRevalidation).toBe(aws - 1);
+    expect(productionSelectionAuthorization).toBe(aws - 1);
+    expect(productionEvidence).toBeGreaterThan(deployStep);
+    expect(productionEvidenceUpload).toBe(productionEvidence + 1);
+    expect(productionFailure).toBe(productionEvidenceUpload + 1);
     expect(deployStep).toBeGreaterThan(aws);
     for (const step of steps.slice(0, authorize)) {
       expect(step.uses).toBeUndefined();
@@ -151,6 +171,14 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(steps[authorize]?.if).toBeUndefined();
     expect(guard).toContain('if [ -n "$INPUT_OPERATION_KEY" ]');
     expect(guard).toContain('release-bus-v2/authorize');
+    expect(guard).toContain('release-bus-v2/production-authority/acquire-bind');
+    expect(guard).toContain(
+      'operation_id="backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID"'
+    );
+    expect(guard).toContain('selection_digest:null');
+    expect(guard).toContain(
+      '"authorized", "bound", "controller_identity", "control_epoch"'
+    );
     expect(guard).toContain('release-bus-v2/manual-deployment-readiness');
     expect(guard).toContain('--connect-timeout 10');
     expect(guard).toContain('--max-time 60');
@@ -184,6 +212,25 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(parsed.concurrency.group).toContain("|| 'manual'");
     expect(parsed.concurrency.group).not.toContain('manual-production');
     expect(parsed.concurrency['cancel-in-progress']).toBe(false);
+    expect((parsed as Record<string, unknown>)['run-name']).toContain(
+      "format('backend-prod-{0}-{1}'"
+    );
+    expect(steps[productionSelectionAuthorization]?.run).toContain(
+      '/production-authority/reauthorize'
+    );
+    expect(steps[productionSelectionAuthorization]?.run).toContain(
+      'selection_type:"backend-production-deployment-selection-v1"'
+    );
+    expect(steps[productionEvidence]?.run).toContain(
+      'evidence_type:"backend-production-authority-v1"'
+    );
+    expect(steps[productionEvidenceUpload]?.uses).toContain(
+      'actions/upload-artifact@'
+    );
+    expect(steps[productionFailure]?.run).toContain(
+      '/production-authority/fail'
+    );
+    expect(deploy).not.toContain('/production-authority/complete');
   });
 
   it('emits one terminal event for an exact manual staging backend deployment without guarding ordinary workflows', () => {
@@ -256,6 +303,7 @@ describe('Release Bus v2 backend critical-path contract', () => {
     const response = path.join(fixture, 'response.json');
     const githubOutput = path.join(fixture, 'github-output.txt');
     const githubStepSummary = path.join(fixture, 'github-step-summary.md');
+    const guardFile = path.join(fixture, 'authorize.sh');
     writeFileSync(githubOutput, '');
     writeFileSync(githubStepSummary, '');
     writeFileSync(
@@ -279,6 +327,37 @@ printf '200'
 `
     );
     chmodSync(fakeCurl, 0o755);
+    const bashEnvironment = {
+      CAPTURE_PAYLOAD: toBashPath(capturePayload),
+      CAPTURE_RESPONSE: toBashPath(response),
+      CAPTURE_URL: toBashPath(captureUrl),
+      GITHUB_REF_NAME: '1a-staging',
+      GITHUB_RUN_ATTEMPT: '2',
+      GITHUB_RUN_ID: '12345',
+      GITHUB_SHA: 'a'.repeat(40),
+      GITHUB_OUTPUT: toBashPath(githubOutput),
+      GITHUB_STEP_SUMMARY: toBashPath(githubStepSummary),
+      INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
+      INPUT_ARTIFACT_RUN_ID: '54321',
+      INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
+      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
+      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
+      INPUT_ENVIRONMENT: 'staging',
+      INPUT_EXPECTED_SHA: 'a'.repeat(40),
+      INPUT_SERVICE: 'api',
+      INPUT_TRAIN_ID: 'train-id',
+      PATH: `${toBashPath(fixture)}:/usr/local/bin:/usr/bin:/bin`,
+      RELEASE_BUS_API_URL: 'https://release-bus.invalid',
+      RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'test-token',
+      RUNNER_TEMP: toBashPath(fixture)
+    };
+    writeFileSync(
+      guardFile,
+      `${Object.entries(bashEnvironment)
+        .map(([key, value]) => `export ${key}='${value}'`)
+        .join('\n')}\n${guard ?? 'exit 1'}\n`
+    );
+    chmodSync(guardFile, 0o755);
     const execute = (operationKey: string) => {
       const manual = operationKey.length === 0;
       writeFileSync(
@@ -304,34 +383,16 @@ printf '200'
               }
         )}\n`
       );
-      execFileSync('bash', ['-c', guard ?? 'exit 1'], {
-        cwd: root,
-        env: {
-          ...process.env,
-          CAPTURE_PAYLOAD: capturePayload,
-          CAPTURE_RESPONSE: response,
-          CAPTURE_URL: captureUrl,
-          GITHUB_REF_NAME: '1a-staging',
-          GITHUB_RUN_ATTEMPT: '2',
-          GITHUB_RUN_ID: '12345',
-          GITHUB_SHA: 'a'.repeat(40),
-          GITHUB_OUTPUT: githubOutput,
-          GITHUB_STEP_SUMMARY: githubStepSummary,
-          INPUT_ARTIFACT_DIGEST: 'b'.repeat(64),
-          INPUT_ARTIFACT_RUN_ID: '54321',
-          INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
-          INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
-          INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
-          INPUT_ENVIRONMENT: 'staging',
-          INPUT_EXPECTED_SHA: 'a'.repeat(40),
-          INPUT_OPERATION_KEY: operationKey,
-          INPUT_SERVICE: 'api',
-          INPUT_TRAIN_ID: 'train-id',
-          PATH: `${fixture}:${process.env.PATH ?? ''}`,
-          RELEASE_BUS_API_URL: 'https://release-bus.invalid',
-          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'test-token'
-        }
-      });
+      writeFileSync(
+        guardFile,
+        `${Object.entries({
+          ...bashEnvironment,
+          INPUT_OPERATION_KEY: operationKey
+        })
+          .map(([key, value]) => `export ${key}='${value}'`)
+          .join('\n')}\n${guard ?? 'exit 1'}\n`
+      );
+      execFileSync('bash', [toBashPath(guardFile)], { cwd: root });
       return {
         payload: JSON.parse(readFileSync(capturePayload, 'utf8')) as Record<
           string,
@@ -448,7 +509,7 @@ printf '200'
     ).not.toThrow();
   });
 
-  it('executes the authenticated emergency compatibility guard and durable audit', () => {
+  it('does not expose the legacy emergency readiness bypass to manual production', () => {
     const parsed = YAML.parse(deploy) as {
       jobs: Record<
         string,
@@ -470,228 +531,15 @@ printf '200'
         name ===
         'Revalidate emergency API bootstrap immediately before cloud credentials'
     );
-    const revalidate = revalidateStep?.run;
     expect(authorize).toBeTruthy();
-    expect(revalidate).toBeTruthy();
-    expect(revalidateStep?.env).toEqual({
-      RELEASE_BUS_API_URL: '${{ vars.RELEASE_BUS_API_URL }}',
-      RELEASE_BUS_WORKFLOW_AUTH_TOKEN:
-        '${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}',
-      GITHUB_TOKEN: '${{ github.token }}'
-    });
-
-    const fixture = mkdtempSync(path.join(tmpdir(), 'emergency-bootstrap-'));
-    const fakeCurl = path.join(fixture, 'curl');
-    const callLog = path.join(fixture, 'calls.txt');
-    const argumentLog = path.join(fixture, 'arguments.txt');
-    const githubOutput = path.join(fixture, 'github-output.txt');
-    const githubSummary = path.join(fixture, 'github-summary.md');
-    writeFileSync(
-      fakeCurl,
-      `#!/bin/sh
-output=
-headers=
-url=
-printf '%s\\n' "$*" >> "$ARGUMENT_LOG"
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --output) output="$2"; shift 2 ;;
-    --dump-header) headers="$2"; shift 2 ;;
-    --data) shift 2 ;;
-    http*) url="$1"; shift ;;
-    *) shift ;;
-  esac
-done
-printf '%s\\n' "$url" >> "$CALL_LOG"
-if [ -n "$headers" ]; then
-  printf 'HTTP/1.1 200 OK\\r\\nCache-Control: no-cache, no-store, must-revalidate\\r\\n\\r\\n' > "$headers"
-fi
-case "$url" in
-  */manual-deployment-readiness)
-    printf '{"error":"Manual backend deployment workflow identity is invalid"}' > "$output"
-    printf '409'
-    ;;
-  */release-bus-v2/controls)
-    if [ "$FAKE_BLOCKED" = true ]; then
-      printf '%s' '{"mode":"PRODUCTION","controls":[{"scope":"ALL","paused":false}],"lanes":[{"lane":"PRODUCTION","status":"OFF","changeable":true}],"locks":[{"name":"production-environment","owner_train_id":"active-train","lease_owner":"worker","lease_token":"held"}]}' > "$output"
-    else
-      printf '%s' '{"mode":"PRODUCTION","controls":[{"scope":"ALL","paused":false}],"lanes":[{"lane":"PRODUCTION","status":"OFF","changeable":true}],"locks":[{"name":"production-environment","owner_train_id":null,"lease_owner":null,"lease_token":null}]}' > "$output"
-    fi
-    printf '200'
-    ;;
-  */release-bus-v2/trains)
-    printf '%s' '{"mode":"PRODUCTION","trains":[]}' > "$output"
-    printf '200'
-    ;;
-  */git/ref/heads/main)
-    printf '%s' '{"object":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' > "$output"
-    printf '200'
-    ;;
-  */actions/runs/12345)
-    printf '%s' '{"id":12345,"run_attempt":2,"actor":{"login":"prxt6529"},"event":"workflow_dispatch","path":".github/workflows/deploy.yml","status":"in_progress","conclusion":null,"head_branch":"main","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"Deploy api to prod [manual]","display_title":"Deploy api to prod [manual]"}' > "$output"
-    printf '200'
-    ;;
-  */contents/.github/workflows/*)
-    if [ "$FAKE_MISSING_WORKFLOW" = true ]; then
-      printf '%s' '{"message":"Not Found"}' > "$output"
-      printf '404'
-    else
-      printf '%s' '{"type":"file","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' > "$output"
-      printf '200'
-    fi
-    ;;
-  */actions/runs\\?*)
-    if [ "$FAKE_INCOMPLETE_RUN_PAGE" = true ]; then
-      printf '%s' '{"total_count":101,"workflow_runs":[]}' > "$output"
-    else
-      printf '%s' '{"total_count":0,"workflow_runs":[]}' > "$output"
-    fi
-    printf '200'
-    ;;
-  *)
-    printf '%s' '{"error":"unexpected fake curl URL"}' > "$output"
-    printf '500'
-    ;;
-esac
-`
+    expect(revalidateStep).toBeUndefined();
+    expect(authorize).toContain(
+      'release-bus-v2/production-authority/acquire-bind'
     );
-    chmodSync(fakeCurl, 0o755);
-    const env = {
-      ...process.env,
-      ARGUMENT_LOG: argumentLog,
-      CALL_LOG: callLog,
-      FAKE_BLOCKED: 'false',
-      FAKE_INCOMPLETE_RUN_PAGE: 'false',
-      FAKE_MISSING_WORKFLOW: 'false',
-      GITHUB_ACTOR: 'prxt6529',
-      GITHUB_API_URL: 'https://api.github.invalid',
-      GITHUB_OUTPUT: githubOutput,
-      GITHUB_REF_NAME: 'main',
-      GITHUB_REPOSITORY: '6529-Collections/6529seize-backend',
-      GITHUB_REPOSITORY_OWNER: '6529-Collections',
-      GITHUB_RUN_ATTEMPT: '2',
-      GITHUB_RUN_ID: '12345',
-      GITHUB_SERVER_URL: 'https://github.com',
-      GITHUB_SHA: 'a'.repeat(40),
-      GITHUB_STEP_SUMMARY: githubSummary,
-      GITHUB_TOKEN: 'github-token',
-      INPUT_ARTIFACT_DIGEST: '',
-      INPUT_ARTIFACT_RUN_ID: '',
-      INPUT_EMERGENCY_API_BOOTSTRAP: 'true',
-      INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: 'a'.repeat(40),
-      INPUT_EMERGENCY_API_BOOTSTRAP_REASON: 'manual-authorizer-self-bootstrap',
-      INPUT_ENVIRONMENT: 'prod',
-      INPUT_EXPECTED_SHA: '',
-      INPUT_OPERATION_KEY: '',
-      INPUT_SERVICE: 'api',
-      INPUT_TRAIN_ID: '',
-      PATH: `${fixture}:${process.env.PATH ?? ''}`,
-      RELEASE_BUS_API_URL: 'https://release-bus.invalid',
-      RELEASE_BUS_WORKFLOW_AUTH_TOKEN: 'workflow-token',
-      RUNNER_TEMP: fixture
-    };
-    try {
-      expect(() =>
-        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
-          cwd: root,
-          env,
-          stdio: 'pipe'
-        })
-      ).not.toThrow();
-      expect(readFileSync(githubOutput, 'utf8')).toContain(
-        'emergency_compatibility_fallback=true'
-      );
-      expect(readFileSync(githubSummary, 'utf8')).toContain(
-        '"authorization_mode":"legacy-identity-compatibility"'
-      );
-      expect(readFileSync(githubSummary, 'utf8')).toContain(
-        '"reason":"manual-authorizer-self-bootstrap"'
-      );
-      writeFileSync(argumentLog, '');
-      expect(() =>
-        execFileSync('bash', ['-c', revalidate ?? 'exit 1'], {
-          cwd: root,
-          env,
-          stdio: 'pipe'
-        })
-      ).not.toThrow();
-      const revalidationArguments = readFileSync(argumentLog, 'utf8')
-        .trim()
-        .split('\n');
-      const githubArguments = revalidationArguments.filter((argumentsLine) =>
-        argumentsLine.includes('https://api.github.invalid/')
-      );
-      const releaseBusArguments = revalidationArguments.filter(
-        (argumentsLine) =>
-          argumentsLine.includes('https://release-bus.invalid/')
-      );
-      expect(githubArguments.length).toBeGreaterThan(0);
-      expect(
-        githubArguments.every((argumentsLine) =>
-          argumentsLine.includes('Authorization: Bearer github-token')
-        )
-      ).toBe(true);
-      expect(
-        githubArguments.every(
-          (argumentsLine) => !argumentsLine.includes('workflow-token')
-        )
-      ).toBe(true);
-      expect(releaseBusArguments.length).toBeGreaterThan(0);
-      expect(
-        releaseBusArguments.every((argumentsLine) =>
-          argumentsLine.includes('Authorization: Bearer workflow-token')
-        )
-      ).toBe(true);
-      expect(
-        releaseBusArguments.every(
-          (argumentsLine) => !argumentsLine.includes('github-token')
-        )
-      ).toBe(true);
-      const summary = readFileSync(githubSummary, 'utf8');
-      expect(summary).not.toContain('workflow-token');
-      expect(summary).not.toContain('github-token');
-      const calls = readFileSync(callLog, 'utf8');
-      expect(calls).toContain('/manual-deployment-readiness');
-      expect(calls).toContain('/release-bus-v2/controls');
-      expect(calls).toContain('/release-bus-v2/trains');
-      expect(calls).toContain('/git/ref/heads/main');
-      expect(calls).toContain('/actions/runs/12345');
-      expect(calls).toContain(
-        '/contents/.github/workflows/build-upload-deploy-prod.yml?ref=main'
-      );
-      expect(calls).toContain(
-        '/repos/6529-Collections/6529seize-frontend/actions/runs?'
-      );
-      expect(authorize).toContain('.total_count');
-      expect(authorize).toContain(
-        'deploy-control-prod-manual concurrency group'
-      );
-      expect(() =>
-        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
-          cwd: root,
-          env: { ...env, FAKE_BLOCKED: 'true' },
-          stdio: 'pipe'
-        })
-      ).toThrow();
-      writeFileSync(callLog, '');
-      expect(() =>
-        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
-          cwd: root,
-          env: { ...env, FAKE_INCOMPLETE_RUN_PAGE: 'true' },
-          stdio: 'pipe'
-        })
-      ).toThrow();
-      expect(readFileSync(callLog, 'utf8')).toContain('page=2');
-      expect(() =>
-        execFileSync('bash', ['-c', authorize ?? 'exit 1'], {
-          cwd: root,
-          env: { ...env, FAKE_MISSING_WORKFLOW: 'true' },
-          stdio: 'pipe'
-        })
-      ).toThrow();
-    } finally {
-      rmSync(fixture, { recursive: true, force: true });
-    }
+    expect(authorize).toContain(
+      'if [ "$production_authority" = true ] && [ "$http_status" != 200 ]'
+    );
+    expect(authorize).toContain('exit 1');
   });
 
   it('rejects cross-train v3 artifacts before authorization or checkout', () => {

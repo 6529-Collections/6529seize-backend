@@ -137,6 +137,39 @@ second manual lease or accept a caller-supplied token. The route therefore
 remains a readiness contract, not a substitute for the authority lease, and it
 does not receive or expose the server-side token.
 
+## Backend workflow integration
+
+The generated `.github/workflows/deploy.yml` uses the authority only for
+manual production dispatches (`environment=prod` and an empty
+`operation_key`). Its first trusted step sends `acquire-bind` with operation ID
+`backend-prod-<service>-<workflow_run_id>`, controller
+`backend-production-workflow`, the exact dispatch SHA and run attempt, and a
+null selection. The service independently verifies that current run before it
+ignores that run in the active-workflow drain. Release Bus operations and
+manual staging retain their existing paths.
+
+After the build has produced the package, the workflow writes a canonical
+selection record containing the service, frozen target SHA, run ID/attempt,
+package path, package byte count, and package SHA-256. It sends only that
+selection digest to `reauthorize` immediately before the AWS credential step.
+The workflow stores only non-secret authority state in the runner temp
+directory. It uploads one bounded success evidence JSON artifact and never
+calls `complete` from the deploy workflow. Failure calls `fail` with null
+selection before reauthorization, or the exact frozen digest afterward, and
+uploads a bounded non-secret state artifact for callback recovery.
+
+`.github/workflows/release-bus-v2-production-authority-completion.yml` is the
+isolated `workflow_run` callback. It rereads the exact completed backend run,
+including repository, head repository, path, workflow name, event, main branch,
+attempt, target SHA, and display title. Only the title
+`Deploy <service> to prod [backend-prod-<service>-<deploy_run_id>]` is eligible;
+staging, Release Bus, manual-title, and unrelated runs are ignored. Success
+requires the exact evidence artifact and calls `complete` with the deployment
+run itself as qualifier plus its immutable evidence digest. Terminal failure
+uses the exact failure-state artifact and calls `fail`; if cancellation occurs
+before that artifact can be uploaded, the authority remains fail-closed and
+expires rather than accepting an unbound release.
+
 ## Schema deployment
 
 Roll out the API-only contract in this order: deploy `dbMigrationsLoop` first,
