@@ -13,25 +13,6 @@ type WavePushNotificationAction =
   | { readonly type: 'reaction'; readonly reaction: string }
   | { readonly type: 'invite' };
 
-const normalizeHandle = (handle: string | null | undefined): string | null => {
-  const trimmed = handle?.trim();
-  return trimmed ? trimmed.toLowerCase() : null;
-};
-
-function getUniqueParticipantHandles(
-  participantHandles: readonly (string | null)[]
-): string[] {
-  const handlesByNormalizedHandle = new Map<string, string>();
-  participantHandles.forEach((handle) => {
-    const trimmedHandle = handle?.trim();
-    const normalizedHandle = normalizeHandle(trimmedHandle);
-    if (trimmedHandle && normalizedHandle) {
-      handlesByNormalizedHandle.set(normalizedHandle, trimmedHandle);
-    }
-  });
-  return Array.from(handlesByNormalizedHandle.values());
-}
-
 function getMessageVerb(context: WavePushNotificationContext): string {
   if (context.kind === 'wave') {
     return 'posted';
@@ -56,50 +37,20 @@ function parseRatingVote(value: unknown): number | null {
 export function buildWavePushNotificationContext({
   waveName,
   isDirectMessage,
-  participantHandles,
-  participantCount,
-  actorHandle,
-  recipientHandle
+  participantCount
 }: {
   readonly waveName: string;
   readonly isDirectMessage: boolean;
-  readonly participantHandles: readonly (string | null)[];
   readonly participantCount: number;
-  readonly actorHandle: string;
-  readonly recipientHandle: string | null;
 }): WavePushNotificationContext {
   if (!isDirectMessage) {
     return { kind: 'wave', label: waveName };
   }
 
-  const normalizedActorHandle = normalizeHandle(actorHandle);
-  const normalizedRecipientHandle = normalizeHandle(recipientHandle);
-  const uniqueParticipantHandles =
-    getUniqueParticipantHandles(participantHandles);
-
   if (participantCount <= 2) {
     return { kind: 'dm', label: 'DM' };
   }
-
-  const otherParticipantHandles = uniqueParticipantHandles.filter((handle) => {
-    const normalized = normalizeHandle(handle);
-    return (
-      normalized !== normalizedActorHandle &&
-      normalized !== normalizedRecipientHandle
-    );
-  });
-  const firstOtherParticipant = otherParticipantHandles[0];
-  if (!firstOtherParticipant) {
-    return { kind: 'group-dm', label: 'Group DM' };
-  }
-
-  const additionalParticipantCount = otherParticipantHandles.length - 1;
-  const countSuffix =
-    additionalParticipantCount > 0 ? ` +${additionalParticipantCount}` : '';
-  return {
-    kind: 'group-dm',
-    label: `Group DM with ${firstOtherParticipant}${countSuffix}`
-  };
+  return { kind: 'group-dm', label: 'Group DM' };
 }
 
 export function buildWavePushNotificationTitle({

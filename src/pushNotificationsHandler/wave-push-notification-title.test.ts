@@ -17,25 +17,25 @@ describe('wave push notification titles', () => {
   };
   const groupDmContext: WavePushNotificationContext = {
     kind: 'group-dm',
-    label: 'Group DM with userC'
+    label: 'Group DM'
   };
 
   it.each([
     ['message', waveContext, 'userA posted · WaveName'],
     ['message', dmContext, 'userA messaged you · DM'],
-    ['message', groupDmContext, 'userA messaged · Group DM with userC'],
+    ['message', groupDmContext, 'userA messaged · Group DM'],
     ['reply', waveContext, 'userA replied · WaveName'],
     ['reply', dmContext, 'userA replied · DM'],
-    ['reply', groupDmContext, 'userA replied · Group DM with userC'],
+    ['reply', groupDmContext, 'userA replied · Group DM'],
     ['mention', waveContext, 'userA mentioned you · WaveName'],
     ['mention', dmContext, 'userA mentioned you · DM'],
-    ['mention', groupDmContext, 'userA mentioned you · Group DM with userC'],
+    ['mention', groupDmContext, 'userA mentioned you · Group DM'],
     ['quote', waveContext, 'userA quoted you · WaveName'],
     ['quote', dmContext, 'userA quoted you · DM'],
-    ['quote', groupDmContext, 'userA quoted you · Group DM with userC'],
+    ['quote', groupDmContext, 'userA quoted you · Group DM'],
     ['invite', waveContext, 'userA invited you · WaveName'],
     ['invite', dmContext, 'userA started a DM'],
-    ['invite', groupDmContext, 'userA added you · Group DM with userC']
+    ['invite', groupDmContext, 'userA added you · Group DM']
   ] as const)('formats %s for %s context', (type, context, expected) => {
     expect(
       buildWavePushNotificationTitle({
@@ -49,7 +49,7 @@ describe('wave push notification titles', () => {
   it.each([
     [waveContext, 'userA reacted 🔥 · WaveName'],
     [dmContext, 'userA reacted 🔥 · DM'],
-    [groupDmContext, 'userA reacted 🔥 · Group DM with userC']
+    [groupDmContext, 'userA reacted 🔥 · Group DM']
   ])('formats reactions for %s context', (context, expected) => {
     expect(
       buildWavePushNotificationTitle({
@@ -65,10 +65,7 @@ describe('wave push notification titles', () => {
       buildWavePushNotificationContext({
         waveName: 'WaveName',
         isDirectMessage: false,
-        participantHandles: [],
-        participantCount: 0,
-        actorHandle: 'userA',
-        recipientHandle: 'userB'
+        participantCount: 0
       })
     ).toEqual(waveContext);
   });
@@ -78,56 +75,31 @@ describe('wave push notification titles', () => {
       buildWavePushNotificationContext({
         waveName: 'DM - userA / userB',
         isDirectMessage: true,
-        participantHandles: ['userA', 'userB'],
-        participantCount: 2,
-        actorHandle: 'userA',
-        recipientHandle: 'userB'
+        participantCount: 2
       })
     ).toEqual(dmContext);
   });
 
-  it('describes a group DM without repeating the actor or recipient', () => {
+  it('uses Group DM for a three-person conversation', () => {
     expect(
       buildWavePushNotificationContext({
         waveName: 'DM - userA / userB / userC',
         isDirectMessage: true,
-        participantHandles: ['userA', 'userB', 'userC'],
-        participantCount: 3,
-        actorHandle: 'USERA',
-        recipientHandle: 'userb'
+        participantCount: 3
       })
     ).toEqual(groupDmContext);
   });
 
-  it('uses group DM when a three-person conversation has a missing handle', () => {
-    expect(
-      buildWavePushNotificationContext({
-        waveName: 'Three-person DM',
-        isDirectMessage: true,
-        participantHandles: ['userA', 'userB', null],
-        participantCount: 3,
-        actorHandle: 'userA',
-        recipientHandle: 'userB'
-      })
-    ).toEqual({
-      kind: 'group-dm',
-      label: 'Group DM'
-    });
-  });
-
-  it('truncates larger group DM context to one handle and a count', () => {
+  it('uses Group DM for a larger conversation', () => {
     expect(
       buildWavePushNotificationContext({
         waveName: 'Large DM',
         isDirectMessage: true,
-        participantHandles: ['userA', 'userB', 'userC', 'userD', 'userE'],
-        participantCount: 5,
-        actorHandle: 'userA',
-        recipientHandle: 'userB'
+        participantCount: 5
       })
     ).toEqual({
       kind: 'group-dm',
-      label: 'Group DM with userC +2'
+      label: 'Group DM'
     });
   });
 
