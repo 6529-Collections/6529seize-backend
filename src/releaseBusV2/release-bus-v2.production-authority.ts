@@ -508,7 +508,6 @@ export class ReleaseBusV2ProductionAuthorityService {
   ): Promise<ReleaseBusV2ProductionAuthorityBindResponse> {
     this.assertIdentityInput(input);
     this.assertUnselectedInput(input);
-    await this.verifyWorkflowBinding(input);
     const existing = await this.deps.repository.findProductionAuthority(
       input.operation_id,
       {},
@@ -527,6 +526,8 @@ export class ReleaseBusV2ProductionAuthorityService {
     }
     if (existing && isTerminal(existing.status))
       return this.bindResponse(existing, true);
+
+    await this.verifyWorkflowBinding(input);
 
     const preflight = await this.preflight(input, existing, input);
     if (preflight.denial) {
@@ -562,7 +563,6 @@ export class ReleaseBusV2ProductionAuthorityService {
     this.assertRecordIdentity(prepared, input);
     if (prepared.status === 'BOUND') {
       this.assertBoundInput(prepared, input);
-      await this.verifyWorkflowBinding(input);
       if (this.expired(prepared))
         return this.bindResponse(
           await this.expire(prepared, 'LEASE_EXPIRED'),
@@ -693,6 +693,11 @@ export class ReleaseBusV2ProductionAuthorityService {
     this.assertRecordIdentity(current, input);
     this.assertBoundInput(current, input);
     this.assertCompletedSelection(current, input.selection_digest);
+    this.assertPersistedCompletion(current, input);
+    if (current.status === 'COMPLETED')
+      return this.completionResponse(current, 'COMPLETED', true);
+    if (isTerminal(current.status))
+      return this.completionResponse(current, 'COMPLETED', false);
     if (current.workflow_run_id === null)
       throw this.conflict(
         'Production authority is not bound to a deployment workflow run',
@@ -732,6 +737,12 @@ export class ReleaseBusV2ProductionAuthorityService {
     const current = await this.requireRecord(input);
     this.assertRecordIdentity(current, input);
     this.assertBoundInput(current, input);
+    this.assertFailureSelection(current, input.selection_digest);
+    this.assertPersistedCompletion(current, input);
+    if (current.status === 'FAILED')
+      return this.completionResponse(current, 'FAILED', true);
+    if (isTerminal(current.status))
+      return this.completionResponse(current, 'FAILED', false);
     await this.verifyFailureEvidence(input, current);
     return this.finish(input, 'FAILED', input.reason_code, input);
   }
@@ -1839,9 +1850,8 @@ export class ReleaseBusV2ProductionAuthorityService {
     selectionDigest: string | null
   ): void {
     if (
-      (record.selection_digest === null && selectionDigest !== null) ||
-      (record.selection_digest !== null &&
-        selectionDigest !== record.selection_digest)
+      record.selection_digest !== null &&
+      selectionDigest !== record.selection_digest
     )
       throw this.conflict(
         'Failure selection must match the authority selection state',

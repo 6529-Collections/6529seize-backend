@@ -92,6 +92,12 @@ E2E identity must also carry the exact bound title, automatic actor, and
 protected-main identity. Its head SHA may be a later protected-main descendant,
 with the original deployment run and immutable failure evidence binding the
 deployed target. The failure evidence is persisted with the terminal record.
+When the deploy workflow has produced an exact candidate selection record but
+the pre-mutation reauthorization response is ambiguous, the failure callback
+supplies that candidate digest. The service accepts it whether the earlier
+request committed or not, but requires an exact match whenever a selection was
+persisted. This closes the lease deterministically without treating an
+uncommitted candidate as a frozen selection.
 
 ## State and invariants
 

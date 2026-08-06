@@ -376,6 +376,23 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     expect(getLock()).toMatchObject({ lease_token: 'server-token-1' });
   });
 
+  it('reuses an exact bound acquisition without depending on a fresh GitHub read', async () => {
+    const { service, deps } = setup();
+    await service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null });
+    const githubIdentity = deps.getWorkflowRunIdentity as jest.Mock;
+    githubIdentity.mockClear();
+    githubIdentity.mockRejectedValue(new Error('GitHub unavailable'));
+
+    await expect(
+      service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null })
+    ).resolves.toMatchObject({
+      status: 'BOUND',
+      authorized: true,
+      reused: true
+    });
+    expect(githubIdentity).not.toHaveBeenCalled();
+  });
+
   it('rejects a foreign workflow instead of granting it an ignored-run hole', async () => {
     const { service, deps, setDeployIdentity, getAuthority } = setup();
     setDeployIdentity(
@@ -514,7 +531,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
 
   it('allows the owning controller to fail before selection discovery and releases its lease', async () => {
     const setupState = setup();
-    const { service, getAuthority, getLock } = setupState;
+    const { service, deps, getAuthority, getLock } = setupState;
     await service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null });
     setupState.setDeployFailed();
 
@@ -527,6 +544,33 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       lease_token: null
     });
     expect(getLock()).toMatchObject({ lease_token: null });
+    const githubIdentity = deps.getWorkflowRunIdentity as jest.Mock;
+    githubIdentity.mockClear();
+    githubIdentity.mockRejectedValue(new Error('GitHub unavailable'));
+    await expect(service.fail(failureInput(null))).resolves.toMatchObject({
+      status: 'FAILED',
+      failed: true,
+      reused: true
+    });
+    expect(githubIdentity).not.toHaveBeenCalled();
+  });
+
+  it('accepts the exact candidate digest when reauthorization may have committed ambiguously', async () => {
+    const setupState = setup();
+    await setupState.service.prepareAndBind({
+      ...DEPLOY_INPUT,
+      selection_digest: null
+    });
+    setupState.setDeployFailed();
+
+    await expect(
+      setupState.service.fail(failureInput(SELECTION_DIGEST))
+    ).resolves.toMatchObject({ status: 'FAILED', failed: true });
+    expect(setupState.getAuthority()).toMatchObject({
+      status: 'FAILED',
+      selection_digest: null,
+      evidence_digest: EVIDENCE_DIGEST
+    });
   });
 
   it('rejects an in-progress failure callback without terminal GitHub evidence', async () => {
@@ -889,7 +933,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
 
   it('accepts the exact deploy-bound E2E title, persists evidence, and releases the lock', async () => {
     const setupState = setup();
-    const { service, getAuthority, getLock } = setupState;
+    const { service, deps, getAuthority, getLock } = setupState;
     await service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null });
     await service.reauthorize({
       ...DEPLOY_INPUT,
@@ -923,12 +967,16 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       code: 'CONFLICT',
       reason_code: 'EVIDENCE_DIGEST_MISMATCH'
     });
+    const githubIdentity = deps.getWorkflowRunIdentity as jest.Mock;
+    githubIdentity.mockClear();
+    githubIdentity.mockRejectedValue(new Error('GitHub unavailable'));
     const retry = await service.complete(COMPLETE_INPUT);
     expect(retry).toMatchObject({
       status: 'COMPLETED',
       completed: true,
       reused: true
     });
+    expect(githubIdentity).not.toHaveBeenCalled();
   });
 
   it('requires backend completion from the exact successful deploy run', async () => {
