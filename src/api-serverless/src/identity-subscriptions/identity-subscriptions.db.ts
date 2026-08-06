@@ -268,53 +268,6 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       .then((it) => it?.cnt ?? 0);
   }
 
-  async countWaveSubscribers(
-    waveId: string,
-    connection?: ConnectionWrapper<any>
-  ) {
-    return this.db
-      .oneOrNull<{
-        cnt: number;
-      }>(
-        `select count(distinct subscriber_id) as cnt
-         from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-         where target_id = :waveId
-           and target_type = :targetType
-           and target_action = :targetAction`,
-        {
-          waveId,
-          targetType: ActivityEventTargetType.WAVE,
-          targetAction: ActivityEventAction.DROP_CREATED
-        },
-        connection ? { wrappedConnection: connection } : undefined
-      )
-      .then((it) => it?.cnt ?? 0);
-  }
-
-  async countWaveSubscribersForUpdate(
-    waveId: string,
-    connection: ConnectionWrapper<any>
-  ) {
-    return this.db
-      .oneOrNull<{
-        cnt: number;
-      }>(
-        `select count(distinct subscriber_id) as cnt
-         from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-         where target_id = :waveId
-           and target_type = :targetType
-           and target_action = :targetAction
-         for update`,
-        {
-          waveId,
-          targetType: ActivityEventTargetType.WAVE,
-          targetAction: ActivityEventAction.DROP_CREATED
-        },
-        { wrappedConnection: connection }
-      )
-      .then((it) => it?.cnt ?? 0);
-  }
-
   async countTargetIdsAndActionsForTarget(
     params: OutgoingIdentitySubscriptionsParams,
     eligibleGroupIds: string[]

@@ -36,3 +36,10 @@ The same accepted extension makes `related_identity` nullable in both
 notification response versions. Subscription coverage is an actorless system
 notification, so fabricating a related profile would be misleading. No other
 reference or nullability change is permitted by the compatibility test.
+
+## Accepted settings retirement
+
+The obsolete `ApiSeizeSettings.all_drops_notifications_subscribers_limit`
+field is retired by the accepted all-message notification limit removal. The
+immutable Phase 0 snapshot remains unchanged, and the compatibility test
+permits no other settings-field removal.
