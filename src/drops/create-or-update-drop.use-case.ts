@@ -2243,15 +2243,26 @@ export class CreateOrUpdateDropUseCase {
         },
         { timer, connection }
       );
-    const eligibleMentionedIdentityIds =
+    const candidateMentionedIdentityIds = collections.distinct([
+      ...directlyMentionedIdentityIds,
+      ...permissionGroupMentionIdentityIds
+    ]);
+    const eligibleNotificationIdentityIds = new Set(
       await this.filterIdentityIdsEligibleToReadWave(
         wave,
-        collections.distinct([
-          ...directlyMentionedIdentityIds,
-          ...permissionGroupMentionIdentityIds
-        ]),
+        [
+          ...candidateMentionedIdentityIds,
+          ...followerRecipients.map((recipient) => recipient.identity_id)
+        ],
         { timer, connection }
-      );
+      )
+    );
+    const eligibleMentionedIdentityIds = candidateMentionedIdentityIds.filter(
+      (identityId) => eligibleNotificationIdentityIds.has(identityId)
+    );
+    const eligibleFollowerRecipients = followerRecipients.filter((recipient) =>
+      eligibleNotificationIdentityIds.has(recipient.identity_id)
+    );
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
@@ -2268,12 +2279,12 @@ export class CreateOrUpdateDropUseCase {
     );
     const mentionedIdentityIds = collections.distinct([
       ...directMentionIdentityIds,
-      ...followerRecipients
+      ...eligibleFollowerRecipients
         .filter((recipient) => recipient.has_group_mention)
         .map((recipient) => recipient.identity_id)
     ]);
     const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
-    const allDropsSubscriberIds = followerRecipients
+    const allDropsSubscriberIds = eligibleFollowerRecipients
       .filter(
         (recipient) =>
           recipient.subscribed_to_all_drops &&
@@ -2314,7 +2325,7 @@ export class CreateOrUpdateDropUseCase {
       );
       if (!parentWave) {
         this.logger.warn(
-          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering direct mention recipients for wave ${wave.id}`
+          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering notification recipients for wave ${wave.id}`
         );
         return [];
       }
