@@ -86,7 +86,7 @@ function deployIdentity(
     headSha: TARGET_SHA,
     name: 'Web Deploy - PROD',
     path: '.github/workflows/build-upload-deploy-prod.yml',
-    displayTitle: 'Web Deploy - PROD',
+    displayTitle: `Production deploy ${TARGET_SHA} [${DEPLOY_INPUT.operation_id}]`,
     status: 'in_progress',
     ...overrides
   };
@@ -385,6 +385,20 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
         displayTitle: 'Production E2E foreign run'
       })
     );
+
+    await expect(
+      service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null })
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      reason_code: 'WORKFLOW_IDENTITY_MISMATCH'
+    });
+    expect(deps.hasActiveProductionMutationOrE2ERun).not.toHaveBeenCalled();
+    expect(getAuthority()).toBeNull();
+  });
+
+  it('rejects a frontend deploy whose title is not bound to its target and operation', async () => {
+    const { service, deps, setDeployIdentity, getAuthority } = setup();
+    setDeployIdentity(deployIdentity({ displayTitle: 'Web Deploy - PROD' }));
 
     await expect(
       service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null })

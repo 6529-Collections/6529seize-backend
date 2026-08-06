@@ -1212,7 +1212,8 @@ export class ReleaseBusV2ProductionAuthorityService {
           identity.event === 'workflow_dispatch' &&
           identity.path === '.github/workflows/build-upload-deploy-prod.yml' &&
           identity.name === 'Web Deploy - PROD' &&
-          identity.displayTitle === 'Web Deploy - PROD'
+          identity.displayTitle ===
+            `Production deploy ${input.target_sha} [${input.operation_id}]`
         : common &&
           identity.event === 'workflow_dispatch' &&
           identity.path === '.github/workflows/deploy.yml' &&
