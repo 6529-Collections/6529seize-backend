@@ -122,12 +122,14 @@ loss, qualifier identity failure, and evidence mismatch are fail-closed. The
 caller must react to the denial; there is no timed blind retry contract.
 
 The existing `/deploy/release-bus-v2/manual-deployment-readiness` route remains
-unchanged for readiness evidence. The manual-fallback race is resolved by the
-separate workflow integration that makes every manual production caller acquire
-this same authority lease; the API does not add a second manual lease or accept
-a caller-supplied token. The route therefore remains a readiness contract, not
-a substitute for the authority lease, and it does not receive or expose the
-server-side token.
+unchanged for readiness evidence. During the API-only phase,
+`dbMigrationsLoop` is deployed before `api`, while the tracked workflows still
+call only `manual-deployment-readiness`. The manual-fallback race is resolved
+only after the separate workflow consumers are deployed and every manual
+production caller acquires this same authority lease. The API does not add a
+second manual lease or accept a caller-supplied token. The route therefore
+remains a readiness contract, not a substitute for the authority lease, and it
+does not receive or expose the server-side token.
 
 ## Schema deployment
 
@@ -138,6 +140,6 @@ entities-first path; there is intentionally no standalone migration file in
 this rollout. Verify the table, unique operation key, and indexed status fields
 on the writer database before deploying `api`. Before rollback, drain callers
 and ensure no authority is active; retain the authority table as audit history
-rather than dropping it. Frontend and workflow generated clients must be
+rather than dropping it. Frontend and workflow-generated clients must be
 regenerated and checked as a later consumer step against the published
 OpenAPI contract.
