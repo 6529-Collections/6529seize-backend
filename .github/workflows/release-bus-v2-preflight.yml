@@ -406,21 +406,17 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             src/*/package-lock.json
-      - name: Activate exact package manager
+      - name: Verify exact package manager through the 6529 wrapper
         if: steps.composition.outcome == 'success'
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         run: |
-          corepack enable npm
-          corepack install
-          test "$(npm --version)" = "10.9.8"
+          test "$(./bin/6529 npm:version)" = "10.9.8"
       - name: Install frozen shared dependencies once
         id: root_install
         if: steps.composition.outcome == 'success'
         continue-on-error: true
         run: |
           set -o pipefail
-          if npm ci --ignore-scripts 2>&1 | tee root-install.log; then
+          if ./bin/6529 ci --ignore-scripts 2>&1 | tee root-install.log; then
             echo "failure_class=CANDIDATE" >> "$GITHUB_OUTPUT"
             exit 0
           fi
