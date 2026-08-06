@@ -27,6 +27,11 @@ const ACCEPTED_REMOVED_SCHEMA_PROPERTIES = new Set([
   'schema ApiSeizeSettings.properties.all_drops_notifications_subscribers_limit'
 ]);
 
+const ACCEPTED_REMOVED_RESPONSE_MAX_LENGTHS = new Set([
+  'schema ApiDropPart.properties.content.maxLength',
+  'schema ApiDropPartV2.properties.content.maxLength'
+]);
+
 const fixtureRoot = path.resolve(
   __dirname,
   '../../../competitions/contract-fixtures/phase-0'
@@ -77,6 +82,13 @@ function assertSchemaCompatible(
   }
   for (const [key, baselineValue] of Object.entries(baselineObject)) {
     if (['description', 'example', 'examples', 'title'].includes(key)) continue;
+    if (
+      key === 'maxLength' &&
+      ACCEPTED_REMOVED_RESPONSE_MAX_LENGTHS.has(`${location}.${key}`) &&
+      !(key in currentObject)
+    ) {
+      continue;
+    }
     expect(currentObject).toHaveProperty(key);
     if (key === 'properties') {
       const currentProperties = semanticObject(currentObject[key]);
