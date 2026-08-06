@@ -264,6 +264,31 @@ cd src/api-serverless
 6529 run build
 ```
 
+### 2.2.1 OpenAPI Contract Synchronization
+
+Every change to `src/api-serverless/openapi.yaml` must be synchronized to the
+frontend repository in the same task, even when no frontend call site changes.
+First regenerate the backend artifacts:
+
+```bash
+cd src/api-serverless
+6529 run generate:openapi
+```
+
+Then, from a `6529seize-frontend` worktree, copy the final backend spec to
+frontend `openapi.yaml` and regenerate the frontend client:
+
+```bash
+cp <backend_worktree>/src/api-serverless/openapi.yaml openapi.yaml
+6529 run generate
+```
+
+If the backend worktree is not locally available, push the exact backend branch
+and use `bash scripts/refresh-api.sh <backend_branch_name>` from the frontend
+worktree before running `6529 run generate`. Commit the frontend `openapi.yaml`
+and `generated/` changes. Treat an unfinished frontend synchronization as a
+blocker, not as completed backend OpenAPI work.
+
 ### 2.3 Environment
 
 To run the project you need a .env file.

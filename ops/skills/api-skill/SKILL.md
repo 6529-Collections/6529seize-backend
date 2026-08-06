@@ -28,8 +28,22 @@ Use this workflow for API contract, route, handler, and generated-model changes.
    `6529 run generate:openapi` runs `restructure-openapi` and then `generate`.
    The `generate` stage refreshes models plus generated routes and operation
    types under `src/api-serverless/src/generated`.
-5. Treat `src/api-serverless/src/generated` as generated-only; never edit it manually.
-6. Implement handler/service logic after generated types exist, then verify the contract matches OpenAPI.
+5. Propagate every `src/api-serverless/openapi.yaml` change to
+   `6529seize-frontend` in the same task, even when no frontend call site
+   changes. From the frontend worktree, prefer copying the final spec directly:
+   ```bash
+   cp <backend_worktree>/src/api-serverless/openapi.yaml openapi.yaml
+   6529 run generate
+   ```
+   If the backend worktree is unavailable, push the exact backend branch, then
+   run `bash scripts/refresh-api.sh <backend_branch_name>` from the frontend
+   worktree before `6529 run generate`. Commit frontend `openapi.yaml` and
+   `generated/` changes. Do not report the backend task complete while this sync
+   is missing; report inability to complete it as an explicit blocker.
+6. Treat `src/api-serverless/src/generated` as generated-only; never edit it
+   manually.
+7. Implement handler/service logic after generated types exist, then verify the
+   contract matches OpenAPI.
 
 ## Generated Routes
 
@@ -104,6 +118,9 @@ x-6529-router:
 - [ ] Declared the final handler import/name in `x-6529-router.handler`.
 - [ ] Ran `cd src/api-serverless && 6529 run generate:openapi`.
 - [ ] Did not manually edit `src/api-serverless/src/generated/*`.
+- [ ] Copied the final backend OpenAPI contract to frontend `openapi.yaml`.
+- [ ] Ran frontend `6529 run generate` and committed frontend `generated/`
+      changes.
 - [ ] Used generated operation types and generated models.
 - [ ] Added Joi validation.
 - [ ] Set auth correctly.

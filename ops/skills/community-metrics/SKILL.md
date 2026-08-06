@@ -31,6 +31,8 @@ Use this workflow for metrics based on `metric_rollup_hour` and exposed through 
 6. Expose the metric only where needed:
    - update `src/api-serverless/openapi.yaml` response schemas for summary, series, or mint metrics
    - run `cd src/api-serverless && 6529 run generate:openapi`
+   - copy the final backend spec to frontend `openapi.yaml`, run frontend
+     `6529 run generate`, and commit the frontend spec and `generated/` changes
    - update `CommunityMetricsService` aggregation and mapping
    - update `community-metrics.routes.ts` only when route validation or query behavior changes
 7. Add or update tests next to the changed code. Prefer focused service/DB tests; use `src/profiles/abusiveness-check.db.test.ts` as the pattern for DB/repository tests.
@@ -62,6 +64,7 @@ Write SQL in the `up` migration only, delete the generated `.down.sql`, and leav
 - [ ] Recording function called in all identified locations.
 - [ ] Backfill migration created only if explicitly required.
 - [ ] OpenAPI schema updated and generated types refreshed when API output changes.
+- [ ] Frontend OpenAPI and generated client synchronized when OpenAPI changes.
 - [ ] Aggregation logic added to `CommunityMetricsService`.
 - [ ] Tests cover recording and exposed aggregation behavior.
 - [ ] `6529 run lint` passes.
