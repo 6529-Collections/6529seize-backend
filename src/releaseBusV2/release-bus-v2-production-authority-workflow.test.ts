@@ -82,6 +82,15 @@ describe('backend production authority workflow integration', () => {
     expect(acquireScript).toContain(
       'if [ "$production_authority" = true ] && [ "$http_status" != 200 ]'
     );
+    const acquireResponseValidation = acquireScript.indexOf(
+      '(keys_unsorted | sort) == ['
+    );
+    const authorityStateWrite = acquireScript.indexOf(
+      `printf '%s\\n' "$state_json" > "$authority_state_file"`
+    );
+    expect(acquireResponseValidation).toBeGreaterThan(-1);
+    expect(authorityStateWrite).toBeGreaterThan(acquireResponseValidation);
+    expect(acquireScript).not.toContain('authority_state_json=');
     expect(acquireScript).not.toContain('--retry');
     expect(steps[acquire]?.uses).toBeUndefined();
     expect(steps[acquire]?.if).toBeUndefined();
@@ -211,6 +220,10 @@ describe('backend production authority workflow integration', () => {
     expect(source.match(/--retry 4 --retry-all-errors/g)).toHaveLength(2);
     expect(source.match(/--retry-max-time 300/g)).toHaveLength(2);
     expect(source).not.toContain('Production E2E');
+    expect(source.match(/actions\/download-artifact@/g)).toHaveLength(2);
+    expect(source).toContain(
+      'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0'
+    );
 
     const identity = parsed.jobs.complete.steps[0]?.run ?? '';
     expect(identity).toContain('.event == "workflow_dispatch"');

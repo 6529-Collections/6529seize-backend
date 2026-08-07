@@ -126,7 +126,7 @@ jobs:
 
       - name: Download exact backend production authority evidence
         if: steps.identity.outputs.manual_prod == 'true' && steps.identity.outputs.conclusion == 'success'
-        uses: actions/download-artifact@37930b1c069e1874edd31b4311f1884172cec0e10 # v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -253,7 +253,7 @@ jobs:
       - name: Download exact backend production authority failure state
         if: always() && steps.identity.outputs.manual_prod == 'true' && steps.identity.outputs.conclusion != 'success' && steps.identity.outputs.failure_artifact_available == 'true'
         continue-on-error: true
-        uses: actions/download-artifact@37930b1c069e1874edd31b4311f1884172cec0e10 # v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
