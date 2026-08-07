@@ -106,8 +106,14 @@ describe('backend production authority workflow integration', () => {
     const authorityStateWrite = acquireScript.indexOf(
       `printf '%s\\n' "$state_json" > "$authority_state_file"`
     );
+    const canonicalAuthorityResponseKeys =
+      '"authorized", "bound", "control_epoch", "controller_identity"';
     expect(acquireResponseValidation).toBeGreaterThan(-1);
     expect(authorityStateWrite).toBeGreaterThan(acquireResponseValidation);
+    expect(acquireScript).toContain(canonicalAuthorityResponseKeys);
+    expect(acquireScript).not.toContain(
+      '"authorized", "bound", "controller_identity", "control_epoch"'
+    );
     expect(acquireScript).not.toContain('authority_state_json=');
     expect(acquireScript).not.toContain('--retry');
     expect(acquireScript).toContain('--arg service "$INPUT_SERVICE"');
@@ -138,9 +144,7 @@ describe('backend production authority workflow integration', () => {
       'selection_type:"backend-production-deployment-selection-v1"'
     );
     expect(selectionScript).toContain('/production-authority/reauthorize');
-    expect(selectionScript).toContain(
-      '"authorized", "bound", "controller_identity", "control_epoch"'
-    );
+    expect(selectionScript).toContain(canonicalAuthorityResponseKeys);
     expect(selectionScript).not.toContain('lease_token');
 
     const evidenceScript = steps[evidence]?.run ?? '';
@@ -287,8 +291,8 @@ describe('backend production authority workflow integration', () => {
       '["failed", "lock_row_version", "operation_id", "reused", "status"]'
     );
     expect(source).not.toContain('lease_token');
-    expect(source.match(/--retry 4 --retry-all-errors/g)).toHaveLength(2);
-    expect(source.match(/--retry-max-time 300/g)).toHaveLength(2);
+    expect(source.match(/--retry 4 --retry-all-errors/g)).toHaveLength(3);
+    expect(source.match(/--retry-max-time 300/g)).toHaveLength(3);
     expect(source).not.toContain('Production E2E');
     expect(source.match(/actions\/download-artifact@/g)).toHaveLength(2);
     expect(source).toContain(
@@ -298,6 +302,14 @@ describe('backend production authority workflow integration', () => {
     const identity = parsed.jobs.complete.steps[0]?.run ?? '';
     expect(identity).toContain('.event == "workflow_dispatch"');
     expect(identity).toContain('.status == "completed"');
+    expect(identity).toContain('actions/workflows/$workflow_id');
+    expect(identity).toMatch(
+      /workflow_status="\$\(curl --silent --show-error \\\n\s+--retry 4 --retry-all-errors --retry-delay 2 --retry-max-time 300/
+    );
+    expect(identity).toContain('.name == "Deploy a service"');
+    expect(identity).toContain('.path == ".github/workflows/deploy.yml"');
+    expect(identity).toContain('.state == "active"');
+    expect(identity).toContain('(.workflow_id | type == "number" and . >= 1)');
     expect(identity).toContain('backend-production-authority-');
     expect(identity).toContain('backend-production-authority-failure-');
     const completion = parsed.jobs.complete.steps.find(({ name }) =>

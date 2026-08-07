@@ -33,8 +33,9 @@ jobs:
           test "$GITHUB_REPOSITORY" = "$BACKEND_REPOSITORY"
           [[ "$DEPLOY_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           run_file="$(mktemp)"
+          workflow_file="$(mktemp)"
           artifact_file="$(mktemp)"
-          trap 'rm -f "$run_file" "$artifact_file"' EXIT
+          trap 'rm -f "$run_file" "$workflow_file" "$artifact_file"' EXIT
           run_status="$(curl --silent --show-error \
             --connect-timeout 10 --max-time 60 --max-filesize 262144 \
             --output "$run_file" --write-out '%{http_code}' \
@@ -47,14 +48,30 @@ jobs:
              'type == "object" and .id == ($run_id | tonumber) and
              .repository.full_name == "6529-Collections/6529seize-backend" and
              .head_repository.full_name == "6529-Collections/6529seize-backend" and
-             .name == "Deploy a service" and
              .path == ".github/workflows/deploy.yml" and
              .event == "workflow_dispatch" and .head_branch == "main" and
              (.head_sha | type == "string" and test("^[a-f0-9]{40}$")) and
+             (.workflow_id | type == "number" and . >= 1) and
              (.run_attempt | type == "number" and . >= 1 and . <= 1000000) and
              .status == "completed" and (.conclusion | type == "string") and
              (.display_title | type == "string")' \
             "$run_file" > /dev/null
+          workflow_id="$(jq -er '.workflow_id' "$run_file")"
+          workflow_status="$(curl --silent --show-error \
+            --retry 4 --retry-all-errors --retry-delay 2 --retry-max-time 300 \
+            --connect-timeout 10 --max-time 60 --max-filesize 262144 \
+            --output "$workflow_file" --write-out '%{http_code}' \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$BACKEND_REPOSITORY/actions/workflows/$workflow_id")"
+          test "$workflow_status" = 200
+          jq -e \
+            --argjson workflow_id "$workflow_id" \
+            'type == "object" and .id == $workflow_id and
+             .name == "Deploy a service" and
+             .path == ".github/workflows/deploy.yml" and
+             .state == "active"' \
+            "$workflow_file" > /dev/null
           title="$(jq -er '.display_title' "$run_file")"
           if [[ "$title" =~ ^Deploy[[:space:]]([A-Za-z0-9]+)[[:space:]]to[[:space:]]prod[[:space:]]\[backend-prod-([A-Za-z0-9]+)-([1-9][0-9]{0,19})\]$ ]]; then
             service="${BASH_REMATCH[1]}"

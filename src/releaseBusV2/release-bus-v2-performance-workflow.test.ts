@@ -193,6 +193,9 @@ describe('Release Bus v2 backend critical-path contract', () => {
     );
     expect(guard).toContain('selection_digest:null');
     expect(guard).toContain(
+      '"authorized", "bound", "control_epoch", "controller_identity"'
+    );
+    expect(guard).not.toContain(
       '"authorized", "bound", "controller_identity", "control_epoch"'
     );
     expect(guard).toContain('release-bus-v2/manual-deployment-readiness');
