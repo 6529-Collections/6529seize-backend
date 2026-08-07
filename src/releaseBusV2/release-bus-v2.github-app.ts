@@ -776,6 +776,10 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     trustedGatePolicyBundleRollout(
       '3403deda84646791436614ab775fd32c5edf2b5e50935166c0b1f864085d5991',
       'b8ef9667450785970266a71869d585b585a2f9ef99a8ca4382d310cf1fde7c6a'
+    ),
+    trustedGatePolicyBundleRollout(
+      'b8ef9667450785970266a71869d585b585a2f9ef99a8ca4382d310cf1fde7c6a',
+      '071e4facda889950c1460d9eaf44fec0f6934655c327948b5fa01d3ec476231c'
     )
   ],
   frontend: [
