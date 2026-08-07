@@ -570,11 +570,12 @@ printf '200'
       ({ name }) => name === 'Verify API health and exact version'
     );
     expect(authorize).toBeTruthy();
+    expect(authorize).toContain('--arg service "$INPUT_SERVICE"');
     expect(authorize).toContain(
-      '--arg title "Deploy api to prod [backend-prod-api-$GITHUB_RUN_ID]"'
+      '.name == ("Deploy " + $service + " to prod [backend-prod-" +'
     );
-    expect(authorize).toContain('.name == $title');
-    expect(authorize).toContain('.display_title == $title');
+    expect(authorize).toContain('.display_title == .name');
+    expect(authorize).not.toContain('--arg title');
     expect(authorize).not.toContain(
       '.display_title == "Deploy api to prod [manual]"'
     );
