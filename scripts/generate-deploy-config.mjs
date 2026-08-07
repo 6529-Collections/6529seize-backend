@@ -668,6 +668,23 @@ jobs:
           fi
           if [ "$http_status" = 200 ] && [ "$production_authority" = true ]; then
             authority_state_file="$RUNNER_TEMP/backend-production-authority-state.json"
+            state_json="$(jq -cnS \
+              --arg operation_id "$operation_id" \
+              --arg controller_identity backend-production-workflow \
+              --arg repository backend \
+              --arg environment prod \
+              --arg service "$INPUT_SERVICE" \
+              --arg target_sha "$GITHUB_SHA" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+              '{schema_version:1,state_type:"backend-production-authority-state-v1",
+                operation_id:$operation_id,controller_identity:$controller_identity,
+                repository:$repository,environment:$environment,service:$service,
+                target_sha:$target_sha,workflow_run_id:$workflow_run_id,
+                workflow_run_attempt:$workflow_run_attempt,selection_digest:null}')"
+            # Persist the exact request identity before parsing the response so
+            # any fail-closed adapter error can still release its acquired lease.
+            printf '%s\\n' "$state_json" > "$authority_state_file"
             jq -e \
               --arg operation_id "$operation_id" \
               --arg controller_identity backend-production-workflow \
@@ -691,7 +708,8 @@ jobs:
                .workflow_run_id == $workflow_run_id and
                .workflow_run_attempt == $workflow_run_attempt and
                (.lease_expires_at | type == "number" and . > 0) and
-               (.hard_expires_at | type == "number" and . > .lease_expires_at) and
+               (.hard_expires_at | type == "number") and
+               (.hard_expires_at > .lease_expires_at) and
                (.lock_row_version | type == "number" and . >= 1) and
                (.control_epoch | type == "object" and
                 (keys_unsorted | sort) == ["all", "mode", "production"] and
@@ -699,21 +717,6 @@ jobs:
                 (.production | type == "number" and . >= 1) and
                 (.mode | type == "string"))' \
               "$response_file" > /dev/null
-            state_json="$(jq -cnS \
-              --arg operation_id "$operation_id" \
-              --arg controller_identity backend-production-workflow \
-              --arg repository backend \
-              --arg environment prod \
-              --arg service "$INPUT_SERVICE" \
-              --arg target_sha "$GITHUB_SHA" \
-              --arg workflow_run_id "$GITHUB_RUN_ID" \
-              --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
-              '{schema_version:1,state_type:"backend-production-authority-state-v1",
-                operation_id:$operation_id,controller_identity:$controller_identity,
-                repository:$repository,environment:$environment,service:$service,
-                target_sha:$target_sha,workflow_run_id:$workflow_run_id,
-                workflow_run_attempt:$workflow_run_attempt,selection_digest:null}')"
-            printf '%s\\n' "$state_json" > "$authority_state_file"
             echo "authority_operation_id=$operation_id" >> "$GITHUB_OUTPUT"
           elif [ "$http_status" = 200 ] && [ -n "$INPUT_OPERATION_KEY" ]; then
             jq -e \
@@ -1106,7 +1109,8 @@ jobs:
              .workflow_run_attempt == $workflow_run_attempt and
              .selection_digest == $selection_digest and
              (.lease_expires_at | type == "number" and . > 0) and
-             (.hard_expires_at | type == "number" and . > .lease_expires_at) and
+             (.hard_expires_at | type == "number") and
+             (.hard_expires_at > .lease_expires_at) and
              (.lock_row_version | type == "number" and . >= 1) and
              (.control_epoch | type == "object" and
               (keys_unsorted | sort) == ["all", "mode", "production"] and
