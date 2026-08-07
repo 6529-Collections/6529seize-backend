@@ -409,7 +409,11 @@ describe('backend production authority workflow integration', () => {
     ).not.toThrow();
     for (const invalidPath of [
       'src/api-serverless/dist/indexXzip',
-      'src/api-serverless/dist/index.zipx'
+      'src/api-serverless/dist/indexAzip',
+      'src/api-serverless/dist/index.zipx',
+      'src/api-serverless/dist/index\\.zip',
+      'x/src/api-serverless/dist/index.zip',
+      'src/api-serverless/subdir/dist/index.zip'
     ]) {
       expect(() =>
         runDeploymentSelectionFilter(selectionFilter, invalidPath)
