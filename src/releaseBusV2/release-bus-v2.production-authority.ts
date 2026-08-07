@@ -1217,18 +1217,19 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.headRepository === expectedHeadRepository &&
       identity.headBranch === MAIN_REF &&
       identity.headSha === input.target_sha;
+    // GitHub's Actions run API overloads `name` with the evaluated `run-name`
+    // when a workflow defines one.  The immutable workflow path identifies the
+    // workflow; the exact display title binds its target and operation.
     const valid =
       input.repository === 'frontend'
         ? common &&
           identity.event === 'workflow_dispatch' &&
           identity.path === '.github/workflows/build-upload-deploy-prod.yml' &&
-          identity.name === 'Web Deploy - PROD' &&
           identity.displayTitle ===
             `Production deploy ${input.target_sha} [${input.operation_id}]`
         : common &&
           identity.event === 'workflow_dispatch' &&
           identity.path === '.github/workflows/deploy.yml' &&
-          identity.name === 'Deploy a service' &&
           identity.displayTitle ===
             `Deploy ${input.service} to prod [${input.operation_id}]`;
     if (!valid)
@@ -1312,7 +1313,6 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.headRepository === FRONTEND_HEAD_REPOSITORY &&
       identity.headBranch === MAIN_REF &&
       identity.path === '.github/workflows/production-e2e.yml' &&
-      identity.name === 'Production E2E' &&
       identity.displayTitle ===
         `Production E2E automatic ${deployWorkflowRunId}`;
     if (!valid)
@@ -1337,7 +1337,6 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.headRepository === FRONTEND_HEAD_REPOSITORY &&
       identity.headBranch === MAIN_REF &&
       identity.path === '.github/workflows/production-e2e.yml' &&
-      identity.name === 'Production E2E' &&
       identity.displayTitle ===
         `Production E2E automatic ${deployWorkflowRunId}`;
     if (!valid)
@@ -1419,7 +1418,6 @@ export class ReleaseBusV2ProductionAuthorityService {
       identity.headBranch === MAIN_REF &&
       identity.headSha === input.target_sha &&
       identity.path === '.github/workflows/deploy.yml' &&
-      identity.name === 'Deploy a service' &&
       identity.displayTitle ===
         `Deploy ${input.service} to prod [${input.operation_id}]`;
     if (!valid)

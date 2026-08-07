@@ -122,11 +122,22 @@ describe('Release Bus v2 backend critical-path contract', () => {
         name ===
         'Reauthorize exact backend production selection immediately before cloud credentials'
     );
+    const emergencyBootstrapRevalidation = steps.findIndex(
+      ({ name }) =>
+        name ===
+        'Revalidate emergency API bootstrap immediately before cloud credentials'
+    );
     const productionEvidence = steps.findIndex(
       ({ name }) => name === 'Create backend production authority evidence'
     );
     const productionEvidenceUpload = steps.findIndex(
       ({ name }) => name === 'Upload backend production authority evidence'
+    );
+    const emergencyEvidence = steps.findIndex(
+      ({ name }) => name === 'Create emergency API bootstrap evidence'
+    );
+    const emergencyEvidenceUpload = steps.findIndex(
+      ({ name }) => name === 'Upload emergency API bootstrap evidence'
     );
     const productionFailure = steps.findIndex(
       ({ name }) =>
@@ -141,9 +152,14 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(setupNode).toBeGreaterThan(checkout);
     expect(setupNode).toBeGreaterThan(verifySource);
     expect(aws).toBeGreaterThan(setupNode);
-    expect(productionSelectionAuthorization).toBe(aws - 1);
+    expect(productionSelectionAuthorization).toBeLessThan(
+      emergencyBootstrapRevalidation
+    );
+    expect(emergencyBootstrapRevalidation).toBe(aws - 1);
     expect(productionEvidence).toBeGreaterThan(deployStep);
     expect(productionEvidenceUpload).toBe(productionEvidence + 1);
+    expect(emergencyEvidence).toBe(productionEvidenceUpload + 1);
+    expect(emergencyEvidenceUpload).toBe(emergencyEvidence + 1);
     expect(productionFailure).toBe(-1);
     expect(deployStep).toBeGreaterThan(aws);
     for (const step of steps.slice(0, authorize)) {
@@ -188,7 +204,8 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(guard).toContain('.ready == true and .mode == "manual"');
     expect(guard).toContain('.authorized == true and .train_id == $train_id');
     expect(guard).toContain('if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]');
-    expect(guard).toContain(
+    expect(guard).toContain('WORKFLOW_IDENTITY_MISMATCH');
+    expect(guard).not.toContain(
       'Manual backend deployment workflow identity is invalid'
     );
     expect(guard).toContain('emergency-api-bootstrap-readiness.sh');
@@ -454,6 +471,8 @@ printf '200'
       ...process.env,
       GITHUB_ACTOR: 'prxt6529',
       GITHUB_REF_NAME: 'main',
+      GITHUB_RUN_ATTEMPT: '1',
+      GITHUB_RUN_ID: '12345',
       GITHUB_SHA: 'a'.repeat(40),
       INPUT_ARTIFACT_CONTRACT_VERSION: 'legacy-v2',
       INPUT_ARTIFACT_DIGEST: '',
@@ -507,7 +526,7 @@ printf '200'
     ).not.toThrow();
   });
 
-  it('does not expose the legacy emergency readiness bypass to manual production', () => {
+  it('limits emergency API bootstrap to the known identity mismatch and rechecks before credentials', () => {
     const parsed = YAML.parse(deploy) as {
       jobs: Record<
         string,
@@ -516,6 +535,7 @@ printf '200'
             name?: string;
             run?: string;
             env?: Record<string, string>;
+            if?: string;
           }>;
         }
       >;
@@ -529,14 +549,90 @@ printf '200'
         name ===
         'Revalidate emergency API bootstrap immediately before cloud credentials'
     );
+    const reauthorizeStep = steps.find(
+      ({ name }) =>
+        name ===
+        'Reauthorize exact backend production selection immediately before cloud credentials'
+    );
+    const normalEvidence = steps.find(
+      ({ name }) => name === 'Create backend production authority evidence'
+    );
+    const emergencyEvidence = steps.find(
+      ({ name }) => name === 'Create emergency API bootstrap evidence'
+    );
+    const emergencyEvidenceUpload = steps.find(
+      ({ name }) => name === 'Upload emergency API bootstrap evidence'
+    );
+    const immutableLambdaVerification = steps.find(
+      ({ name }) => name === 'Verify immutable Lambda code'
+    );
+    const exactApiHealthVerification = steps.find(
+      ({ name }) => name === 'Verify API health and exact version'
+    );
     expect(authorize).toBeTruthy();
-    expect(revalidateStep).toBeUndefined();
+    expect(revalidateStep).toBeDefined();
+    expect(revalidateStep?.if).toBe(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(revalidateStep?.run).toContain(
+      'emergency-api-bootstrap-readiness.sh'
+    );
+    expect(revalidateStep?.run).toContain('test ! -L "$emergency_guard"');
+    expect(revalidateStep?.env).toMatchObject({
+      EXPECTED_EMERGENCY_GUARD_SHA256:
+        '${{ steps.deployment_authorization.outputs.emergency_guard_sha256 }}'
+    });
+    expect(revalidateStep?.run).toContain(
+      'test "$emergency_guard_sha256" = "$EXPECTED_EMERGENCY_GUARD_SHA256"'
+    );
+    expect(revalidateStep?.run).toContain('/usr/bin/env -i');
+    expect(revalidateStep?.run).toContain(
+      '/usr/bin/bash --noprofile --norc -s'
+    );
+    expect(reauthorizeStep?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'"
+    );
+    expect(normalEvidence?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'"
+    );
+    expect(emergencyEvidence?.if).toBe(
+      "success() && steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(emergencyEvidence?.run).toContain(
+      'evidence_type:"backend-emergency-api-bootstrap-v1"'
+    );
+    expect(emergencyEvidence?.run).toContain(
+      'authorization_mode:"workflow-identity-self-bootstrap"'
+    );
+    expect(immutableLambdaVerification?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(exactApiHealthVerification?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(exactApiHealthVerification?.run).toContain(
+      'test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$INPUT_EXPECTED_SHA"'
+    );
+    expect(exactApiHealthVerification?.run).toContain('"$expected_sha"');
+    expect(emergencyEvidenceUpload).toMatchObject({
+      uses: expect.stringMatching(
+        /^actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02$/
+      ),
+      with: {
+        name: 'backend-emergency-api-bootstrap-${{ github.run_id }}',
+        'retention-days': 30
+      }
+    });
     expect(authorize).toContain(
       'release-bus-v2/production-authority/acquire-bind'
     );
     expect(authorize).toContain(
       'if [ "$production_authority" = true ] && [ "$http_status" != 200 ]'
     );
+    expect(authorize).toContain(
+      '[ "$rejection_reason" = "WORKFLOW_IDENTITY_MISMATCH" ]'
+    );
+    expect(authorize).toContain('[ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]');
     expect(authorize).toContain('exit 1');
   });
 
