@@ -8,6 +8,7 @@ import {
   RELEASE_BUS_V2_LOCKS_TABLE,
   RELEASE_BUS_V2_MANIFESTS_TABLE,
   RELEASE_BUS_V2_OPERATIONS_TABLE,
+  RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE,
   RELEASE_BUS_V2_STAGING_STATE_TABLE,
   RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE,
   RELEASE_BUS_V2_TRAINS_TABLE
@@ -31,6 +32,10 @@ import type {
   ReleaseBusV2OperationStatus,
   ReleaseBusV2PrEvidence,
   ReleaseBusV2CandidateStagingEvidence,
+  ReleaseBusV2ProductionAuthorityDenialCode,
+  ReleaseBusV2ProductionAuthorityFailureCode,
+  ReleaseBusV2ProductionAuthorityRecord,
+  ReleaseBusV2ProductionAuthorityStatus,
   ReleaseBusV2ProductionQualificationPolicy,
   ReleaseBusV2Repository as ReleaseBusV2RepositoryName,
   ReleaseBusV2StagingLiveState,
@@ -144,6 +149,32 @@ export type ReleaseBusV2MaintenanceLease = {
   readonly lease_token: string;
   readonly expires_at: number;
   readonly row_version: number;
+};
+
+export type ReleaseBusV2ProductionAuthorityUpdate = {
+  readonly status?: ReleaseBusV2ProductionAuthorityStatus;
+  readonly selection_digest?: string | null;
+  readonly workflow_run_id?: string | null;
+  readonly workflow_run_attempt?: number | null;
+  readonly qualifier_workflow_run_id?: string | null;
+  readonly qualifier_workflow_run_attempt?: number | null;
+  readonly evidence_digest?: string | null;
+  readonly lease_owner?: string | null;
+  readonly lease_token?: string | null;
+  readonly lease_expires_at?: number | null;
+  readonly hard_expires_at?: number | null;
+  readonly lock_row_version?: number | null;
+  readonly control_epoch_all?: number;
+  readonly control_epoch_production?: number;
+  readonly control_mode?: ReleaseBusV2ProductionAuthorityRecord['control_mode'];
+  readonly denial_code?: ReleaseBusV2ProductionAuthorityDenialCode | null;
+  readonly denial_observed_all_epoch?: number | null;
+  readonly denial_observed_production_epoch?: number | null;
+  readonly denial_observed_mode?:
+    | ReleaseBusV2ProductionAuthorityRecord['control_mode']
+    | null;
+  readonly failure_code?: ReleaseBusV2ProductionAuthorityFailureCode | null;
+  readonly completed_at?: number | null;
 };
 
 const RELEASE_BUS_V2_MAINTENANCE_LOCK_NAMES = [
@@ -1364,6 +1395,160 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async findProductionAuthority(
+    operationId: string,
+    ctx: RequestContext,
+    forUpdate = false,
+    forceWrite = false
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2ProductionAuthorityRecord>(
+      `select * from ${RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE}
+       where operation_id = :operationId${forUpdate ? ' for update' : ''}`,
+      { operationId },
+      dbOptions(ctx, forceWrite)
+    );
+  }
+
+  public async findProductionAuthorityById(
+    id: string,
+    ctx: RequestContext,
+    forUpdate = false,
+    forceWrite = false
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord | null> {
+    return this.db.oneOrNull<ReleaseBusV2ProductionAuthorityRecord>(
+      `select * from ${RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE}
+       where id = :id${forUpdate ? ' for update' : ''}`,
+      { id },
+      dbOptions(ctx, forceWrite)
+    );
+  }
+
+  public async createProductionAuthority(
+    input: Omit<
+      ReleaseBusV2ProductionAuthorityRecord,
+      'created_at' | 'updated_at' | 'row_version'
+    >,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2ProductionAuthorityRecord> {
+    const now = Date.now();
+    await this.db.execute(
+      `insert into ${RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE}
+       (id, operation_id, controller_identity, repository, environment, service,
+       target_sha, selection_digest,
+        workflow_run_id, workflow_run_attempt,
+        qualifier_workflow_run_id, qualifier_workflow_run_attempt, evidence_digest,
+        status, lease_owner, lease_token,
+        lease_expires_at, hard_expires_at, lock_row_version,
+        control_epoch_all, control_epoch_production, control_mode,
+        denial_code, denial_observed_all_epoch, denial_observed_production_epoch,
+        denial_observed_mode, failure_code, completed_at, created_at, updated_at,
+        row_version)
+       values (:id, :operationId, :controllerIdentity, :repository, :environment,
+        :service, :targetSha, :selectionDigest,
+        :workflowRunId, :workflowRunAttempt,
+        :qualifierWorkflowRunId, :qualifierWorkflowRunAttempt, :evidenceDigest,
+        :status, :leaseOwner, :leaseToken,
+        :leaseExpiresAt, :hardExpiresAt, :lockRowVersion,
+        :controlEpochAll, :controlEpochProduction, :controlMode,
+        :denialCode, :denialObservedAllEpoch, :denialObservedProductionEpoch,
+        :denialObservedMode, :failureCode, :completedAt, :now, :now, 1)`,
+      {
+        id: input.id,
+        operationId: input.operation_id,
+        controllerIdentity: input.controller_identity,
+        repository: input.repository,
+        environment: input.environment,
+        service: input.service,
+        targetSha: input.target_sha,
+        selectionDigest: input.selection_digest,
+        workflowRunId: input.workflow_run_id,
+        workflowRunAttempt: input.workflow_run_attempt,
+        qualifierWorkflowRunId: input.qualifier_workflow_run_id,
+        qualifierWorkflowRunAttempt: input.qualifier_workflow_run_attempt,
+        evidenceDigest: input.evidence_digest,
+        status: input.status,
+        leaseOwner: input.lease_owner,
+        leaseToken: input.lease_token,
+        leaseExpiresAt: input.lease_expires_at,
+        hardExpiresAt: input.hard_expires_at,
+        lockRowVersion: input.lock_row_version,
+        controlEpochAll: input.control_epoch_all,
+        controlEpochProduction: input.control_epoch_production,
+        controlMode: input.control_mode,
+        denialCode: input.denial_code,
+        denialObservedAllEpoch: input.denial_observed_all_epoch,
+        denialObservedProductionEpoch: input.denial_observed_production_epoch,
+        denialObservedMode: input.denial_observed_mode,
+        failureCode: input.failure_code,
+        completedAt: input.completed_at,
+        now
+      },
+      dbOptions(ctx)
+    );
+    const created = await this.findProductionAuthority(
+      input.operation_id,
+      ctx,
+      true,
+      true
+    );
+    if (!created)
+      throw new Error(
+        'Release Bus v2 production authority insert was not visible'
+      );
+    return created;
+  }
+
+  public async updateProductionAuthority(
+    id: string,
+    rowVersion: number,
+    fields: ReleaseBusV2ProductionAuthorityUpdate,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const assignments = ['updated_at = :now', 'row_version = row_version + 1'];
+    const params: Record<string, unknown> = {
+      id,
+      rowVersion,
+      now: Date.now()
+    };
+    const addField = (
+      field: keyof ReleaseBusV2ProductionAuthorityUpdate,
+      column = field
+    ): void => {
+      if (fields[field] === undefined) return;
+      assignments.push(`${column} = :${field}`);
+      params[field] = fields[field] ?? null;
+    };
+    addField('status');
+    addField('selection_digest');
+    addField('workflow_run_id');
+    addField('workflow_run_attempt');
+    addField('qualifier_workflow_run_id');
+    addField('qualifier_workflow_run_attempt');
+    addField('evidence_digest');
+    addField('lease_owner');
+    addField('lease_token');
+    addField('lease_expires_at');
+    addField('hard_expires_at');
+    addField('lock_row_version');
+    addField('control_epoch_all');
+    addField('control_epoch_production');
+    addField('control_mode');
+    addField('denial_code');
+    addField('denial_observed_all_epoch');
+    addField('denial_observed_production_epoch');
+    addField('denial_observed_mode');
+    addField('failure_code');
+    addField('completed_at');
+    const result = await this.db.execute(
+      `update ${RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE}
+       set ${assignments.join(', ')}
+       where id = :id and row_version = :rowVersion`,
+      params,
+      dbOptions(ctx)
+    );
+    return this.db.getAffectedRows(result) === 1;
+  }
+
   public async listOperations(
     trainId: string,
     ctx: RequestContext,
@@ -1476,6 +1661,34 @@ export class ReleaseBusV2Repository extends LazyDbAccessCompatibleService {
            row_version = row_version + 1
        where name = :name and (lease_token is null or expires_at < :now or lease_owner = :leaseOwner)`,
       { name, ownerTrainId, leaseOwner, token, now, expiresAt: now + ttlMs },
+      dbOptions(ctx)
+    );
+    if (this.db.getAffectedRows(result) !== 1) return null;
+    return this.db.oneOrNull<ReleaseBusV2LockRecord>(
+      `select * from ${RELEASE_BUS_V2_LOCKS_TABLE} where name = :name`,
+      { name },
+      ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : { forcePool: DbPoolName.WRITE }
+    );
+  }
+
+  public async renewLock(
+    name: string,
+    leaseOwner: string,
+    leaseToken: string,
+    expiresAt: number,
+    now: number,
+    ctx: RequestContext
+  ): Promise<ReleaseBusV2LockRecord | null> {
+    const result = await this.db.execute(
+      `update ${RELEASE_BUS_V2_LOCKS_TABLE}
+       set heartbeat_at = :now, expires_at = :expiresAt, updated_at = :now,
+           row_version = row_version + 1
+       where name = :name and owner_train_id is null
+         and lease_owner = :leaseOwner and lease_token = :leaseToken
+         and expires_at is not null and expires_at >= :now`,
+      { name, leaseOwner, leaseToken, expiresAt, now },
       dbOptions(ctx)
     );
     if (this.db.getAffectedRows(result) !== 1) return null;

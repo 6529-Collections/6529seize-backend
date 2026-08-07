@@ -1,4 +1,4 @@
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -34,6 +34,12 @@ import {
   ReleaseBusV2CandidateListQuerySchema,
   ReleaseBusV2CurrentStagingRepairBodySchema,
   ReleaseBusV2ManualDeploymentReadinessBodySchema,
+  ReleaseBusV2ProductionAuthorityPrepareBodySchema,
+  ReleaseBusV2ProductionAuthorityBindBodySchema,
+  ReleaseBusV2ProductionAuthorityAcquireBindBodySchema,
+  ReleaseBusV2ProductionAuthorityReauthorizeBodySchema,
+  ReleaseBusV2ProductionAuthorityCompleteBodySchema,
+  ReleaseBusV2ProductionAuthorityFailBodySchema,
   ReleaseBusV2ProductionSelectionBodySchema,
   ReleaseBusV2ControlBodySchema,
   ReleaseBusV2AuthorizationBodySchema,
@@ -60,6 +66,14 @@ import {
   type ReleaseBusV2ManualDeploymentAuthorizationInput
 } from '@/releaseBusV2/release-bus-v2.manual-deployment';
 import {
+  isReleaseBusV2ProductionAuthorityError,
+  releaseBusV2ProductionAuthorityService,
+  type ReleaseBusV2ProductionAuthorityBindInput,
+  type ReleaseBusV2ProductionAuthorityCompleteInput,
+  type ReleaseBusV2ProductionAuthorityFailureInput,
+  type ReleaseBusV2ProductionAuthorityPrepareInput
+} from '@/releaseBusV2/release-bus-v2.production-authority';
+import {
   isReleaseBusV2CandidateDeregistrationError,
   releaseBusV2CandidateDeregistrationService
 } from '@/releaseBusV2/release-bus-v2.candidate-deregistration';
@@ -83,7 +97,8 @@ import {
   type ReleaseBusV2Repository,
   type ReleaseBusV2CandidateStatus,
   type ReleaseBusV2ControlScope,
-  type ReleaseBusV2RegisterInput
+  type ReleaseBusV2RegisterInput,
+  type ReleaseBusV2ProductionAuthorityReauthorizeInput
 } from '@/releaseBusV2/release-bus-v2.types';
 import type { ApiReleaseBusV2CandidateDeregistrationRequest } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationRequest';
 import { ApiReleaseBusV2CandidateDeregistrationControlVersionScopeEnum } from '@/api/generated/models/ApiReleaseBusV2CandidateDeregistrationControlVersion';
@@ -1263,6 +1278,138 @@ deployRoutes.post(
           error.message
         );
       throw error;
+    }
+  }
+);
+
+function productionAuthorityErrorResponse(
+  res: Response,
+  operationId: string,
+  error: unknown
+): Response | never {
+  if (!isReleaseBusV2ProductionAuthorityError(error)) throw error;
+  setNoStoreHeaders(res);
+  return res.status(error.code === 'CONFLICT' ? 409 : 503).json({
+    authorized: false,
+    operation_id: operationId,
+    reason_code: error.reason_code,
+    ...(error.observed_epoch ? { observed_epoch: error.observed_epoch } : {})
+  });
+}
+
+deployRoutes.post(
+  '/release-bus-v2/production-authority/prepare',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityPrepareInput>(
+        req.body,
+        ReleaseBusV2ProductionAuthorityPrepareBodySchema
+      );
+    try {
+      const result = await releaseBusV2ProductionAuthorityService.prepare(body);
+      setNoStoreHeaders(res);
+      return res.status(result.prepared ? 200 : 409).json(result);
+    } catch (error) {
+      return productionAuthorityErrorResponse(res, body.operation_id, error);
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/production-authority/acquire-bind',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityBindInput>(
+        req.body,
+        ReleaseBusV2ProductionAuthorityAcquireBindBodySchema
+      );
+    try {
+      const result =
+        await releaseBusV2ProductionAuthorityService.prepareAndBind(body);
+      setNoStoreHeaders(res);
+      return res.status(result.authorized ? 200 : 409).json(result);
+    } catch (error) {
+      return productionAuthorityErrorResponse(res, body.operation_id, error);
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/production-authority/bind',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityBindInput>(
+        req.body,
+        ReleaseBusV2ProductionAuthorityBindBodySchema
+      );
+    try {
+      const result = await releaseBusV2ProductionAuthorityService.bind(body);
+      setNoStoreHeaders(res);
+      return res.status(result.authorized ? 200 : 409).json(result);
+    } catch (error) {
+      return productionAuthorityErrorResponse(res, body.operation_id, error);
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/production-authority/reauthorize',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityReauthorizeInput>(
+        req.body,
+        ReleaseBusV2ProductionAuthorityReauthorizeBodySchema
+      );
+    try {
+      const result =
+        await releaseBusV2ProductionAuthorityService.reauthorize(body);
+      setNoStoreHeaders(res);
+      return res.status(result.authorized ? 200 : 409).json(result);
+    } catch (error) {
+      return productionAuthorityErrorResponse(res, body.operation_id, error);
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/production-authority/complete',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityCompleteInput>(
+        req.body,
+        ReleaseBusV2ProductionAuthorityCompleteBodySchema
+      );
+    try {
+      const result =
+        await releaseBusV2ProductionAuthorityService.complete(body);
+      setNoStoreHeaders(res);
+      return res.status(result.completed ? 200 : 409).json(result);
+    } catch (error) {
+      return productionAuthorityErrorResponse(res, body.operation_id, error);
+    }
+  }
+);
+
+deployRoutes.post(
+  '/release-bus-v2/production-authority/fail',
+  async (req, res) => {
+    requireWorkflowCredential(req);
+    const body =
+      getValidatedByJoiOrThrow<ReleaseBusV2ProductionAuthorityFailureInput>(
+        req.body,
+        ReleaseBusV2ProductionAuthorityFailBodySchema
+      );
+    try {
+      const result = await releaseBusV2ProductionAuthorityService.fail(body);
+      setNoStoreHeaders(res);
+      return res.status(result.failed ? 200 : 409).json(result);
+    } catch (error) {
+      return productionAuthorityErrorResponse(res, body.operation_id, error);
     }
   }
 );

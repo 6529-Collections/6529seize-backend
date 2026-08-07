@@ -238,3 +238,5 @@ export const RELEASE_BUS_V2_CONTROLS_TABLE = 'release_bus_v2_controls';
 export const RELEASE_BUS_V2_EVENTS_TABLE = 'release_bus_v2_events';
 export const RELEASE_BUS_V2_STAGING_STATE_TABLE =
   'release_bus_v2_staging_state';
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE =
+  'release_bus_v2_production_authorities';

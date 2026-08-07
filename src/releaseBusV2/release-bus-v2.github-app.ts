@@ -90,6 +90,8 @@ export type GitHubRun = {
   readonly updated_at?: string;
   readonly event?: string;
   readonly actor?: { readonly login?: string };
+  readonly repository?: { readonly full_name?: string };
+  readonly head_repository?: { readonly full_name?: string } | null;
   readonly jobs?: GitHubWorkflowJob[];
 };
 
@@ -98,6 +100,8 @@ export type ReleaseBusWorkflowRunIdentity = {
   readonly attempt: number;
   readonly conclusion: string | null;
   readonly event: string;
+  readonly repository: string;
+  readonly headRepository: string;
   readonly headBranch: string;
   readonly headSha: string;
   readonly name: string;
@@ -2126,8 +2130,14 @@ export class ReleaseBusGitHubApp {
     await this.assertOk(response, `read ${repository} workflow run`);
     const run = (await response.json()) as GitHubRun;
     const actor = run.actor?.login ?? '';
+    const runRepository = run.repository?.full_name ?? '';
+    const headRepository = run.head_repository?.full_name ?? '';
     if (!isValidGitHubWorkflowActor(actor))
       throw new Error('GitHub workflow run has no valid actor');
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(runRepository))
+      throw new Error('GitHub workflow run has no valid repository');
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(headRepository))
+      throw new Error('GitHub workflow run has no valid head repository');
     if (!/^[a-f0-9]{40}$/i.test(run.head_sha))
       throw new Error('GitHub workflow run has no valid head SHA');
     if (
@@ -2142,6 +2152,8 @@ export class ReleaseBusGitHubApp {
       attempt: Number(run.run_attempt),
       conclusion: run.conclusion,
       event: run.event ?? '',
+      repository: runRepository,
+      headRepository,
       headBranch: run.head_branch,
       headSha: run.head_sha.toLowerCase(),
       name: run.name,
