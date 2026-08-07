@@ -48,7 +48,10 @@ export interface CiPipelineAlertRequest {
   readonly release_operation_key?: string | null;
   readonly contributor_github_logins?: string[];
   readonly contributor_evidence?:
-    'release-bus-operation' | 'manual-pr' | 'manual-range' | null;
+    | 'release-bus-operation'
+    | 'manual-pr'
+    | 'manual-range'
+    | null;
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
