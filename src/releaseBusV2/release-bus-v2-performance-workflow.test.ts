@@ -443,7 +443,9 @@ printf '200'
         INPUT_EMERGENCY_API_BOOTSTRAP: 'false',
         INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA: '',
         INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
-        INPUT_RELEASE_NOTE_OPT_OUT: 'false'
+        INPUT_RELEASE_NOTE_OPT_OUT: 'false',
+        INPUT_RELEASE_PULL_REQUEST: '1861',
+        INPUT_RELEASE_GROUP_SERVICES: 'api'
       })
     ).not.toThrow();
   });
@@ -695,6 +697,8 @@ esac
   });
 
   it('rejects cross-train v3 artifacts before authorization or checkout', () => {
+    const trainId = '11111111-1111-4111-8111-111111111111';
+    const otherTrainId = '22222222-2222-4222-8222-222222222222';
     const parsed = YAML.parse(deploy) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
     };
@@ -716,17 +720,17 @@ esac
           INPUT_EMERGENCY_API_BOOTSTRAP_REASON: '',
           INPUT_ENVIRONMENT: 'prod',
           INPUT_EXPECTED_SHA: 'a'.repeat(40),
-          INPUT_OPERATION_KEY: 'rb2:train-id:deploy:api:a1',
+          INPUT_OPERATION_KEY: `rb2:${trainId}:deploy:production:backend:api:a1`,
           INPUT_RELEASE_CONTRIBUTORS: '[]',
           INPUT_SERVICE: 'api',
-          INPUT_TRAIN_ID: 'train-id',
+          INPUT_TRAIN_ID: trainId,
           INPUT_TRAIN_REVISION: '1'
         },
         stdio: 'pipe'
       });
 
-    expect(() => execute('other-train')).toThrow();
-    expect(() => execute('train-id')).not.toThrow();
+    expect(() => execute(otherTrainId)).toThrow();
+    expect(() => execute(trainId)).not.toThrow();
     expect(() => execute('')).not.toThrow();
   });
 
@@ -1343,7 +1347,7 @@ esac
         pinnedActionWorkflows: []
       });
       expect(bridge.digest).toBe(
-        '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143'
+        '89b2da6f3742cd9a3cf2ae7599084e442c742dd1f781133446a789b5a24c4195'
       );
       expect(pullRequestCiBlob).toBe(LEGACY_PR_CI_WORKFLOW_BLOB);
       return;

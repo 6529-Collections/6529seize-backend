@@ -3,6 +3,7 @@ import fetch, { type RequestInit, type Response } from 'node-fetch';
 import AdmZip from 'adm-zip';
 import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
+import { isHumanGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
 
 // The helper owns the abort signal so every request has one authoritative
@@ -119,13 +120,17 @@ type GitHubPullRequestDetails = {
   readonly state?: string;
   readonly mergeable?: boolean | null;
   readonly mergeable_state?: string;
-  readonly user?: { readonly login?: string } | null;
+  readonly user?: { readonly login?: string; readonly type?: string } | null;
   readonly head?: { readonly sha?: string; readonly ref?: string };
   readonly base?: { readonly sha?: string; readonly ref?: string };
   readonly merge_commit_sha?: string | null;
 };
 type GitHubPullRequestCommit = {
-  readonly author?: { readonly login?: string } | null;
+  readonly author?: { readonly login?: string; readonly type?: string } | null;
+  readonly committer?: {
+    readonly login?: string;
+    readonly type?: string;
+  } | null;
 };
 type GitHubCheckRun = {
   readonly id?: number;
@@ -299,6 +304,10 @@ const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
     trustedGatePolicyPathRollout(
       '997c61f57f40f94bc4e1cc2be81ed3d61ba00f09',
       '6daafbc30b25d0c2b41317023bd7e035707d945e'
+    ),
+    trustedGatePolicyPathRollout(
+      '6daafbc30b25d0c2b41317023bd7e035707d945e',
+      'a5b37612a529862ef41b1c3faf4cd0e55e36abb1'
     )
   ],
   '.github/workflows/release-bus-v2-preflight.yml': [
@@ -369,6 +378,10 @@ const TRUSTED_BACKEND_PR_CI_GATE_POLICY_TRANSITIONS: Readonly<
     trustedGatePolicyPathRollout(
       '4ce90709eb815dae11dfd11e34b501ea793a41c1',
       '1409355f5c30f974ef4009db96b4b3394cbb68bf'
+    ),
+    trustedGatePolicyPathRollout(
+      '1409355f5c30f974ef4009db96b4b3394cbb68bf',
+      '655a5f941f0cdaaed713539e251daa9022d30911'
     )
   ],
   'scripts/pr-ci-policy-bundle.cjs': [
@@ -756,6 +769,10 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     trustedGatePolicyBundleRollout(
       '2a79efe36915440f8bc7f4844a354a8cb28e01a2c415f2009af1b3e343215219',
       '0f6bffeb37b72f67a69e8fc8d4077caf0bfb2d5f4d36af6d287f51d3cc924244'
+    ),
+    trustedGatePolicyBundleRollout(
+      '0f6bffeb37b72f67a69e8fc8d4077caf0bfb2d5f4d36af6d287f51d3cc924244',
+      'f0e2b3e1736f4011b05c82e292eeec57a43ecebc12d2822d0409822d9936daf6'
     )
   ],
   frontend: [
@@ -1889,9 +1906,21 @@ export class ReleaseBusGitHubApp {
     pull: GitHubPullRequestDetails
   ): Promise<readonly string[]> {
     const logins: string[] = [];
-    const addLogin = (value: string | undefined) => {
-      const login = value?.trim();
-      if (!login || isReleaseBusGitHubAppActor(login)) return;
+    const addUser = (
+      value:
+        | { readonly login?: string; readonly type?: string }
+        | null
+        | undefined
+    ) => {
+      const login = value?.login?.trim();
+      const type = value?.type?.trim().toLowerCase();
+      if (
+        !login ||
+        type !== 'user' ||
+        !isHumanGithubContributorLogin(login) ||
+        isReleaseBusGitHubAppActor(login)
+      )
+        return;
       if (
         logins.some(
           (candidate) => candidate.toLowerCase() === login.toLowerCase()
@@ -1900,7 +1929,7 @@ export class ReleaseBusGitHubApp {
         return;
       logins.push(login);
     };
-    addLogin(pull.user?.login);
+    addUser(pull.user);
     try {
       for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page += 1) {
         const response = await this.request(
@@ -1917,7 +1946,8 @@ export class ReleaseBusGitHubApp {
             `Invalid ${repository} pull request ${pullNumber} commits response`
           );
         for (const commit of commits) {
-          addLogin(commit.author?.login);
+          addUser(commit.author);
+          addUser(commit.committer);
         }
         if (commits.length < GITHUB_PAGE_SIZE) break;
         if (page === MAX_PULL_REQUEST_COMMIT_PAGES) {

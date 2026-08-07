@@ -83,6 +83,50 @@ choose_release_note_mode() {
   printf '%s\n' "$choice"
 }
 
+choose_release_group_services() {
+  local current_service="$1"
+  local branch="$2"
+  local pull_request="$3"
+  local selected_output
+  local selected_service
+  local allowed_service
+  local canonical_services=''
+  local -a selected_services=()
+
+  selected_output="$(
+    node "$PICKER_SCRIPT" multi \
+      "Select every production service represented by PR #$pull_request on $branch" \
+      "${BATCH_SERVICES[@]}"
+  )" || die 'Cancelled'
+
+  while IFS= read -r selected_service; do
+    [[ -n "$selected_service" ]] || continue
+    service_is_allowed "$selected_service" "${BATCH_SERVICES[@]}" ||
+      die "Invalid release-group service '$selected_service'"
+    if (( ${#selected_services[@]} == 0 )) ||
+      ! service_is_allowed "$selected_service" "${selected_services[@]}"; then
+      selected_services+=("$selected_service")
+    fi
+  done <<< "$selected_output"
+
+  (( ${#selected_services[@]} > 0 )) ||
+    die 'Select at least one production service represented by the PR'
+  service_is_allowed "$current_service" "${selected_services[@]}" ||
+    die "Release group must include the service being deployed: $current_service"
+
+  for allowed_service in "${BATCH_SERVICES[@]}"; do
+    if ! service_is_allowed "$allowed_service" "${selected_services[@]}"; then
+      continue
+    fi
+    if [[ -n "$canonical_services" ]]; then
+      canonical_services+=','
+    fi
+    canonical_services+="$allowed_service"
+  done
+
+  printf '%s\n' "$canonical_services"
+}
+
 resolve_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null ||
     die 'Run this command from inside the repository'
@@ -333,6 +377,8 @@ dispatch_deploy() {
   local upstream_ref="$4"
   local release_pull_request="$5"
   local release_note_publish="$6"
+  local release_note_opt_out="$7"
+  local release_group_services="$8"
 
   printf 'Triggering deploy for service=%s environment=%s branch=%s upstream=%s\n' \
     "$service" "$environment" "$branch" "$upstream_ref"
@@ -343,6 +389,8 @@ dispatch_deploy() {
     -f "service=$service" \
     -f "release_pull_request=$release_pull_request" \
     -f "release_note_publish=$release_note_publish" \
+    -f "release_note_opt_out=$release_note_opt_out" \
+    -f "release_group_services=$release_group_services" \
     -R "$WORKFLOW_REPO"
 }
 
@@ -383,8 +431,12 @@ run_batch_mode() {
   local repo_root="$1"
   local branch="$2"
   local upstream_ref="$3"
+  local attribution_mode="$4"
   local allowed_service
   local environment
+  local release_pull_request=''
+  local release_note_opt_out='false'
+  local release_group_services=''
   local continue_choice
   local idx
   local selected_output
@@ -393,6 +445,11 @@ run_batch_mode() {
   environment="$(choose_environment 'selected services' "$branch")"
   if [[ "$environment" == 'prod' ]]; then
     die 'Deploy production services one at a time from their service directories so each run can hold or publish its PR release note'
+  fi
+  if [[ "$attribution_mode" == 'internal' ]]; then
+    release_note_opt_out='true'
+  else
+    release_pull_request="$(read_release_pr_number)"
   fi
 
   selected_output="$(choose_services_for_batch "$branch" "$environment" "${BATCH_SERVICES[@]}")" ||
@@ -405,12 +462,24 @@ run_batch_mode() {
 
   (( ${#selected_services[@]} > 0 )) || die 'No services were selected'
 
+  if [[ "$attribution_mode" == 'pr' ]]; then
+    for allowed_service in "${BATCH_SERVICES[@]}"; do
+      if ! service_is_allowed "$allowed_service" "${selected_services[@]}"; then
+        continue
+      fi
+      if [[ -n "$release_group_services" ]]; then
+        release_group_services+=','
+      fi
+      release_group_services+="$allowed_service"
+    done
+  fi
+
   BATCH_SUCCEEDED=()
   BATCH_FAILED=()
   BATCH_SKIPPED=()
 
   for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
-    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" '' false; then
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref" "$release_pull_request" false "$release_note_opt_out" "$release_group_services"; then
       BATCH_SUCCEEDED+=("${selected_services[$idx]}")
       continue
     fi
@@ -449,8 +518,15 @@ main() {
   local allowed_service
   local release_pull_request=''
   local release_note_publish='false'
+  local release_note_opt_out='false'
+  local release_group_services=''
+  local attribution_mode='pr'
 
-  [[ $# -eq 0 ]] || die 'This command does not take arguments'
+  if [[ $# -eq 1 && ( "$1" == '--internal' || "$1" == '--recovery' ) ]]; then
+    attribution_mode='internal'
+  elif [[ $# -ne 0 ]]; then
+    die 'Usage: ghdeploy [--internal|--recovery]'
+  fi
 
   ensure_command git
   ensure_command gh
@@ -479,7 +555,7 @@ main() {
   upstream_ref="$(ensure_branch_in_sync "$repo_root" "$branch")"
 
   if [[ "$mode_or_service" == '__ROOT__' ]]; then
-    run_batch_mode "$repo_root" "$branch" "$upstream_ref"
+    run_batch_mode "$repo_root" "$branch" "$upstream_ref" "$attribution_mode"
     return
   fi
 
@@ -489,13 +565,26 @@ main() {
     die "Directory '$current_dir' does not map to a deployable service in $WORKFLOW_FILE"
 
   environment="$(choose_environment "$service" "$branch")"
-  if [[ "$environment" == 'prod' ]]; then
+  if [[ "$attribution_mode" == 'internal' ]]; then
+    release_note_opt_out='true'
+  else
     release_pull_request="$(read_release_pr_number)"
+    if [[ "$environment" == 'prod' ]]; then
+      release_group_services="$(
+        choose_release_group_services "$service" "$branch" "$release_pull_request"
+      )"
+    else
+      release_group_services="$service"
+    fi
+  fi
+  if [[ "$environment" == 'prod' && "$attribution_mode" == 'pr' ]]; then
     if [[ "$(choose_release_note_mode "$release_pull_request")" == 'publish' ]]; then
       release_note_publish='true'
     fi
   fi
-  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_pull_request" "$release_note_publish"
+  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref" "$release_pull_request" "$release_note_publish" "$release_note_opt_out" "$release_group_services"
 }
 
-main "$@"
+if [[ "${GHDEPLOY_SOURCE_ONLY:-false}" != 'true' ]]; then
+  main "$@"
+fi

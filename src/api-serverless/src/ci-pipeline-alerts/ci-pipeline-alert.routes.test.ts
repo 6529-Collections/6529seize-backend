@@ -10,11 +10,15 @@ jest.mock('@/redis', () => ({
   getRedisClient: jest.fn()
 }));
 
-jest.mock('./ci-pipeline-alert.service', () => ({
-  ciPipelineAlertService: {
-    postAlert: jest.fn()
-  }
-}));
+jest.mock('./ci-pipeline-alert.service', () => {
+  const actual = jest.requireActual('./ci-pipeline-alert.service');
+  return {
+    ...actual,
+    ciPipelineAlertService: {
+      postAlert: jest.fn()
+    }
+  };
+});
 
 import fc from 'fast-check';
 import { getRedisClient } from '@/redis';
@@ -282,6 +286,32 @@ describe('ci pipeline alert routes', () => {
     );
   });
 
+  it('does not let ignored legacy contributors bypass notification dedupe', () => {
+    const common = {
+      repo: '6529seize-frontend',
+      workflow: 'Release Bus - Deploy Frontend Production',
+      status: 'success' as const,
+      run_id: '99',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/99',
+      title: 'Deploy complete',
+      triggered_by_github_login: '6529-release-bus[bot]',
+      environment: 'prod'
+    };
+
+    expect(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        contributor_github_logins: ['first-user']
+      })
+    ).toBe(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        contributor_github_logins: ['second-user']
+      })
+    );
+  });
+
   it('builds distinct dedupe keys for arbitrary changed alert fields', () => {
     const changedFieldArbitrary = fc.constantFrom(
       ...ciPipelineAlertChangedFields
@@ -315,16 +345,20 @@ describe('ci pipeline alert routes', () => {
 
   it('posts alerts without Redis dedupe when Redis is unavailable', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
-    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
-      undefined
-    );
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue({
+      ci_drop: 'accepted',
+      release_note: 'ineligible'
+    });
     const res = makeResponse();
 
     await ciPipelineAlertHandler(makeAlertRequest(), res);
 
     expect(ciPipelineAlertService.postAlert).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
-    expect(res.send).toHaveBeenCalledWith({});
+    expect(res.send).toHaveBeenCalledWith({
+      ci_drop: 'accepted',
+      release_note: 'ineligible'
+    });
   });
 
   it('rejects signed alert payloads with missing environments', async () => {
@@ -383,32 +417,41 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
-  it('requires a release train id with contributor metadata', async () => {
+  it('accepts legacy contributor metadata during rollout for safe omission', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue({
+      ci_drop: 'accepted',
+      release_note: 'ineligible'
+    });
 
-    await expect(
-      ciPipelineAlertHandler(
-        makeAlertRequest({
-          contributor_github_logins: ['GelatoGenesis']
-        }),
-        makeResponse()
-      )
-    ).rejects.toThrow(
-      'release_train_id is required with contributor_github_logins'
+    await ciPipelineAlertHandler(
+      makeAlertRequest({
+        contributor_github_logins: ['GelatoGenesis']
+      }),
+      makeResponse()
     );
 
-    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+    expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contributor_github_logins: ['GelatoGenesis']
+      }),
+      expect.any(Object)
+    );
   });
 
   it('accepts signed release train contributor metadata', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
-    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
-      undefined
-    );
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue({
+      ci_drop: 'accepted',
+      release_note: 'ineligible'
+    });
 
     await ciPipelineAlertHandler(
       makeAlertRequest({
-        release_train_id: 'train-123',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:frontend:a1',
+        contributor_evidence: 'release-bus-operation',
         contributor_github_logins: ['GelatoGenesis', 'prxt6529']
       }),
       makeResponse()
@@ -416,7 +459,10 @@ describe('ci pipeline alert routes', () => {
 
     expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
       expect.objectContaining({
-        release_train_id: 'train-123',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:frontend:a1',
+        contributor_evidence: 'release-bus-operation',
         contributor_github_logins: ['GelatoGenesis', 'prxt6529']
       }),
       expect.any(Object)
@@ -538,7 +584,10 @@ describe('ci pipeline alert routes', () => {
 
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
     expect(res.status).not.toHaveBeenCalled();
-    expect(res.send).toHaveBeenCalledWith({});
+    expect(res.send).toHaveBeenCalledWith({
+      ci_drop: 'duplicate',
+      release_note: 'duplicate'
+    });
   });
 
   it('logs post failures and still acknowledges the webhook', async () => {
@@ -558,6 +607,9 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).toHaveBeenCalledTimes(1);
     expect(redis.del).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
-    expect(res.send).toHaveBeenCalledWith({});
+    expect(res.send).toHaveBeenCalledWith({
+      ci_drop: 'failed',
+      release_note: 'not-requested'
+    });
   });
 });

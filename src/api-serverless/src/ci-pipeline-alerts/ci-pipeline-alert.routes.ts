@@ -12,8 +12,10 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
 import { GITHUB_CONTRIBUTOR_LOGIN_PATTERN } from '@/release-notes/release-note-contributors.config';
 import {
+  CiPipelineAlertOutcome,
   CiPipelineAlertRequest,
-  ciPipelineAlertService
+  ciPipelineAlertService,
+  verifiedContributorGithubLogins
 } from './ci-pipeline-alert.service';
 
 const router = asyncRouter();
@@ -53,7 +55,13 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
     service: Joi.string().trim().max(200).allow(null, '').optional(),
     release_train_id: Joi.string()
       .trim()
-      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
+      .guid({ version: ['uuidv4'] })
+      .allow(null, '')
+      .optional(),
+    release_operation_key: Joi.string()
+      .trim()
+      .pattern(/^rb2:[A-Za-z0-9:._-]{1,200}:a[1-9]\d{0,8}$/)
+      .max(240)
       .allow(null, '')
       .optional(),
     contributor_github_logins: Joi.array()
@@ -61,6 +69,10 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
         Joi.string().trim().max(39).pattern(GITHUB_CONTRIBUTOR_LOGIN_PATTERN)
       )
       .max(100)
+      .optional(),
+    contributor_evidence: Joi.string()
+      .valid('release-bus-operation', 'manual-pr', 'manual-range')
+      .allow(null)
       .optional(),
     release_notes_prompt_path: Joi.string()
       .trim()
@@ -113,14 +125,27 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   })
     .unknown(false)
     .custom((value, helpers) => {
+      // Accept the legacy train-plus-contributors shape during the ordered
+      // backend-first rollout. The service deliberately ignores contributors
+      // unless the new signed evidence contract is also present.
       if (
-        value.contributor_github_logins !== undefined &&
-        !value.release_train_id?.trim()
-      ) {
+        value.contributor_evidence === 'release-bus-operation' &&
+        (!value.release_train_id?.trim() ||
+          !value.release_operation_key?.trim())
+      )
         return helpers.message({
-          custom: 'release_train_id is required with contributor_github_logins'
+          custom:
+            'release_train_id and release_operation_key are required for release-bus contributor evidence'
         });
-      }
+      if (
+        (value.contributor_evidence === 'manual-pr' ||
+          value.contributor_evidence === 'manual-range') &&
+        (value.release_train_id?.trim() || value.release_operation_key?.trim())
+      )
+        return helpers.message({
+          custom:
+            'manual contributor evidence cannot include Release Bus identity'
+        });
       const groups = value.release_note_groups;
       if (!groups) return value;
       const service = value.service?.trim();
@@ -168,6 +193,17 @@ interface CiPipelineAlertProcessingState {
   readonly lockAcquired: boolean;
   readonly shouldSkip: boolean;
 }
+
+type CiPipelineAlertAcknowledgement =
+  | CiPipelineAlertOutcome
+  | {
+      readonly ci_drop: 'duplicate';
+      readonly release_note: 'duplicate';
+    }
+  | {
+      readonly ci_drop: 'failed';
+      readonly release_note: 'not-requested';
+    };
 
 function timingSafeEqualHex(a: string, b: string): boolean {
   const aBuffer = Buffer.from(a, 'hex');
@@ -270,6 +306,7 @@ export function verifyCiPipelineAlertSignature(
 export function buildCiPipelineAlertDedupeKey(
   request: CiPipelineAlertRequest
 ): string {
+  const verifiedContributors = verifiedContributorGithubLogins(request);
   const hash = crypto
     .createHash('sha256')
     .update(
@@ -285,7 +322,11 @@ export function buildCiPipelineAlertDedupeKey(
         request.sha ?? '',
         request.branch ?? '',
         request.environment ?? '',
-        request.service ?? ''
+        request.service ?? '',
+        request.release_train_id ?? '',
+        request.release_operation_key ?? '',
+        verifiedContributors.length ? request.contributor_evidence : '',
+        verifiedContributors
       ])
     )
     .digest('hex');
@@ -393,18 +434,20 @@ async function postCiPipelineAlert(
   request: CiPipelineAlertRequest,
   processingState: CiPipelineAlertProcessingState,
   req: Request
-): Promise<void> {
+): Promise<CiPipelineAlertOutcome | null> {
   const { cacheKey, lockAcquired, processingKey, redis } = processingState;
 
   try {
-    await ciPipelineAlertService.postAlert(request, {
+    const outcome = await ciPipelineAlertService.postAlert(request, {
       timer: Timer.getFromRequest(req)
     });
     if (redis && lockAcquired) {
       await markCiPipelineAlertProcessed(redis, cacheKey);
     }
+    return outcome;
   } catch (err) {
     logger.error(`Failed to post CI pipeline alert ${cacheKey}: ${err}`);
+    return null;
   } finally {
     if (redis && lockAcquired) {
       await releaseCiPipelineAlertProcessingLock(redis, processingKey);
@@ -416,7 +459,7 @@ router.post(
   '/',
   async (
     req: Request<any, any, CiPipelineAlertRequest, any, any>,
-    res: Response<ApiResponse<Record<string, never>>>
+    res: Response<ApiResponse<CiPipelineAlertAcknowledgement>>
   ) => {
     const verification = verifyCiPipelineAlertSignature(req);
     if (!verification.ok) {
@@ -432,11 +475,19 @@ router.post(
     );
     const processingState = await prepareCiPipelineAlertProcessing(request);
     if (processingState.shouldSkip) {
-      return res.send({});
+      return res.send({
+        ci_drop: 'duplicate',
+        release_note: 'duplicate'
+      });
     }
 
-    await postCiPipelineAlert(request, processingState, req);
-    return res.send({});
+    const outcome = await postCiPipelineAlert(request, processingState, req);
+    return res.send(
+      outcome ?? {
+        ci_drop: 'failed',
+        release_note: 'not-requested'
+      }
+    );
   }
 );
 

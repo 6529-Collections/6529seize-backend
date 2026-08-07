@@ -341,6 +341,34 @@ describe('processRequest', () => {
     );
   });
 
+  it.each(['invalid-range', 'already-deployed'] as const)(
+    'records the terminal %s release skip',
+    async (outcome) => {
+      const redis = buildRedis();
+
+      await processRequest(
+        {
+          ...request,
+          release_group_services: ['api'],
+          publish_release_note: true
+        },
+        {
+          redis: redis as any,
+          generateAndPost: jest.fn().mockResolvedValue(outcome)
+        }
+      );
+
+      expect(redis.set).toHaveBeenCalledWith(
+        'release-note:6529seize-backend:pr-1749',
+        '1',
+        { EX: 7776000 }
+      );
+      expect(redis.del).toHaveBeenCalledWith(
+        'release-note:6529seize-backend:pr-1749:processing'
+      );
+    }
+  );
+
   it('keeps the latest successful run for a service before publication', async () => {
     const runKey = 'release-note-group:6529seize-backend:pr-1749:run:api';
     const originalRun = JSON.stringify({
