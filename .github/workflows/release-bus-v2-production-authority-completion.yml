@@ -94,14 +94,30 @@ jobs:
           esac
           target_sha="$(jq -er '.head_sha' "$run_file")"
           run_attempt="$(jq -er '.run_attempt' "$run_file")"
-          artifact_status="$(curl --silent --show-error \
-            --connect-timeout 10 --max-time 60 --max-filesize 262144 \
-            --output "$artifact_file" --write-out '%{http_code}' \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            "$GITHUB_API_URL/repos/$BACKEND_REPOSITORY/actions/runs/$DEPLOY_RUN_ID/artifacts?per_page=100")"
-          test "$artifact_status" = 200
-          jq -e 'type == "object" and (.artifacts | type == "array" and length <= 100)' "$artifact_file" > /dev/null
+          if [ "$conclusion" = success ]; then
+            expected_artifact="backend-production-authority-$DEPLOY_RUN_ID"
+          else
+            expected_artifact="backend-production-authority-failure-$DEPLOY_RUN_ID"
+          fi
+          artifact_count=0
+          for artifact_attempt in {1..12}; do
+            artifact_status="$(curl --silent --show-error \
+              --connect-timeout 10 --max-time 60 --max-filesize 262144 \
+              --output "$artifact_file" --write-out '%{http_code}' \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "$GITHUB_API_URL/repos/$BACKEND_REPOSITORY/actions/runs/$DEPLOY_RUN_ID/artifacts?per_page=100")"
+            test "$artifact_status" = 200
+            jq -e 'type == "object" and (.artifacts | type == "array" and length <= 100)' "$artifact_file" > /dev/null
+            artifact_count="$(jq -r --arg name "$expected_artifact" '[.artifacts[] | select(.name == $name)] | length' "$artifact_file")"
+            test "$artifact_count" -le 1
+            if [ "$artifact_count" = 1 ]; then
+              break
+            fi
+            if [ "$artifact_attempt" -lt 12 ]; then
+              sleep 5
+            fi
+          done
           {
             echo 'manual_prod=true'
             echo "conclusion=$conclusion"
@@ -111,8 +127,6 @@ jobs:
             echo "workflow_run_attempt=$run_attempt"
           } >> "$GITHUB_OUTPUT"
           if [ "$conclusion" = success ]; then
-            expected_artifact="backend-production-authority-$DEPLOY_RUN_ID"
-            artifact_count="$(jq -r --arg name "$expected_artifact" '[.artifacts[] | select(.name == $name)] | length' "$artifact_file")"
             test "$artifact_count" = 1
             artifact_json="$(jq -c --arg name "$expected_artifact" '[.artifacts[] | select(.name == $name)][0]' "$artifact_file")"
             jq -e \
@@ -122,8 +136,6 @@ jobs:
               <<< "$artifact_json" > /dev/null
             echo "evidence_artifact_name=$expected_artifact" >> "$GITHUB_OUTPUT"
           else
-            expected_artifact="backend-production-authority-failure-$DEPLOY_RUN_ID"
-            artifact_count="$(jq -r --arg name "$expected_artifact" '[.artifacts[] | select(.name == $name)] | length' "$artifact_file")"
             if [ "$artifact_count" = 0 ]; then
               echo 'failure_artifact_available=false' >> "$GITHUB_OUTPUT"
             elif [ "$artifact_count" = 1 ]; then

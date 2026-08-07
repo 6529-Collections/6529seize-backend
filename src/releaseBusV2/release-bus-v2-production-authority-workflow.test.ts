@@ -6,6 +6,72 @@ import YAML from 'yaml';
 const root = process.cwd();
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
 
+const extractInlineJqFilter = (script: string, marker: string): string => {
+  const markerIndex = script.indexOf(marker);
+  if (markerIndex < 0) throw new Error(`Missing jq filter marker: ${marker}`);
+  const filterStart = script.indexOf('\'type == "object" and', markerIndex);
+  const filterSuffix = script.slice(filterStart);
+  const filterEndMatch = /'\s+"\$response_file"/.exec(filterSuffix);
+  if (filterStart < 0 || !filterEndMatch)
+    throw new Error(`Missing inline jq response filter after: ${marker}`);
+  return filterSuffix.slice(1, filterEndMatch.index);
+};
+
+const validAuthorityResponse = {
+  authorized: true,
+  bound: true,
+  control_epoch: { all: 69, mode: 'PRODUCTION', production: 43 },
+  controller_identity: 'backend-production-workflow',
+  environment: 'prod',
+  hard_expires_at: 20_000,
+  lease_expires_at: 10_000,
+  lock_row_version: 343,
+  operation_id: 'backend-prod-api-123',
+  repository: 'backend',
+  reused: false,
+  selection_digest: null as string | null,
+  service: 'api',
+  status: 'BOUND',
+  target_sha: 'a'.repeat(40),
+  workflow_run_attempt: 1,
+  workflow_run_id: '123'
+};
+
+const runAuthorityResponseFilter = (
+  filter: string,
+  response: typeof validAuthorityResponse,
+  selectionDigest?: string
+) => {
+  const args = [
+    '-e',
+    '--arg',
+    'operation_id',
+    response.operation_id,
+    '--arg',
+    'controller_identity',
+    response.controller_identity,
+    '--arg',
+    'service',
+    response.service,
+    '--arg',
+    'target_sha',
+    response.target_sha,
+    '--arg',
+    'workflow_run_id',
+    response.workflow_run_id,
+    '--argjson',
+    'workflow_run_attempt',
+    String(response.workflow_run_attempt)
+  ];
+  if (selectionDigest) args.push('--arg', 'selection_digest', selectionDigest);
+  args.push(filter);
+  execFileSync('jq', args, {
+    cwd: root,
+    input: JSON.stringify(response),
+    stdio: 'pipe'
+  });
+};
+
 describe('backend production authority workflow integration', () => {
   it('keeps the generated workflow deterministic and acquires before candidate code', () => {
     const workflowPath = '.github/workflows/deploy.yml';
@@ -109,7 +175,7 @@ describe('backend production authority workflow integration', () => {
     const canonicalAuthorityResponseKeys =
       '"authorized", "bound", "control_epoch", "controller_identity"';
     expect(acquireResponseValidation).toBeGreaterThan(-1);
-    expect(authorityStateWrite).toBeGreaterThan(acquireResponseValidation);
+    expect(authorityStateWrite).toBeLessThan(acquireResponseValidation);
     expect(acquireScript).toContain(canonicalAuthorityResponseKeys);
     expect(acquireScript).not.toContain(
       '"authorized", "bound", "controller_identity", "control_epoch"'
@@ -208,6 +274,61 @@ describe('backend production authority workflow integration', () => {
       'backend-production-authority-failure-${{ github.run_id }}'
     );
     expect(before).not.toContain('/production-authority/complete');
+  });
+
+  it('executes both inline authority response filters with object-scoped expiry comparisons', () => {
+    const parsed = YAML.parse(read('.github/workflows/deploy.yml')) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const steps = parsed.jobs['build-and-deploy'].steps;
+    const acquireScript =
+      steps.find(({ name }) => name === 'Authorize exact deployment operation')
+        ?.run ?? '';
+    const reauthorizeScript =
+      steps.find(
+        ({ name }) =>
+          name ===
+          'Reauthorize exact backend production selection immediately before cloud credentials'
+      )?.run ?? '';
+    const acquireFilter = extractInlineJqFilter(
+      acquireScript,
+      'if [ "$http_status" = 200 ] && [ "$production_authority" = true ]'
+    );
+    const reauthorizeFilter = extractInlineJqFilter(
+      reauthorizeScript,
+      'test "$http_status" = 200 ||'
+    );
+    const selectionDigest = 'b'.repeat(64);
+
+    expect(acquireFilter).toContain('(.hard_expires_at > .lease_expires_at)');
+    expect(reauthorizeFilter).toContain(
+      '(.hard_expires_at > .lease_expires_at)'
+    );
+    expect(acquireFilter).not.toContain(
+      '.hard_expires_at | type == "number" and . > .lease_expires_at'
+    );
+    expect(() =>
+      runAuthorityResponseFilter(acquireFilter, validAuthorityResponse)
+    ).not.toThrow();
+    expect(() =>
+      runAuthorityResponseFilter(
+        reauthorizeFilter,
+        {
+          ...validAuthorityResponse,
+          selection_digest: selectionDigest
+        },
+        selectionDigest
+      )
+    ).not.toThrow();
+
+    for (const invalidHardExpiry of [10_000, '20000']) {
+      expect(() =>
+        runAuthorityResponseFilter(acquireFilter, {
+          ...validAuthorityResponse,
+          hard_expires_at: invalidHardExpiry as number
+        })
+      ).toThrow();
+    }
   });
 
   it.each([
@@ -312,6 +433,10 @@ describe('backend production authority workflow integration', () => {
     expect(identity).toContain('(.workflow_id | type == "number" and . >= 1)');
     expect(identity).toContain('backend-production-authority-');
     expect(identity).toContain('backend-production-authority-failure-');
+    expect(identity).toContain('for artifact_attempt in {1..12}');
+    expect(identity).toContain('if [ "$artifact_attempt" -lt 12 ]');
+    expect(identity).toContain('sleep 5');
+    expect(identity).toContain('test "$artifact_count" -le 1');
     const completion = parsed.jobs.complete.steps.find(({ name }) =>
       name?.includes('complete backend authority')
     );
