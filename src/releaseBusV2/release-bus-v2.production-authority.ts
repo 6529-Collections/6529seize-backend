@@ -82,6 +82,7 @@ export type ReleaseBusV2ProductionAuthorityDependencies = {
     forUpdate?: boolean
   ) => Promise<readonly unknown[]>;
   readonly getWorkflowRunIdentity: WorkflowRunIdentityReader;
+  readonly getProductionE2EWorkflowRunIdentity: WorkflowRunIdentityReader;
   readonly isOrganizationOperator: (actor: string) => Promise<boolean>;
   readonly resolveRef: (
     repository: ReleaseBusV2Repository,
@@ -116,6 +117,11 @@ const defaultDependencies: ReleaseBusV2ProductionAuthorityDependencies = {
     ),
   getWorkflowRunIdentity: (repository, workflowRunId) =>
     releaseBusGitHubApp.getWorkflowRunIdentity(repository, workflowRunId),
+  getProductionE2EWorkflowRunIdentity: (repository, workflowRunId) =>
+    releaseBusGitHubApp.getProductionE2EWorkflowRunIdentity(
+      repository,
+      workflowRunId
+    ),
   isOrganizationOperator: (actor) =>
     releaseBusGitHubApp.isOrganizationOperator(
       actor,
@@ -1282,10 +1288,15 @@ export class ReleaseBusV2ProductionAuthorityService {
     repository: ReleaseBusV2Repository
   ): Promise<ReleaseBusWorkflowRunIdentity> {
     try {
-      return await this.deps.getWorkflowRunIdentity(
-        repository,
-        input.qualifier_workflow_run_id
-      );
+      return await (repository === 'frontend'
+        ? this.deps.getProductionE2EWorkflowRunIdentity(
+            repository,
+            input.qualifier_workflow_run_id
+          )
+        : this.deps.getWorkflowRunIdentity(
+            repository,
+            input.qualifier_workflow_run_id
+          ));
     } catch {
       throw new ReleaseBusV2ProductionAuthorityError(
         'UNAVAILABLE',
