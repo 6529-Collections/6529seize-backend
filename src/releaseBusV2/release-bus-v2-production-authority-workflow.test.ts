@@ -110,6 +110,14 @@ describe('backend production authority workflow integration', () => {
     expect(authorityStateWrite).toBeGreaterThan(acquireResponseValidation);
     expect(acquireScript).not.toContain('authority_state_json=');
     expect(acquireScript).not.toContain('--retry');
+    expect(acquireScript).toContain(
+      '--arg title "Deploy api to prod [backend-prod-api-$GITHUB_RUN_ID]"'
+    );
+    expect(acquireScript).toContain('.name == $title');
+    expect(acquireScript).toContain('.display_title == $title');
+    expect(acquireScript).not.toContain(
+      '.name == "Deploy api to prod [manual]"'
+    );
     expect(steps[acquire]?.uses).toBeUndefined();
     expect(steps[acquire]?.if).toBeUndefined();
 

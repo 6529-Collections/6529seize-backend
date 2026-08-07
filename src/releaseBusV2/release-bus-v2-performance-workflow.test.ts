@@ -570,6 +570,14 @@ printf '200'
       ({ name }) => name === 'Verify API health and exact version'
     );
     expect(authorize).toBeTruthy();
+    expect(authorize).toContain(
+      '--arg title "Deploy api to prod [backend-prod-api-$GITHUB_RUN_ID]"'
+    );
+    expect(authorize).toContain('.name == $title');
+    expect(authorize).toContain('.display_title == $title');
+    expect(authorize).not.toContain(
+      '.display_title == "Deploy api to prod [manual]"'
+    );
     expect(revalidateStep).toBeDefined();
     expect(revalidateStep?.if).toBe(
       "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
