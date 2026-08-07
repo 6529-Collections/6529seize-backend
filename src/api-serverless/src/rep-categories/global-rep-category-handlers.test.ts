@@ -14,6 +14,7 @@ import {
   GetGlobalRepCategoryWavesQuery,
   GetGlobalRepCategoryWavesRequest
 } from '@/api/generated/routes/operations';
+import { REP_CATEGORY_INVALID_MESSAGE } from '@/entities/IAbusivenessDetectionResult';
 import { PageSortDirection } from '@/api/page-request';
 import { globalRepCategoryApiService } from '@/api/rep-categories/global-rep-category.api.service';
 import {
@@ -155,15 +156,29 @@ describe('global REP category handlers', () => {
   });
 
   it('rejects invalid category names before calling the service', async () => {
+    // A slash is disallowed (dashes are allowed now, but only non-leading).
+    const invalidCategory = 'bad/category';
     const getOverview = jest
       .spyOn(globalRepCategoryApiService, 'getOverview')
-      .mockResolvedValue(makeOverview('bad-category'));
+      .mockResolvedValue(makeOverview(invalidCategory));
 
     await expect(
-      handleGetGlobalRepCategoryOverview(makeOverviewRequest('bad-category'))
-    ).rejects.toThrow('"category" with value "bad-category" fails');
+      handleGetGlobalRepCategoryOverview(makeOverviewRequest(invalidCategory))
+    ).rejects.toThrow(REP_CATEGORY_INVALID_MESSAGE);
 
     expect(getOverview).not.toHaveBeenCalled();
+  });
+
+  it('accepts a category with a non-leading dash', async () => {
+    const getOverview = jest
+      .spyOn(globalRepCategoryApiService, 'getOverview')
+      .mockResolvedValue(makeOverview('state-of-the-art'));
+
+    await handleGetGlobalRepCategoryOverview(
+      makeOverviewRequest('state-of-the-art')
+    );
+
+    expect(getOverview).toHaveBeenCalled();
   });
 
   it('applies ratings query defaults and normalizes empty search', async () => {

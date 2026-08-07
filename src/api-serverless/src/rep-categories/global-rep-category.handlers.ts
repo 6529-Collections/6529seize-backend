@@ -24,7 +24,10 @@ import {
 } from '@/api/rep-categories/global-rep-category.db';
 import { globalRepCategoryApiService } from '@/api/rep-categories/global-rep-category.api.service';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
+import {
+  REP_CATEGORY_INVALID_MESSAGE,
+  REP_CATEGORY_PATTERN
+} from '@/entities/IAbusivenessDetectionResult';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 
@@ -58,6 +61,9 @@ type WaveRankingParams = OverviewParams & {
 const CategorySchema = Joi.string()
   .max(100)
   .regex(REP_CATEGORY_PATTERN)
+  .messages({
+    'string.pattern.base': REP_CATEGORY_INVALID_MESSAGE
+  })
   .required();
 
 const OverviewSchema = Joi.object<OverviewParams>({
