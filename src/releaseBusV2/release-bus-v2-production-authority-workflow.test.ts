@@ -302,8 +302,11 @@ describe('backend production authority workflow integration', () => {
     const identity = parsed.jobs.complete.steps[0]?.run ?? '';
     expect(identity).toContain('.event == "workflow_dispatch"');
     expect(identity).toContain('.status == "completed"');
-    expect(identity).toContain('.name == .display_title');
-    expect(identity).not.toContain('.name == "Deploy a service"');
+    expect(identity).toContain('actions/workflows/$workflow_id');
+    expect(identity).toContain('.name == "Deploy a service"');
+    expect(identity).toContain('.path == ".github/workflows/deploy.yml"');
+    expect(identity).toContain('.state == "active"');
+    expect(identity).toContain('(.workflow_id | type == "number" and . >= 1)');
     expect(identity).toContain('backend-production-authority-');
     expect(identity).toContain('backend-production-authority-failure-');
     const completion = parsed.jobs.complete.steps.find(({ name }) =>
