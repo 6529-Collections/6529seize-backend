@@ -211,7 +211,7 @@ env:
   API_GATEWAY_WS_ENDPOINT_PROD: https://ws.6529.io
   API_GATEWAY_WS_ENDPOINT_STAGING: https://ws.staging.6529.io
 
-run-name: Deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }} [\${{ github.event.inputs.operation_key || 'manual' }}]
+run-name: Deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }} [\${{ github.event.inputs.operation_key != '' && github.event.inputs.operation_key || (github.event.inputs.environment == 'prod' && format('backend-prod-{0}-{1}', github.event.inputs.service, github.run_id) || 'manual') }}]
 
 jobs:
   build-and-deploy:
@@ -293,6 +293,10 @@ jobs:
             if [ -n "$INPUT_ARTIFACT_TRAIN_ID" ]; then
               [[ "$INPUT_ARTIFACT_TRAIN_ID" =~ ^[A-Za-z0-9._-]{1,100}$ ]]
             fi
+          elif [ "$INPUT_ENVIRONMENT" = prod ]; then
+            [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+            [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,5}$ ]]
+            [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
           else
             test -z "$INPUT_TRAIN_ID"
             test -z "$INPUT_TRAIN_REVISION"
@@ -343,6 +347,7 @@ jobs:
           test -n "$RELEASE_BUS_WORKFLOW_AUTH_TOKEN"
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
+          production_authority=false
           if [ -n "$INPUT_OPERATION_KEY" ]; then
             payload="$(jq -n \
               --arg train_id "$INPUT_TRAIN_ID" \
@@ -356,6 +361,24 @@ jobs:
               --arg artifact_digest "$INPUT_ARTIFACT_DIGEST" \
               '{train_id:$train_id,operation_key:$operation_key,workflow_run_id:$workflow_run_id,artifact_run_id:$artifact_run_id,repository:$repository,environment:$environment,service:$service,expected_sha:$expected_sha,artifact_digest:$artifact_digest}')"
             endpoint=release-bus-v2/authorize
+          elif [ "$INPUT_ENVIRONMENT" = prod ]; then
+            operation_id="backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID"
+            payload="$(jq -n \
+              --arg operation_id "$operation_id" \
+              --arg controller_identity backend-production-workflow \
+              --arg repository backend \
+              --arg environment prod \
+              --arg service "$INPUT_SERVICE" \
+              --arg target_sha "$GITHUB_SHA" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+              '{operation_id:$operation_id,controller_identity:$controller_identity,
+                repository:$repository,environment:$environment,service:$service,
+                target_sha:$target_sha,selection_digest:null,
+                workflow_run_id:$workflow_run_id,
+                workflow_run_attempt:$workflow_run_attempt}')"
+            endpoint=release-bus-v2/production-authority/acquire-bind
+            production_authority=true
           else
             expected_lane="$([ "$INPUT_ENVIRONMENT" = staging ] && printf STAGING || printf PRODUCTION)"
             payload="$(jq -n \
@@ -379,6 +402,15 @@ jobs:
             --data "$payload" \
               "$RELEASE_BUS_API_URL/deploy/$endpoint")"
           emergency_compatibility_fallback=false
+          if [ "$production_authority" = true ] && [ "$http_status" != 200 ]; then
+            rejection_reason="$(jq -r '.reason_code // .error // empty' "$response_file" 2>/dev/null)"
+            if [ -n "$rejection_reason" ]; then
+              echo "::error::Production authority acquisition was rejected with HTTP $http_status: $rejection_reason"
+            else
+              echo "::error::Production authority acquisition was rejected with HTTP $http_status"
+            fi
+            exit 1
+          fi
           if [ "$http_status" != 200 ]; then
             rejection_reason="$(jq -r '.error // empty' "$response_file" 2>/dev/null)"
             if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ] &&
@@ -621,7 +653,56 @@ jobs:
               exit 1
             fi
           fi
-          if [ "$http_status" = 200 ] && [ -n "$INPUT_OPERATION_KEY" ]; then
+          if [ "$http_status" = 200 ] && [ "$production_authority" = true ]; then
+            authority_state_file="$RUNNER_TEMP/backend-production-authority-state.json"
+            jq -e \
+              --arg operation_id "$operation_id" \
+              --arg controller_identity backend-production-workflow \
+              --arg service "$INPUT_SERVICE" \
+              --arg target_sha "$GITHUB_SHA" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+              'type == "object" and
+               (keys_unsorted | sort) == [
+                 "authorized", "bound", "controller_identity", "control_epoch",
+                 "environment", "hard_expires_at", "lease_expires_at",
+                 "lock_row_version", "operation_id", "repository", "reused",
+                 "selection_digest", "service", "status", "target_sha",
+                 "workflow_run_attempt", "workflow_run_id"
+               ] and
+               .authorized == true and .bound == true and .reused == false and
+               .status == "BOUND" and .repository == "backend" and
+               .environment == "prod" and .controller_identity == $controller_identity and
+               .operation_id == $operation_id and .service == $service and
+               .target_sha == $target_sha and .selection_digest == null and
+               .workflow_run_id == $workflow_run_id and
+               .workflow_run_attempt == $workflow_run_attempt and
+               (.lease_expires_at | type == "number" and . > 0) and
+               (.hard_expires_at | type == "number" and . > .lease_expires_at) and
+               (.lock_row_version | type == "number" and . >= 1) and
+               (.control_epoch | type == "object" and
+                (keys_unsorted | sort) == ["all", "mode", "production"] and
+                (.all | type == "number" and . >= 1) and
+                (.production | type == "number" and . >= 1) and
+                (.mode | type == "string"))' \
+              "$response_file" > /dev/null
+            state_json="$(jq -cnS \
+              --arg operation_id "$operation_id" \
+              --arg controller_identity backend-production-workflow \
+              --arg repository backend \
+              --arg environment prod \
+              --arg service "$INPUT_SERVICE" \
+              --arg target_sha "$GITHUB_SHA" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+              '{schema_version:1,state_type:"backend-production-authority-state-v1",
+                operation_id:$operation_id,controller_identity:$controller_identity,
+                repository:$repository,environment:$environment,service:$service,
+                target_sha:$target_sha,workflow_run_id:$workflow_run_id,
+                workflow_run_attempt:$workflow_run_attempt,selection_digest:null}')"
+            printf '%s\\n' "$state_json" > "$authority_state_file"
+            echo "authority_operation_id=$operation_id" >> "$GITHUB_OUTPUT"
+          elif [ "$http_status" = 200 ] && [ -n "$INPUT_OPERATION_KEY" ]; then
             jq -e \
               --arg train_id "$INPUT_TRAIN_ID" \
               --arg operation_key "$INPUT_OPERATION_KEY" \
@@ -888,20 +969,158 @@ jobs:
           rm -rf "$destination"
           mkdir -p "$destination"
           cp "release-bus-artifact/packages/$INPUT_SERVICE/index.zip" "$destination/index.zip"
-      - name: Revalidate emergency API bootstrap immediately before cloud credentials
-        if: steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
+      - name: Reauthorize exact backend production selection immediately before cloud credentials
+        if: github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        id: production_selection_authorization
         shell: bash
         env:
           RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
           RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
-          GITHUB_TOKEN: \${{ github.token }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"
-          {
-            echo
-            echo "Emergency compatibility readiness revalidated immediately before cloud credentials."
-          } >> "$GITHUB_STEP_SUMMARY"
+          umask 077
+          state_file="$RUNNER_TEMP/backend-production-authority-state.json"
+          selection_file="$RUNNER_TEMP/backend-production-deployment-selection.json"
+          test -f "$state_file"
+          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,5}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          jq -e \
+            --arg operation_id "backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID" \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            'type == "object" and
+             (keys_unsorted | sort) == [
+               "controller_identity", "environment", "operation_id", "repository",
+               "schema_version", "selection_digest", "service", "state_type",
+               "target_sha", "workflow_run_attempt", "workflow_run_id"
+             ] and
+             .schema_version == 1 and
+             .state_type == "backend-production-authority-state-v1" and
+             .operation_id == $operation_id and
+             .controller_identity == "backend-production-workflow" and
+             .repository == "backend" and .environment == "prod" and
+             .service == $service and .target_sha == $target_sha and
+             .workflow_run_id == $workflow_run_id and
+             .workflow_run_attempt == $workflow_run_attempt and
+             .selection_digest == null' \
+            "$state_file" > /dev/null
+          if [ "$INPUT_SERVICE" = api ]; then
+            package_path=src/api-serverless/dist/index.zip
+          else
+            package_path="src/$INPUT_SERVICE/dist/index.zip"
+          fi
+          test -f "$package_path"
+          test ! -L "$package_path"
+          package_bytes="$(stat -c '%s' "$package_path")"
+          [[ "$package_bytes" =~ ^[1-9][0-9]{0,8}$ ]]
+          test "$package_bytes" -le 524288000
+          package_digest="$(sha256sum "$package_path" | cut -d' ' -f1)"
+          [[ "$package_digest" =~ ^[a-f0-9]{64}$ ]]
+          selection_json="$(jq -cnS \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg package_path "$package_path" \
+            --arg package_digest "$package_digest" \
+            --argjson package_bytes "$package_bytes" \
+            '{schema_version:1,selection_type:"backend-production-deployment-selection-v1",
+              repository:"backend",environment:"prod",service:$service,
+              target_sha:$target_sha,workflow_run_id:$workflow_run_id,
+              workflow_run_attempt:$workflow_run_attempt,artifact_kind:"lambda-zip",
+              package_path:$package_path,package_digest:$package_digest,
+              package_bytes:$package_bytes}')"
+          printf '%s' "$selection_json" > "$selection_file"
+          selection_digest="$(sha256sum "$selection_file" | cut -d' ' -f1)"
+          [[ "$selection_digest" =~ ^[a-f0-9]{64}$ ]]
+          payload="$(jq -cn \
+            --arg operation_id "backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID" \
+            --arg controller_identity backend-production-workflow \
+            --arg repository backend \
+            --arg environment prod \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg selection_digest "$selection_digest" \
+            '{operation_id:$operation_id,controller_identity:$controller_identity,
+              repository:$repository,environment:$environment,service:$service,
+              target_sha:$target_sha,workflow_run_id:$workflow_run_id,
+              workflow_run_attempt:$workflow_run_attempt,
+              selection_digest:$selection_digest}')"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          http_status="$(curl --silent --show-error \
+            --connect-timeout 10 --max-time 60 --max-filesize 32768 \
+            --output "$response_file" --write-out '%{http_code}' \
+            -H "Authorization: Bearer $RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$RELEASE_BUS_API_URL/deploy/release-bus-v2/production-authority/reauthorize")"
+          test "$http_status" = 200 || {
+            reason_code="$(jq -r '.reason_code // .error // empty' "$response_file" 2>/dev/null || true)"
+            if [ -n "$reason_code" ]; then
+              echo "::error::Backend production authority reauthorization was rejected: $reason_code" >&2
+            else
+              echo "::error::Backend production authority reauthorization was rejected with HTTP $http_status" >&2
+            fi
+            exit 1
+          }
+          jq -e \
+            --arg operation_id "backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID" \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg selection_digest "$selection_digest" \
+            'type == "object" and
+             (keys_unsorted | sort) == [
+               "authorized", "bound", "controller_identity", "control_epoch",
+               "environment", "hard_expires_at", "lease_expires_at",
+               "lock_row_version", "operation_id", "repository", "reused",
+               "selection_digest", "service", "status", "target_sha",
+               "workflow_run_attempt", "workflow_run_id"
+             ] and
+             .authorized == true and .bound == true and .reused == false and
+             .status == "BOUND" and .controller_identity == "backend-production-workflow" and
+             .repository == "backend" and .environment == "prod" and
+             .operation_id == $operation_id and .service == $service and
+             .target_sha == $target_sha and .workflow_run_id == $workflow_run_id and
+             .workflow_run_attempt == $workflow_run_attempt and
+             .selection_digest == $selection_digest and
+             (.lease_expires_at | type == "number" and . > 0) and
+             (.hard_expires_at | type == "number" and . > .lease_expires_at) and
+             (.lock_row_version | type == "number" and . >= 1) and
+             (.control_epoch | type == "object" and
+              (keys_unsorted | sort) == ["all", "mode", "production"] and
+              (.all | type == "number" and . >= 1) and
+              (.production | type == "number" and . >= 1) and
+              (.mode | type == "string"))' \
+            "$response_file" > /dev/null
+          state_json="$(jq -cnS \
+            --arg operation_id "backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID" \
+            --arg controller_identity backend-production-workflow \
+            --arg repository backend \
+            --arg environment prod \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg selection_digest "$selection_digest" \
+            '{schema_version:1,state_type:"backend-production-authority-state-v1",
+              operation_id:$operation_id,controller_identity:$controller_identity,
+              repository:$repository,environment:$environment,service:$service,
+              target_sha:$target_sha,workflow_run_id:$workflow_run_id,
+              workflow_run_attempt:$workflow_run_attempt,
+              selection_digest:$selection_digest}')"
+          state_tmp="$state_file.tmp"
+          printf '%s' "$state_json" > "$state_tmp"
+          mv -f "$state_tmp" "$state_file"
+          echo "selection_digest=$selection_digest" >> "$GITHUB_OUTPUT"
       - name: Configure AWS credentials
         id: aws_credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
@@ -1188,6 +1407,108 @@ jobs:
           done
           echo "API did not report healthy exact commit $INPUT_EXPECTED_SHA" >&2
           exit 1
+      - name: Create backend production authority evidence
+        if: success() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        id: production_authority_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          state_file="$RUNNER_TEMP/backend-production-authority-state.json"
+          selection_file="$RUNNER_TEMP/backend-production-deployment-selection.json"
+          evidence_file="$RUNNER_TEMP/backend-production-authority-evidence.json"
+          test -f "$state_file"
+          test -f "$selection_file"
+          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,5}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          jq -e \
+            --arg operation_id "backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID" \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            'type == "object" and
+             (keys_unsorted | sort) == [
+               "controller_identity", "environment", "operation_id", "repository",
+               "schema_version", "selection_digest", "service", "state_type",
+               "target_sha", "workflow_run_attempt", "workflow_run_id"
+             ] and
+             .schema_version == 1 and
+             .state_type == "backend-production-authority-state-v1" and
+             .operation_id == $operation_id and
+             .controller_identity == "backend-production-workflow" and
+             .repository == "backend" and .environment == "prod" and
+             .service == $service and .target_sha == $target_sha and
+             .workflow_run_id == $workflow_run_id and
+             .workflow_run_attempt == $workflow_run_attempt and
+             (.selection_digest | type == "string" and test("^[a-f0-9]{64}$"))' \
+            "$state_file" > /dev/null
+          selection_json="$(jq -cS '.' "$selection_file")"
+          jq -e \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            'type == "object" and
+             (keys_unsorted | sort) == [
+               "artifact_kind", "environment", "package_bytes", "package_digest",
+               "package_path", "repository", "schema_version", "selection_type",
+               "service", "target_sha", "workflow_run_attempt", "workflow_run_id"
+             ] and
+             .schema_version == 1 and
+             .selection_type == "backend-production-deployment-selection-v1" and
+             .repository == "backend" and .environment == "prod" and
+             .service == $service and .target_sha == $target_sha and
+             .workflow_run_id == $workflow_run_id and
+             .workflow_run_attempt == $workflow_run_attempt and
+             .artifact_kind == "lambda-zip" and
+             (.package_path | type == "string" and
+              test("^src/(api-serverless|[A-Za-z0-9]+)/dist/index\\.zip$")) and
+             (.package_digest | type == "string" and test("^[a-f0-9]{64}$")) and
+             (.package_bytes | type == "number" and . >= 1 and . <= 524288000)' \
+            "$selection_file" > /dev/null
+          selection_digest="$(printf '%s' "$selection_json" | sha256sum | cut -d' ' -f1)"
+          persisted_selection_digest="$(jq -er '.selection_digest' "$state_file")"
+          test "$selection_digest" = "$persisted_selection_digest"
+          package_path="$(jq -er '.package_path' "$selection_file")"
+          package_digest="$(jq -er '.package_digest' "$selection_file")"
+          package_bytes="$(jq -er '.package_bytes' "$selection_file")"
+          test -f "$package_path"
+          test ! -L "$package_path"
+          test "$(stat -c '%s' "$package_path")" = "$package_bytes"
+          test "$(sha256sum "$package_path" | cut -d' ' -f1)" = "$package_digest"
+          evidence_json="$(jq -cnS \
+            --arg operation_id "backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID" \
+            --arg controller_identity backend-production-workflow \
+            --arg repository backend \
+            --arg environment prod \
+            --arg service "$INPUT_SERVICE" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg selection_digest "$selection_digest" \
+            --argjson selection "$selection_json" \
+            '{evidence_type:"backend-production-authority-v1",schema_version:1,
+              operation_id:$operation_id,controller_identity:$controller_identity,
+              repository:$repository,environment:$environment,service:$service,
+              target_sha:$target_sha,workflow_run_id:$workflow_run_id,
+              workflow_run_attempt:$workflow_run_attempt,
+              selection_digest:$selection_digest,selection:$selection,
+              deployment_result:"success"}')"
+          printf '%s' "$evidence_json" > "$evidence_file"
+          evidence_bytes="$(stat -c '%s' "$evidence_file")"
+          test "$evidence_bytes" -ge 1
+          test "$evidence_bytes" -le 65536
+      - name: Upload backend production authority evidence
+        if: success() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-production-authority-\${{ github.run_id }}
+          path: \${{ runner.temp }}/backend-production-authority-evidence.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Report structured Release Bus deployment result
         if: always() && github.event.inputs.operation_key != ''
         shell: bash
@@ -1401,6 +1722,51 @@ jobs:
           CI_RELEASE_NOTE_GROUPS: \${{ github.event.inputs.release_note_groups }}
           CI_RELEASE_NOTE_OPT_OUT: \${{ github.event.inputs.release_note_opt_out }}
         run: node scripts/notify-ci-wave.mjs
+
+      - name: Preserve bounded backend production authority failure evidence
+        if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        shell: bash
+        env:
+          JOB_STATUS: \${{ job.status }}
+        run: |
+          set -euo pipefail
+          if [ "$JOB_STATUS" = success ]; then
+            exit 0
+          fi
+          state_file="$RUNNER_TEMP/backend-production-authority-state.json"
+          failure_file="$RUNNER_TEMP/backend-production-authority-failure.json"
+          if [ ! -f "$state_file" ]; then
+            exit 0
+          fi
+          jq -e \
+            'type == "object" and
+             (keys_unsorted | sort) == [
+               "controller_identity", "environment", "operation_id", "repository",
+               "schema_version", "selection_digest", "service", "state_type",
+               "target_sha", "workflow_run_attempt", "workflow_run_id"
+             ] and
+             .schema_version == 1 and
+             .state_type == "backend-production-authority-state-v1" and
+             .controller_identity == "backend-production-workflow" and
+             .repository == "backend" and .environment == "prod" and
+             (.operation_id | type == "string" and test("^backend-prod-[A-Za-z0-9]+-[1-9][0-9]{0,19}$")) and
+             (.service | type == "string" and test("^[A-Za-z0-9]+$")) and
+             (.target_sha | type == "string" and test("^[a-f0-9]{40}$")) and
+             (.workflow_run_id | type == "string" and test("^[1-9][0-9]{0,19}$")) and
+             (.workflow_run_attempt | type == "number" and . >= 1 and . <= 1000000) and
+             (.selection_digest == null or
+              (.selection_digest | type == "string" and test("^[a-f0-9]{64}$")))' \
+            "$state_file" > /dev/null
+          cp -- "$state_file" "$failure_file"
+      - name: Upload backend production authority failure state
+        if: always() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod' && job.status != 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-production-authority-failure-\${{ github.run_id }}
+          path: \${{ runner.temp }}/backend-production-authority-failure.json
+          if-no-files-found: ignore
+          retention-days: 7
 `;
 }
 
