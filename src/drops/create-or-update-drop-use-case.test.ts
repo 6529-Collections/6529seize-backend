@@ -180,6 +180,31 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
   }
 
+  it('rejects oversized content before an update can delete existing rows', async () => {
+    const deleteDropUseCase = { execute: jest.fn() };
+    const useCase = createUseCaseWithMocks({ deleteDropUseCase });
+
+    await expect(
+      useCase.execute(
+        createChatDropModel({
+          drop_id: 'drop-1',
+          parts: [
+            {
+              content: 'a'.repeat(25_001),
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        false,
+        { connection: {} as any }
+      )
+    ).rejects.toThrow(
+      'drop part 1 content must be at most 25000 UTF-16 code units'
+    );
+    expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
+  });
+
   it('does not increment inserted-drop metrics when editing a drop', async () => {
     const dropsDb = {
       findDropById: jest.fn().mockResolvedValue({
@@ -1152,17 +1177,17 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
-  it('skips all-drops notifications once the wave reaches the subscriber cap', async () => {
-    jest.spyOn(env, 'getIntOrNull').mockReturnValue(15);
+  it('sends all-drops notifications regardless of the wave follower count', async () => {
+    const allDropsRecipients = Array.from({ length: 16 }, (_, index) => ({
+      identity_id: `all-drops-${index + 1}`,
+      subscribed_to_all_drops: true,
+      has_group_mention: false
+    }));
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([
-          {
-            identity_id: 'all-drops-1',
-            subscribed_to_all_drops: true,
-            has_group_mention: false
-          },
+          ...allDropsRecipients,
           {
             identity_id: 'group-mention-1',
             subscribed_to_all_drops: false,
@@ -1174,7 +1199,6 @@ describe('CreateOrUpdateDropUseCase', () => {
             has_group_mention: true
           }
         ]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(15),
       findMutedWaveReaders: jest.fn().mockResolvedValue(['direct-muted'])
     };
     const userNotifier = {
@@ -1202,10 +1226,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       )
     ).resolves.toEqual([101]);
 
-    expect(identitySubscriptionsDb.countWaveSubscribers).toHaveBeenCalledWith(
-      'wave-1',
-      {}
-    );
     expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
       {
         waveId: 'wave-1',
@@ -1214,7 +1234,9 @@ describe('CreateOrUpdateDropUseCase', () => {
         replyNotification: null,
         quoteNotifications: [],
         mentionedIdentityIds: ['direct-1', 'group-mention-1', 'both-1'],
-        allDropsSubscriberIds: []
+        allDropsSubscriberIds: allDropsRecipients.map(
+          (recipient) => recipient.identity_id
+        )
       },
       null,
       { timer: undefined, connection: {} }
@@ -1223,13 +1245,25 @@ describe('CreateOrUpdateDropUseCase', () => {
 
   it('filters direct mentions to identities eligible for a private wave', async () => {
     const userGroupsService = {
-      findIdentitiesInGroups: jest.fn().mockResolvedValue(['eligible-mention'])
+      findIdentitiesInGroups: jest
+        .fn()
+        .mockResolvedValue(['eligible-mention', 'eligible-all-drops'])
     };
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
-        .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
+        .mockResolvedValue([
+          {
+            identity_id: 'eligible-all-drops',
+            subscribed_to_all_drops: true,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'stale-all-drops',
+            subscribed_to_all_drops: true,
+            has_group_mention: false
+          }
+        ]),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1276,7 +1310,7 @@ describe('CreateOrUpdateDropUseCase', () => {
         replyNotification: null,
         quoteNotifications: [],
         mentionedIdentityIds: ['eligible-mention'],
-        allDropsSubscriberIds: []
+        allDropsSubscriberIds: ['eligible-all-drops']
       },
       'private-group',
       { timer: undefined, connection: {} }
@@ -1291,7 +1325,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1343,7 +1376,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1442,7 +1474,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1494,8 +1525,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
-  it('keeps all-drops notifications below the subscriber cap while deduplicating @all mentions', async () => {
-    jest.spyOn(env, 'getIntOrNull').mockReturnValue(15);
+  it('deduplicates all-drops subscribers who are also mentioned by @all', async () => {
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
@@ -1516,7 +1546,6 @@ describe('CreateOrUpdateDropUseCase', () => {
             has_group_mention: true
           }
         ]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(14),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
@@ -1564,7 +1593,6 @@ describe('CreateOrUpdateDropUseCase', () => {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
         .mockResolvedValue([]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(0),
       findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userGroupsService = {
@@ -1745,7 +1773,6 @@ describe('CreateOrUpdateDropUseCase', () => {
             has_group_mention: false
           }
         ]),
-      countWaveSubscribers: jest.fn().mockResolvedValue(20),
       findMutedWaveReaders: jest.fn().mockResolvedValue(['follower-2'])
     };
     const userNotifier = {

@@ -72,7 +72,8 @@ const EVIDENCE_CHECKS = {
 const TRUSTED_WORKFLOW_BLOBS = {
   backend: {
     legacy: '0cc8865dbb869b5156b46cc45e8581b259052916',
-    modern: 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40'
+    previous: 'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40',
+    modern: '926a915a4b9c62b76f169de4e4b6b6eaa4196d35'
   },
   frontend: {
     legacy: 'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c',

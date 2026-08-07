@@ -44,7 +44,7 @@
 - Focused tests run with a lightweight Jest config that skips the repository
   global MySQL testcontainer setup because these are unit/protocol tests.
 - Current local bot-response patch focused checks passed: targeted ESLint,
-  focused CMS Jest set (5 suites, 46 tests), `npm run generate:deploy-config`,
+  focused CMS Jest set (5 suites, 46 tests), `6529 run generate:deploy-config`,
   and `codex-diff-check` for non-generated changes.
 - Root `tsc --noEmit` currently fails before a useful branch-specific signal
   because the borrowed dependency tree resolves `openai` without declarations.

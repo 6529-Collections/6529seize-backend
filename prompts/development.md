@@ -158,35 +158,35 @@ jobs:
           ref: ${{ steps.extract_branch.outputs.branch }}
 
       - name: Install root dependencies
-        run: npm i
+        run: ./bin/6529 ci
 
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api'
         run: |
-          npm i
+          ./bin/6529 ci
           pushd src/${{ github.event.inputs.service }}
-          npm i
+          ../../bin/6529 ci
           popd
 
       - name: Install API dependencies
         if: github.event.inputs.service == 'api'
         run: |
           pushd src/api-serverless
-          npm i
+          ../../bin/6529 ci
           popd
 
       - name: Build service
         if: github.event.inputs.service != 'api'
         run: |
           pushd src/${{ github.event.inputs.service }}
-          npm run build
+          ../../bin/6529 run build
           popd
 
       - name: Build API
         if: github.event.inputs.service == 'api'
         run: |
           pushd src/api-serverless
-          npm run build
+          ../../bin/6529 run build
           popd
 
       - name: Configure AWS credentials
@@ -201,7 +201,7 @@ jobs:
         run: |
           export VERSION_DESCRIPTION="$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           pushd src/${{ github.event.inputs.service }}
-          npm run sls-deploy:${{ github.event.inputs.environment }}
+          ../../bin/6529 run sls-deploy:${{ github.event.inputs.environment }}
           popd
 
       - name: Deploy API

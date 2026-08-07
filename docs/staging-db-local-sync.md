@@ -78,13 +78,13 @@ Do not commit this file.
 Resume an existing dump or create one if none exists:
 
 ```bash
-npm run db:staging:resume
+6529 run db:staging:resume
 ```
 
 Archive the old dump and start fresh:
 
 ```bash
-npm run db:staging:fresh
+6529 run db:staging:fresh
 ```
 
 Dump staging only, without restoring local MySQL:
@@ -111,7 +111,7 @@ Then start the API:
 
 ```bash
 cd src/api-serverless
-npm run dev
+6529 run dev
 ```
 
 If Docker Desktop is closed, the script can start it when `AUTO_START_DOCKER=true`.

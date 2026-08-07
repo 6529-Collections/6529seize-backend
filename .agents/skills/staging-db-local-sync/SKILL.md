@@ -45,13 +45,13 @@ The script only calls AWS when `STAGING_SSM_TARGET` is set. Without that variabl
 Resume or start the normal sync:
 
 ```bash
-npm run db:staging:resume
+6529 run db:staging:resume
 ```
 
 Archive the old dump and build a new one:
 
 ```bash
-npm run db:staging:fresh
+6529 run db:staging:fresh
 ```
 
 Dump only:

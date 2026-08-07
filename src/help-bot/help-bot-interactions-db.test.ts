@@ -8,7 +8,10 @@ import {
   HelpBotInteractionsDb
 } from './help-bot-interactions.db';
 import { Time } from '@/time';
-import { HELP_BOT_ANSWERING_LEASE_MS } from './help-bot.config';
+import {
+  HELP_BOT_ANSWERING_LEASE_MS,
+  HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES
+} from './help-bot.config';
 import { ConnectionWrapper } from '@/sql-executor';
 
 describe('HelpBotInteractionsDb', () => {
@@ -98,6 +101,32 @@ describe('HelpBotInteractionsDb', () => {
 
     expect(result.created).toBe(true);
     expect(sqlExecutor.getAffectedRows).toHaveBeenCalledWith([0, 1]);
+  });
+
+  it('rejects a question that cannot fit in the unchanged TEXT column', async () => {
+    const sqlExecutor = createSqlExecutor({ executeResult: [0, 1] });
+    const db = createDb(sqlExecutor);
+
+    await expect(
+      db.insertSeen(
+        {
+          triggerDropId: 'trigger-drop',
+          targetDropId: 'trigger-drop',
+          waveId: 'wave-1',
+          authorProfileId: 'author-1',
+          triggerType: HelpBotInteractionTriggerType.MENTION,
+          question: '漢'.repeat(21_846),
+          parentBotDropId: null
+        },
+        ctx
+      )
+    ).rejects.toThrow(
+      `${HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES} UTF-8 bytes`
+    );
+    expect(sqlExecutor.execute).not.toHaveBeenCalled();
+    expect(
+      sqlExecutor.executeNativeQueriesInTransaction
+    ).not.toHaveBeenCalled();
   });
 
   it('inserts and reads back seen interactions on one transactional connection', async () => {

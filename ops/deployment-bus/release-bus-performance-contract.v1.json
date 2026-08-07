@@ -10,7 +10,7 @@
       "Check out exact fresh composition",
       "Verify exact composition and deployment graph",
       "Install Node.js",
-      "Activate exact package manager",
+      "Verify exact package manager through the 6529 wrapper",
       "Install frozen shared dependencies once",
       "Build and package only selected deploy units",
       "Upload one exact backend artifact",

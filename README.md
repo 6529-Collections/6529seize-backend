@@ -10,7 +10,11 @@ This is a 2-part repository for
 
 This repo includes a `.envrc` for `direnv`.
 
-It is only used for repo-local shell helpers. Right now it adds the repo `bin/` directory to your `PATH`, which makes commands like `ghruns` and `ghdeploy` available anywhere inside this repository.
+It is only used for repo-local shell helpers. Right now it adds the repo `bin/`
+directory to your `PATH`, which makes commands like `6529`, `ghruns`, and
+`ghdeploy` available anywhere inside this repository. Direct package-manager
+commands are blocked there; `6529` runs the npm version pinned by the current
+package through Corepack without replacing your machine-wide npm.
 
 It does not load `.env.local` and it does not set `NODE_ENV`.
 
@@ -58,9 +62,19 @@ again to approve the updated file.
 From the repo root, you should be able to run:
 
 ```bash
+which 6529
 which ghruns
 ghruns
 ```
+
+If you do not use `direnv`, bootstrap the same repo-scoped command once:
+
+```bash
+./bin/6529 bootstrap
+```
+
+See [Backend Package Commands](docs/package-commands.md) for bootstrap,
+command, enforcement, API, and independently packaged Lambda guidance.
 
 `ghruns` is a shortcut for:
 
@@ -172,8 +186,8 @@ This repo includes local tooling to build a resumable staging MySQL dump and res
 Common commands:
 
 ```bash
-npm run db:staging:resume
-npm run db:staging:fresh
+6529 run db:staging:resume
+6529 run db:staging:fresh
 ```
 
 See [docs/staging-db-local-sync.md](docs/staging-db-local-sync.md) for setup, AWS credential behavior, restore-only usage, restart recovery, and troubleshooting.
@@ -182,14 +196,18 @@ See [docs/staging-db-local-sync.md](docs/staging-db-local-sync.md) for setup, AW
 
 ### 1.1 Install
 
+```bash
+6529 ci
 ```
-npm i
-```
+
+Use `6529 add <package>` only when intentionally changing dependencies or
+regenerating `package-lock.json`. Direct npm, npx, and Corepack npm project
+commands are rejected.
 
 ### 1.2 Build
 
-```
-npm run build
+```bash
+6529 run build
 ```
 
 ### 1.3 Environment
@@ -202,21 +220,22 @@ The name of your .env file must include the environment you want to run like `.e
 
 ### 1.4 Run
 
-Before running anything, either manually run `npm run migrate:up` or make sure `dbMigrationsLoop` is run.
+Before running anything, either manually run `6529 run migrate:up` or make sure `dbMigrationsLoop` is run.
 
-#### 1.4.1 using npm
+#### 1.4.1 using the 6529 wrapper
 
-```
-npm run backend:env
+```bash
+6529 run backend:local
 ```
 
 #### 1.4.2 using PM2
 
-```
-pm2 start npm --name=6529backend -- run backend:env
+```bash
+pm2 start bash --name=6529backend -- -lc 'cd /path/to/6529seize-backend && ./bin/6529 run backend:local'
 ```
 
-\* Note: env can be one of: `local` / `dev` / `prod`
+For the built development or production modes, use `6529 run backend:dev` or
+`6529 run backend:prod` respectively.
 
 #### 1.4.3 using AWS Lambda
 
@@ -228,7 +247,7 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 
 - **Running database for development:** You can use docker and docker-compose for this. Run `docker-compose up -d` in project root and configure your `.env` exactly as DB part in `.env.sample`.
 
-- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `npm run migrate:up` or make sure `dbMigrationsLoop` is run to be sure that all migrations are applied.
+- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `6529 run migrate:up` or make sure `dbMigrationsLoop` is run to be sure that all migrations are applied.
 
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
@@ -236,7 +255,7 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 - **S3 and Video Compression:** [S3Uploader](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Uploader). The s3Uploader persists compressed versions of the nft images and videos on AWS S3. This worker is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
   Download instructions at: https://ffmpeg.org/
 
-- Creating new migrations: Run `npm run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `npm run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
+- Creating new migrations: Run `6529 run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `6529 run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
 
 ## 2. API
 
@@ -246,17 +265,47 @@ PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend
 
 ### 2.1 Install
 
-```
+```bash
 cd src/api-serverless
-npm i
+6529 ci
 ```
 
 ### 2.2 Build
 
-```
+```bash
 cd src/api-serverless
-npm run build
+6529 run build
 ```
+
+### 2.2.1 OpenAPI Contract Synchronization
+
+Every change to `src/api-serverless/openapi.yaml` must be synchronized to the
+frontend repository in the same task, even when no frontend call site changes.
+First regenerate the backend artifacts:
+
+```bash
+cd src/api-serverless
+6529 run generate:openapi
+```
+
+If the task's backend worktree is locally available on the backend feature
+branch containing the final spec, copy that exact spec to the frontend
+worktree's root `openapi.yaml` and regenerate the frontend client:
+
+```bash
+cp <backend_worktree>/src/api-serverless/openapi.yaml openapi.yaml
+6529 run generate
+```
+
+If that backend worktree is not locally available, commit and push the final
+spec, then run
+`bash scripts/refresh-api.sh <backend_feature_branch>` from the frontend
+worktree before `6529 run generate`. Pass the exact backend feature branch that
+contains the OpenAPI change, never the frontend branch. Do not omit the argument
+for unmerged feature work: omission defaults to backend `main`, which may not
+contain the change. Commit the frontend `openapi.yaml` and `generated/` changes.
+Treat an unfinished frontend synchronization as a blocker, not as completed
+backend OpenAPI work.
 
 ### 2.3 Environment
 
@@ -268,21 +317,24 @@ The name of your .env file must include the environment you want to run like `.e
 
 ### 2.4 Run
 
-In project root directory:
+From `src/api-serverless`:
 
-```
-npm run api:env
+```bash
+6529 run dev
 ```
 
-\* Note: env can be one of: local / dev / prod
+The API package's `dev` script runs with `NODE_ENV=local`. Staging and
+production API processes are built and deployed through the repository
+workflows.
 
 ### 2.5 RUN USING PM2
 
-```
-pm2 start npm --name=6529api -- run api:env
+```bash
+pm2 start bash --name=6529api -- -lc 'cd /path/to/6529seize-backend/src/api-serverless && ../../bin/6529 run dev'
 ```
 
-\* Note: env can be one of: `local` / `dev` / `prod`
+Use the matching deployed-process command when configuring PM2 outside local
+development.
 
 ### 2.6 RUN USING AWS Lambda
 

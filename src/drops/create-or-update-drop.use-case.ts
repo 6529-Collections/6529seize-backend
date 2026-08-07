@@ -4,6 +4,10 @@ import {
   DropPartIdentifierModel,
   DropReferencedNftModel
 } from './create-or-update-drop.model';
+import {
+  formatDropContentLimitViolation,
+  getDropContentLimitViolation
+} from './drop-content-limits';
 import { Time, Timer } from '@/time';
 import { ConnectionWrapper } from '@/sql-executor';
 import { dropsDb, DropsDb } from './drops.db';
@@ -271,6 +275,15 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropMediaUploadsDb: DropMediaUploadsDb
   ) {}
 
+  private assertDropContentLimits(
+    parts: readonly CreateOrUpdateDropPartModel[]
+  ): void {
+    const violation = getDropContentLimitViolation(parts);
+    if (violation) {
+      throw new BadRequestException(formatDropContentLimitViolation(violation));
+    }
+  }
+
   private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
     const authorId = model.author_id;
     if (!authorId) {
@@ -285,10 +298,6 @@ export class CreateOrUpdateDropUseCase {
       throw new BadRequestException(`drop_id is required`);
     }
     return dropId;
-  }
-
-  private getAllDropsNotificationsSubscribersLimit(): number {
-    return env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
   }
 
   private normalizeMentionedGroups(
@@ -323,6 +332,7 @@ export class CreateOrUpdateDropUseCase {
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
     let resolvedModel = sanitizeDropStructuredFields(model);
+    this.assertDropContentLimits(resolvedModel.parts);
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
     let authorId = resolvedModel.author_id;
     if (!authorId) {
@@ -441,6 +451,7 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions?: boolean;
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+    this.assertDropContentLimits(model.parts);
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
@@ -1555,6 +1566,7 @@ export class CreateOrUpdateDropUseCase {
     // Keep this guard at the persistence boundary too; this method can be
     // reused independently of execute() and the normalization is idempotent.
     const model = this.normalizeMentionedGroups(inputModel);
+    this.assertDropContentLimits(model.parts);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
@@ -2206,11 +2218,7 @@ export class CreateOrUpdateDropUseCase {
     const notificationMentionedGroups = groupMentionNotificationsEnabled
       ? model.mentioned_groups
       : [];
-    const [
-      followerRecipients,
-      waveSubscribersCount,
-      relationshipNotifications
-    ] = await Promise.all([
+    const [followerRecipients, relationshipNotifications] = await Promise.all([
       this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
@@ -2219,7 +2227,6 @@ export class CreateOrUpdateDropUseCase {
         },
         connection
       ),
-      this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection),
       this.resolveDropRelationshipNotifications(
         { model },
         { timer, connection }
@@ -2236,15 +2243,26 @@ export class CreateOrUpdateDropUseCase {
         },
         { timer, connection }
       );
-    const eligibleMentionedIdentityIds =
+    const candidateMentionedIdentityIds = collections.distinct([
+      ...directlyMentionedIdentityIds,
+      ...permissionGroupMentionIdentityIds
+    ]);
+    const eligibleNotificationIdentityIds = new Set(
       await this.filterIdentityIdsEligibleToReadWave(
         wave,
-        collections.distinct([
-          ...directlyMentionedIdentityIds,
-          ...permissionGroupMentionIdentityIds
-        ]),
+        [
+          ...candidateMentionedIdentityIds,
+          ...followerRecipients.map((recipient) => recipient.identity_id)
+        ],
         { timer, connection }
-      );
+      )
+    );
+    const eligibleMentionedIdentityIds = candidateMentionedIdentityIds.filter(
+      (identityId) => eligibleNotificationIdentityIds.has(identityId)
+    );
+    const eligibleFollowerRecipients = followerRecipients.filter((recipient) =>
+      eligibleNotificationIdentityIds.has(recipient.identity_id)
+    );
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
@@ -2261,21 +2279,18 @@ export class CreateOrUpdateDropUseCase {
     );
     const mentionedIdentityIds = collections.distinct([
       ...directMentionIdentityIds,
-      ...followerRecipients
+      ...eligibleFollowerRecipients
         .filter((recipient) => recipient.has_group_mention)
         .map((recipient) => recipient.identity_id)
     ]);
     const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
-    const allDropsSubscriberIds =
-      waveSubscribersCount < this.getAllDropsNotificationsSubscribersLimit()
-        ? followerRecipients
-            .filter(
-              (recipient) =>
-                recipient.subscribed_to_all_drops &&
-                !mentionedIdentityIdsSet.has(recipient.identity_id)
-            )
-            .map((recipient) => recipient.identity_id)
-        : [];
+    const allDropsSubscriberIds = eligibleFollowerRecipients
+      .filter(
+        (recipient) =>
+          recipient.subscribed_to_all_drops &&
+          !mentionedIdentityIdsSet.has(recipient.identity_id)
+      )
+      .map((recipient) => recipient.identity_id);
 
     const pendingPushNotificationIds =
       await this.userNotifier.notifyWaveDropCreatedRecipients(
@@ -2310,7 +2325,7 @@ export class CreateOrUpdateDropUseCase {
       );
       if (!parentWave) {
         this.logger.warn(
-          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering direct mention recipients for wave ${wave.id}`
+          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering notification recipients for wave ${wave.id}`
         );
         return [];
       }

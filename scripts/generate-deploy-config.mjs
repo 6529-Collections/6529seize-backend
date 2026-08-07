@@ -800,13 +800,9 @@ jobs:
           node-version: '22.17.1'
           cache: npm
           cache-dependency-path: package-lock.json
-      - name: Activate pinned npm
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+      - name: Verify pinned npm through the 6529 wrapper
         run: |
-          corepack enable npm
-          corepack install
-          test "$(npm --version)" = "$(node -p 'require("./package.json").packageManager.split("npm@")[1]')"
+          test "$(./bin/6529 npm:version)" = "$(node -p 'require("./package.json").packageManager.split("npm@")[1]')"
       - name: Resolve Release Bus GitHub App installation
         if: github.event.inputs.service == 'releaseBus' || (github.event.inputs.service == 'api' && github.event.inputs.environment == 'prod')
         id: release_bus_app
@@ -884,22 +880,22 @@ jobs:
           echo "package_digest=$package_digest" >> "$GITHUB_OUTPUT"
       - name: Install root dependencies for manual build
         if: github.event.inputs.operation_key == ''
-        run: npm i
+        run: ./bin/6529 ci
       - name: Install frozen root deploy tooling
         if: github.event.inputs.operation_key != '' && (${deployToolingCondition})
-        run: npm ci
+        run: ./bin/6529 ci
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api' && github.event.inputs.operation_key == ''
-        run: npm i && pushd src/\${{ github.event.inputs.service }} && npm i && popd
+        run: ./bin/6529 ci && pushd src/\${{ github.event.inputs.service }} && ../../bin/6529 ci && popd
       - name: Install api dependencies
         if: github.event.inputs.service == 'api' && github.event.inputs.operation_key == ''
-        run: pushd src/api-serverless && npm i && popd
+        run: pushd src/api-serverless && ../../bin/6529 ci && popd
       - name: Build service
         if: github.event.inputs.service != 'api' && github.event.inputs.operation_key == ''
-        run: pushd src/\${{ github.event.inputs.service }} && npm run build && popd
+        run: pushd src/\${{ github.event.inputs.service }} && ../../bin/6529 run build && popd
       - name: Build API
         if: github.event.inputs.service == 'api' && github.event.inputs.operation_key == ''
-        run: pushd src/api-serverless && npm run build && popd
+        run: pushd src/api-serverless && ../../bin/6529 run build && popd
       - name: Install immutable package
         if: github.event.inputs.operation_key != ''
         shell: bash
@@ -1061,7 +1057,7 @@ jobs:
         run: |
           VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           export VERSION_DESCRIPTION
-          pushd src/\${{ github.event.inputs.service }} && npm run sls-deploy:\${{ github.event.inputs.environment }} && popd
+          pushd src/\${{ github.event.inputs.service }} && ../../bin/6529 run sls-deploy:\${{ github.event.inputs.environment }} && popd
       - name: Deploy Release Bus with runtime credentials
         if: github.event.inputs.service == 'releaseBus'
         env:
@@ -1074,7 +1070,7 @@ jobs:
           test -n "$RELEASE_BUS_GITHUB_INSTALLATION_ID"
           VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           export VERSION_DESCRIPTION
-          pushd src/releaseBus && npm run sls-deploy:\${{ github.event.inputs.environment }} && popd
+          pushd src/releaseBus && ../../bin/6529 run sls-deploy:\${{ github.event.inputs.environment }} && popd
       - name: Deploy API
         if: github.event.inputs.service == 'api'
         env:

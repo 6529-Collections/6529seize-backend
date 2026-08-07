@@ -66,7 +66,8 @@ describe('DirectMessageWaveDisplayService', () => {
             handle: 'viewer',
             pfp: 'viewer.png'
           }
-        ]
+        ],
+        participantCount: 3
       }
     });
   });

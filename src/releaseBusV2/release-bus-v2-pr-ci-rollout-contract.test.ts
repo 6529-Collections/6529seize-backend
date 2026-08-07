@@ -4,8 +4,12 @@ import path from 'node:path';
 
 const root = process.cwd();
 const LEGACY_BACKEND_WORKFLOW_BLOB = '0cc8865dbb869b5156b46cc45e8581b259052916';
-const PRODUCER_BACKEND_WORKFLOW_BLOB =
+const PREVIOUS_BACKEND_WORKFLOW_BLOB =
   'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40';
+const PACKAGE_COMMAND_BACKEND_WORKFLOW_BLOB =
+  '926a915a4b9c62b76f169de4e4b6b6eaa4196d35';
+const PRODUCER_BACKEND_WORKFLOW_BLOB =
+  'af4314e0eff6b4110edddf8da8747216b2014b10';
 const LEGACY_FRONTEND_WORKFLOW_BLOB =
   'e365520edf6bb6ee01e0cfc6ba6b99dc28971b2c';
 const PREVIOUS_FRONTEND_WORKFLOW_BLOB =
@@ -16,16 +20,16 @@ const BRIDGE_POLICY_DIGEST =
   '12ee0bd6c718124c80ce3cd9c09d1287677027cb653db0ffeab21af1cd785143';
 const PREVIOUS_PRODUCER_POLICY_DIGEST =
   '9964af459f06d3d79d02157f2bd69200448a2722728a7d81cd360dd17b5a6a87';
-const PRODUCER_POLICY_DIGEST =
+const INTERMEDIATE_PRODUCER_POLICY_DIGEST =
   '6d381f8b39476a8ebc2986d64804871862ee34e768fca1ec2cf4aa01f13c299f';
-const PREVIOUS_RELEASE_ATTRIBUTION_POLICY_DIGEST =
-  'c1aff2471b1856a086fcd48ff855a403c7c1a968d546eeb307c16a4d7bf9b590';
+const PREVIOUS_PACKAGE_COMMAND_POLICY_DIGEST =
+  'ed8e0bd5f1f34433b2b262a7ae3cc3be7c8d05625b901d90eabf745abbea44d7';
+const PACKAGE_COMMAND_POLICY_DIGEST =
+  '2a79efe36915440f8bc7f4844a354a8cb28e01a2c415f2009af1b3e343215219';
+const PRODUCER_POLICY_DIGEST =
+  '0f6bffeb37b72f67a69e8fc8d4077caf0bfb2d5f4d36af6d287f51d3cc924244';
 const RELEASE_ATTRIBUTION_POLICY_DIGEST =
-  '8ad2b1ef1cb12607718eeb4969d662a1c2d4e06da6ad6ac33fc5ffd3b615a6d8';
-const MERGED_RELEASE_ATTRIBUTION_POLICY_DIGEST =
-  '28611f0c19e689d0c12500f9d86e855c48d3c6ace54a4e452d25a43e4f5a6909';
-const CURRENT_RELEASE_ATTRIBUTION_POLICY_DIGEST =
-  '06ac82b98a00fa8b8e7ec9fe3386a3fe954323b9b33a0bd8a5da2baa55209128';
+  'f0e2b3e1736f4011b05c82e292eeec57a43ecebc12d2822d0409822d9936daf6';
 const FRONTEND_BRIDGE_POLICY_DIGEST =
   '57d9f94b108788cf3ed1e5f80156caf2d8b31974c375ec0b353e607e2e74b4d8';
 const FRONTEND_PRODUCER_POLICY_DIGEST =
@@ -45,6 +49,8 @@ describe('Release Bus PR CI producer bridge', () => {
   it('preauthorizes only the frozen backend and frontend producer workflows', () => {
     for (const expected of [
       LEGACY_BACKEND_WORKFLOW_BLOB,
+      PREVIOUS_BACKEND_WORKFLOW_BLOB,
+      PACKAGE_COMMAND_BACKEND_WORKFLOW_BLOB,
       PRODUCER_BACKEND_WORKFLOW_BLOB,
       LEGACY_FRONTEND_WORKFLOW_BLOB,
       PREVIOUS_FRONTEND_WORKFLOW_BLOB,
@@ -57,11 +63,11 @@ describe('Release Bus PR CI producer bridge', () => {
     for (const expected of [
       BRIDGE_POLICY_DIGEST,
       PREVIOUS_PRODUCER_POLICY_DIGEST,
+      INTERMEDIATE_PRODUCER_POLICY_DIGEST,
+      PREVIOUS_PACKAGE_COMMAND_POLICY_DIGEST,
+      PACKAGE_COMMAND_POLICY_DIGEST,
       PRODUCER_POLICY_DIGEST,
-      PREVIOUS_RELEASE_ATTRIBUTION_POLICY_DIGEST,
       RELEASE_ATTRIBUTION_POLICY_DIGEST,
-      MERGED_RELEASE_ATTRIBUTION_POLICY_DIGEST,
-      CURRENT_RELEASE_ATTRIBUTION_POLICY_DIGEST,
       FRONTEND_BRIDGE_POLICY_DIGEST,
       FRONTEND_PRODUCER_POLICY_DIGEST
     ])
@@ -77,9 +83,18 @@ describe('Release Bus PR CI producer bridge', () => {
     };
     if (workflowBlob === LEGACY_BACKEND_WORKFLOW_BLOB) {
       const modernOnly = new Set([
+        'bin/6529',
+        'bin/bun',
+        'bin/corepack',
+        'bin/npm',
+        'bin/npx',
+        'bin/pnpm',
+        'bin/yarn',
+        'scripts/bootstrap-6529-command.sh',
         'scripts/pr-ci-policy-bundle.cjs',
         'scripts/release-bus-backend-package-strategies.mjs',
         'scripts/release-bus-package-backend.mjs',
+        'scripts/require-6529-command.cjs',
         'src/releaseBusV2/release-bus-v2-performance-workflow.test.ts'
       ]);
       expect(
@@ -96,7 +111,7 @@ describe('Release Bus PR CI producer bridge', () => {
 
     expect(workflowBlob).toBe(PRODUCER_BACKEND_WORKFLOW_BLOB);
     expect(policy.buildPolicyBundle({ root }).digest).toBe(
-      CURRENT_RELEASE_ATTRIBUTION_POLICY_DIGEST
+      RELEASE_ATTRIBUTION_POLICY_DIGEST
     );
   });
 });
