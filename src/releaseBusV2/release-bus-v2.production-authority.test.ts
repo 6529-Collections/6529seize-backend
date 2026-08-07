@@ -282,6 +282,11 @@ function setup() {
         ? e2eIdentity()
         : deployRunIdentity;
     }),
+    getProductionE2EWorkflowRunIdentity: jest.fn(async (repository, runId) => {
+      if (repository !== 'frontend')
+        throw new Error('Production E2E requires frontend');
+      return (deps.getWorkflowRunIdentity as jest.Mock)(repository, runId);
+    }),
     resolveRef: jest.fn(async () => TARGET_SHA),
     refContainsCommit: jest.fn(async () => true),
     hasActiveProductionMutationOrE2ERun: jest.fn(async () => false),
@@ -1001,6 +1006,10 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       lease_token: null
     });
     expect(getLock()).toMatchObject({ lease_token: null });
+    expect(deps.getProductionE2EWorkflowRunIdentity).toHaveBeenCalledWith(
+      'frontend',
+      COMPLETE_INPUT.qualifier_workflow_run_id
+    );
 
     await expect(
       service.complete({

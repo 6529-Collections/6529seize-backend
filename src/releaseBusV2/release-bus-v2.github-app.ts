@@ -58,14 +58,11 @@ export function workflowRunMatchesOperation(
 }
 
 export function isValidGitHubWorkflowActor(actor: string): boolean {
-  // Keep the shared parser narrow, then let each operation authorize the
-  // parsed actor for its own role. The Release Bus App may drive automated
-  // operations; github-actions[bot] may attest the separately verified
-  // Production E2E qualifier. Human logins retain GitHub's 39-character limit.
+  // The shared parser admits only operators and the Release Bus App. The
+  // GitHub Actions actor is accepted through the dedicated Production E2E
+  // reader, whose workflow and repository boundary is narrower than this one.
   return (
-    /^[A-Za-z0-9-]{1,39}$/.test(actor) ||
-    isReleaseBusGitHubAppActor(actor) ||
-    actor === 'github-actions[bot]'
+    /^[A-Za-z0-9-]{1,39}$/.test(actor) || isReleaseBusGitHubAppActor(actor)
   );
 }
 export type GitHubWorkflowJob = {
@@ -2149,6 +2146,43 @@ export class ReleaseBusGitHubApp {
     repository: ReleaseBusV2Repository,
     workflowRunId: string
   ): Promise<ReleaseBusWorkflowRunIdentity> {
+    return this.readWorkflowRunIdentity(
+      repository,
+      workflowRunId,
+      isValidGitHubWorkflowActor
+    );
+  }
+
+  public async getProductionE2EWorkflowRunIdentity(
+    repository: ReleaseBusV2Repository,
+    workflowRunId: string
+  ): Promise<ReleaseBusWorkflowRunIdentity> {
+    if (repository !== 'frontend')
+      throw new Error(
+        'Production E2E identity must use the frontend repository'
+      );
+    const identity = await this.readWorkflowRunIdentity(
+      repository,
+      workflowRunId,
+      (actor) => actor === 'github-actions[bot]'
+    );
+    const expectedRepository = `${this.owner}/${REPOSITORIES.frontend}`;
+    if (
+      identity.actor !== 'github-actions[bot]' ||
+      identity.event !== 'workflow_dispatch' ||
+      identity.path !== '.github/workflows/production-e2e.yml' ||
+      identity.repository !== expectedRepository ||
+      identity.headRepository !== expectedRepository
+    )
+      throw new Error('GitHub workflow run is not a Production E2E qualifier');
+    return identity;
+  }
+
+  private async readWorkflowRunIdentity(
+    repository: ReleaseBusV2Repository,
+    workflowRunId: string,
+    isValidActor: (actor: string) => boolean
+  ): Promise<ReleaseBusWorkflowRunIdentity> {
     if (!/^\d+$/.test(workflowRunId))
       throw new Error('Invalid GitHub workflow run id');
     const response = await this.request(
@@ -2160,7 +2194,7 @@ export class ReleaseBusGitHubApp {
     const actor = run.actor?.login ?? '';
     const runRepository = run.repository?.full_name ?? '';
     const headRepository = run.head_repository?.full_name ?? '';
-    if (!isValidGitHubWorkflowActor(actor))
+    if (!isValidActor(actor))
       throw new Error('GitHub workflow run has no valid actor');
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(runRepository))
       throw new Error('GitHub workflow run has no valid repository');
