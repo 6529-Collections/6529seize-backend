@@ -428,10 +428,10 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     expect(getAuthority()).toBeNull();
   });
 
-  it('accepts the live GitHub API shape where name equals the evaluated run-name', async () => {
+  it('ignores a stale frontend workflow name when path and evaluated title are exact', async () => {
     const { service, setDeployIdentity } = setup();
-    const identity = deployIdentity();
-    expect(identity.name).toBe(identity.displayTitle);
+    const identity = deployIdentity({ name: 'Web Deploy - PROD' });
+    expect(identity.name).not.toBe(identity.displayTitle);
     setDeployIdentity(identity);
 
     await expect(
@@ -440,6 +440,28 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       status: 'BOUND',
       authorized: true,
       workflow_run_id: DEPLOY_INPUT.workflow_run_id
+    });
+  });
+
+  it('ignores a stale backend workflow name when path and evaluated title are exact', async () => {
+    const setupState = setup();
+    (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockResolvedValue(
+      backendIdentity({
+        name: 'Deploy a service',
+        status: 'in_progress',
+        conclusion: null
+      })
+    );
+
+    await expect(
+      setupState.service.prepareAndBind({
+        ...BACKEND_DEPLOY_INPUT,
+        selection_digest: null
+      })
+    ).resolves.toMatchObject({
+      status: 'BOUND',
+      authorized: true,
+      workflow_run_id: BACKEND_DEPLOY_INPUT.workflow_run_id
     });
   });
 
@@ -648,7 +670,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
       async (_repository: string, runId: string) =>
         runId === COMPLETE_INPUT.qualifier_workflow_run_id
-          ? e2eIdentity({ conclusion: 'failure' })
+          ? e2eIdentity({ name: 'Production E2E', conclusion: 'failure' })
           : deployIdentity({ status: 'completed', conclusion: 'success' })
     );
 
@@ -956,6 +978,12 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
       selection_digest: SELECTION_DIGEST
     });
     setupState.setDeployCompleted();
+    (setupState.deps.getWorkflowRunIdentity as jest.Mock).mockImplementation(
+      async (_repository: string, runId: string) =>
+        runId === COMPLETE_INPUT.qualifier_workflow_run_id
+          ? e2eIdentity({ name: 'Production E2E' })
+          : deployIdentity({ status: 'completed', conclusion: 'success' })
+    );
 
     const result = await service.complete(COMPLETE_INPUT);
     expect(result).toMatchObject({
