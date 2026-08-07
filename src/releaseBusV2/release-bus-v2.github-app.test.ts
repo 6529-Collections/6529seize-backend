@@ -1165,9 +1165,57 @@ describe('GitHub workflow operation identity', () => {
   it('accepts human and GitHub App workflow actors', () => {
     expect(isValidGitHubWorkflowActor('GelatoGenesis')).toBe(true);
     expect(isValidGitHubWorkflowActor('6529-release-bus[bot]')).toBe(true);
-    expect(isValidGitHubWorkflowActor('github-actions[bot]')).toBe(false);
+    expect(isValidGitHubWorkflowActor('github-actions[bot]')).toBe(true);
     expect(isValidGitHubWorkflowActor('release-bus[admin]')).toBe(false);
     expect(isValidGitHubWorkflowActor(`${'a'.repeat(40)}`)).toBe(false);
+  });
+
+  it('parses the exact GitHub Actions actor used by Production E2E', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 31205398386,
+          run_attempt: 1,
+          name: 'Production E2E automatic 31204118712',
+          path: '.github/workflows/production-e2e.yml',
+          display_title: 'Production E2E automatic 31204118712',
+          status: 'completed',
+          conclusion: 'failure',
+          head_branch: 'main',
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/31205398386',
+          event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-frontend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-frontend'
+          },
+          actor: { login: 'github-actions[bot]' }
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getWorkflowRunIdentity('frontend', '31205398386')
+      ).resolves.toMatchObject({
+        actor: 'github-actions[bot]',
+        attempt: 1,
+        conclusion: 'failure',
+        event: 'workflow_dispatch',
+        path: '.github/workflows/production-e2e.yml',
+        displayTitle: 'Production E2E automatic 31204118712',
+        status: 'completed'
+      });
+    } finally {
+      fetchMock.mockReset();
+    }
   });
 
   it('reads the exact Release Bus App actor from a workflow run', async () => {
