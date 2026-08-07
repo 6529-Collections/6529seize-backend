@@ -58,6 +58,7 @@ jobs:
             "$run_file" > /dev/null
           workflow_id="$(jq -er '.workflow_id' "$run_file")"
           workflow_status="$(curl --silent --show-error \
+            --retry 4 --retry-all-errors --retry-delay 2 --retry-max-time 300 \
             --connect-timeout 10 --max-time 60 --max-filesize 262144 \
             --output "$workflow_file" --write-out '%{http_code}' \
             -H "Authorization: Bearer $GITHUB_TOKEN" \

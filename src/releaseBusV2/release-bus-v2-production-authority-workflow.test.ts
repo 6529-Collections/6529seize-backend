@@ -291,8 +291,8 @@ describe('backend production authority workflow integration', () => {
       '["failed", "lock_row_version", "operation_id", "reused", "status"]'
     );
     expect(source).not.toContain('lease_token');
-    expect(source.match(/--retry 4 --retry-all-errors/g)).toHaveLength(2);
-    expect(source.match(/--retry-max-time 300/g)).toHaveLength(2);
+    expect(source.match(/--retry 4 --retry-all-errors/g)).toHaveLength(3);
+    expect(source.match(/--retry-max-time 300/g)).toHaveLength(3);
     expect(source).not.toContain('Production E2E');
     expect(source.match(/actions\/download-artifact@/g)).toHaveLength(2);
     expect(source).toContain(
@@ -303,6 +303,9 @@ describe('backend production authority workflow integration', () => {
     expect(identity).toContain('.event == "workflow_dispatch"');
     expect(identity).toContain('.status == "completed"');
     expect(identity).toContain('actions/workflows/$workflow_id');
+    expect(identity).toMatch(
+      /workflow_status="\$\(curl --silent --show-error \\\n\s+--retry 4 --retry-all-errors --retry-delay 2 --retry-max-time 300/
+    );
     expect(identity).toContain('.name == "Deploy a service"');
     expect(identity).toContain('.path == ".github/workflows/deploy.yml"');
     expect(identity).toContain('.state == "active"');
