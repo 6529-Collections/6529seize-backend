@@ -84,7 +84,8 @@ function deployIdentity(
     headRepository: '6529-Collections/6529seize-frontend',
     headBranch: 'main',
     headSha: TARGET_SHA,
-    name: 'Web Deploy - PROD',
+    // GitHub returns the evaluated run-name in both `name` and display_title.
+    name: `Production deploy ${TARGET_SHA} [${DEPLOY_INPUT.operation_id}]`,
     path: '.github/workflows/build-upload-deploy-prod.yml',
     displayTitle: `Production deploy ${TARGET_SHA} [${DEPLOY_INPUT.operation_id}]`,
     status: 'in_progress',
@@ -104,7 +105,7 @@ function e2eIdentity(
     headRepository: '6529-Collections/6529seize-frontend',
     headBranch: 'main',
     headSha: TARGET_SHA,
-    name: 'Production E2E',
+    name: `Production E2E automatic ${DEPLOY_INPUT.workflow_run_id}`,
     path: '.github/workflows/production-e2e.yml',
     displayTitle: `Production E2E automatic ${DEPLOY_INPUT.workflow_run_id}`,
     status: 'completed',
@@ -124,7 +125,7 @@ function backendIdentity(
     headRepository: '6529-Collections/6529seize-backend',
     headBranch: 'main',
     headSha: TARGET_SHA,
-    name: 'Deploy a service',
+    name: `Deploy ${BACKEND_DEPLOY_INPUT.service} to prod [${BACKEND_DEPLOY_INPUT.operation_id}]`,
     path: '.github/workflows/deploy.yml',
     displayTitle: `Deploy ${BACKEND_DEPLOY_INPUT.service} to prod [${BACKEND_DEPLOY_INPUT.operation_id}]`,
     status: 'completed',
@@ -398,7 +399,7 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     setDeployIdentity(
       deployIdentity({
         path: '.github/workflows/production-e2e.yml',
-        name: 'Production E2E',
+        name: 'Production E2E foreign run',
         displayTitle: 'Production E2E foreign run'
       })
     );
@@ -425,6 +426,21 @@ describe('Release Bus v2 production authority adversarial boundaries', () => {
     });
     expect(deps.hasActiveProductionMutationOrE2ERun).not.toHaveBeenCalled();
     expect(getAuthority()).toBeNull();
+  });
+
+  it('accepts the live GitHub API shape where name equals the evaluated run-name', async () => {
+    const { service, setDeployIdentity } = setup();
+    const identity = deployIdentity();
+    expect(identity.name).toBe(identity.displayTitle);
+    setDeployIdentity(identity);
+
+    await expect(
+      service.prepareAndBind({ ...DEPLOY_INPUT, selection_digest: null })
+    ).resolves.toMatchObject({
+      status: 'BOUND',
+      authorized: true,
+      workflow_run_id: DEPLOY_INPUT.workflow_run_id
+    });
   });
 
   it('rejects a deploy actor who is not an organization operator', async () => {
