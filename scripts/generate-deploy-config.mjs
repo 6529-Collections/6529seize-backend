@@ -1164,6 +1164,7 @@ jobs:
             GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             GITHUB_ACTOR="$GITHUB_ACTOR" \
             GITHUB_REF_NAME="$GITHUB_REF_NAME" \
+            INPUT_SERVICE="$INPUT_SERVICE" \
             /usr/bin/bash --noprofile --norc -s <<< "$emergency_guard_contents"
       - name: Configure AWS credentials
         id: aws_credentials

@@ -123,6 +123,13 @@ describe('backend production authority workflow integration', () => {
     expect(steps[acquire]?.uses).toBeUndefined();
     expect(steps[acquire]?.if).toBeUndefined();
 
+    const emergencyRevalidationScript =
+      steps[emergencyBootstrapRevalidation]?.run ?? '';
+    expect(emergencyRevalidationScript).toContain('/usr/bin/env -i');
+    expect(emergencyRevalidationScript).toContain(
+      'INPUT_SERVICE="$INPUT_SERVICE"'
+    );
+
     const selectionScript = steps[reauthorize]?.run ?? '';
     expect(steps[reauthorize]?.if).toContain(
       "steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'"

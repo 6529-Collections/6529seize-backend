@@ -595,6 +595,7 @@ printf '200'
       'test "$emergency_guard_sha256" = "$EXPECTED_EMERGENCY_GUARD_SHA256"'
     );
     expect(revalidateStep?.run).toContain('/usr/bin/env -i');
+    expect(revalidateStep?.run).toContain('INPUT_SERVICE="$INPUT_SERVICE"');
     expect(revalidateStep?.run).toContain(
       '/usr/bin/bash --noprofile --norc -s'
     );
