@@ -1248,7 +1248,7 @@ jobs:
              .workflow_run_attempt == $workflow_run_attempt and
              .artifact_kind == "lambda-zip" and
              (.package_path | type == "string" and
-              test("^src/(api-serverless|[A-Za-z0-9]+)/dist/index\.zip$")) and
+              test("^src/(api-serverless|[A-Za-z0-9]+)/dist/index\\.zip$")) and
              (.package_digest | type == "string" and test("^[a-f0-9]{64}$")) and
              (.package_bytes | type == "number" and . >= 1 and . <= 524288000)'             "$selection_file" > /dev/null
           selection_digest="$(printf '%s' "$selection_json" | sha256sum | cut -d' ' -f1)"

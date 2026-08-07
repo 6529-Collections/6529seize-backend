@@ -6,15 +6,64 @@ import YAML from 'yaml';
 const root = process.cwd();
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
 
-const extractInlineJqFilter = (script: string, marker: string): string => {
+const extractInlineJqFilter = (
+  script: string,
+  marker: string,
+  inputVariable = 'response_file'
+): string => {
   const markerIndex = script.indexOf(marker);
   if (markerIndex < 0) throw new Error(`Missing jq filter marker: ${marker}`);
   const filterStart = script.indexOf('\'type == "object" and', markerIndex);
   const filterSuffix = script.slice(filterStart);
-  const filterEndMatch = /'\s+"\$response_file"/.exec(filterSuffix);
+  const filterEndMatch = new RegExp(`'\\s+"\\$${inputVariable}"`).exec(
+    filterSuffix
+  );
   if (filterStart < 0 || !filterEndMatch)
     throw new Error(`Missing inline jq response filter after: ${marker}`);
   return filterSuffix.slice(1, filterEndMatch.index);
+};
+
+const runDeploymentSelectionFilter = (
+  filter: string,
+  packagePath: string
+): void => {
+  execFileSync(
+    'jq',
+    [
+      '-e',
+      '--arg',
+      'service',
+      'api',
+      '--arg',
+      'target_sha',
+      'a'.repeat(40),
+      '--arg',
+      'workflow_run_id',
+      '123',
+      '--argjson',
+      'workflow_run_attempt',
+      '1',
+      filter
+    ],
+    {
+      cwd: root,
+      input: JSON.stringify({
+        artifact_kind: 'lambda-zip',
+        environment: 'prod',
+        package_bytes: 1024,
+        package_digest: 'b'.repeat(64),
+        package_path: packagePath,
+        repository: 'backend',
+        schema_version: 1,
+        selection_type: 'backend-production-deployment-selection-v1',
+        service: 'api',
+        target_sha: 'a'.repeat(40),
+        workflow_run_attempt: 1,
+        workflow_run_id: '123'
+      }),
+      stdio: 'pipe'
+    }
+  );
 };
 
 const validAuthorityResponse = {
@@ -327,6 +376,47 @@ describe('backend production authority workflow integration', () => {
           ...validAuthorityResponse,
           hard_expires_at: invalidHardExpiry as number
         })
+      ).toThrow();
+    }
+  });
+
+  it('executes the generated deployment-selection filter with a literal zip suffix', () => {
+    const parsed = YAML.parse(read('.github/workflows/deploy.yml')) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const evidenceScript =
+      parsed.jobs['build-and-deploy'].steps.find(
+        ({ name }) => name === 'Create backend production authority evidence'
+      )?.run ?? '';
+    const selectionFilter = extractInlineJqFilter(
+      evidenceScript,
+      'selection_json="$(jq -cS',
+      'selection_file'
+    );
+
+    expect(selectionFilter).toContain('dist/index\\\\.zip$');
+    expect(() =>
+      runDeploymentSelectionFilter(
+        selectionFilter,
+        'src/api-serverless/dist/index.zip'
+      )
+    ).not.toThrow();
+    expect(() =>
+      runDeploymentSelectionFilter(
+        selectionFilter,
+        'src/tdhLoop/dist/index.zip'
+      )
+    ).not.toThrow();
+    for (const invalidPath of [
+      'src/api-serverless/dist/indexXzip',
+      'src/api-serverless/dist/indexAzip',
+      'src/api-serverless/dist/index.zipx',
+      'src/api-serverless/dist/index\\.zip',
+      'x/src/api-serverless/dist/index.zip',
+      'src/api-serverless/subdir/dist/index.zip'
+    ]) {
+      expect(() =>
+        runDeploymentSelectionFilter(selectionFilter, invalidPath)
       ).toThrow();
     }
   });
