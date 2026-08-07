@@ -110,6 +110,16 @@ describe('backend production authority workflow integration', () => {
     expect(authorityStateWrite).toBeGreaterThan(acquireResponseValidation);
     expect(acquireScript).not.toContain('authority_state_json=');
     expect(acquireScript).not.toContain('--retry');
+    expect(acquireScript).toContain('--arg service "$INPUT_SERVICE"');
+    expect(acquireScript).toContain(
+      '.name == ("Deploy " + $service + " to prod [backend-prod-" +'
+    );
+    expect(acquireScript).toContain('$service + "-" + $run_id + "]")');
+    expect(acquireScript).toContain('.display_title == .name');
+    expect(acquireScript).not.toContain(
+      '.name == "Deploy api to prod [manual]"'
+    );
+    expect(acquireScript).not.toContain('--arg title');
     expect(steps[acquire]?.uses).toBeUndefined();
     expect(steps[acquire]?.if).toBeUndefined();
 

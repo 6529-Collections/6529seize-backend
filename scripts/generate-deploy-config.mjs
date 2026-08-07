@@ -554,6 +554,7 @@ jobs:
             --arg run_id "$GITHUB_RUN_ID" \
             --argjson attempt "$GITHUB_RUN_ATTEMPT" \
             --arg sha "$GITHUB_SHA" \
+            --arg service "$INPUT_SERVICE" \
             'type == "object" and
              (.id | tostring) == $run_id and
              .run_attempt == $attempt and
@@ -564,8 +565,9 @@ jobs:
              .conclusion == null and
              .head_branch == $branch and
              .head_sha == $sha and
-             .name == "Deploy api to prod [manual]" and
-             .display_title == "Deploy api to prod [manual]"' \
+             .name == ("Deploy " + $service + " to prod [backend-prod-" +
+               $service + "-" + $run_id + "]") and
+             .display_title == .name' \
             "$current_run_file" > /dev/null
 
           assert_workflow_exists() {
