@@ -204,7 +204,8 @@ describe('Release Bus v2 backend critical-path contract', () => {
     expect(guard).toContain('.ready == true and .mode == "manual"');
     expect(guard).toContain('.authorized == true and .train_id == $train_id');
     expect(guard).toContain('if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]');
-    expect(guard).toContain(
+    expect(guard).toContain('WORKFLOW_IDENTITY_MISMATCH');
+    expect(guard).not.toContain(
       'Manual backend deployment workflow identity is invalid'
     );
     expect(guard).toContain('emergency-api-bootstrap-readiness.sh');
