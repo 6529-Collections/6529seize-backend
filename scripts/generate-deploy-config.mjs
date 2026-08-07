@@ -1383,7 +1383,7 @@ jobs:
             exit 1
           fi
       - name: Verify immutable Lambda code
-        if: github.event.inputs.operation_key != ''
+        if: github.event.inputs.operation_key != '' || steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
         shell: bash
         env:
           VERIFICATION_TARGETS_BY_SERVICE: '${JSON.stringify(verificationTargetsByService)}'
@@ -1439,12 +1439,17 @@ jobs:
             | jq -r '.DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/mainnet/metadata/*" or .PathPattern == "/testnet/metadata/*") | .LambdaFunctionAssociations.Items[].LambdaFunctionARN' \
             | grep -Fx "$latest_arn"
       - name: Verify API health and exact version
-        if: github.event.inputs.operation_key != '' && github.event.inputs.service == 'api'
+        if: (github.event.inputs.operation_key != '' || steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true') && github.event.inputs.service == 'api'
         shell: bash
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
-          [[ "$INPUT_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          expected_sha="$INPUT_EXPECTED_SHA"
+          if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ]; then
+            test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$INPUT_EXPECTED_SHA"
+            expected_sha="$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA"
+          fi
+          [[ "$expected_sha" =~ ^[a-f0-9]{40}$ ]]
           if [ "$INPUT_ENVIRONMENT" = prod ]; then
             health_url=https://api.6529.io/health
           else
@@ -1452,12 +1457,12 @@ jobs:
           fi
           for attempt in {1..18}; do
             health="$(curl --fail --silent --show-error --max-time 15 "$health_url" || true)"
-            if [ "$(jq -r '.version.commit // ""' <<< "$health")" = "$INPUT_EXPECTED_SHA" ] && [ "$(jq -r '.status // ""' <<< "$health")" = ok ]; then
+            if [ "$(jq -r '.version.commit // ""' <<< "$health")" = "$expected_sha" ] && [ "$(jq -r '.status // ""' <<< "$health")" = ok ]; then
               exit 0
             fi
             sleep 10
           done
-          echo "API did not report healthy exact commit $INPUT_EXPECTED_SHA" >&2
+          echo "API did not report healthy exact commit $expected_sha" >&2
           exit 1
       - name: Create backend production authority evidence
         if: success() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod' && steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'
@@ -1574,6 +1579,7 @@ jobs:
           test "$INPUT_EMERGENCY_API_BOOTSTRAP" = true
           test -z "$INPUT_OPERATION_KEY"
           test "$INPUT_EXPECTED_SHA" = "$GITHUB_SHA"
+          test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$GITHUB_SHA"
           [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,5}$ ]]

@@ -54,6 +54,10 @@ describe('backend production authority workflow integration', () => {
     const emergencyEvidenceUpload = index(
       'Upload emergency API bootstrap evidence'
     );
+    const immutableLambdaVerification = index('Verify immutable Lambda code');
+    const exactApiHealthVerification = index(
+      'Verify API health and exact version'
+    );
     const inlineFailure = index(
       'Fail backend production authority after workflow failure'
     );
@@ -75,6 +79,10 @@ describe('backend production authority workflow integration', () => {
     expect(evidenceUpload).toBe(evidence + 1);
     expect(emergencyEvidence).toBe(evidenceUpload + 1);
     expect(emergencyEvidenceUpload).toBe(emergencyEvidence + 1);
+    expect(immutableLambdaVerification).toBeGreaterThan(aws);
+    expect(exactApiHealthVerification).toBeGreaterThan(
+      immutableLambdaVerification
+    );
     expect(inlineFailure).toBe(-1);
     expect(failureState).toBeGreaterThan(successNotification);
     expect(failureState).toBeGreaterThan(successWaveNotification);
@@ -148,6 +156,18 @@ describe('backend production authority workflow integration', () => {
     );
     expect(emergencyEvidenceScript).toContain(
       'test "$INPUT_EXPECTED_SHA" = "$GITHUB_SHA"'
+    );
+    expect(emergencyEvidenceScript).toContain(
+      'test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$GITHUB_SHA"'
+    );
+    expect(steps[immutableLambdaVerification]?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(steps[exactApiHealthVerification]?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(steps[exactApiHealthVerification]?.run).toContain(
+      'test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$INPUT_EXPECTED_SHA"'
     );
     expect(steps[emergencyEvidenceUpload]).toMatchObject({
       uses: expect.stringMatching(

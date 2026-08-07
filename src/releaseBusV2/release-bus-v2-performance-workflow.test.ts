@@ -562,6 +562,12 @@ printf '200'
     const emergencyEvidenceUpload = steps.find(
       ({ name }) => name === 'Upload emergency API bootstrap evidence'
     );
+    const immutableLambdaVerification = steps.find(
+      ({ name }) => name === 'Verify immutable Lambda code'
+    );
+    const exactApiHealthVerification = steps.find(
+      ({ name }) => name === 'Verify API health and exact version'
+    );
     expect(authorize).toBeTruthy();
     expect(revalidateStep).toBeDefined();
     expect(revalidateStep?.if).toBe(
@@ -597,6 +603,16 @@ printf '200'
     expect(emergencyEvidence?.run).toContain(
       'authorization_mode:"workflow-identity-self-bootstrap"'
     );
+    expect(immutableLambdaVerification?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(exactApiHealthVerification?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'"
+    );
+    expect(exactApiHealthVerification?.run).toContain(
+      'test "$INPUT_EMERGENCY_API_BOOTSTRAP_EXPECTED_SHA" = "$INPUT_EXPECTED_SHA"'
+    );
+    expect(exactApiHealthVerification?.run).toContain('"$expected_sha"');
     expect(emergencyEvidenceUpload).toMatchObject({
       uses: expect.stringMatching(
         /^actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02$/
