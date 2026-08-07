@@ -404,24 +404,28 @@ jobs:
           emergency_compatibility_fallback=false
           if [ "$production_authority" = true ] && [ "$http_status" != 200 ]; then
             rejection_reason="$(jq -r '.reason_code // .error // empty' "$response_file" 2>/dev/null)"
-            if [ -n "$rejection_reason" ]; then
-              echo "::error::Production authority acquisition was rejected with HTTP $http_status: $rejection_reason"
-            else
-              echo "::error::Production authority acquisition was rejected with HTTP $http_status"
+            if ! { [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ] &&
+                   [ -z "$INPUT_OPERATION_KEY" ] &&
+                   [ "$http_status" = 409 ] &&
+                   [ "$rejection_reason" = "WORKFLOW_IDENTITY_MISMATCH" ]; }; then
+              if [ -n "$rejection_reason" ]; then
+                echo "::error::Production authority acquisition was rejected with HTTP $http_status: $rejection_reason"
+              else
+                echo "::error::Production authority acquisition was rejected with HTTP $http_status"
+              fi
+              exit 1
             fi
-            exit 1
           fi
           if [ "$http_status" != 200 ]; then
-            rejection_reason="$(jq -r '.error // empty' "$response_file" 2>/dev/null)"
+            rejection_reason="$(jq -r '.reason_code // .error // empty' "$response_file" 2>/dev/null)"
             if [ "$INPUT_EMERGENCY_API_BOOTSTRAP" = true ] &&
                [ -z "$INPUT_OPERATION_KEY" ] &&
                [ "$http_status" = 409 ] &&
-               [ "$rejection_reason" = "Manual backend deployment workflow identity is invalid" ]; then
-              # The authenticated legacy server has verified this exact run,
-              # attempt, ref and SHA, then rejected only GitHub's newer run-name
-              # identity. Reproduce the remaining fail-closed readiness checks
-              # and save one script so the same guard is run again immediately
-              # before cloud credentials.
+               [ "$rejection_reason" = "WORKFLOW_IDENTITY_MISMATCH" ]; then
+              # The authenticated server rejected only the known GitHub
+              # run-name identity incompatibility. Reproduce the remaining
+              # fail-closed readiness checks and save one script so the same
+              # guard is run again immediately before cloud credentials.
               emergency_guard="$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"
               cat > "$emergency_guard" <<'EMERGENCY_API_BOOTSTRAP_GUARD'
           #!/usr/bin/env bash
@@ -642,7 +646,24 @@ jobs:
           assert_no_active_production_runs frontend "$GITHUB_REPOSITORY_OWNER/6529seize-frontend"
           EMERGENCY_API_BOOTSTRAP_GUARD
               chmod 700 "$emergency_guard"
-              "$emergency_guard"
+              emergency_guard_contents="$(cat -- "$emergency_guard")"
+              emergency_guard_sha256="$(printf '%s' "$emergency_guard_contents" | sha256sum | cut -d' ' -f1)"
+              [[ "$emergency_guard_sha256" =~ ^[a-f0-9]{64}$ ]]
+              echo "emergency_guard_sha256=$emergency_guard_sha256" >> "$GITHUB_OUTPUT"
+              /usr/bin/env -i \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                RELEASE_BUS_API_URL="$RELEASE_BUS_API_URL" \
+                RELEASE_BUS_WORKFLOW_AUTH_TOKEN="$RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+                GITHUB_TOKEN="$GITHUB_TOKEN" \
+                GITHUB_API_URL="$GITHUB_API_URL" \
+                GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+                GITHUB_REPOSITORY_OWNER="$GITHUB_REPOSITORY_OWNER" \
+                GITHUB_SHA="$GITHUB_SHA" \
+                GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+                GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+                GITHUB_ACTOR="$GITHUB_ACTOR" \
+                GITHUB_REF_NAME="$GITHUB_REF_NAME" \
+                /usr/bin/bash --noprofile --norc -s <<< "$emergency_guard_contents"
               emergency_compatibility_fallback=true
             else
               if [ -n "$rejection_reason" ]; then
@@ -970,7 +991,7 @@ jobs:
           mkdir -p "$destination"
           cp "release-bus-artifact/packages/$INPUT_SERVICE/index.zip" "$destination/index.zip"
       - name: Reauthorize exact backend production selection immediately before cloud credentials
-        if: github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        if: github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod' && steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'
         id: production_selection_authorization
         shell: bash
         env:
@@ -1121,6 +1142,37 @@ jobs:
           printf '%s' "$state_json" > "$state_tmp"
           mv -f "$state_tmp" "$state_file"
           echo "selection_digest=$selection_digest" >> "$GITHUB_OUTPUT"
+      - name: Revalidate emergency API bootstrap immediately before cloud credentials
+        if: steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
+        shell: bash
+        env:
+          RELEASE_BUS_API_URL: \${{ vars.RELEASE_BUS_API_URL }}
+          RELEASE_BUS_WORKFLOW_AUTH_TOKEN: \${{ secrets.RELEASE_BUS_WORKFLOW_AUTH_TOKEN }}
+          GITHUB_TOKEN: \${{ github.token }}
+          EXPECTED_EMERGENCY_GUARD_SHA256: \${{ steps.deployment_authorization.outputs.emergency_guard_sha256 }}
+        run: |
+          set -euo pipefail
+          emergency_guard="$RUNNER_TEMP/emergency-api-bootstrap-readiness.sh"
+          test -f "$emergency_guard"
+          test ! -L "$emergency_guard"
+          [[ "$EXPECTED_EMERGENCY_GUARD_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          emergency_guard_contents="$(cat -- "$emergency_guard")"
+          emergency_guard_sha256="$(printf '%s' "$emergency_guard_contents" | sha256sum | cut -d' ' -f1)"
+          test "$emergency_guard_sha256" = "$EXPECTED_EMERGENCY_GUARD_SHA256"
+          /usr/bin/env -i \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            RELEASE_BUS_API_URL="$RELEASE_BUS_API_URL" \
+            RELEASE_BUS_WORKFLOW_AUTH_TOKEN="$RELEASE_BUS_WORKFLOW_AUTH_TOKEN" \
+            GITHUB_TOKEN="$GITHUB_TOKEN" \
+            GITHUB_API_URL="$GITHUB_API_URL" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_REPOSITORY_OWNER="$GITHUB_REPOSITORY_OWNER" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+            GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            GITHUB_ACTOR="$GITHUB_ACTOR" \
+            GITHUB_REF_NAME="$GITHUB_REF_NAME" \
+            /usr/bin/bash --noprofile --norc -s <<< "$emergency_guard_contents"
       - name: Configure AWS credentials
         id: aws_credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
@@ -1408,7 +1460,7 @@ jobs:
           echo "API did not report healthy exact commit $INPUT_EXPECTED_SHA" >&2
           exit 1
       - name: Create backend production authority evidence
-        if: success() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        if: success() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod' && steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'
         id: production_authority_evidence
         shell: bash
         run: |
@@ -1502,13 +1554,67 @@ jobs:
           test "$evidence_bytes" -ge 1
           test "$evidence_bytes" -le 65536
       - name: Upload backend production authority evidence
-        if: success() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod'
+        if: success() && github.event.inputs.operation_key == '' && github.event.inputs.environment == 'prod' && steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: backend-production-authority-\${{ github.run_id }}
           path: \${{ runner.temp }}/backend-production-authority-evidence.json
           if-no-files-found: error
           retention-days: 7
+      - name: Create emergency API bootstrap evidence
+        if: success() && steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
+        shell: bash
+        env:
+          EMERGENCY_GUARD_SHA256: \${{ steps.deployment_authorization.outputs.emergency_guard_sha256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$INPUT_SERVICE" = api
+          test "$INPUT_ENVIRONMENT" = prod
+          test "$INPUT_EMERGENCY_API_BOOTSTRAP" = true
+          test -z "$INPUT_OPERATION_KEY"
+          test "$INPUT_EXPECTED_SHA" = "$GITHUB_SHA"
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,5}$ ]]
+          [[ "$EMERGENCY_GUARD_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON" =~ ^[A-Za-z0-9._:/-]{10,200}$ ]]
+          package_path=src/api-serverless/dist/index.zip
+          test -f "$package_path"
+          test ! -L "$package_path"
+          package_bytes="$(stat -c '%s' "$package_path")"
+          [[ "$package_bytes" =~ ^[1-9][0-9]{0,8}$ ]]
+          test "$package_bytes" -le 524288000
+          package_digest="$(sha256sum "$package_path" | cut -d' ' -f1)"
+          [[ "$package_digest" =~ ^[a-f0-9]{64}$ ]]
+          evidence_file="$RUNNER_TEMP/backend-emergency-api-bootstrap-evidence.json"
+          jq -cnS \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg reason "$INPUT_EMERGENCY_API_BOOTSTRAP_REASON" \
+            --arg target_sha "$GITHUB_SHA" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg guard_sha256 "$EMERGENCY_GUARD_SHA256" \
+            --arg package_digest "$package_digest" \
+            --argjson package_bytes "$package_bytes" \
+            '{schema_version:1,evidence_type:"backend-emergency-api-bootstrap-v1",
+              authorization_mode:"workflow-identity-self-bootstrap",
+              repository:"backend",environment:"prod",service:"api",
+              actor:$actor,reason:$reason,target_sha:$target_sha,
+              workflow_run_id:$workflow_run_id,
+              workflow_run_attempt:$workflow_run_attempt,
+              guard_sha256:$guard_sha256,package_digest:$package_digest,
+              package_bytes:$package_bytes,deployment_result:"success"}' \
+            > "$evidence_file"
+          test "$(stat -c '%s' "$evidence_file")" -le 65536
+      - name: Upload emergency API bootstrap evidence
+        if: success() && steps.deployment_authorization.outputs.emergency_compatibility_fallback == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-emergency-api-bootstrap-\${{ github.run_id }}
+          path: \${{ runner.temp }}/backend-emergency-api-bootstrap-evidence.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Report structured Release Bus deployment result
         if: always() && github.event.inputs.operation_key != ''
         shell: bash

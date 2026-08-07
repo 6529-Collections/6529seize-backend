@@ -43,9 +43,16 @@ describe('backend production authority workflow integration', () => {
     const reauthorize = index(
       'Reauthorize exact backend production selection immediately before cloud credentials'
     );
+    const emergencyBootstrapRevalidation = index(
+      'Revalidate emergency API bootstrap immediately before cloud credentials'
+    );
     const evidence = index('Create backend production authority evidence');
     const evidenceUpload = index(
       'Upload backend production authority evidence'
+    );
+    const emergencyEvidence = index('Create emergency API bootstrap evidence');
+    const emergencyEvidenceUpload = index(
+      'Upload emergency API bootstrap evidence'
     );
     const inlineFailure = index(
       'Fail backend production authority after workflow failure'
@@ -62,9 +69,12 @@ describe('backend production authority workflow integration', () => {
     expect(validation).toBe(0);
     expect(acquire).toBe(1);
     expect(checkout).toBeGreaterThan(acquire);
-    expect(reauthorize).toBe(aws - 1);
+    expect(reauthorize).toBeLessThan(emergencyBootstrapRevalidation);
+    expect(emergencyBootstrapRevalidation).toBe(aws - 1);
     expect(evidence).toBeGreaterThan(aws);
     expect(evidenceUpload).toBe(evidence + 1);
+    expect(emergencyEvidence).toBe(evidenceUpload + 1);
+    expect(emergencyEvidenceUpload).toBe(emergencyEvidence + 1);
     expect(inlineFailure).toBe(-1);
     expect(failureState).toBeGreaterThan(successNotification);
     expect(failureState).toBeGreaterThan(successWaveNotification);
@@ -96,6 +106,9 @@ describe('backend production authority workflow integration', () => {
     expect(steps[acquire]?.if).toBeUndefined();
 
     const selectionScript = steps[reauthorize]?.run ?? '';
+    expect(steps[reauthorize]?.if).toContain(
+      "steps.deployment_authorization.outputs.emergency_compatibility_fallback != 'true'"
+    );
     expect(selectionScript).toContain(
       'selection_type:"backend-production-deployment-selection-v1"'
     );
@@ -125,6 +138,26 @@ describe('backend production authority workflow integration', () => {
     expect(JSON.stringify(steps[evidenceUpload])).toContain(
       '${{ runner.temp }}/backend-production-authority-evidence.json'
     );
+
+    const emergencyEvidenceScript = steps[emergencyEvidence]?.run ?? '';
+    expect(emergencyEvidenceScript).toContain(
+      'evidence_type:"backend-emergency-api-bootstrap-v1"'
+    );
+    expect(emergencyEvidenceScript).toContain(
+      'authorization_mode:"workflow-identity-self-bootstrap"'
+    );
+    expect(emergencyEvidenceScript).toContain(
+      'test "$INPUT_EXPECTED_SHA" = "$GITHUB_SHA"'
+    );
+    expect(steps[emergencyEvidenceUpload]).toMatchObject({
+      uses: expect.stringMatching(
+        /^actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02$/
+      ),
+      with: {
+        name: 'backend-emergency-api-bootstrap-${{ github.run_id }}',
+        'retention-days': 30
+      }
+    });
 
     expect(before).not.toContain('/production-authority/fail');
     expect(before).not.toContain(
