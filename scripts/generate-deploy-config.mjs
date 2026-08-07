@@ -677,7 +677,7 @@ jobs:
               --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
               'type == "object" and
                (keys_unsorted | sort) == [
-                 "authorized", "bound", "controller_identity", "control_epoch",
+                 "authorized", "bound", "control_epoch", "controller_identity",
                  "environment", "hard_expires_at", "lease_expires_at",
                  "lock_row_version", "operation_id", "repository", "reused",
                  "selection_digest", "service", "status", "target_sha",
@@ -1092,7 +1092,7 @@ jobs:
             --arg selection_digest "$selection_digest" \
             'type == "object" and
              (keys_unsorted | sort) == [
-               "authorized", "bound", "controller_identity", "control_epoch",
+               "authorized", "bound", "control_epoch", "controller_identity",
                "environment", "hard_expires_at", "lease_expires_at",
                "lock_row_version", "operation_id", "repository", "reused",
                "selection_digest", "service", "status", "target_sha",

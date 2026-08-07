@@ -47,7 +47,7 @@ jobs:
              'type == "object" and .id == ($run_id | tonumber) and
              .repository.full_name == "6529-Collections/6529seize-backend" and
              .head_repository.full_name == "6529-Collections/6529seize-backend" and
-             .name == "Deploy a service" and
+             .name == .display_title and
              .path == ".github/workflows/deploy.yml" and
              .event == "workflow_dispatch" and .head_branch == "main" and
              (.head_sha | type == "string" and test("^[a-f0-9]{40}$")) and

@@ -553,7 +553,7 @@ jobs:
             authority_state_file="$RUNNER_TEMP/backend-production-authority-state.json"
             jq -e               --arg operation_id "$operation_id"               --arg controller_identity backend-production-workflow               --arg service "$INPUT_SERVICE"               --arg target_sha "$GITHUB_SHA"               --arg workflow_run_id "$GITHUB_RUN_ID"               --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT"               'type == "object" and
                (keys_unsorted | sort) == [
-                 "authorized", "bound", "controller_identity", "control_epoch",
+                 "authorized", "bound", "control_epoch", "controller_identity",
                  "environment", "hard_expires_at", "lease_expires_at",
                  "lock_row_version", "operation_id", "repository", "reused",
                  "selection_digest", "service", "status", "target_sha",
@@ -888,7 +888,7 @@ jobs:
           }
           jq -e             --arg operation_id "backend-prod-$INPUT_SERVICE-$GITHUB_RUN_ID"             --arg service "$INPUT_SERVICE"             --arg target_sha "$GITHUB_SHA"             --arg workflow_run_id "$GITHUB_RUN_ID"             --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT"             --arg selection_digest "$selection_digest"             'type == "object" and
              (keys_unsorted | sort) == [
-               "authorized", "bound", "controller_identity", "control_epoch",
+               "authorized", "bound", "control_epoch", "controller_identity",
                "environment", "hard_expires_at", "lease_expires_at",
                "lock_row_version", "operation_id", "repository", "reused",
                "selection_digest", "service", "status", "target_sha",
