@@ -317,6 +317,14 @@ entire corpus.
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
 frontend calendar API calls for drop timing and Bedrock-planned public-data
 intents compiled to backend-owned SQL.
+Natural multi-wallet setup wording such as adding, linking, pairing, or setting
+up another wallet is routed to the consolidation records when the wording
+includes both a setup action and an explicit additional, quantified, or
+possessive multi-wallet target. Generic connection questions, bare plural
+wallet wording, and capability questions about merely using multiple wallets
+remain outside that route so the bot does not incorrectly prescribe
+consolidation. Explicit delegation wording remains governed by delegation
+routing rather than this consolidation shortcut.
 Direct follow-up questions first match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.

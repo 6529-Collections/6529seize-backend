@@ -246,6 +246,131 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     );
   });
 
+  it.each([
+    'how do i add a second wallet?',
+    'can i link another address to my setup?',
+    'where do i connect an additional wallet?',
+    'how can i pair two wallets?',
+    'how do i set up multiple wallets?',
+    'how do i link my wallet with another wallet?',
+    'how do i add my other wallet?',
+    'where can i link my wallets?'
+  ])('routes natural multi-wallet wording in "%s"', async (question) => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.wallet-architecture',
+            title: 'Wallet Architecture',
+            canonical_path: '/delegation/wallet-architecture',
+            aliases: ['wallet architecture'],
+            keywords: ['wallet', 'architecture', 'vault'],
+            facts: ['Separate vault, transaction, and minting wallets.']
+          },
+          {
+            id: 'delegation.register-consolidation-doc',
+            title: 'Register Consolidation Guide',
+            canonical_path: '/delegation/delegation-faq/register-consolidation',
+            aliases: ['register consolidation guide'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Register Consolidation connects wallets you control.']
+          },
+          {
+            id: 'delegation.register-consolidation',
+            title: 'Register Consolidation',
+            canonical_path: '/delegation/register-consolidation',
+            aliases: ['register consolidation'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Use the Register Consolidation form.']
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            title: 'Consolidation Use Cases',
+            canonical_path: '/delegation/consolidation-use-cases',
+            aliases: ['consolidation use cases'],
+            keywords: ['consolidation', 'wallet'],
+            facts: [
+              '6529 recognizes up to three addresses as one consolidation group.'
+            ]
+          }
+        ]
+      })
+    );
+
+    const matches = await source.findMatches(question, 4);
+
+    const matchIds = matches.map((match) => match.record.id);
+
+    expect(matchIds.slice(0, 2)).toEqual([
+      'delegation.register-consolidation-doc',
+      'delegation.register-consolidation'
+    ]);
+    expect(matchIds.slice(2)).toEqual(
+      expect.arrayContaining([
+        'delegation.consolidation-use-cases',
+        'delegation.wallet-architecture'
+      ])
+    );
+  });
+
+  it.each([
+    'how do i add another profile statement?',
+    'how do i connect my hardware wallet?',
+    'can i use more than one wallet?',
+    'can i use two wallets?',
+    'how do i link wallets?',
+    'how do i add a delegate wallet?'
+  ])(
+    'does not misroute unrelated wallet/addition wording in "%s"',
+    async (question) => {
+      const source = new FrontendHelpBotKnowledgeSource(async () =>
+        response({
+          schema_version: 1,
+          generated_at: '2026-06-19T00:00:00.000Z',
+          commit_sha: 'test',
+          base_url: 'https://6529.io',
+          records: [
+            {
+              id: 'delegation.wallet-architecture',
+              title: 'Wallet Architecture',
+              canonical_path: '/delegation/wallet-architecture',
+              aliases: ['wallet architecture', 'hardware wallet setup'],
+              keywords: ['wallet', 'architecture', 'vault'],
+              facts: ['Separate vault, transaction, and minting wallets.']
+            },
+            {
+              id: 'delegation.faq',
+              title: 'Delegation FAQ',
+              canonical_path: '/delegation/delegation-faq',
+              aliases: ['set up delegation', 'delegate wallet'],
+              keywords: ['delegation', 'delegate', 'wallet'],
+              facts: ['Delegation grants scoped rights to another wallet.']
+            },
+            {
+              id: 'delegation.register-consolidation-doc',
+              title: 'Register Consolidation Guide',
+              canonical_path:
+                '/delegation/delegation-faq/register-consolidation',
+              aliases: ['register consolidation guide'],
+              keywords: ['register', 'consolidation', 'wallet'],
+              facts: ['Register Consolidation connects wallets you control.']
+            }
+          ]
+        })
+      );
+
+      const matches = await source.findMatches(question, 4);
+
+      expect(matches.map((match) => match.record.id)).not.toContain(
+        'delegation.register-consolidation-doc'
+      );
+    }
+  );
+
   it('does not route generic transaction display questions as wallet architecture', async () => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
       response({

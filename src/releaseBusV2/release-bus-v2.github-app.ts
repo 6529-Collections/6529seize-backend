@@ -58,9 +58,9 @@ export function workflowRunMatchesOperation(
 }
 
 export function isValidGitHubWorkflowActor(actor: string): boolean {
-  // GitHub App workflow actors use the app slug followed by the literal
-  // `[bot]` suffix. Only the Release Bus App may drive automated operations;
-  // human logins retain GitHub's 39-character limit for manual attribution.
+  // The shared parser admits only operators and the Release Bus App. The
+  // GitHub Actions actor is accepted through the dedicated Production E2E
+  // reader, whose workflow and repository boundary is narrower than this one.
   return (
     /^[A-Za-z0-9-]{1,39}$/.test(actor) || isReleaseBusGitHubAppActor(actor)
   );
@@ -90,6 +90,8 @@ export type GitHubRun = {
   readonly updated_at?: string;
   readonly event?: string;
   readonly actor?: { readonly login?: string };
+  readonly repository?: { readonly full_name?: string };
+  readonly head_repository?: { readonly full_name?: string } | null;
   readonly jobs?: GitHubWorkflowJob[];
 };
 
@@ -98,6 +100,8 @@ export type ReleaseBusWorkflowRunIdentity = {
   readonly attempt: number;
   readonly conclusion: string | null;
   readonly event: string;
+  readonly repository: string;
+  readonly headRepository: string;
   readonly headBranch: string;
   readonly headSha: string;
   readonly name: string;
@@ -686,6 +690,14 @@ function trustedGatePolicyBundleRollout(from: string, to: string) {
   } as const;
 }
 
+function trustedGatePolicyBundleRolloutChain(
+  digests: readonly [string, string, ...string[]]
+) {
+  return digests
+    .slice(1)
+    .map((to, index) => trustedGatePolicyBundleRollout(digests[index]!, to));
+}
+
 const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
   Record<
     ReleaseBusV2Repository,
@@ -756,7 +768,27 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
     trustedGatePolicyBundleRollout(
       '2a79efe36915440f8bc7f4844a354a8cb28e01a2c415f2009af1b3e343215219',
       '0f6bffeb37b72f67a69e8fc8d4077caf0bfb2d5f4d36af6d287f51d3cc924244'
-    )
+    ),
+    trustedGatePolicyBundleRollout(
+      '0f6bffeb37b72f67a69e8fc8d4077caf0bfb2d5f4d36af6d287f51d3cc924244',
+      '18862aeb2dd8369665c61c1ee3f7627b039cae97ae88f8a7aabfa210cdec05b6'
+    ),
+    trustedGatePolicyBundleRollout(
+      '18862aeb2dd8369665c61c1ee3f7627b039cae97ae88f8a7aabfa210cdec05b6',
+      '528692aee7457217f9956e950497a9abbd0b5eb317a7a899ce8fb04c0b73ff36'
+    ),
+    ...trustedGatePolicyBundleRolloutChain([
+      '528692aee7457217f9956e950497a9abbd0b5eb317a7a899ce8fb04c0b73ff36',
+      '3403deda84646791436614ab775fd32c5edf2b5e50935166c0b1f864085d5991',
+      'b8ef9667450785970266a71869d585b585a2f9ef99a8ca4382d310cf1fde7c6a',
+      '071e4facda889950c1460d9eaf44fec0f6934655c327948b5fa01d3ec476231c',
+      '7ad7d9d8698d8adfe41ddca2d926d2a60af96e78e6b5ad10b00e13a583f4be4a',
+      '4186f8f83b5c29af0ca3194a0dc2e18a72e2fa29b459acfc006725385254f551',
+      '2fdd612fba4a2490f06108dc2c5ed69574277de200e8b1a03fc104b0bb7a66c9',
+      '71ce7c1b557c45fe9096fda2b0e6ddb19d78f7c50f6b6ee12f8b56487547f296',
+      '286fb53b44defe2958b8f0d97baa8d090f4992e521b3aa78d6b787da7890cb16',
+      'b563ed89a7edc5c70031503f74946ba5fa664ed1cecd401a456ed9190dafb0c4'
+    ])
   ],
   frontend: [
     trustedGatePolicyBundleRollout(
@@ -2117,6 +2149,43 @@ export class ReleaseBusGitHubApp {
     repository: ReleaseBusV2Repository,
     workflowRunId: string
   ): Promise<ReleaseBusWorkflowRunIdentity> {
+    return this.readWorkflowRunIdentity(
+      repository,
+      workflowRunId,
+      isValidGitHubWorkflowActor
+    );
+  }
+
+  public async getProductionE2EWorkflowRunIdentity(
+    repository: ReleaseBusV2Repository,
+    workflowRunId: string
+  ): Promise<ReleaseBusWorkflowRunIdentity> {
+    if (repository !== 'frontend')
+      throw new Error(
+        'Production E2E identity must use the frontend repository'
+      );
+    const identity = await this.readWorkflowRunIdentity(
+      repository,
+      workflowRunId,
+      (actor) => actor === 'github-actions[bot]'
+    );
+    const expectedRepository = `${this.owner}/${REPOSITORIES.frontend}`;
+    if (
+      identity.actor !== 'github-actions[bot]' ||
+      identity.event !== 'workflow_dispatch' ||
+      identity.path !== '.github/workflows/production-e2e.yml' ||
+      identity.repository !== expectedRepository ||
+      identity.headRepository !== expectedRepository
+    )
+      throw new Error('GitHub workflow run is not a Production E2E qualifier');
+    return identity;
+  }
+
+  private async readWorkflowRunIdentity(
+    repository: ReleaseBusV2Repository,
+    workflowRunId: string,
+    isValidActor: (actor: string) => boolean
+  ): Promise<ReleaseBusWorkflowRunIdentity> {
     if (!/^\d+$/.test(workflowRunId))
       throw new Error('Invalid GitHub workflow run id');
     const response = await this.request(
@@ -2126,8 +2195,14 @@ export class ReleaseBusGitHubApp {
     await this.assertOk(response, `read ${repository} workflow run`);
     const run = (await response.json()) as GitHubRun;
     const actor = run.actor?.login ?? '';
-    if (!isValidGitHubWorkflowActor(actor))
+    const runRepository = run.repository?.full_name ?? '';
+    const headRepository = run.head_repository?.full_name ?? '';
+    if (!isValidActor(actor))
       throw new Error('GitHub workflow run has no valid actor');
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(runRepository))
+      throw new Error('GitHub workflow run has no valid repository');
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(headRepository))
+      throw new Error('GitHub workflow run has no valid head repository');
     if (!/^[a-f0-9]{40}$/i.test(run.head_sha))
       throw new Error('GitHub workflow run has no valid head SHA');
     if (
@@ -2142,6 +2217,8 @@ export class ReleaseBusGitHubApp {
       attempt: Number(run.run_attempt),
       conclusion: run.conclusion,
       event: run.event ?? '',
+      repository: runRepository,
+      headRepository,
       headBranch: run.head_branch,
       headSha: run.head_sha.toLowerCase(),
       name: run.name,
