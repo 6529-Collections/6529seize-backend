@@ -4,6 +4,7 @@ import {
   HelpBotKnowledgeSource,
   HelpBotKnowledgeRecord,
   HelpBotKnowledgeMatch,
+  isAmbiguousWalletManagementQuestion,
   isMultiWalletLimitQuestion,
   isMultiWalletRemovalQuestion,
   isMultiWalletReplacementQuestion,
@@ -1306,7 +1307,8 @@ function isLikelyProductText(value: string | null | undefined): boolean {
     isMultiWalletSetupQuestion(normalized) ||
     isMultiWalletLimitQuestion(normalized) ||
     isMultiWalletRemovalQuestion(normalized) ||
-    isMultiWalletReplacementQuestion(normalized)
+    isMultiWalletReplacementQuestion(normalized) ||
+    isAmbiguousWalletManagementQuestion(normalized)
   );
 }
 

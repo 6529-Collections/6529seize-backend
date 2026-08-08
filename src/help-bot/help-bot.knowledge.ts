@@ -134,11 +134,6 @@ const MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS = [
   /\bupdat(?:e[ds]?|ing)\b/
 ] as const;
 
-const STRONG_MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS = [
-  /\breplac(?:e[ds]?|ing)\b/,
-  /\bswap(?:s|ped|ping)?\b/
-] as const;
-
 const EXTERNAL_WALLET_CONTEXT_PATTERNS = [
   /\bhardware wallets?\b/,
   /\bmetamask\b/,
@@ -223,8 +218,7 @@ const CONSOLIDATION_COUNT_RELATION_PATTERNS = [
   /\bcount(?:ed|s|ing)?\b/,
   /\brecogniz(?:e|ed|es|ing)\b/,
   /\bgroup(?:ed|s|ing)?\b/,
-  /\btreat(?:ed|s|ing)?\b/,
-  /\btogether\b/
+  /\btreat(?:ed|s|ing)?\b/
 ] as const;
 
 const WALLET_CHECK_CONTEXT_PATTERNS = [
@@ -245,6 +239,8 @@ const REGISTER_CONSOLIDATION_DOC_PATH =
   '/delegation/delegation-faq/register-consolidation';
 const MANAGE_REVOKE_DOC_PATH = '/delegation/delegation-faq/manage-revoke';
 const MANAGE_UPDATE_DOC_PATH = '/delegation/delegation-faq/manage-update';
+const WALLET_MANAGEMENT_CLARIFICATION_ID =
+  'delegation.wallet-management-clarification';
 const WALLET_ARCHITECTURE_ID = 'delegation.wallet-architecture';
 const WALLET_CHECKER_ID = 'delegation.wallet-checker';
 const NETWORK_DEFINITIONS_ID = 'network.definitions';
@@ -277,6 +273,11 @@ const DELEGATION_CONTEXT_PATTERNS = [
   /\bdelegat(?:e|es|ed|ing|ion|ions)\b/,
   /\bdelegation managers?\b/,
   /\bminting delegation\b/
+] as const;
+
+const DISQUALIFYING_DELEGATION_CONTEXT_PATTERNS = [
+  /\bdelegat(?:e|es|ed|ing)\b/,
+  /\bdelegations?\b(?!\s+center\b)/
 ] as const;
 
 const GENESIS_SET_PATTERNS = [/\bgenesis sets?\b/] as const;
@@ -561,31 +562,26 @@ function hasCountedMultiWalletTarget(normalizedQuestion: string): boolean {
   return false;
 }
 
-function hasDisqualifyingWalletContext(
-  normalizedQuestion: string,
-  hasConsolidationContext: boolean
-): boolean {
+function hasMultiWalletTarget(normalizedQuestion: string): boolean {
   return (
-    !hasConsolidationContext &&
-    (matchesAny(normalizedQuestion, DELEGATION_CONTEXT_PATTERNS) ||
-      matchesAny(normalizedQuestion, EXTERNAL_WALLET_CONTEXT_PATTERNS))
+    matchesAny(normalizedQuestion, MULTI_WALLET_SETUP_TARGET_PATTERNS) ||
+    hasCountedMultiWalletTarget(normalizedQuestion)
+  );
+}
+
+function hasDisqualifyingWalletContext(normalizedQuestion: string): boolean {
+  return (
+    matchesAny(normalizedQuestion, DISQUALIFYING_DELEGATION_CONTEXT_PATTERNS) ||
+    matchesAny(normalizedQuestion, EXTERNAL_WALLET_CONTEXT_PATTERNS)
   );
 }
 
 export function isMultiWalletSetupQuestion(question: string): boolean {
   const normalizedQuestion = normalizeText(question);
-  const hasConsolidationContext = matchesAny(
-    normalizedQuestion,
-    CONSOLIDATION_CONTEXT_PATTERNS
-  );
   return (
-    !hasDisqualifyingWalletContext(
-      normalizedQuestion,
-      hasConsolidationContext
-    ) &&
+    !hasDisqualifyingWalletContext(normalizedQuestion) &&
     matchesAny(normalizedQuestion, MULTI_WALLET_SETUP_ACTION_PATTERNS) &&
-    (matchesAny(normalizedQuestion, MULTI_WALLET_SETUP_TARGET_PATTERNS) ||
-      hasCountedMultiWalletTarget(normalizedQuestion))
+    hasMultiWalletTarget(normalizedQuestion)
   );
 }
 
@@ -605,10 +601,7 @@ export function isMultiWalletLimitQuestion(question: string): boolean {
     matchesAny(normalizedQuestion, CONSOLIDATION_COUNT_RELATION_PATTERNS);
   return (
     matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS) &&
-    !hasDisqualifyingWalletContext(
-      normalizedQuestion,
-      hasConsolidationContext
-    ) &&
+    !hasDisqualifyingWalletContext(normalizedQuestion) &&
     (matchesAny(
       normalizedQuestion,
       STRONG_CONSOLIDATION_LIMIT_CONTEXT_PATTERNS
@@ -626,7 +619,8 @@ export function isMultiWalletRemovalQuestion(question: string): boolean {
   return (
     matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS) &&
     matchesAny(normalizedQuestion, MULTI_WALLET_REMOVAL_ACTION_PATTERNS) &&
-    !hasDisqualifyingWalletContext(normalizedQuestion, hasConsolidationContext)
+    (hasConsolidationContext || hasMultiWalletTarget(normalizedQuestion)) &&
+    !hasDisqualifyingWalletContext(normalizedQuestion)
   );
 }
 
@@ -638,16 +632,24 @@ export function isMultiWalletReplacementQuestion(question: string): boolean {
   );
   return (
     matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS) &&
-    (matchesAny(
-      normalizedQuestion,
-      STRONG_MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS
-    ) ||
-      (hasConsolidationContext &&
-        matchesAny(
-          normalizedQuestion,
-          MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS
-        ))) &&
-    !hasDisqualifyingWalletContext(normalizedQuestion, hasConsolidationContext)
+    matchesAny(normalizedQuestion, MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS) &&
+    (hasConsolidationContext || hasMultiWalletTarget(normalizedQuestion)) &&
+    !hasDisqualifyingWalletContext(normalizedQuestion)
+  );
+}
+
+export function isAmbiguousWalletManagementQuestion(question: string): boolean {
+  const normalizedQuestion = normalizeText(question);
+  const hasManagementAction =
+    matchesAny(normalizedQuestion, MULTI_WALLET_REMOVAL_ACTION_PATTERNS) ||
+    matchesAny(normalizedQuestion, MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS);
+  return (
+    hasManagementAction &&
+    matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS) &&
+    !matchesAny(normalizedQuestion, CONSOLIDATION_CONTEXT_PATTERNS) &&
+    !hasMultiWalletTarget(normalizedQuestion) &&
+    !hasDisqualifyingWalletContext(normalizedQuestion) &&
+    !/\bprofiles?\b/.test(normalizedQuestion)
   );
 }
 
@@ -707,6 +709,7 @@ interface RoutedQuestionContext {
   readonly hasMultiWalletLimitContext: boolean;
   readonly hasMultiWalletRemovalContext: boolean;
   readonly hasMultiWalletReplacementContext: boolean;
+  readonly hasAmbiguousWalletManagementContext: boolean;
   readonly hasConsolidationLimitContext: boolean;
   readonly hasDelegationContext: boolean;
   readonly hasWalletCheckContext: boolean;
@@ -737,6 +740,8 @@ function routedQuestionContext(
       isMultiWalletRemovalQuestion(normalizedQuestion),
     hasMultiWalletReplacementContext:
       isMultiWalletReplacementQuestion(normalizedQuestion),
+    hasAmbiguousWalletManagementContext:
+      isAmbiguousWalletManagementQuestion(normalizedQuestion),
     hasConsolidationLimitContext: matchesAny(
       normalizedQuestion,
       CONSOLIDATION_LIMIT_CONTEXT_PATTERNS
@@ -820,6 +825,27 @@ function addConsolidationManagementScores(
     addRoutedPathScore(scores, MANAGE_REVOKE_DOC_PATH, 6);
     addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 5);
   }
+  if (context.hasAmbiguousWalletManagementContext) {
+    addRoutedIdScore(scores, WALLET_MANAGEMENT_CLARIFICATION_ID, 18);
+  }
+}
+
+function applyConsolidationRoutingExclusions(
+  scores: Map<string, number>,
+  context: RoutedQuestionContext
+): void {
+  if (!hasDisqualifyingWalletContext(context.normalizedQuestion)) {
+    return;
+  }
+
+  [
+    CONSOLIDATION_USE_CASES_PATH,
+    REGISTER_CONSOLIDATION_PATH,
+    REGISTER_CONSOLIDATION_DOC_PATH,
+    MANAGE_REVOKE_DOC_PATH,
+    MANAGE_UPDATE_DOC_PATH
+  ].forEach((path) => scores.set(routedPathKey(path), -100));
+  scores.set(routedIdKey(WALLET_MANAGEMENT_CLARIFICATION_ID), -100);
 }
 
 function addConsolidationScores(
@@ -914,6 +940,7 @@ function routedRecordScores(
   addNetworkDefinitionScores(scores, context);
   addTdhDefinitionScores(scores, context);
   addStreamReviewScores(scores, context);
+  applyConsolidationRoutingExclusions(scores, context);
 
   return scores;
 }

@@ -2,6 +2,7 @@ import {
   FrontendHelpBotKnowledgeSource,
   HelpBotKnowledgeIndex,
   HelpBotKnowledgeUnavailableError,
+  isAmbiguousWalletManagementQuestion,
   isMultiWalletLimitQuestion,
   isMultiWalletRemovalQuestion,
   isMultiWalletReplacementQuestion,
@@ -33,6 +34,21 @@ describe('multi-wallet intent boundaries', () => {
         isMultiWalletReplacementQuestion(question)
       ].some(Boolean)
     ).toBe(false);
+  });
+
+  it.each(['how do i remove a wallet?', 'how do i replace a wallet?'])(
+    'treats bare wallet-management wording in "%s" as ambiguous',
+    (question) => {
+      expect(isMultiWalletRemovalQuestion(question)).toBe(false);
+      expect(isMultiWalletReplacementQuestion(question)).toBe(false);
+      expect(isAmbiguousWalletManagementQuestion(question)).toBe(true);
+    }
+  );
+
+  it('does not use "together" alone as a consolidation-limit signal', () => {
+    expect(isMultiWalletLimitQuestion('how many wallets work together?')).toBe(
+      false
+    );
   });
 });
 
@@ -404,7 +420,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
   });
 
   it.each([
-    'how do i remove a wallet?',
+    'how do i remove one of my wallets?',
     'can i unlink my other address?',
     'how do i detach a wallet from consolidation?',
     'how do i delete a consolidated wallet?'
@@ -442,10 +458,11 @@ describe('FrontendHelpBotKnowledgeSource', () => {
   });
 
   it.each([
-    'how do i replace a wallet?',
+    'how do i replace one of my wallets?',
     'can i swap my other address?',
     'how do i change a wallet in my consolidation?',
-    'how do i update a consolidated address?'
+    'how do i update a consolidated address?',
+    'how do i replace a wallet in consolidation from the delegation center?'
   ])('routes consolidation replacement wording in "%s"', async (question) => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
       response({
@@ -477,6 +494,126 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     const match = await source.findMatch(question);
 
     expect(match?.record.id).toBe('delegation.manage-update-doc');
+  });
+
+  it.each(['how do i remove a wallet?', 'how do i replace a wallet?'])(
+    'routes ambiguous wallet-management wording in "%s" to clarification',
+    async (question) => {
+      const source = new FrontendHelpBotKnowledgeSource(async () =>
+        response({
+          schema_version: 1,
+          generated_at: '2026-06-19T00:00:00.000Z',
+          commit_sha: 'test',
+          base_url: 'https://6529.io',
+          records: [
+            {
+              id: 'delegation.wallet-management-clarification',
+              title: 'Wallet Management Clarification',
+              canonical_path: '/delegation/delegation-center',
+              aliases: ['wallet management clarification'],
+              keywords: ['wallet', 'management', 'consolidation'],
+              facts: [
+                'Clarify whether the user means their connected wallet or a consolidation record.'
+              ]
+            },
+            {
+              id: 'delegation.manage-revoke-doc',
+              title: 'How to Revoke a Delegation or Consolidation',
+              canonical_path: '/delegation/delegation-faq/manage-revoke',
+              aliases: ['revoke consolidation'],
+              keywords: ['revoke', 'remove', 'wallet', 'consolidation'],
+              facts: ['Use View/Manage to revoke a consolidation record.']
+            },
+            {
+              id: 'delegation.manage-update-doc',
+              title: 'How to Update a Delegation or Consolidation',
+              canonical_path: '/delegation/delegation-faq/manage-update',
+              aliases: ['update consolidation'],
+              keywords: ['update', 'replace', 'wallet', 'consolidation'],
+              facts: ['Use View/Manage to update a consolidation record.']
+            }
+          ]
+        })
+      );
+
+      const match = await source.findMatch(question);
+
+      expect(match?.record.id).toBe(
+        'delegation.wallet-management-clarification'
+      );
+    }
+  );
+
+  it.each([
+    'how do i replace wallet in consolidation using metamask?',
+    'how do i remove wallet from consolidation in metamask?',
+    'what is the metamask wallet consolidation limit?',
+    'how do i replace my hardware wallet in a consolidation?',
+    'how do i remove a delegate wallet from consolidation?'
+  ])('does not bypass wallet-context exclusions in "%s"', async (question) => {
+    const consolidationRecordIds = [
+      'delegation.wallet-management-clarification',
+      'delegation.register-consolidation-doc',
+      'delegation.consolidation-use-cases',
+      'delegation.manage-revoke-doc',
+      'delegation.manage-update-doc'
+    ];
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.wallet-management-clarification',
+            title: 'Wallet Management Clarification',
+            canonical_path: '/delegation/delegation-center',
+            aliases: ['wallet management clarification'],
+            keywords: ['wallet', 'management'],
+            facts: ['Clarify the wallet-management context.']
+          },
+          {
+            id: 'delegation.register-consolidation-doc',
+            title: 'Register Consolidation Guide',
+            canonical_path: '/delegation/delegation-faq/register-consolidation',
+            aliases: ['register consolidation guide'],
+            keywords: ['register', 'consolidation', 'wallet'],
+            facts: ['Register Consolidation connects wallets you control.']
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            title: 'Consolidation Use Cases',
+            canonical_path: '/delegation/consolidation-use-cases',
+            aliases: ['wallet consolidation limit'],
+            keywords: ['consolidation', 'wallet', 'limit'],
+            facts: ['Only the last three addresses count.']
+          },
+          {
+            id: 'delegation.manage-revoke-doc',
+            title: 'How to Revoke a Consolidation',
+            canonical_path: '/delegation/delegation-faq/manage-revoke',
+            aliases: ['remove wallet from consolidation'],
+            keywords: ['remove', 'wallet', 'consolidation'],
+            facts: ['Use View/Manage to revoke a consolidation record.']
+          },
+          {
+            id: 'delegation.manage-update-doc',
+            title: 'How to Update a Consolidation',
+            canonical_path: '/delegation/delegation-faq/manage-update',
+            aliases: ['replace wallet in consolidation'],
+            keywords: ['replace', 'wallet', 'consolidation'],
+            facts: ['Use View/Manage to update a consolidation record.']
+          }
+        ]
+      })
+    );
+
+    const matches = await source.findMatches(question, 5);
+
+    expect(matches.map((match) => match.record.id)).toEqual(
+      expect.not.arrayContaining(consolidationRecordIds)
+    );
   });
 
   it.each([
