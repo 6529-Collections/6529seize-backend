@@ -2,6 +2,10 @@ import {
   FrontendHelpBotKnowledgeSource,
   HelpBotKnowledgeIndex,
   HelpBotKnowledgeUnavailableError,
+  isMultiWalletLimitQuestion,
+  isMultiWalletRemovalQuestion,
+  isMultiWalletReplacementQuestion,
+  isMultiWalletSetupQuestion,
   StaticHelpBotKnowledgeSource
 } from './help-bot.knowledge';
 
@@ -12,6 +16,25 @@ function response(body: unknown, ok = true, status = 200) {
     text: async () => JSON.stringify(body)
   };
 }
+
+describe('multi-wallet intent boundaries', () => {
+  it.each([
+    'how many wallets can i connect to metamask?',
+    'what is the metamask wallet limit?',
+    'how do i replace my hardware wallet?',
+    'how do i remove a delegate wallet?',
+    'how do i change my wallet architecture?'
+  ])('does not classify unrelated wallet wording in "%s"', (question) => {
+    expect(
+      [
+        isMultiWalletSetupQuestion(question),
+        isMultiWalletLimitQuestion(question),
+        isMultiWalletRemovalQuestion(question),
+        isMultiWalletReplacementQuestion(question)
+      ].some(Boolean)
+    ).toBe(false);
+  });
+});
 
 describe('FrontendHelpBotKnowledgeSource', () => {
   it('loads snake_case frontend help index records', async () => {
@@ -256,7 +279,10 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     'how do i add my other wallet?',
     'where can i link my wallets?',
     'i have another wallet; how do i add it?',
-    'there are two wallets i need to link'
+    'there are two wallets i need to link',
+    'can i add three wallets?',
+    'how do i connect several addresses?',
+    'where can i add more wallets?'
   ])('routes natural multi-wallet wording in "%s"', async (question) => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
       response({
@@ -324,7 +350,10 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     'what is the maximum number of wallets i can link?',
     'is there a limit to the addresses i can pair?',
     'what is the wallet capacity for one consolidation?',
-    'how many addresses can 6529 treat together?'
+    'how many addresses can 6529 treat together?',
+    'what is the max wallets?',
+    'is there a wallet limit?',
+    'how many wallets are allowed?'
   ])('routes natural consolidation-limit wording in "%s"', async (question) => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
       response({
@@ -377,6 +406,82 @@ describe('FrontendHelpBotKnowledgeSource', () => {
   });
 
   it.each([
+    'how do i remove a wallet?',
+    'can i unlink my other address?',
+    'how do i detach a wallet from consolidation?',
+    'how do i delete a consolidated wallet?'
+  ])('routes consolidation removal wording in "%s"', async (question) => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.manage-revoke-doc',
+            title: 'How to Revoke a Delegation or Consolidation',
+            canonical_path: '/delegation/delegation-faq/manage-revoke',
+            aliases: ['revoke consolidation'],
+            keywords: ['revoke', 'remove', 'wallet', 'consolidation'],
+            facts: ['Use View/Manage to revoke a consolidation record.']
+          },
+          {
+            id: 'delegation.register-consolidation-doc',
+            title: 'Register Consolidation Guide',
+            canonical_path: '/delegation/delegation-faq/register-consolidation',
+            aliases: ['register consolidation'],
+            keywords: ['register', 'wallet', 'consolidation'],
+            facts: ['Register Consolidation connects wallets you control.']
+          }
+        ]
+      })
+    );
+
+    const match = await source.findMatch(question);
+
+    expect(match?.record.id).toBe('delegation.manage-revoke-doc');
+  });
+
+  it.each([
+    'how do i replace a wallet?',
+    'can i swap my other address?',
+    'how do i change a wallet in my consolidation?',
+    'how do i update a consolidated address?'
+  ])('routes consolidation replacement wording in "%s"', async (question) => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.manage-update-doc',
+            title: 'How to Update a Delegation or Consolidation',
+            canonical_path: '/delegation/delegation-faq/manage-update',
+            aliases: ['update consolidation'],
+            keywords: ['update', 'replace', 'wallet', 'consolidation'],
+            facts: ['Use View/Manage to update a consolidation record.']
+          },
+          {
+            id: 'delegation.manage-revoke-doc',
+            title: 'How to Revoke a Delegation or Consolidation',
+            canonical_path: '/delegation/delegation-faq/manage-revoke',
+            aliases: ['revoke consolidation'],
+            keywords: ['revoke', 'remove', 'wallet', 'consolidation'],
+            facts: ['Use View/Manage to revoke a consolidation record.']
+          }
+        ]
+      })
+    );
+
+    const match = await source.findMatch(question);
+
+    expect(match?.record.id).toBe('delegation.manage-update-doc');
+  });
+
+  it.each([
     'how do i add another profile statement?',
     'how do i connect my hardware wallet?',
     'can i use more than one wallet?',
@@ -385,7 +490,9 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     'how do i add a delegate wallet?',
     'how many wallets exist?',
     'how many hardware wallets can this device connect?',
-    'how many delegate wallets can i add?'
+    'how many delegate wallets can i add?',
+    'what is the metamask wallet limit?',
+    'how many wallets can i connect to metamask?'
   ])(
     'does not misroute unrelated wallet/addition wording in "%s"',
     async (question) => {

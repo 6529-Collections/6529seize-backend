@@ -322,13 +322,17 @@ up another wallet is routed to the consolidation records when the wording
 includes both a setup action and an explicit additional, quantified, or
 possessive multi-wallet target, regardless of which appears first. Wallet-limit
 questions are routed to consolidation use cases when they combine a wallet or
-address subject, quantity or limit language, and either a setup action or
-explicit consolidation relationship. Generic connection questions, bare
-plural wallet wording, and capability questions about merely using multiple
-wallets remain outside those routes so the bot does not incorrectly prescribe
-consolidation. Explicit delegation and standalone hardware-wallet wording
-remain governed by their own context rather than these consolidation
-shortcuts.
+address subject with either strong limit language or quantity language plus a
+counting, setup, or consolidation relationship. The answer distinguishes
+registration capacity from the effective metrics group: more than three
+addresses can have consolidation records, but only the last three count for
+consolidation purposes. Removal and unlinking wording routes to consolidation
+revoke guidance, while replacement and swapping wording routes to update
+guidance. Generic connection questions, bare plural wallet wording, and
+capability questions about merely using multiple wallets remain outside those
+routes so the bot does not incorrectly prescribe consolidation. Explicit
+delegation and external wallet-provider, device, and hardware-wallet wording
+remain governed by their own context rather than these consolidation shortcuts.
 Direct follow-up questions first match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.

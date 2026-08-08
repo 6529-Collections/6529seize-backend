@@ -874,7 +874,11 @@ describe('HelpBotAnswerer', () => {
     'how do i register a consolidation?',
     'how do i add another wallet?',
     'how many wallets can i add?',
-    'what is the maximum number of addresses i can link?'
+    'what is the maximum number of addresses i can link?',
+    'what is the max wallets?',
+    'how many wallets are allowed?',
+    'how do i remove a wallet?',
+    'how do i replace a wallet?'
   ])(
     'treats unindexed multi-wallet question "%s" as product context',
     async (question) => {
