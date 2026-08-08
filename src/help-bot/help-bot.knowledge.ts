@@ -102,13 +102,61 @@ const CONSOLIDATION_CONTEXT_PATTERNS = [
   /\bcombine(?:d|s|ing)? (?:my )?(?:wallets?|address(?:es)?)\b/
 ] as const;
 
-const MULTI_WALLET_SETUP_CONTEXT_PATTERNS = [
-  /\b(?:add(?:ing)?|attach(?:ing)?|bring(?:ing)?|includ(?:e|ing)|link(?:ing)?|pair(?:ing)?|connect(?:ing)?|associat(?:e|ing)|join(?:ing)?|tie|tying|us(?:e|ing)|have)\s+(?:(?:a|an|my|the)\s+)?(?:second|another|additional|extra|new|one more|other|2nd)\s+(?:wallet|address)\b/,
-  /\b(?:set(?:ting)? up|setup)\s+(?:(?:a|an|my|the)\s+)?(?:second|another|additional|extra|new|one more|other|2nd)\s+(?:wallet|address)\b/,
-  /\b(?:add(?:ing)?|link(?:ing)?|pair(?:ing)?|connect(?:ing)?|combin(?:e|ing)|associat(?:e|ing)|join(?:ing)?)\s+(?:(?:my|the)\s+)?(?:two|2|multiple)\s+(?:wallets?|address(?:es)?)\b/,
-  /\b(?:us(?:e|ing)|have|manag(?:e|ing)|set(?:ting)? up|setup)\s+(?:more than one|multiple|two|2)\s+(?:wallets?|address(?:es)?)\b/,
-  /\b(?:link|connect|pair|associate|tie)\s+(?:my\s+)?(?:wallet|address)\s+(?:to|with)\s+(?:another|a second|an additional|one more|my other)\s+(?:wallet|address)\b/,
-  /\b(?:attach(?:ing)?|includ(?:e|ing)|link(?:ing)?|pair(?:ing)?|associat(?:e|ing)|join(?:ing)?|tie|tying)\s+(?:(?:my|the)\s+)?(?:wallets|addresses)\b/
+const MULTI_WALLET_SETUP_ACTION_PATTERNS = [
+  /\badd(?:ing)?\b/,
+  /\battach(?:ing)?\b/,
+  /\bbring(?:ing)?\b/,
+  /\binclud(?:e|ing)\b/,
+  /\blink(?:ing)?\b/,
+  /\bpair(?:ing)?\b/,
+  /\bconnect(?:ing)?\b/,
+  /\bcombin(?:e|ing)\b/,
+  /\bassociat(?:e|ing)\b/,
+  /\bjoin(?:ing)?\b/,
+  /\b(?:tie|tying)\b/,
+  /\bset(?:ting)? up\b/,
+  /\bsetup\b/
+] as const;
+
+const EXPLICIT_ADDITIONAL_WALLET_TARGET_PATTERNS = [
+  /\bsecond wallet\b/,
+  /\bsecond address\b/,
+  /\banother wallet\b/,
+  /\banother address\b/,
+  /\badditional wallet\b/,
+  /\badditional address\b/,
+  /\bextra wallet\b/,
+  /\bextra address\b/,
+  /\bnew wallet\b/,
+  /\bnew address\b/,
+  /\bone more wallet\b/,
+  /\bone more address\b/,
+  /\bother wallet\b/,
+  /\bother address\b/,
+  /\b2nd wallet\b/,
+  /\b2nd address\b/
+] as const;
+
+const QUANTIFIED_MULTI_WALLET_TARGET_PATTERNS = [
+  /\btwo wallets?\b/,
+  /\btwo address(?:es)?\b/,
+  /\b2 wallets?\b/,
+  /\b2 address(?:es)?\b/,
+  /\bmultiple wallets?\b/,
+  /\bmultiple address(?:es)?\b/
+] as const;
+
+const POSSESSIVE_MULTI_WALLET_TARGET_PATTERNS = [
+  /\bmy wallets\b/,
+  /\bmy addresses\b/,
+  /\bthe wallets\b/,
+  /\bthe addresses\b/
+] as const;
+
+const MULTI_WALLET_SETUP_TARGET_PATTERNS = [
+  ...EXPLICIT_ADDITIONAL_WALLET_TARGET_PATTERNS,
+  ...QUANTIFIED_MULTI_WALLET_TARGET_PATTERNS,
+  ...POSSESSIVE_MULTI_WALLET_TARGET_PATTERNS
 ] as const;
 
 const CONSOLIDATION_LIMIT_CONTEXT_PATTERNS = [
@@ -432,10 +480,17 @@ function matchesAny(
 }
 
 export function isMultiWalletSetupQuestion(question: string): boolean {
-  return matchesAny(
-    normalizeText(question),
-    MULTI_WALLET_SETUP_CONTEXT_PATTERNS
-  );
+  const normalizedQuestion = normalizeText(question);
+  return MULTI_WALLET_SETUP_TARGET_PATTERNS.some((targetPattern) => {
+    const targetIndex = normalizedQuestion.search(targetPattern);
+    return (
+      targetIndex > 0 &&
+      matchesAny(
+        normalizedQuestion.slice(0, targetIndex),
+        MULTI_WALLET_SETUP_ACTION_PATTERNS
+      )
+    );
+  });
 }
 
 function parseWalletCount(rawCount: string): number | null {

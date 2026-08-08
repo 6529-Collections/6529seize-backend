@@ -251,7 +251,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     'can i link another address to my setup?',
     'where do i connect an additional wallet?',
     'how can i pair two wallets?',
-    'can i use more than one wallet?',
+    'how do i set up multiple wallets?',
     'how do i link my wallet with another wallet?',
     'how do i add my other wallet?',
     'where can i link my wallets?'
@@ -313,7 +313,11 @@ describe('FrontendHelpBotKnowledgeSource', () => {
 
   it.each([
     'how do i add another profile statement?',
-    'how do i connect my hardware wallet?'
+    'how do i connect my hardware wallet?',
+    'can i use more than one wallet?',
+    'can i use two wallets?',
+    'how do i link wallets?',
+    'how do i add a delegate wallet?'
   ])(
     'does not misroute unrelated wallet/addition wording in "%s"',
     async (question) => {
@@ -324,6 +328,22 @@ describe('FrontendHelpBotKnowledgeSource', () => {
           commit_sha: 'test',
           base_url: 'https://6529.io',
           records: [
+            {
+              id: 'delegation.wallet-architecture',
+              title: 'Wallet Architecture',
+              canonical_path: '/delegation/wallet-architecture',
+              aliases: ['wallet architecture', 'hardware wallet setup'],
+              keywords: ['wallet', 'architecture', 'vault'],
+              facts: ['Separate vault, transaction, and minting wallets.']
+            },
+            {
+              id: 'delegation.faq',
+              title: 'Delegation FAQ',
+              canonical_path: '/delegation/delegation-faq',
+              aliases: ['set up delegation', 'delegate wallet'],
+              keywords: ['delegation', 'delegate', 'wallet'],
+              facts: ['Delegation grants scoped rights to another wallet.']
+            },
             {
               id: 'delegation.register-consolidation-doc',
               title: 'Register Consolidation Guide',
@@ -337,7 +357,11 @@ describe('FrontendHelpBotKnowledgeSource', () => {
         })
       );
 
-      await expect(source.findMatch(question)).resolves.toBeNull();
+      const matches = await source.findMatches(question, 4);
+
+      expect(matches.map((match) => match.record.id)).not.toContain(
+        'delegation.register-consolidation-doc'
+      );
     }
   );
 
