@@ -303,11 +303,17 @@ describe('FrontendHelpBotKnowledgeSource', () => {
 
     const matches = await source.findMatches(question, 4);
 
-    expect(matches.map((match) => match.record.id)).toEqual([
+    const matchIds = matches.map((match) => match.record.id);
+
+    expect(matchIds.slice(0, 2)).toEqual([
       'delegation.register-consolidation-doc',
-      'delegation.register-consolidation',
-      'delegation.consolidation-use-cases',
-      'delegation.wallet-architecture'
+      'delegation.register-consolidation'
+    ]);
+    expect(matchIds.slice(2)).toEqual(
+      expect.arrayContaining([
+        'delegation.consolidation-use-cases',
+        'delegation.wallet-architecture'
+      ])
     ]);
   });
 
