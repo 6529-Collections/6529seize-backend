@@ -331,15 +331,17 @@ multi-wallet or consolidation context routes to consolidation revoke guidance,
 while replacement and swapping wording with that context routes to update
 guidance. Bare singular requests such as removing or replacing "a wallet"
 route to clarification guidance because they may refer either to the connected
-wallet or an on-chain consolidation record. Generic connection questions, bare
+wallet or an on-chain consolidation record. Ambiguous requests to connect an
+additional wallet also route to clarification because ordinary site connection
+is distinct from consolidation. Generic connection questions, bare
 plural wallet wording, and capability questions about merely using multiple
 wallets remain outside those routes so the bot does not incorrectly prescribe
 consolidation. Explicit delegation-workflow and external wallet-provider,
 device, and hardware-wallet wording remain governed by their own context rather
 than these consolidation shortcuts, even when consolidation wording is also
-present. Naming the Delegation Center itself does not suppress an otherwise
-explicit consolidation question. Direct follow-up questions first match the
-current user message; previous bot
+present. Naming the Delegation Center or its documentation does not suppress an
+otherwise explicit consolidation question. Direct follow-up questions first
+match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.
 

@@ -98,7 +98,6 @@ const CONSOLIDATION_CONTEXT_PATTERNS = [
   /\bconsolidat(?:e|es|ed|ing|ion|ions)\b/,
   /\bcount(?:ed)? together\b/,
   /\btreat(?:ed)? together\b/,
-  /\bconnect(?:ed|ing)? (?:my )?(?:wallets?|address(?:es)?)\b/,
   /\bcombine(?:d|s|ing)? (?:my )?(?:wallets?|address(?:es)?)\b/
 ] as const;
 
@@ -109,13 +108,16 @@ const MULTI_WALLET_SETUP_ACTION_PATTERNS = [
   /\binclud(?:e|ing)\b/,
   /\blink(?:ing)?\b/,
   /\bpair(?:ing)?\b/,
-  /\bconnect(?:ing)?\b/,
   /\bcombin(?:e|ing)\b/,
   /\bassociat(?:e|ing)\b/,
   /\bjoin(?:ing)?\b/,
   /\b(?:tie|tying)\b/,
   /\bset(?:ting)? up\b/,
   /\bsetup\b/
+] as const;
+
+const AMBIGUOUS_WALLET_CONNECTION_ACTION_PATTERNS = [
+  /\bconnect(?:s|ed|ing)?\b/
 ] as const;
 
 const MULTI_WALLET_REMOVAL_ACTION_PATTERNS = [
@@ -277,7 +279,7 @@ const DELEGATION_CONTEXT_PATTERNS = [
 
 const DISQUALIFYING_DELEGATION_CONTEXT_PATTERNS = [
   /\bdelegat(?:e|es|ed|ing)\b/,
-  /\bdelegations?\b(?!\s+center\b)/
+  /\bdelegations?\b(?!\s+(?:center|docs?|faq|guides?|help)\b)/
 ] as const;
 
 const GENESIS_SET_PATTERNS = [/\bgenesis sets?\b/] as const;
@@ -640,14 +642,24 @@ export function isMultiWalletReplacementQuestion(question: string): boolean {
 
 export function isAmbiguousWalletManagementQuestion(question: string): boolean {
   const normalizedQuestion = normalizeText(question);
-  const hasManagementAction =
+  const hasRemovalOrReplacementAction =
     matchesAny(normalizedQuestion, MULTI_WALLET_REMOVAL_ACTION_PATTERNS) ||
     matchesAny(normalizedQuestion, MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS);
+  const hasAmbiguousConnectionAction =
+    matchesAny(
+      normalizedQuestion,
+      AMBIGUOUS_WALLET_CONNECTION_ACTION_PATTERNS
+    ) &&
+    (hasMultiWalletTarget(normalizedQuestion) ||
+      matchesAny(normalizedQuestion, CONSOLIDATION_LIMIT_CONTEXT_PATTERNS));
+  const hasAmbiguousManagementAction =
+    (hasRemovalOrReplacementAction &&
+      !hasMultiWalletTarget(normalizedQuestion)) ||
+    hasAmbiguousConnectionAction;
   return (
-    hasManagementAction &&
+    hasAmbiguousManagementAction &&
     matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS) &&
     !matchesAny(normalizedQuestion, CONSOLIDATION_CONTEXT_PATTERNS) &&
-    !hasMultiWalletTarget(normalizedQuestion) &&
     !hasDisqualifyingWalletContext(normalizedQuestion) &&
     !/\bprofiles?\b/.test(normalizedQuestion)
   );

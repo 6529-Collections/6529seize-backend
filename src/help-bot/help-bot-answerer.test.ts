@@ -878,7 +878,8 @@ describe('HelpBotAnswerer', () => {
     'what is the max wallets?',
     'how many wallets are allowed?',
     'how do i remove a wallet?',
-    'how do i replace a wallet?'
+    'how do i replace a wallet?',
+    'where do i connect an additional wallet?'
   ])(
     'treats unindexed multi-wallet question "%s" as product context',
     async (question) => {

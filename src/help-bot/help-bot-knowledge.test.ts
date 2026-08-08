@@ -36,8 +36,13 @@ describe('multi-wallet intent boundaries', () => {
     ).toBe(false);
   });
 
-  it.each(['how do i remove a wallet?', 'how do i replace a wallet?'])(
-    'treats bare wallet-management wording in "%s" as ambiguous',
+  it.each([
+    'how do i remove a wallet?',
+    'how do i replace a wallet?',
+    'where do i connect an additional wallet?',
+    'how many wallets can i connect?'
+  ])(
+    'treats ambiguous wallet-management wording in "%s" as clarification',
     (question) => {
       expect(isMultiWalletRemovalQuestion(question)).toBe(false);
       expect(isMultiWalletReplacementQuestion(question)).toBe(false);
@@ -288,7 +293,6 @@ describe('FrontendHelpBotKnowledgeSource', () => {
   it.each([
     'how do i add a second wallet?',
     'can i link another address to my setup?',
-    'where do i connect an additional wallet?',
     'how can i pair two wallets?',
     'how do i set up multiple wallets?',
     'how do i link my wallet with another wallet?',
@@ -297,7 +301,6 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     'i have another wallet; how do i add it?',
     'there are two wallets i need to link',
     'can i add three wallets?',
-    'how do i connect several addresses?',
     'where can i add more wallets?'
   ])('routes natural multi-wallet wording in "%s"', async (question) => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
@@ -496,7 +499,12 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     expect(match?.record.id).toBe('delegation.manage-update-doc');
   });
 
-  it.each(['how do i remove a wallet?', 'how do i replace a wallet?'])(
+  it.each([
+    'how do i remove a wallet?',
+    'how do i replace a wallet?',
+    'where do i connect an additional wallet?',
+    'how do i connect two wallets?'
+  ])(
     'routes ambiguous wallet-management wording in "%s" to clarification',
     async (question) => {
       const source = new FrontendHelpBotKnowledgeSource(async () =>
