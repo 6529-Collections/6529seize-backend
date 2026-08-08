@@ -475,6 +475,7 @@ export class ReleaseNoteGitHubService {
       !Number.isSafeInteger(currentRun.workflow_id) ||
       !Number.isSafeInteger(currentRun.run_number) ||
       (getRepoName(request.repo) === FRONTEND_REPO &&
+        request.workflow === FRONTEND_PRODUCTION_WORKFLOW &&
         !isMatchingProductionRun(currentRun, request))
     ) {
       throw new Error(
