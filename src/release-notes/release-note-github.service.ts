@@ -9,6 +9,7 @@ interface GitHubWorkflowRun {
   readonly id: number;
   readonly display_title: string;
   readonly path?: string;
+  readonly head_branch?: string | null;
   readonly head_sha: string;
   readonly run_number: number;
   readonly workflow_id: number;
@@ -192,7 +193,8 @@ function isMatchingProductionRun(
   if (repoName === FRONTEND_REPO) {
     return (
       request.workflow === FRONTEND_PRODUCTION_WORKFLOW &&
-      run.path === FRONTEND_PRODUCTION_WORKFLOW_PATH
+      run.path === FRONTEND_PRODUCTION_WORKFLOW_PATH &&
+      run.head_branch === normalizeBranch(request.branch)
     );
   }
   return false;
@@ -470,7 +472,10 @@ export class ReleaseNoteGitHubService {
     if (
       String(currentRun.id) !== request.run_id ||
       currentRun.head_sha !== request.sha ||
-      !Number.isSafeInteger(currentRun.workflow_id)
+      !Number.isSafeInteger(currentRun.workflow_id) ||
+      !Number.isSafeInteger(currentRun.run_number) ||
+      (getRepoName(request.repo) === FRONTEND_REPO &&
+        !isMatchingProductionRun(currentRun, request))
     ) {
       throw new Error(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
