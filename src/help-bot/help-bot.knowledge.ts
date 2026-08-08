@@ -626,10 +626,7 @@ export function isMultiWalletRemovalQuestion(question: string): boolean {
   return (
     matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS) &&
     matchesAny(normalizedQuestion, MULTI_WALLET_REMOVAL_ACTION_PATTERNS) &&
-    !hasDisqualifyingWalletContext(
-      normalizedQuestion,
-      hasConsolidationContext
-    )
+    !hasDisqualifyingWalletContext(normalizedQuestion, hasConsolidationContext)
   );
 }
 
@@ -650,10 +647,7 @@ export function isMultiWalletReplacementQuestion(question: string): boolean {
           normalizedQuestion,
           MULTI_WALLET_REPLACEMENT_ACTION_PATTERNS
         ))) &&
-    !hasDisqualifyingWalletContext(
-      normalizedQuestion,
-      hasConsolidationContext
-    )
+    !hasDisqualifyingWalletContext(normalizedQuestion, hasConsolidationContext)
   );
 }
 

@@ -394,9 +394,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
 
     const matches = await source.findMatches(question, 3);
 
-    expect(matches[0]?.record.id).toBe(
-      'delegation.consolidation-use-cases'
-    );
+    expect(matches[0]?.record.id).toBe('delegation.consolidation-use-cases');
     expect(matches.map((match) => match.record.id)).toEqual(
       expect.arrayContaining([
         'delegation.consolidation-use-cases',
