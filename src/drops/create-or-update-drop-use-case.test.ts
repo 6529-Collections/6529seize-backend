@@ -920,7 +920,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toBe(true);
   });
 
-  it('seeds missing reader metrics before a new direct-message drop', async () => {
+  it('records the new direct-message drop for every recipient except the author', async () => {
     const connection = {};
     const wave = {
       ...createSlowModeWave({
@@ -936,8 +936,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       next_decision_time: null
     };
     const wavesApiDb = {
-      findExistingWaveReaderMetricReaderIds: jest.fn().mockResolvedValue([]),
-      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+      recordDirectMessageUnreadDrop: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
       findIdentitiesInGroups: jest
@@ -949,11 +948,14 @@ describe('CreateOrUpdateDropUseCase', () => {
       userGroupsService
     });
 
-    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+    const recipientIds = await (
+      useCase as any
+    ).recordDirectMessageUnreadForNewDrop(
       {
         wave,
         authorId: 'author-profile',
-        createdAt: 1400
+        createdAt: 1400,
+        serialNo: 42
       },
       { connection }
     );
@@ -962,41 +964,31 @@ describe('CreateOrUpdateDropUseCase', () => {
       ['chat-dm-group'],
       { timer: undefined, connection }
     );
-    expect(
-      wavesApiDb.findExistingWaveReaderMetricReaderIds
-    ).toHaveBeenCalledWith(
+    expect(wavesApiDb.recordDirectMessageUnreadDrop).toHaveBeenCalledWith(
       {
         waveId: 'wave-1',
-        readerIds: ['reader-profile']
+        recipientIds: ['reader-profile'],
+        dropSerialNo: 42,
+        dropCreatedAt: 1400
       },
       { timer: undefined, connection }
     );
-    expect(wavesApiDb.insertMissingWaveReaderMetrics).toHaveBeenCalledWith(
-      {
-        waveId: 'wave-1',
-        readerIds: ['reader-profile'],
-        latestReadTimestamp: 1399
-      },
-      { timer: undefined, connection }
-    );
+    expect(recipientIds).toEqual(['reader-profile']);
   });
 
-  it('skips direct-message reader metric seeding when recipients already have metrics', async () => {
+  it('does not record unread state for a non-direct-message wave', async () => {
     const connection = {};
     const wave = {
       ...createSlowModeWave({
         chat_slow_mode_cooldown_ms: null,
-        is_direct_message: true,
+        is_direct_message: false,
         chat_group_id: 'chat-dm-group'
       }),
       type: WaveType.CHAT,
       next_decision_time: null
     };
     const wavesApiDb = {
-      findExistingWaveReaderMetricReaderIds: jest
-        .fn()
-        .mockResolvedValue(['reader-profile']),
-      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+      recordDirectMessageUnreadDrop: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
       findIdentitiesInGroups: jest
@@ -1008,16 +1000,21 @@ describe('CreateOrUpdateDropUseCase', () => {
       userGroupsService
     });
 
-    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+    const recipientIds = await (
+      useCase as any
+    ).recordDirectMessageUnreadForNewDrop(
       {
         wave,
         authorId: 'author-profile',
-        createdAt: 1400
+        createdAt: 1400,
+        serialNo: 42
       },
       { connection }
     );
 
-    expect(wavesApiDb.insertMissingWaveReaderMetrics).not.toHaveBeenCalled();
+    expect(userGroupsService.findIdentitiesInGroups).not.toHaveBeenCalled();
+    expect(wavesApiDb.recordDirectMessageUnreadDrop).not.toHaveBeenCalled();
+    expect(recipientIds).toEqual([]);
   });
 
   it('allows scheme-less GIF provider candidates in chat link allowlist', () => {

@@ -1444,6 +1444,28 @@ const seededReaderMetricUnreadSummaryWave = aWave(
     name: 'Seeded Reader Metric Unread Summary Wave'
   }
 );
+const dmUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!,
+    is_direct_message: true
+  },
+  {
+    id: 'wave-dm-unread-summary',
+    serial_no: 35,
+    name: 'DM Unread Summary Wave'
+  }
+);
+const secondDmUnreadSummaryWave = aWave(
+  {
+    created_by: author.profile_id!,
+    is_direct_message: true
+  },
+  {
+    id: 'wave-dm-unread-summary-2',
+    serial_no: 36,
+    name: 'Second DM Unread Summary Wave'
+  }
+);
 
 describeWithSeed(
   'WavesApiDb unread summaries',
@@ -1454,7 +1476,9 @@ describeWithSeed(
       noUnreadSummaryWave,
       mutedUnreadSummaryWave,
       noReaderMetricUnreadSummaryWave,
-      seededReaderMetricUnreadSummaryWave
+      seededReaderMetricUnreadSummaryWave,
+      dmUnreadSummaryWave,
+      secondDmUnreadSummaryWave
     ]),
     {
       table: WAVE_READER_METRICS_TABLE,
@@ -1470,6 +1494,22 @@ describeWithSeed(
           reader_id: unreadReader.profile_id!,
           latest_read_timestamp: 1000,
           muted: true
+        },
+        {
+          wave_id: dmUnreadSummaryWave.id,
+          reader_id: unreadReader.profile_id!,
+          latest_read_timestamp: 2000,
+          latest_read_serial_no: 35,
+          unread_state_version: 5,
+          muted: false
+        },
+        {
+          wave_id: secondDmUnreadSummaryWave.id,
+          reader_id: unreadReader.profile_id!,
+          latest_read_timestamp: 0,
+          latest_read_serial_no: 0,
+          unread_state_version: 2,
+          muted: false
         }
       ]
     },
@@ -1610,6 +1650,66 @@ describeWithSeed(
           drop_type: DropType.CHAT,
           signature: null,
           hide_link_preview: false
+        },
+        {
+          serial_no: 35,
+          id: 'dm-read-at-identical-timestamp',
+          wave_id: dmUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 2000,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 36,
+          id: 'dm-unread-at-identical-timestamp',
+          wave_id: dmUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 2000,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 37,
+          id: 'dm-reader-authored-drop',
+          wave_id: dmUnreadSummaryWave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 2100,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          serial_no: 38,
+          id: 'second-dm-unread-drop',
+          wave_id: secondDmUnreadSummaryWave.id,
+          author_id: author.profile_id!,
+          created_at: 2200,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
         }
       ]
     }
@@ -1690,6 +1790,223 @@ describeWithSeed(
           first_unread_drop_serial_no: 29
         }
       });
+    });
+
+    it('uses serial ordering for per-conversation DM state even when timestamps are identical', async () => {
+      const states = await repo.findDmUnreadConversationStates(
+        { identityId: unreadReader.profile_id! },
+        ctx
+      );
+
+      expect(
+        states.sort((left, right) => left.wave_id.localeCompare(right.wave_id))
+      ).toEqual([
+        {
+          profile_id: unreadReader.profile_id!,
+          wave_id: dmUnreadSummaryWave.id,
+          unread_count: 1,
+          first_unread_drop_serial_no: 36,
+          latest_drop_serial_no: 37,
+          latest_read_serial_no: 35,
+          version: 5
+        },
+        {
+          profile_id: unreadReader.profile_id!,
+          wave_id: secondDmUnreadSummaryWave.id,
+          unread_count: 1,
+          first_unread_drop_serial_no: 38,
+          latest_drop_serial_no: 38,
+          latest_read_serial_no: 0,
+          version: 2
+        }
+      ]);
+    });
+
+    it('reads authoritative DM state for multiple recipients in one query', async () => {
+      await repo.recordDirectMessageUnreadDrop(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          recipientIds: [
+            unreadReader.profile_id!,
+            mutedUnreadReader.profile_id!
+          ],
+          dropSerialNo: 35,
+          dropCreatedAt: 1999
+        },
+        ctx
+      );
+
+      const states = await repo.findDmUnreadConversationStatesForIdentities(
+        {
+          identityIds: [
+            unreadReader.profile_id!,
+            mutedUnreadReader.profile_id!
+          ],
+          waveIds: [dmUnreadSummaryWave.id]
+        },
+        ctx
+      );
+
+      expect(states).toHaveLength(2);
+      expect(states.map((state) => state.profile_id).sort()).toEqual(
+        [unreadReader.profile_id!, mutedUnreadReader.profile_id!].sort()
+      );
+      expect(states).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            profile_id: unreadReader.profile_id!,
+            wave_id: dmUnreadSummaryWave.id
+          }),
+          expect.objectContaining({
+            profile_id: mutedUnreadReader.profile_id!,
+            wave_id: dmUnreadSummaryWave.id
+          })
+        ])
+      );
+    });
+
+    it('advances DM reads monotonically through the requested serial', async () => {
+      await repo.markDirectMessageReadThroughSerial(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          readerId: unreadReader.profile_id!,
+          readThroughSerialNo: 36
+        },
+        ctx
+      );
+      await repo.markDirectMessageReadThroughSerial(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          readerId: unreadReader.profile_id!,
+          readThroughSerialNo: 35
+        },
+        ctx
+      );
+
+      await expect(
+        repo.findDmUnreadConversationStates(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [dmUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        expect.objectContaining({
+          unread_count: 0,
+          first_unread_drop_serial_no: null,
+          latest_read_serial_no: 36,
+          version: 6
+        })
+      ]);
+    });
+
+    it('does not move a legacy timestamp read backward when serial state is initialized', async () => {
+      await sqlExecutor.execute(
+        `update ${WAVE_READER_METRICS_TABLE}
+         set latest_read_serial_no = null
+         where wave_id = :waveId and reader_id = :readerId`,
+        {
+          waveId: dmUnreadSummaryWave.id,
+          readerId: unreadReader.profile_id!
+        }
+      );
+
+      await repo.markDirectMessageReadThroughSerial(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          readerId: unreadReader.profile_id!,
+          readThroughSerialNo: 35
+        },
+        ctx
+      );
+
+      await expect(
+        repo.findDmUnreadConversationStates(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [dmUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        expect.objectContaining({
+          unread_count: 0,
+          latest_read_serial_no: 36,
+          version: 5
+        })
+      ]);
+    });
+
+    it('versions mute changes and restores the same authoritative unread state', async () => {
+      await repo.setWaveMuted(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          readerId: unreadReader.profile_id!,
+          muted: true
+        },
+        ctx
+      );
+      await expect(
+        repo.findDmUnreadConversationStates(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [dmUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        expect.objectContaining({ unread_count: 0, version: 6 })
+      ]);
+
+      await repo.setWaveMuted(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          readerId: unreadReader.profile_id!,
+          muted: false
+        },
+        ctx
+      );
+      await expect(
+        repo.findDmUnreadConversationStates(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [dmUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        expect.objectContaining({ unread_count: 1, version: 7 })
+      ]);
+    });
+
+    it('can move the same DM authority backward for mark-unread', async () => {
+      await repo.setDirectMessageUnreadFromSerial(
+        {
+          waveId: dmUnreadSummaryWave.id,
+          readerId: unreadReader.profile_id!,
+          firstUnreadSerialNo: 36,
+          latestReadTimestamp: 1999
+        },
+        ctx
+      );
+
+      await expect(
+        repo.findDmUnreadConversationStates(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [dmUnreadSummaryWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        expect.objectContaining({
+          unread_count: 1,
+          first_unread_drop_serial_no: 36,
+          latest_read_serial_no: 35,
+          version: 6
+        })
+      ]);
     });
   }
 );

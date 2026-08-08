@@ -11,6 +11,7 @@ import {
   dropRatingUpdateMessage,
   dropReactionUpdateMessage,
   dropUpdateMessage,
+  dmUnreadStateChangedMessage,
   dropUpdateRefMessage,
   DROP_UPDATE_MAX_UTF8_BYTES,
   DropUpdateRefType,
@@ -32,6 +33,7 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -243,6 +245,42 @@ export class WsListenersNotifier {
     } catch (error) {
       this.logger.error(
         `Sending notification invalidations to websockets failed. Profile ids: ${profileIds.join(',')}`,
+        error
+      );
+    }
+  }
+
+  async notifyAboutDmUnreadStateChanged(
+    states: ApiDmUnreadConversationState[]
+  ): Promise<void> {
+    const statesByProfileId = states.reduce((acc, state) => {
+      const profileStates = acc.get(state.profile_id) ?? [];
+      profileStates.push(state);
+      acc.set(state.profile_id, profileStates);
+      return acc;
+    }, new Map<string, ApiDmUnreadConversationState[]>());
+    if (!statesByProfileId.size) {
+      return;
+    }
+    const profileIds = Array.from(statesByProfileId.keys());
+    try {
+      const recipients =
+        await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+          profileIds
+        );
+      await Promise.all(
+        recipients.flatMap(({ connectionId, identityId }) =>
+          (statesByProfileId.get(identityId) ?? []).map((state) =>
+            this.appWebSockets.send({
+              connectionId,
+              message: JSON.stringify(dmUnreadStateChangedMessage(state))
+            })
+          )
+        )
+      );
+    } catch (error) {
+      this.logger.error(
+        `Sending DM unread states to websockets failed. Profile ids: ${profileIds.join(',')}`,
         error
       );
     }

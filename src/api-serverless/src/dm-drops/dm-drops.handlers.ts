@@ -1,5 +1,5 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
-import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
+import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { GetDmDropsUnreadRequest } from '@/api/generated/routes/operations';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
@@ -15,7 +15,7 @@ const GetDmDropsUnreadQuerySchema = Joi.object<Record<string, never>>({})
 
 export async function handleGetDmDropsUnread(
   req: GetDmDropsUnreadRequest
-): Promise<ApiDmDropsUnreadCount> {
+): Promise<ApiDmUnreadSnapshot> {
   const timer = Timer.getFromRequest(req);
   getValidatedByJoiOrThrow(req.query, GetDmDropsUnreadQuerySchema);
 
@@ -33,10 +33,17 @@ export async function handleGetDmDropsUnread(
     ctx
   );
 
-  const count = await wavesApiDb.countIdentityUnreadDmDrops(
+  const conversations = await wavesApiDb.findDmUnreadConversationStates(
     { identityId, eligibleGroups },
     ctx
   );
 
-  return { count };
+  return {
+    profile_id: identityId,
+    count: conversations.reduce(
+      (total, conversation) => total + conversation.unread_count,
+      0
+    ),
+    conversations
+  };
 }
