@@ -314,7 +314,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
         'delegation.consolidation-use-cases',
         'delegation.wallet-architecture'
       ])
-    ]);
+    );
   });
 
   it.each([
