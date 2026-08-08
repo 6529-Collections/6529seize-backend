@@ -33,6 +33,8 @@ const currentRun = {
   id: 123,
   name: 'Web Deploy - PROD',
   display_title: 'Web Deploy - PROD',
+  path: '.github/workflows/build-upload-deploy-prod.yml',
+  head_branch: 'main',
   head_sha: 'abc123',
   run_number: 45,
   workflow_id: 7
@@ -229,16 +231,25 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('finds a previous production run when run_number is missing', async () => {
+  it('uses a custom-named frontend production run as the release baseline', async () => {
     (fetch as unknown as jest.Mock)
-      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
+          ...currentRun,
+          name: 'Production deploy abc123 [frontend-prod-123]',
+          display_title: 'Production deploy abc123 [frontend-prod-123]'
+        })
+      )
       .mockResolvedValueOnce(
         response({
           workflow_runs: [
             {
               id: 122,
-              name: 'Web Deploy - PROD',
-              display_title: 'Web Deploy - PROD',
+              name: 'Production deploy previous-sha [frontend-prod-122]',
+              display_title:
+                'Production deploy previous-sha [frontend-prod-122]',
+              path: '.github/workflows/build-upload-deploy-prod.yml',
+              head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 44,
               workflow_id: 7
@@ -263,6 +274,137 @@ describe('ReleaseNoteGitHubService', () => {
       'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?status=success&branch=main&per_page=100&page=1',
       expect.any(Object)
     );
+  });
+
+  it('rejects a frontend release from another current workflow path', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...currentRun,
+        path: '.github/workflows/deploy-staging.yml'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext(request)
+    ).rejects.toThrow(
+      'GitHub release run 123 does not match the queued release metadata'
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a frontend release without a current workflow path', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({ ...currentRun, path: undefined })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext(request)
+    ).rejects.toThrow(
+      'GitHub release run 123 does not match the queued release metadata'
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a frontend release from another current branch', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...currentRun,
+        head_branch: '1a-staging'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext(request)
+    ).rejects.toThrow(
+      'GitHub release run 123 does not match the queued release metadata'
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not use a custom-named run from another workflow path', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Production deploy previous-sha [frontend-prod-122]',
+              display_title:
+                'Production deploy previous-sha [frontend-prod-122]',
+              path: '.github/workflows/deploy-staging.yml',
+              head_branch: 'main',
+              head_sha: 'previous-sha',
+              run_number: 44,
+              workflow_id: 7
+            }
+          ]
+        })
+      );
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request
+    );
+
+    expect(context).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not use a frontend production run without a workflow path', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Production deploy previous-sha [frontend-prod-122]',
+              display_title:
+                'Production deploy previous-sha [frontend-prod-122]',
+              head_branch: 'main',
+              head_sha: 'previous-sha',
+              run_number: 44,
+              workflow_id: 7
+            }
+          ]
+        })
+      );
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request
+    );
+
+    expect(context).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not use a frontend production run from another branch', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              id: 122,
+              name: 'Production deploy previous-sha [frontend-prod-122]',
+              display_title:
+                'Production deploy previous-sha [frontend-prod-122]',
+              path: '.github/workflows/build-upload-deploy-prod.yml',
+              head_branch: '1a-staging',
+              head_sha: 'previous-sha',
+              run_number: 44,
+              workflow_id: 7
+            }
+          ]
+        })
+      );
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request
+    );
+
+    expect(context).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('uses service-specific backend run names from the deploy workflow', async () => {
