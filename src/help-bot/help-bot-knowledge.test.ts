@@ -254,7 +254,9 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     'how do i set up multiple wallets?',
     'how do i link my wallet with another wallet?',
     'how do i add my other wallet?',
-    'where can i link my wallets?'
+    'where can i link my wallets?',
+    'i have another wallet; how do i add it?',
+    'there are two wallets i need to link'
   ])('routes natural multi-wallet wording in "%s"', async (question) => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
       response({
@@ -318,12 +320,72 @@ describe('FrontendHelpBotKnowledgeSource', () => {
   });
 
   it.each([
+    'how many wallets can i add?',
+    'what is the maximum number of wallets i can link?',
+    'is there a limit to the addresses i can pair?',
+    'what is the wallet capacity for one consolidation?',
+    'how many addresses can 6529 treat together?'
+  ])('routes natural consolidation-limit wording in "%s"', async (question) => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.register-consolidation-doc',
+            title: 'Register Consolidation Guide',
+            canonical_path: '/delegation/delegation-faq/register-consolidation',
+            aliases: ['register consolidation guide'],
+            keywords: ['register', 'consolidation', 'wallet'],
+            facts: ['Register Consolidation connects wallets you control.']
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            title: 'Consolidation Use Cases',
+            canonical_path: '/delegation/consolidation-use-cases',
+            aliases: ['consolidation use cases'],
+            keywords: ['consolidation', 'wallet', 'limit'],
+            facts: [
+              '6529 recognizes up to three addresses as one consolidation group.'
+            ]
+          },
+          {
+            id: 'delegation.wallet-architecture',
+            title: 'Wallet Architecture',
+            canonical_path: '/delegation/wallet-architecture',
+            aliases: ['wallet architecture'],
+            keywords: ['wallet', 'architecture'],
+            facts: ['Separate vault, transaction, and minting wallets.']
+          }
+        ]
+      })
+    );
+
+    const matches = await source.findMatches(question, 3);
+
+    expect(matches[0]?.record.id).toBe(
+      'delegation.consolidation-use-cases'
+    );
+    expect(matches.map((match) => match.record.id)).toEqual(
+      expect.arrayContaining([
+        'delegation.consolidation-use-cases',
+        'delegation.wallet-architecture'
+      ])
+    );
+  });
+
+  it.each([
     'how do i add another profile statement?',
     'how do i connect my hardware wallet?',
     'can i use more than one wallet?',
     'can i use two wallets?',
     'how do i link wallets?',
-    'how do i add a delegate wallet?'
+    'how do i add a delegate wallet?',
+    'how many wallets exist?',
+    'how many hardware wallets can this device connect?',
+    'how many delegate wallets can i add?'
   ])(
     'does not misroute unrelated wallet/addition wording in "%s"',
     async (question) => {

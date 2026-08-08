@@ -320,11 +320,15 @@ intents compiled to backend-owned SQL.
 Natural multi-wallet setup wording such as adding, linking, pairing, or setting
 up another wallet is routed to the consolidation records when the wording
 includes both a setup action and an explicit additional, quantified, or
-possessive multi-wallet target. Generic connection questions, bare plural
-wallet wording, and capability questions about merely using multiple wallets
-remain outside that route so the bot does not incorrectly prescribe
-consolidation. Explicit delegation wording remains governed by delegation
-routing rather than this consolidation shortcut.
+possessive multi-wallet target, regardless of which appears first. Wallet-limit
+questions are routed to consolidation use cases when they combine a wallet or
+address subject, quantity or limit language, and either a setup action or
+explicit consolidation relationship. Generic connection questions, bare
+plural wallet wording, and capability questions about merely using multiple
+wallets remain outside those routes so the bot does not incorrectly prescribe
+consolidation. Explicit delegation and standalone hardware-wallet wording
+remain governed by their own context rather than these consolidation
+shortcuts.
 Direct follow-up questions first match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.

@@ -872,7 +872,9 @@ describe('HelpBotAnswerer', () => {
 
   it.each([
     'how do i register a consolidation?',
-    'how do i add another wallet?'
+    'how do i add another wallet?',
+    'how many wallets can i add?',
+    'what is the maximum number of addresses i can link?'
   ])(
     'treats unindexed multi-wallet question "%s" as product context',
     async (question) => {

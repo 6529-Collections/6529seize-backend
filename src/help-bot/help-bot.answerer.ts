@@ -4,6 +4,7 @@ import {
   HelpBotKnowledgeSource,
   HelpBotKnowledgeRecord,
   HelpBotKnowledgeMatch,
+  isMultiWalletLimitQuestion,
   isMultiWalletSetupQuestion
 } from './help-bot.knowledge';
 import {
@@ -1300,7 +1301,8 @@ function isLikelyProductText(value: string | null | undefined): boolean {
   const normalized = normalizeBoundaryText(value ?? '');
   return (
     PRODUCT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized)) ||
-    isMultiWalletSetupQuestion(normalized)
+    isMultiWalletSetupQuestion(normalized) ||
+    isMultiWalletLimitQuestion(normalized)
   );
 }
 

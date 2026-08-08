@@ -161,10 +161,12 @@ const MULTI_WALLET_SETUP_TARGET_PATTERNS = [
 
 const CONSOLIDATION_LIMIT_CONTEXT_PATTERNS = [
   /\bhow many\b/,
+  /\bnumber of\b/,
   /\bmaximum\b/,
   /\bmax\b/,
   /\blimit\b/,
   /\blimits\b/,
+  /\bcapacity\b/,
   /\bgroup size\b/,
   /\bone consolidation group\b/,
   /\bper consolidation group\b/,
@@ -481,16 +483,41 @@ function matchesAny(
 
 export function isMultiWalletSetupQuestion(question: string): boolean {
   const normalizedQuestion = normalizeText(question);
-  return MULTI_WALLET_SETUP_TARGET_PATTERNS.some((targetPattern) => {
-    const targetIndex = normalizedQuestion.search(targetPattern);
-    return (
-      targetIndex > 0 &&
-      matchesAny(
-        normalizedQuestion.slice(0, targetIndex),
-        MULTI_WALLET_SETUP_ACTION_PATTERNS
-      )
-    );
-  });
+  const hasDelegationContext = matchesAny(
+    normalizedQuestion,
+    DELEGATION_CONTEXT_PATTERNS
+  );
+  const hasConsolidationContext = matchesAny(
+    normalizedQuestion,
+    CONSOLIDATION_CONTEXT_PATTERNS
+  );
+  return (
+    (!hasDelegationContext || hasConsolidationContext) &&
+    matchesAny(normalizedQuestion, MULTI_WALLET_SETUP_ACTION_PATTERNS) &&
+    matchesAny(normalizedQuestion, MULTI_WALLET_SETUP_TARGET_PATTERNS)
+  );
+}
+
+export function isMultiWalletLimitQuestion(question: string): boolean {
+  const normalizedQuestion = normalizeText(question);
+  const hasStandaloneHardwareWalletContext =
+    /\bhardware wallets?\b/.test(normalizedQuestion);
+  const hasDelegationContext = matchesAny(
+    normalizedQuestion,
+    DELEGATION_CONTEXT_PATTERNS
+  );
+  const hasConsolidationContext = matchesAny(
+    normalizedQuestion,
+    CONSOLIDATION_CONTEXT_PATTERNS
+  );
+  return (
+    matchesAny(normalizedQuestion, WALLET_CONTEXT_PATTERNS) &&
+    matchesAny(normalizedQuestion, CONSOLIDATION_LIMIT_CONTEXT_PATTERNS) &&
+    (hasConsolidationContext ||
+      matchesAny(normalizedQuestion, MULTI_WALLET_SETUP_ACTION_PATTERNS)) &&
+    (!hasDelegationContext || hasConsolidationContext) &&
+    (!hasStandaloneHardwareWalletContext || hasConsolidationContext)
+  );
 }
 
 function parseWalletCount(rawCount: string): number | null {
@@ -555,6 +582,7 @@ interface RoutedQuestionContext {
   readonly hasExplicitArchitectureContext: boolean;
   readonly hasConsolidationContext: boolean;
   readonly hasMultiWalletSetupContext: boolean;
+  readonly hasMultiWalletLimitContext: boolean;
   readonly hasConsolidationLimitContext: boolean;
   readonly hasDelegationContext: boolean;
   readonly hasWalletCheckContext: boolean;
@@ -580,6 +608,7 @@ function routedQuestionContext(
       CONSOLIDATION_CONTEXT_PATTERNS
     ),
     hasMultiWalletSetupContext: isMultiWalletSetupQuestion(normalizedQuestion),
+    hasMultiWalletLimitContext: isMultiWalletLimitQuestion(normalizedQuestion),
     hasConsolidationLimitContext: matchesAny(
       normalizedQuestion,
       CONSOLIDATION_LIMIT_CONTEXT_PATTERNS
@@ -654,8 +683,9 @@ function addConsolidationScores(
   context: RoutedQuestionContext
 ): void {
   if (
-    context.hasConsolidationContext &&
-    context.hasConsolidationLimitContext &&
+    (context.hasMultiWalletLimitContext ||
+      (context.hasConsolidationContext &&
+        context.hasConsolidationLimitContext)) &&
     (context.hasWalletContext || context.hasArchitectureContext)
   ) {
     addRoutedPathScore(scores, CONSOLIDATION_USE_CASES_PATH, 18);
