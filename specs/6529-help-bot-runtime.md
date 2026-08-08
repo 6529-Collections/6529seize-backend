@@ -317,6 +317,10 @@ entire corpus.
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
 frontend calendar API calls for drop timing and Bedrock-planned public-data
 intents compiled to backend-owned SQL.
+Natural multi-wallet setup wording such as adding, linking, pairing, or using
+another wallet is routed to the consolidation records when the wording includes
+clear multi-wallet intent. Generic wallet-connection questions remain outside
+that route so the bot does not incorrectly prescribe consolidation.
 Direct follow-up questions first match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.

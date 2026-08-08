@@ -59,7 +59,7 @@ const logger = Logger.get('HelpBotKnowledge');
 
 const WALLET_CONTEXT_PATTERNS = [
   /\bwallets?\b/,
-  /\baddresses?\b/,
+  /\baddress(?:es)?\b/,
   /\bvault\b/,
   /\bhot wallet\b/,
   /\bcold wallet\b/,
@@ -98,8 +98,17 @@ const CONSOLIDATION_CONTEXT_PATTERNS = [
   /\bconsolidat(?:e|es|ed|ing|ion|ions)\b/,
   /\bcount(?:ed)? together\b/,
   /\btreat(?:ed)? together\b/,
-  /\bconnect(?:ed|ing)? (?:my )?(?:wallets?|addresses?)\b/,
-  /\bcombine(?:d|s|ing)? (?:my )?(?:wallets?|addresses?)\b/
+  /\bconnect(?:ed|ing)? (?:my )?(?:wallets?|address(?:es)?)\b/,
+  /\bcombine(?:d|s|ing)? (?:my )?(?:wallets?|address(?:es)?)\b/
+] as const;
+
+const MULTI_WALLET_SETUP_CONTEXT_PATTERNS = [
+  /\b(?:add(?:ing)?|attach(?:ing)?|bring(?:ing)?|includ(?:e|ing)|link(?:ing)?|pair(?:ing)?|connect(?:ing)?|associat(?:e|ing)|join(?:ing)?|tie|tying|us(?:e|ing)|have)\s+(?:(?:a|an|my|the)\s+)?(?:second|another|additional|extra|new|one more|other|2nd)\s+(?:wallet|address)\b/,
+  /\b(?:set(?:ting)? up|setup)\s+(?:(?:a|an|my|the)\s+)?(?:second|another|additional|extra|new|one more|other|2nd)\s+(?:wallet|address)\b/,
+  /\b(?:add(?:ing)?|link(?:ing)?|pair(?:ing)?|connect(?:ing)?|combin(?:e|ing)|associat(?:e|ing)|join(?:ing)?)\s+(?:(?:my|the)\s+)?(?:two|2|multiple)\s+(?:wallets?|address(?:es)?)\b/,
+  /\b(?:us(?:e|ing)|have|manag(?:e|ing)|set(?:ting)? up|setup)\s+(?:more than one|multiple|two|2)\s+(?:wallets?|address(?:es)?)\b/,
+  /\b(?:link|connect|pair|associate|tie)\s+(?:my\s+)?(?:wallet|address)\s+(?:to|with)\s+(?:another|a second|an additional|one more|my other)\s+(?:wallet|address)\b/,
+  /\b(?:attach(?:ing)?|includ(?:e|ing)|link(?:ing)?|pair(?:ing)?|associat(?:e|ing)|join(?:ing)?|tie|tying)\s+(?:(?:my|the)\s+)?(?:wallets|addresses)\b/
 ] as const;
 
 const CONSOLIDATION_LIMIT_CONTEXT_PATTERNS = [
@@ -422,6 +431,13 @@ function matchesAny(
   return patterns.some((pattern) => pattern.test(normalizedQuestion));
 }
 
+export function isMultiWalletSetupQuestion(question: string): boolean {
+  return matchesAny(
+    normalizeText(question),
+    MULTI_WALLET_SETUP_CONTEXT_PATTERNS
+  );
+}
+
 function parseWalletCount(rawCount: string): number | null {
   const wordValue = WALLET_COUNT_WORDS.get(rawCount);
   if (wordValue !== undefined) {
@@ -483,6 +499,7 @@ interface RoutedQuestionContext {
   readonly hasArchitectureContext: boolean;
   readonly hasExplicitArchitectureContext: boolean;
   readonly hasConsolidationContext: boolean;
+  readonly hasMultiWalletSetupContext: boolean;
   readonly hasConsolidationLimitContext: boolean;
   readonly hasDelegationContext: boolean;
   readonly hasWalletCheckContext: boolean;
@@ -507,6 +524,7 @@ function routedQuestionContext(
       normalizedQuestion,
       CONSOLIDATION_CONTEXT_PATTERNS
     ),
+    hasMultiWalletSetupContext: isMultiWalletSetupQuestion(normalizedQuestion),
     hasConsolidationLimitContext: matchesAny(
       normalizedQuestion,
       CONSOLIDATION_LIMIT_CONTEXT_PATTERNS
@@ -593,7 +611,7 @@ function addConsolidationScores(
   }
 
   if (
-    context.hasConsolidationContext &&
+    (context.hasConsolidationContext || context.hasMultiWalletSetupContext) &&
     (context.hasWalletContext || context.hasArchitectureContext)
   ) {
     addRoutedPathScore(scores, REGISTER_CONSOLIDATION_DOC_PATH, 16);

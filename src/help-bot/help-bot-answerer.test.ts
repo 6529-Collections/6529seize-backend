@@ -870,17 +870,23 @@ describe('HelpBotAnswerer', () => {
     });
   });
 
-  it('treats consolidation questions as product context when unindexed', async () => {
-    await expect(
-      answerer().answer({
-        question: 'how do i register a consolidation?',
-        baseUrl: BASE_URL
-      })
-    ).resolves.toEqual({
-      type: 'NO_RELIABLE_SOURCE',
-      escalateToTechTeam: true
-    });
-  });
+  it.each([
+    'how do i register a consolidation?',
+    'how do i add another wallet?'
+  ])(
+    'treats unindexed multi-wallet question "%s" as product context',
+    async (question) => {
+      await expect(
+        answerer().answer({
+          question,
+          baseUrl: BASE_URL
+        })
+      ).resolves.toEqual({
+        type: 'NO_RELIABLE_SOURCE',
+        escalateToTechTeam: true
+      });
+    }
+  );
 
   it('asks for a topic when the user only asks for help', async () => {
     const publicDataService = {
