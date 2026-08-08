@@ -7,8 +7,8 @@ import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
 
 interface GitHubWorkflowRun {
   readonly id: number;
-  readonly name: string;
   readonly display_title: string;
+  readonly path?: string;
   readonly head_sha: string;
   readonly run_number: number;
   readonly workflow_id: number;
@@ -101,6 +101,8 @@ const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
 const FRONTEND_REPO = '6529seize-frontend';
 const FRONTEND_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
+const FRONTEND_PRODUCTION_WORKFLOW_PATH =
+  '.github/workflows/build-upload-deploy-prod.yml';
 const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
 const MAX_PULL_REQUESTS = 100;
 const MAX_PROMPT_LENGTH = 20000;
@@ -190,7 +192,7 @@ function isMatchingProductionRun(
   if (repoName === FRONTEND_REPO) {
     return (
       request.workflow === FRONTEND_PRODUCTION_WORKFLOW &&
-      run.name === FRONTEND_PRODUCTION_WORKFLOW
+      run.path === FRONTEND_PRODUCTION_WORKFLOW_PATH
     );
   }
   return false;
