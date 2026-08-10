@@ -28,6 +28,10 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '@/sql-executor';
+import {
+  MINIMUM_SUBSCRIPTION_ELIGIBILITY,
+  normalizeSubscriptionEligibility
+} from '@/subscriptionsDaily/subscription-eligibility';
 import { Time } from '@/time';
 import {
   decideSubscriptionCoverageAlert,
@@ -1011,7 +1015,7 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
     ctx: RequestContext
   ): Promise<Map<string, number | null>> {
     const eligibility = new Map<string, number | null>(
-      keys.map((key) => [key, 0])
+      keys.map((key) => [key, MINIMUM_SUBSCRIPTION_ELIGIBILITY])
     );
     const season = await this.db.oneOrNull<{ max_id: number | string | null }>(
       `SELECT MAX(id) AS max_id FROM ${MEMES_SEASONS_TABLE}`,
@@ -1037,7 +1041,7 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
     for (const row of rows) {
       eligibility.set(
         row.consolidation_key.toLowerCase(),
-        toSafeNonNegativeInteger(row.sets)
+        normalizeSubscriptionEligibility(toSafeNonNegativeInteger(row.sets))
       );
     }
     return eligibility;
