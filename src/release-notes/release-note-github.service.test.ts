@@ -253,7 +253,6 @@ describe('ReleaseNoteGitHubService', () => {
     ['queued', null, { status: 'queued' }],
     ['completed with failure', 'failure', { status: 'completed' }],
     ['completed with cancellation', 'cancelled', { status: 'completed' }],
-    ['wrong workflow name', 'success', { name: 'Other production deploy' }],
     [
       'wrong workflow path',
       'success',
@@ -337,6 +336,80 @@ describe('ReleaseNoteGitHubService', () => {
       expect.any(Object)
     );
   });
+
+  it('accepts custom run names while binding manual production to its approved workflow file', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(
+        response({
+          ...currentRun,
+          name: 'Production deploy abc123 [frontend-prod-123]',
+          display_title: 'Production deploy abc123 [frontend-prod-123]'
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...currentRun,
+              id: 122,
+              name: 'Production deploy previous-sha [frontend-prod-122]',
+              display_title:
+                'Production deploy previous-sha [frontend-prod-122]',
+              head_sha: 'previous-sha',
+              run_number: 44,
+              created_at: '2026-07-12T11:38:00Z'
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
+      .mockResolvedValueOnce(
+        response({ commits: [], total_commits: 0, status: 'ahead' })
+      );
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext(request)
+    ).resolves.toEqual({
+      previous_sha: 'previous-sha',
+      current_sha: 'abc123',
+      pull_requests: []
+    });
+  });
+
+  it.each([
+    [
+      'another workflow path',
+      { path: '.github/workflows/deploy-staging.yml@refs/heads/main' }
+    ],
+    ['a missing workflow path', { path: undefined }],
+    ['another branch', { head_branch: '1a-staging' }]
+  ])(
+    'does not use a manual production baseline from %s',
+    async (_label, overrides) => {
+      (fetch as unknown as jest.Mock)
+        .mockResolvedValueOnce(response(currentRun))
+        .mockResolvedValueOnce(
+          response({
+            workflow_runs: [
+              {
+                ...currentRun,
+                id: 122,
+                head_sha: 'previous-sha',
+                run_number: 44,
+                created_at: '2026-07-12T11:38:00Z',
+                ...overrides
+              }
+            ]
+          })
+        )
+        .mockResolvedValueOnce(response({ workflow_runs: [] }));
+
+      await expect(
+        new ReleaseNoteGitHubService().getReleaseContext(request)
+      ).resolves.toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(3);
+    }
+  );
 
   it('accepts a live manual frontend production notification run', async () => {
     (fetch as unknown as jest.Mock)

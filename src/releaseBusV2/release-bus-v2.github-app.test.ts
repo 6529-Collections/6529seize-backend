@@ -1218,6 +1218,126 @@ describe('GitHub workflow operation identity', () => {
     expect(isValidGitHubWorkflowActor(`${'a'.repeat(40)}`)).toBe(false);
   });
 
+  it('parses the GitHub Actions actor only through the Production E2E reader', async () => {
+    const app = new ReleaseBusGitHubApp();
+    (
+      app as unknown as {
+        cachedToken: { value: string; expiresAt: number };
+      }
+    ).cachedToken = { value: 'test-token', expiresAt: Date.now() + 120_000 };
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 31205398386,
+          run_attempt: 1,
+          name: 'Production E2E automatic 31204118712',
+          path: '.github/workflows/production-e2e.yml',
+          display_title: 'Production E2E automatic 31204118712',
+          status: 'completed',
+          conclusion: 'failure',
+          head_branch: 'main',
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/31205398386',
+          event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-frontend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-frontend'
+          },
+          actor: { login: 'github-actions[bot]' }
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getProductionE2EWorkflowRunIdentity('frontend', '31205398386')
+      ).resolves.toMatchObject({
+        actor: 'github-actions[bot]',
+        attempt: 1,
+        conclusion: 'failure',
+        event: 'workflow_dispatch',
+        path: '.github/workflows/production-e2e.yml',
+        displayTitle: 'Production E2E automatic 31204118712',
+        status: 'completed'
+      });
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('rejects the GitHub Actions actor through the shared workflow reader', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 31205398386,
+          run_attempt: 1,
+          name: 'Production E2E automatic 31204118712',
+          path: '.github/workflows/production-e2e.yml',
+          display_title: 'Production E2E automatic 31204118712',
+          status: 'completed',
+          conclusion: 'failure',
+          head_branch: 'main',
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/31205398386',
+          event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-frontend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-frontend'
+          },
+          actor: { login: 'github-actions[bot]' }
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getWorkflowRunIdentity('frontend', '31205398386')
+      ).rejects.toThrow('GitHub workflow run has no valid actor');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('rejects the GitHub Actions actor outside the Production E2E workflow', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 12345,
+          run_attempt: 1,
+          name: 'Compose frontend v2 train beta',
+          path: '.github/workflows/release-bus-v2-compose.yml',
+          display_title: 'Compose frontend v2 train beta [rb2:beta:a1]',
+          status: 'completed',
+          conclusion: 'success',
+          head_branch: 'main',
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/12345',
+          event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-frontend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-frontend'
+          },
+          actor: { login: 'github-actions[bot]' }
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getProductionE2EWorkflowRunIdentity('frontend', '12345')
+      ).rejects.toThrow(
+        'GitHub workflow run is not a Production E2E qualifier'
+      );
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
   it('reads the exact Release Bus App actor from a workflow run', async () => {
     const app = new ReleaseBusGitHubApp();
     (
@@ -1240,6 +1360,10 @@ describe('GitHub workflow operation identity', () => {
           head_sha: 'a'.repeat(40),
           html_url: 'https://github.com/example/actions/runs/12345',
           event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-backend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-backend'
+          },
           actor: { login: '6529-release-bus[bot]' }
         })
       )
@@ -1253,6 +1377,8 @@ describe('GitHub workflow operation identity', () => {
         attempt: 2,
         conclusion: null,
         event: 'workflow_dispatch',
+        repository: '6529-Collections/6529seize-backend',
+        headRepository: '6529-Collections/6529seize-backend',
         headBranch: 'main',
         headSha: 'a'.repeat(40),
         status: 'in_progress'

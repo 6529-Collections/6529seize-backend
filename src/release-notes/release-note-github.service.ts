@@ -242,7 +242,14 @@ function isMatchingProductionRun(
     return run.display_title.endsWith(' to prod');
   }
   if (repoName === FRONTEND_REPO) {
-    return isApprovedFrontendProductionWorkflow(run.name);
+    if (!isApprovedFrontendProductionWorkflow(request.workflow)) {
+      return false;
+    }
+    const workflowFile = FRONTEND_PRODUCTION_WORKFLOWS[request.workflow];
+    return (
+      run.path?.split('@')[0] === `.github/workflows/${workflowFile}` &&
+      run.head_branch === normalizeBranch(request.branch)
+    );
   }
   return false;
 }
@@ -538,7 +545,6 @@ export class ReleaseNoteGitHubService {
       const runWorkflowPath = currentRun.path?.split('@')[0] ?? null;
       if (
         !workflowFile ||
-        currentRun.name !== request.workflow ||
         currentRun.head_branch !== branch ||
         !isAcceptedFrontendCurrentRunState(currentRun) ||
         !currentRun.created_at ||
@@ -581,7 +587,6 @@ export class ReleaseNoteGitHubService {
         const createdAt = Date.parse(run.created_at ?? '');
         if (
           String(run.id) === request.run_id ||
-          run.name !== workflowName ||
           run.status !== 'completed' ||
           run.conclusion !== 'success' ||
           run.head_branch !== normalizeBranch(request.branch) ||

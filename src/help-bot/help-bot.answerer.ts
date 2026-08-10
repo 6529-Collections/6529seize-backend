@@ -3,7 +3,12 @@ import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
   HelpBotKnowledgeRecord,
-  HelpBotKnowledgeMatch
+  HelpBotKnowledgeMatch,
+  isAmbiguousWalletManagementQuestion,
+  isMultiWalletLimitQuestion,
+  isMultiWalletRemovalQuestion,
+  isMultiWalletReplacementQuestion,
+  isMultiWalletSetupQuestion
 } from './help-bot.knowledge';
 import {
   HelpBotCalendarService,
@@ -1297,7 +1302,14 @@ function mergeKnowledgeMatches(
 
 function isLikelyProductText(value: string | null | undefined): boolean {
   const normalized = normalizeBoundaryText(value ?? '');
-  return PRODUCT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized));
+  return (
+    PRODUCT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized)) ||
+    isMultiWalletSetupQuestion(normalized) ||
+    isMultiWalletLimitQuestion(normalized) ||
+    isMultiWalletRemovalQuestion(normalized) ||
+    isMultiWalletReplacementQuestion(normalized) ||
+    isAmbiguousWalletManagementQuestion(normalized)
+  );
 }
 
 function isLikelyProductQuestion(
