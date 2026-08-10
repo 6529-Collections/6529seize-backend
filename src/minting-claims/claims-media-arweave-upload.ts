@@ -3,6 +3,7 @@ import {
   fetchMaxSeasonId,
   fetchMemeIdByMemeName
 } from '@/api/minting-claims/api.minting-claims.db';
+import { getMintingClaimSeasonWindow } from '@/minting-claims/minting-claim-season';
 import { arweaveFileUploader } from '@/arweave';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
@@ -998,15 +999,19 @@ async function appendSeasonIssues(
     missing.push('Season');
     return null;
   }
+  // Publication may happen long after claim creation, so historical seasons
+  // remain valid. Keep the upper bound to prevent bad future metadata.
+  if (seasonValue < 1) {
+    invalid.push(`Season (must be a positive integer, got ${seasonValue})`);
+    return seasonValue;
+  }
+
   const maxSeasonId = await fetchMaxSeasonId();
-  const requiredMinSeason = Math.max(1, maxSeasonId);
-  if (
-    !Number.isInteger(seasonValue) ||
-    seasonValue < requiredMinSeason ||
-    seasonValue > requiredMinSeason + 1
-  ) {
+  const { nextSeason: maxAllowedSeason } =
+    getMintingClaimSeasonWindow(maxSeasonId);
+  if (seasonValue > maxAllowedSeason) {
     invalid.push(
-      `Season (must be ${requiredMinSeason} or ${requiredMinSeason + 1}; current max season is ${maxSeasonId}, got ${seasonValue})`
+      `Season (must not exceed ${maxAllowedSeason}; current max season is ${maxSeasonId}, got ${seasonValue})`
     );
   }
   return seasonValue;
