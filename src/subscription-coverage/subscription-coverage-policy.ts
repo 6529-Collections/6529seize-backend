@@ -1,6 +1,6 @@
 import { SubscriptionCoverageStatus } from './subscription-coverage.types';
 
-export const SUBSCRIPTION_COVERAGE_CALCULATION_VERSION = 1;
+export const SUBSCRIPTION_COVERAGE_CALCULATION_VERSION = 2;
 
 export const SUBSCRIPTION_COVERAGE_POLICY = Object.freeze({
   coveredMinimumDrops: 7,
