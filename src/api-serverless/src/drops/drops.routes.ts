@@ -706,7 +706,8 @@ router.post(
       const dmUnreadState = (
         await wavesApiDb.findDmUnreadConversationStates(
           { identityId, waveIds: [waveId] },
-          ctx
+          ctx,
+          DbPoolName.WRITE
         )
       )[0];
       if (dmUnreadState) {

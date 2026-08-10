@@ -199,7 +199,8 @@ export class NotificationsApiService {
       ? ((
           await this.wavesApiDb.findDmUnreadConversationStates(
             { identityId, waveIds: [waveId] },
-            ctx
+            ctx,
+            DbPoolName.WRITE
           )
         )[0] ?? null)
       : null;

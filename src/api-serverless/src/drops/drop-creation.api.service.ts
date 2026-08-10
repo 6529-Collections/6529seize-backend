@@ -33,6 +33,7 @@ import {
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
 import { Logger } from '@/logging';
+import { DbPoolName } from '@/db-query.options';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import {
   CreateDropPollRequest,
@@ -217,7 +218,8 @@ export class DropCreationApiService {
       const states =
         await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
           { identityIds: recipientIds, waveIds: [waveId] },
-          ctx
+          ctx,
+          DbPoolName.WRITE
         );
       await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
     } catch (error) {

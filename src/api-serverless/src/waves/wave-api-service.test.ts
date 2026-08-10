@@ -22,6 +22,7 @@ import {
   WaveType
 } from '@/entities/IWave';
 import { Time } from '@/time';
+import { DbPoolName } from '@/db-query.options';
 
 describe('WaveApiService updateWave immutability', () => {
   function createService({
@@ -1624,7 +1625,8 @@ describe('WaveApiService direct-message mute synchronization', () => {
       );
       expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
         { identityId: 'profile-1', waveIds: ['wave-1'] },
-        ctx
+        ctx,
+        DbPoolName.WRITE
       );
       expect(
         wsListenersNotifier.notifyAboutDmUnreadStateChanged

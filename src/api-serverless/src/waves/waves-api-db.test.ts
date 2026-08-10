@@ -1848,8 +1848,12 @@ describeWithSeed(
       );
 
       expect(states).toHaveLength(2);
-      expect(states.map((state) => state.profile_id).sort()).toEqual(
-        [unreadReader.profile_id!, mutedUnreadReader.profile_id!].sort()
+      const compareIds = (left: string, right: string) =>
+        left.localeCompare(right);
+      expect(states.map((state) => state.profile_id).sort(compareIds)).toEqual(
+        [unreadReader.profile_id!, mutedUnreadReader.profile_id!].sort(
+          compareIds
+        )
       );
       expect(states).toEqual(
         expect.arrayContaining([

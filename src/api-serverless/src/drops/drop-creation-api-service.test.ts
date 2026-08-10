@@ -4,6 +4,7 @@ import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache'
 import { DropType } from '@/entities/IDrop';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { DbPoolName } from '@/db-query.options';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForWave: jest.fn().mockResolvedValue(undefined)
@@ -348,7 +349,8 @@ describe('DropCreationApiService.createDrop', () => {
       wavesApiDb.findDmUnreadConversationStatesForIdentities
     ).toHaveBeenCalledWith(
       { identityIds: ['reader-profile'], waveIds: ['wave-1'] },
-      expect.objectContaining({ timer: undefined })
+      expect.objectContaining({ timer: undefined }),
+      DbPoolName.WRITE
     );
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged

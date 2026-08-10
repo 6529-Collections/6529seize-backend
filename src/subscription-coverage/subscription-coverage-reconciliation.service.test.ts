@@ -133,7 +133,7 @@ describe('SubscriptionCoverageReconciliationService reads', () => {
     expect(forecast.nextUnfunded).toBeNull();
   });
 
-  it('skips row transactions for a materially unchanged full-scan snapshot', async () => {
+  it('skips exact snapshots but persists fingerprint-only changes without notification', async () => {
     const source: SubscriptionCoverageSourceData = {
       consolidationKey: 'profile-key',
       hasDemonstratedIntent: true,
@@ -145,7 +145,13 @@ describe('SubscriptionCoverageReconciliationService reads', () => {
       eligibilityCount: 1,
       selections: []
     };
-    const applyAlertSnapshot = jest.fn();
+    let currentFingerprint = '';
+    const applyAlertSnapshot = jest.fn(async () => ({
+      notificationIds: [],
+      notificationStatus: null,
+      decisionReason: 'UNCHANGED' as const,
+      createdBaseline: false
+    }));
     const repository = {
       listDemonstratedIntentKeys: jest.fn(async () => ['profile-key']),
       loadSourceData: jest.fn(async () => new Map([['profile-key', source]])),
@@ -157,7 +163,7 @@ describe('SubscriptionCoverageReconciliationService reads', () => {
               'profile-key',
               {
                 current_status: 'ACTION_REQUIRED',
-                current_fingerprint: 'older-balance-fingerprint',
+                current_fingerprint: currentFingerprint,
                 current_at_risk_token_id: 528,
                 current_fully_funded_drops: 0,
                 current_requested_mints: 1,
@@ -193,16 +199,23 @@ describe('SubscriptionCoverageReconciliationService reads', () => {
       scheduleProvider,
       () => Date.parse('2026-07-26T22:00:00.000Z')
     );
+    const forecast = await service.calculateCoverage('profile-key');
+    currentFingerprint = forecast.fingerprint;
 
-    const result = await service.reconcileFullPage(undefined, 100, {
+    const options = {
       dryRun: false,
       notificationsEnabled: true,
       baselineOnly: false,
       notifyInitialCritical: false,
       pushEnabled: true
-    });
+    };
+    const unchangedResult = await service.reconcileFullPage(
+      undefined,
+      100,
+      options
+    );
 
-    expect(result).toMatchObject({
+    expect(unchangedResult).toMatchObject({
       scanned: 1,
       succeeded: 1,
       failed: 0,
@@ -211,6 +224,26 @@ describe('SubscriptionCoverageReconciliationService reads', () => {
       pushesQueued: 0
     });
     expect(applyAlertSnapshot).not.toHaveBeenCalled();
+
+    currentFingerprint = 'version-1-fingerprint';
+    const fingerprintChangeResult = await service.reconcileFullPage(
+      undefined,
+      100,
+      options
+    );
+
+    expect(fingerprintChangeResult).toMatchObject({
+      scanned: 1,
+      succeeded: 1,
+      failed: 0,
+      deduplicatedOrSuppressed: 1,
+      notificationsCreated: 0,
+      pushesQueued: 0
+    });
+    expect(applyAlertSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ fingerprint: forecast.fingerprint }),
+      expect.objectContaining({ notificationsEnabled: true })
+    );
     expect(mockSendIdentityPushNotifications).not.toHaveBeenCalled();
   });
 

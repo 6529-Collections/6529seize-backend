@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import {
   activityRecorder,
   ActivityRecorder
@@ -2268,7 +2269,8 @@ export class WaveApiService {
     const state = (
       await this.wavesApiDb.findDmUnreadConversationStates(
         { identityId, waveIds: [waveId] },
-        ctx
+        ctx,
+        DbPoolName.WRITE
       )
     )[0];
     if (state) {

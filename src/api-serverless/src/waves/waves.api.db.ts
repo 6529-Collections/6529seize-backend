@@ -3876,7 +3876,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       eligibleGroups?: string[];
       waveIds?: string[];
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    forcePool: DbPoolName = DbPoolName.READ
   ): Promise<ApiDmUnreadConversationState[]> {
     return await this.findDmUnreadConversationStatesForReaders(
       {
@@ -3884,7 +3885,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         eligibleGroups: param.eligibleGroups,
         waveIds: param.waveIds
       },
-      ctx
+      ctx,
+      forcePool
     );
   }
 
@@ -3893,9 +3895,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       identityIds: string[];
       waveIds?: string[];
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    forcePool: DbPoolName = DbPoolName.READ
   ): Promise<ApiDmUnreadConversationState[]> {
-    return await this.findDmUnreadConversationStatesForReaders(param, ctx);
+    return await this.findDmUnreadConversationStatesForReaders(
+      param,
+      ctx,
+      forcePool
+    );
   }
 
   private async findDmUnreadConversationStatesForReaders(
@@ -3904,7 +3911,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       eligibleGroups?: string[];
       waveIds?: string[];
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    forcePool: DbPoolName
   ): Promise<ApiDmUnreadConversationState[]> {
     const identityIds = Array.from(
       new Set(param.identityIds.filter((identityId) => !!identityId))
@@ -3978,17 +3986,26 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     else null
                   end
                 ) as first_unread_drop_serial_no,
-                coalesce(max(d.serial_no), 0) as latest_drop_serial_no,
+                coalesce(
+                  (
+                    select max(latest_drop.serial_no)
+                    from ${DROPS_TABLE} latest_drop
+                    where latest_drop.wave_id = state.wave_id
+                  ),
+                  0
+                ) as latest_drop_serial_no,
                 state.latest_read_serial_no,
                 state.unread_state_version
          from dm_reader_state state
          left join ${DROPS_TABLE} d
            on d.wave_id = state.wave_id
+          and d.serial_no > state.latest_read_serial_no
          left join ${IDENTITY_MUTES_TABLE} im
            on im.muter_id = state.reader_id
           and im.muted_identity_id = d.author_id
          group by state.reader_id,
                   state.wave_id,
+                  state.muted,
                   state.latest_read_serial_no,
                   state.unread_state_version`,
         {
@@ -3998,7 +4015,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         },
         {
           wrappedConnection: ctx.connection,
-          forcePool: DbPoolName.WRITE
+          forcePool
         }
       );
       return rows.map((row) => ({

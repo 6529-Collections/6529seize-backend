@@ -6,6 +6,7 @@ import { NotificationsApiService } from '@/api/notifications/notifications.api.s
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { NotFoundException } from '@/exceptions';
+import { DbPoolName } from '@/db-query.options';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
@@ -812,7 +813,8 @@ describe('NotificationsApiService realtime invalidation', () => {
     );
     expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
       { identityId: 'profile-1', waveIds: ['wave-1'] },
-      {}
+      {},
+      DbPoolName.WRITE
     );
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
