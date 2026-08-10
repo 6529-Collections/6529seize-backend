@@ -1,6 +1,7 @@
 import {
   fetchMaxSeasonId,
   fetchMintingClaimByClaimId,
+  updateMintingClaimIfEditable,
   updateMintingClaim,
   type MintingClaimRow
 } from '@/api/minting-claims/api.minting-claims.db';
@@ -18,7 +19,9 @@ import {
   animationDetailsHtml
 } from '@/minting-claims/media-inspector';
 import { sqlExecutor } from '@/sql-executor';
+import { getMintingClaimSeasonWindow } from '@/minting-claims/minting-claim-season';
 import { ethers } from 'ethers';
+import { isDeepStrictEqual } from 'node:util';
 
 const MIN_EDITION_SIZE = 300;
 const TYPE_SEASON_TRAIT = 'Type - Season';
@@ -119,15 +122,14 @@ function validateRequestedSeason(
   maxSeason: number
 ): number {
   const requested = Number(requestedSeason);
-  const minSeason = 1;
-  const requiredMinSeason = Math.max(minSeason, maxSeason);
+  const { currentSeason, nextSeason } = getMintingClaimSeasonWindow(maxSeason);
   if (
     !Number.isInteger(requested) ||
-    requested < requiredMinSeason ||
-    requested > requiredMinSeason + 1
+    requested < currentSeason ||
+    requested > nextSeason
   ) {
     throw new BadRequestException(
-      `Season must be ${requiredMinSeason} or ${requiredMinSeason + 1} (current max season is ${maxSeason}), got ${requestedSeason}`
+      `Season must be ${currentSeason} or ${nextSeason} (current max season is ${maxSeason}), got ${requestedSeason}`
     );
   }
   return requested;
@@ -160,6 +162,62 @@ function extractSeasonFromAttributes(attributes: unknown): number | null {
   }
 
   return null;
+}
+
+function extractSeasonFromStoredAttributes(attributes: string): number | null {
+  try {
+    return extractSeasonFromAttributes(
+      sanitizeMintingClaimAttributes(JSON.parse(attributes) as unknown)
+    );
+  } catch {
+    return null;
+  }
+}
+
+function areStoredAttributesEquivalent(first: string, second: string): boolean {
+  try {
+    return isDeepStrictEqual(JSON.parse(first), JSON.parse(second));
+  } catch {
+    return first === second;
+  }
+}
+
+const JSON_CLAIM_FIELDS = new Set([
+  'attributes',
+  'image_details',
+  'animation_details'
+]);
+
+function isClaimFieldEqual(
+  key: string,
+  actual: unknown,
+  expected: unknown
+): boolean {
+  if (JSON_CLAIM_FIELDS.has(key)) {
+    try {
+      const parsedActual =
+        typeof actual === 'string' ? JSON.parse(actual) : actual;
+      return isDeepStrictEqual(parsedActual, expected);
+    } catch {
+      // Stored JSON is server-written. Fail closed on legacy corruption rather
+      // than treating an unverifiable conditional update as successful.
+      return false;
+    }
+  }
+  if (key === 'media_uploading') {
+    return Boolean(actual) === expected;
+  }
+  return actual === expected;
+}
+
+function doesClaimMatchUpdates(
+  claim: MintingClaimRow,
+  updates: MintingClaimUpdates
+): boolean {
+  const claimRecord = claim as unknown as Record<string, unknown>;
+  return Object.entries(updates).every(([key, expected]) =>
+    isClaimFieldEqual(key, claimRecord[key], expected)
+  );
 }
 
 function normalizeAttributesWithSeason(
@@ -261,7 +319,8 @@ async function applyAnimationFromBody(
 async function applyAttributesFromBody(
   body: MintingClaimUpdateRequest,
   updates: MintingClaimUpdates,
-  isMemesContract: boolean
+  isMemesContract: boolean,
+  existingAttributes: string
 ): Promise<boolean> {
   if (body.attributes === undefined) {
     return false;
@@ -280,10 +339,13 @@ async function applyAttributesFromBody(
     );
   }
 
-  const validatedSeason = validateRequestedSeason(
-    requestedSeason,
-    await fetchMaxSeasonId()
-  );
+  const existingSeason = extractSeasonFromStoredAttributes(existingAttributes);
+  // Historical seasons remain valid when another attribute is edited. Apply
+  // the moving current/next-season window only to an actual season change.
+  const validatedSeason =
+    requestedSeason === existingSeason
+      ? requestedSeason
+      : validateRequestedSeason(requestedSeason, await fetchMaxSeasonId());
 
   updates.attributes = normalizeAttributesWithSeason(
     sanitizedAttributes,
@@ -335,7 +397,14 @@ export async function buildUpdatesForClaimPatch(
     shouldResetMetadataLocation = true;
   }
 
-  if (await applyAttributesFromBody(body, updates, isMemesContract)) {
+  if (
+    await applyAttributesFromBody(
+      body,
+      updates,
+      isMemesContract,
+      existing.attributes
+    )
+  ) {
     shouldResetMetadataLocation = true;
   }
 
@@ -367,6 +436,45 @@ export async function buildUpdatesForClaimPatch(
   return updates;
 }
 
+async function didConditionalClaimUpdateSucceed(
+  didUpdate: boolean,
+  contract: string,
+  claimId: number,
+  expectedAttributes: string | undefined,
+  updates: MintingClaimUpdates
+): Promise<boolean> {
+  if (didUpdate) return true;
+
+  const current = await fetchMintingClaimByClaimId(
+    contract,
+    claimId,
+    CLAIM_PATCH_READ_OPTIONS
+  );
+  if (current === null) return false;
+  if (current.media_uploading) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim media upload in progress; updates are temporarily blocked'
+    );
+  }
+  if (
+    expectedAttributes !== undefined &&
+    !areStoredAttributesEquivalent(current.attributes, expectedAttributes)
+  ) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim attributes changed while this update was being processed; refresh and retry'
+    );
+  }
+  if (!doesClaimMatchUpdates(current, updates)) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim changed while this update was being processed; refresh and retry'
+    );
+  }
+  return true;
+}
+
 export async function patchMintingClaim(
   contract: string,
   claimId: number,
@@ -392,7 +500,24 @@ export async function patchMintingClaim(
     existing,
     isMemesContract
   );
-  await updateMintingClaim(contract, claimId, updates);
+  const expectedAttributes =
+    body.attributes === undefined ? undefined : existing.attributes;
+  const didUpdate = await updateMintingClaimIfEditable(
+    contract,
+    claimId,
+    updates,
+    expectedAttributes
+  );
+  if (
+    !(await didConditionalClaimUpdateSucceed(
+      didUpdate,
+      contract,
+      claimId,
+      expectedAttributes,
+      updates
+    ))
+  )
+    return null;
 
   const updated = await fetchMintingClaimByClaimId(
     contract,
