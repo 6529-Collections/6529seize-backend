@@ -1322,9 +1322,11 @@ const WaveConfigSchema = createWaveConfigSchema(
   CreateWaveDecisionsStrategySchema
 );
 
+// For updates, do not default reset_votes_after_win to false —
+// preserve the existing value if the field is omitted.
 const UpdateWaveConfigSchema = createWaveConfigSchema(
   UpdateWaveDecisionsStrategySchema
-);
+).fork('reset_votes_after_win', (schema) => schema.optional());
 
 const WaveOutcomeDistributionItemSchema =
   Joi.object<ApiWaveOutcomeDistributionItem>({
