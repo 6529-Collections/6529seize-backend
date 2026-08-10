@@ -178,7 +178,7 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[PROD] Seize PROD WEB DEPLOY: CI pipeline is broken!!! 🚨',
+                  '[🚀 PRODUCTION] Seize PROD WEB DEPLOY: CI pipeline is broken!!! 🚨',
                   '',
                   'abc123 - Fix deploy',
                   '',
@@ -246,7 +246,7 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+                  '[🚧 STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
                   '',
                   'abc123 - Fix deploy',
                   '',
@@ -269,7 +269,7 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+        '[🚧 STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
         '',
         'abc123 - Fix deploy',
         '',
@@ -652,7 +652,7 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[PROD] Desktop Publish completed 🚀 ✅',
+        '[🚀 PRODUCTION] Desktop Publish completed 🚀 ✅',
         '',
         'Production v0.3.11 publish completed with S3 and Arweave links published and CloudFront invalidated.',
         '',
@@ -678,7 +678,7 @@ describe('CiPipelineAlertService', () => {
 
       expect(
         dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest.parts[0].content.startsWith(
-          '[PROD] Web Deploy - PROD 🚨'
+          '[🚀 PRODUCTION] Web Deploy - PROD 🚨'
         )
       ).toBe(true);
     }
@@ -698,8 +698,10 @@ describe('CiPipelineAlertService', () => {
     const content =
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content;
-    expect(content.startsWith('[PROD] Build succeeded ✅')).toBe(true);
-    expect(content.startsWith('[PROD] Build succeeded ✅ ❌ 🚨')).toBe(false);
+    expect(content.startsWith('[🚀 PRODUCTION] Build succeeded ✅')).toBe(true);
+    expect(content.startsWith('[🚀 PRODUCTION] Build succeeded ✅ ❌ 🚨')).toBe(
+      false
+    );
   });
 
   it('preserves the outcome and run metadata when text is long', async () => {
