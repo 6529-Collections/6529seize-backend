@@ -9,9 +9,12 @@ describe('normalizeSubscriptionEligibility', () => {
     [0, 1],
     [1, 1],
     [2, 2],
-    [3, 3],
+    ['3', 3],
     [Number.NaN, 1],
-    [1.5, 1]
+    [1.5, 1],
+    [Number.MAX_SAFE_INTEGER + 1, 1],
+    [null, 1],
+    [undefined, 1]
   ])('normalizes %s Meme sets to eligibility %s', (memeSets, expected) => {
     expect(normalizeSubscriptionEligibility(memeSets)).toBe(expected);
   });

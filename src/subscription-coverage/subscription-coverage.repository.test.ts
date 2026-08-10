@@ -7,7 +7,7 @@ import {
 function createExecutor(
   eligibilityRows: ReadonlyArray<{
     readonly consolidation_key: string;
-    readonly sets: number;
+    readonly sets: number | string;
   }> = []
 ) {
   const execute = jest.fn(async (sql: string) => {
@@ -102,7 +102,7 @@ describe('SubscriptionCoverageRepository source loading', () => {
   it('normalizes zero-set and positive-set coverage eligibility', async () => {
     const { executor } = createExecutor([
       { consolidation_key: 'zero-sets', sets: 0 },
-      { consolidation_key: 'multiple-sets', sets: 3 }
+      { consolidation_key: 'multiple-sets', sets: '3' }
     ]);
     const repository = new SubscriptionCoverageRepository(() => executor);
 

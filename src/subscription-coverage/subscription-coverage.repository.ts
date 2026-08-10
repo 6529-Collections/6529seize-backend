@@ -1041,7 +1041,7 @@ export class SubscriptionCoverageRepository extends LazyDbAccessCompatibleServic
     for (const row of rows) {
       eligibility.set(
         row.consolidation_key.toLowerCase(),
-        normalizeSubscriptionEligibility(toSafeNonNegativeInteger(row.sets))
+        normalizeSubscriptionEligibility(row.sets)
       );
     }
     return eligibility;
