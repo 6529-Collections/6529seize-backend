@@ -322,6 +322,26 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
     expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts the next season at the upper boundary', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 15 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).resolves.toEqual({
+      imageUrl: 'https://cdn.example.com/image.png',
+      typeMemeId: 9,
+      seasonValue: 15
+    });
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects missing MEMES traits before Arweave upload', async () => {
     const attributes = buildMemesRawAttributes().filter(
       (attribute) => attribute.trait_type !== 'Boost'

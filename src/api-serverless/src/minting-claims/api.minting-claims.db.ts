@@ -431,16 +431,32 @@ export async function updateMintingClaimIfEditable(
     params.expectedAttributes = expectedAttributes;
   }
 
-  const result = await sqlExecutor.execute<{ affectedRows: number }>(
-    `UPDATE ${MINTING_CLAIMS_TABLE}
-     SET ${setClauses.join(', ')}
-     WHERE contract = :contract
-       AND claim_id = :claimId
-       AND COALESCE(media_uploading, 0) = 0
-       ${attributesPredicate}`,
-    params
+  return await sqlExecutor.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const matchingRows = await sqlExecutor.execute<{ claim_id: number }>(
+        `SELECT claim_id
+         FROM ${MINTING_CLAIMS_TABLE}
+         WHERE contract = :contract
+           AND claim_id = :claimId
+           AND COALESCE(media_uploading, 0) = 0
+           ${attributesPredicate}
+         FOR UPDATE`,
+        params,
+        { wrappedConnection: connection }
+      );
+      if (matchingRows.length === 0) return false;
+
+      await sqlExecutor.execute(
+        `UPDATE ${MINTING_CLAIMS_TABLE}
+         SET ${setClauses.join(', ')}
+         WHERE contract = :contract
+           AND claim_id = :claimId`,
+        params,
+        { wrappedConnection: connection }
+      );
+      return true;
+    }
   );
-  return getAffectedRowsFromUpdateResult(result) > 0;
 }
 
 function buildMintingClaimUpdateStatement(

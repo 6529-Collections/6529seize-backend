@@ -182,36 +182,42 @@ function areStoredAttributesEquivalent(first: string, second: string): boolean {
   }
 }
 
+const JSON_CLAIM_FIELDS = new Set([
+  'attributes',
+  'image_details',
+  'animation_details'
+]);
+
+function isClaimFieldEqual(
+  key: string,
+  actual: unknown,
+  expected: unknown
+): boolean {
+  if (JSON_CLAIM_FIELDS.has(key)) {
+    try {
+      const parsedActual =
+        typeof actual === 'string' ? JSON.parse(actual) : actual;
+      return isDeepStrictEqual(parsedActual, expected);
+    } catch {
+      // Stored JSON is server-written. Fail closed on legacy corruption rather
+      // than treating an unverifiable conditional update as successful.
+      return false;
+    }
+  }
+  if (key === 'media_uploading') {
+    return Boolean(actual) === expected;
+  }
+  return actual === expected;
+}
+
 function doesClaimMatchUpdates(
   claim: MintingClaimRow,
   updates: MintingClaimUpdates
 ): boolean {
   const claimRecord = claim as unknown as Record<string, unknown>;
-  for (const [key, expected] of Object.entries(updates)) {
-    const actual = claimRecord[key];
-    if (
-      key === 'attributes' ||
-      key === 'image_details' ||
-      key === 'animation_details'
-    ) {
-      try {
-        const parsedActual =
-          typeof actual === 'string' ? JSON.parse(actual) : actual;
-        if (!isDeepStrictEqual(parsedActual, expected)) {
-          return false;
-        }
-      } catch {
-        return false;
-      }
-      continue;
-    }
-    if (key === 'media_uploading') {
-      if (Boolean(actual) !== expected) return false;
-      continue;
-    }
-    if (actual !== expected) return false;
-  }
-  return true;
+  return Object.entries(updates).every(([key, expected]) =>
+    isClaimFieldEqual(key, claimRecord[key], expected)
+  );
 }
 
 function normalizeAttributesWithSeason(
@@ -430,6 +436,45 @@ export async function buildUpdatesForClaimPatch(
   return updates;
 }
 
+async function didConditionalClaimUpdateSucceed(
+  didUpdate: boolean,
+  contract: string,
+  claimId: number,
+  expectedAttributes: string | undefined,
+  updates: MintingClaimUpdates
+): Promise<boolean> {
+  if (didUpdate) return true;
+
+  const current = await fetchMintingClaimByClaimId(
+    contract,
+    claimId,
+    CLAIM_PATCH_READ_OPTIONS
+  );
+  if (current === null) return false;
+  if (current.media_uploading) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim media upload in progress; updates are temporarily blocked'
+    );
+  }
+  if (
+    expectedAttributes !== undefined &&
+    !areStoredAttributesEquivalent(current.attributes, expectedAttributes)
+  ) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim attributes changed while this update was being processed; refresh and retry'
+    );
+  }
+  if (!doesClaimMatchUpdates(current, updates)) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim changed while this update was being processed; refresh and retry'
+    );
+  }
+  return true;
+}
+
 export async function patchMintingClaim(
   contract: string,
   claimId: number,
@@ -463,36 +508,16 @@ export async function patchMintingClaim(
     updates,
     expectedAttributes
   );
-
-  if (!didUpdate) {
-    const current = await fetchMintingClaimByClaimId(
+  if (
+    !(await didConditionalClaimUpdateSucceed(
+      didUpdate,
       contract,
       claimId,
-      CLAIM_PATCH_READ_OPTIONS
-    );
-    if (current === null) return null;
-    if (current.media_uploading) {
-      throw new CustomApiCompliantException(
-        409,
-        'Claim media upload in progress; updates are temporarily blocked'
-      );
-    }
-    if (
-      expectedAttributes !== undefined &&
-      !areStoredAttributesEquivalent(current.attributes, expectedAttributes)
-    ) {
-      throw new CustomApiCompliantException(
-        409,
-        'Claim attributes changed while this update was being processed; refresh and retry'
-      );
-    }
-    if (!doesClaimMatchUpdates(current, updates)) {
-      throw new CustomApiCompliantException(
-        409,
-        'Claim changed while this update was being processed; refresh and retry'
-      );
-    }
-  }
+      expectedAttributes,
+      updates
+    ))
+  )
+    return null;
 
   const updated = await fetchMintingClaimByClaimId(
     contract,

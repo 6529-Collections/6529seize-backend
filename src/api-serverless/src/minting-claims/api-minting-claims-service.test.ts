@@ -552,4 +552,33 @@ describe('patchMintingClaim', () => {
     ).resolves.toEqual(existing);
     expect(fetchMintingClaimByClaimIdMock).toHaveBeenCalledTimes(3);
   });
+
+  it('resets published metadata when identical attributes are resubmitted', async () => {
+    const attributes = JSON.stringify([
+      { trait_type: 'Type - Season', value: 15, display_type: 'number' }
+    ]);
+    const existing = baseClaim({ attributes });
+    const updated = baseClaim({ attributes, metadata_location: null });
+    fetchMintingClaimByClaimIdMock
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(updated);
+    updateMintingClaimIfEditableMock.mockResolvedValue(true);
+
+    await expect(
+      patchMintingClaim(
+        existing.contract,
+        existing.claim_id,
+        {
+          attributes: [{ trait_type: 'Type - Season', value: 15 }]
+        },
+        true
+      )
+    ).resolves.toEqual(updated);
+    expect(updateMintingClaimIfEditableMock).toHaveBeenCalledWith(
+      existing.contract,
+      existing.claim_id,
+      expect.objectContaining({ metadata_location: null }),
+      existing.attributes
+    );
+  });
 });
