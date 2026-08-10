@@ -317,7 +317,31 @@ entire corpus.
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
 frontend calendar API calls for drop timing and Bedrock-planned public-data
 intents compiled to backend-owned SQL.
-Direct follow-up questions first match the current user message; previous bot
+Natural multi-wallet setup wording such as adding, linking, pairing, or setting
+up another wallet is routed to the consolidation records when the wording
+includes both a setup action and an explicit additional, quantified, or
+possessive multi-wallet target, regardless of which appears first. Wallet-limit
+questions are routed to consolidation use cases when they combine a wallet or
+address subject with either strong limit language or quantity language plus a
+counting, setup, or consolidation relationship. The answer distinguishes
+registration capacity from the effective metrics group: more than three
+addresses can have consolidation records, but only the last three count for
+consolidation purposes. Removal and unlinking wording with explicit
+multi-wallet or consolidation context routes to consolidation revoke guidance,
+while replacement and swapping wording with that context routes to update
+guidance. Bare singular requests such as removing or replacing "a wallet"
+route to clarification guidance because they may refer either to the connected
+wallet or an on-chain consolidation record. Ambiguous requests to connect an
+additional wallet also route to clarification because ordinary site connection
+is distinct from consolidation. Generic connection questions, bare
+plural wallet wording, and capability questions about merely using multiple
+wallets remain outside those routes so the bot does not incorrectly prescribe
+consolidation. Explicit delegation-workflow and external wallet-provider,
+device, and hardware-wallet wording remain governed by their own context rather
+than these consolidation shortcuts, even when consolidation wording is also
+present. Naming the Delegation Center or its documentation does not suppress an
+otherwise explicit consolidation question. Direct follow-up questions first
+match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.
 
@@ -540,7 +564,7 @@ private user data beyond what is needed for debugging and abuse controls.
 - Draft frontend help index spec.
 - Draft backend runtime spec.
 - Agree on bot naming and hardcoded handle: `@help6529` (`HELP_BOT_HANDLE =
-  'help6529'`).
+'help6529'`).
 
 ### Phase 2: V1 Help Bot Plumbing - Done In PR
 

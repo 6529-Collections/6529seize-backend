@@ -98,6 +98,122 @@ export const RELEASE_BUS_V2_OPERATION_STATUSES = [
 export type ReleaseBusV2OperationStatus =
   (typeof RELEASE_BUS_V2_OPERATION_STATUSES)[number];
 
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_STATUSES = [
+  'PREPARED',
+  'BOUND',
+  'COMPLETED',
+  'FAILED',
+  'DENIED',
+  'EXPIRED'
+] as const;
+export type ReleaseBusV2ProductionAuthorityStatus =
+  (typeof RELEASE_BUS_V2_PRODUCTION_AUTHORITY_STATUSES)[number];
+
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_DENIAL_CODES = [
+  'LANE_ON',
+  'LANE_NOT_CHANGEABLE',
+  'ACTIVE_WORKFLOW',
+  'ACTIVE_TRAIN',
+  'ACTIVE_OPERATION',
+  'ENVIRONMENT_LOCK_HELD',
+  'CONTROL_EPOCH_CHANGED',
+  'TARGET_NOT_IN_PROTECTED_MAIN_HISTORY',
+  'SELECTION_DIGEST_MISMATCH',
+  'WORKFLOW_IDENTITY_MISMATCH',
+  'QUALIFIER_WORKFLOW_IDENTITY_MISMATCH',
+  'EVIDENCE_DIGEST_MISMATCH',
+  'OWNER_MISMATCH',
+  'AUTHORITY_NOT_FOUND',
+  'AUTHORITY_NOT_BOUND',
+  'AUTHORITY_TERMINAL',
+  'LEASE_EXPIRED',
+  'LEASE_LOST',
+  'HARD_TTL_EXPIRED',
+  'AUTHORITY_UNAVAILABLE'
+] as const;
+export type ReleaseBusV2ProductionAuthorityDenialCode =
+  (typeof RELEASE_BUS_V2_PRODUCTION_AUTHORITY_DENIAL_CODES)[number];
+
+export const RELEASE_BUS_V2_PRODUCTION_AUTHORITY_FAILURE_CODES = [
+  'AWS_MUTATION_FAILED',
+  'WORKFLOW_FAILED',
+  'ABORTED',
+  'CONTROL_REVOKED',
+  'LEASE_EXPIRED',
+  'LEASE_LOST'
+] as const;
+export type ReleaseBusV2ProductionAuthorityFailureCode =
+  (typeof RELEASE_BUS_V2_PRODUCTION_AUTHORITY_FAILURE_CODES)[number];
+
+export type ReleaseBusV2ControlEpoch = {
+  readonly all: number;
+  readonly production: number;
+  readonly mode: ReleaseBusV2Mode;
+};
+
+export type ReleaseBusV2ProductionAuthorityIdentity = {
+  readonly operation_id: string;
+  readonly controller_identity: string;
+  readonly repository: ReleaseBusV2Repository;
+  readonly environment: 'prod';
+  readonly service: string;
+  readonly target_sha: string;
+};
+
+export type ReleaseBusV2ProductionAuthoritySelectionState = {
+  readonly selection_digest: string | null;
+};
+
+export type ReleaseBusV2ProductionAuthorityBinding = {
+  readonly workflow_run_id: string;
+  readonly workflow_run_attempt: number;
+};
+
+export type ReleaseBusV2ProductionAuthorityReauthorizeInput =
+  ReleaseBusV2ProductionAuthorityIdentity &
+    ReleaseBusV2ProductionAuthorityBinding & {
+      readonly selection_digest: string;
+    };
+
+export type ReleaseBusV2ProductionAuthorityTerminalEvidence = {
+  readonly qualifier_workflow_run_id: string;
+  readonly qualifier_workflow_run_attempt: number;
+  readonly evidence_digest: string;
+};
+
+export type ReleaseBusV2ProductionAuthorityCompletionInput =
+  ReleaseBusV2ProductionAuthorityReauthorizeInput &
+    ReleaseBusV2ProductionAuthorityTerminalEvidence;
+
+export type ReleaseBusV2ProductionAuthorityRecord =
+  ReleaseBusV2ProductionAuthorityIdentity &
+    ReleaseBusV2ProductionAuthoritySelectionState & {
+      readonly id: string;
+      readonly status: ReleaseBusV2ProductionAuthorityStatus;
+      readonly workflow_run_id: string | null;
+      readonly workflow_run_attempt: number | null;
+      readonly qualifier_workflow_run_id: string | null;
+      readonly qualifier_workflow_run_attempt: number | null;
+      readonly evidence_digest: string | null;
+      readonly lease_owner: string | null;
+      readonly lease_token: string | null;
+      readonly lease_expires_at: number | null;
+      readonly hard_expires_at: number | null;
+      readonly lock_row_version: number | null;
+      readonly control_epoch_all: number;
+      readonly control_epoch_production: number;
+      readonly control_mode: ReleaseBusV2Mode;
+      readonly denial_code: ReleaseBusV2ProductionAuthorityDenialCode | null;
+      readonly denial_observed_all_epoch: number | null;
+      readonly denial_observed_production_epoch: number | null;
+      readonly denial_observed_mode: ReleaseBusV2Mode | null;
+      readonly failure_code: ReleaseBusV2ProductionAuthorityFailureCode | null;
+      readonly completed_at: number | null;
+      readonly created_at: number;
+      readonly updated_at: number;
+      readonly row_version: number;
+    };
+
 export const RELEASE_BUS_V2_FAILURE_CLASSES = [
   'CANDIDATE',
   'INTERACTION',
