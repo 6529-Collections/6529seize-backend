@@ -212,6 +212,7 @@ function materiallyMatchesStoredState(
 ): boolean {
   return (
     state.current_status === snapshot.status &&
+    state.current_fingerprint === snapshot.fingerprint &&
     state.current_at_risk_token_id === snapshot.atRiskTokenId &&
     state.current_fully_funded_drops === snapshot.fullyFundedDrops &&
     state.current_requested_mints === snapshot.requestedMints &&
