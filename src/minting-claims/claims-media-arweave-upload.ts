@@ -3,6 +3,7 @@ import {
   fetchMaxSeasonId,
   fetchMemeIdByMemeName
 } from '@/api/minting-claims/api.minting-claims.db';
+import { getMintingClaimSeasonWindow } from '@/minting-claims/minting-claim-season';
 import { arweaveFileUploader } from '@/arweave';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
@@ -1006,7 +1007,8 @@ async function appendSeasonIssues(
   }
 
   const maxSeasonId = await fetchMaxSeasonId();
-  const maxAllowedSeason = Math.max(1, maxSeasonId) + 1;
+  const { nextSeason: maxAllowedSeason } =
+    getMintingClaimSeasonWindow(maxSeasonId);
   if (seasonValue > maxAllowedSeason) {
     invalid.push(
       `Season (must not exceed ${maxAllowedSeason}; current max season is ${maxSeasonId}, got ${seasonValue})`

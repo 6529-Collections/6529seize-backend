@@ -13,7 +13,7 @@ import {
 import {
   fetchMaxSeasonId,
   fetchMintingClaimByClaimId,
-  updateMintingClaim
+  updateMintingClaimIfEditable
 } from '@/api/minting-claims/api.minting-claims.db';
 import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import { MEMES_CONTRACT } from '@/constants';
@@ -29,6 +29,7 @@ jest.mock('@/minting-claims/media-inspector', () => ({
 jest.mock('@/api/minting-claims/api.minting-claims.db', () => ({
   fetchMaxSeasonId: jest.fn(),
   fetchMintingClaimByClaimId: jest.fn(),
+  updateMintingClaimIfEditable: jest.fn(),
   updateMintingClaim: jest.fn()
 }));
 
@@ -314,6 +315,34 @@ describe('buildUpdatesForClaimPatch', () => {
     expect(updates.metadata_location).toBeNull();
   });
 
+  it('recognizes an unchanged historical season after normalizing stored attributes', async () => {
+    fetchMaxSeasonIdMock.mockResolvedValue(16);
+    const existing = baseClaim({
+      attributes: JSON.stringify([
+        { trait_type: 'Palette', value: 'Monochrome' },
+        { trait_type: ' Type - Season ', value: ' 15 ' }
+      ])
+    });
+    const body: MintingClaimUpdateRequest = {
+      attributes: [
+        { trait_type: 'Palette', value: 'Color' },
+        { trait_type: 'Type - Season', value: 15 }
+      ]
+    };
+
+    const updates = await buildUpdatesForClaimPatch(body, existing, true);
+
+    expect(fetchMaxSeasonIdMock).not.toHaveBeenCalled();
+    expect(updates.attributes).toEqual([
+      { trait_type: 'Palette', value: 'Color' },
+      {
+        trait_type: 'Type - Season',
+        value: 15,
+        display_type: 'number'
+      }
+    ]);
+  });
+
   it('keeps current-season validation when the MEMES season changes', async () => {
     fetchMaxSeasonIdMock.mockResolvedValue(16);
     const existing = baseClaim({
@@ -337,9 +366,10 @@ describe('patchMintingClaim', () => {
     fetchMintingClaimByClaimId as jest.MockedFunction<
       typeof fetchMintingClaimByClaimId
     >;
-  const updateMintingClaimMock = updateMintingClaim as jest.MockedFunction<
-    typeof updateMintingClaim
-  >;
+  const updateMintingClaimIfEditableMock =
+    updateMintingClaimIfEditable as jest.MockedFunction<
+      typeof updateMintingClaimIfEditable
+    >;
   const upsertAutomaticAirdropsForPhaseMock =
     upsertAutomaticAirdropsForPhase as jest.MockedFunction<
       typeof upsertAutomaticAirdropsForPhase
@@ -369,7 +399,7 @@ describe('patchMintingClaim', () => {
         return updated;
       }
     );
-    updateMintingClaimMock.mockResolvedValue(undefined);
+    updateMintingClaimIfEditableMock.mockResolvedValue(true);
     upsertAutomaticAirdropsForPhaseMock.mockResolvedValue(undefined);
     sqlExecutorExecuteMock.mockResolvedValue([
       { wallet: '0xc6400A5584db71e41B0E5dFbdC769b54B91256CD' }
@@ -395,6 +425,12 @@ describe('patchMintingClaim', () => {
       { forcePool: DbPoolName.WRITE }
     );
     expect(fetchMintingClaimByClaimIdMock).toHaveBeenCalledTimes(2);
+    expect(updateMintingClaimIfEditableMock).toHaveBeenCalledWith(
+      existing.contract,
+      existing.claim_id,
+      { edition_size: 500 },
+      undefined
+    );
     expect(upsertAutomaticAirdropsForPhaseMock).toHaveBeenCalledWith(
       MEMES_CONTRACT,
       existing.claim_id,
@@ -409,5 +445,111 @@ describe('patchMintingClaim', () => {
       false
     );
     expect(result).toEqual(updated);
+  });
+
+  it('rejects a stale full-attribute update instead of restoring an old season', async () => {
+    const existing = baseClaim({
+      attributes: JSON.stringify([
+        { trait_type: 'Palette', value: 'Monochrome' },
+        { trait_type: 'Type - Season', value: 15 }
+      ])
+    });
+    const concurrentlyUpdated = baseClaim({
+      attributes: JSON.stringify([
+        { trait_type: 'Palette', value: 'Monochrome' },
+        { trait_type: 'Type - Season', value: 16 }
+      ])
+    });
+    fetchMintingClaimByClaimIdMock
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(concurrentlyUpdated);
+    updateMintingClaimIfEditableMock.mockResolvedValue(false);
+
+    await expect(
+      patchMintingClaim(
+        existing.contract,
+        existing.claim_id,
+        {
+          attributes: [
+            { trait_type: 'Palette', value: 'Color' },
+            { trait_type: 'Type - Season', value: 15 }
+          ]
+        },
+        true
+      )
+    ).rejects.toThrow(
+      'Claim attributes changed while this update was being processed; refresh and retry'
+    );
+    expect(updateMintingClaimIfEditableMock).toHaveBeenCalledWith(
+      existing.contract,
+      existing.claim_id,
+      expect.any(Object),
+      existing.attributes
+    );
+  });
+
+  it('rejects a patch when a media upload starts after the initial read', async () => {
+    const existing = baseClaim();
+    fetchMintingClaimByClaimIdMock
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(baseClaim({ media_uploading: true }));
+    updateMintingClaimIfEditableMock.mockResolvedValue(false);
+
+    await expect(
+      patchMintingClaim(
+        existing.contract,
+        existing.claim_id,
+        { name: 'Updated name' },
+        true
+      )
+    ).rejects.toThrow(
+      'Claim media upload in progress; updates are temporarily blocked'
+    );
+  });
+
+  it('rejects a patch if a transient media lock prevented its changes', async () => {
+    const existing = baseClaim();
+    fetchMintingClaimByClaimIdMock
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(existing);
+    updateMintingClaimIfEditableMock.mockResolvedValue(false);
+
+    await expect(
+      patchMintingClaim(
+        existing.contract,
+        existing.claim_id,
+        { name: 'Updated name' },
+        true
+      )
+    ).rejects.toThrow(
+      'Claim changed while this update was being processed; refresh and retry'
+    );
+  });
+
+  it('accepts an idempotent attribute patch when JSON object key order differs', async () => {
+    const existing = baseClaim({
+      metadata_location: null,
+      attributes: JSON.stringify([
+        {
+          value: 15,
+          display_type: 'number',
+          trait_type: 'Type - Season'
+        }
+      ])
+    });
+    fetchMintingClaimByClaimIdMock.mockResolvedValue(existing);
+    updateMintingClaimIfEditableMock.mockResolvedValue(false);
+
+    await expect(
+      patchMintingClaim(
+        existing.contract,
+        existing.claim_id,
+        {
+          attributes: [{ trait_type: 'Type - Season', value: 15 }]
+        },
+        true
+      )
+    ).resolves.toEqual(existing);
+    expect(fetchMintingClaimByClaimIdMock).toHaveBeenCalledTimes(3);
   });
 });

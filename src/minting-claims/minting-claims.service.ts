@@ -23,6 +23,10 @@ import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
 import { numbers } from '@/numbers';
+import {
+  getMintingClaimSeasonWindow,
+  isSeasonInMintingClaimCreationWindow
+} from '@/minting-claims/minting-claim-season';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
@@ -232,6 +236,9 @@ export class MintingClaimsService {
     claimId: number,
     ctx: RequestContext
   ): Promise<number> {
+    const maxSeasonId = await this.mintingClaimsDb.getMaxSeasonId(ctx);
+    const { currentSeason, nextSeason } =
+      getMintingClaimSeasonWindow(maxSeasonId);
     const calendarUrl = `${MEME_CALENDAR_API_BASE}/${claimId}`;
     try {
       const { buffer } = await fetchPublicUrlToBuffer(calendarUrl, {
@@ -245,22 +252,25 @@ export class MintingClaimsService {
         season?: unknown;
       };
       const season = numbers.parseIntOrNull(parsed?.season);
-      if (season !== null && season > 0) {
+      if (
+        season !== null &&
+        isSeasonInMintingClaimCreationWindow(season, maxSeasonId)
+      ) {
         this.logger.info(
           `Using meme-calendar season=${season} for claim_id=${claimId}`
         );
         return season;
       }
       this.logger.warn(
-        `Invalid season from meme-calendar for claim_id=${claimId}, value=${parsed?.season}; falling back to max season`
+        `Invalid season from meme-calendar for claim_id=${claimId}, value=${parsed?.season}; expected ${currentSeason} or ${nextSeason}, falling back to current season`
       );
     } catch (error) {
       this.logger.warn(
-        `Failed to resolve season from meme-calendar for claim_id=${claimId}; falling back to max season`,
+        `Failed to resolve season from meme-calendar for claim_id=${claimId}; falling back to current season`,
         { error }
       );
     }
-    return await this.mintingClaimsDb.getMaxSeasonId(ctx);
+    return currentSeason;
   }
 
   private async resolveNextClaimId(ctx: RequestContext): Promise<number> {
