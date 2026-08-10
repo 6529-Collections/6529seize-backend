@@ -56,6 +56,7 @@ export interface WaveBaseType {
   readonly participation_terms: string | null;
   readonly admin_drop_deletion_enabled: boolean;
   readonly forbid_negative_votes: boolean;
+  readonly reset_votes_after_win: boolean;
 }
 
 export class WaveBase implements WaveBaseType {
@@ -189,6 +190,9 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly forbid_negative_votes!: boolean;
+
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly reset_votes_after_win!: boolean;
 
   @Index('idx_wave_is_direct_message')
   @Column({ type: 'boolean', nullable: true, default: null })
