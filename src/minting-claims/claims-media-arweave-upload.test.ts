@@ -7,13 +7,9 @@ import {
   uploadMintingClaimToArweave,
   validateMintingClaimReadyForArweaveUpload
 } from '@/minting-claims/claims-media-arweave-upload';
-import {
-  fetchMaxSeasonId,
-  fetchMemeIdByMemeName
-} from '@/api/minting-claims/api.minting-claims.db';
+import { fetchMemeIdByMemeName } from '@/api/minting-claims/api.minting-claims.db';
 
 jest.mock('@/api/minting-claims/api.minting-claims.db', () => ({
-  fetchMaxSeasonId: jest.fn(),
   fetchMemeIdByMemeName: jest.fn()
 }));
 
@@ -223,15 +219,11 @@ function baseClaim(overrides: Partial<MintingClaimRow> = {}): MintingClaimRow {
 }
 
 describe('validateMintingClaimReadyForArweaveUpload', () => {
-  const fetchMaxSeasonIdMock = fetchMaxSeasonId as jest.MockedFunction<
-    typeof fetchMaxSeasonId
-  >;
   const fetchMemeIdByMemeNameMock =
     fetchMemeIdByMemeName as jest.MockedFunction<typeof fetchMemeIdByMemeName>;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    fetchMaxSeasonIdMock.mockResolvedValue(14);
     fetchMemeIdByMemeNameMock.mockResolvedValue(9);
   });
 
@@ -264,6 +256,42 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
       typeMemeId: 9,
       seasonValue: 14
     });
+  });
+
+  it('accepts a historical positive season for Arweave republishing', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 1 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).resolves.toEqual({
+      imageUrl: 'https://cdn.example.com/image.png',
+      typeMemeId: 9,
+      seasonValue: 1
+    });
+  });
+
+  it('rejects a non-positive season before Arweave upload', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 0 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(
+      'Invalid fields for Arweave upload: Season (must be a positive integer, got 0).'
+    );
   });
 
   it('rejects missing MEMES traits before Arweave upload', async () => {
@@ -315,9 +343,6 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
 });
 
 describe('uploadMintingClaimToArweave', () => {
-  const fetchMaxSeasonIdMock = fetchMaxSeasonId as jest.MockedFunction<
-    typeof fetchMaxSeasonId
-  >;
   const fetchMemeIdByMemeNameMock =
     fetchMemeIdByMemeName as jest.MockedFunction<typeof fetchMemeIdByMemeName>;
   const uploadFileMock = arweaveFileUploader.uploadFile as jest.MockedFunction<
@@ -330,7 +355,6 @@ describe('uploadMintingClaimToArweave', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    fetchMaxSeasonIdMock.mockResolvedValue(14);
     fetchMemeIdByMemeNameMock.mockResolvedValue(9);
     fetchPublicUrlToBufferMock.mockResolvedValue({
       buffer: Buffer.from('image-bytes'),

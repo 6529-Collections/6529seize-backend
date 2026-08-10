@@ -162,6 +162,14 @@ function extractSeasonFromAttributes(attributes: unknown): number | null {
   return null;
 }
 
+function extractSeasonFromStoredAttributes(attributes: string): number | null {
+  try {
+    return extractSeasonFromAttributes(JSON.parse(attributes) as unknown);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeAttributesWithSeason(
   attributes: unknown,
   season: number
@@ -261,7 +269,8 @@ async function applyAnimationFromBody(
 async function applyAttributesFromBody(
   body: MintingClaimUpdateRequest,
   updates: MintingClaimUpdates,
-  isMemesContract: boolean
+  isMemesContract: boolean,
+  existingAttributes: string
 ): Promise<boolean> {
   if (body.attributes === undefined) {
     return false;
@@ -280,10 +289,13 @@ async function applyAttributesFromBody(
     );
   }
 
-  const validatedSeason = validateRequestedSeason(
-    requestedSeason,
-    await fetchMaxSeasonId()
-  );
+  const existingSeason = extractSeasonFromStoredAttributes(existingAttributes);
+  // Historical seasons remain valid when another attribute is edited. Apply
+  // the moving current/next-season window only to an actual season change.
+  const validatedSeason =
+    requestedSeason === existingSeason
+      ? requestedSeason
+      : validateRequestedSeason(requestedSeason, await fetchMaxSeasonId());
 
   updates.attributes = normalizeAttributesWithSeason(
     sanitizedAttributes,
@@ -335,7 +347,14 @@ export async function buildUpdatesForClaimPatch(
     shouldResetMetadataLocation = true;
   }
 
-  if (await applyAttributesFromBody(body, updates, isMemesContract)) {
+  if (
+    await applyAttributesFromBody(
+      body,
+      updates,
+      isMemesContract,
+      existing.attributes
+    )
+  ) {
     shouldResetMetadataLocation = true;
   }
 

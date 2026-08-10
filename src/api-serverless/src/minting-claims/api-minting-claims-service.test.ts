@@ -284,6 +284,52 @@ describe('buildUpdatesForClaimPatch', () => {
       }
     ]);
   });
+
+  it('allows other MEMES attributes to change when a historical season is unchanged', async () => {
+    fetchMaxSeasonIdMock.mockResolvedValue(16);
+    const existing = baseClaim({
+      attributes: JSON.stringify([
+        { trait_type: 'Palette', value: 'Monochrome' },
+        { trait_type: 'Type - Season', value: 15 }
+      ])
+    });
+    const body: MintingClaimUpdateRequest = {
+      attributes: [
+        { trait_type: 'Palette', value: 'Color' },
+        { trait_type: 'Type - Season', value: 15 }
+      ]
+    };
+
+    const updates = await buildUpdatesForClaimPatch(body, existing, true);
+
+    expect(fetchMaxSeasonIdMock).not.toHaveBeenCalled();
+    expect(updates.attributes).toEqual([
+      { trait_type: 'Palette', value: 'Color' },
+      {
+        trait_type: 'Type - Season',
+        value: 15,
+        display_type: 'number'
+      }
+    ]);
+    expect(updates.metadata_location).toBeNull();
+  });
+
+  it('keeps current-season validation when the MEMES season changes', async () => {
+    fetchMaxSeasonIdMock.mockResolvedValue(16);
+    const existing = baseClaim({
+      attributes: JSON.stringify([{ trait_type: 'Type - Season', value: 14 }])
+    });
+    const body: MintingClaimUpdateRequest = {
+      attributes: [{ trait_type: 'Type - Season', value: 15 }]
+    };
+
+    await expect(
+      buildUpdatesForClaimPatch(body, existing, true)
+    ).rejects.toThrow(
+      'Season must be 16 or 17 (current max season is 16), got 15'
+    );
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('patchMintingClaim', () => {

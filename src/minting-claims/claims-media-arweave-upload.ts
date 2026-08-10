@@ -1,8 +1,5 @@
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
-import {
-  fetchMaxSeasonId,
-  fetchMemeIdByMemeName
-} from '@/api/minting-claims/api.minting-claims.db';
+import { fetchMemeIdByMemeName } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
@@ -917,7 +914,7 @@ export async function validateMintingClaimReadyForArweaveUpload(
 
   let seasonValue: number | null = null;
   if (memesContract) {
-    seasonValue = await appendSeasonIssues(rawAttributes, missing, invalid);
+    seasonValue = appendSeasonIssues(rawAttributes, missing, invalid);
   }
   const typeMemeId = memesContract
     ? await resolveTypeMemeId(rawAttributes, missing, invalid)
@@ -988,26 +985,20 @@ function appendEditionSizeIssues(
   }
 }
 
-async function appendSeasonIssues(
+function appendSeasonIssues(
   rawAttributes: unknown,
   missing: string[],
   invalid: string[]
-): Promise<number | null> {
+): number | null {
   const seasonValue = extractSeasonFromAttributes(rawAttributes);
   if (seasonValue == null) {
     missing.push('Season');
     return null;
   }
-  const maxSeasonId = await fetchMaxSeasonId();
-  const requiredMinSeason = Math.max(1, maxSeasonId);
-  if (
-    !Number.isInteger(seasonValue) ||
-    seasonValue < requiredMinSeason ||
-    seasonValue > requiredMinSeason + 1
-  ) {
-    invalid.push(
-      `Season (must be ${requiredMinSeason} or ${requiredMinSeason + 1}; current max season is ${maxSeasonId}, got ${seasonValue})`
-    );
+  // Publication may happen long after claim creation. Season freshness is
+  // enforced when the value changes, not while republishing stored metadata.
+  if (seasonValue < 1) {
+    invalid.push(`Season (must be a positive integer, got ${seasonValue})`);
   }
   return seasonValue;
 }
