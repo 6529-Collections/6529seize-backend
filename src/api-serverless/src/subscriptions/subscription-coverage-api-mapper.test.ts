@@ -77,7 +77,7 @@ describe('mapSubscriptionCoverageToApi', () => {
         horizon_start_token_id: 528,
         horizon_end_token_id: 534,
         horizon_drop_count: 7,
-        calculation_version: 1,
+        calculation_version: 2,
         unknown_reason: null
       }
     });

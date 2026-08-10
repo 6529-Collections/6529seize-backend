@@ -42,6 +42,7 @@ import {
   persistNFTFinalSubscriptions,
   persistSubscriptions
 } from './db.subscriptions';
+import { MINIMUM_SUBSCRIPTION_ELIGIBILITY } from './subscription-eligibility';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('SUBSCRIPTIONS');
@@ -121,8 +122,9 @@ async function populateAutoSubscriptionsForMemeId(
     autoSubscriptionsDelta.forEach((s) => {
       let subscribedCount = 1;
       const eligibilityCount = s.consolidation_key
-        ? (eligibilityByKey.get(s.consolidation_key.toLowerCase()) ?? 1)
-        : 1;
+        ? (eligibilityByKey.get(s.consolidation_key.toLowerCase()) ??
+          MINIMUM_SUBSCRIPTION_ELIGIBILITY)
+        : MINIMUM_SUBSCRIPTION_ELIGIBILITY;
       if (s.subscribe_all_editions) {
         subscribedCount = eligibilityCount;
       }
@@ -309,8 +311,9 @@ async function addFundedFinalSubscription(
   }
   const subscribedAt = Time.millis(createdAt).toIsoString();
   const eligibilityCount = sub.consolidation_key
-    ? (eligibilityByKey.get(sub.consolidation_key.toLowerCase()) ?? 1)
-    : 1;
+    ? (eligibilityByKey.get(sub.consolidation_key.toLowerCase()) ??
+      MINIMUM_SUBSCRIPTION_ELIGIBILITY)
+    : MINIMUM_SUBSCRIPTION_ELIGIBILITY;
   const airdropAddress = await fetchAirdropAddressForConsolidationKey(
     sub.consolidation_key
   );
