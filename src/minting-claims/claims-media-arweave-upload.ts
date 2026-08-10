@@ -1,5 +1,8 @@
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
-import { fetchMemeIdByMemeName } from '@/api/minting-claims/api.minting-claims.db';
+import {
+  fetchMaxSeasonId,
+  fetchMemeIdByMemeName
+} from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
@@ -914,7 +917,7 @@ export async function validateMintingClaimReadyForArweaveUpload(
 
   let seasonValue: number | null = null;
   if (memesContract) {
-    seasonValue = appendSeasonIssues(rawAttributes, missing, invalid);
+    seasonValue = await appendSeasonIssues(rawAttributes, missing, invalid);
   }
   const typeMemeId = memesContract
     ? await resolveTypeMemeId(rawAttributes, missing, invalid)
@@ -985,20 +988,29 @@ function appendEditionSizeIssues(
   }
 }
 
-function appendSeasonIssues(
+async function appendSeasonIssues(
   rawAttributes: unknown,
   missing: string[],
   invalid: string[]
-): number | null {
+): Promise<number | null> {
   const seasonValue = extractSeasonFromAttributes(rawAttributes);
   if (seasonValue == null) {
     missing.push('Season');
     return null;
   }
-  // Publication may happen long after claim creation. Season freshness is
-  // enforced when the value changes, not while republishing stored metadata.
+  // Publication may happen long after claim creation, so historical seasons
+  // remain valid. Keep the upper bound to prevent bad future metadata.
   if (seasonValue < 1) {
     invalid.push(`Season (must be a positive integer, got ${seasonValue})`);
+    return seasonValue;
+  }
+
+  const maxSeasonId = await fetchMaxSeasonId();
+  const maxAllowedSeason = Math.max(1, maxSeasonId) + 1;
+  if (seasonValue > maxAllowedSeason) {
+    invalid.push(
+      `Season (must not exceed ${maxAllowedSeason}; current max season is ${maxSeasonId}, got ${seasonValue})`
+    );
   }
   return seasonValue;
 }
