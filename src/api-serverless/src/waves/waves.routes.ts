@@ -1309,7 +1309,12 @@ function createWaveConfigSchema(
     period: IntRangeSchema.optional(),
     admin_group: WaveScopeSchema.required(),
     decisions_strategy: decisionsStrategySchema.optional().allow(null),
-    admin_drop_deletion_enabled: Joi.boolean().optional().default(false)
+    admin_drop_deletion_enabled: Joi.boolean().optional().default(false),
+    reset_votes_after_win: Joi.when('type', {
+      is: Joi.string().valid(ApiWaveType.Approve),
+      then: Joi.boolean().optional().default(false),
+      otherwise: Joi.valid(false).optional().default(false)
+    })
   });
 }
 
