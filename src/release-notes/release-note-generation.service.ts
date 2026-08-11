@@ -140,9 +140,9 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
   if (surface === 'Frontend' && request.release_group_services.length === 1) {
     const runNumber = request.run_number || request.run_id;
     const run = formatMarkdownLink(`#${runNumber}`, request.run_url);
-    return `### ${surface} deploy ${run} · commit ${commit} — ${formattedDate}`;
+    return `### ${surface} Deploy ${run} · commit ${commit} — ${formattedDate}`;
   }
-  return `### ${surface} deploy · commit ${commit} — ${formattedDate}`;
+  return `### ${surface} Deploy · commit ${commit} — ${formattedDate}`;
 }
 
 function getBackendRunsByService(

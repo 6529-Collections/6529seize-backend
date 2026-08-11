@@ -266,6 +266,82 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
     });
   });
 
+  it('accepts a historical positive season for Arweave republishing', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 1 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).resolves.toEqual({
+      imageUrl: 'https://cdn.example.com/image.png',
+      typeMemeId: 9,
+      seasonValue: 1
+    });
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a non-positive season before Arweave upload', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 0 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(
+      'Invalid fields for Arweave upload: Season (must be a positive integer, got 0).'
+    );
+    expect(fetchMaxSeasonIdMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a season above the current and next-season window', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 16 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(
+      'Invalid fields for Arweave upload: Season (must not exceed 15; current max season is 14, got 16).'
+    );
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the next season at the upper boundary', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 15 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).resolves.toEqual({
+      imageUrl: 'https://cdn.example.com/image.png',
+      typeMemeId: 9,
+      seasonValue: 15
+    });
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects missing MEMES traits before Arweave upload', async () => {
     const attributes = buildMemesRawAttributes().filter(
       (attribute) => attribute.trait_type !== 'Boost'

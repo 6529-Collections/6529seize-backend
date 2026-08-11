@@ -4,7 +4,12 @@ import {
   SubscriptionCoverageRepository
 } from './subscription-coverage.repository';
 
-function createExecutor() {
+function createExecutor(
+  eligibilityRows: ReadonlyArray<{
+    readonly consolidation_key: string;
+    readonly sets: number | string;
+  }> = []
+) {
   const execute = jest.fn(async (sql: string) => {
     if (sql.includes('CAST(balance AS CHAR)')) {
       return [
@@ -44,7 +49,7 @@ function createExecutor() {
       ];
     }
     if (sql.includes('FROM owners_balances_memes_consolidation')) {
-      return [];
+      return eligibilityRows;
     }
     return [];
   });
@@ -60,7 +65,7 @@ function createExecutor() {
 }
 
 describe('SubscriptionCoverageRepository source loading', () => {
-  it('uses exact balance text, normalized intent evidence, and zero eligibility', async () => {
+  it('uses exact balance text, normalized intent evidence, and minimum eligibility', async () => {
     const { executor, execute } = createExecutor();
     const repository = new SubscriptionCoverageRepository(() => executor);
 
@@ -74,7 +79,7 @@ describe('SubscriptionCoverageRepository source loading', () => {
         automatic: true,
         subscribeAllEditions: true
       },
-      eligibilityCount: 0,
+      eligibilityCount: 1,
       selections: [
         {
           tokenId: 528,
@@ -92,6 +97,24 @@ describe('SubscriptionCoverageRepository source loading', () => {
     expect(sql).toContain('token_id >= :firstFutureTokenId');
     expect(sql).not.toContain('token_id IN (:tokenIds)');
     expect(sql).not.toContain('subscriptions_logs');
+  });
+
+  it('normalizes zero-set and positive-set coverage eligibility', async () => {
+    const { executor } = createExecutor([
+      { consolidation_key: 'zero-sets', sets: 0 },
+      { consolidation_key: 'multiple-sets', sets: '3' }
+    ]);
+    const repository = new SubscriptionCoverageRepository(() => executor);
+
+    const result = await repository.loadSourceData(
+      ['ZERO-SETS', 'MULTIPLE-SETS', 'MISSING-ROW'],
+      [528],
+      {}
+    );
+
+    expect(result.get('zero-sets')?.eligibilityCount).toBe(1);
+    expect(result.get('multiple-sets')?.eligibilityCount).toBe(3);
+    expect(result.get('missing-row')?.eligibilityCount).toBe(1);
   });
 
   it('routes only a single canonical profile row', async () => {

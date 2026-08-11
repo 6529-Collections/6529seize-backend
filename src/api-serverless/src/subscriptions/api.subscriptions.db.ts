@@ -40,6 +40,7 @@ import {
   fetchSubscriptionEligibility,
   fetchSubscriptionEligibilityForKeys
 } from '@/subscriptionsDaily/db.subscriptions';
+import { MINIMUM_SUBSCRIPTION_ELIGIBILITY } from '@/subscriptionsDaily/subscription-eligibility';
 import { Time } from '@/time';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 
@@ -792,7 +793,8 @@ function getAutomaticSubscriptionEffectiveCount(
   autoSubEligibilityMap: Map<string, number>
 ): number {
   const eligibility =
-    autoSubEligibilityMap.get(autoSub.consolidation_key.toLowerCase()) ?? 1;
+    autoSubEligibilityMap.get(autoSub.consolidation_key.toLowerCase()) ??
+    MINIMUM_SUBSCRIPTION_ELIGIBILITY;
   const subscribedCount = autoSub.subscribe_all_editions ? eligibility : 1;
 
   return getEffectiveSubscriptionCount(

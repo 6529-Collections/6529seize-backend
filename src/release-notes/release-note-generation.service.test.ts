@@ -395,7 +395,7 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      '### Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend Deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
     expect(content).not.toContain('\n\n- Service:');
     expect(content).not.toContain('Runs:');
@@ -498,9 +498,9 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      '### Frontend deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123) · commit [current-](https://github.com/6529-Collections/6529seize-frontend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Frontend Deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123) · commit [current-](https://github.com/6529-Collections/6529seize-frontend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
-    expect(content).not.toContain('[Frontend deploy #45]');
+    expect(content).not.toContain('[Frontend Deploy #45]');
 
     await service.generateAndPost(
       {
@@ -514,7 +514,7 @@ describe('ReleaseNoteGenerationService', () => {
     const backendContent =
       createDrop.mock.calls[1][0].createDropRequest.parts[0].content;
     expect(backendContent).toContain(
-      '### Backend deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend Deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
     expect(backendContent).toContain(
       '- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'

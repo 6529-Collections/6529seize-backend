@@ -299,10 +299,14 @@ function formatAlertHeading(request: CiPipelineAlertRequest): string {
 }
 
 function formatEnvironmentPrefix(value: string | null | undefined): string {
-  const environmentLabel = formatEnvironmentLabel(value);
-  const stagingEmoji =
-    normalizeTargetEnvironment(value) === 'staging' ? ' 🚧' : '';
-  return `[${environmentLabel}${stagingEmoji}] `;
+  const targetEnvironment = normalizeTargetEnvironment(value);
+  if (targetEnvironment === 'staging') {
+    return '[🚧 STAGING] ';
+  }
+  if (targetEnvironment === 'prod') {
+    return '[🚀 PRODUCTION] ';
+  }
+  return `[${formatEnvironmentLabel(value)}] `;
 }
 
 function formatEnvironmentLabel(value: string | null | undefined): string {

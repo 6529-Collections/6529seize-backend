@@ -86,6 +86,7 @@ describe('subscription coverage forecast', () => {
     expect(result.fundedThrough?.tokenId).toBe(FIRST_TOKEN_ID + 6);
     expect(result.nextUnfunded?.tokenId).toBe(FIRST_TOKEN_ID + 7);
     expect(result.recommendedTopUp).toBeNull();
+    expect(result.forecast.calculationVersion).toBe(2);
   });
 
   it('treats a partially funded immediate xN drop as critical', () => {
