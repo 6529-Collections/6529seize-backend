@@ -16,11 +16,13 @@ import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMembe
 import { ApiCommunityMembersPage } from '../generated/models/ApiCommunityMembersPage';
 import { ApiCommunityMembersSortOption } from '../generated/models/ApiCommunityMembersSortOption';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { cacheRequest } from '@/api/request-cache';
 
 const router = asyncRouter();
 
 router.get(
   `/`,
+  cacheRequest(),
   async function (
     req: Request<
       any,

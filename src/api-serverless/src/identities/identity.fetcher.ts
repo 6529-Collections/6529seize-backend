@@ -719,17 +719,17 @@ export class IdentityFetcher {
       );
       return communityMember ? [communityMember] : [];
     } else {
-      const membersByHandles =
-        await this.identitiesDb.searchCommunityMembersWhereHandleLike({
+      const [membersByHandles, profilesByEnsNames] = await Promise.all([
+        this.identitiesDb.searchCommunityMembersWhereHandleLike({
           handle: param,
           limit: limit * 3
-        });
-      const profilesByEnsNames =
-        await this.identitiesDb.searchCommunityMembersWhereEnsLike({
+        }),
+        this.identitiesDb.searchCommunityMembersWhereEnsLike({
           ensCandidate: param,
           onlyProfileOwners,
           limit: limit * 3
-        });
+        })
+      ]);
       const dedupedMembers: (IdentityEntity & { ens?: string | null })[] = [];
       const seenProfKeys = new Set<string>();
       for (const prof of [...membersByHandles, ...profilesByEnsNames]) {
