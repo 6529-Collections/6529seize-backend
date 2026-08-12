@@ -2,7 +2,8 @@ import { SQS } from '@/sqs';
 import {
   RELEASE_NOTE_GENERATION_QUEUE_NAME,
   ReleaseNoteGenerationQueue,
-  ReleaseNoteGenerationRequest
+  ReleaseNoteGenerationRequest,
+  ReleaseNoteValidationRequest
 } from './release-note-generation-queue';
 
 function buildRequest(): ReleaseNoteGenerationRequest {
@@ -48,5 +49,31 @@ describe('ReleaseNoteGenerationQueue', () => {
     await expect(
       queue.enqueueBestEffort(buildRequest())
     ).resolves.toBeUndefined();
+  });
+
+  it('sends validation work to the existing release-note queue', async () => {
+    const sendToQueueName = jest.fn().mockResolvedValue(undefined);
+    const queue = new ReleaseNoteGenerationQueue({
+      sendToQueueName
+    } as unknown as SQS);
+    const validation: ReleaseNoteValidationRequest = {
+      message_type: 'release_validation',
+      repo: '6529-Collections/6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      run_id: '456',
+      run_number: '12',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
+      sha: 'a'.repeat(40),
+      release_group_id: 'frontend-release',
+      status: 'success'
+    };
+
+    await queue.enqueueValidationBestEffort(validation);
+
+    expect(sendToQueueName).toHaveBeenCalledWith({
+      queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
+      message: validation
+    });
   });
 });

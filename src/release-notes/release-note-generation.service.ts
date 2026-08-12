@@ -11,6 +11,7 @@ import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
+import { DEVS_6529_MENTION } from '@/constants/mentions';
 import { createHash } from 'node:crypto';
 import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
 import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
@@ -22,6 +23,7 @@ import {
 } from './release-note-github.service';
 import {
   ReleaseNoteGenerationRequest,
+  ReleaseNoteValidationRequest,
   ReleaseNoteRunReference
 } from './release-note-generation-queue';
 
@@ -50,6 +52,7 @@ const COMPACT_CHANGED_FILES = 50;
 const MAX_SUMMARY_LENGTH = 600;
 const MAX_RELEASE_CONTEXT_LENGTH = 200000;
 const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
+const RELEASE_NOTE_VALIDATION_ID_METADATA_KEY = 'release_note_validation_id';
 
 export type ReleaseNoteGenerationOutcome =
   | 'published'
@@ -98,8 +101,11 @@ function isFrontendRelease(request: ReleaseNoteGenerationRequest): boolean {
   return getRepoName(request.repo) === '6529seize-frontend';
 }
 
-function buildReleaseNotePublicationId(
-  request: ReleaseNoteGenerationRequest
+export function buildReleaseNotePublicationId(
+  request: Pick<
+    ReleaseNoteGenerationRequest,
+    'repo' | 'release_group_id' | 'sha' | 'pull_request_number'
+  >
 ): string {
   const identity = request.pull_request_number
     ? `pr:${request.pull_request_number}`
@@ -109,6 +115,50 @@ function buildReleaseNotePublicationId(
     .update('\0')
     .update(identity)
     .digest('hex');
+}
+
+function buildReleaseValidationPublicationId(
+  request: ReleaseNoteValidationRequest
+): string {
+  return createHash('sha256')
+    .update(buildReleaseNotePublicationId(request))
+    .update('\0')
+    .update(request.status)
+    .update('\0')
+    .update(request.run_id)
+    .digest('hex');
+}
+
+function formatReleaseValidationContent(
+  request: ReleaseNoteValidationRequest
+): string {
+  const repository = request.repo.includes('/')
+    ? request.repo
+    : `6529-Collections/${request.repo}`;
+  const commit = formatMarkdownLink(
+    request.sha.slice(0, 8),
+    `https://github.com/${repository}/commit/${request.sha}`
+  );
+  const run = formatMarkdownLink(
+    request.run_number ? `#${request.run_number}` : `#${request.run_id}`,
+    request.run_url
+  );
+  if (request.status === 'success') {
+    return [
+      '### ✅ Post-deployment validation passed',
+      '',
+      `Production commit ${commit} passed automatic E2E validation.`,
+      `Run: ${run}`
+    ].join('\n');
+  }
+  return [
+    '### 🚨 Post-deployment validation failed',
+    '',
+    `Production commit ${commit} is live, but automatic E2E validation failed.`,
+    `Run: ${run}`,
+    '',
+    `cc ${DEVS_6529_MENTION}`
+  ].join('\n');
 }
 
 function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
@@ -331,6 +381,80 @@ export class ReleaseNoteGenerationService {
     await this.dropCreationApiService.createDrop(
       {
         createDropRequest,
+        authorId: botProfileId,
+        representativeId: botProfileId,
+        hideLinkPreview: true
+      },
+      {
+        ...ctx,
+        authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
+      }
+    );
+    return 'published';
+  }
+
+  public async postValidationReply(
+    request: ReleaseNoteValidationRequest,
+    ctx: RequestContext
+  ): Promise<'published' | 'already-published'> {
+    const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
+    const waveId = env.getStringOrThrow('CI_RELEASES_WAVE_ID');
+    const validationPublicationId =
+      buildReleaseValidationPublicationId(request);
+    const existingValidationDropId =
+      await this.dropsRepository.findDropIdByMetadata(
+        {
+          waveId,
+          dataKey: RELEASE_NOTE_VALIDATION_ID_METADATA_KEY,
+          dataValue: validationPublicationId
+        },
+        ctx
+      );
+    if (existingValidationDropId) {
+      this.logger.info(
+        `Skipping release validation ${validationPublicationId}; drop ${existingValidationDropId} already exists`
+      );
+      return 'already-published';
+    }
+    const releaseNoteDropId = await this.dropsRepository.findDropIdByMetadata(
+      {
+        waveId,
+        dataKey: RELEASE_NOTE_ID_METADATA_KEY,
+        dataValue: buildReleaseNotePublicationId(request)
+      },
+      ctx
+    );
+    if (!releaseNoteDropId) {
+      throw new Error(
+        `Release note is not published yet for ${request.repo} run ${request.run_id}`
+      );
+    }
+    await this.dropCreationApiService.createDrop(
+      {
+        createDropRequest: {
+          wave_id: waveId,
+          reply_to: { drop_id: releaseNoteDropId, drop_part_id: 1 },
+          title: null,
+          drop_type: ApiDropType.Chat,
+          parts: [
+            {
+              content: formatReleaseValidationContent(request),
+              quoted_drop: null,
+              media: []
+            }
+          ],
+          mentioned_users: [],
+          mentioned_groups: [],
+          referenced_nfts: [],
+          metadata: [
+            {
+              data_key: RELEASE_NOTE_VALIDATION_ID_METADATA_KEY,
+              data_value: validationPublicationId
+            }
+          ],
+          signature: null,
+          is_safe_signature: false
+        },
         authorId: botProfileId,
         representativeId: botProfileId,
         hideLinkPreview: true

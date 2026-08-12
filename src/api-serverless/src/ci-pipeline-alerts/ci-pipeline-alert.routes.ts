@@ -28,6 +28,9 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
     repo: Joi.string().trim().min(1).max(200).required(),
     workflow: Joi.string().trim().min(1).max(200).required(),
     status: Joi.string().valid('success', 'failure').required(),
+    notification_type: Joi.string()
+      .valid('pipeline', 'release_validation')
+      .optional(),
     title: Joi.string().trim().min(1).max(250).required(),
     description: Joi.string().trim().max(5000).allow(null, '').optional(),
     triggered_by_github_login: Joi.string()
@@ -113,6 +116,26 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   })
     .unknown(false)
     .custom((value, helpers) => {
+      if (value.notification_type === 'release_validation') {
+        if (
+          !['prod', 'production'].includes(value.environment) ||
+          !value.release_group_id?.trim() ||
+          !/^[a-f0-9]{40}$/.test(value.sha ?? '')
+        ) {
+          return helpers.message({
+            custom:
+              'production environment, release_group_id, and exact sha are required for release validation'
+          });
+        }
+        if (
+          value.release_notes_prompt_path !== undefined ||
+          value.release_note_groups !== undefined
+        ) {
+          return helpers.message({
+            custom: 'release validation cannot request release-note generation'
+          });
+        }
+      }
       if (
         value.contributor_github_logins !== undefined &&
         !value.release_train_id?.trim()
@@ -279,13 +302,16 @@ export function buildCiPipelineAlertDedupeKey(
         request.run_id,
         request.run_url,
         request.status,
+        request.notification_type ?? 'pipeline',
         request.title,
         request.description ?? '',
         request.triggered_by_github_login ?? '',
         request.sha ?? '',
         request.branch ?? '',
         request.environment ?? '',
-        request.service ?? ''
+        request.service ?? '',
+        request.release_group_id ?? '',
+        request.pull_request_number ?? null
       ])
     )
     .digest('hex');

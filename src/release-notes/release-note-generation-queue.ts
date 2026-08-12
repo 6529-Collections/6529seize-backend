@@ -32,6 +32,19 @@ export interface ReleaseNoteGenerationRequest {
   readonly deployed_at: string;
 }
 
+export interface ReleaseNoteValidationRequest {
+  readonly message_type: 'release_validation';
+  readonly repo: string;
+  readonly workflow: string;
+  readonly run_id: string;
+  readonly run_number?: string | null;
+  readonly run_url: string;
+  readonly sha: string;
+  readonly release_group_id: string;
+  readonly pull_request_number?: number | null;
+  readonly status: 'success' | 'failure';
+}
+
 export class ReleaseNoteGenerationQueue {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -40,6 +53,19 @@ export class ReleaseNoteGenerationQueue {
   public async enqueueBestEffort(
     request: ReleaseNoteGenerationRequest
   ): Promise<void> {
+    await this.enqueueMessageBestEffort(request, 'release notes');
+  }
+
+  public async enqueueValidationBestEffort(
+    request: ReleaseNoteValidationRequest
+  ): Promise<void> {
+    await this.enqueueMessageBestEffort(request, 'release validation');
+  }
+
+  private async enqueueMessageBestEffort(
+    request: ReleaseNoteGenerationRequest | ReleaseNoteValidationRequest,
+    label: string
+  ): Promise<void> {
     try {
       await this.sqsClient.sendToQueueName({
         queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
@@ -47,7 +73,7 @@ export class ReleaseNoteGenerationQueue {
       });
     } catch (error) {
       this.logger.error(
-        `Failed to enqueue release notes for ${request.repo} run ${request.run_id}: ${error}`
+        `Failed to enqueue ${label} for ${request.repo} run ${request.run_id}: ${error}`
       );
     }
   }

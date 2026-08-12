@@ -369,6 +369,49 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
+  it('accepts a production release-validation event with exact identity', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
+      undefined
+    );
+
+    await ciPipelineAlertHandler(
+      makeAlertRequest({
+        repo: '6529seize-frontend',
+        notification_type: 'release_validation',
+        sha: 'a'.repeat(40),
+        release_group_id: 'frontend-release'
+      }),
+      makeResponse()
+    );
+
+    expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notification_type: 'release_validation',
+        release_group_id: 'frontend-release'
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects release validation without an exact release identity', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          repo: '6529seize-frontend',
+          notification_type: 'release_validation',
+          sha: 'not-an-exact-sha'
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'production environment, release_group_id, and exact sha are required'
+    );
+    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-boolean release-note publish flag', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
     const res = makeResponse();

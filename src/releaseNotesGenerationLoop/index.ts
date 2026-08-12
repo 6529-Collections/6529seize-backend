@@ -4,6 +4,7 @@ import { releaseNoteGenerationService } from '@/release-notes/release-note-gener
 import {
   RELEASE_NOTE_DEPLOYED_AT_PATTERN,
   ReleaseNoteGenerationRequest,
+  ReleaseNoteValidationRequest,
   ReleaseNoteRunReference
 } from '@/release-notes/release-note-generation-queue';
 import { doInDbContext } from '@/secrets';
@@ -129,6 +130,42 @@ export function parseReleaseNoteMessage(
     ),
     publish_release_note: parsePublishReleaseNote(payload.publish_release_note),
     deployed_at: requireTimestamp(payload, 'deployed_at')
+  };
+}
+
+export function parseReleaseValidationMessage(
+  body: string
+): ReleaseNoteValidationRequest {
+  const parsed = JSON.parse(body) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Invalid release validation message payload');
+  }
+  const payload = parsed as Record<string, unknown>;
+  if (payload.message_type !== 'release_validation') {
+    throw new Error(
+      'Invalid release validation message: message_type is required'
+    );
+  }
+  const status = payload.status;
+  if (status !== 'success' && status !== 'failure') {
+    throw new Error(
+      'Invalid release validation message: status must be success or failure'
+    );
+  }
+  return {
+    message_type: 'release_validation',
+    repo: requireString(payload, 'repo'),
+    workflow: requireString(payload, 'workflow'),
+    run_id: requireString(payload, 'run_id'),
+    run_number:
+      typeof payload.run_number === 'string' && payload.run_number.trim()
+        ? payload.run_number.trim()
+        : null,
+    run_url: requireString(payload, 'run_url'),
+    sha: requireString(payload, 'sha'),
+    release_group_id: requireString(payload, 'release_group_id'),
+    pull_request_number: parsePullRequestNumber(payload.pull_request_number),
+    status
   };
 }
 
@@ -434,6 +471,20 @@ const sqsHandler: SQSHandler = async (event) => {
   await doInDbContext(
     async () => {
       for (const record of event.Records) {
+        const envelope = JSON.parse(record.body) as {
+          readonly message_type?: unknown;
+        };
+        if (envelope.message_type === 'release_validation') {
+          const validation = parseReleaseValidationMessage(record.body);
+          logger.info(
+            `Posting release validation for ${validation.repo} run ${validation.run_id}`
+          );
+          await releaseNoteGenerationService.postValidationReply(
+            validation,
+            {}
+          );
+          continue;
+        }
         const request = parseReleaseNoteMessage(record.body);
         logger.info(
           `Generating release notes for ${request.repo} run ${request.run_id}`

@@ -34,6 +34,7 @@ export interface CiPipelineAlertRequest {
   readonly repo: string;
   readonly workflow: string;
   readonly status: CiPipelineAlertStatus;
+  readonly notification_type?: 'pipeline' | 'release_validation';
   readonly title: string;
   readonly description?: string | null;
   readonly triggered_by_github_login?: string | null;
@@ -320,6 +321,10 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     ctx: RequestContext
   ): Promise<void> {
+    if (request.notification_type === 'release_validation') {
+      await this.enqueueReleaseValidation(request);
+      return;
+    }
     const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const mentions = await this.resolveAlertMentions(request);
@@ -346,6 +351,30 @@ export class CiPipelineAlertService {
     );
 
     await this.enqueueReleaseNotesIfEligible(request);
+  }
+
+  private async enqueueReleaseValidation(
+    request: CiPipelineAlertRequest
+  ): Promise<void> {
+    const sha = normalizeOptionalValue(request.sha);
+    const releaseGroupId = normalizeOptionalValue(request.release_group_id);
+    if (!sha || !releaseGroupId) {
+      throw new Error(
+        'Release validation requires an exact SHA and release group ID'
+      );
+    }
+    await this.releaseNotesQueue.enqueueValidationBestEffort({
+      message_type: 'release_validation',
+      repo: request.repo,
+      workflow: request.workflow,
+      run_id: request.run_id,
+      run_number: request.run_number,
+      run_url: request.run_url,
+      sha,
+      release_group_id: releaseGroupId,
+      pull_request_number: request.pull_request_number,
+      status: request.status
+    });
   }
 
   private async enqueueReleaseNotesIfEligible(

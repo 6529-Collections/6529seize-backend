@@ -45,7 +45,10 @@ describe('CiPipelineAlertService', () => {
     toggleHideLinkPreview: jest.Mock;
   };
   let identitiesRepository: { getIdsByHandles: jest.Mock };
-  let releaseNotesQueue: { enqueueBestEffort: jest.Mock };
+  let releaseNotesQueue: {
+    enqueueBestEffort: jest.Mock;
+    enqueueValidationBestEffort: jest.Mock;
+  };
 
   beforeEach(() => {
     originalEnv = {
@@ -66,7 +69,8 @@ describe('CiPipelineAlertService', () => {
       })
     };
     releaseNotesQueue = {
-      enqueueBestEffort: jest.fn().mockResolvedValue(undefined)
+      enqueueBestEffort: jest.fn().mockResolvedValue(undefined),
+      enqueueValidationBestEffort: jest.fn().mockResolvedValue(undefined)
     };
   });
 
@@ -499,6 +503,41 @@ describe('CiPipelineAlertService', () => {
     ).toBeLessThan(
       releaseNotesQueue.enqueueBestEffort.mock.invocationCallOrder[0]
     );
+  });
+
+  it('queues release validation without posting a standalone pipeline alert', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+    const sha = 'a'.repeat(40);
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        notification_type: 'release_validation',
+        status: 'failure',
+        sha,
+        release_group_id: 'frontend-release'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueValidationBestEffort).toHaveBeenCalledWith({
+      message_type: 'release_validation',
+      repo: baseRequest.repo,
+      workflow: baseRequest.workflow,
+      run_id: baseRequest.run_id,
+      run_number: baseRequest.run_number,
+      run_url: baseRequest.run_url,
+      sha,
+      release_group_id: 'frontend-release',
+      pull_request_number: undefined,
+      status: 'failure'
+    });
+    expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
+    expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
   });
 
   it('does not enqueue an unreviewed repository prompt path', async () => {

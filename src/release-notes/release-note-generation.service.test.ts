@@ -2,7 +2,10 @@ import { AiPrompter } from '@/abusiveness/ai-prompter';
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { DropsDb } from '@/drops/drops.db';
-import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
+import {
+  ReleaseNoteGenerationRequest,
+  ReleaseNoteValidationRequest
+} from './release-note-generation-queue';
 import {
   GitHubReleaseContext,
   ReleaseNoteGitHubService
@@ -620,6 +623,85 @@ describe('ReleaseNoteGenerationService', () => {
     expect(outcome).toBe('no-baseline');
     expect(getReleasePrompt).not.toHaveBeenCalled();
     expect(promptAndGetReply).not.toHaveBeenCalled();
+    expect(createDrop).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['success', 'validation passed', false],
+    ['failure', 'validation failed', true]
+  ] as const)(
+    'posts a threaded %s validation result against the release note',
+    async (status, expectedText, mentionsDevs) => {
+      const validation: ReleaseNoteValidationRequest = {
+        message_type: 'release_validation',
+        repo: '6529-Collections/6529seize-frontend',
+        workflow: 'Web Deploy - PROD',
+        run_id: '456',
+        run_number: '12',
+        run_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
+        sha: 'a'.repeat(40),
+        release_group_id: 'frontend-release',
+        status
+      };
+      const createDrop = jest.fn().mockResolvedValue({});
+      const findDropIdByMetadata = jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce('release-note-drop');
+      const service = new ReleaseNoteGenerationService(
+        {} as ReleaseNoteGitHubService,
+        {} as AiPrompter,
+        { createDrop } as unknown as DropCreationApiService,
+        {} as IdentitiesDb,
+        undefined,
+        { findDropIdByMetadata } as unknown as DropsDb
+      );
+
+      await expect(service.postValidationReply(validation, {})).resolves.toBe(
+        'published'
+      );
+
+      const createDropRequest = createDrop.mock.calls[0][0].createDropRequest;
+      expect(createDropRequest.reply_to).toEqual({
+        drop_id: 'release-note-drop',
+        drop_part_id: 1
+      });
+      expect(createDropRequest.parts[0].content).toContain(expectedText);
+      expect(createDropRequest.parts[0].content.includes('@devs6529')).toBe(
+        mentionsDevs
+      );
+      expect(createDropRequest.metadata).toEqual([
+        expect.objectContaining({ data_key: 'release_note_validation_id' })
+      ]);
+    }
+  );
+
+  it('retries validation while the release note is not published', async () => {
+    const validation: ReleaseNoteValidationRequest = {
+      message_type: 'release_validation',
+      repo: '6529-Collections/6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      run_id: '456',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
+      sha: 'a'.repeat(40),
+      release_group_id: 'frontend-release',
+      status: 'success'
+    };
+    const createDrop = jest.fn();
+    const service = new ReleaseNoteGenerationService(
+      {} as ReleaseNoteGitHubService,
+      {} as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {} as IdentitiesDb,
+      undefined,
+      createDropsRepository()
+    );
+
+    await expect(service.postValidationReply(validation, {})).rejects.toThrow(
+      'Release note is not published yet'
+    );
     expect(createDrop).not.toHaveBeenCalled();
   });
 });

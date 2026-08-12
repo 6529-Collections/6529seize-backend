@@ -1,5 +1,9 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
-import { parseReleaseNoteMessage, processRequest } from './index';
+import {
+  parseReleaseNoteMessage,
+  parseReleaseValidationMessage,
+  processRequest
+} from './index';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529seize-backend',
@@ -100,6 +104,50 @@ describe('parseReleaseNoteMessage', () => {
         JSON.stringify({ ...request, contributor_github_logins: 'Alice' })
       )
     ).toThrow('contributor_github_logins must be an array');
+  });
+});
+
+describe('parseReleaseValidationMessage', () => {
+  it('parses a validation event for the existing release-note queue', () => {
+    expect(
+      parseReleaseValidationMessage(
+        JSON.stringify({
+          message_type: 'release_validation',
+          repo: '6529-Collections/6529seize-frontend',
+          workflow: 'Web Deploy - PROD',
+          run_id: '456',
+          run_number: '12',
+          run_url:
+            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
+          sha: 'a'.repeat(40),
+          release_group_id: 'frontend-release',
+          status: 'failure'
+        })
+      )
+    ).toEqual({
+      message_type: 'release_validation',
+      repo: '6529-Collections/6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      run_id: '456',
+      run_number: '12',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
+      sha: 'a'.repeat(40),
+      release_group_id: 'frontend-release',
+      pull_request_number: null,
+      status: 'failure'
+    });
+  });
+
+  it('rejects an unsupported validation status', () => {
+    expect(() =>
+      parseReleaseValidationMessage(
+        JSON.stringify({
+          message_type: 'release_validation',
+          status: 'pending'
+        })
+      )
+    ).toThrow('status must be success or failure');
   });
 });
 
