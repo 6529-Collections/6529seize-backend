@@ -2136,7 +2136,8 @@ export class ReleaseBusGitHubApp {
     repository: ReleaseBusV2Repository,
     workflow: string,
     operationKey: string,
-    externalId?: string | null
+    externalId?: string | null,
+    matchesIdentity?: (run: GitHubRun) => boolean
   ): Promise<GitHubRun | null> {
     if (externalId) {
       if (!/^[0-9]+$/.test(externalId))
@@ -2152,6 +2153,10 @@ export class ReleaseBusGitHubApp {
         throw new Error(
           `GitHub workflow run ${externalId} does not match operation ${operationKey}`
         );
+      if (matchesIdentity && !matchesIdentity(run))
+        throw new Error(
+          `GitHub workflow run ${externalId} does not match the required identity`
+        );
       return this.withWorkflowJobs(repository, run);
     }
     const response = await this.request(
@@ -2163,8 +2168,10 @@ export class ReleaseBusGitHubApp {
       ((await response.json()) as { workflow_runs?: GitHubRun[] })
         .workflow_runs ?? [];
     const run =
-      runs.find((candidate) =>
-        workflowRunMatchesOperation(candidate.display_title, operationKey)
+      runs.find(
+        (candidate) =>
+          workflowRunMatchesOperation(candidate.display_title, operationKey) &&
+          (!matchesIdentity || matchesIdentity(candidate))
       ) ?? null;
     return run ? this.withWorkflowJobs(repository, run) : null;
   }

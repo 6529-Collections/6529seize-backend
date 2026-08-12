@@ -23,6 +23,8 @@ const CI_PIPELINE_ALERT_SIGNATURE_SKEW_SECONDS = 300;
 const CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS = 86400;
 const CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS = 300;
 
+// This HMAC-signed, automation-only ingress is mounted manually and is
+// intentionally excluded from the public OpenAPI surface.
 const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   Joi.object<CiPipelineAlertRequest>({
     repo: Joi.string().trim().min(1).max(200).required(),
@@ -126,6 +128,16 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
           return helpers.message({
             custom:
               'production environment, release_group_id, and exact sha are required for release validation'
+          });
+        }
+        if (
+          value.repo.split('/').pop() !== '6529seize-frontend' ||
+          (value.pull_request_number !== undefined &&
+            value.pull_request_number !== null)
+        ) {
+          return helpers.message({
+            custom:
+              'release validation supports only frontend deployment identities without pull_request_number'
           });
         }
         if (
@@ -312,6 +324,7 @@ export function buildCiPipelineAlertDedupeKey(
         request.run_url,
         request.status,
         request.notification_type ?? 'pipeline',
+        request.validation_mode ?? '',
         request.title,
         request.description ?? '',
         request.triggered_by_github_login ?? '',

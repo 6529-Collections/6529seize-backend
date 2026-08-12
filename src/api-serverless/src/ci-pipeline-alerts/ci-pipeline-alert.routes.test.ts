@@ -396,6 +396,30 @@ describe('ci pipeline alert routes', () => {
     );
   });
 
+  it.each([
+    [{ repo: '6529seize-backend' }, 'supports only frontend'],
+    [{ pull_request_number: 1923 }, 'without pull_request_number']
+  ])(
+    'rejects a release-validation identity outside the frontend deployment contract',
+    async (identity, expectedMessage) => {
+      (getRedisClient as jest.Mock).mockReturnValue(null);
+
+      await expect(
+        ciPipelineAlertHandler(
+          makeAlertRequest({
+            repo: '6529seize-frontend',
+            notification_type: 'release_validation',
+            sha: 'a'.repeat(40),
+            release_group_id: 'frontend-release',
+            ...identity
+          }),
+          makeResponse()
+        )
+      ).rejects.toThrow(expectedMessage);
+      expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+    }
+  );
+
   it('rejects validation mode on a normal pipeline alert', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
 
@@ -405,6 +429,33 @@ describe('ci pipeline alert routes', () => {
         makeResponse()
       )
     ).rejects.toThrow('validation_mode is allowed only for release validation');
+  });
+
+  it('includes validation mode in the signed-ingress dedupe identity', () => {
+    const common = {
+      repo: '6529seize-frontend',
+      workflow: 'Production E2E',
+      status: 'success' as const,
+      notification_type: 'release_validation' as const,
+      title: 'Production validation passed',
+      run_id: '123',
+      run_url: 'https://github.com/example/actions/runs/123',
+      sha: 'a'.repeat(40),
+      environment: 'production',
+      release_group_id: 'frontend-release'
+    };
+
+    expect(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        validation_mode: 'automatic'
+      })
+    ).not.toBe(
+      buildCiPipelineAlertDedupeKey({
+        ...common,
+        validation_mode: 'manual'
+      })
+    );
   });
 
   it('rejects release validation without an exact release identity', async () => {

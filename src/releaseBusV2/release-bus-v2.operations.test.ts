@@ -2163,6 +2163,34 @@ describe('Release Bus v2 exact operation callbacks', () => {
         workflow_run_id: '12345'
       }
     });
+    const identityMatcher = mockFindWorkflowRun.mock.calls[0]?.[4] as (
+      run: Record<string, unknown>
+    ) => boolean;
+    expect(identityMatcher).toEqual(expect.any(Function));
+    expect(
+      identityMatcher({
+        id: 99999,
+        status: 'in_progress',
+        conclusion: null,
+        actor: { login: 'another-actor' },
+        event: 'workflow_dispatch',
+        path: '.github/workflows/production-e2e.yml',
+        head_sha: 'c'.repeat(40),
+        display_title: 'Production E2E [rb2:train-id:e2e:prod:a1]'
+      })
+    ).toBe(false);
+    expect(
+      identityMatcher({
+        id: 12345,
+        status: 'in_progress',
+        conclusion: null,
+        actor: { login: '6529-release-bus[bot]' },
+        event: 'workflow_dispatch',
+        path: '.github/workflows/production-e2e.yml',
+        head_sha: 'c'.repeat(40),
+        display_title: 'Production E2E [rb2:train-id:e2e:prod:a1]'
+      })
+    ).toBe(true);
   });
 
   it('bounded-retries a failed artifact preparation whose terminal callback was not stored', async () => {

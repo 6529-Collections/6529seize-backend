@@ -98,14 +98,23 @@ function parseContributorGithubLogins(value: unknown): string[] | undefined {
   return contributors;
 }
 
-export function parseReleaseNoteMessage(
-  body: string
-): ReleaseNoteGenerationRequest {
+type ReleaseNoteQueueEnvelope = Record<string, unknown>;
+
+function parseQueueEnvelope(
+  body: string,
+  messageKind = 'release note'
+): ReleaseNoteQueueEnvelope {
   const parsed = JSON.parse(body) as unknown;
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Invalid release note message payload');
+    throw new Error(`Invalid ${messageKind} message payload`);
   }
-  const payload = parsed as Record<string, unknown>;
+  return parsed as ReleaseNoteQueueEnvelope;
+}
+
+export function parseReleaseNoteMessage(
+  input: string | ReleaseNoteQueueEnvelope
+): ReleaseNoteGenerationRequest {
+  const payload = typeof input === 'string' ? parseQueueEnvelope(input) : input;
   const optionalString = (field: keyof ReleaseNoteGenerationRequest) => {
     const value = payload[field];
     return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -134,13 +143,12 @@ export function parseReleaseNoteMessage(
 }
 
 export function parseReleaseValidationMessage(
-  body: string
+  input: string | ReleaseNoteQueueEnvelope
 ): ReleaseNoteValidationRequest {
-  const parsed = JSON.parse(body) as unknown;
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Invalid release validation message payload');
-  }
-  const payload = parsed as Record<string, unknown>;
+  const payload =
+    typeof input === 'string'
+      ? parseQueueEnvelope(input, 'release validation')
+      : input;
   if (payload.message_type !== 'release_validation') {
     throw new Error(
       'Invalid release validation message: message_type is required'
@@ -460,7 +468,7 @@ export async function processRequest(
       releaseNoteGenerationService.generateAndPost.bind(
         releaseNoteGenerationService
       );
-    const outcome = await generateAndPost(
+    await generateAndPost(
       {
         ...request,
         release_group_services: releaseGroup.services,
@@ -480,11 +488,18 @@ const sqsHandler: SQSHandler = async (event) => {
   await doInDbContext(
     async () => {
       for (const record of event.Records) {
-        const envelope = JSON.parse(record.body) as {
-          readonly message_type?: unknown;
-        };
+        let envelope: ReleaseNoteQueueEnvelope;
+        try {
+          envelope = parseQueueEnvelope(record.body);
+        } catch (error) {
+          throw new Error(
+            `Invalid release-note queue record ${record.messageId}: ${
+              error instanceof Error ? error.message : 'malformed JSON'
+            }`
+          );
+        }
         if (envelope.message_type === 'release_validation') {
-          const validation = parseReleaseValidationMessage(record.body);
+          const validation = parseReleaseValidationMessage(envelope);
           logger.info(
             `Posting release validation for ${validation.repo} run ${validation.run_id}`
           );
@@ -494,7 +509,7 @@ const sqsHandler: SQSHandler = async (event) => {
           );
           continue;
         }
-        const request = parseReleaseNoteMessage(record.body);
+        const request = parseReleaseNoteMessage(envelope);
         logger.info(
           `Generating release notes for ${request.repo} run ${request.run_id}`
         );

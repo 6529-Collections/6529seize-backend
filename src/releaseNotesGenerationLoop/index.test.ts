@@ -159,6 +159,21 @@ describe('parseReleaseValidationMessage', () => {
     ).toBe('manual');
   });
 
+  it('accepts an already-parsed queue envelope', () => {
+    expect(
+      parseReleaseValidationMessage({
+        message_type: 'release_validation',
+        repo: '6529-Collections/6529seize-frontend',
+        workflow: 'Production E2E',
+        run_id: '789',
+        run_url: 'https://github.com/example/actions/runs/789',
+        sha: 'a'.repeat(40),
+        release_group_id: 'frontend-release',
+        status: 'success'
+      }).run_id
+    ).toBe('789');
+  });
+
   it('rejects an unsupported validation status', () => {
     expect(() =>
       parseReleaseValidationMessage(

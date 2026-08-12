@@ -58,14 +58,17 @@ export class ReleaseNoteGenerationQueue {
   }
 
   public async enqueue(request: ReleaseNoteGenerationRequest): Promise<void> {
-    await this.sqsClient.sendToQueueName({
-      queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
-      message: request
-    });
+    await this.enqueueMessage(request);
   }
 
   public async enqueueValidation(
     request: ReleaseNoteValidationRequest
+  ): Promise<void> {
+    await this.enqueueMessage(request);
+  }
+
+  private async enqueueMessage(
+    request: ReleaseNoteGenerationRequest | ReleaseNoteValidationRequest
   ): Promise<void> {
     await this.sqsClient.sendToQueueName({
       queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
@@ -78,10 +81,7 @@ export class ReleaseNoteGenerationQueue {
     label: string
   ): Promise<void> {
     try {
-      await this.sqsClient.sendToQueueName({
-        queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
-        message: request
-      });
+      await this.enqueueMessage(request);
     } catch (error) {
       this.logger.error(
         `Failed to enqueue ${label} for ${request.repo} run ${request.run_id}: ${error}`

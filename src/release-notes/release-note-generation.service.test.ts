@@ -727,6 +727,39 @@ describe('ReleaseNoteGenerationService', () => {
     }
   );
 
+  it('does not republish an already-recorded validation result', async () => {
+    const createDrop = jest.fn();
+    const findDropIdByMetadata = jest
+      .fn()
+      .mockResolvedValueOnce('existing-validation-drop');
+    const service = new ReleaseNoteGenerationService(
+      {} as ReleaseNoteGitHubService,
+      {} as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {} as IdentitiesDb,
+      undefined,
+      { findDropIdByMetadata } as unknown as DropsDb
+    );
+
+    await expect(
+      service.postValidationReply(
+        {
+          message_type: 'release_validation',
+          repo: '6529-Collections/6529seize-frontend',
+          workflow: 'Production E2E',
+          run_id: '456',
+          run_url: 'https://github.com/example/actions/runs/456',
+          sha: 'a'.repeat(40),
+          release_group_id: 'frontend-release',
+          status: 'success'
+        },
+        {}
+      )
+    ).resolves.toBe('already-published');
+    expect(findDropIdByMetadata).toHaveBeenCalledTimes(1);
+    expect(createDrop).not.toHaveBeenCalled();
+  });
+
   it('retries validation while the release note is not published', async () => {
     const validation: ReleaseNoteValidationRequest = {
       message_type: 'release_validation',

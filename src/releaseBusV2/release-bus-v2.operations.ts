@@ -823,13 +823,28 @@ export class ReleaseBusV2Operations {
         }
       : { ...operationRequest.inputs, operation_key: attemptKey };
     const recoveringTransport = transportRetryState(operation.result_json);
+    const simplifiedE2EIdentity = simplifiedE2E
+      ? (candidate: {
+          readonly actor?: { readonly login?: string };
+          readonly event?: string;
+          readonly path?: string;
+          readonly head_sha: string;
+          readonly display_title: string;
+        }) =>
+          isReleaseBusGitHubAppActor(candidate.actor?.login) &&
+          candidate.event === 'workflow_dispatch' &&
+          candidate.path === `.github/workflows/${operationRequest.workflow}` &&
+          candidate.head_sha === operationRequest.workflow_control_sha &&
+          workflowRunMatchesOperation(candidate.display_title, attemptKey)
+      : undefined;
     let run;
     try {
       run = await releaseBusGitHubApp.findWorkflowRun(
         spec.repository,
         operationRequest.workflow,
         attemptKey,
-        operation.external_id
+        operation.external_id,
+        simplifiedE2EIdentity
       );
       if (!run && operation.status === 'PENDING' && recoveringTransport) {
         // A dispatch response may have been lost. Require one successful GitHub
@@ -915,30 +930,6 @@ export class ReleaseBusV2Operations {
     if (['SUCCEEDED', 'FAILED', 'RETRY_WAIT'].includes(latest.status))
       return latest;
     if (simplifiedE2E) {
-      const expectedPath = `.github/workflows/${operationRequest.workflow}`;
-      if (
-        !isReleaseBusGitHubAppActor(run.actor?.login) ||
-        run.event !== 'workflow_dispatch' ||
-        run.path !== expectedPath ||
-        run.head_sha !== operationRequest.workflow_control_sha ||
-        !workflowRunMatchesOperation(run.display_title, attemptKey)
-      ) {
-        await this.update(latest, {
-          status: 'FAILED',
-          externalId: String(run.id),
-          failureClass: 'CONTROL_PLANE',
-          failureMessage:
-            'Simplified E2E workflow identity did not match the exact Release Bus operation',
-          completedAt: Date.now()
-        });
-        return (
-          (await this.repository.findOperation(
-            spec.idempotencyKey,
-            {},
-            true
-          )) ?? latest
-        );
-      }
       if (run.conclusion === 'success') {
         await this.update(latest, {
           status: 'SUCCEEDED',

@@ -20,6 +20,7 @@ import {
 } from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 import { DEVS_6529_MENTION } from '@/constants/mentions';
+import { BadRequestException } from '@/exceptions';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
 
@@ -326,6 +327,7 @@ export class CiPipelineAlertService {
       await this.enqueueReleaseValidation(request);
       return;
     }
+    await this.enqueueReleaseNotesIfEligible(request);
     const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const mentions = await this.resolveAlertMentions(request);
@@ -350,8 +352,6 @@ export class CiPipelineAlertService {
         authenticationContext
       }
     );
-
-    await this.enqueueReleaseNotesIfEligible(request);
   }
 
   private async enqueueReleaseValidation(
@@ -359,9 +359,15 @@ export class CiPipelineAlertService {
   ): Promise<void> {
     const sha = normalizeOptionalValue(request.sha);
     const releaseGroupId = normalizeOptionalValue(request.release_group_id);
-    if (!sha || !releaseGroupId) {
-      throw new Error(
-        'Release validation requires an exact SHA and release group ID'
+    if (
+      !sha ||
+      !releaseGroupId ||
+      request.repo.split('/').pop() !== '6529seize-frontend' ||
+      (request.pull_request_number !== undefined &&
+        request.pull_request_number !== null)
+    ) {
+      throw new BadRequestException(
+        'Release validation requires an exact frontend SHA and release group identity without a pull request number'
       );
     }
     await this.releaseNotesQueue.enqueueValidation({
@@ -373,7 +379,7 @@ export class CiPipelineAlertService {
       run_url: request.run_url,
       sha,
       release_group_id: releaseGroupId,
-      pull_request_number: request.pull_request_number,
+      pull_request_number: null,
       status: request.status,
       validation_mode: request.validation_mode
     });
@@ -437,7 +443,9 @@ export class CiPipelineAlertService {
         prompt_path: promptPath,
         release_group_id: normalizedGroup.releaseGroupId,
         release_group_services: normalizedGroup.releaseGroupServices,
-        pull_request_number: normalizedGroup.pullRequestNumber,
+        pull_request_number: isBackendRelease
+          ? normalizedGroup.pullRequestNumber
+          : null,
         ...(contributorGithubLogins.length
           ? { contributor_github_logins: contributorGithubLogins }
           : {}),

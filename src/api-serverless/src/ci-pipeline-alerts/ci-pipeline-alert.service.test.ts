@@ -464,7 +464,7 @@ describe('CiPipelineAlertService', () => {
     ).toContain('Initiated by: unknown');
   });
 
-  it('enqueues release-note generation after posting an eligible production success', async () => {
+  it('enqueues required frontend release notes before posting an eligible production success', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any,
@@ -500,9 +500,34 @@ describe('CiPipelineAlertService', () => {
       publish_release_note: false,
       deployed_at: '2026-07-13T11:38:00.000Z'
     });
-    expect(
+    expect(releaseNotesQueue.enqueue.mock.invocationCallOrder[0]).toBeLessThan(
       dropCreationApiService.createDrop.mock.invocationCallOrder[0]
-    ).toBeLessThan(releaseNotesQueue.enqueue.mock.invocationCallOrder[0]);
+    );
+  });
+
+  it('does not create an alert drop when required frontend enqueue fails', async () => {
+    releaseNotesQueue.enqueue.mockRejectedValueOnce(new Error('queue down'));
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await expect(
+      service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          release_notes_prompt_path:
+            'ops/release-notes/release-notes.prompt.md',
+          release_group_id: 'frontend-release',
+          release_group_services: ['web'],
+          deployed_at: '2026-07-13T11:38:00.000Z'
+        },
+        {}
+      )
+    ).rejects.toThrow('queue down');
+    expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
   });
 
   it('queues release validation without posting a standalone pipeline alert', async () => {
@@ -533,7 +558,7 @@ describe('CiPipelineAlertService', () => {
       run_url: baseRequest.run_url,
       sha,
       release_group_id: 'frontend-release',
-      pull_request_number: undefined,
+      pull_request_number: null,
       status: 'failure',
       validation_mode: undefined
     });
@@ -565,6 +590,28 @@ describe('CiPipelineAlertService', () => {
       )
     ).rejects.toThrow('queue down');
     expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
+  });
+
+  it('rejects backend and PR-scoped validation identities defensively', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+    const validation = {
+      ...baseRequest,
+      notification_type: 'release_validation' as const,
+      sha: 'a'.repeat(40),
+      release_group_id: 'frontend-release'
+    };
+
+    await expect(
+      service.postAlert({ ...validation, repo: '6529seize-backend' }, {})
+    ).rejects.toThrow('exact frontend SHA');
+    await expect(
+      service.postAlert({ ...validation, pull_request_number: 1923 }, {})
+    ).rejects.toThrow('without a pull request number');
+    expect(releaseNotesQueue.enqueueValidation).not.toHaveBeenCalled();
   });
 
   it('does not enqueue an unreviewed repository prompt path', async () => {

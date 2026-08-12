@@ -812,6 +812,46 @@ describe('GitHub pull request qualification evidence', () => {
     }
   );
 
+  it('filters same-title workflow runs by exact identity before binding', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    const operationKey = 'rb2:train-id:e2e:prod:a1';
+    const invalidRun = {
+      id: 100,
+      name: 'Production E2E',
+      display_title: `Production E2E [${operationKey}]`,
+      status: 'in_progress',
+      conclusion: null,
+      head_sha: 'b'.repeat(40),
+      html_url: 'https://github.com/example/runs/100'
+    };
+    const validRun = {
+      ...invalidRun,
+      id: 101,
+      head_sha: 'c'.repeat(40),
+      html_url: 'https://github.com/example/runs/101'
+    };
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ workflow_runs: [invalidRun, validRun] }))
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ jobs: [] })));
+
+    try {
+      await expect(
+        app.findWorkflowRun(
+          'frontend',
+          'production-e2e.yml',
+          operationKey,
+          null,
+          (run) => run.head_sha === 'c'.repeat(40)
+        )
+      ).resolves.toMatchObject({ id: 101 });
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
   it.each([
     {
       repository: 'backend' as const,

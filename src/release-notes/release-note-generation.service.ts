@@ -459,44 +459,41 @@ export class ReleaseNoteGenerationService {
       ctx
     );
     if (!releaseNoteDropId) {
+      const publicationId = buildReleaseNotePublicationId(request);
+      this.logger.warn(
+        `Release note ${publicationId} is not published yet for ${request.repo} run ${request.run_id}`
+      );
       throw new Error(
-        `Release note is not published yet for ${request.repo} run ${request.run_id}`
+        `Release note is not published yet (publication ${publicationId}) for ${request.repo} run ${request.run_id}`
       );
     }
-    await this.dropCreationApiService.createDrop(
+    await this.createReleaseDrop(
       {
-        createDropRequest: {
-          wave_id: waveId,
-          reply_to: { drop_id: releaseNoteDropId, drop_part_id: 1 },
-          title: null,
-          drop_type: ApiDropType.Chat,
-          parts: [
-            {
-              content: formatReleaseValidationContent(request),
-              quoted_drop: null,
-              media: []
-            }
-          ],
-          mentioned_users: [],
-          mentioned_groups: [],
-          referenced_nfts: [],
-          metadata: [
-            {
-              data_key: RELEASE_NOTE_VALIDATION_ID_METADATA_KEY,
-              data_value: validationPublicationId
-            }
-          ],
-          signature: null,
-          is_safe_signature: false
-        },
-        authorId: botProfileId,
-        representativeId: botProfileId,
-        hideLinkPreview: true
+        wave_id: waveId,
+        reply_to: { drop_id: releaseNoteDropId, drop_part_id: 1 },
+        title: null,
+        drop_type: ApiDropType.Chat,
+        parts: [
+          {
+            content: formatReleaseValidationContent(request),
+            quoted_drop: null,
+            media: []
+          }
+        ],
+        mentioned_users: [],
+        mentioned_groups: [],
+        referenced_nfts: [],
+        metadata: [
+          {
+            data_key: RELEASE_NOTE_VALIDATION_ID_METADATA_KEY,
+            data_value: validationPublicationId
+          }
+        ],
+        signature: null,
+        is_safe_signature: false
       },
-      {
-        ...ctx,
-        authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
-      }
+      botProfileId,
+      ctx
     );
     return 'published';
   }
