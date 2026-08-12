@@ -43,3 +43,9 @@ The obsolete `ApiSeizeSettings.all_drops_notifications_subscribers_limit`
 field is retired by the accepted all-message notification limit removal. The
 immutable Phase 0 snapshot remains unchanged, and the compatibility test
 permits no other settings-field removal.
+
+## Accepted cache extension
+
+`GET /api/community-members` may add response caching without changing its
+request or response semantics. The immutable Phase 0 runtime manifest remains
+unchanged, and the route census permits no other uncached-to-cached transition.
