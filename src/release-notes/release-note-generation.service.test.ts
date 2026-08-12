@@ -601,7 +601,7 @@ describe('ReleaseNoteGenerationService', () => {
     expect(secondPublicationId).toBe(firstPublicationId);
   });
 
-  it('reports a missing baseline without generating content', async () => {
+  it('publishes a parent deployment record when no baseline exists', async () => {
     const getReleaseContext = jest.fn().mockResolvedValue(null);
     const getReleasePrompt = jest.fn();
     const promptAndGetReply = jest.fn();
@@ -620,10 +620,60 @@ describe('ReleaseNoteGenerationService', () => {
 
     const outcome = await service.generateAndPost(request, {});
 
-    expect(outcome).toBe('no-baseline');
+    expect(outcome).toBe('published');
     expect(getReleasePrompt).not.toHaveBeenCalled();
     expect(promptAndGetReply).not.toHaveBeenCalled();
-    expect(createDrop).not.toHaveBeenCalled();
+    expect(createDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createDropRequest: expect.objectContaining({
+          metadata: [expect.objectContaining({ data_key: 'release_note_id' })],
+          parts: [
+            expect.objectContaining({
+              content: expect.stringContaining(
+                'No previous successful production deployment was available for release-note comparison.'
+              )
+            })
+          ]
+        })
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('publishes a parent deployment record when no merged PRs exist', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: []
+        }),
+        getReleasePrompt: jest.fn()
+      } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply: jest.fn() } as unknown as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
+      undefined,
+      createDropsRepository()
+    );
+
+    await expect(service.generateAndPost(request, {})).resolves.toBe(
+      'published'
+    );
+    expect(createDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createDropRequest: expect.objectContaining({
+          parts: [
+            expect.objectContaining({
+              content: expect.stringContaining(
+                'No new merged pull requests were found for this production deployment.'
+              )
+            })
+          ]
+        })
+      }),
+      expect.any(Object)
+    );
   });
 
   it.each([
@@ -703,5 +753,59 @@ describe('ReleaseNoteGenerationService', () => {
       'Release note is not published yet'
     );
     expect(createDrop).not.toHaveBeenCalled();
+  });
+
+  it('records a manual success after an automatic failure in the same thread', async () => {
+    const createDrop = jest.fn().mockResolvedValue({});
+    const findDropIdByMetadata = jest
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('release-note-drop')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('release-note-drop');
+    const service = new ReleaseNoteGenerationService(
+      {} as ReleaseNoteGitHubService,
+      {} as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {} as IdentitiesDb,
+      undefined,
+      { findDropIdByMetadata } as unknown as DropsDb
+    );
+    const baseValidation: ReleaseNoteValidationRequest = {
+      message_type: 'release_validation',
+      repo: '6529-Collections/6529seize-frontend',
+      workflow: 'Production E2E',
+      run_id: 'automatic-run',
+      run_url: 'https://github.com/example/automatic-run',
+      sha: 'a'.repeat(40),
+      release_group_id: 'frontend-release',
+      status: 'failure',
+      validation_mode: 'automatic'
+    };
+
+    await service.postValidationReply(baseValidation, {});
+    await service.postValidationReply(
+      {
+        ...baseValidation,
+        run_id: 'manual-run',
+        run_url: 'https://github.com/example/manual-run',
+        status: 'success',
+        validation_mode: 'manual'
+      },
+      {}
+    );
+
+    const contents = createDrop.mock.calls.map(
+      (call) => call[0].createDropRequest.parts[0].content
+    );
+    expect(contents[0]).toContain('Post-deployment validation failed');
+    expect(contents[0]).toContain('@devs6529');
+    expect(contents[1]).toContain('Manual production revalidation passed');
+    expect(contents[1]).not.toContain('@devs6529');
+    expect(
+      createDrop.mock.calls.map(
+        (call) => call[0].createDropRequest.reply_to.drop_id
+      )
+    ).toEqual(['release-note-drop', 'release-note-drop']);
   });
 });

@@ -51,6 +51,14 @@ describe('ReleaseNoteGenerationQueue', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('rejects a required release-note enqueue when the queue is unavailable', async () => {
+    const queue = new ReleaseNoteGenerationQueue({
+      sendToQueueName: jest.fn().mockRejectedValue(new Error('queue down'))
+    } as unknown as SQS);
+
+    await expect(queue.enqueue(buildRequest())).rejects.toThrow('queue down');
+  });
+
   it('sends validation work to the existing release-note queue', async () => {
     const sendToQueueName = jest.fn().mockResolvedValue(undefined);
     const queue = new ReleaseNoteGenerationQueue({
@@ -69,11 +77,31 @@ describe('ReleaseNoteGenerationQueue', () => {
       status: 'success'
     };
 
-    await queue.enqueueValidationBestEffort(validation);
+    await queue.enqueueValidation(validation);
 
     expect(sendToQueueName).toHaveBeenCalledWith({
       queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
       message: validation
     });
+  });
+
+  it('rejects validation when the queue does not accept it', async () => {
+    const queue = new ReleaseNoteGenerationQueue({
+      sendToQueueName: jest.fn().mockRejectedValue(new Error('queue down'))
+    } as unknown as SQS);
+
+    await expect(
+      queue.enqueueValidation({
+        message_type: 'release_validation',
+        repo: '6529-Collections/6529seize-frontend',
+        workflow: 'Web Deploy - PROD',
+        run_id: '456',
+        run_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
+        sha: 'a'.repeat(40),
+        release_group_id: 'frontend-release',
+        status: 'success'
+      })
+    ).rejects.toThrow('queue down');
   });
 });

@@ -3,6 +3,7 @@ const mockGetWorkflowBlobIdentity = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
 const mockResolveRef = jest.fn();
+const mockSupportsSimplifiedE2EWorkflow = jest.fn();
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
   class ReleaseBusGitHubInfrastructureError extends Error {
@@ -13,6 +14,8 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
   }
   return {
     ReleaseBusGitHubInfrastructureError,
+    workflowRunMatchesOperation: (displayTitle: string, operationKey: string) =>
+      displayTitle.includes(`[${operationKey}]`),
     releaseBusGitHubApp: {
       getWorkflowBlobIdentity: (...args: unknown[]) =>
         mockGetWorkflowBlobIdentity(...args),
@@ -20,7 +23,9 @@ jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
         mockGetWorkflowRunIdentity(...args),
       findWorkflowRun: (...args: unknown[]) => mockFindWorkflowRun(...args),
       dispatchWorkflow: (...args: unknown[]) => mockDispatchWorkflow(...args),
-      resolveRef: (...args: unknown[]) => mockResolveRef(...args)
+      resolveRef: (...args: unknown[]) => mockResolveRef(...args),
+      supportsSimplifiedE2EWorkflow: (...args: unknown[]) =>
+        mockSupportsSimplifiedE2EWorkflow(...args)
     }
   };
 });
@@ -156,6 +161,8 @@ describe('Release Bus v2 exact operation callbacks', () => {
     mockDispatchWorkflow.mockReset();
     mockResolveRef.mockReset();
     mockResolveRef.mockResolvedValue('f'.repeat(40));
+    mockSupportsSimplifiedE2EWorkflow.mockReset();
+    mockSupportsSimplifiedE2EWorkflow.mockResolvedValue(false);
   });
 
   it('injects one transparent beta infrastructure retry before dispatch', async () => {
@@ -2053,6 +2060,108 @@ describe('Release Bus v2 exact operation callbacks', () => {
     expect(state.current()).toMatchObject({
       status: 'FAILED',
       failure_class: 'CONTROL_PLANE'
+    });
+  });
+
+  it('dispatches the simplified E2E contract without legacy control inputs', async () => {
+    const initial = operation({
+      external_id: null,
+      status: 'PENDING',
+      idempotency_key: 'rb2:train-id:e2e:staging',
+      operation_type: 'E2E_STAGING',
+      repository: 'frontend',
+      environment: 'staging',
+      request_json: {
+        workflow: 'staging-e2e.yml',
+        ref: '1a-staging',
+        workflow_control_sha: 'c'.repeat(40),
+        inputs: {
+          release_train_id: 'train-id',
+          release_manifest_id: 'manifest-id'
+        }
+      }
+    });
+    const state = repositoryFor(initial);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    mockSupportsSimplifiedE2EWorkflow.mockResolvedValue(true);
+    mockFindWorkflowRun.mockResolvedValue(null);
+
+    await service.reconcileWorkflow({
+      idempotencyKey: initial.idempotency_key,
+      trainId: initial.train_id,
+      operationType: initial.operation_type,
+      repository: 'frontend',
+      workflow: 'staging-e2e.yml',
+      ref: '1a-staging',
+      environment: 'staging',
+      service: null,
+      expectedSha: initial.expected_sha!,
+      artifactDigest: null,
+      inputs: {}
+    });
+
+    expect(mockDispatchWorkflow).toHaveBeenCalledWith(
+      'frontend',
+      'staging-e2e.yml',
+      '1a-staging',
+      {
+        pack: 'all',
+        trusted_deployed_sha: initial.expected_sha,
+        tracking_id: 'rb2:train-id:e2e:staging:a1'
+      }
+    );
+  });
+
+  it('accepts an exact successful simplified E2E run without a callback', async () => {
+    const initial = operation({
+      idempotency_key: 'rb2:train-id:e2e:prod',
+      operation_type: 'E2E_PROD',
+      repository: 'frontend',
+      environment: 'prod',
+      external_id: '12345',
+      status: 'RUNNING',
+      request_json: {
+        workflow: 'production-e2e.yml',
+        ref: 'main',
+        workflow_control_sha: 'c'.repeat(40),
+        inputs: {}
+      }
+    });
+    const state = repositoryFor(initial);
+    const service = new ReleaseBusV2Operations(state.repository as never);
+    mockSupportsSimplifiedE2EWorkflow.mockResolvedValue(true);
+    mockFindWorkflowRun.mockResolvedValue({
+      id: 12345,
+      status: 'completed',
+      conclusion: 'success',
+      actor: { login: '6529-release-bus[bot]' },
+      event: 'workflow_dispatch',
+      path: '.github/workflows/production-e2e.yml',
+      head_sha: 'c'.repeat(40),
+      display_title: 'Production E2E [rb2:train-id:e2e:prod:a1]'
+    });
+
+    await service.reconcileWorkflow({
+      idempotencyKey: initial.idempotency_key,
+      trainId: initial.train_id,
+      operationType: initial.operation_type,
+      repository: 'frontend',
+      workflow: 'production-e2e.yml',
+      ref: 'main',
+      environment: 'prod',
+      service: null,
+      expectedSha: initial.expected_sha!,
+      artifactDigest: null,
+      inputs: {}
+    });
+
+    expect(state.current()).toMatchObject({
+      status: 'SUCCEEDED',
+      external_id: '12345',
+      result_json: {
+        workflow_conclusion: 'success',
+        workflow_run_id: '12345'
+      }
     });
   });
 

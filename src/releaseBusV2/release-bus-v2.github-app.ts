@@ -1,6 +1,7 @@
 import { createHash, createSign } from 'node:crypto';
 import fetch, { type RequestInit, type Response } from 'node-fetch';
 import AdmZip from 'adm-zip';
+import YAML from 'yaml';
 import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
@@ -2092,6 +2093,43 @@ export class ReleaseBusGitHubApp {
       response,
       `dispatch ${repository} workflow ${workflow}`
     );
+  }
+
+  public async supportsSimplifiedE2EWorkflow(
+    repository: ReleaseBusV2Repository,
+    workflow: string,
+    ref: string
+  ): Promise<boolean> {
+    if (!['staging-e2e.yml', 'production-e2e.yml'].includes(workflow))
+      return false;
+    if (!/^[a-f0-9]{40}$/.test(ref))
+      throw new Error('Simplified E2E workflow ref must be an exact SHA');
+    const response = await this.request(
+      repository,
+      `/contents/.github/workflows/${workflow}?ref=${encodeURIComponent(ref)}`
+    );
+    await this.assertOk(response, `read ${repository} E2E workflow contract`);
+    const file = (await response.json()) as GitHubContentsIdentity;
+    if (
+      file.type !== 'file' ||
+      file.encoding !== 'base64' ||
+      typeof file.content !== 'string' ||
+      !Number.isInteger(file.size) ||
+      Number(file.size) < 1 ||
+      Number(file.size) > 1_000_000
+    )
+      throw new Error('E2E workflow contract has invalid GitHub content');
+    const parsed = YAML.parse(
+      Buffer.from(file.content.replace(/\s/g, ''), 'base64').toString('utf8')
+    ) as {
+      readonly on?: {
+        readonly workflow_dispatch?: {
+          readonly inputs?: Readonly<Record<string, unknown>>;
+        };
+      };
+    };
+    const inputs = parsed?.on?.workflow_dispatch?.inputs;
+    return Boolean(inputs?.trusted_deployed_sha && inputs?.tracking_id);
   }
 
   public async findWorkflowRun(

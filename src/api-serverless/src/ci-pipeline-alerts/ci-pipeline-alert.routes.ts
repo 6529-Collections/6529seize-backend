@@ -31,6 +31,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
     notification_type: Joi.string()
       .valid('pipeline', 'release_validation')
       .optional(),
+    validation_mode: Joi.string().valid('automatic', 'manual').optional(),
     title: Joi.string().trim().min(1).max(250).required(),
     description: Joi.string().trim().max(5000).allow(null, '').optional(),
     triggered_by_github_login: Joi.string()
@@ -135,6 +136,14 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
             custom: 'release validation cannot request release-note generation'
           });
         }
+      }
+      if (
+        value.validation_mode !== undefined &&
+        value.notification_type !== 'release_validation'
+      ) {
+        return helpers.message({
+          custom: 'validation_mode is allowed only for release validation'
+        });
       }
       if (
         value.contributor_github_logins !== undefined &&

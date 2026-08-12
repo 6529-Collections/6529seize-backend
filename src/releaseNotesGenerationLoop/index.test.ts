@@ -135,8 +135,28 @@ describe('parseReleaseValidationMessage', () => {
       sha: 'a'.repeat(40),
       release_group_id: 'frontend-release',
       pull_request_number: null,
-      status: 'failure'
+      status: 'failure',
+      validation_mode: undefined
     });
+  });
+
+  it('parses manual validation mode', () => {
+    expect(
+      parseReleaseValidationMessage(
+        JSON.stringify({
+          message_type: 'release_validation',
+          repo: '6529-Collections/6529seize-frontend',
+          workflow: 'Production E2E',
+          run_id: '789',
+          run_url:
+            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/789',
+          sha: 'a'.repeat(40),
+          release_group_id: 'frontend-release',
+          status: 'success',
+          validation_mode: 'manual'
+        })
+      ).validation_mode
+    ).toBe('manual');
   });
 
   it('rejects an unsupported validation status', () => {
@@ -364,7 +384,7 @@ describe('processRequest', () => {
     expect(generateAndPost).not.toHaveBeenCalled();
   });
 
-  it('does not record deduplication when no release baseline exists', async () => {
+  it('records deduplication after publishing the no-baseline deployment record', async () => {
     const redis = buildRedis();
 
     await processRequest(
@@ -375,11 +395,11 @@ describe('processRequest', () => {
       },
       {
         redis: redis as any,
-        generateAndPost: jest.fn().mockResolvedValue('no-baseline')
+        generateAndPost: jest.fn().mockResolvedValue('published')
       }
     );
 
-    expect(redis.set).not.toHaveBeenCalledWith(
+    expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749',
       '1',
       { EX: 7776000 }

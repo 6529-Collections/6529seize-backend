@@ -152,6 +152,16 @@ export function parseReleaseValidationMessage(
       'Invalid release validation message: status must be success or failure'
     );
   }
+  const validationMode = payload.validation_mode;
+  if (
+    validationMode !== undefined &&
+    validationMode !== 'automatic' &&
+    validationMode !== 'manual'
+  ) {
+    throw new Error(
+      'Invalid release validation message: validation_mode must be automatic or manual'
+    );
+  }
   return {
     message_type: 'release_validation',
     repo: requireString(payload, 'repo'),
@@ -165,7 +175,8 @@ export function parseReleaseValidationMessage(
     sha: requireString(payload, 'sha'),
     release_group_id: requireString(payload, 'release_group_id'),
     pull_request_number: parsePullRequestNumber(payload.pull_request_number),
-    status
+    status,
+    validation_mode: validationMode
   };
 }
 
@@ -457,11 +468,9 @@ export async function processRequest(
       },
       {}
     );
-    if (outcome !== 'no-baseline') {
-      await redis.set(dedupeKey, '1', {
-        EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
-      });
-    }
+    await redis.set(dedupeKey, '1', {
+      EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
+    });
   } finally {
     await redis.del(processingKey);
   }

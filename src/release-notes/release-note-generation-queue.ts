@@ -43,6 +43,7 @@ export interface ReleaseNoteValidationRequest {
   readonly release_group_id: string;
   readonly pull_request_number?: number | null;
   readonly status: 'success' | 'failure';
+  readonly validation_mode?: 'automatic' | 'manual';
 }
 
 export class ReleaseNoteGenerationQueue {
@@ -56,10 +57,20 @@ export class ReleaseNoteGenerationQueue {
     await this.enqueueMessageBestEffort(request, 'release notes');
   }
 
-  public async enqueueValidationBestEffort(
+  public async enqueue(request: ReleaseNoteGenerationRequest): Promise<void> {
+    await this.sqsClient.sendToQueueName({
+      queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
+      message: request
+    });
+  }
+
+  public async enqueueValidation(
     request: ReleaseNoteValidationRequest
   ): Promise<void> {
-    await this.enqueueMessageBestEffort(request, 'release validation');
+    await this.sqsClient.sendToQueueName({
+      queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
+      message: request
+    });
   }
 
   private async enqueueMessageBestEffort(

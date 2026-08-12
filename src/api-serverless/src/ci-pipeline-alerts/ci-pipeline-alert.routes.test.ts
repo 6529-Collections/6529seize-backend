@@ -379,6 +379,7 @@ describe('ci pipeline alert routes', () => {
       makeAlertRequest({
         repo: '6529seize-frontend',
         notification_type: 'release_validation',
+        validation_mode: 'manual',
         sha: 'a'.repeat(40),
         release_group_id: 'frontend-release'
       }),
@@ -388,10 +389,22 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
       expect.objectContaining({
         notification_type: 'release_validation',
+        validation_mode: 'manual',
         release_group_id: 'frontend-release'
       }),
       expect.any(Object)
     );
+  });
+
+  it('rejects validation mode on a normal pipeline alert', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({ validation_mode: 'manual' }),
+        makeResponse()
+      )
+    ).rejects.toThrow('validation_mode is allowed only for release validation');
   });
 
   it('rejects release validation without an exact release identity', async () => {

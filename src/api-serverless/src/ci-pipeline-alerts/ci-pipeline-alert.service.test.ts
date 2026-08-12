@@ -46,8 +46,9 @@ describe('CiPipelineAlertService', () => {
   };
   let identitiesRepository: { getIdsByHandles: jest.Mock };
   let releaseNotesQueue: {
+    enqueue: jest.Mock;
     enqueueBestEffort: jest.Mock;
-    enqueueValidationBestEffort: jest.Mock;
+    enqueueValidation: jest.Mock;
   };
 
   beforeEach(() => {
@@ -69,8 +70,9 @@ describe('CiPipelineAlertService', () => {
       })
     };
     releaseNotesQueue = {
+      enqueue: jest.fn().mockResolvedValue(undefined),
       enqueueBestEffort: jest.fn().mockResolvedValue(undefined),
-      enqueueValidationBestEffort: jest.fn().mockResolvedValue(undefined)
+      enqueueValidation: jest.fn().mockResolvedValue(undefined)
     };
   });
 
@@ -481,7 +483,7 @@ describe('CiPipelineAlertService', () => {
       {}
     );
 
-    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith({
+    expect(releaseNotesQueue.enqueue).toHaveBeenCalledWith({
       repo: baseRequest.repo,
       workflow: baseRequest.workflow,
       run_id: baseRequest.run_id,
@@ -500,9 +502,7 @@ describe('CiPipelineAlertService', () => {
     });
     expect(
       dropCreationApiService.createDrop.mock.invocationCallOrder[0]
-    ).toBeLessThan(
-      releaseNotesQueue.enqueueBestEffort.mock.invocationCallOrder[0]
-    );
+    ).toBeLessThan(releaseNotesQueue.enqueue.mock.invocationCallOrder[0]);
   });
 
   it('queues release validation without posting a standalone pipeline alert', async () => {
@@ -524,7 +524,7 @@ describe('CiPipelineAlertService', () => {
       {}
     );
 
-    expect(releaseNotesQueue.enqueueValidationBestEffort).toHaveBeenCalledWith({
+    expect(releaseNotesQueue.enqueueValidation).toHaveBeenCalledWith({
       message_type: 'release_validation',
       repo: baseRequest.repo,
       workflow: baseRequest.workflow,
@@ -534,10 +534,37 @@ describe('CiPipelineAlertService', () => {
       sha,
       release_group_id: 'frontend-release',
       pull_request_number: undefined,
-      status: 'failure'
+      status: 'failure',
+      validation_mode: undefined
     });
     expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
     expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
+    expect(releaseNotesQueue.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('propagates validation enqueue failure to the signed endpoint', async () => {
+    releaseNotesQueue.enqueueValidation.mockRejectedValueOnce(
+      new Error('queue down')
+    );
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await expect(
+      service.postAlert(
+        {
+          ...baseRequest,
+          notification_type: 'release_validation',
+          status: 'failure',
+          sha: 'a'.repeat(40),
+          release_group_id: 'frontend-release'
+        },
+        {}
+      )
+    ).rejects.toThrow('queue down');
+    expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
   });
 
   it('does not enqueue an unreviewed repository prompt path', async () => {

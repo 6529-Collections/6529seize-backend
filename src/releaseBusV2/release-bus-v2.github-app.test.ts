@@ -1371,6 +1371,46 @@ describe('GitHub workflow operation identity', () => {
   });
 
   it.each([
+    [
+      true,
+      `on:\n  workflow_dispatch:\n    inputs:\n      trusted_deployed_sha:\n        type: string\n      tracking_id:\n        type: string\n`
+    ],
+    [
+      false,
+      `on:\n  workflow_dispatch:\n    inputs:\n      release_train_id:\n        type: string\n`
+    ]
+  ])(
+    'detects simplified E2E workflow support as %s',
+    async (expected, source) => {
+      const app = appWithCachedToken();
+      const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            type: 'file',
+            sha: 'b'.repeat(40),
+            encoding: 'base64',
+            content: Buffer.from(source).toString('base64'),
+            size: Buffer.byteLength(source)
+          })
+        )
+      );
+
+      try {
+        await expect(
+          app.supportsSimplifiedE2EWorkflow(
+            'frontend',
+            'production-e2e.yml',
+            'a'.repeat(40)
+          )
+        ).resolves.toBe(expected);
+      } finally {
+        fetchMock.mockReset();
+      }
+    }
+  );
+
+  it.each([
     ['../deploy.yml', 'a'.repeat(40), 'filename'],
     ['Deploy.yml', 'a'.repeat(40), 'filename'],
     ['deploy.yaml', 'a'.repeat(40), 'filename'],

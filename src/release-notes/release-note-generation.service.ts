@@ -54,11 +54,7 @@ const MAX_RELEASE_CONTEXT_LENGTH = 200000;
 const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
 const RELEASE_NOTE_VALIDATION_ID_METADATA_KEY = 'release_note_validation_id';
 
-export type ReleaseNoteGenerationOutcome =
-  | 'published'
-  | 'already-published'
-  | 'no-baseline'
-  | 'no-pull-requests';
+export type ReleaseNoteGenerationOutcome = 'published' | 'already-published';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -143,18 +139,26 @@ function formatReleaseValidationContent(
     request.run_number ? `#${request.run_number}` : `#${request.run_id}`,
     request.run_url
   );
+  const validationLabel =
+    request.validation_mode === 'manual'
+      ? 'Manual production revalidation'
+      : 'Post-deployment validation';
+  const validationDescription =
+    request.validation_mode === 'manual'
+      ? 'manual E2E revalidation'
+      : 'automatic E2E validation';
   if (request.status === 'success') {
     return [
-      '### ✅ Post-deployment validation passed',
+      `### ✅ ${validationLabel} passed`,
       '',
-      `Production commit ${commit} passed automatic E2E validation.`,
+      `Production commit ${commit} passed ${validationDescription}.`,
       `Run: ${run}`
     ].join('\n');
   }
   return [
-    '### 🚨 Post-deployment validation failed',
+    `### 🚨 ${validationLabel} failed`,
     '',
-    `Production commit ${commit} is live, but automatic E2E validation failed.`,
+    `Production commit ${commit} is live, but ${validationDescription} failed.`,
     `Run: ${run}`,
     '',
     `cc ${DEVS_6529_MENTION}`
@@ -357,15 +361,37 @@ export class ReleaseNoteGenerationService {
     const context = await this.githubService.getReleaseContext(request);
     if (!context) {
       this.logger.info(
-        `Skipping release notes for ${request.repo} run ${request.run_id}; no previous successful production run was found`
+        `Publishing a deployment record for ${request.repo} run ${request.run_id}; no previous successful production run was found`
       );
-      return 'no-baseline';
+      await this.createReleaseDrop(
+        this.buildEmptyCreateDropRequest({
+          request,
+          publicationId,
+          waveId,
+          explanation:
+            'No previous successful production deployment was available for release-note comparison.'
+        }),
+        botProfileId,
+        ctx
+      );
+      return 'published';
     }
     if (!context.pull_requests.length) {
       this.logger.info(
-        `Skipping release notes for ${request.repo} run ${request.run_id}; no merged pull requests were found`
+        `Publishing a deployment record for ${request.repo} run ${request.run_id}; no merged pull requests were found`
       );
-      return 'no-pull-requests';
+      await this.createReleaseDrop(
+        this.buildEmptyCreateDropRequest({
+          request,
+          publicationId,
+          waveId,
+          explanation:
+            'No new merged pull requests were found for this production deployment.'
+        }),
+        botProfileId,
+        ctx
+      );
+      return 'published';
     }
     const generatedNotes = await this.generateReleaseNotes(request, context);
     const contributors = await this.resolveContributors(context.pull_requests);
@@ -378,6 +404,15 @@ export class ReleaseNoteGenerationService {
       waveId
     });
 
+    await this.createReleaseDrop(createDropRequest, botProfileId, ctx);
+    return 'published';
+  }
+
+  private async createReleaseDrop(
+    createDropRequest: ApiCreateDropRequest,
+    botProfileId: string,
+    ctx: RequestContext
+  ): Promise<void> {
     await this.dropCreationApiService.createDrop(
       {
         createDropRequest,
@@ -390,7 +425,6 @@ export class ReleaseNoteGenerationService {
         authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
       }
     );
-    return 'published';
   }
 
   public async postValidationReply(
@@ -674,6 +708,42 @@ export class ReleaseNoteGenerationService {
         mentioned_profile_id: profile.profileId,
         handle_in_content: profile.handle
       })),
+      mentioned_groups: [],
+      referenced_nfts: [],
+      metadata: [
+        {
+          data_key: RELEASE_NOTE_ID_METADATA_KEY,
+          data_value: publicationId
+        }
+      ],
+      signature: null,
+      is_safe_signature: false,
+      wave_id: waveId
+    };
+  }
+
+  private buildEmptyCreateDropRequest({
+    request,
+    publicationId,
+    waveId,
+    explanation
+  }: {
+    readonly request: ReleaseNoteGenerationRequest;
+    readonly publicationId: string;
+    readonly waveId: string;
+    readonly explanation: string;
+  }): ApiCreateDropRequest {
+    return {
+      title: null,
+      drop_type: ApiDropType.Chat,
+      parts: [
+        {
+          content: [getReleaseHeading(request), '', explanation].join('\n'),
+          quoted_drop: null,
+          media: []
+        }
+      ],
+      mentioned_users: [],
       mentioned_groups: [],
       referenced_nfts: [],
       metadata: [

@@ -35,6 +35,7 @@ export interface CiPipelineAlertRequest {
   readonly workflow: string;
   readonly status: CiPipelineAlertStatus;
   readonly notification_type?: 'pipeline' | 'release_validation';
+  readonly validation_mode?: 'automatic' | 'manual';
   readonly title: string;
   readonly description?: string | null;
   readonly triggered_by_github_login?: string | null;
@@ -363,7 +364,7 @@ export class CiPipelineAlertService {
         'Release validation requires an exact SHA and release group ID'
       );
     }
-    await this.releaseNotesQueue.enqueueValidationBestEffort({
+    await this.releaseNotesQueue.enqueueValidation({
       message_type: 'release_validation',
       repo: request.repo,
       workflow: request.workflow,
@@ -373,7 +374,8 @@ export class CiPipelineAlertService {
       sha,
       release_group_id: releaseGroupId,
       pull_request_number: request.pull_request_number,
-      status: request.status
+      status: request.status,
+      validation_mode: request.validation_mode
     });
   }
 
@@ -422,7 +424,7 @@ export class CiPipelineAlertService {
         continue;
       }
       const contributorGithubLogins = this.getReleaseTrainContributors(request);
-      await this.releaseNotesQueue.enqueueBestEffort({
+      const releaseNoteRequest = {
         repo: request.repo,
         workflow: request.workflow,
         run_id: request.run_id,
@@ -441,7 +443,12 @@ export class CiPipelineAlertService {
           : {}),
         publish_release_note: normalizedGroup.publishReleaseNote,
         deployed_at: deployedAt
-      });
+      };
+      if (isBackendRelease) {
+        await this.releaseNotesQueue.enqueueBestEffort(releaseNoteRequest);
+      } else {
+        await this.releaseNotesQueue.enqueue(releaseNoteRequest);
+      }
     }
   }
 

@@ -2,7 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import {
   releaseBusGitHubApp,
-  ReleaseBusGitHubInfrastructureError
+  ReleaseBusGitHubInfrastructureError,
+  workflowRunMatchesOperation
 } from '@/releaseBusV2/release-bus-v2.github-app';
 import {
   releaseBusV2Repository,
@@ -357,6 +358,10 @@ function isArtifactPreparationOperation(operationType: string): boolean {
     operationType.includes('PREPARE_ARTIFACT_') ||
     operationType.startsWith('ISOLATE_PREFLIGHT_')
   );
+}
+
+function isSimplifiedE2EOperation(operationType: string): boolean {
+  return operationType === 'E2E_STAGING' || operationType === 'E2E_PROD';
 }
 
 function exactStringArray(value: unknown): readonly string[] | null {
@@ -803,10 +808,20 @@ export class ReleaseBusV2Operations {
       operation.idempotency_key,
       operation.attempt
     );
-    const dispatchInputs = {
-      ...operationRequest.inputs,
-      operation_key: attemptKey
-    };
+    const simplifiedE2E = isSimplifiedE2EOperation(operation.operation_type)
+      ? await releaseBusGitHubApp.supportsSimplifiedE2EWorkflow(
+          spec.repository,
+          operationRequest.workflow,
+          operationRequest.workflow_control_sha ?? ''
+        )
+      : false;
+    const dispatchInputs = simplifiedE2E
+      ? {
+          ...(spec.environment === 'staging' ? { pack: 'all' } : {}),
+          trusted_deployed_sha: spec.expectedSha,
+          tracking_id: attemptKey
+        }
+      : { ...operationRequest.inputs, operation_key: attemptKey };
     const recoveringTransport = transportRetryState(operation.result_json);
     let run;
     try {
@@ -899,6 +914,50 @@ export class ReleaseBusV2Operations {
       operation;
     if (['SUCCEEDED', 'FAILED', 'RETRY_WAIT'].includes(latest.status))
       return latest;
+    if (simplifiedE2E) {
+      const expectedPath = `.github/workflows/${operationRequest.workflow}`;
+      if (
+        !isReleaseBusGitHubAppActor(run.actor?.login) ||
+        run.event !== 'workflow_dispatch' ||
+        run.path !== expectedPath ||
+        run.head_sha !== operationRequest.workflow_control_sha ||
+        !workflowRunMatchesOperation(run.display_title, attemptKey)
+      ) {
+        await this.update(latest, {
+          status: 'FAILED',
+          externalId: String(run.id),
+          failureClass: 'CONTROL_PLANE',
+          failureMessage:
+            'Simplified E2E workflow identity did not match the exact Release Bus operation',
+          completedAt: Date.now()
+        });
+        return (
+          (await this.repository.findOperation(
+            spec.idempotencyKey,
+            {},
+            true
+          )) ?? latest
+        );
+      }
+      if (run.conclusion === 'success') {
+        await this.update(latest, {
+          status: 'SUCCEEDED',
+          externalId: String(run.id),
+          result: {
+            workflow_conclusion: 'success',
+            workflow_run_id: String(run.id)
+          },
+          completedAt: Date.now()
+        });
+        return (
+          (await this.repository.findOperation(
+            spec.idempotencyKey,
+            {},
+            true
+          )) ?? latest
+        );
+      }
+    }
     const failureClass = unreportedWorkflowFailureClass(
       latest.operation_type,
       run.conclusion
@@ -910,9 +969,11 @@ export class ReleaseBusV2Operations {
       externalId: String(run.id),
       nextRetryAt: retry ? Date.now() + retryDelayMs(latest.attempt) : null,
       failureClass,
-      failureMessage: `GitHub workflow concluded ${
-        run.conclusion ?? 'without a conclusion'
-      } without a structured terminal callback`,
+      failureMessage: simplifiedE2E
+        ? `GitHub E2E workflow concluded ${run.conclusion ?? 'without a conclusion'}`
+        : `GitHub workflow concluded ${
+            run.conclusion ?? 'without a conclusion'
+          } without a structured terminal callback`,
       completedAt: retry ? null : Date.now()
     });
     return (
