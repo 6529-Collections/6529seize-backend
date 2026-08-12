@@ -731,15 +731,25 @@ export class IdentityFetcher {
         })
       ]);
       const dedupedMembers: (IdentityEntity & { ens?: string | null })[] = [];
-      const seenProfKeys = new Set<string>();
+      const memberIndexesByProfileKey = new Map<string, number>();
       for (const prof of [...membersByHandles, ...profilesByEnsNames]) {
         const profKey = String(
           prof.consolidation_key ?? prof.profile_id ?? prof.primary_address
         );
-        if (seenProfKeys.has(profKey)) {
+        const existingMemberIndex = memberIndexesByProfileKey.get(profKey);
+        if (existingMemberIndex !== undefined) {
+          const existingMember = dedupedMembers[existingMemberIndex];
+          const profEns =
+            'ens' in prof && typeof prof.ens === 'string' ? prof.ens : null;
+          if (!existingMember.ens && profEns) {
+            dedupedMembers[existingMemberIndex] = {
+              ...existingMember,
+              ens: profEns
+            };
+          }
           continue;
         }
-        seenProfKeys.add(profKey);
+        memberIndexesByProfileKey.set(profKey, dedupedMembers.length);
         dedupedMembers.push(prof);
       }
 
