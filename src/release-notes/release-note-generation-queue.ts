@@ -44,6 +44,7 @@ export interface ReleaseNoteValidationRequest {
   readonly pull_request_number?: number | null;
   readonly status: 'success' | 'failure';
   readonly validation_mode?: 'automatic' | 'manual';
+  readonly triggered_by_github_login?: string | null;
 }
 
 export class ReleaseNoteGenerationQueue {

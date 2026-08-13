@@ -560,7 +560,8 @@ describe('CiPipelineAlertService', () => {
       release_group_id: 'frontend-release',
       pull_request_number: null,
       status: 'failure',
-      validation_mode: undefined
+      validation_mode: undefined,
+      triggered_by_github_login: 'prxt6529'
     });
     expect(dropCreationApiService.createDrop).not.toHaveBeenCalled();
     expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();

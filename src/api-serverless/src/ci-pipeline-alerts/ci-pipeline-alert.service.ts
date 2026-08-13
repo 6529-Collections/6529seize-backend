@@ -359,15 +359,19 @@ export class CiPipelineAlertService {
   ): Promise<void> {
     const sha = normalizeOptionalValue(request.sha);
     const releaseGroupId = normalizeOptionalValue(request.release_group_id);
+    const triggeredByGithubLogin = normalizeOptionalValue(
+      request.triggered_by_github_login
+    );
     if (
       !sha ||
       !releaseGroupId ||
+      !triggeredByGithubLogin ||
       request.repo.split('/').pop() !== '6529seize-frontend' ||
       (request.pull_request_number !== undefined &&
         request.pull_request_number !== null)
     ) {
       throw new BadRequestException(
-        'Release validation requires an exact frontend SHA and release group identity without a pull request number'
+        'Release validation requires an exact frontend SHA, release group identity, and workflow initiator without a pull request number'
       );
     }
     await this.releaseNotesQueue.enqueueValidation({
@@ -381,7 +385,8 @@ export class CiPipelineAlertService {
       release_group_id: releaseGroupId,
       pull_request_number: null,
       status: request.status,
-      validation_mode: request.validation_mode
+      validation_mode: request.validation_mode,
+      triggered_by_github_login: triggeredByGithubLogin
     });
   }
 

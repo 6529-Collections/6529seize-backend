@@ -123,11 +123,12 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
         if (
           !['prod', 'production'].includes(value.environment) ||
           !value.release_group_id?.trim() ||
-          !/^[a-f0-9]{40}$/.test(value.sha ?? '')
+          !/^[a-f0-9]{40}$/.test(value.sha ?? '') ||
+          !value.triggered_by_github_login?.trim()
         ) {
           return helpers.message({
             custom:
-              'production environment, release_group_id, and exact sha are required for release validation'
+              'production environment, release_group_id, exact sha, and workflow initiator are required for release validation'
           });
         }
         if (

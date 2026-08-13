@@ -7,6 +7,7 @@ import {
   ReleaseNoteValidationRequest,
   ReleaseNoteRunReference
 } from '@/release-notes/release-note-generation-queue';
+import { isGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import type { SQSHandler } from 'aws-lambda';
@@ -170,6 +171,17 @@ export function parseReleaseValidationMessage(
       'Invalid release validation message: validation_mode must be automatic or manual'
     );
   }
+  const triggeredByGithubLogin = payload.triggered_by_github_login;
+  if (
+    triggeredByGithubLogin !== undefined &&
+    triggeredByGithubLogin !== null &&
+    (typeof triggeredByGithubLogin !== 'string' ||
+      !isGithubContributorLogin(triggeredByGithubLogin.trim()))
+  ) {
+    throw new Error(
+      'Invalid release validation message: triggered_by_github_login must be a valid GitHub login'
+    );
+  }
   return {
     message_type: 'release_validation',
     repo: requireString(payload, 'repo'),
@@ -184,7 +196,11 @@ export function parseReleaseValidationMessage(
     release_group_id: requireString(payload, 'release_group_id'),
     pull_request_number: parsePullRequestNumber(payload.pull_request_number),
     status,
-    validation_mode: validationMode
+    validation_mode: validationMode,
+    triggered_by_github_login:
+      typeof triggeredByGithubLogin === 'string'
+        ? triggeredByGithubLogin.trim()
+        : null
   };
 }
 

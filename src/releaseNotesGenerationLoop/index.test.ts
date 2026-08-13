@@ -121,6 +121,7 @@ describe('parseReleaseValidationMessage', () => {
             'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
           sha: 'a'.repeat(40),
           release_group_id: 'frontend-release',
+          triggered_by_github_login: 'prxt6529',
           status: 'failure'
         })
       )
@@ -136,7 +137,8 @@ describe('parseReleaseValidationMessage', () => {
       release_group_id: 'frontend-release',
       pull_request_number: null,
       status: 'failure',
-      validation_mode: undefined
+      validation_mode: undefined,
+      triggered_by_github_login: 'prxt6529'
     });
   });
 
@@ -153,7 +155,8 @@ describe('parseReleaseValidationMessage', () => {
           sha: 'a'.repeat(40),
           release_group_id: 'frontend-release',
           status: 'success',
-          validation_mode: 'manual'
+          validation_mode: 'manual',
+          triggered_by_github_login: 'GelatoGenesis'
         })
       ).validation_mode
     ).toBe('manual');
@@ -169,6 +172,7 @@ describe('parseReleaseValidationMessage', () => {
         run_url: 'https://github.com/example/actions/runs/789',
         sha: 'a'.repeat(40),
         release_group_id: 'frontend-release',
+        triggered_by_github_login: 'prxt6529',
         status: 'success'
       }).run_id
     ).toBe('789');
@@ -183,6 +187,18 @@ describe('parseReleaseValidationMessage', () => {
         })
       )
     ).toThrow('status must be success or failure');
+  });
+
+  it('rejects an invalid workflow initiator login', () => {
+    expect(() =>
+      parseReleaseValidationMessage(
+        JSON.stringify({
+          message_type: 'release_validation',
+          status: 'success',
+          triggered_by_github_login: 'not a login'
+        })
+      )
+    ).toThrow('triggered_by_github_login must be a valid GitHub login');
   });
 });
 

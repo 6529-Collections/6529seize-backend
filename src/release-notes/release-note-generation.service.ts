@@ -126,7 +126,8 @@ function buildReleaseValidationPublicationId(
 }
 
 function formatReleaseValidationContent(
-  request: ReleaseNoteValidationRequest
+  request: ReleaseNoteValidationRequest,
+  initiator: MentionedProfile | null
 ): string {
   const repository = request.repo.includes('/')
     ? request.repo
@@ -155,11 +156,25 @@ function formatReleaseValidationContent(
       `Run: ${run}`
     ].join('\n');
   }
+  const initiatorLabel =
+    request.validation_mode === 'manual'
+      ? 'Revalidation initiated by'
+      : 'Deployment initiated by';
+  const githubLogin = request.triggered_by_github_login?.trim();
+  const initiatorReference = initiator
+    ? `@[${initiator.handle}]`
+    : githubLogin
+      ? formatMarkdownLink(
+          githubLogin,
+          `https://github.com/${encodeURIComponent(githubLogin)}`
+        )
+      : 'unknown';
   return [
     `### 🚨 ${validationLabel} failed`,
     '',
     `Production commit ${commit} is live, but ${validationDescription} failed.`,
     `Run: ${run}`,
+    `${initiatorLabel}: ${initiatorReference}`,
     '',
     `cc ${DEVS_6529_MENTION}`
   ].join('\n');
@@ -467,6 +482,10 @@ export class ReleaseNoteGenerationService {
         `Release note is not published yet (publication ${publicationId}) for ${request.repo} run ${request.run_id}`
       );
     }
+    const initiator =
+      request.status === 'failure'
+        ? await this.resolveValidationInitiator(request)
+        : null;
     await this.createReleaseDrop(
       {
         wave_id: waveId,
@@ -475,12 +494,19 @@ export class ReleaseNoteGenerationService {
         drop_type: ApiDropType.Chat,
         parts: [
           {
-            content: formatReleaseValidationContent(request),
+            content: formatReleaseValidationContent(request, initiator),
             quoted_drop: null,
             media: []
           }
         ],
-        mentioned_users: [],
+        mentioned_users: initiator
+          ? [
+              {
+                mentioned_profile_id: initiator.profileId,
+                handle_in_content: initiator.handle
+              }
+            ]
+          : [],
         mentioned_groups: [],
         referenced_nfts: [],
         metadata: [
@@ -496,6 +522,39 @@ export class ReleaseNoteGenerationService {
       ctx
     );
     return 'published';
+  }
+
+  private async resolveValidationInitiator(
+    request: ReleaseNoteValidationRequest
+  ): Promise<MentionedProfile | null> {
+    const githubLogin = request.triggered_by_github_login?.trim();
+    if (!githubLogin) {
+      this.logger.warn(
+        `Unable to resolve release validation initiator for ${request.repo} run ${request.run_id}: GitHub login is missing`
+      );
+      return null;
+    }
+    const handle = GITHUB_TO_6529_HANDLES[githubLogin.toLowerCase()];
+    if (!handle) {
+      this.logger.warn(
+        `Unable to resolve release validation initiator ${githubLogin}: 6529 profile mapping is missing`
+      );
+      return null;
+    }
+    const profileIdsByHandle = await this.identitiesRepository.getIdsByHandles([
+      handle
+    ]);
+    const profile = Object.entries(profileIdsByHandle).find(
+      ([resolvedHandle]) =>
+        resolvedHandle.toLowerCase() === handle.toLowerCase()
+    );
+    if (!profile) {
+      this.logger.warn(
+        `Unable to resolve release validation initiator ${githubLogin}: 6529 profile ${handle} is missing`
+      );
+      return null;
+    }
+    return { handle: profile[0], profileId: profile[1] };
   }
 
   private async generateReleaseNotes(

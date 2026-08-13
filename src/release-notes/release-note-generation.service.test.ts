@@ -677,11 +677,30 @@ describe('ReleaseNoteGenerationService', () => {
   });
 
   it.each([
-    ['success', 'validation passed', false],
-    ['failure', 'validation failed', true]
+    ['success', 'validation passed', false, 'automatic', null],
+    [
+      'failure',
+      'validation failed',
+      true,
+      'automatic',
+      'Deployment initiated by: @[prxt0]'
+    ],
+    [
+      'failure',
+      'revalidation failed',
+      true,
+      'manual',
+      'Revalidation initiated by: @[prxt0]'
+    ]
   ] as const)(
     'posts a threaded %s validation result against the release note',
-    async (status, expectedText, mentionsDevs) => {
+    async (
+      status,
+      expectedText,
+      mentionsDevs,
+      validationMode,
+      initiatorLine
+    ) => {
       const validation: ReleaseNoteValidationRequest = {
         message_type: 'release_validation',
         repo: '6529-Collections/6529seize-frontend',
@@ -692,7 +711,9 @@ describe('ReleaseNoteGenerationService', () => {
           'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
         sha: 'a'.repeat(40),
         release_group_id: 'frontend-release',
-        status
+        triggered_by_github_login: 'prxt6529',
+        status,
+        validation_mode: validationMode
       };
       const createDrop = jest.fn().mockResolvedValue({});
       const findDropIdByMetadata = jest
@@ -703,7 +724,11 @@ describe('ReleaseNoteGenerationService', () => {
         {} as ReleaseNoteGitHubService,
         {} as AiPrompter,
         { createDrop } as unknown as DropCreationApiService,
-        {} as IdentitiesDb,
+        {
+          getIdsByHandles: jest
+            .fn()
+            .mockResolvedValue({ prxt0: 'profile-prxt' })
+        } as unknown as IdentitiesDb,
         undefined,
         { findDropIdByMetadata } as unknown as DropsDb
       );
@@ -721,6 +746,20 @@ describe('ReleaseNoteGenerationService', () => {
       expect(createDropRequest.parts[0].content.includes('@devs6529')).toBe(
         mentionsDevs
       );
+      if (mentionsDevs) {
+        expect(createDropRequest.parts[0].content).toContain(initiatorLine);
+        expect(createDropRequest.mentioned_users).toEqual([
+          {
+            mentioned_profile_id: 'profile-prxt',
+            handle_in_content: 'prxt0'
+          }
+        ]);
+      } else {
+        expect(createDropRequest.parts[0].content).not.toContain(
+          'initiated by:'
+        );
+        expect(createDropRequest.mentioned_users).toEqual([]);
+      }
       expect(createDropRequest.metadata).toEqual([
         expect.objectContaining({ data_key: 'release_note_validation_id' })
       ]);
@@ -736,7 +775,9 @@ describe('ReleaseNoteGenerationService', () => {
       {} as ReleaseNoteGitHubService,
       {} as AiPrompter,
       { createDrop } as unknown as DropCreationApiService,
-      {} as IdentitiesDb,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({ prxt0: 'profile-prxt' })
+      } as unknown as IdentitiesDb,
       undefined,
       { findDropIdByMetadata } as unknown as DropsDb
     );
@@ -800,7 +841,9 @@ describe('ReleaseNoteGenerationService', () => {
       {} as ReleaseNoteGitHubService,
       {} as AiPrompter,
       { createDrop } as unknown as DropCreationApiService,
-      {} as IdentitiesDb,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({ prxt0: 'profile-prxt' })
+      } as unknown as IdentitiesDb,
       undefined,
       { findDropIdByMetadata } as unknown as DropsDb
     );
@@ -813,7 +856,8 @@ describe('ReleaseNoteGenerationService', () => {
       sha: 'a'.repeat(40),
       release_group_id: 'frontend-release',
       status: 'failure',
-      validation_mode: 'automatic'
+      validation_mode: 'automatic',
+      triggered_by_github_login: 'prxt6529'
     };
 
     await service.postValidationReply(baseValidation, {});

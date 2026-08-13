@@ -471,9 +471,26 @@ describe('ci pipeline alert routes', () => {
         makeResponse()
       )
     ).rejects.toThrow(
-      'production environment, release_group_id, and exact sha are required'
+      'production environment, release_group_id, exact sha, and workflow initiator are required'
     );
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+  });
+
+  it('rejects release validation without a workflow initiator', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          repo: '6529seize-frontend',
+          notification_type: 'release_validation',
+          triggered_by_github_login: null,
+          sha: 'a'.repeat(40),
+          release_group_id: 'frontend-release'
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow('workflow initiator are required');
   });
 
   it('rejects a non-boolean release-note publish flag', async () => {
