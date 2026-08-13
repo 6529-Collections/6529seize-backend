@@ -66,7 +66,8 @@ describe('WalletDistributionAllocationsDb', () => {
       },
       undefined
     );
-    expect(oneOrNull.mock.calls[1][0]).toContain('AND LOWER(wallet) = :wallet');
+    expect(oneOrNull.mock.calls[0][0]).toContain('WHERE contract = :contract');
+    expect(oneOrNull.mock.calls[1][0]).toContain('AND wallet = :wallet');
     expect(execute.mock.calls[0][0]).toContain(
       `FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
     );

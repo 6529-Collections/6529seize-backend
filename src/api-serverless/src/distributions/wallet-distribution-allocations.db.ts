@@ -3,7 +3,7 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import { ApiWalletDistributionAllocationPhaseEnum } from '@/api/generated/models/ApiWalletDistributionAllocation';
-import { AllowlistNormalizedEntry } from '@/entities/IDistribution';
+import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
@@ -26,12 +26,20 @@ interface DistributionExistsRow {
 }
 
 interface WalletNormalizedDistributionRow {
-  readonly allowlist: AllowlistNormalizedEntry[] | string | null;
+  readonly allowlist: unknown[] | string | null;
 }
 
 interface PublicSubscriptionRow {
   readonly subscribed_count: NumericDatabaseValue;
 }
+
+interface WalletNormalizedAllowlistEntry {
+  readonly phase: string;
+  readonly spots_airdrop: number;
+  readonly spots_allowlist: number;
+}
+
+const logger = Logger.get('WalletDistributionAllocationsDb');
 
 const MANUAL_PHASE_BY_ALIAS = new Map<string, string>([
   ['p0', ApiWalletDistributionAllocationPhaseEnum.Phase0],
@@ -48,7 +56,7 @@ function normalizePhase(phase: string): string | null {
 }
 
 function aggregatePhaseAllocations(
-  rows: AllowlistNormalizedEntry[]
+  rows: WalletNormalizedAllowlistEntry[]
 ): WalletPhaseAllocationRow[] {
   const allocations = new Map<string, WalletPhaseAllocationRow>();
   for (const row of rows) {
@@ -79,7 +87,9 @@ function toAllocationCount(value: unknown): number | null {
   return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
-function toAllowlistEntry(value: unknown): AllowlistNormalizedEntry | null {
+function toAllowlistEntry(
+  value: unknown
+): WalletNormalizedAllowlistEntry | null {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
@@ -96,24 +106,30 @@ function toAllowlistEntry(value: unknown): AllowlistNormalizedEntry | null {
   }
   return {
     phase,
-    spots: spotsAirdrop + spotsAllowlist,
     spots_airdrop: spotsAirdrop,
     spots_allowlist: spotsAllowlist
   };
 }
 
-function toAllowlistEntries(value: unknown): AllowlistNormalizedEntry[] {
+function toAllowlistEntries(value: unknown): WalletNormalizedAllowlistEntry[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .map(toAllowlistEntry)
-    .filter((entry): entry is AllowlistNormalizedEntry => entry !== null);
+  const entries = value.map(toAllowlistEntry);
+  const invalidEntryCount = entries.filter((entry) => entry === null).length;
+  if (invalidEntryCount > 0) {
+    logger.warn('Ignoring invalid normalized wallet allowlist entries', {
+      invalidEntryCount
+    });
+  }
+  return entries.filter(
+    (entry): entry is WalletNormalizedAllowlistEntry => entry !== null
+  );
 }
 
 function parseAllowlist(
   value: WalletNormalizedDistributionRow['allowlist']
-): AllowlistNormalizedEntry[] {
+): WalletNormalizedAllowlistEntry[] {
   if (!value) {
     return [];
   }
@@ -124,6 +140,7 @@ function parseAllowlist(
     const parsed: unknown = JSON.parse(value);
     return toAllowlistEntries(parsed);
   } catch {
+    logger.warn('Ignoring malformed normalized wallet allowlist JSON');
     return [];
   }
 }
@@ -147,7 +164,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         `SELECT EXISTS(
            SELECT 1
            FROM ${DISTRIBUTION_NORMALIZED_TABLE}
-           WHERE LOWER(contract) = :contract
+           WHERE contract = :contract
              AND card_id = :cardId
          ) AS has_distribution`,
         { contract: normalizedContract, cardId },
@@ -172,9 +189,9 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
           // serializing that wallet's allowlist.
           `SELECT allowlist
            FROM ${DISTRIBUTION_NORMALIZED_TABLE}
-           WHERE LOWER(contract) = :contract
+           WHERE contract = :contract
              AND card_id = :cardId
-             AND LOWER(wallet) = :wallet
+             AND wallet = :wallet
            LIMIT 1`,
           {
             contract: normalizedContract,
