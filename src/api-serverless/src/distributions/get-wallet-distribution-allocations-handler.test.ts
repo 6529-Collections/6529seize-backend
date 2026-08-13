@@ -44,7 +44,12 @@ describe('handleGetWalletDistributionAllocations', () => {
   it.each([
     { contract: 'not-an-address', card_id: '534', wallet },
     { contract, card_id: '0', wallet },
-    { contract, card_id: '534', wallet: 'not-an-address' }
+    { contract, card_id: '534', wallet: 'not-an-address' },
+    {
+      contract,
+      card_id: '534',
+      wallet: '0000000000000000000000000000000000000001'
+    }
   ])('rejects invalid request data %#', async (input) => {
     await expect(
       handleGetWalletDistributionAllocations({

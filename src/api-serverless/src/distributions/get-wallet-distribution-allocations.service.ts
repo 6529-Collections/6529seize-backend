@@ -16,12 +16,12 @@ const PHASE_ORDER = [
   ApiWalletDistributionAllocationPhaseEnum.Public
 ] as const;
 
-const SUPPORTED_PHASES = new Set<string>(PHASE_ORDER);
+const SUPPORTED_MANUAL_PHASES = new Set<string>(PHASE_ORDER.slice(0, 3));
 
 function mapPhaseAllocation(
   row: WalletPhaseAllocationRow
 ): ApiWalletDistributionAllocation | null {
-  if (!SUPPORTED_PHASES.has(row.phase)) {
+  if (!SUPPORTED_MANUAL_PHASES.has(row.phase)) {
     return null;
   }
   const allocation: ApiWalletDistributionAllocation = {

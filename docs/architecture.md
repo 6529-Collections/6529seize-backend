@@ -268,7 +268,9 @@ Important API responsibilities:
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while
   returning card-level publication state without exposing the full Public
-  subscription list.
+  subscription list. They intentionally accept any wallet address without
+  authentication because distribution plans are public and the home page must
+  render before wallet authentication.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
   derives visibility eligibility from a persisted wave, and the authenticated
   `/v2/waves/mention-search` draft endpoint, which applies the selected

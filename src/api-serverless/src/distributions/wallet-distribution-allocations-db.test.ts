@@ -29,7 +29,7 @@ describe('WalletDistributionAllocationsDb', () => {
     ).resolves.toEqual({
       hasDistribution: true,
       phaseAllocations: [
-        { phase: 'Phase 0', spots_airdrop: '11', spots_allowlist: 0 }
+        { phase: 'Phase 0', spots_airdrop: 11, spots_allowlist: 0 }
       ],
       publicAirdropCount: 2
     });
@@ -43,7 +43,9 @@ describe('WalletDistributionAllocationsDb', () => {
         contract: '0xcontract',
         cardId: 534,
         wallet: '0xwallet',
-        phases: ['Phase 0', 'Phase 1', 'Phase 2']
+        phase0: 'Phase 0',
+        phase1: 'Phase 1',
+        phase2: 'Phase 2'
       },
       undefined
     );
@@ -51,11 +53,36 @@ describe('WalletDistributionAllocationsDb', () => {
       `FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
     );
     expect(oneOrNull.mock.calls[1][0]).toContain('phase = :publicPhase');
+    expect(execute.mock.calls[0][0]).toContain('ORDER BY CASE phase');
     expect(timerStart).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
     );
     expect(timerStop).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
+    );
+  });
+
+  it('normalizes mixed-case addresses before querying', async () => {
+    const oneOrNull = jest
+      .fn()
+      .mockResolvedValueOnce({ has_distribution: 1 })
+      .mockResolvedValueOnce({ spots_airdrop: 0 });
+    const execute = jest.fn().mockResolvedValue([]);
+    const db = new WalletDistributionAllocationsDb(
+      () => ({ oneOrNull, execute }) as any
+    );
+
+    await db.findByWallet('0xConTrAcT', 534, '0xWaLlEt', {});
+
+    expect(oneOrNull.mock.calls[0][1]).toEqual({
+      contract: '0xcontract',
+      cardId: 534
+    });
+    expect(execute.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        contract: '0xcontract',
+        wallet: '0xwallet'
+      })
     );
   });
 

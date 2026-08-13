@@ -545,7 +545,7 @@ function renderRoutesFile(operations: GeneratedOperation[]): string {
       const sortedTypeImports = typeImports.sort(compareStrings);
       return {
         group,
-        line: `import { ${sortedTypeImports.join(', ')} } from './operations';`
+        line: `import { ${sortedTypeImports.join(', ')} } from './operations'; // NOSONAR -- stable merge groups intentionally split type imports`
       };
     });
   const defaultTypeImportLines = typeImportLinesByGroup
