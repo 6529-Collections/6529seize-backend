@@ -63,9 +63,7 @@ describe('WalletDistributionAllocationsDb', () => {
       "LOWER(REPLACE(phase, ' ', ''))"
     );
     expect(execute.mock.calls[0][0]).toContain('GROUP BY canonical_phase');
-    expect(execute.mock.calls[0][0]).toContain(
-      'ORDER BY CASE canonical_phase'
-    );
+    expect(execute.mock.calls[0][0]).toContain('ORDER BY CASE canonical_phase');
     expect(timerStart).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
     );
