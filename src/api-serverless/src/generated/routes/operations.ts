@@ -57,6 +57,7 @@ import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/Api
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
+import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentionSearchResult';
@@ -64,6 +65,25 @@ import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
+
+export interface GetWalletDistributionAllocationsPathParams {
+  "contract": string;
+  "card_id": number;
+}
+
+export interface GetWalletDistributionAllocationsQuery {
+  "wallet": string;
+}
+
+export type GetWalletDistributionAllocationsResponse = ApiWalletDistributionAllocations;
+
+export type GetWalletDistributionAllocationsRequest = Request<
+  GetWalletDistributionAllocationsPathParams,
+  ApiResponse<GetWalletDistributionAllocationsResponse>,
+  never,
+  GetWalletDistributionAllocationsQuery,
+  Record<string, never>
+>;
 
 export type GetDmDropsUnreadPathParams = Record<string, never>;
 
