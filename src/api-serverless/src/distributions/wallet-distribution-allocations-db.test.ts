@@ -12,15 +12,13 @@ describe('WalletDistributionAllocationsDb', () => {
       .fn()
       .mockResolvedValueOnce({ has_distribution: 1 })
       .mockResolvedValueOnce({ spots_airdrop: '2' });
-    const execute = jest
-      .fn()
-      .mockResolvedValue([
-        { phase: 'P0', spots_airdrop: '3', spots_allowlist: 0 },
-        { phase: 'Phase0', spots_airdrop: '4', spots_allowlist: 0 },
-        { phase: 'PHASE 0', spots_airdrop: '4', spots_allowlist: 0 },
-        { phase: 'p1', spots_airdrop: 0, spots_allowlist: '2' },
-        { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' }
-      ]);
+    const execute = jest.fn().mockResolvedValue([
+      { phase: 'P0', spots_airdrop: '3', spots_allowlist: 0 },
+      { phase: 'Phase0', spots_airdrop: '4', spots_allowlist: 0 },
+      { phase: 'PHASE 0', spots_airdrop: '4', spots_allowlist: 0 },
+      { phase: 'p1', spots_airdrop: 0, spots_allowlist: '2' },
+      { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' }
+    ]);
     const db = new WalletDistributionAllocationsDb(
       () => ({ oneOrNull, execute }) as any
     );
@@ -66,9 +64,7 @@ describe('WalletDistributionAllocationsDb', () => {
       "LOWER(REPLACE(phase, ' ', ''))"
     );
     expect(execute.mock.calls[0][0]).toContain('GROUP BY phase');
-    expect(oneOrNull.mock.calls[1][0]).toContain(
-      'COALESCE(SUM(subscribed_count), 0)'
-    );
+    expect(oneOrNull.mock.calls[1][0]).toContain('COUNT(*)');
     expect(timerStart).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
     );

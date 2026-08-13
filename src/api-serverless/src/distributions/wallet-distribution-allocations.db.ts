@@ -34,20 +34,22 @@ interface PublicAirdropCountRow {
   readonly spots_airdrop: NumericDatabaseValue;
 }
 
+const MANUAL_PHASE_ALIASES = [
+  { phase: 'Phase 0', short: 'p0', compact: 'phase0' },
+  { phase: 'Phase 1', short: 'p1', compact: 'phase1' },
+  { phase: 'Phase 2', short: 'p2', compact: 'phase2' }
+] as const;
+
+const MANUAL_PHASE_BY_ALIAS = new Map<string, string>(
+  MANUAL_PHASE_ALIASES.flatMap(({ phase, short, compact }) => [
+    [short, phase],
+    [compact, phase]
+  ])
+);
+
 function normalizePhase(phase: string): string | null {
-  switch (phase.trim().toLowerCase().replace(/\s+/g, '')) {
-    case 'p0':
-    case 'phase0':
-      return 'Phase 0';
-    case 'p1':
-    case 'phase1':
-      return 'Phase 1';
-    case 'p2':
-    case 'phase2':
-      return 'Phase 2';
-    default:
-      return null;
-  }
+  const alias = phase.trim().toLowerCase().replace(/\s+/g, '');
+  return MANUAL_PHASE_BY_ALIAS.get(alias) ?? null;
 }
 
 function aggregatePhaseAllocations(
@@ -90,7 +92,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         `SELECT EXISTS(
            SELECT 1
            FROM ${DISTRIBUTION_NORMALIZED_TABLE}
-           WHERE contract = :contract
+           WHERE LOWER(contract) = :contract
              AND card_id = :cardId
          ) AS has_distribution`,
         { contract: normalizedContract, cardId },
@@ -114,9 +116,9 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
                   COALESCE(SUM(count_airdrop), 0) AS spots_airdrop,
                   COALESCE(SUM(count_allowlist), 0) AS spots_allowlist
            FROM ${DISTRIBUTION_TABLE}
-           WHERE contract = :contract
+           WHERE LOWER(contract) = :contract
              AND card_id = :cardId
-             AND wallet = :wallet
+             AND LOWER(wallet) = :wallet
              AND LOWER(REPLACE(phase, ' ', '')) IN (
                :phase0Short,
                :phase0Compact,
@@ -130,21 +132,21 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
             contract: normalizedContract,
             cardId,
             wallet: normalizedWallet,
-            phase0Short: 'p0',
-            phase0Compact: 'phase0',
-            phase1Short: 'p1',
-            phase1Compact: 'phase1',
-            phase2Short: 'p2',
-            phase2Compact: 'phase2'
+            phase0Short: MANUAL_PHASE_ALIASES[0].short,
+            phase0Compact: MANUAL_PHASE_ALIASES[0].compact,
+            phase1Short: MANUAL_PHASE_ALIASES[1].short,
+            phase1Compact: MANUAL_PHASE_ALIASES[1].compact,
+            phase2Short: MANUAL_PHASE_ALIASES[2].short,
+            phase2Compact: MANUAL_PHASE_ALIASES[2].compact
           },
           queryOptions
         ),
         this.db.oneOrNull<PublicAirdropCountRow>(
-          `SELECT COALESCE(SUM(subscribed_count), 0) AS spots_airdrop
+          `SELECT COUNT(*) AS spots_airdrop
            FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-           WHERE contract = :contract
+           WHERE LOWER(contract) = :contract
              AND token_id = :cardId
-             AND airdrop_address = :wallet
+             AND LOWER(airdrop_address) = :wallet
              AND phase = :publicPhase`,
           {
             contract: normalizedContract,
