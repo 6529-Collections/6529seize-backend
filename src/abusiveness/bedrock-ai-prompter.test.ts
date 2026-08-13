@@ -14,7 +14,7 @@ describe('bedrock abusiveness prompter', () => {
     );
   });
 
-  it('keeps the historical Anthropic Bedrock payload settings', () => {
+  it('uses a Sonnet 4.5-compatible Anthropic Bedrock payload', () => {
     const input = buildAbusivenessBedrockInvokeModelInput(
       'anthropic.test-model',
       'is this category okay?'
@@ -24,8 +24,8 @@ describe('bedrock abusiveness prompter', () => {
     expect(input.modelId).toBe('anthropic.test-model');
     expect(body).toMatchObject({
       temperature: 0.7,
-      top_p: 0.8,
       top_k: 30
     });
+    expect(body).not.toHaveProperty('top_p');
   });
 });
