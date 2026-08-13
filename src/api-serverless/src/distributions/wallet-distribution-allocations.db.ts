@@ -30,10 +30,11 @@ interface DistributionExistsRow {
   readonly has_distribution: number | boolean;
 }
 
-interface PublicAirdropCountRow {
-  readonly spots_airdrop: NumericDatabaseValue;
+interface PublicSubscriptionRow {
+  readonly subscribed_count: NumericDatabaseValue;
 }
 
+// This table drives both the SQL compact-alias filter and application mapping.
 const MANUAL_PHASE_ALIASES = [
   { phase: 'Phase 0', short: 'p0', compact: 'phase0' },
   { phase: 'Phase 1', short: 'p1', compact: 'phase1' },
@@ -110,7 +111,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         };
       }
 
-      const [phaseAllocations, publicAirdropRow] = await Promise.all([
+      const [phaseAllocations, publicSubscriptions] = await Promise.all([
         this.db.execute<WalletPhaseAllocationDatabaseRow>(
           `SELECT phase,
                   COALESCE(SUM(count_airdrop), 0) AS spots_airdrop,
@@ -141,8 +142,8 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
           },
           queryOptions
         ),
-        this.db.oneOrNull<PublicAirdropCountRow>(
-          `SELECT COUNT(*) AS spots_airdrop
+        this.db.execute<PublicSubscriptionRow>(
+          `SELECT subscribed_count
            FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
            WHERE LOWER(contract) = :contract
              AND token_id = :cardId
@@ -161,7 +162,10 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
       return {
         hasDistribution: true,
         phaseAllocations: aggregatePhaseAllocations(phaseAllocations),
-        publicAirdropCount: Number(publicAirdropRow?.spots_airdrop ?? 0)
+        publicAirdropCount: publicSubscriptions.reduce(
+          (total, row) => total + Number(row.subscribed_count ?? 0),
+          0
+        )
       };
     } finally {
       ctx.timer?.stop(timerName);

@@ -8,17 +8,20 @@ import { WalletDistributionAllocationsDb } from './wallet-distribution-allocatio
 
 describe('WalletDistributionAllocationsDb', () => {
   it('returns phase and Public allocations when distribution is published', async () => {
-    const oneOrNull = jest
+    const oneOrNull = jest.fn().mockResolvedValue({ has_distribution: 1 });
+    const execute = jest
       .fn()
-      .mockResolvedValueOnce({ has_distribution: 1 })
-      .mockResolvedValueOnce({ spots_airdrop: '2' });
-    const execute = jest.fn().mockResolvedValue([
-      { phase: 'P0', spots_airdrop: '3', spots_allowlist: 0 },
-      { phase: 'Phase0', spots_airdrop: '4', spots_allowlist: 0 },
-      { phase: 'PHASE 0', spots_airdrop: '4', spots_allowlist: 0 },
-      { phase: 'p1', spots_airdrop: 0, spots_allowlist: '2' },
-      { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' }
-    ]);
+      .mockResolvedValueOnce([
+        { phase: 'P0', spots_airdrop: '3', spots_allowlist: 0 },
+        { phase: 'Phase0', spots_airdrop: '4', spots_allowlist: 0 },
+        { phase: 'PHASE 0', spots_airdrop: '4', spots_allowlist: 0 },
+        { phase: 'p1', spots_airdrop: 0, spots_allowlist: '2' },
+        { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' }
+      ])
+      .mockResolvedValueOnce([
+        { subscribed_count: '3' },
+        { subscribed_count: 2 }
+      ]);
     const db = new WalletDistributionAllocationsDb(
       () => ({ oneOrNull, execute }) as any
     );
@@ -35,7 +38,7 @@ describe('WalletDistributionAllocationsDb', () => {
         { phase: 'Phase 1', spots_airdrop: 0, spots_allowlist: 2 },
         { phase: 'Phase 2', spots_airdrop: 1, spots_allowlist: 1 }
       ],
-      publicAirdropCount: 2
+      publicAirdropCount: 5
     });
 
     expect(oneOrNull.mock.calls[0][0]).toContain(
@@ -56,15 +59,15 @@ describe('WalletDistributionAllocationsDb', () => {
       },
       undefined
     );
-    expect(oneOrNull.mock.calls[1][0]).toContain(
+    expect(execute.mock.calls[1][0]).toContain(
       `FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
     );
-    expect(oneOrNull.mock.calls[1][0]).toContain('phase = :publicPhase');
+    expect(execute.mock.calls[1][0]).toContain('phase = :publicPhase');
     expect(execute.mock.calls[0][0]).toContain(
       "LOWER(REPLACE(phase, ' ', ''))"
     );
     expect(execute.mock.calls[0][0]).toContain('GROUP BY phase');
-    expect(oneOrNull.mock.calls[1][0]).toContain('COUNT(*)');
+    expect(execute.mock.calls[1][0]).toContain('SELECT subscribed_count');
     expect(timerStart).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
     );
@@ -74,10 +77,7 @@ describe('WalletDistributionAllocationsDb', () => {
   });
 
   it('normalizes mixed-case addresses before querying', async () => {
-    const oneOrNull = jest
-      .fn()
-      .mockResolvedValueOnce({ has_distribution: 1 })
-      .mockResolvedValueOnce({ spots_airdrop: 0 });
+    const oneOrNull = jest.fn().mockResolvedValue({ has_distribution: 1 });
     const execute = jest.fn().mockResolvedValue([]);
     const db = new WalletDistributionAllocationsDb(
       () => ({ oneOrNull, execute }) as any
