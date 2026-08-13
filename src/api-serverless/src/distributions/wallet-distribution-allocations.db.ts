@@ -1,18 +1,13 @@
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
+import { ApiWalletDistributionAllocationPhaseEnum } from '@/api/generated/models/ApiWalletDistributionAllocation';
+import { AllowlistNormalizedEntry } from '@/entities/IDistribution';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
 type NumericDatabaseValue = number | string | null;
-
-interface WalletPhaseAllocationDatabaseRow {
-  readonly phase: string;
-  readonly spots_airdrop: NumericDatabaseValue;
-  readonly spots_allowlist: NumericDatabaseValue;
-}
 
 export interface WalletPhaseAllocationRow {
   readonly phase: string;
@@ -30,20 +25,22 @@ interface DistributionExistsRow {
   readonly has_distribution: number | boolean;
 }
 
-interface PublicAirdropCountRow {
-  readonly spots_airdrop: NumericDatabaseValue;
+interface WalletNormalizedDistributionRow {
+  readonly allowlist: AllowlistNormalizedEntry[] | string | null;
 }
 
-const MANUAL_PHASE_BY_ALIAS = new Map<string, string>(
-  [
-    ['p0', 'Phase 0'],
-    ['phase0', 'Phase 0'],
-    ['p1', 'Phase 1'],
-    ['phase1', 'Phase 1'],
-    ['p2', 'Phase 2'],
-    ['phase2', 'Phase 2']
-  ]
-);
+interface PublicSubscriptionRow {
+  readonly subscribed_count: NumericDatabaseValue;
+}
+
+const MANUAL_PHASE_BY_ALIAS = new Map<string, string>([
+  ['p0', ApiWalletDistributionAllocationPhaseEnum.Phase0],
+  ['phase0', ApiWalletDistributionAllocationPhaseEnum.Phase0],
+  ['p1', ApiWalletDistributionAllocationPhaseEnum.Phase1],
+  ['phase1', ApiWalletDistributionAllocationPhaseEnum.Phase1],
+  ['p2', ApiWalletDistributionAllocationPhaseEnum.Phase2],
+  ['phase2', ApiWalletDistributionAllocationPhaseEnum.Phase2]
+]);
 
 function normalizePhase(phase: string): string | null {
   const alias = phase.trim().toLowerCase().replace(/\s+/g, '');
@@ -51,7 +48,7 @@ function normalizePhase(phase: string): string | null {
 }
 
 function aggregatePhaseAllocations(
-  rows: WalletPhaseAllocationDatabaseRow[]
+  rows: AllowlistNormalizedEntry[]
 ): WalletPhaseAllocationRow[] {
   const allocations = new Map<string, WalletPhaseAllocationRow>();
   for (const row of rows) {
@@ -69,6 +66,17 @@ function aggregatePhaseAllocations(
     });
   }
   return Array.from(allocations.values());
+}
+
+function parseAllowlist(
+  value: WalletNormalizedDistributionRow['allowlist']
+): AllowlistNormalizedEntry[] {
+  if (!value) {
+    return [];
+  }
+  return typeof value === 'string'
+    ? (JSON.parse(value) as AllowlistNormalizedEntry[])
+    : value;
 }
 
 export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleService {
@@ -108,18 +116,14 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         };
       }
 
-      const [phaseAllocations, publicAirdropRow] = await Promise.all([
-        // Phase labels vary in stored distribution data. Read this wallet's
-        // small card-scoped set and apply the single canonical filter below.
-        this.db.execute<WalletPhaseAllocationDatabaseRow>(
-          `SELECT phase,
-                  COALESCE(SUM(count_airdrop), 0) AS spots_airdrop,
-                  COALESCE(SUM(count_allowlist), 0) AS spots_allowlist
-           FROM ${DISTRIBUTION_TABLE}
+      const [walletDistributionRow, publicSubscriptions] = await Promise.all([
+        this.db.oneOrNull<WalletNormalizedDistributionRow>(
+          `SELECT allowlist
+           FROM ${DISTRIBUTION_NORMALIZED_TABLE}
            WHERE LOWER(contract) = :contract
              AND card_id = :cardId
              AND LOWER(wallet) = :wallet
-           GROUP BY phase`,
+           LIMIT 1`,
           {
             contract: normalizedContract,
             cardId,
@@ -127,11 +131,8 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
           },
           queryOptions
         ),
-        this.db.oneOrNull<PublicAirdropCountRow>(
-          // Finalization caps subscribed_count to the allocated edition
-          // quantity; distribution export uses it as amount and redemption is
-          // bounded by it. Match the existing subscription-total SUM semantic.
-          `SELECT COALESCE(SUM(subscribed_count), 0) AS spots_airdrop
+        this.db.execute<PublicSubscriptionRow>(
+          `SELECT subscribed_count
            FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
            WHERE LOWER(contract) = :contract
              AND token_id = :cardId
@@ -149,8 +150,16 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
 
       return {
         hasDistribution: true,
-        phaseAllocations: aggregatePhaseAllocations(phaseAllocations),
-        publicAirdropCount: Number(publicAirdropRow?.spots_airdrop ?? 0)
+        phaseAllocations: aggregatePhaseAllocations(
+          parseAllowlist(walletDistributionRow?.allowlist ?? null)
+        ),
+        // Finalization caps subscribed_count to the allocated edition
+        // quantity; distribution export uses it as amount and redemption is
+        // bounded by it.
+        publicAirdropCount: publicSubscriptions.reduce(
+          (total, row) => total + Number(row.subscribed_count ?? 0),
+          0
+        )
       };
     } finally {
       ctx.timer?.stop(timerName);
