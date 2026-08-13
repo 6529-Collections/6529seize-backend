@@ -6,8 +6,10 @@ import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { getWalletDistributionAllocations } from './get-wallet-distribution-allocations.service';
 
+const ETHEREUM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
 function normalizeEthereumAddress(value: string, helpers: Joi.CustomHelpers) {
-  return ethers.isAddress(value)
+  return ETHEREUM_ADDRESS_PATTERN.test(value) && ethers.isAddress(value)
     ? value.toLowerCase()
     : helpers.error('any.invalid');
 }

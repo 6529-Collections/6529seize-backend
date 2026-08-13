@@ -30,21 +30,19 @@ interface DistributionExistsRow {
   readonly has_distribution: number | boolean;
 }
 
-interface PublicSubscriptionRow {
-  readonly subscribed_count: NumericDatabaseValue;
+interface PublicAirdropCountRow {
+  readonly spots_airdrop: NumericDatabaseValue;
 }
 
-const MANUAL_PHASE_ALIASES = [
-  { phase: 'Phase 0', short: 'p0', compact: 'phase0' },
-  { phase: 'Phase 1', short: 'p1', compact: 'phase1' },
-  { phase: 'Phase 2', short: 'p2', compact: 'phase2' }
-] as const;
-
 const MANUAL_PHASE_BY_ALIAS = new Map<string, string>(
-  MANUAL_PHASE_ALIASES.flatMap(({ phase, short, compact }) => [
-    [short, phase],
-    [compact, phase]
-  ])
+  [
+    ['p0', 'Phase 0'],
+    ['phase0', 'Phase 0'],
+    ['p1', 'Phase 1'],
+    ['phase1', 'Phase 1'],
+    ['p2', 'Phase 2'],
+    ['phase2', 'Phase 2']
+  ]
 );
 
 function normalizePhase(phase: string): string | null {
@@ -110,7 +108,9 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         };
       }
 
-      const [phaseAllocations, publicSubscriptions] = await Promise.all([
+      const [phaseAllocations, publicAirdropRow] = await Promise.all([
+        // Phase labels vary in stored distribution data. Read this wallet's
+        // small card-scoped set and apply the single canonical filter below.
         this.db.execute<WalletPhaseAllocationDatabaseRow>(
           `SELECT phase,
                   COALESCE(SUM(count_airdrop), 0) AS spots_airdrop,
@@ -127,8 +127,11 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
           },
           queryOptions
         ),
-        this.db.execute<PublicSubscriptionRow>(
-          `SELECT subscribed_count
+        this.db.oneOrNull<PublicAirdropCountRow>(
+          // Finalization caps subscribed_count to the allocated edition
+          // quantity; distribution export uses it as amount and redemption is
+          // bounded by it. Match the existing subscription-total SUM semantic.
+          `SELECT COALESCE(SUM(subscribed_count), 0) AS spots_airdrop
            FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
            WHERE LOWER(contract) = :contract
              AND token_id = :cardId
@@ -147,12 +150,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
       return {
         hasDistribution: true,
         phaseAllocations: aggregatePhaseAllocations(phaseAllocations),
-        // Finalized subscribed_count is the allocated edition quantity used by
-        // distribution exports and bounded by redeemed_count during minting.
-        publicAirdropCount: publicSubscriptions.reduce(
-          (total, row) => total + Number(row.subscribed_count ?? 0),
-          0
-        )
+        publicAirdropCount: Number(publicAirdropRow?.spots_airdrop ?? 0)
       };
     } finally {
       ctx.timer?.stop(timerName);

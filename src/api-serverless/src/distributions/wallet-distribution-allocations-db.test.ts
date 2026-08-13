@@ -8,7 +8,10 @@ import { WalletDistributionAllocationsDb } from './wallet-distribution-allocatio
 
 describe('WalletDistributionAllocationsDb', () => {
   it('returns phase and Public allocations when distribution is published', async () => {
-    const oneOrNull = jest.fn().mockResolvedValue({ has_distribution: 1 });
+    const oneOrNull = jest
+      .fn()
+      .mockResolvedValueOnce({ has_distribution: 1 })
+      .mockResolvedValueOnce({ spots_airdrop: '5' });
     const execute = jest
       .fn()
       .mockResolvedValueOnce([
@@ -19,12 +22,6 @@ describe('WalletDistributionAllocationsDb', () => {
         { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' },
         { phase: 'Phase3', spots_airdrop: '9', spots_allowlist: '9' },
         { phase: 'Airdrop', spots_airdrop: '9', spots_allowlist: 0 }
-      ])
-      .mockResolvedValueOnce([
-        { subscribed_count: '3' },
-        { subscribed_count: 2 },
-        { subscribed_count: 0 },
-        { subscribed_count: null }
       ]);
     const db = new WalletDistributionAllocationsDb(
       () => ({ oneOrNull, execute }) as any
@@ -57,12 +54,12 @@ describe('WalletDistributionAllocationsDb', () => {
       },
       undefined
     );
-    expect(execute.mock.calls[1][0]).toContain(
+    expect(oneOrNull.mock.calls[1][0]).toContain(
       `FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
     );
-    expect(execute.mock.calls[1][0]).toContain('phase = :publicPhase');
+    expect(oneOrNull.mock.calls[1][0]).toContain('phase = :publicPhase');
     expect(execute.mock.calls[0][0]).toContain('GROUP BY phase');
-    expect(execute.mock.calls[1][0]).toContain('SELECT subscribed_count');
+    expect(oneOrNull.mock.calls[1][0]).toContain('SUM(subscribed_count)');
     expect(timerStart).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
     );
@@ -72,7 +69,10 @@ describe('WalletDistributionAllocationsDb', () => {
   });
 
   it('normalizes mixed-case addresses before querying', async () => {
-    const oneOrNull = jest.fn().mockResolvedValue({ has_distribution: 1 });
+    const oneOrNull = jest
+      .fn()
+      .mockResolvedValueOnce({ has_distribution: 1 })
+      .mockResolvedValueOnce({ spots_airdrop: 0 });
     const execute = jest.fn().mockResolvedValue([]);
     const db = new WalletDistributionAllocationsDb(
       () => ({ oneOrNull, execute }) as any
