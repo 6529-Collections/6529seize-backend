@@ -264,7 +264,13 @@ Important API responsibilities:
   complete all semantic and wallet-signature checks before a final atomic nonce
   consumption. The full auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
-- Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
+  subscriptions, and notifications. Wallet distribution allocation reads
+  combine Phase 0–2 distribution rows with Public subscription airdrops, while
+  returning card-level publication state without exposing the full Public
+  subscription list. They intentionally accept any wallet address without
+  authentication because distribution plans are public and the home page must
+  render before wallet authentication.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
   derives visibility eligibility from a persisted wave, and the authenticated
   `/v2/waves/mention-search` draft endpoint, which applies the selected
