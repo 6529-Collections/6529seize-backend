@@ -44,8 +44,14 @@ describe('WalletDistributionAllocationsDb', () => {
         cardId: 534,
         wallet: '0xwallet',
         phase0: 'Phase 0',
+        phase0Short: 'p0',
+        phase0Compact: 'phase0',
         phase1: 'Phase 1',
-        phase2: 'Phase 2'
+        phase1Short: 'p1',
+        phase1Compact: 'phase1',
+        phase2: 'Phase 2',
+        phase2Short: 'p2',
+        phase2Compact: 'phase2'
       },
       undefined
     );
@@ -53,7 +59,13 @@ describe('WalletDistributionAllocationsDb', () => {
       `FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
     );
     expect(oneOrNull.mock.calls[1][0]).toContain('phase = :publicPhase');
-    expect(execute.mock.calls[0][0]).toContain('ORDER BY CASE phase');
+    expect(execute.mock.calls[0][0]).toContain(
+      "LOWER(REPLACE(phase, ' ', ''))"
+    );
+    expect(execute.mock.calls[0][0]).toContain('GROUP BY canonical_phase');
+    expect(execute.mock.calls[0][0]).toContain(
+      'ORDER BY CASE canonical_phase'
+    );
     expect(timerStart).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
     );

@@ -73,16 +73,32 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
 
       const [phaseAllocations, publicAirdropRow] = await Promise.all([
         this.db.execute<WalletPhaseAllocationDatabaseRow>(
-          `SELECT phase,
+          `SELECT canonical_phase AS phase,
                   COALESCE(SUM(count_airdrop), 0) AS spots_airdrop,
                   COALESCE(SUM(count_allowlist), 0) AS spots_allowlist
-           FROM ${DISTRIBUTION_TABLE}
-           WHERE LOWER(contract) = :contract
-             AND card_id = :cardId
-             AND LOWER(wallet) = :wallet
-             AND phase IN (:phase0, :phase1, :phase2)
-           GROUP BY phase
-           ORDER BY CASE phase
+           FROM (
+             SELECT CASE
+                      WHEN LOWER(REPLACE(phase, ' ', '')) IN (:phase0Short, :phase0Compact) THEN :phase0
+                      WHEN LOWER(REPLACE(phase, ' ', '')) IN (:phase1Short, :phase1Compact) THEN :phase1
+                      WHEN LOWER(REPLACE(phase, ' ', '')) IN (:phase2Short, :phase2Compact) THEN :phase2
+                    END AS canonical_phase,
+                    count_airdrop,
+                    count_allowlist
+             FROM ${DISTRIBUTION_TABLE}
+             WHERE LOWER(contract) = :contract
+               AND card_id = :cardId
+               AND LOWER(wallet) = :wallet
+               AND LOWER(REPLACE(phase, ' ', '')) IN (
+                 :phase0Short,
+                 :phase0Compact,
+                 :phase1Short,
+                 :phase1Compact,
+                 :phase2Short,
+                 :phase2Compact
+               )
+           ) canonical_allocations
+           GROUP BY canonical_phase
+           ORDER BY CASE canonical_phase
              WHEN :phase0 THEN 0
              WHEN :phase1 THEN 1
              WHEN :phase2 THEN 2
@@ -93,8 +109,14 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
             cardId,
             wallet: normalizedWallet,
             phase0: 'Phase 0',
+            phase0Short: 'p0',
+            phase0Compact: 'phase0',
             phase1: 'Phase 1',
-            phase2: 'Phase 2'
+            phase1Short: 'p1',
+            phase1Compact: 'phase1',
+            phase2: 'Phase 2',
+            phase2Short: 'p2',
+            phase2Compact: 'phase2'
           },
           queryOptions
         ),
