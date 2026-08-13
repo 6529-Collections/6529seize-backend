@@ -201,6 +201,8 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
           queryOptions
         ),
         this.db.execute<PublicSubscriptionRow>(
+          // Finalized subscriptions are populated independently from
+          // DistributionNormalized, so retain case-insensitive predicates.
           `SELECT subscribed_count
            FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
            WHERE LOWER(contract) = :contract

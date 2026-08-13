@@ -71,6 +71,7 @@ describe('wallet distribution normalization contract', () => {
     const walletAAllowlist = params[`allowlist_${walletAIndex}`] as string;
 
     expect(params[`wallet_${walletAIndex}`]).toBe('0xaaa');
+    expect(params[`contract_${walletAIndex}`]).toBe('0xcontract');
     expect(params[`airdrops_${walletAIndex}`]).toBe(2);
     expect(JSON.parse(walletAAllowlist)).toEqual([
       { phase: 'P0', spots: 3, spots_airdrop: 3, spots_allowlist: 0 },
@@ -82,6 +83,7 @@ describe('wallet distribution normalization contract', () => {
       }
     ]);
     expect(params[`wallet_${walletBIndex}`]).toBe('0xbbb');
+    expect(params[`contract_${walletBIndex}`]).toBe('0xcontract');
     expect(JSON.parse(params[`allowlist_${walletBIndex}`] as string)).toEqual([
       {
         phase: 'Phase 1',
