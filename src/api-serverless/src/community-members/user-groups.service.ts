@@ -1532,6 +1532,9 @@ export class UserGroupsService {
   }
 
   private async doNameAbusivenessCheck(groupEntity: ApiGroupFull) {
+    if (this.isKnownSafePersonalGroupName(groupEntity)) {
+      return;
+    }
     const abusivenessDetectionResult =
       await this.abusivenessCheckService.checkFilterName({
         text: groupEntity.name,
@@ -1542,6 +1545,14 @@ export class UserGroupsService {
         `Group name is not allowed: ${abusivenessDetectionResult.explanation}`
       );
     }
+  }
+
+  private isKnownSafePersonalGroupName(groupEntity: ApiGroupFull): boolean {
+    if (groupEntity.name === 'Only Me') {
+      return true;
+    }
+    const creatorHandle = groupEntity.created_by?.handle;
+    return !!creatorHandle && groupEntity.name === `Only ${creatorHandle}`;
   }
 
   public async getByIdOrThrow(
