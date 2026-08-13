@@ -2115,6 +2115,8 @@ paths:
       x-6529-router:
         enabled: true
         auth: none
+        cache:
+          ttlSeconds: 60
         handler:
           import: "@/api/distributions/get-wallet-distribution-allocations.handler"
           name: handleGetWalletDistributionAllocations
@@ -2148,6 +2150,10 @@ paths:
                 $ref: "#/components/schemas/ApiWalletDistributionAllocations"
         "400":
           description: Invalid contract, card ID, or wallet address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
   /distributions/{contract}/{id}/overview:
     get:
       tags:
@@ -17111,6 +17117,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropWithoutWave"
+    ApiErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: string
     ApiEthereumAddress:
       type: string
       pattern: ^0x[a-fA-F0-9]{40}$

@@ -25,6 +25,7 @@ import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, Crea
 const router = asyncRouter();
 router.get(
   '/distributions/:contract/:card_id/wallet-allocations',
+  cacheRequest({ ttl: Time.seconds(60) }),
   async (
     req: GetWalletDistributionAllocationsRequest,
     res: Response<ApiResponse<GetWalletDistributionAllocationsResponse>>
