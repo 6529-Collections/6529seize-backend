@@ -161,14 +161,15 @@ function formatReleaseValidationContent(
       ? 'Revalidation initiated by'
       : 'Deployment initiated by';
   const githubLogin = request.triggered_by_github_login?.trim();
-  const initiatorReference = initiator
-    ? `@[${initiator.handle}]`
-    : githubLogin
-      ? formatMarkdownLink(
-          githubLogin,
-          `https://github.com/${encodeURIComponent(githubLogin)}`
-        )
-      : 'unknown';
+  let initiatorReference = 'unknown';
+  if (initiator) {
+    initiatorReference = `@[${initiator.handle}]`;
+  } else if (githubLogin) {
+    initiatorReference = formatMarkdownLink(
+      githubLogin,
+      `https://github.com/${encodeURIComponent(githubLogin)}`
+    );
+  }
   return [
     `### 🚨 ${validationLabel} failed`,
     '',

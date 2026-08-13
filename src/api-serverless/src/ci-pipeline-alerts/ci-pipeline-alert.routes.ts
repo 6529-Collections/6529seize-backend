@@ -23,6 +23,36 @@ const CI_PIPELINE_ALERT_SIGNATURE_SKEW_SECONDS = 300;
 const CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS = 86400;
 const CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS = 300;
 
+function getReleaseValidationContractError(
+  value: CiPipelineAlertRequest
+): string | null {
+  if (value.notification_type !== 'release_validation') {
+    return null;
+  }
+  if (
+    !['prod', 'production'].includes(value.environment) ||
+    !value.release_group_id?.trim() ||
+    !/^[a-f0-9]{40}$/.test(value.sha ?? '') ||
+    !value.triggered_by_github_login?.trim()
+  ) {
+    return 'production environment, release_group_id, exact sha, and workflow initiator are required for release validation';
+  }
+  if (
+    value.repo.split('/').pop() !== '6529seize-frontend' ||
+    (value.pull_request_number !== undefined &&
+      value.pull_request_number !== null)
+  ) {
+    return 'release validation supports only frontend deployment identities without pull_request_number';
+  }
+  if (
+    value.release_notes_prompt_path !== undefined ||
+    value.release_note_groups !== undefined
+  ) {
+    return 'release validation cannot request release-note generation';
+  }
+  return null;
+}
+
 // This HMAC-signed, automation-only ingress is mounted manually and is
 // intentionally excluded from the public OpenAPI surface.
 const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
@@ -119,36 +149,9 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   })
     .unknown(false)
     .custom((value, helpers) => {
-      if (value.notification_type === 'release_validation') {
-        if (
-          !['prod', 'production'].includes(value.environment) ||
-          !value.release_group_id?.trim() ||
-          !/^[a-f0-9]{40}$/.test(value.sha ?? '') ||
-          !value.triggered_by_github_login?.trim()
-        ) {
-          return helpers.message({
-            custom:
-              'production environment, release_group_id, exact sha, and workflow initiator are required for release validation'
-          });
-        }
-        if (
-          value.repo.split('/').pop() !== '6529seize-frontend' ||
-          (value.pull_request_number !== undefined &&
-            value.pull_request_number !== null)
-        ) {
-          return helpers.message({
-            custom:
-              'release validation supports only frontend deployment identities without pull_request_number'
-          });
-        }
-        if (
-          value.release_notes_prompt_path !== undefined ||
-          value.release_note_groups !== undefined
-        ) {
-          return helpers.message({
-            custom: 'release validation cannot request release-note generation'
-          });
-        }
+      const releaseValidationError = getReleaseValidationContractError(value);
+      if (releaseValidationError) {
+        return helpers.message({ custom: releaseValidationError });
       }
       if (
         value.validation_mode !== undefined &&
