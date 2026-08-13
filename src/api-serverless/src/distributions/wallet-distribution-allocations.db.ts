@@ -34,6 +34,43 @@ interface PublicAirdropCountRow {
   readonly spots_airdrop: NumericDatabaseValue;
 }
 
+function normalizePhase(phase: string): string | null {
+  switch (phase.trim().toLowerCase().replace(/\s+/g, '')) {
+    case 'p0':
+    case 'phase0':
+      return 'Phase 0';
+    case 'p1':
+    case 'phase1':
+      return 'Phase 1';
+    case 'p2':
+    case 'phase2':
+      return 'Phase 2';
+    default:
+      return null;
+  }
+}
+
+function aggregatePhaseAllocations(
+  rows: WalletPhaseAllocationDatabaseRow[]
+): WalletPhaseAllocationRow[] {
+  const allocations = new Map<string, WalletPhaseAllocationRow>();
+  for (const row of rows) {
+    const phase = normalizePhase(row.phase);
+    if (!phase) {
+      continue;
+    }
+    const current = allocations.get(phase);
+    allocations.set(phase, {
+      phase,
+      spots_airdrop:
+        (current?.spots_airdrop ?? 0) + Number(row.spots_airdrop ?? 0),
+      spots_allowlist:
+        (current?.spots_allowlist ?? 0) + Number(row.spots_allowlist ?? 0)
+    });
+  }
+  return Array.from(allocations.values());
+}
+
 export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleService {
   public async findByWallet(
     contract: string,
@@ -53,7 +90,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         `SELECT EXISTS(
            SELECT 1
            FROM ${DISTRIBUTION_NORMALIZED_TABLE}
-           WHERE LOWER(contract) = :contract
+           WHERE contract = :contract
              AND card_id = :cardId
          ) AS has_distribution`,
         { contract: normalizedContract, cardId },
@@ -73,59 +110,41 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
 
       const [phaseAllocations, publicAirdropRow] = await Promise.all([
         this.db.execute<WalletPhaseAllocationDatabaseRow>(
-          `SELECT canonical_phase AS phase,
+          `SELECT phase,
                   COALESCE(SUM(count_airdrop), 0) AS spots_airdrop,
                   COALESCE(SUM(count_allowlist), 0) AS spots_allowlist
-           FROM (
-             SELECT CASE
-                      WHEN LOWER(REPLACE(phase, ' ', '')) IN (:phase0Short, :phase0Compact) THEN :phase0
-                      WHEN LOWER(REPLACE(phase, ' ', '')) IN (:phase1Short, :phase1Compact) THEN :phase1
-                      WHEN LOWER(REPLACE(phase, ' ', '')) IN (:phase2Short, :phase2Compact) THEN :phase2
-                    END AS canonical_phase,
-                    count_airdrop,
-                    count_allowlist
-             FROM ${DISTRIBUTION_TABLE}
-             WHERE LOWER(contract) = :contract
-               AND card_id = :cardId
-               AND LOWER(wallet) = :wallet
-               AND LOWER(REPLACE(phase, ' ', '')) IN (
-                 :phase0Short,
-                 :phase0Compact,
-                 :phase1Short,
-                 :phase1Compact,
-                 :phase2Short,
-                 :phase2Compact
-               )
-           ) canonical_allocations
-           GROUP BY canonical_phase
-           ORDER BY CASE canonical_phase
-             WHEN :phase0 THEN 0
-             WHEN :phase1 THEN 1
-             WHEN :phase2 THEN 2
-             ELSE 3
-           END`,
+           FROM ${DISTRIBUTION_TABLE}
+           WHERE contract = :contract
+             AND card_id = :cardId
+             AND wallet = :wallet
+             AND LOWER(REPLACE(phase, ' ', '')) IN (
+               :phase0Short,
+               :phase0Compact,
+               :phase1Short,
+               :phase1Compact,
+               :phase2Short,
+               :phase2Compact
+             )
+           GROUP BY phase`,
           {
             contract: normalizedContract,
             cardId,
             wallet: normalizedWallet,
-            phase0: 'Phase 0',
             phase0Short: 'p0',
             phase0Compact: 'phase0',
-            phase1: 'Phase 1',
             phase1Short: 'p1',
             phase1Compact: 'phase1',
-            phase2: 'Phase 2',
             phase2Short: 'p2',
             phase2Compact: 'phase2'
           },
           queryOptions
         ),
         this.db.oneOrNull<PublicAirdropCountRow>(
-          `SELECT COUNT(*) AS spots_airdrop
+          `SELECT COALESCE(SUM(subscribed_count), 0) AS spots_airdrop
            FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-           WHERE LOWER(contract) = :contract
+           WHERE contract = :contract
              AND token_id = :cardId
-             AND LOWER(airdrop_address) = :wallet
+             AND airdrop_address = :wallet
              AND phase = :publicPhase`,
           {
             contract: normalizedContract,
@@ -139,11 +158,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
 
       return {
         hasDistribution: true,
-        phaseAllocations: phaseAllocations.map((allocation) => ({
-          phase: allocation.phase,
-          spots_airdrop: Number(allocation.spots_airdrop ?? 0),
-          spots_allowlist: Number(allocation.spots_allowlist ?? 0)
-        })),
+        phaseAllocations: aggregatePhaseAllocations(phaseAllocations),
         publicAirdropCount: Number(publicAirdropRow?.spots_airdrop ?? 0)
       };
     } finally {

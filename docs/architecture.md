@@ -270,7 +270,8 @@ Important API responsibilities:
   returning card-level publication state without exposing the full Public
   subscription list. They intentionally accept any wallet address without
   authentication because distribution plans are public and the home page must
-  render before wallet authentication.
+  render before wallet authentication. Responses use a 60-second route cache
+  to limit repeated database reads while keeping publication changes timely.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
   derives visibility eligibility from a persisted wave, and the authenticated
   `/v2/waves/mention-search` draft endpoint, which applies the selected

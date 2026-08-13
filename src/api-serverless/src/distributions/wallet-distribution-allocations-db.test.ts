@@ -15,7 +15,11 @@ describe('WalletDistributionAllocationsDb', () => {
     const execute = jest
       .fn()
       .mockResolvedValue([
-        { phase: 'Phase 0', spots_airdrop: '11', spots_allowlist: 0 }
+        { phase: 'P0', spots_airdrop: '3', spots_allowlist: 0 },
+        { phase: 'Phase0', spots_airdrop: '4', spots_allowlist: 0 },
+        { phase: 'PHASE 0', spots_airdrop: '4', spots_allowlist: 0 },
+        { phase: 'p1', spots_airdrop: 0, spots_allowlist: '2' },
+        { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' }
       ]);
     const db = new WalletDistributionAllocationsDb(
       () => ({ oneOrNull, execute }) as any
@@ -29,7 +33,9 @@ describe('WalletDistributionAllocationsDb', () => {
     ).resolves.toEqual({
       hasDistribution: true,
       phaseAllocations: [
-        { phase: 'Phase 0', spots_airdrop: 11, spots_allowlist: 0 }
+        { phase: 'Phase 0', spots_airdrop: 11, spots_allowlist: 0 },
+        { phase: 'Phase 1', spots_airdrop: 0, spots_allowlist: 2 },
+        { phase: 'Phase 2', spots_airdrop: 1, spots_allowlist: 1 }
       ],
       publicAirdropCount: 2
     });
@@ -43,13 +49,10 @@ describe('WalletDistributionAllocationsDb', () => {
         contract: '0xcontract',
         cardId: 534,
         wallet: '0xwallet',
-        phase0: 'Phase 0',
         phase0Short: 'p0',
         phase0Compact: 'phase0',
-        phase1: 'Phase 1',
         phase1Short: 'p1',
         phase1Compact: 'phase1',
-        phase2: 'Phase 2',
         phase2Short: 'p2',
         phase2Compact: 'phase2'
       },
@@ -62,8 +65,10 @@ describe('WalletDistributionAllocationsDb', () => {
     expect(execute.mock.calls[0][0]).toContain(
       "LOWER(REPLACE(phase, ' ', ''))"
     );
-    expect(execute.mock.calls[0][0]).toContain('GROUP BY canonical_phase');
-    expect(execute.mock.calls[0][0]).toContain('ORDER BY CASE canonical_phase');
+    expect(execute.mock.calls[0][0]).toContain('GROUP BY phase');
+    expect(oneOrNull.mock.calls[1][0]).toContain(
+      'COALESCE(SUM(subscribed_count), 0)'
+    );
     expect(timerStart).toHaveBeenCalledWith(
       'WalletDistributionAllocationsDb->findByWallet'
     );
