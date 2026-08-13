@@ -68,21 +68,47 @@ function aggregatePhaseAllocations(
   return Array.from(allocations.values());
 }
 
-function isAllowlistEntry(value: unknown): value is AllowlistNormalizedEntry {
-  if (typeof value !== 'object' || value === null) {
-    return false;
+function toAllocationCount(value: unknown): number | null {
+  if (
+    (typeof value !== 'number' && typeof value !== 'string') ||
+    (typeof value === 'string' && value.trim() === '')
+  ) {
+    return null;
   }
-  const entry = value as Partial<AllowlistNormalizedEntry>;
-  return (
-    typeof entry.phase === 'string' &&
-    typeof entry.spots === 'number' &&
-    typeof entry.spots_airdrop === 'number' &&
-    typeof entry.spots_allowlist === 'number'
-  );
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+function toAllowlistEntry(value: unknown): AllowlistNormalizedEntry | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const entry = value as Record<string, unknown>;
+  const phase = entry.phase;
+  const spotsAirdrop = toAllocationCount(entry.spots_airdrop);
+  const spotsAllowlist = toAllocationCount(entry.spots_allowlist);
+  if (
+    typeof phase !== 'string' ||
+    spotsAirdrop === null ||
+    spotsAllowlist === null
+  ) {
+    return null;
+  }
+  return {
+    phase,
+    spots: spotsAirdrop + spotsAllowlist,
+    spots_airdrop: spotsAirdrop,
+    spots_allowlist: spotsAllowlist
+  };
 }
 
 function toAllowlistEntries(value: unknown): AllowlistNormalizedEntry[] {
-  return Array.isArray(value) ? value.filter(isAllowlistEntry) : [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(toAllowlistEntry)
+    .filter((entry): entry is AllowlistNormalizedEntry => entry !== null);
 }
 
 function parseAllowlist(
@@ -141,6 +167,9 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
 
       const [walletDistributionRow, publicSubscriptions] = await Promise.all([
         this.db.oneOrNull<WalletNormalizedDistributionRow>(
+          // DistributionNormalized's primary key is card/contract/wallet;
+          // populateDistributionNormalized groups raw rows by wallet before
+          // serializing that wallet's allowlist.
           `SELECT allowlist
            FROM ${DISTRIBUTION_NORMALIZED_TABLE}
            WHERE LOWER(contract) = :contract

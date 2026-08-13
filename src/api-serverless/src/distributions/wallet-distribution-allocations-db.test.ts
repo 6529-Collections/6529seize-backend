@@ -12,8 +12,13 @@ describe('WalletDistributionAllocationsDb', () => {
       .mockResolvedValueOnce({ has_distribution: 1 })
       .mockResolvedValueOnce({
         allowlist: JSON.stringify([
-          { phase: 'P0', spots: 3, spots_airdrop: 3, spots_allowlist: 0 },
-          { phase: 'Phase0', spots: 4, spots_airdrop: 4, spots_allowlist: 0 },
+          {
+            phase: 'P0',
+            spots: '3',
+            spots_airdrop: '3',
+            spots_allowlist: '0'
+          },
+          { phase: 'Phase0', spots_airdrop: 4, spots_allowlist: 0 },
           { phase: 'PHASE 0', spots: 4, spots_airdrop: 4, spots_allowlist: 0 },
           { phase: 'p1', spots: 2, spots_airdrop: 0, spots_allowlist: 2 },
           { phase: 'Phase 2', spots: 2, spots_airdrop: 1, spots_allowlist: 1 },
@@ -61,6 +66,7 @@ describe('WalletDistributionAllocationsDb', () => {
       },
       undefined
     );
+    expect(oneOrNull.mock.calls[1][0]).toContain('AND LOWER(wallet) = :wallet');
     expect(execute.mock.calls[0][0]).toContain(
       `FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
     );
@@ -117,6 +123,16 @@ describe('WalletDistributionAllocationsDb', () => {
         spots_airdrop: 1,
         spots_allowlist: 0
       })
+    ],
+    [
+      'invalid allocation counts',
+      JSON.stringify([
+        {
+          phase: 'Phase 0',
+          spots_airdrop: 'invalid',
+          spots_allowlist: 0
+        }
+      ])
     ]
   ])('ignores %s in the normalized allowlist', async (_, allowlist) => {
     const oneOrNull = jest
