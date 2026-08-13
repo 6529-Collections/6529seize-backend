@@ -16,11 +16,15 @@ describe('WalletDistributionAllocationsDb', () => {
         { phase: 'Phase0', spots_airdrop: '4', spots_allowlist: 0 },
         { phase: 'PHASE 0', spots_airdrop: '4', spots_allowlist: 0 },
         { phase: 'p1', spots_airdrop: 0, spots_allowlist: '2' },
-        { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' }
+        { phase: 'Phase 2', spots_airdrop: '1', spots_allowlist: '1' },
+        { phase: 'Phase3', spots_airdrop: '9', spots_allowlist: '9' },
+        { phase: 'Airdrop', spots_airdrop: '9', spots_allowlist: 0 }
       ])
       .mockResolvedValueOnce([
         { subscribed_count: '3' },
-        { subscribed_count: 2 }
+        { subscribed_count: 2 },
+        { subscribed_count: 0 },
+        { subscribed_count: null }
       ]);
     const db = new WalletDistributionAllocationsDb(
       () => ({ oneOrNull, execute }) as any
@@ -49,13 +53,7 @@ describe('WalletDistributionAllocationsDb', () => {
       {
         contract: '0xcontract',
         cardId: 534,
-        wallet: '0xwallet',
-        phase0Short: 'p0',
-        phase0Compact: 'phase0',
-        phase1Short: 'p1',
-        phase1Compact: 'phase1',
-        phase2Short: 'p2',
-        phase2Compact: 'phase2'
+        wallet: '0xwallet'
       },
       undefined
     );
@@ -63,9 +61,6 @@ describe('WalletDistributionAllocationsDb', () => {
       `FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
     );
     expect(execute.mock.calls[1][0]).toContain('phase = :publicPhase');
-    expect(execute.mock.calls[0][0]).toContain(
-      "LOWER(REPLACE(phase, ' ', ''))"
-    );
     expect(execute.mock.calls[0][0]).toContain('GROUP BY phase');
     expect(execute.mock.calls[1][0]).toContain('SELECT subscribed_count');
     expect(timerStart).toHaveBeenCalledWith(

@@ -34,7 +34,6 @@ interface PublicSubscriptionRow {
   readonly subscribed_count: NumericDatabaseValue;
 }
 
-// This table drives both the SQL compact-alias filter and application mapping.
 const MANUAL_PHASE_ALIASES = [
   { phase: 'Phase 0', short: 'p0', compact: 'phase0' },
   { phase: 'Phase 1', short: 'p1', compact: 'phase1' },
@@ -120,25 +119,11 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
            WHERE LOWER(contract) = :contract
              AND card_id = :cardId
              AND LOWER(wallet) = :wallet
-             AND LOWER(REPLACE(phase, ' ', '')) IN (
-               :phase0Short,
-               :phase0Compact,
-               :phase1Short,
-               :phase1Compact,
-               :phase2Short,
-               :phase2Compact
-             )
            GROUP BY phase`,
           {
             contract: normalizedContract,
             cardId,
-            wallet: normalizedWallet,
-            phase0Short: MANUAL_PHASE_ALIASES[0].short,
-            phase0Compact: MANUAL_PHASE_ALIASES[0].compact,
-            phase1Short: MANUAL_PHASE_ALIASES[1].short,
-            phase1Compact: MANUAL_PHASE_ALIASES[1].compact,
-            phase2Short: MANUAL_PHASE_ALIASES[2].short,
-            phase2Compact: MANUAL_PHASE_ALIASES[2].compact
+            wallet: normalizedWallet
           },
           queryOptions
         ),
@@ -162,6 +147,8 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
       return {
         hasDistribution: true,
         phaseAllocations: aggregatePhaseAllocations(phaseAllocations),
+        // Finalized subscribed_count is the allocated edition quantity used by
+        // distribution exports and bounded by redeemed_count during minting.
         publicAirdropCount: publicSubscriptions.reduce(
           (total, row) => total + Number(row.subscribed_count ?? 0),
           0
