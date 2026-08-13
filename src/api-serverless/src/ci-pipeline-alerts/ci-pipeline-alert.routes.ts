@@ -30,7 +30,7 @@ function getReleaseValidationContractError(
     return null;
   }
   if (
-    !['prod', 'production'].includes(value.environment) ||
+    !['prod', 'production'].includes(value.environment ?? '') ||
     !value.release_group_id?.trim() ||
     !/^[a-f0-9]{40}$/.test(value.sha ?? '') ||
     !value.triggered_by_github_login?.trim()
