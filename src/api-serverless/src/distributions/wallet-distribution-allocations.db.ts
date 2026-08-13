@@ -68,15 +68,38 @@ function aggregatePhaseAllocations(
   return Array.from(allocations.values());
 }
 
+function isAllowlistEntry(value: unknown): value is AllowlistNormalizedEntry {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const entry = value as Partial<AllowlistNormalizedEntry>;
+  return (
+    typeof entry.phase === 'string' &&
+    typeof entry.spots === 'number' &&
+    typeof entry.spots_airdrop === 'number' &&
+    typeof entry.spots_allowlist === 'number'
+  );
+}
+
+function toAllowlistEntries(value: unknown): AllowlistNormalizedEntry[] {
+  return Array.isArray(value) ? value.filter(isAllowlistEntry) : [];
+}
+
 function parseAllowlist(
   value: WalletNormalizedDistributionRow['allowlist']
 ): AllowlistNormalizedEntry[] {
   if (!value) {
     return [];
   }
-  return typeof value === 'string'
-    ? (JSON.parse(value) as AllowlistNormalizedEntry[])
-    : value;
+  if (Array.isArray(value)) {
+    return toAllowlistEntries(value);
+  }
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return toAllowlistEntries(parsed);
+  } catch {
+    return [];
+  }
 }
 
 export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleService {

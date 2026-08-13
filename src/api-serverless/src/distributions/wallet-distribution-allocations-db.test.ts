@@ -107,6 +107,36 @@ describe('WalletDistributionAllocationsDb', () => {
     );
   });
 
+  it.each([
+    ['malformed JSON', 'not-json'],
+    [
+      'a non-array JSON value',
+      JSON.stringify({
+        phase: 'Phase 0',
+        spots: 1,
+        spots_airdrop: 1,
+        spots_allowlist: 0
+      })
+    ]
+  ])('ignores %s in the normalized allowlist', async (_, allowlist) => {
+    const oneOrNull = jest
+      .fn()
+      .mockResolvedValueOnce({ has_distribution: 1 })
+      .mockResolvedValueOnce({ allowlist });
+    const execute = jest.fn().mockResolvedValue([]);
+    const db = new WalletDistributionAllocationsDb(
+      () => ({ oneOrNull, execute }) as any
+    );
+
+    await expect(
+      db.findByWallet('0xcontract', 534, '0xwallet', {})
+    ).resolves.toEqual({
+      hasDistribution: true,
+      phaseAllocations: [],
+      publicAirdropCount: 0
+    });
+  });
+
   it('does not query wallet allocations before distribution is published', async () => {
     const oneOrNull = jest.fn().mockResolvedValue({ has_distribution: 0 });
     const execute = jest.fn();
