@@ -164,7 +164,7 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
         `SELECT EXISTS(
            SELECT 1
            FROM ${DISTRIBUTION_NORMALIZED_TABLE}
-           WHERE contract = :contract
+           WHERE LOWER(contract) = :contract
              AND card_id = :cardId
          ) AS has_distribution`,
         { contract: normalizedContract, cardId },
@@ -189,9 +189,9 @@ export class WalletDistributionAllocationsDb extends LazyDbAccessCompatibleServi
           // serializing that wallet's allowlist.
           `SELECT allowlist
            FROM ${DISTRIBUTION_NORMALIZED_TABLE}
-           WHERE contract = :contract
+           WHERE LOWER(contract) = :contract
              AND card_id = :cardId
-             AND wallet = :wallet
+             AND LOWER(wallet) = :wallet
            LIMIT 1`,
           {
             contract: normalizedContract,
