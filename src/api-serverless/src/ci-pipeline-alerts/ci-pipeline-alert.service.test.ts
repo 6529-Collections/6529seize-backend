@@ -306,7 +306,9 @@ describe('CiPipelineAlertService', () => {
     async (serviceName) => {
       const service = new CiPipelineAlertService(
         dropCreationApiService as any,
-        identitiesRepository as any
+        identitiesRepository as any,
+        releaseNotesQueue as any,
+        alertTargetStore as any
       );
 
       await service.postAlert(

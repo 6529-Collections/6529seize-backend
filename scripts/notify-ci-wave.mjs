@@ -1,5 +1,8 @@
 #!/usr/bin/env node
+/* global AbortController, Buffer, clearTimeout, fetch, setTimeout */
 import crypto from 'node:crypto';
+import console from 'node:console';
+import process from 'node:process';
 
 const {
   CI_PIPELINES_ALERT_URL,

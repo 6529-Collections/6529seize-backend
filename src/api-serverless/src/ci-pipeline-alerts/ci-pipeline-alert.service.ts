@@ -322,22 +322,25 @@ function formatRun(
   request: CiPipelineAlertRequest,
   includeAttempt: boolean
 ): string {
-  const runLabel = normalizeOptionalValue(request.run_number)
-    ? `#${normalizeOptionalValue(request.run_number)}`
-    : `#${request.run_id}`;
-  const attempt = request.run_attempt ?? 1;
-  const attemptSuffix =
-    includeAttempt && attempt > 1 ? ` (attempt ${attempt})` : '';
-  return `${formatMarkdownLink(runLabel, request.run_url)}${attemptSuffix}`;
+  const { runLabel, attemptSuffix } = getRunLabelParts(request);
+  return `${formatMarkdownLink(runLabel, request.run_url)}${includeAttempt ? attemptSuffix : ''}`;
 }
 
 function formatWebE2ESuccessRun(request: CiPipelineAlertRequest): string {
-  const runLabel = normalizeOptionalValue(request.run_number)
-    ? `#${normalizeOptionalValue(request.run_number)}`
-    : `#${request.run_id}`;
-  const attempt = request.run_attempt ?? 1;
-  const attemptSuffix = attempt > 1 ? ` (attempt ${attempt})` : '';
+  const { runLabel, attemptSuffix } = getRunLabelParts(request);
   return formatMarkdownLink(`Run ${runLabel}${attemptSuffix}`, request.run_url);
+}
+
+function getRunLabelParts(request: CiPipelineAlertRequest): {
+  readonly runLabel: string;
+  readonly attemptSuffix: string;
+} {
+  const runNumber = normalizeOptionalValue(request.run_number);
+  const attempt = request.run_attempt ?? 1;
+  return {
+    runLabel: `#${runNumber ?? request.run_id}`,
+    attemptSuffix: attempt > 1 ? ` (attempt ${attempt})` : ''
+  };
 }
 
 function isWebE2EAlert(request: CiPipelineAlertRequest): boolean {
@@ -348,7 +351,7 @@ function isSuccessfulWebDeployAlert(request: CiPipelineAlertRequest): boolean {
   return (
     request.alert_type === 'deploy' &&
     request.status === 'success' &&
-    request.repo.split('/').pop() === '6529seize-frontend' &&
+    request.repo === '6529seize-frontend' &&
     normalizeOptionalValue(request.service) === 'web'
   );
 }
@@ -403,13 +406,12 @@ export class CiPipelineAlertService {
 
     if (isSuccessfulWebDeployAlert(request)) {
       const environment = normalizeTargetEnvironment(request.environment);
-      if (!environment) {
-        throw new Error(
-          `Unsupported CI pipeline alert environment: ${request.environment ?? 'missing'}`
-        );
-      }
       const firstPart = drop.parts?.[0];
-      if (firstPart) {
+      if (!environment) {
+        this.logger.warn(
+          `Unable to remember WEB deploy reply target for ${request.repo} run ${request.run_id}: unsupported environment ${request.environment ?? 'missing'}`
+        );
+      } else if (firstPart) {
         await this.alertTargetStore.rememberDeployTarget(
           {
             repo: request.repo,
@@ -730,9 +732,10 @@ export class CiPipelineAlertService {
       );
     }
     const automatic = isAutomationActor(request.triggered_by_github_login);
-    const validation = automatic
-      ? 'Automatic'
-      : `Manual by ${mentions.triggeredBy ? '@[' + mentions.triggeredBy.handle + ']' : 'unknown'}`;
+    const manualValidator = mentions.triggeredBy
+      ? `@[${mentions.triggeredBy.handle}]`
+      : 'unknown';
+    const validation = automatic ? 'Automatic' : `Manual by ${manualValidator}`;
     const deployInitiatorIsDistinct =
       mentions.deployInitiator !== null &&
       mentions.deployInitiator.profileId !== mentions.triggeredBy?.profileId;

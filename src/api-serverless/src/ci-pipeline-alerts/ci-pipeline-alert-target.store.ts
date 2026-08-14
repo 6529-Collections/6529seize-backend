@@ -52,11 +52,13 @@ function identityKeys(identity: CiPipelineDeployTargetIdentity): string[] {
 function parseTarget(value: string): CiPipelineDeployAlertTarget | null {
   try {
     const parsed = JSON.parse(value) as Partial<CiPipelineDeployAlertTarget>;
+    const dropPartId = parsed.dropPartId;
     if (
       typeof parsed.dropId !== 'string' ||
       !parsed.dropId ||
-      !Number.isInteger(parsed.dropPartId) ||
-      Number(parsed.dropPartId) < 0 ||
+      typeof dropPartId !== 'number' ||
+      !Number.isInteger(dropPartId) ||
+      dropPartId < 0 ||
       (parsed.sha !== null && typeof parsed.sha !== 'string') ||
       (parsed.triggeredByGithubLogin !== null &&
         typeof parsed.triggeredByGithubLogin !== 'string')
@@ -65,7 +67,7 @@ function parseTarget(value: string): CiPipelineDeployAlertTarget | null {
     }
     return {
       dropId: parsed.dropId,
-      dropPartId: Number(parsed.dropPartId),
+      dropPartId,
       sha: parsed.sha ?? null,
       triggeredByGithubLogin: parsed.triggeredByGithubLogin ?? null
     };

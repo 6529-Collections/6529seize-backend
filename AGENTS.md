@@ -28,6 +28,14 @@
   together.
 - `STAGING_DEPLOYED` is not validation. Do not mutate staging during manifest-
   bound E2E, and never infer production readiness from staging validation.
+- CI wave senders pass deploy/run identities, never raw drop IDs. The `api`
+  receiver exclusively owns Redis correlation and the drop `reply_to` target;
+  every supplied deploy-run/train identity must resolve to the same drop or the
+  E2E result posts standalone.
+- Preserve exact backend Lambda identifiers and `WEB` capitalization in CI
+  wave messages. Keep alert delivery best effort, deploy the backend `api`
+  receiver before frontend workflow senders, and follow
+  `docs/ci-pipeline-alerts.md` for the durable contract.
 - Production readiness is an explicit dependency-closed selection. Every
   selected unchanged SHA must carry successful staging manifest/E2E evidence;
   unrelated staging candidates and the current shared-staging combination are

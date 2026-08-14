@@ -25,8 +25,13 @@ describe('RedisCiPipelineAlertTargetStore', () => {
   });
 
   it('indexes a deploy drop by run and Release Train identity', async () => {
+    const values = new Map<string, string>();
     const redis = {
-      set: jest.fn().mockResolvedValue('OK')
+      set: jest.fn(async (key: string, value: string, _options: unknown) => {
+        values.set(key, value);
+        return 'OK';
+      }),
+      get: jest.fn(async (key: string) => values.get(key) ?? null)
     };
     (getRedisClient as jest.Mock).mockReturnValue(redis);
     const store = new RedisCiPipelineAlertTargetStore();
@@ -34,22 +39,25 @@ describe('RedisCiPipelineAlertTargetStore', () => {
     await store.rememberDeployTarget(identity, target);
 
     expect(redis.set).toHaveBeenCalledTimes(2);
-    expect(redis.set.mock.calls[0][0]).not.toBe(redis.set.mock.calls[1][0]);
+    const writtenKeys = redis.set.mock.calls.map(([key]) => key);
+    expect(new Set(writtenKeys).size).toBe(2);
     for (const [, value, options] of redis.set.mock.calls) {
       expect(JSON.parse(value)).toEqual(target);
       expect(options).toEqual({ EX: 30 * 24 * 60 * 60 });
     }
-  });
-
-  it('resolves only when every supplied identity points to the same drop', async () => {
-    const redis = {
-      get: jest.fn().mockResolvedValue(JSON.stringify(target))
-    };
-    (getRedisClient as jest.Mock).mockReturnValue(redis);
-    const store = new RedisCiPipelineAlertTargetStore();
 
     await expect(store.resolveDeployTarget(identity)).resolves.toEqual(target);
-    expect(redis.get).toHaveBeenCalledTimes(2);
+    expect(redis.get.mock.calls.map(([key]) => key)).toEqual(writtenKeys);
+
+    await expect(
+      store.resolveDeployTarget({ ...identity, runId: 'different-run' })
+    ).resolves.toBeNull();
+    await expect(
+      store.resolveDeployTarget({
+        ...identity,
+        releaseTrainId: 'different-train'
+      })
+    ).resolves.toBeNull();
   });
 
   it('treats conflicting parent identities as ambiguous', async () => {
@@ -67,8 +75,9 @@ describe('RedisCiPipelineAlertTargetStore', () => {
     await expect(store.resolveDeployTarget(identity)).resolves.toBeNull();
   });
 
-  it('falls back to a standalone post when identity is absent or Redis is unavailable', async () => {
-    (getRedisClient as jest.Mock).mockReturnValue(null);
+  it('does not query Redis when no correlation identity is supplied', async () => {
+    const redis = { get: jest.fn() };
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
     const store = new RedisCiPipelineAlertTargetStore();
 
     await expect(
@@ -77,6 +86,21 @@ describe('RedisCiPipelineAlertTargetStore', () => {
         environment: identity.environment
       })
     ).resolves.toBeNull();
+    expect(redis.get).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a standalone post when Redis is unavailable', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    const store = new RedisCiPipelineAlertTargetStore();
+
+    await expect(store.resolveDeployTarget(identity)).resolves.toBeNull();
+  });
+
+  it('falls back to a standalone post when Redis lookup fails', async () => {
+    const redis = { get: jest.fn().mockRejectedValue(new Error('offline')) };
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+    const store = new RedisCiPipelineAlertTargetStore();
+
     await expect(store.resolveDeployTarget(identity)).resolves.toBeNull();
   });
 });

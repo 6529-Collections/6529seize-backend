@@ -166,7 +166,14 @@ Examples:
 
 If you run `ghdeploy` from an unsupported folder, it fails with a clear error instead of guessing.
 
-### 0.5 Staging DB Local Sync
+### 0.5 CI Pipeline Alerts
+
+Deploy and WEB E2E workflows post signed outcomes to the CI waves through the
+backend API. Message formats, reply correlation, rerun behavior, and the
+backend-first rollout contract are documented in
+[CI Pipeline Alerts](docs/ci-pipeline-alerts.md).
+
+### 0.6 Staging DB Local Sync
 
 This repo includes local tooling to build a resumable staging MySQL dump and restore it into the local Docker MySQL service.
 

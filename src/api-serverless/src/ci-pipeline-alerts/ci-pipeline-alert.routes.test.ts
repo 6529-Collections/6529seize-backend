@@ -493,6 +493,24 @@ describe('ci pipeline alert routes', () => {
     );
   });
 
+  it('rejects WEB E2E alerts for a non-canonical frontend repository', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          alert_type: 'web_e2e',
+          repo: 'other/6529seize-frontend',
+          validation_pack: 'all',
+          service: 'web'
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'web_e2e alerts are supported only for the frontend web service'
+    );
+  });
+
   it('rejects E2E parent identity on ordinary workflow alerts', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
 
@@ -503,6 +521,31 @@ describe('ci pipeline alert routes', () => {
       )
     ).rejects.toThrow(
       'E2E deployment identity fields require alert_type web_e2e'
+    );
+  });
+
+  it('treats null and empty E2E identity fields as absent on ordinary alerts', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
+      undefined
+    );
+
+    await ciPipelineAlertHandler(
+      makeAlertRequest({
+        parent_deploy_run_id: null,
+        parent_release_train_id: '',
+        validation_pack: null
+      }),
+      makeResponse()
+    );
+
+    expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parent_deploy_run_id: null,
+        parent_release_train_id: '',
+        validation_pack: null
+      }),
+      expect.any(Object)
     );
   });
 

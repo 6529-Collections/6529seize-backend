@@ -146,10 +146,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
         });
       }
       if (value.alert_type === 'web_e2e') {
-        if (
-          value.repo.split('/').pop() !== '6529seize-frontend' ||
-          value.service !== 'web'
-        ) {
+        if (value.repo !== '6529seize-frontend' || value.service !== 'web') {
           return helpers.message({
             custom:
               'web_e2e alerts are supported only for the frontend web service'
@@ -161,9 +158,11 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
           });
         }
       } else if (
-        value.parent_deploy_run_id !== undefined ||
-        value.parent_release_train_id !== undefined ||
-        value.validation_pack !== undefined
+        [
+          value.parent_deploy_run_id,
+          value.parent_release_train_id,
+          value.validation_pack
+        ].some((field) => typeof field === 'string' && field.trim().length > 0)
       ) {
         return helpers.message({
           custom: 'E2E deployment identity fields require alert_type web_e2e'
