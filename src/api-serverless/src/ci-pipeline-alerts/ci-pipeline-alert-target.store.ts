@@ -124,10 +124,7 @@ export class RedisCiPipelineAlertTargetStore implements CiPipelineAlertTargetSto
       const targets = values
         .filter((value): value is string => typeof value === 'string')
         .map(parseTarget);
-      if (
-        targets.length !== keys.length ||
-        targets.some((target) => target === null)
-      ) {
+      if (targets.length !== keys.length || targets.includes(null)) {
         return null;
       }
       const resolvedTargets = targets as CiPipelineDeployAlertTarget[];

@@ -361,6 +361,11 @@ function isAutomationActor(value: string | null | undefined): boolean {
   return login === 'github-actions[bot]' || isReleaseBusGitHubAppActor(login);
 }
 
+function getMappedProfileHandle(githubLogin: string | null): string | null {
+  if (!githubLogin || isAutomationActor(githubLogin)) return null;
+  return GITHUB_TO_6529_HANDLES[githubLogin.toLowerCase()] ?? null;
+}
+
 export class CiPipelineAlertService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -548,15 +553,10 @@ export class CiPipelineAlertService {
     const deployInitiatorGithubLogin = normalizeOptionalValue(
       deployTarget?.triggeredByGithubLogin
     );
-    const triggeredByHandle =
-      triggeredByGithubLogin && !isAutomationActor(triggeredByGithubLogin)
-        ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
-        : null;
-    const deployInitiatorHandle =
-      deployInitiatorGithubLogin &&
-      !isAutomationActor(deployInitiatorGithubLogin)
-        ? GITHUB_TO_6529_HANDLES[deployInitiatorGithubLogin.toLowerCase()]
-        : null;
+    const triggeredByHandle = getMappedProfileHandle(triggeredByGithubLogin);
+    const deployInitiatorHandle = getMappedProfileHandle(
+      deployInitiatorGithubLogin
+    );
     if (!triggeredByGithubLogin) {
       this.logger.warn(
         'Unable to resolve CI workflow initiator: GitHub login is missing'

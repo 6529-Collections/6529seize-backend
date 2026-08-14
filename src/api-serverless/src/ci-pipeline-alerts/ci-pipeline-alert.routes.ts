@@ -23,6 +23,26 @@ const CI_PIPELINE_ALERT_SIGNATURE_SKEW_SECONDS = 300;
 const CI_PIPELINE_ALERT_DEDUPE_TTL_SECONDS = 86400;
 const CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS = 300;
 
+function getE2EValidationError(value: CiPipelineAlertRequest): string | null {
+  if (value.alert_type === 'web_e2e') {
+    if (value.repo !== '6529seize-frontend' || value.service !== 'web') {
+      return 'web_e2e alerts are supported only for the frontend web service';
+    }
+    return value.validation_pack?.trim()
+      ? null
+      : 'validation_pack is required for web_e2e alerts';
+  }
+
+  const hasE2EIdentity = [
+    value.parent_deploy_run_id,
+    value.parent_release_train_id,
+    value.validation_pack
+  ].some((field) => typeof field === 'string' && field.trim().length > 0);
+  return hasE2EIdentity
+    ? 'E2E deployment identity fields require alert_type web_e2e'
+    : null;
+}
+
 const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   Joi.object<CiPipelineAlertRequest>({
     alert_type: Joi.string()
@@ -62,7 +82,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .optional(),
     parent_deploy_run_id: Joi.string()
       .trim()
-      .pattern(/^[1-9][0-9]{0,19}$/)
+      .pattern(/^[1-9]\d{0,19}$/)
       .allow(null, '')
       .optional(),
     parent_release_train_id: Joi.string()
@@ -145,28 +165,9 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
           custom: 'release_train_id is required with contributor_github_logins'
         });
       }
-      if (value.alert_type === 'web_e2e') {
-        if (value.repo !== '6529seize-frontend' || value.service !== 'web') {
-          return helpers.message({
-            custom:
-              'web_e2e alerts are supported only for the frontend web service'
-          });
-        }
-        if (!value.validation_pack?.trim()) {
-          return helpers.message({
-            custom: 'validation_pack is required for web_e2e alerts'
-          });
-        }
-      } else if (
-        [
-          value.parent_deploy_run_id,
-          value.parent_release_train_id,
-          value.validation_pack
-        ].some((field) => typeof field === 'string' && field.trim().length > 0)
-      ) {
-        return helpers.message({
-          custom: 'E2E deployment identity fields require alert_type web_e2e'
-        });
+      const e2eValidationError = getE2EValidationError(value);
+      if (e2eValidationError) {
+        return helpers.message({ custom: e2eValidationError });
       }
       const groups = value.release_note_groups;
       if (!groups) return value;
