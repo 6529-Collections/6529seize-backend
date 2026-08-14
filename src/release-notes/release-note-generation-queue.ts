@@ -18,6 +18,7 @@ export interface ReleaseNoteGenerationRequest {
   readonly run_id: string;
   readonly run_number?: string | null;
   readonly run_url: string;
+  readonly triggered_by_github_login?: string | null;
   readonly sha: string;
   readonly branch?: string | null;
   readonly environment: string;
@@ -29,6 +30,8 @@ export interface ReleaseNoteGenerationRequest {
   readonly contributor_github_logins?: string[];
   readonly publish_release_note?: boolean;
   readonly release_group_runs?: ReleaseNoteRunReference[];
+  readonly release_version?: string | null;
+  readonly frontend_sha?: string | null;
   readonly deployed_at: string;
 }
 

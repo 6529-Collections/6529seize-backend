@@ -26,6 +26,7 @@ interface GitHubUser {
 
 interface GitHubCommit {
   readonly sha: string;
+  readonly parents?: Array<{ readonly sha: string }>;
   readonly author?: GitHubUser | null;
   readonly committer?: GitHubUser | null;
   readonly commit?: {
@@ -82,6 +83,7 @@ export interface GitHubReleaseContext {
   readonly previous_sha: string;
   readonly current_sha: string;
   readonly pull_requests: ReleasePullRequestContext[];
+  readonly commit_messages?: string[];
 }
 
 interface AggregatedPullRequest {
@@ -101,9 +103,13 @@ const MAX_WORKFLOW_RUN_PAGES = 10;
 const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
 const FRONTEND_REPO = '6529seize-frontend';
+const CORE_REPO = '6529-core';
 const FRONTEND_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
 const FRONTEND_PRODUCTION_WORKFLOW_PATH =
   '.github/workflows/build-upload-deploy-prod.yml';
+const CORE_PRODUCTION_WORKFLOW_PATH =
+  '.github/workflows/build-all-platforms.yml';
+const CORE_PRODUCTION_RUN_PREFIX = 'FLOW: Publish / ENV: Production - v';
 const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
 const MAX_PULL_REQUESTS = 100;
 const MAX_PROMPT_LENGTH = 20000;
@@ -197,7 +203,56 @@ function isMatchingProductionRun(
       run.head_branch === normalizeBranch(request.branch)
     );
   }
+  if (repoName === CORE_REPO) {
+    return (
+      request.workflow === 'Publish' &&
+      run.path === CORE_PRODUCTION_WORKFLOW_PATH &&
+      run.display_title.startsWith(CORE_PRODUCTION_RUN_PREFIX)
+    );
+  }
   return false;
+}
+
+function getFirstParentReleaseCommits(
+  commits: GitHubCommit[],
+  previousSha: string,
+  currentSha: string
+): GitHubCommit[] {
+  const commitsBySha = new Map(commits.map((commit) => [commit.sha, commit]));
+  const releaseCommits: GitHubCommit[] = [];
+  const visited = new Set<string>();
+  let cursor = currentSha;
+
+  while (cursor !== previousSha) {
+    if (visited.has(cursor)) {
+      throw new Error('Desktop release first-parent history contains a cycle');
+    }
+    visited.add(cursor);
+    const commit = commitsBySha.get(cursor);
+    if (!commit) {
+      throw new Error(
+        `Desktop release first-parent commit ${cursor} is missing from the GitHub comparison`
+      );
+    }
+    const parents = commit.parents ?? [];
+    if (parents[0]?.sha === previousSha) {
+      releaseCommits.push(commit);
+      return releaseCommits.reverse();
+    }
+    if (parents.slice(1).some((parent) => parent.sha === previousSha)) {
+      return releaseCommits.reverse();
+    }
+    releaseCommits.push(commit);
+    const firstParent = parents[0]?.sha;
+    if (!firstParent) {
+      throw new Error(
+        `Desktop release history did not reach previous production commit ${previousSha}`
+      );
+    }
+    cursor = firstParent;
+  }
+
+  return releaseCommits.reverse();
 }
 
 function mergeAssociatedPullRequests(
@@ -381,14 +436,22 @@ export class ReleaseNoteGitHubService {
       return null;
     }
 
-    const commits = await this.getComparedCommits(
+    const comparedCommits = await this.getComparedCommits(
       repository,
       previousRun.head_sha,
       request.sha
     );
+    const desktopRelease = getRepoName(request.repo) === CORE_REPO;
+    const commits = desktopRelease
+      ? getFirstParentReleaseCommits(
+          comparedCommits,
+          previousRun.head_sha,
+          request.sha
+        )
+      : comparedCommits;
     const pullRequests = await this.getPullRequests(
       repository,
-      normalizeBranch(request.branch),
+      desktopRelease ? 'main' : normalizeBranch(request.branch),
       commits,
       request.release_group_services
     );
@@ -396,7 +459,14 @@ export class ReleaseNoteGitHubService {
     return {
       previous_sha: previousRun.head_sha,
       current_sha: request.sha,
-      pull_requests: pullRequests
+      pull_requests: pullRequests,
+      ...(desktopRelease
+        ? {
+            commit_messages: commits
+              .map((commit) => commit.commit?.message?.trim())
+              .filter((message): message is string => Boolean(message))
+          }
+        : {})
     };
   }
 
@@ -474,8 +544,9 @@ export class ReleaseNoteGitHubService {
       currentRun.head_sha !== request.sha ||
       !Number.isSafeInteger(currentRun.workflow_id) ||
       !Number.isSafeInteger(currentRun.run_number) ||
-      (getRepoName(request.repo) === FRONTEND_REPO &&
-        request.workflow === FRONTEND_PRODUCTION_WORKFLOW &&
+      (((getRepoName(request.repo) === FRONTEND_REPO &&
+        request.workflow === FRONTEND_PRODUCTION_WORKFLOW) ||
+        getRepoName(request.repo) === CORE_REPO) &&
         !isMatchingProductionRun(currentRun, request))
     ) {
       throw new Error(
@@ -491,10 +562,14 @@ export class ReleaseNoteGitHubService {
   ): Promise<GitHubWorkflowRun | null> {
     const currentRun = await this.getValidatedCurrentRun(repository, request);
 
-    const branch = encodeURIComponent(normalizeBranch(request.branch));
+    const repoName = getRepoName(request.repo);
+    const branchQuery =
+      repoName === CORE_REPO
+        ? ''
+        : `&branch=${encodeURIComponent(normalizeBranch(request.branch))}`;
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
       const payload = await this.api<GitHubWorkflowRunsResponse>(
-        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?status=success&branch=${branch}&per_page=${PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?status=success${branchQuery}&per_page=${PAGE_SIZE}&page=${page}`
       );
       const runs = payload.workflow_runs ?? [];
       const previousRun = runs.find(

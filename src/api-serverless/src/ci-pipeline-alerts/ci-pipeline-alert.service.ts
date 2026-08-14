@@ -52,6 +52,8 @@ export interface CiPipelineAlertRequest {
   readonly pull_request_number?: number | null;
   readonly publish_release_note?: boolean;
   readonly release_note_groups?: CiPipelineReleaseNoteGroup[];
+  readonly release_version?: string | null;
+  readonly frontend_sha?: string | null;
   readonly deployed_at?: string | null;
 }
 
@@ -393,12 +395,20 @@ export class CiPipelineAlertService {
         continue;
       }
       const contributorGithubLogins = this.getReleaseTrainContributors(request);
+      const triggeredByGithubLogin = normalizeOptionalValue(
+        request.triggered_by_github_login
+      );
+      const releaseVersion = normalizeOptionalValue(request.release_version);
+      const frontendSha = normalizeOptionalValue(request.frontend_sha);
       await this.releaseNotesQueue.enqueueBestEffort({
         repo: request.repo,
         workflow: request.workflow,
         run_id: request.run_id,
         run_number: request.run_number,
         run_url: request.run_url,
+        ...(triggeredByGithubLogin
+          ? { triggered_by_github_login: triggeredByGithubLogin }
+          : {}),
         sha,
         branch: request.branch,
         environment: 'prod',
@@ -411,6 +421,8 @@ export class CiPipelineAlertService {
           ? { contributor_github_logins: contributorGithubLogins }
           : {}),
         publish_release_note: normalizedGroup.publishReleaseNote,
+        ...(releaseVersion ? { release_version: releaseVersion } : {}),
+        ...(frontendSha ? { frontend_sha: frontendSha } : {}),
         deployed_at: deployedAt
       });
     }
