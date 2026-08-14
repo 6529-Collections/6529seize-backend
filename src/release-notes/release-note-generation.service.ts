@@ -68,6 +68,8 @@ const FRONTEND_REPOSITORY = '6529-Collections/6529seize-frontend';
 const RELEASES_WEB_BASE_URL = 'https://6529.io/waves';
 const DESKTOP_DOWNLOAD_BASE_URL =
   'https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app';
+const HISTORICAL_FRONTEND_HEADING_PATTERN =
+  /^### Frontend Deploy \[#(\d{1,12})\]\([^)\r\n]{1,2048}\) · commit \[([a-f0-9]{8})\]\([^)\r\n]{1,2048}\) — ([A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} (?:AM|PM) UTC)$/;
 
 export type ReleaseNoteGenerationOutcome =
   | 'published'
@@ -211,27 +213,26 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
   return `### ${surface} Deploy · commit ${commit} — ${formattedDate}`;
 }
 
-function getFrontendReleaseNoteLabel(
+export function getFrontendReleaseNoteLabel(
   reference: ReleaseNoteDropReference,
   frontendSha: string
 ): string {
-  if (reference.run_number && reference.deployed_at) {
-    return `Frontend Deploy #${reference.run_number} · commit ${frontendSha.slice(0, 8)} — ${formatDeployedAt(reference.deployed_at)}`;
+  if (/^\d{1,12}$/.test(reference.run_number ?? '') && reference.deployed_at) {
+    try {
+      return `Frontend Deploy #${reference.run_number} · commit ${frontendSha.slice(0, 8)} — ${formatDeployedAt(reference.deployed_at)}`;
+    } catch {
+      // Fall through to the bounded historical heading parser.
+    }
   }
   const firstLine = reference.content?.split('\n')[0]?.trim() ?? '';
-  const label = firstLine
-    .replace(/^###\s+/, '')
-    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
-    .trim();
-  if (
-    !/^Frontend Deploy #\d+ · commit [a-f0-9]{8} — .+$/i.test(label) ||
-    !label.includes(frontendSha.slice(0, 8))
-  ) {
+  const headingMatch = HISTORICAL_FRONTEND_HEADING_PATTERN.exec(firstLine);
+  if (!headingMatch || headingMatch[2] !== frontendSha.slice(0, 8)) {
     throw new Error(
       `Frontend release note ${reference.id} has an unsupported heading`
     );
   }
-  return label;
+  const [, runNumber, shortSha, deployedAt] = headingMatch;
+  return `Frontend Deploy #${runNumber} · commit ${shortSha} — ${deployedAt}`;
 }
 
 function getReleaseNoteMetadata(

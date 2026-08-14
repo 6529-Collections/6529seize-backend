@@ -1475,6 +1475,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<ReleaseNoteDropReference | null> {
+    if (
+      !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repository) ||
+      !/^[a-f0-9]{40}$/.test(sha)
+    ) {
+      throw new Error('Invalid release-note source repository or SHA');
+    }
+    const expectedCommitUrl = `https://github.com/${repository}/commit/${sha}`;
+    if (commitUrl !== expectedCommitUrl) {
+      throw new Error(
+        'Release-note source commit URL does not match its identity'
+      );
+    }
+    const escapedCommitUrl = commitUrl.replace(/[\\%_]/g, '\\$&');
     const metadataMatch = `
       exists (
         select 1 from ${DROP_METADATA_TABLE} repository_metadata
@@ -1511,7 +1524,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          on dp.drop_id = d.id and dp.drop_part_id = 1
        where d.wave_id = :waveId
          and d.author_id = :authorId
-         and ((${metadataMatch}) or dp.content like :commitUrlPattern)
+         and (
+           (${metadataMatch})
+           or (
+             dp.content like '### Frontend Deploy %'
+             and dp.content like :commitUrlPattern escape '\\\\'
+           )
+         )
        order by case when ${metadataMatch} then 0 else 1 end,
                 d.serial_no desc
        limit 1`,
@@ -1520,7 +1539,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         authorId,
         repository,
         sha,
-        commitUrlPattern: `%${commitUrl}%`
+        commitUrlPattern: `%${escapedCommitUrl}%`
       },
       { wrappedConnection: ctx.connection }
     );

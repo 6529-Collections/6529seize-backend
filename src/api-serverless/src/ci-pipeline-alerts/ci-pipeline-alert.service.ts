@@ -74,6 +74,13 @@ interface AlertMentions {
   readonly all: MentionedProfile[];
 }
 
+interface ReleaseNoteEnqueueContext {
+  readonly promptPath: string;
+  readonly sha: string;
+  readonly deployedAt: string;
+  readonly isBackendRelease: boolean;
+}
+
 const MAX_DROP_CONTENT_LENGTH = 30000;
 const MAX_DROP_TITLE_LENGTH = 250;
 const MAX_ALERT_DESCRIPTION_LENGTH = 5000;
@@ -171,6 +178,29 @@ export function normalizeContributorGithubLogins(
     logins.push(login);
   }
   return logins;
+}
+
+function getReleaseNoteEnqueueContext(
+  request: CiPipelineAlertRequest
+): ReleaseNoteEnqueueContext | null {
+  const promptPath = normalizeOptionalValue(request.release_notes_prompt_path);
+  const sha = normalizeOptionalValue(request.sha);
+  const deployedAt = normalizeOptionalValue(request.deployed_at);
+  if (
+    request.status !== 'success' ||
+    normalizeTargetEnvironment(request.environment) !== 'prod' ||
+    !promptPath ||
+    !sha ||
+    !deployedAt
+  ) {
+    return null;
+  }
+  return {
+    promptPath,
+    sha,
+    deployedAt,
+    isBackendRelease: request.repo.split('/').pop() === '6529seize-backend'
+  };
 }
 
 function formatStatusEmoji(status: CiPipelineAlertStatus): string {
@@ -353,22 +383,11 @@ export class CiPipelineAlertService {
   private async enqueueReleaseNotesIfEligible(
     request: CiPipelineAlertRequest
   ): Promise<void> {
-    const promptPath = normalizeOptionalValue(
-      request.release_notes_prompt_path
-    );
-    const sha = normalizeOptionalValue(request.sha);
-    const deployedAt = normalizeOptionalValue(request.deployed_at);
-    const isBackendRelease =
-      request.repo.split('/').pop() === '6529seize-backend';
-    if (
-      request.status !== 'success' ||
-      normalizeTargetEnvironment(request.environment) !== 'prod' ||
-      !promptPath ||
-      !sha ||
-      !deployedAt
-    ) {
+    const enqueueContext = getReleaseNoteEnqueueContext(request);
+    if (!enqueueContext) {
       return;
     }
+    const { promptPath, sha, deployedAt, isBackendRelease } = enqueueContext;
     if (!isAllowedReleaseNotesPrompt(request.repo, promptPath)) {
       this.logger.warn(
         `Skipping release notes for unsupported prompt path ${promptPath} in ${request.repo}`

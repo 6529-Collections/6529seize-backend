@@ -505,8 +505,9 @@ export async function processRequestWithRetryPolicy(
     isDesktopRelease(request) &&
     receiveCount > DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT
   ) {
-    await postFailure(request, 'Retrying terminal failure notification');
-    return;
+    throw new Error(
+      'Desktop release-note terminal alert failed and must move to the DLQ'
+    );
   }
   try {
     await process(request);

@@ -169,6 +169,20 @@ describe('Desktop retry policy', () => {
     ).resolves.toBeUndefined();
     expect(postFailure).toHaveBeenCalledWith(desktopRequest, error);
   });
+
+  it('does not duplicate the terminal alert before moving to the DLQ', async () => {
+    const process = jest.fn();
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 5, {
+        process,
+        postFailure
+      })
+    ).rejects.toThrow('terminal alert failed and must move to the DLQ');
+    expect(process).not.toHaveBeenCalled();
+    expect(postFailure).not.toHaveBeenCalled();
+  });
 });
 
 describe('processRequest', () => {

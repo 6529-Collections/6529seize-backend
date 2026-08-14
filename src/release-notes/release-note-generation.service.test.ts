@@ -7,7 +7,10 @@ import {
   GitHubReleaseContext,
   ReleaseNoteGitHubService
 } from './release-note-github.service';
-import { ReleaseNoteGenerationService } from './release-note-generation.service';
+import {
+  getFrontendReleaseNoteLabel,
+  ReleaseNoteGenerationService
+} from './release-note-generation.service';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529-Collections/6529seize-backend',
@@ -73,6 +76,42 @@ function createDropsRepository(existingDropId: string | null = null): DropsDb {
     findReleaseNoteDropBySourceSha: jest.fn().mockResolvedValue(null)
   } as unknown as DropsDb;
 }
+
+describe('getFrontendReleaseNoteLabel', () => {
+  const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
+
+  it('reconstructs a safe label from the bounded historical heading', () => {
+    expect(
+      getFrontendReleaseNoteLabel(
+        {
+          id: 'frontend-drop',
+          serial_no: 1292112,
+          content:
+            '### Frontend Deploy [#1636](https://github.com/6529-Collections/6529seize-frontend/actions/runs/1) · commit [63630a3e](https://github.com/6529-Collections/6529seize-frontend/commit/63630a3e27c37296bbe39d9813b014a824265a56) — Aug 12, 11:02 AM UTC',
+          run_number: null,
+          deployed_at: null
+        },
+        frontendSha
+      )
+    ).toBe('Frontend Deploy #1636 · commit 63630a3e — Aug 12, 11:02 AM UTC');
+  });
+
+  it('rejects markdown injected into a historical heading', () => {
+    expect(() =>
+      getFrontendReleaseNoteLabel(
+        {
+          id: 'hostile-drop',
+          serial_no: 1292113,
+          content:
+            '### Frontend Deploy [#1636](https://github.com/6529-Collections/6529seize-frontend/actions/runs/1) · commit [63630a3e](https://github.com/6529-Collections/6529seize-frontend/commit/63630a3e27c37296bbe39d9813b014a824265a56) — Aug 12, 11:02 AM UTC](https://example.com)',
+          run_number: null,
+          deployed_at: null
+        },
+        frontendSha
+      )
+    ).toThrow('unsupported heading');
+  });
+});
 
 describe('ReleaseNoteGenerationService', () => {
   const originalBotProfileId = process.env.CI_PIPELINES_BOT_PROFILE_ID;
