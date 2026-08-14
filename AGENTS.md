@@ -33,9 +33,11 @@
   every supplied deploy-run/train identity must resolve to the same drop or the
   E2E result posts standalone.
 - Preserve exact backend Lambda identifiers and `WEB` capitalization in CI
-  wave messages. Keep alert delivery best effort, deploy the backend `api`
-  receiver before frontend workflow senders, and follow
-  `docs/ci-pipeline-alerts.md` for the durable contract.
+  wave messages. Keep alert delivery best effort and deploy the backend `api`
+  receiver before frontend workflow senders. The same rollout updates the
+  production-only `releaseBus` trusted frontend PR-CI policy digest; staging
+  notification validation needs only `api`. Follow `docs/ci-pipeline-alerts.md`
+  for the durable contract.
 - Production readiness is an explicit dependency-closed selection. Every
   selected unchanged SHA must carry successful staging manifest/E2E evidence;
   unrelated staging candidates and the current shared-staging combination are

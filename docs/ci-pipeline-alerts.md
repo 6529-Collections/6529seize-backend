@@ -76,10 +76,19 @@ as people to mention.
 
 ## Deployment And Rollback
 
-This receiver runs in the backend `api` service. Deploy it before enabling the
-frontend workflow sender because an older API rejects the new `web_e2e` fields.
-For rollback, remove or revert the frontend sender first and then roll back the
-backend `api` implementation.
+The backend PR changes two runtime services for different reasons:
+
+- `api` owns alert validation, rendering, Redis correlation, and wave posting;
+- the production-only `releaseBus` service trusts the frontend PR-CI policy
+  bundle introduced by these workflow changes.
+
+Deploy `api` before enabling the frontend workflow sender because an older API
+rejects the new `web_e2e` fields. Deploy `releaseBus` before asking the
+production Release Bus to accept frontend heads with the new policy bundle. A
+staging-only notification test needs the updated `api`, not a `releaseBus`
+deployment. For rollback, revert the frontend sender and policy bundle before
+rolling back the corresponding backend services, so no active sender targets
+an older receiver and no accepted frontend policy loses its trusted digest.
 
 The frontend workflow-side contract, including default-branch E2E activation,
 is documented in that repository's
