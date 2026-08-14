@@ -331,6 +331,15 @@ function formatRun(
   return `${formatMarkdownLink(runLabel, request.run_url)}${attemptSuffix}`;
 }
 
+function formatWebE2ESuccessRun(request: CiPipelineAlertRequest): string {
+  const runLabel = normalizeOptionalValue(request.run_number)
+    ? `#${normalizeOptionalValue(request.run_number)}`
+    : `#${request.run_id}`;
+  const attempt = request.run_attempt ?? 1;
+  const attemptSuffix = attempt > 1 ? ` (attempt ${attempt})` : '';
+  return formatMarkdownLink(`Run ${runLabel}${attemptSuffix}`, request.run_url);
+}
+
 function isWebE2EAlert(request: CiPipelineAlertRequest): boolean {
   return request.alert_type === 'web_e2e';
 }
@@ -393,12 +402,18 @@ export class CiPipelineAlertService {
     );
 
     if (isSuccessfulWebDeployAlert(request)) {
+      const environment = normalizeTargetEnvironment(request.environment);
+      if (!environment) {
+        throw new Error(
+          `Unsupported CI pipeline alert environment: ${request.environment ?? 'missing'}`
+        );
+      }
       const firstPart = drop.parts?.[0];
       if (firstPart) {
         await this.alertTargetStore.rememberDeployTarget(
           {
             repo: request.repo,
-            environment: normalizeTargetEnvironment(request.environment)!,
+            environment,
             runId: request.run_id,
             releaseTrainId: request.release_train_id
           },
@@ -410,6 +425,10 @@ export class CiPipelineAlertService {
               request.triggered_by_github_login
             )
           }
+        );
+      } else {
+        this.logger.warn(
+          `Unable to remember WEB deploy reply target for ${request.repo} run ${request.run_id}: created drop has no parts`
         );
       }
     }
@@ -514,6 +533,13 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     deployTarget: CiPipelineDeployAlertTarget | null
   ): Promise<AlertMentions> {
+    if (isWebE2EAlert(request) && request.status === 'success') {
+      return {
+        triggeredBy: null,
+        deployInitiator: null,
+        all: []
+      };
+    }
     const triggeredByGithubLogin = normalizeOptionalValue(
       request.triggered_by_github_login
     );
@@ -697,6 +723,12 @@ export class CiPipelineAlertService {
     mentions: AlertMentions,
     deployTarget: CiPipelineDeployAlertTarget | null
   ): string {
+    if (request.status === 'success') {
+      return truncate(
+        `${formatAlertHeading(request)} ${formatWebE2ESuccessRun(request)}`,
+        MAX_DROP_CONTENT_LENGTH
+      );
+    }
     const automatic = isAutomationActor(request.triggered_by_github_login);
     const validation = automatic
       ? 'Automatic'

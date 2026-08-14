@@ -413,25 +413,15 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
     ).toMatchObject({
       reply_to: { drop_id: 'deploy-drop', drop_part_id: 7 },
-      mentioned_users: [
-        {
-          mentioned_profile_id: 'profile-initiator',
-          handle_in_content: 'prxt0'
-        }
-      ],
+      mentioned_users: [],
       parts: [
         {
-          content: [
-            '[🚀 PRODUCTION] WEB E2E passed ✅',
-            '',
-            'Validation: Automatic',
-            'Deploy initiated by: @[prxt0]',
-            `Commit: [${'b'.repeat(8)}](https://github.com/6529-Collections/6529seize-frontend/commit/${'b'.repeat(40)})`,
-            'Run: [#791](https://github.com/6529-Collections/6529seize-frontend/actions/runs/900) (attempt 2)'
-          ].join('\n')
+          content:
+            '[🚀 PRODUCTION] WEB E2E passed ✅ [Run #791 (attempt 2)](https://github.com/6529-Collections/6529seize-frontend/actions/runs/900)'
         }
       ]
     });
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
   });
 
   it('posts an unambiguous manual E2E failure as a sibling reply', async () => {
@@ -500,9 +490,6 @@ describe('CiPipelineAlertService', () => {
   });
 
   it('posts a manual E2E success standalone when its deploy is ambiguous', async () => {
-    identitiesRepository.getIdsByHandles.mockResolvedValue({
-      ragne: 'profile-validator'
-    });
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any,
@@ -529,17 +516,11 @@ describe('CiPipelineAlertService', () => {
     const request =
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
     expect(request).not.toHaveProperty('reply_to');
-    expect(request.mentioned_users).toEqual([
-      {
-        mentioned_profile_id: 'profile-validator',
-        handle_in_content: 'ragne'
-      }
-    ]);
-    expect(request.parts[0].content).toContain(
-      'Validation: Manual by @[ragne]'
+    expect(request.mentioned_users).toEqual([]);
+    expect(request.parts[0].content).toBe(
+      '[🚧 STAGING] WEB E2E passed ✅ [Run #6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
     );
-    expect(request.parts[0].content).not.toContain('Deploy initiated by:');
-    expect(request.parts[0].content).not.toContain('Commit:');
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
   });
 
   it.each([

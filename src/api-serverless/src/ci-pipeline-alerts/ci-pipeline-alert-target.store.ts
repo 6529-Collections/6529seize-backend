@@ -94,6 +94,8 @@ export class RedisCiPipelineAlertTargetStore implements CiPipelineAlertTargetSto
 
     try {
       const value = JSON.stringify(target);
+      // Resolution requires every supplied identity key to exist and match,
+      // so a partial best-effort write safely falls back to a standalone post.
       await Promise.all(
         keys.map((key) =>
           redis.set(key, value, {
