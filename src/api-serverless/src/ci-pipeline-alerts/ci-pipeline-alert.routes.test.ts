@@ -282,6 +282,26 @@ describe('ci pipeline alert routes', () => {
     );
   });
 
+  it('builds distinct dedupe keys for rerun attempts', () => {
+    const common = {
+      repo: '6529seize-frontend',
+      workflow: 'Staging E2E',
+      status: 'failure' as const,
+      title: 'WEB E2E failed',
+      run_id: '791',
+      run_url:
+        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/791',
+      environment: 'staging',
+      service: 'web',
+      alert_type: 'web_e2e' as const,
+      validation_pack: 'all'
+    };
+
+    expect(
+      buildCiPipelineAlertDedupeKey({ ...common, run_attempt: 1 })
+    ).not.toEqual(buildCiPipelineAlertDedupeKey({ ...common, run_attempt: 2 }));
+  });
+
   it('builds distinct dedupe keys for arbitrary changed alert fields', () => {
     const changedFieldArbitrary = fc.constantFrom(
       ...ciPipelineAlertChangedFields
@@ -420,6 +440,69 @@ describe('ci pipeline alert routes', () => {
         contributor_github_logins: ['GelatoGenesis', 'prxt6529']
       }),
       expect.any(Object)
+    );
+  });
+
+  it('accepts signed WEB E2E validation identity', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
+      undefined
+    );
+
+    await ciPipelineAlertHandler(
+      makeAlertRequest({
+        alert_type: 'web_e2e',
+        repo: '6529seize-frontend',
+        service: 'web',
+        run_attempt: 2,
+        parent_deploy_run_id: '791',
+        parent_release_train_id: 'train-123',
+        validation_pack: 'core'
+      }),
+      makeResponse()
+    );
+
+    expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        alert_type: 'web_e2e',
+        repo: '6529seize-frontend',
+        service: 'web',
+        run_attempt: 2,
+        parent_deploy_run_id: '791',
+        parent_release_train_id: 'train-123',
+        validation_pack: 'core'
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects WEB E2E alerts for non-WEB services', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          alert_type: 'web_e2e',
+          validation_pack: 'all',
+          service: 'api'
+        }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'web_e2e alerts are supported only for the frontend web service'
+    );
+  });
+
+  it('rejects E2E parent identity on ordinary workflow alerts', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({ parent_deploy_run_id: '791' }),
+        makeResponse()
+      )
+    ).rejects.toThrow(
+      'E2E deployment identity fields require alert_type web_e2e'
     );
   });
 

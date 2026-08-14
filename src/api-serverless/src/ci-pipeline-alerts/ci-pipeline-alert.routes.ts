@@ -25,6 +25,9 @@ const CI_PIPELINE_ALERT_PROCESSING_LOCK_TTL_SECONDS = 300;
 
 const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   Joi.object<CiPipelineAlertRequest>({
+    alert_type: Joi.string()
+      .valid('workflow', 'deploy', 'web_e2e')
+      .default('workflow'),
     repo: Joi.string().trim().min(1).max(200).required(),
     workflow: Joi.string().trim().min(1).max(200).required(),
     status: Joi.string().valid('success', 'failure').required(),
@@ -51,6 +54,27 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .valid('staging', 'prod', 'production')
       .required(),
     service: Joi.string().trim().max(200).allow(null, '').optional(),
+    run_attempt: Joi.number()
+      .integer()
+      .min(1)
+      .max(1_000_000)
+      .allow(null)
+      .optional(),
+    parent_deploy_run_id: Joi.string()
+      .trim()
+      .pattern(/^[1-9][0-9]{0,19}$/)
+      .allow(null, '')
+      .optional(),
+    parent_release_train_id: Joi.string()
+      .trim()
+      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
+      .allow(null, '')
+      .optional(),
+    validation_pack: Joi.string()
+      .trim()
+      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
+      .allow(null, '')
+      .optional(),
     release_train_id: Joi.string()
       .trim()
       .pattern(/^[A-Za-z0-9._-]{1,100}$/)
@@ -119,6 +143,30 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       ) {
         return helpers.message({
           custom: 'release_train_id is required with contributor_github_logins'
+        });
+      }
+      if (value.alert_type === 'web_e2e') {
+        if (
+          value.repo.split('/').pop() !== '6529seize-frontend' ||
+          value.service !== 'web'
+        ) {
+          return helpers.message({
+            custom:
+              'web_e2e alerts are supported only for the frontend web service'
+          });
+        }
+        if (!value.validation_pack?.trim()) {
+          return helpers.message({
+            custom: 'validation_pack is required for web_e2e alerts'
+          });
+        }
+      } else if (
+        value.parent_deploy_run_id !== undefined ||
+        value.parent_release_train_id !== undefined ||
+        value.validation_pack !== undefined
+      ) {
+        return helpers.message({
+          custom: 'E2E deployment identity fields require alert_type web_e2e'
         });
       }
       const groups = value.release_note_groups;
@@ -285,7 +333,12 @@ export function buildCiPipelineAlertDedupeKey(
         request.sha ?? '',
         request.branch ?? '',
         request.environment ?? '',
-        request.service ?? ''
+        request.service ?? '',
+        request.alert_type ?? 'workflow',
+        request.run_attempt ?? 1,
+        request.parent_deploy_run_id ?? '',
+        request.parent_release_train_id ?? '',
+        request.validation_pack ?? ''
       ])
     )
     .digest('hex');
