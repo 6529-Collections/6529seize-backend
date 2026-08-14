@@ -1,10 +1,14 @@
 #!/usr/bin/env node
+/* global AbortController, Buffer, clearTimeout, fetch, setTimeout */
 import crypto from 'node:crypto';
+import console from 'node:console';
+import process from 'node:process';
 
 const {
   CI_PIPELINES_ALERT_URL,
   CI_PIPELINES_ALERT_SECRET,
   CI_PIPELINES_ALERT_API_AUTH,
+  CI_PIPELINES_ALERT_TYPE,
   CI_PIPELINES_TARGET_ENV,
   CI_PIPELINES_STATUS,
   CI_PIPELINES_TITLE,
@@ -26,6 +30,7 @@ const {
   GITHUB_WORKFLOW,
   GITHUB_RUN_ID,
   GITHUB_RUN_NUMBER,
+  GITHUB_RUN_ATTEMPT,
   GITHUB_SERVER_URL = 'https://github.com',
   GITHUB_SHA,
   GITHUB_REF_NAME,
@@ -194,6 +199,16 @@ const repository = requireValue('GITHUB_REPOSITORY', GITHUB_REPOSITORY);
 const runId = requireValue('GITHUB_RUN_ID', GITHUB_RUN_ID);
 const status = requireValue('CI_PIPELINES_STATUS', CI_PIPELINES_STATUS);
 const title = requireValue('CI_PIPELINES_TITLE', CI_PIPELINES_TITLE);
+const alertType = CI_PIPELINES_ALERT_TYPE || 'workflow';
+if (!['workflow', 'deploy', 'web_e2e'].includes(alertType)) {
+  console.error('CI_PIPELINES_ALERT_TYPE is invalid');
+  process.exit(1);
+}
+const runAttempt = GITHUB_RUN_ATTEMPT ? Number(GITHUB_RUN_ATTEMPT) : 1;
+if (!Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
+  console.error('GITHUB_RUN_ATTEMPT must be a positive integer');
+  process.exit(1);
+}
 const triggeredByGithubLogin = GITHUB_TRIGGERING_ACTOR || GITHUB_ACTOR || null;
 const isReleaseNotesEligible =
   status === 'success' &&
@@ -301,6 +316,7 @@ const releaseTrainFields =
     : {};
 
 const payload = {
+  alert_type: alertType,
   repo: repository.split('/').pop() ?? repository,
   workflow: CI_PIPELINES_WORKFLOW || GITHUB_WORKFLOW || 'GitHub Actions',
   status,
@@ -309,6 +325,7 @@ const payload = {
   triggered_by_github_login: triggeredByGithubLogin,
   run_id: runId,
   run_number: GITHUB_RUN_NUMBER || null,
+  run_attempt: runAttempt,
   run_url: `${GITHUB_SERVER_URL}/${repository}/actions/runs/${runId}`,
   sha: CI_PIPELINES_SHA || GITHUB_SHA || null,
   branch: GITHUB_REF_NAME || null,

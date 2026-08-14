@@ -25,7 +25,7 @@ const baseRequest = {
   repo: '6529seize-frontend',
   workflow: 'Web Deploy - PROD',
   status: 'failure' as const,
-  title: 'Seize PROD WEB DEPLOY: CI pipeline is broken!!!',
+  title: 'WEB deploy failed',
   description: 'abc123 - Fix deploy',
   triggered_by_github_login: 'prxt6529',
   run_id: '12345',
@@ -46,6 +46,10 @@ describe('CiPipelineAlertService', () => {
   };
   let identitiesRepository: { getIdsByHandles: jest.Mock };
   let releaseNotesQueue: { enqueueBestEffort: jest.Mock };
+  let alertTargetStore: {
+    rememberDeployTarget: jest.Mock;
+    resolveDeployTarget: jest.Mock;
+  };
 
   beforeEach(() => {
     originalEnv = {
@@ -67,6 +71,10 @@ describe('CiPipelineAlertService', () => {
     };
     releaseNotesQueue = {
       enqueueBestEffort: jest.fn().mockResolvedValue(undefined)
+    };
+    alertTargetStore = {
+      rememberDeployTarget: jest.fn().mockResolvedValue(undefined),
+      resolveDeployTarget: jest.fn().mockResolvedValue(null)
     };
   });
 
@@ -178,11 +186,11 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[🚀 PRODUCTION] Seize PROD WEB DEPLOY: CI pipeline is broken!!! 🚨',
+                  '[🚀 PRODUCTION] WEB deploy failed 🚨',
                   '',
                   'abc123 - Fix deploy',
                   '',
-                  'Service: Frontend - web',
+                  'Service: web',
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
@@ -220,7 +228,7 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         status: 'success',
-        title: 'Seize Lambda staging api DEPLOY CI pipeline complete',
+        title: 'WEB deploy complete',
         environment: 'staging'
       },
       {}
@@ -246,11 +254,11 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[🚧 STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+                  '[🚧 STAGING] WEB deploy complete ✅',
                   '',
                   'abc123 - Fix deploy',
                   '',
-                  'Service: Frontend - web',
+                  'Service: web',
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
@@ -269,11 +277,11 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[🚧 STAGING] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+        '[🚧 STAGING] WEB deploy complete ✅',
         '',
         'abc123 - Fix deploy',
         '',
-        'Service: Frontend - web',
+        'Service: web',
         'Workflow: Web Deploy - PROD',
         'Branch: main',
         'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
@@ -291,6 +299,230 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).not.toContain('cc @[');
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
+  });
+
+  it.each(['api', 'overRatesRevocationLoop'])(
+    'preserves the exact backend service identifier %s',
+    async (serviceName) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as any,
+        identitiesRepository as any,
+        releaseNotesQueue as any,
+        alertTargetStore as any
+      );
+
+      await service.postAlert(
+        {
+          ...baseRequest,
+          repo: '6529seize-backend',
+          workflow: 'Deploy a service',
+          title: `${serviceName} deploy complete`,
+          status: 'success',
+          service: serviceName
+        },
+        {}
+      );
+
+      const content =
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+          .parts[0].content;
+      expect(content).toContain(
+        `[🚀 PRODUCTION] ${serviceName} deploy complete ✅`
+      );
+      expect(content).toContain(`Service: ${serviceName}`);
+    }
+  );
+
+  it('remembers a successful WEB deploy as an E2E reply target', async () => {
+    dropCreationApiService.createDrop.mockResolvedValue({
+      id: 'deploy-drop',
+      parts: [{ part_id: 7 }]
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'deploy',
+        status: 'success',
+        title: 'WEB deploy complete',
+        release_train_id: 'train-123'
+      },
+      {}
+    );
+
+    expect(alertTargetStore.rememberDeployTarget).toHaveBeenCalledWith(
+      {
+        repo: '6529seize-frontend',
+        environment: 'prod',
+        runId: '12345',
+        releaseTrainId: 'train-123'
+      },
+      {
+        dropId: 'deploy-drop',
+        dropPartId: 7,
+        sha: 'abc1234567890',
+        triggeredByGithubLogin: 'prxt6529'
+      }
+    );
+  });
+
+  it('replies to the WEB deploy for an automatic E2E success', async () => {
+    alertTargetStore.resolveDeployTarget.mockResolvedValue({
+      dropId: 'deploy-drop',
+      dropPartId: 7,
+      sha: 'b'.repeat(40),
+      triggeredByGithubLogin: 'prxt6529'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Production E2E',
+        status: 'success',
+        title: 'WEB E2E passed',
+        triggered_by_github_login: 'github-actions[bot]',
+        run_id: '900',
+        run_number: '791',
+        run_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/900',
+        run_attempt: 2,
+        parent_deploy_run_id: '12345',
+        validation_pack: 'all'
+      },
+      {}
+    );
+
+    expect(alertTargetStore.resolveDeployTarget).toHaveBeenCalledWith({
+      repo: '6529seize-frontend',
+      environment: 'prod',
+      runId: '12345',
+      releaseTrainId: null
+    });
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+    ).toMatchObject({
+      reply_to: { drop_id: 'deploy-drop', drop_part_id: 7 },
+      mentioned_users: [],
+      parts: [
+        {
+          content:
+            '[🚀 PRODUCTION] WEB E2E passed ✅ [Run #791 (attempt 2)](https://github.com/6529-Collections/6529seize-frontend/actions/runs/900)'
+        }
+      ]
+    });
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+  });
+
+  it('posts an unambiguous manual E2E failure as a sibling reply', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      ragne: 'profile-validator',
+      prxt0: 'profile-initiator'
+    });
+    alertTargetStore.resolveDeployTarget.mockResolvedValue({
+      dropId: 'deploy-drop',
+      dropPartId: 7,
+      sha: 'c'.repeat(40),
+      triggeredByGithubLogin: 'prxt6529'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Staging E2E',
+        title: 'WEB E2E failed',
+        triggered_by_github_login: 'ragnep',
+        run_attempt: 1,
+        parent_release_train_id: 'train-123',
+        validation_pack: 'core',
+        environment: 'staging'
+      },
+      {}
+    );
+
+    const request =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(request.reply_to).toEqual({
+      drop_id: 'deploy-drop',
+      drop_part_id: 7
+    });
+    expect(request.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'profile-validator',
+        handle_in_content: 'ragne'
+      },
+      {
+        mentioned_profile_id: 'profile-initiator',
+        handle_in_content: 'prxt0'
+      }
+    ]);
+    expect(request.parts[0].content).toContain(
+      [
+        '[🚧 STAGING] WEB E2E failed 🚨',
+        '',
+        'Validation: Manual by @[ragne]',
+        'Pack: core',
+        'Deploy initiated by: @[prxt0]'
+      ].join('\n')
+    );
+    expect(request.parts[0].content).toContain(
+      'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+    );
+    expect(request.parts[0].content).not.toContain('(attempt 1)');
+    expect(request.parts[0].content.endsWith('\n\ncc @devs6529')).toBe(true);
+  });
+
+  it('posts a manual E2E success standalone when its deploy is ambiguous', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Staging E2E',
+        title: 'WEB E2E passed',
+        status: 'success',
+        triggered_by_github_login: 'ragnep',
+        parent_deploy_run_id: null,
+        parent_release_train_id: null,
+        validation_pack: 'all',
+        environment: 'staging'
+      },
+      {}
+    );
+
+    const request =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(request).not.toHaveProperty('reply_to');
+    expect(request.mentioned_users).toEqual([]);
+    expect(request.parts[0].content).toBe(
+      '[🚧 STAGING] WEB E2E passed ✅ [Run #6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+    );
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
   });
 
   it.each([
