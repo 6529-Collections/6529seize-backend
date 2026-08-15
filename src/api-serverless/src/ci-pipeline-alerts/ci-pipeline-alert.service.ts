@@ -20,8 +20,14 @@ import {
 } from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 import { DEVS_6529_MENTION } from '@/constants/mentions';
+import {
+  ciPipelineAlertTargetStore,
+  CiPipelineAlertTargetStore,
+  CiPipelineDeployAlertTarget
+} from './ci-pipeline-alert-target.store';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
+export type CiPipelineAlertType = 'workflow' | 'deploy' | 'web_e2e';
 
 export interface CiPipelineReleaseNoteGroup {
   readonly release_group_id: string;
@@ -31,6 +37,7 @@ export interface CiPipelineReleaseNoteGroup {
 }
 
 export interface CiPipelineAlertRequest {
+  readonly alert_type?: CiPipelineAlertType;
   readonly repo: string;
   readonly workflow: string;
   readonly status: CiPipelineAlertStatus;
@@ -44,6 +51,10 @@ export interface CiPipelineAlertRequest {
   readonly branch?: string | null;
   readonly environment?: string | null;
   readonly service?: string | null;
+  readonly run_attempt?: number | null;
+  readonly parent_deploy_run_id?: string | null;
+  readonly parent_release_train_id?: string | null;
+  readonly validation_pack?: string | null;
   readonly release_train_id?: string | null;
   readonly release_operation_key?: string | null;
   readonly contributor_github_logins?: string[];
@@ -79,6 +90,7 @@ interface AlertMentions {
     readonly githubLogin: string;
     readonly profile: MentionedProfile | null;
   }>;
+  readonly deployInitiator: MentionedProfile | null;
   readonly all: MentionedProfile[];
 }
 
@@ -335,10 +347,13 @@ function formatRepoLabel(repo: string): string {
 function formatServiceLabel(request: CiPipelineAlertRequest): string {
   const repoLabel = formatRepoLabel(request.repo);
   const service = normalizeOptionalValue(request.service);
-  if (repoLabel === 'Core' && service?.toLowerCase() === 'desktop') {
-    return '6529 Desktop';
+  if (repoLabel === 'Core') {
+    if (service?.toLowerCase() === 'desktop') {
+      return '6529 Desktop';
+    }
+    return service ? `${repoLabel} - ${service}` : repoLabel;
   }
-  return service ? `${repoLabel} - ${service}` : repoLabel;
+  return service ?? repoLabel;
 }
 
 function formatInitiator(
@@ -391,8 +406,11 @@ export function formatMarkdownLink(label: string, url: string): string {
   return `[${escapedLabel}](${url})`;
 }
 
-function formatCommit(request: CiPipelineAlertRequest): string | null {
-  const sha = normalizeOptionalValue(request.sha);
+function formatCommit(
+  request: CiPipelineAlertRequest,
+  shaOverride?: string | null
+): string | null {
+  const sha = normalizeOptionalValue(shaOverride ?? request.sha);
   if (!sha) {
     return null;
   }
@@ -403,11 +421,52 @@ function formatCommit(request: CiPipelineAlertRequest): string | null {
     : shortSha;
 }
 
-function formatRun(request: CiPipelineAlertRequest): string {
-  const runLabel = normalizeOptionalValue(request.run_number)
-    ? `#${normalizeOptionalValue(request.run_number)}`
-    : `#${request.run_id}`;
-  return formatMarkdownLink(runLabel, request.run_url);
+function formatRun(
+  request: CiPipelineAlertRequest,
+  includeAttempt: boolean
+): string {
+  const { runLabel, attemptSuffix } = getRunLabelParts(request);
+  return `${formatMarkdownLink(runLabel, request.run_url)}${includeAttempt ? attemptSuffix : ''}`;
+}
+
+function formatWebE2ESuccessRun(request: CiPipelineAlertRequest): string {
+  const { runLabel, attemptSuffix } = getRunLabelParts(request);
+  return formatMarkdownLink(`Run ${runLabel}${attemptSuffix}`, request.run_url);
+}
+
+function getRunLabelParts(request: CiPipelineAlertRequest): {
+  readonly runLabel: string;
+  readonly attemptSuffix: string;
+} {
+  const runNumber = normalizeOptionalValue(request.run_number);
+  const attempt = request.run_attempt ?? 1;
+  return {
+    runLabel: `#${runNumber ?? request.run_id}`,
+    attemptSuffix: attempt > 1 ? ` (attempt ${attempt})` : ''
+  };
+}
+
+function isWebE2EAlert(request: CiPipelineAlertRequest): boolean {
+  return request.alert_type === 'web_e2e';
+}
+
+function isSuccessfulWebDeployAlert(request: CiPipelineAlertRequest): boolean {
+  return (
+    request.alert_type === 'deploy' &&
+    request.status === 'success' &&
+    request.repo === '6529seize-frontend' &&
+    normalizeOptionalValue(request.service) === 'web'
+  );
+}
+
+function isAutomationActor(value: string | null | undefined): boolean {
+  const login = normalizeOptionalValue(value)?.toLowerCase();
+  return login === 'github-actions[bot]' || isReleaseBusGitHubAppActor(login);
+}
+
+function getMappedProfileHandle(githubLogin: string | null): string | null {
+  if (!githubLogin || isAutomationActor(githubLogin)) return null;
+  return GITHUB_TO_6529_HANDLES[githubLogin.toLowerCase()] ?? null;
 }
 
 export class CiPipelineAlertService {
@@ -416,7 +475,8 @@ export class CiPipelineAlertService {
   constructor(
     private readonly dropCreationApiService: DropCreationApiService,
     private readonly identitiesRepository: IdentitiesDb,
-    private readonly releaseNotesQueue: ReleaseNoteGenerationQueue = releaseNoteGenerationQueue
+    private readonly releaseNotesQueue: ReleaseNoteGenerationQueue = releaseNoteGenerationQueue,
+    private readonly alertTargetStore: CiPipelineAlertTargetStore = ciPipelineAlertTargetStore
   ) {}
 
   public async postAlert(
@@ -425,17 +485,21 @@ export class CiPipelineAlertService {
   ): Promise<CiPipelineAlertOutcome> {
     const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
-    const mentions = await this.resolveAlertMentions(request);
+    const deployTarget = isWebE2EAlert(request)
+      ? await this.resolveDeployTarget(request)
+      : null;
+    const mentions = await this.resolveAlertMentions(request, deployTarget);
 
     const createDropRequest = this.buildCreateDropRequest({
       request,
       waveId,
-      mentions
+      mentions,
+      deployTarget
     });
     const authenticationContext =
       AuthenticationContext.fromProfileId(botProfileId);
 
-    await this.dropCreationApiService.createDrop(
+    const drop = await this.dropCreationApiService.createDrop(
       {
         createDropRequest,
         authorId: botProfileId,
@@ -448,10 +512,54 @@ export class CiPipelineAlertService {
       }
     );
 
+    if (isSuccessfulWebDeployAlert(request)) {
+      const environment = normalizeTargetEnvironment(request.environment);
+      const firstPart = drop.parts?.[0];
+      if (!environment) {
+        this.logger.warn(
+          `Unable to remember WEB deploy reply target for ${request.repo} run ${request.run_id}: unsupported environment ${request.environment ?? 'missing'}`
+        );
+      } else if (firstPart) {
+        await this.alertTargetStore.rememberDeployTarget(
+          {
+            repo: request.repo,
+            environment,
+            runId: request.run_id,
+            releaseTrainId: request.release_train_id
+          },
+          {
+            dropId: drop.id,
+            dropPartId: firstPart.part_id,
+            sha: normalizeOptionalValue(request.sha),
+            triggeredByGithubLogin: normalizeOptionalValue(
+              request.triggered_by_github_login
+            )
+          }
+        );
+      } else {
+        this.logger.warn(
+          `Unable to remember WEB deploy reply target for ${request.repo} run ${request.run_id}: created drop has no parts`
+        );
+      }
+    }
+
     return {
       ci_drop: 'accepted',
       ...(await this.enqueueReleaseNotesIfEligible(request))
     };
+  }
+
+  private async resolveDeployTarget(
+    request: CiPipelineAlertRequest
+  ): Promise<CiPipelineDeployAlertTarget | null> {
+    const environment = normalizeTargetEnvironment(request.environment);
+    if (!environment) return null;
+    return this.alertTargetStore.resolveDeployTarget({
+      repo: request.repo,
+      environment,
+      runId: normalizeOptionalValue(request.parent_deploy_run_id),
+      releaseTrainId: normalizeOptionalValue(request.parent_release_train_id)
+    });
   }
 
   private async enqueueReleaseNotesIfEligible(
@@ -586,21 +694,39 @@ export class CiPipelineAlertService {
   }
 
   private async resolveAlertMentions(
-    request: CiPipelineAlertRequest
+    request: CiPipelineAlertRequest,
+    deployTarget: CiPipelineDeployAlertTarget | null
   ): Promise<AlertMentions> {
+    if (isWebE2EAlert(request) && request.status === 'success') {
+      return {
+        triggeredBy: null,
+        contributors: [],
+        deployInitiator: null,
+        all: []
+      };
+    }
     const triggeredByGithubLogin = normalizeOptionalValue(
       request.triggered_by_github_login
     );
     const isReleaseTrain = isVerifiedReleaseBusAlert(request);
     const triggeredByHandle =
       triggeredByGithubLogin && !isReleaseTrain
-        ? GITHUB_TO_6529_HANDLES[triggeredByGithubLogin.toLowerCase()]
+        ? getMappedProfileHandle(triggeredByGithubLogin)
         : null;
+    const deployInitiatorGithubLogin = normalizeOptionalValue(
+      deployTarget?.triggeredByGithubLogin
+    );
+    const deployInitiatorHandle = getMappedProfileHandle(
+      deployInitiatorGithubLogin
+    );
     if (!triggeredByGithubLogin) {
       this.logger.warn(
         'Unable to resolve CI workflow initiator: GitHub login is missing'
       );
-    } else if (!isReleaseTrain && !triggeredByHandle) {
+    } else if (
+      !isAutomationActor(triggeredByGithubLogin) &&
+      !triggeredByHandle
+    ) {
       this.logger.warn(
         `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile mapping is missing`
       );
@@ -612,6 +738,7 @@ export class CiPipelineAlertService {
       .filter((handle): handle is string => Boolean(handle));
     const handlesToResolve = [
       ...(triggeredByHandle ? [triggeredByHandle] : []),
+      ...(deployInitiatorHandle ? [deployInitiatorHandle] : []),
       ...contributorHandles
     ].filter(
       (handle, index, handles) =>
@@ -626,6 +753,7 @@ export class CiPipelineAlertService {
           githubLogin,
           profile: null
         })),
+        deployInitiator: null,
         all: []
       };
     }
@@ -645,9 +773,18 @@ export class CiPipelineAlertService {
       ? (mentionsByNormalizedHandle.get(triggeredByHandle.toLowerCase()) ??
         null)
       : null;
+    const deployInitiator = deployInitiatorHandle
+      ? (mentionsByNormalizedHandle.get(deployInitiatorHandle.toLowerCase()) ??
+        null)
+      : null;
     if (triggeredByHandle && !triggeredBy) {
       this.logger.warn(
         `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile ${triggeredByHandle} is missing`
+      );
+    }
+    if (deployInitiatorHandle && !deployInitiator) {
+      this.logger.warn(
+        `Unable to resolve CI deploy initiator ${deployInitiatorGithubLogin}: 6529 profile ${deployInitiatorHandle} is missing`
       );
     }
 
@@ -663,6 +800,7 @@ export class CiPipelineAlertService {
     // Profile IDs collapse handle aliases while preserving initiator-first order.
     const all = [
       ...(triggeredBy ? [triggeredBy] : []),
+      ...(deployInitiator ? [deployInitiator] : []),
       ...contributors
         .map(({ profile }) => profile)
         .filter((profile): profile is MentionedProfile => !!profile)
@@ -673,7 +811,7 @@ export class CiPipelineAlertService {
         ) === index
     );
 
-    return { triggeredBy, contributors, all };
+    return { triggeredBy, contributors, deployInitiator, all };
   }
 
   private resolveWaveId(request: CiPipelineAlertRequest): string {
@@ -692,15 +830,27 @@ export class CiPipelineAlertService {
   private buildCreateDropRequest({
     request,
     waveId,
-    mentions
+    mentions,
+    deployTarget
   }: {
     readonly request: CiPipelineAlertRequest;
     readonly waveId: string;
     readonly mentions: AlertMentions;
+    readonly deployTarget: CiPipelineDeployAlertTarget | null;
   }): ApiCreateDropRequest {
-    const content = this.formatContent(request, mentions);
+    const content = isWebE2EAlert(request)
+      ? this.formatWebE2EContent(request, mentions, deployTarget)
+      : this.formatContent(request, mentions);
     return {
       title: null,
+      ...(deployTarget
+        ? {
+            reply_to: {
+              drop_id: deployTarget.dropId,
+              drop_part_id: deployTarget.dropPartId
+            }
+          }
+        : {}),
       drop_type: ApiDropType.Chat,
       parts: [
         {
@@ -758,7 +908,50 @@ export class CiPipelineAlertService {
       ...(commit ? [`Commit: ${commit}`] : []),
       `Initiated by: ${triggeredBy}`,
       ...(contributors ? [`Contributors: ${contributors}`] : []),
-      `Run: ${formatRun(request)}`,
+      `Run: ${formatRun(request, false)}`,
+      ...failureMentionLines
+    ];
+
+    return truncate(lines.join('\n'), MAX_DROP_CONTENT_LENGTH);
+  }
+
+  private formatWebE2EContent(
+    request: CiPipelineAlertRequest,
+    mentions: AlertMentions,
+    deployTarget: CiPipelineDeployAlertTarget | null
+  ): string {
+    if (request.status === 'success') {
+      return truncate(
+        `${formatAlertHeading(request)} ${formatWebE2ESuccessRun(request)}`,
+        MAX_DROP_CONTENT_LENGTH
+      );
+    }
+    const automatic = isAutomationActor(request.triggered_by_github_login);
+    const manualValidator = mentions.triggeredBy
+      ? `@[${mentions.triggeredBy.handle}]`
+      : 'unknown';
+    const validation = automatic ? 'Automatic' : `Manual by ${manualValidator}`;
+    const deployInitiatorIsDistinct =
+      mentions.deployInitiator !== null &&
+      mentions.deployInitiator.profileId !== mentions.triggeredBy?.profileId;
+    const validationPack = normalizeOptionalValue(request.validation_pack);
+    const commit = deployTarget
+      ? formatCommit(request, deployTarget.sha)
+      : null;
+    const failureMentionLines =
+      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
+    const lines = [
+      formatAlertHeading(request),
+      '',
+      `Validation: ${validation}`,
+      ...(validationPack && validationPack !== 'all'
+        ? [`Pack: ${validationPack}`]
+        : []),
+      ...(deployInitiatorIsDistinct
+        ? [`Deploy initiated by: @[${mentions.deployInitiator!.handle}]`]
+        : []),
+      ...(commit ? [`Commit: ${commit}`] : []),
+      `Run: ${formatRun(request, true)}`,
       ...failureMentionLines
     ];
 
@@ -769,5 +962,6 @@ export class CiPipelineAlertService {
 export const ciPipelineAlertService = new CiPipelineAlertService(
   dropCreationService,
   identitiesDb,
-  releaseNoteGenerationQueue
+  releaseNoteGenerationQueue,
+  ciPipelineAlertTargetStore
 );

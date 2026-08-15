@@ -312,6 +312,25 @@ describe('ci pipeline alert routes', () => {
     );
   });
 
+  it('builds distinct dedupe keys for rerun attempts', () => {
+    const common = {
+      repo: '6529seize-frontend',
+      workflow: 'Staging E2E',
+      status: 'failure' as const,
+      title: 'Staging E2E failed',
+      run_id: '123',
+      run_url: 'https://github.com/example/repo/actions/runs/123',
+      triggered_by_github_login: 'github-actions[bot]',
+      alert_type: 'web_e2e' as const,
+      environment: 'staging',
+      service: 'web'
+    };
+
+    expect(
+      buildCiPipelineAlertDedupeKey({ ...common, run_attempt: 1 })
+    ).not.toEqual(buildCiPipelineAlertDedupeKey({ ...common, run_attempt: 2 }));
+  });
+
   it('builds distinct dedupe keys for arbitrary changed alert fields', () => {
     const changedFieldArbitrary = fc.constantFrom(
       ...ciPipelineAlertChangedFields

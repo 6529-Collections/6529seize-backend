@@ -126,6 +126,22 @@ async function runManualEvidenceNotifier({
 }
 
 describe('notify-ci-wave release-note metadata', () => {
+  it('sends the alert kind and GitHub run attempt', async () => {
+    const result = await runNotifier({
+      CI_PIPELINES_ALERT_TYPE: 'deploy',
+      GITHUB_RUN_ATTEMPT: '2'
+    });
+
+    expect(result).toMatchObject({
+      code: 0,
+      stderr: '',
+      payload: {
+        alert_type: 'deploy',
+        run_attempt: 2
+      }
+    });
+  });
+
   it('bounds a receiver response body that never completes', async () => {
     const result = await runNotifier(
       {
