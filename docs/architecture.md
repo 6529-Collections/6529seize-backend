@@ -221,6 +221,15 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+CI deploy and WEB E2E signals enter the API through the signed pipeline-alert
+route. The API renders and posts the deploy drop, then retains successful WEB
+deploy reply targets in Redis by deploy run ID and optional Release Bus train
+ID. Terminal E2E signals carry those durable identities back to the API; only
+an unambiguous match becomes a drop reply, while missing or inconsistent state
+falls back to a standalone result. Workflows never own Seize drop IDs. See
+[CI Pipeline Alerts](./ci-pipeline-alerts.md) for the request, formatting,
+retention, rerun, and rollout contract.
+
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
 WebSocket notification subscription replacement is transactional. New connections, re-authentication, and identity resyncs each have a one-percent chance of running bounded, deterministic cleanup of expired and orphaned subscription rows, so cleanup capacity follows subscription churn without putting the sweep on every hot-path call. The repository identity update method is the sole write path for `ws_connections.identity_id` and keeps the primary subscription reset coupled to re-authentication.
@@ -264,7 +273,14 @@ Important API responsibilities:
   complete all semantic and wallet-signature checks before a final atomic nonce
   consumption. The full auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
-- Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
+  subscriptions, and notifications. Wallet distribution allocation reads
+  combine Phase 0–2 distribution rows with Public subscription airdrops, while
+  returning card-level publication state without exposing the full Public
+  subscription list. They intentionally accept any wallet address without
+  authentication because distribution plans are public and the home page must
+  render before wallet authentication. Responses use a 60-second route cache
+  to limit repeated database reads while keeping publication changes timely.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
   derives visibility eligibility from a persisted wave, and the authenticated
   `/v2/waves/mention-search` draft endpoint, which applies the selected
