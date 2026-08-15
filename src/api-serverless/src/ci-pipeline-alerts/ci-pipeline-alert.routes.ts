@@ -53,10 +53,33 @@ function getReleaseValidationContractError(
   return null;
 }
 
+function getE2EValidationError(value: CiPipelineAlertRequest): string | null {
+  if (value.alert_type === 'web_e2e') {
+    if (value.repo !== '6529seize-frontend' || value.service !== 'web') {
+      return 'web_e2e alerts are supported only for the frontend web service';
+    }
+    return value.validation_pack?.trim()
+      ? null
+      : 'validation_pack is required for web_e2e alerts';
+  }
+
+  const hasE2EIdentity = [
+    value.parent_deploy_run_id,
+    value.parent_release_train_id,
+    value.validation_pack
+  ].some((field) => typeof field === 'string' && field.trim().length > 0);
+  return hasE2EIdentity
+    ? 'E2E deployment identity fields require alert_type web_e2e'
+    : null;
+}
+
 // This HMAC-signed, automation-only ingress is mounted manually and is
 // intentionally excluded from the public OpenAPI surface.
 const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
   Joi.object<CiPipelineAlertRequest>({
+    alert_type: Joi.string()
+      .valid('workflow', 'deploy', 'web_e2e')
+      .default('workflow'),
     repo: Joi.string().trim().min(1).max(200).required(),
     workflow: Joi.string().trim().min(1).max(200).required(),
     status: Joi.string().valid('success', 'failure').required(),
@@ -87,6 +110,27 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .valid('staging', 'prod', 'production')
       .required(),
     service: Joi.string().trim().max(200).allow(null, '').optional(),
+    run_attempt: Joi.number()
+      .integer()
+      .min(1)
+      .max(1_000_000)
+      .allow(null)
+      .optional(),
+    parent_deploy_run_id: Joi.string()
+      .trim()
+      .pattern(/^[1-9]\d{0,19}$/)
+      .allow(null, '')
+      .optional(),
+    parent_release_train_id: Joi.string()
+      .trim()
+      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
+      .allow(null, '')
+      .optional(),
+    validation_pack: Joi.string()
+      .trim()
+      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
+      .allow(null, '')
+      .optional(),
     release_train_id: Joi.string()
       .trim()
       .pattern(/^[A-Za-z0-9._-]{1,100}$/)
@@ -168,6 +212,10 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
         return helpers.message({
           custom: 'release_train_id is required with contributor_github_logins'
         });
+      }
+      const e2eValidationError = getE2EValidationError(value);
+      if (e2eValidationError) {
+        return helpers.message({ custom: e2eValidationError });
       }
       const groups = value.release_note_groups;
       if (!groups) return value;
@@ -337,7 +385,12 @@ export function buildCiPipelineAlertDedupeKey(
         request.environment ?? '',
         request.service ?? '',
         request.release_group_id ?? '',
-        request.pull_request_number ?? null
+        request.pull_request_number ?? null,
+        request.alert_type ?? 'workflow',
+        request.run_attempt ?? 1,
+        request.parent_deploy_run_id ?? '',
+        request.parent_release_train_id ?? '',
+        request.validation_pack ?? ''
       ])
     )
     .digest('hex');

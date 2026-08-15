@@ -178,11 +178,62 @@ describe('parseReleaseValidationMessage', () => {
     ).toBe('789');
   });
 
+  it('rejects validation events for a non-frontend repository', () => {
+    expect(() =>
+      parseReleaseValidationMessage({
+        message_type: 'release_validation',
+        repo: '6529-Collections/6529seize-backend',
+        workflow: 'Deploy a service',
+        run_id: '789',
+        run_url: 'https://github.com/example/actions/runs/789',
+        sha: 'a'.repeat(40),
+        release_group_id: 'backend-release',
+        triggered_by_github_login: 'prxt6529',
+        status: 'success'
+      })
+    ).toThrow('repo must identify 6529seize-frontend');
+  });
+
+  it('rejects validation events without an exact lowercase SHA', () => {
+    expect(() =>
+      parseReleaseValidationMessage({
+        message_type: 'release_validation',
+        repo: '6529-Collections/6529seize-frontend',
+        workflow: 'Production E2E',
+        run_id: '789',
+        run_url: 'https://github.com/example/actions/runs/789',
+        sha: 'ABC123',
+        release_group_id: 'frontend-release',
+        triggered_by_github_login: 'prxt6529',
+        status: 'success'
+      })
+    ).toThrow('sha must be a lowercase 40-character commit SHA');
+  });
+
+  it('rejects PR-scoped validation identities', () => {
+    expect(() =>
+      parseReleaseValidationMessage({
+        message_type: 'release_validation',
+        repo: '6529-Collections/6529seize-frontend',
+        workflow: 'Production E2E',
+        run_id: '789',
+        run_url: 'https://github.com/example/actions/runs/789',
+        sha: 'a'.repeat(40),
+        release_group_id: 'frontend-release',
+        pull_request_number: 1923,
+        triggered_by_github_login: 'prxt6529',
+        status: 'success'
+      })
+    ).toThrow('pull_request_number must be null');
+  });
+
   it('rejects an unsupported validation status', () => {
     expect(() =>
       parseReleaseValidationMessage(
         JSON.stringify({
           message_type: 'release_validation',
+          repo: '6529-Collections/6529seize-frontend',
+          sha: 'a'.repeat(40),
           status: 'pending'
         })
       )
@@ -194,6 +245,8 @@ describe('parseReleaseValidationMessage', () => {
       parseReleaseValidationMessage(
         JSON.stringify({
           message_type: 'release_validation',
+          repo: '6529-Collections/6529seize-frontend',
+          sha: 'a'.repeat(40),
           status: 'success',
           triggered_by_github_login: 'not a login'
         })

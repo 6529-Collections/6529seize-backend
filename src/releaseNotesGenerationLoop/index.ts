@@ -155,6 +155,24 @@ export function parseReleaseValidationMessage(
       'Invalid release validation message: message_type is required'
     );
   }
+  const repo = requireString(payload, 'repo');
+  if (repo.split('/').pop() !== '6529seize-frontend') {
+    throw new Error(
+      'Invalid release validation message: repo must identify 6529seize-frontend'
+    );
+  }
+  const sha = requireString(payload, 'sha');
+  if (!/^[a-f0-9]{40}$/.test(sha)) {
+    throw new Error(
+      'Invalid release validation message: sha must be a lowercase 40-character commit SHA'
+    );
+  }
+  const pullRequestNumber = parsePullRequestNumber(payload.pull_request_number);
+  if (pullRequestNumber !== null) {
+    throw new Error(
+      'Invalid release validation message: pull_request_number must be null'
+    );
+  }
   const status = payload.status;
   if (status !== 'success' && status !== 'failure') {
     throw new Error(
@@ -184,7 +202,7 @@ export function parseReleaseValidationMessage(
   }
   return {
     message_type: 'release_validation',
-    repo: requireString(payload, 'repo'),
+    repo,
     workflow: requireString(payload, 'workflow'),
     run_id: requireString(payload, 'run_id'),
     run_number:
@@ -192,9 +210,9 @@ export function parseReleaseValidationMessage(
         ? payload.run_number.trim()
         : null,
     run_url: requireString(payload, 'run_url'),
-    sha: requireString(payload, 'sha'),
+    sha,
     release_group_id: requireString(payload, 'release_group_id'),
-    pull_request_number: parsePullRequestNumber(payload.pull_request_number),
+    pull_request_number: pullRequestNumber,
     status,
     validation_mode: validationMode,
     triggered_by_github_login:
