@@ -9,6 +9,7 @@ import {
   DropType
 } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
+import { getDropEditableUntil } from '@/drops/drop-editability';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
@@ -1197,6 +1198,10 @@ export class DropsMappers {
       parts_count: dropEntity.parts_count,
       created_at: dropEntity.created_at,
       updated_at: numbers.parseIntOrNull(dropEntity.updated_at),
+      editable_until: getDropEditableUntil({
+        createdAt: dropEntity.created_at,
+        updatedAt: numbers.parseIntOrNull(dropEntity.updated_at)
+      }),
       mentioned_waves: mentionedWavesOfDrop,
       referenced_nfts: referencedNfts
         .filter((it) => it.drop_id === dropEntity.id)
