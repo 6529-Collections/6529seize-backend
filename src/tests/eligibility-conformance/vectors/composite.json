@@ -1,0 +1,80 @@
+[
+  {
+    "name": "composite-all-dimensions-and",
+    "dimension": "composite",
+    "description": "All configured criteria dimensions must pass together (logical AND, spec §1.1 step 4): one failing axis rejects the group.",
+    "identities": [
+      { "id": "subject", "tdh": 200, "level_raw": 100, "rep": 10, "cic": 5 },
+      { "id": "alice" }
+    ],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 10 },
+      { "rater": "alice", "target": "subject", "matter": "CIC", "rating": 5 }
+    ],
+    "nft_ownings": [
+      { "owner": "subject", "collection": "memes", "token_id": "100" }
+    ],
+    "groups": [
+      {
+        "id": "g-all-pass",
+        "tdh_min": 100,
+        "level_min": 3,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-cic-axis-fails",
+        "tdh_min": 100,
+        "level_min": 3,
+        "rep_min": 10,
+        "cic_min": 6,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-level-axis-fails",
+        "tdh_min": 100,
+        "level_min": 4,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-all-pass"] }
+  },
+  {
+    "name": "multi-group-mixed-dimensions",
+    "dimension": "composite",
+    "description": "One profile evaluated against several single-dimension groups at once; the result is the set of passing groups (spec §1, §11 rule 3).",
+    "identities": [
+      { "id": "subject", "tdh": 50, "level_raw": 30, "rep": 3, "cic": 0 },
+      { "id": "alice" }
+    ],
+    "subject": "subject",
+    "ratings": [
+      { "rater": "alice", "target": "subject", "matter": "REP", "category": "artist", "rating": 3 }
+    ],
+    "nft_ownings": [
+      { "owner": "subject", "collection": "gradient", "token_id": "7" }
+    ],
+    "groups": [
+      { "id": "g-tdh-pass", "tdh_min": 40 },
+      { "id": "g-level-fail", "level_min": 2 },
+      { "id": "g-rep-by-user-pass", "rep_user": "alice" },
+      {
+        "id": "g-nft-fail",
+        "owns_gradient": true,
+        "owns_gradient_tokens": ["8"],
+        "owns_gradient_tokens_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-tdh-pass", "g-rep-by-user-pass"] }
+  }
+]
