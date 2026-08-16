@@ -719,18 +719,10 @@ export class CiPipelineAlertService {
     const deployInitiatorHandle = getMappedProfileHandle(
       deployInitiatorGithubLogin
     );
-    if (!triggeredByGithubLogin) {
-      this.logger.warn(
-        'Unable to resolve CI workflow initiator: GitHub login is missing'
-      );
-    } else if (
-      !isAutomationActor(triggeredByGithubLogin) &&
-      !triggeredByHandle
-    ) {
-      this.logger.warn(
-        `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile mapping is missing`
-      );
-    }
+    this.logWorkflowInitiatorMappingFailure(
+      triggeredByGithubLogin,
+      triggeredByHandle
+    );
 
     const contributorGithubLogins = verifiedContributorGithubLogins(request);
     const contributorHandles = contributorGithubLogins
@@ -777,16 +769,14 @@ export class CiPipelineAlertService {
       ? (mentionsByNormalizedHandle.get(deployInitiatorHandle.toLowerCase()) ??
         null)
       : null;
-    if (triggeredByHandle && !triggeredBy) {
-      this.logger.warn(
-        `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile ${triggeredByHandle} is missing`
-      );
-    }
-    if (deployInitiatorHandle && !deployInitiator) {
-      this.logger.warn(
-        `Unable to resolve CI deploy initiator ${deployInitiatorGithubLogin}: 6529 profile ${deployInitiatorHandle} is missing`
-      );
-    }
+    this.logMissingMentionProfiles({
+      triggeredByGithubLogin,
+      triggeredByHandle,
+      triggeredBy,
+      deployInitiatorGithubLogin,
+      deployInitiatorHandle,
+      deployInitiator
+    });
 
     const contributors = contributorGithubLogins.map((githubLogin) => {
       const mappedHandle = GITHUB_TO_6529_HANDLES[githubLogin.toLowerCase()];
@@ -812,6 +802,48 @@ export class CiPipelineAlertService {
     );
 
     return { triggeredBy, contributors, deployInitiator, all };
+  }
+
+  private logWorkflowInitiatorMappingFailure(
+    githubLogin: string | null,
+    mappedHandle: string | null
+  ): void {
+    if (!githubLogin) {
+      this.logger.warn(
+        'Unable to resolve CI workflow initiator: GitHub login is missing'
+      );
+    } else if (!isAutomationActor(githubLogin) && !mappedHandle) {
+      this.logger.warn(
+        `Unable to resolve CI workflow initiator ${githubLogin}: 6529 profile mapping is missing`
+      );
+    }
+  }
+
+  private logMissingMentionProfiles({
+    triggeredByGithubLogin,
+    triggeredByHandle,
+    triggeredBy,
+    deployInitiatorGithubLogin,
+    deployInitiatorHandle,
+    deployInitiator
+  }: {
+    readonly triggeredByGithubLogin: string | null;
+    readonly triggeredByHandle: string | null;
+    readonly triggeredBy: MentionedProfile | null;
+    readonly deployInitiatorGithubLogin: string | null;
+    readonly deployInitiatorHandle: string | null;
+    readonly deployInitiator: MentionedProfile | null;
+  }): void {
+    if (triggeredByHandle && !triggeredBy) {
+      this.logger.warn(
+        `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile ${triggeredByHandle} is missing`
+      );
+    }
+    if (deployInitiatorHandle && !deployInitiator) {
+      this.logger.warn(
+        `Unable to resolve CI deploy initiator ${deployInitiatorGithubLogin}: 6529 profile ${deployInitiatorHandle} is missing`
+      );
+    }
   }
 
   private resolveWaveId(request: CiPipelineAlertRequest): string {
