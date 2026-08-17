@@ -226,7 +226,7 @@ export function getFrontendReleaseNoteLabel(
   }
   const firstLine = reference.content?.split('\n')[0]?.trim() ?? '';
   const headingMatch = HISTORICAL_FRONTEND_HEADING_PATTERN.exec(firstLine);
-  if (!headingMatch || headingMatch[2] !== frontendSha.slice(0, 8)) {
+  if (headingMatch?.[2] !== frontendSha.slice(0, 8)) {
     throw new Error(
       `Frontend release note ${reference.id} has an unsupported heading`
     );

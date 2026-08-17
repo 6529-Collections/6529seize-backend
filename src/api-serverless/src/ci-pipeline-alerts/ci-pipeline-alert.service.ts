@@ -495,7 +495,7 @@ export class CiPipelineAlertService {
     if (!enqueueContext) {
       return;
     }
-    const { promptPath, sha, deployedAt, isBackendRelease } = enqueueContext;
+    const { promptPath, isBackendRelease } = enqueueContext;
     if (!isAllowedReleaseNotesPrompt(request.repo, promptPath)) {
       this.logger.warn(
         `Skipping release notes for unsupported prompt path ${promptPath} in ${request.repo}`
@@ -505,54 +505,85 @@ export class CiPipelineAlertService {
 
     const structuredGroups = request.release_note_groups !== undefined;
     for (const group of requestedReleaseNoteGroups(request)) {
-      const normalizedGroup = normalizeReleaseNoteGroup(
+      const normalizedGroup = this.getNormalizedReleaseNoteGroup(
+        request,
         group,
-        request.service,
-        isBackendRelease
+        isBackendRelease,
+        structuredGroups
       );
       if (!normalizedGroup) {
-        if (structuredGroups) {
-          throw new Error(
-            `Malformed structured release-note group ${group.release_group_id || 'missing'} for ${request.repo} run ${request.run_id}`
-          );
-        }
-        this.logger.warn(
-          `Skipping malformed release-note group ${group.release_group_id || 'missing'} for ${request.repo} run ${request.run_id}`
-        );
         continue;
       }
-      const contributorGithubLogins = this.getReleaseTrainContributors(request);
-      const triggeredByGithubLogin = normalizeOptionalValue(
-        request.triggered_by_github_login
+      await this.enqueueReleaseNoteGroup(
+        request,
+        enqueueContext,
+        normalizedGroup
       );
-      const releaseVersion = normalizeOptionalValue(request.release_version);
-      const frontendSha = normalizeOptionalValue(request.frontend_sha);
-      await this.releaseNotesQueue.enqueueBestEffort({
-        repo: request.repo,
-        workflow: request.workflow,
-        run_id: request.run_id,
-        run_number: request.run_number,
-        run_url: request.run_url,
-        ...(triggeredByGithubLogin
-          ? { triggered_by_github_login: triggeredByGithubLogin }
-          : {}),
-        sha,
-        branch: request.branch,
-        environment: 'prod',
-        service: request.service,
-        prompt_path: promptPath,
-        release_group_id: normalizedGroup.releaseGroupId,
-        release_group_services: normalizedGroup.releaseGroupServices,
-        pull_request_number: normalizedGroup.pullRequestNumber,
-        ...(contributorGithubLogins.length
-          ? { contributor_github_logins: contributorGithubLogins }
-          : {}),
-        publish_release_note: normalizedGroup.publishReleaseNote,
-        ...(releaseVersion ? { release_version: releaseVersion } : {}),
-        ...(frontendSha ? { frontend_sha: frontendSha } : {}),
-        deployed_at: deployedAt
-      });
     }
+  }
+
+  private getNormalizedReleaseNoteGroup(
+    request: CiPipelineAlertRequest,
+    group: CiPipelineReleaseNoteGroup,
+    isBackendRelease: boolean,
+    structuredGroups: boolean
+  ): NormalizedReleaseNoteGroup | null {
+    const normalizedGroup = normalizeReleaseNoteGroup(
+      group,
+      request.service,
+      isBackendRelease
+    );
+    if (normalizedGroup) {
+      return normalizedGroup;
+    }
+    const groupId = group.release_group_id || 'missing';
+    if (structuredGroups) {
+      throw new Error(
+        `Malformed structured release-note group ${groupId} for ${request.repo} run ${request.run_id}`
+      );
+    }
+    this.logger.warn(
+      `Skipping malformed release-note group ${groupId} for ${request.repo} run ${request.run_id}`
+    );
+    return null;
+  }
+
+  private async enqueueReleaseNoteGroup(
+    request: CiPipelineAlertRequest,
+    enqueueContext: ReleaseNoteEnqueueContext,
+    normalizedGroup: NormalizedReleaseNoteGroup
+  ): Promise<void> {
+    const contributorGithubLogins = this.getReleaseTrainContributors(request);
+    const triggeredByGithubLogin = normalizeOptionalValue(
+      request.triggered_by_github_login
+    );
+    const releaseVersion = normalizeOptionalValue(request.release_version);
+    const frontendSha = normalizeOptionalValue(request.frontend_sha);
+    await this.releaseNotesQueue.enqueueBestEffort({
+      repo: request.repo,
+      workflow: request.workflow,
+      run_id: request.run_id,
+      run_number: request.run_number,
+      run_url: request.run_url,
+      ...(triggeredByGithubLogin
+        ? { triggered_by_github_login: triggeredByGithubLogin }
+        : {}),
+      sha: enqueueContext.sha,
+      branch: request.branch,
+      environment: 'prod',
+      service: request.service,
+      prompt_path: enqueueContext.promptPath,
+      release_group_id: normalizedGroup.releaseGroupId,
+      release_group_services: normalizedGroup.releaseGroupServices,
+      pull_request_number: normalizedGroup.pullRequestNumber,
+      ...(contributorGithubLogins.length
+        ? { contributor_github_logins: contributorGithubLogins }
+        : {}),
+      publish_release_note: normalizedGroup.publishReleaseNote,
+      ...(releaseVersion ? { release_version: releaseVersion } : {}),
+      ...(frontendSha ? { frontend_sha: frontendSha } : {}),
+      deployed_at: enqueueContext.deployedAt
+    });
   }
 
   private getReleaseTrainContributors(

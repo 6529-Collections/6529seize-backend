@@ -1487,7 +1487,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         'Release-note source commit URL does not match its identity'
       );
     }
-    const escapedCommitUrl = commitUrl.replace(/[\\%_]/g, '\\$&');
+    const escapedCommitUrl = commitUrl.replace(/[\\%_]/g, String.raw`\$&`);
     const metadataMatch = `
       exists (
         select 1 from ${DROP_METADATA_TABLE} repository_metadata
@@ -1502,7 +1502,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           and sha_metadata.data_value = :sha
       )`;
     const result = await this.db.execute<ReleaseNoteDropReference>(
-      `select d.id,
+      String.raw`select d.id,
               d.serial_no,
               dp.content,
               (
@@ -1528,7 +1528,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
            (${metadataMatch})
            or (
              dp.content like '### Frontend Deploy %'
-             and dp.content like :commitUrlPattern escape '\\\\'
+             and dp.content like :commitUrlPattern escape '\\'
            )
          )
        order by case when ${metadataMatch} then 0 else 1 end,
