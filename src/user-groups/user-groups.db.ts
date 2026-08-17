@@ -49,10 +49,76 @@ export interface IdentityGroupMembershipPage {
   readonly nextCursor: IdentityGroupMembership | null;
 }
 
+export interface GroupMembershipSql {
+  readonly key: string;
+  readonly sql: string;
+  readonly params: Readonly<Record<string, unknown>>;
+}
+
 const IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE = 500;
 const IDENTITY_GROUP_MEMBERSHIP_LOOKUP_BATCH_SIZE = 500;
 
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
+  async findMembershipKeysOutsideContainingGroup(
+    containingGroup: GroupMembershipSql,
+    containedGroups: readonly GroupMembershipSql[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!containedGroups.length) {
+      return [];
+    }
+
+    const timerName = `${this.constructor.name}->findMembershipKeysOutsideContainingGroup`;
+    ctx.timer?.start(timerName);
+    try {
+      const namespaceMembershipSql = (
+        membership: GroupMembershipSql,
+        namespace: string
+      ) => {
+        const params = Object.fromEntries(
+          Object.entries(membership.params).map(([key, value]) => [
+            `${namespace}_${key}`,
+            value
+          ])
+        );
+        return {
+          sql: membership.sql.replace(
+            /:([A-Za-z0-9_]+)/g,
+            (_match, key: string) => `:${namespace}_${key}`
+          ),
+          params
+        };
+      };
+
+      const containing = namespaceMembershipSql(containingGroup, 'containing');
+      const params: Record<string, unknown> = { ...containing.params };
+      const containedQueries = containedGroups.map((membership, index) => {
+        const namespace = `contained_${index}`;
+        const namespaced = namespaceMembershipSql(membership, namespace);
+        const keyParam = `${namespace}_key`;
+        params[keyParam] = membership.key;
+        Object.assign(params, namespaced.params);
+        return `select :${keyParam} as membership_key, members.profile_id
+                  from (${namespaced.sql}
+                        select profile_id from user_groups_view) members`;
+      });
+
+      const rows = await this.db.execute<{ membership_key: string }>(
+        `select distinct contained.membership_key
+           from (${containedQueries.join(' union all ')}) contained
+           left join (${containing.sql}
+                      select profile_id from user_groups_view) containing
+             on containing.profile_id = contained.profile_id
+          where containing.profile_id is null`,
+        params,
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.map((row) => row.membership_key);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async save(
     entity: Omit<UserGroupEntity, 'is_pure_profile_group'>,
     connection: ConnectionWrapper<any>

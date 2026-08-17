@@ -360,3 +360,38 @@ describe('UserGroupsDb findIdentityGroupMembershipPage', () => {
     );
   });
 });
+
+describeWithSeed(
+  'UserGroupsDb findMembershipKeysOutsideContainingGroup',
+  [],
+  () => {
+    const repo = new UserGroupsDb(() => sqlExecutor);
+    const membershipSql = (key: string, profileIds: readonly string[]) => ({
+      key,
+      sql: `with user_groups_view as (
+              ${profileIds
+                .map(
+                  (_profileId, index) =>
+                    `select :profile_${index} as profile_id`
+                )
+                .join(' union all ')})`,
+      params: Object.fromEntries(
+        profileIds.map((profileId, index) => [`profile_${index}`, profileId])
+      )
+    });
+
+    it('finds every group with a member outside the containing group in one query', async () => {
+      await expect(
+        repo.findMembershipKeysOutsideContainingGroup(
+          membershipSql('view', ['profile-1', 'profile-2']),
+          [
+            membershipSql('contained', ['profile-1']),
+            membershipSql('outside', ['profile-3']),
+            membershipSql('mixed', ['profile-2', 'profile-4'])
+          ],
+          { timer: undefined }
+        )
+      ).resolves.toEqual(expect.arrayContaining(['outside', 'mixed']));
+    });
+  }
+);

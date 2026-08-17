@@ -3113,6 +3113,33 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return result.length ? result[0] : null;
   }
 
+  public async findWavesUsingGroupId(
+    groupId: string,
+    ctx: RequestContext
+  ): Promise<WaveEntity[]> {
+    if (!ctx.connection) {
+      throw new Error('findWavesUsingGroupId requires a connection');
+    }
+    const timerName = `${this.constructor.name}->findWavesUsingGroupId`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db.execute<WaveEntity>(
+        `select *
+           from ${WAVES_TABLE}
+          where visibility_group_id = :groupId
+             or participation_group_id = :groupId
+             or chat_group_id = :groupId
+             or admin_group_id = :groupId
+             or voting_group_id = :groupId
+          for update`,
+        { groupId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async getWavesPauses(
     waveIds: string[],
     ctx: RequestContext

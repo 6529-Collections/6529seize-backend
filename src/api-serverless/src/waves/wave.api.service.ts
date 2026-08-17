@@ -65,6 +65,8 @@ import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubs
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
+import { ApiWaveGroupRole } from '../generated/models/ApiWaveGroupRole';
+import { ApiWaveGroupValidationRequest } from '../generated/models/ApiWaveGroupValidationRequest';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import {
   IdentityFetcher,
@@ -127,6 +129,11 @@ type RequestContextWithConnection = RequestContext & {
   connection: NonNullable<RequestContext['connection']>;
 };
 
+type WavePrivilegeGroup = {
+  readonly role: ApiWaveGroupRole;
+  readonly groupId: string | null;
+};
+
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
@@ -178,6 +185,166 @@ export class WaveApiService {
 
   private isSupportedCardSetTdhContract(contract: string): boolean {
     return CARD_SET_TDH_SUPPORTED_CONTRACTS.has(contract.toLowerCase());
+  }
+
+  private getActivePrivilegeGroups(
+    request: ApiCreateNewWave | ApiUpdateWaveRequest
+  ): WavePrivilegeGroup[] {
+    const groups: WavePrivilegeGroup[] = [];
+    const adminGroupId = request.wave.admin_group?.group_id ?? null;
+    if (adminGroupId !== null) {
+      groups.push({
+        role: ApiWaveGroupRole.Admin,
+        groupId: adminGroupId
+      });
+    }
+    if (request.chat.enabled) {
+      groups.push({
+        role: ApiWaveGroupRole.Chat,
+        groupId: request.chat.scope.group_id
+      });
+    }
+    if (request.wave.type !== ApiWaveType.Chat) {
+      groups.push(
+        {
+          role: ApiWaveGroupRole.Participation,
+          groupId: request.participation.scope.group_id
+        },
+        {
+          role: ApiWaveGroupRole.Voting,
+          groupId: request.voting.scope.group_id
+        }
+      );
+    }
+    return groups;
+  }
+
+  private getReferencedGroupIds(
+    request: ApiCreateNewWave | ApiUpdateWaveRequest
+  ): string[] {
+    return collections.distinct(
+      [
+        request.visibility.scope.group_id,
+        request.participation.scope.group_id,
+        request.voting.scope.group_id,
+        request.chat.scope.group_id,
+        request.wave.admin_group?.group_id ?? null
+      ].filter((id): id is string => id !== null)
+    );
+  }
+
+  private getPreviousGroupId(
+    role: ApiWaveGroupRole,
+    wave: WaveEntity
+  ): string | null {
+    switch (role) {
+      case ApiWaveGroupRole.Participation:
+        return wave.participation_group_id;
+      case ApiWaveGroupRole.Voting:
+        return wave.voting_group_id;
+      case ApiWaveGroupRole.Chat:
+        return wave.chat_group_id;
+      case ApiWaveGroupRole.Admin:
+        return wave.admin_group_id;
+    }
+  }
+
+  private async findInvalidWaveGroupRoles(
+    {
+      visibilityGroupId,
+      privilegeGroups,
+      referencedGroupIds,
+      authenticatedAdminProfileId,
+      preloadedGroups = []
+    }: {
+      readonly visibilityGroupId: string | null;
+      readonly privilegeGroups: readonly WavePrivilegeGroup[];
+      readonly referencedGroupIds: readonly string[];
+      readonly authenticatedAdminProfileId?: string | null | undefined;
+      readonly preloadedGroups?: readonly ApiGroupFull[] | undefined;
+    },
+    ctx: RequestContext
+  ): Promise<ApiWaveGroupRole[]> {
+    const preloadedGroupsById = new Map(
+      preloadedGroups.map((group) => [group.id, group])
+    );
+    const groupEntities = await this.userGroupsService.getApiGroupsByIds(
+      Array.from(referencedGroupIds).filter(
+        (groupId) => !preloadedGroupsById.has(groupId)
+      ),
+      ctx
+    );
+    const groupsById = new Map<string, ApiGroupFull>(
+      preloadedGroups.map((group) => [group.id, group])
+    );
+    groupEntities.forEach((group) => groupsById.set(group.id, group));
+    const missingGroupIds = referencedGroupIds.filter(
+      (groupId) => !groupsById.has(groupId)
+    );
+    if (missingGroupIds.length) {
+      throw new BadRequestException(
+        `Group(s) not found: ${missingGroupIds.join(', ')}`
+      );
+    }
+    if (visibilityGroupId === null) {
+      return [];
+    }
+
+    const invalidRoles = new Set<ApiWaveGroupRole>();
+    const explicitPrivilegeGroups = new Map<string, ApiGroupFull>();
+    for (const privilegeGroup of privilegeGroups) {
+      if (privilegeGroup.groupId === null) {
+        invalidRoles.add(privilegeGroup.role);
+      } else if (privilegeGroup.groupId !== visibilityGroupId) {
+        explicitPrivilegeGroups.set(
+          privilegeGroup.groupId,
+          groupsById.get(privilegeGroup.groupId)!
+        );
+      }
+    }
+
+    if (explicitPrivilegeGroups.size) {
+      const outsideGroupIds = new Set(
+        await this.userGroupsService.findGroupIdsWithMembersOutsideContainingGroup(
+          groupsById.get(visibilityGroupId)!,
+          Array.from(explicitPrivilegeGroups.values()),
+          ctx
+        )
+      );
+      privilegeGroups.forEach((privilegeGroup) => {
+        if (
+          privilegeGroup.groupId !== null &&
+          outsideGroupIds.has(privilegeGroup.groupId)
+        ) {
+          invalidRoles.add(privilegeGroup.role);
+        }
+      });
+    }
+
+    if (authenticatedAdminProfileId) {
+      const eligibleGroupIds =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          authenticatedAdminProfileId,
+          ctx.timer
+        );
+      if (!eligibleGroupIds.includes(visibilityGroupId)) {
+        invalidRoles.add(ApiWaveGroupRole.Admin);
+      }
+    }
+    return Object.values(ApiWaveGroupRole).filter((role) =>
+      invalidRoles.has(role)
+    );
+  }
+
+  private assertNoInvalidWaveGroupRoles(
+    invalidRoles: readonly ApiWaveGroupRole[]
+  ): void {
+    if (!invalidRoles.length) {
+      return;
+    }
+    throw new BadRequestException(
+      `Wave ${invalidRoles.join(', ')} group members must also belong to the View group`
+    );
   }
 
   private assertImmutableWaveUpdateFieldsUnchanged({
@@ -974,9 +1141,135 @@ export class WaveApiService {
     return await this.createWave(waveRequest, true, ctx);
   }
 
+  public async validateWaveGroupContainmentPreview(
+    request: ApiWaveGroupValidationRequest,
+    authenticatedProfileId: string | null,
+    ctx: RequestContext
+  ): Promise<ApiWaveGroupRole[]> {
+    const privilegeGroups: WavePrivilegeGroup[] = [];
+    if (request.participation_group_id !== undefined) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Participation,
+        groupId: request.participation_group_id
+      });
+    }
+    if (request.voting_group_id !== undefined) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Voting,
+        groupId: request.voting_group_id
+      });
+    }
+    if (request.chat_group_id !== undefined) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Chat,
+        groupId: request.chat_group_id
+      });
+    }
+    if (
+      request.admin_group_id !== undefined &&
+      request.admin_group_id !== null
+    ) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Admin,
+        groupId: request.admin_group_id
+      });
+    }
+    const referencedGroupIds = collections.distinct(
+      [
+        request.visibility_group_id,
+        ...privilegeGroups.map((group) => group.groupId)
+      ].filter((groupId): groupId is string => groupId !== null)
+    );
+    return await this.findInvalidWaveGroupRoles(
+      {
+        visibilityGroupId: request.visibility_group_id,
+        privilegeGroups,
+        referencedGroupIds,
+        authenticatedAdminProfileId: request.include_authenticated_user_as_admin
+          ? authenticatedProfileId
+          : null
+      },
+      ctx
+    );
+  }
+
+  public async assertGroupReplacementPreservesWaveViewAccess(
+    {
+      currentGroup,
+      replacedGroupId
+    }: {
+      readonly currentGroup: ApiGroupFull;
+      readonly replacedGroupId: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const affectedWaves = await this.wavesApiDb.findWavesUsingGroupId(
+      replacedGroupId,
+      ctx
+    );
+    for (const wave of affectedWaves) {
+      const replaceGroupId = (groupId: string | null): string | null =>
+        groupId === replacedGroupId ? currentGroup.id : groupId;
+      const privilegeGroups: WavePrivilegeGroup[] = [];
+      const adminGroupId = replaceGroupId(wave.admin_group_id);
+      if (adminGroupId !== null) {
+        privilegeGroups.push({
+          role: ApiWaveGroupRole.Admin,
+          groupId: adminGroupId
+        });
+      }
+      if (wave.chat_enabled) {
+        privilegeGroups.push({
+          role: ApiWaveGroupRole.Chat,
+          groupId: replaceGroupId(wave.chat_group_id)
+        });
+      }
+      if (wave.type !== WaveType.CHAT) {
+        privilegeGroups.push(
+          {
+            role: ApiWaveGroupRole.Participation,
+            groupId: replaceGroupId(wave.participation_group_id)
+          },
+          {
+            role: ApiWaveGroupRole.Voting,
+            groupId: replaceGroupId(wave.voting_group_id)
+          }
+        );
+      }
+      const rolesToValidate =
+        wave.visibility_group_id === replacedGroupId
+          ? privilegeGroups
+          : privilegeGroups.filter(
+              (group) =>
+                this.getPreviousGroupId(group.role, wave) === replacedGroupId
+            );
+      if (!rolesToValidate.length) {
+        continue;
+      }
+      const visibilityGroupId = replaceGroupId(wave.visibility_group_id);
+      const referencedGroupIds = collections.distinct(
+        [
+          visibilityGroupId,
+          ...rolesToValidate.map((group) => group.groupId)
+        ].filter((groupId): groupId is string => groupId !== null)
+      );
+      const invalidRoles = await this.findInvalidWaveGroupRoles(
+        {
+          visibilityGroupId,
+          privilegeGroups: rolesToValidate,
+          referencedGroupIds,
+          preloadedGroups: [currentGroup]
+        },
+        ctx
+      );
+      this.assertNoInvalidWaveGroupRoles(invalidRoles);
+    }
+  }
+
   private async validateWaveRelations(
     request: ApiCreateNewWave | ApiUpdateWaveRequest,
-    ctx: RequestContext
+    ctx: RequestContext,
+    waveBeforeUpdate?: WaveEntity | undefined
   ) {
     const timer = ctx.timer;
     timer?.start(`${this.constructor.name}->validateWaveRelations`);
@@ -1094,28 +1387,28 @@ export class WaveApiService {
         );
       }
     }
-    const referencedGroupIds = collections.distinct(
-      [
-        request.visibility.scope.group_id,
-        request.participation.scope.group_id,
-        request.voting.scope.group_id
-      ].filter((id) => id !== null) as string[]
-    );
-    timer?.start(`${this.constructor.name}->userGroupsService->getByIds`);
-    const groupEntities = await this.userGroupsService.getByIds(
-      referencedGroupIds,
+    const activePrivilegeGroups = this.getActivePrivilegeGroups(request);
+    const privilegeGroupsToValidate =
+      !waveBeforeUpdate ||
+      waveBeforeUpdate.visibility_group_id !== request.visibility.scope.group_id
+        ? activePrivilegeGroups
+        : activePrivilegeGroups.filter(
+            (group) =>
+              (group.role === ApiWaveGroupRole.Chat &&
+                request.chat.enabled &&
+                !waveBeforeUpdate.chat_enabled) ||
+              this.getPreviousGroupId(group.role, waveBeforeUpdate) !==
+                group.groupId
+          );
+    const invalidGroupRoles = await this.findInvalidWaveGroupRoles(
+      {
+        visibilityGroupId: request.visibility.scope.group_id,
+        privilegeGroups: privilegeGroupsToValidate,
+        referencedGroupIds: this.getReferencedGroupIds(request)
+      },
       ctx
     );
-    timer?.stop(`${this.constructor.name}->userGroupsService->getByIds`);
-    const missingGroupIds = referencedGroupIds.filter(
-      (it) => !groupEntities.find((e) => e.id === it)
-    );
-    if (missingGroupIds.length) {
-      timer?.stop(`${this.constructor.name}->validateWaveRelations`);
-      throw new BadRequestException(
-        `Group(s) not found: ${missingGroupIds.join(', ')}`
-      );
-    }
+    this.assertNoInvalidWaveGroupRoles(invalidGroupRoles);
     const referencedCreditorIdentity = request.voting.creditor_id;
     if (referencedCreditorIdentity) {
       const profileId = await this.identityFetcher.getProfileIdByIdentityKey(
@@ -1839,9 +2132,9 @@ export class WaveApiService {
     return await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        const waveBeforeUpdate = await this.wavesApiDb.findWaveById(
+        const waveBeforeUpdate = await this.wavesApiDb.findWaveByIdForUpdate(
           waveId,
-          connection
+          ctxWithConnection
         );
         if (!waveBeforeUpdate) {
           throw new NotFoundException(`Wave ${waveId} not found`);
@@ -1853,6 +2146,16 @@ export class WaveApiService {
         ) {
           throw new ForbiddenException(
             `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+          );
+        }
+        if (
+          waveBeforeUpdate.visibility_group_id !== null &&
+          !groupsUserIsEligibleFor.includes(
+            waveBeforeUpdate.visibility_group_id
+          )
+        ) {
+          throw new ForbiddenException(
+            `You can't update a wave you can't view`
           );
         }
         if (waveBeforeUpdate.created_by !== authenticatedProfileId) {
@@ -1900,7 +2203,11 @@ export class WaveApiService {
           request,
           waveBeforeUpdate
         });
-        await this.validateWaveRelations(request, ctxWithConnection);
+        await this.validateWaveRelations(
+          request,
+          ctxWithConnection,
+          waveBeforeUpdate
+        );
         await this.validateWaveVisibilityInheritanceOnUpdate({
           request,
           waveBeforeUpdate,

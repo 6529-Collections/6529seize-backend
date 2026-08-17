@@ -81,6 +81,9 @@ export function mapWaveToApiWaveMin({
   identityWave: boolean;
   authenticatedProfileId: string | null | undefined;
 }): ApiWaveMin {
+  const authenticatedUserCanView =
+    wave.visibility_group_id === null ||
+    groupIdsUserIsEligibleFor.includes(wave.visibility_group_id);
   return {
     id: wave.id,
     name: displayByWaveId[wave.id]?.name ?? wave.name,
@@ -89,22 +92,27 @@ export function mapWaveToApiWaveMin({
     last_drop_time: wave.last_drop_time,
     submission_type: resolveWaveSubmissionType(wave.submission_type),
     authenticated_user_eligible_to_vote:
+      authenticatedUserCanView &&
       !noRightToVote &&
       (wave.voting_group_id === null ||
         groupIdsUserIsEligibleFor.includes(wave.voting_group_id)),
     authenticated_user_eligible_to_participate:
+      authenticatedUserCanView &&
       !noRightToParticipate &&
       (wave.participation_group_id === null ||
         groupIdsUserIsEligibleFor.includes(wave.participation_group_id)),
     authenticated_user_eligible_to_chat:
+      authenticatedUserCanView &&
       wave.chat_enabled &&
       (wave.chat_group_id === null ||
         groupIdsUserIsEligibleFor.includes(wave.chat_group_id)),
-    authenticated_user_admin: isWaveCreatorOrAdmin({
-      authenticatedProfileId,
-      wave,
-      groupIdsUserIsEligibleFor
-    }),
+    authenticated_user_admin:
+      authenticatedUserCanView &&
+      isWaveCreatorOrAdmin({
+        authenticatedProfileId,
+        wave,
+        groupIdsUserIsEligibleFor
+      }),
     voting_period_start: wave.voting_period_start,
     voting_period_end: wave.voting_period_end,
     voting_credit_type: enums.resolveOrThrow(
