@@ -255,25 +255,30 @@ export class WaveApiService {
       privilegeGroups,
       referencedGroupIds,
       authenticatedAdminProfileId,
+      enforceRequesterVisibility = false,
       preloadedGroups = []
     }: {
       readonly visibilityGroupId: string | null;
       readonly privilegeGroups: readonly WavePrivilegeGroup[];
       readonly referencedGroupIds: readonly string[];
-      readonly authenticatedAdminProfileId?: string | null | undefined;
-      readonly preloadedGroups?: readonly ApiGroupFull[] | undefined;
+      readonly authenticatedAdminProfileId?: string | null;
+      readonly enforceRequesterVisibility?: boolean;
+      readonly preloadedGroups?: readonly ApiGroupFull[];
     },
     ctx: RequestContext
   ): Promise<ApiWaveGroupRole[]> {
     const preloadedGroupsById = new Map(
       preloadedGroups.map((group) => [group.id, group])
     );
-    const groupEntities = await this.userGroupsService.getApiGroupsByIds(
-      Array.from(referencedGroupIds).filter(
-        (groupId) => !preloadedGroupsById.has(groupId)
-      ),
-      ctx
+    const groupIdsToLoad = Array.from(referencedGroupIds).filter(
+      (groupId) => !preloadedGroupsById.has(groupId)
     );
+    const groupEntities = enforceRequesterVisibility
+      ? await this.userGroupsService.getApiGroupsVisibleToRequesterByIds(
+          groupIdsToLoad,
+          ctx
+        )
+      : await this.userGroupsService.getApiGroupsByIds(groupIdsToLoad, ctx);
     const groupsById = new Map<string, ApiGroupFull>(
       preloadedGroups.map((group) => [group.id, group])
     );
@@ -283,7 +288,9 @@ export class WaveApiService {
     );
     if (missingGroupIds.length) {
       throw new BadRequestException(
-        `Group(s) not found: ${missingGroupIds.join(', ')}`
+        enforceRequesterVisibility
+          ? `One or more Wave groups were not found or aren't available`
+          : `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
     }
     if (visibilityGroupId === null) {
@@ -1185,6 +1192,7 @@ export class WaveApiService {
         visibilityGroupId: request.visibility_group_id,
         privilegeGroups,
         referencedGroupIds,
+        enforceRequesterVisibility: true,
         authenticatedAdminProfileId: request.include_authenticated_user_as_admin
           ? authenticatedProfileId
           : null
@@ -1372,15 +1380,16 @@ export class WaveApiService {
       request.participation.submission_strategy,
       request.wave.type
     );
-    if (request.wave.decisions_strategy !== null) {
+    const decisionStrategy = request.wave.decisions_strategy;
+    if (decisionStrategy !== null) {
       if (request.wave.type !== ApiWaveType.Rank) {
         throw new BadRequestException(
           `Only waves of type RANK support a decision strategy.`
         );
       }
       if (
-        request.wave.decisions_strategy.is_rolling &&
-        !request.wave.decisions_strategy.subsequent_decisions.length
+        decisionStrategy.is_rolling &&
+        !decisionStrategy.subsequent_decisions.length
       ) {
         throw new BadRequestException(
           `On rolling decision strategy subsequent decisions is mandatory`

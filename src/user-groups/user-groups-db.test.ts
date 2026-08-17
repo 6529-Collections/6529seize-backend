@@ -368,13 +368,19 @@ describeWithSeed(
     const repo = new UserGroupsDb(() => sqlExecutor);
     const membershipSql = (key: string, profileIds: readonly string[]) => ({
       key,
-      sql: `with user_groups_view as (
+      sql: `with harmless_literal as (
+              select ':not_a_parameter' as marker
+            ),
+            shared_membership_stage as (
               ${profileIds
                 .map(
                   (_profileId, index) =>
                     `select :profile_${index} as profile_id`
                 )
-                .join(' union all ')})`,
+                .join(' union all ')}),
+             user_groups_view as (
+               select profile_id from shared_membership_stage
+             )`,
       params: Object.fromEntries(
         profileIds.map((profileId, index) => [`profile_${index}`, profileId])
       )
@@ -395,3 +401,29 @@ describeWithSeed(
     });
   }
 );
+
+describe('UserGroupsDb membership SQL parameter validation', () => {
+  it('fails closed before executing SQL with an unbound placeholder', async () => {
+    const execute = jest.fn();
+    const repo = new UserGroupsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.findMembershipKeysOutsideContainingGroup(
+        {
+          key: 'view',
+          sql: 'with user_groups_view as (select :missing as profile_id)',
+          params: {}
+        },
+        [
+          {
+            key: 'contained',
+            sql: 'with user_groups_view as (select :profile as profile_id)',
+            params: { profile: 'profile-1' }
+          }
+        ],
+        { timer: undefined }
+      )
+    ).rejects.toThrow('contains an unbound parameter');
+    expect(execute).not.toHaveBeenCalled();
+  });
+});

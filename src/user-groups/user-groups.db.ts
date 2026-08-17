@@ -58,6 +58,75 @@ export interface GroupMembershipSql {
 const IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE = 500;
 const IDENTITY_GROUP_MEMBERSHIP_LOOKUP_BATCH_SIZE = 500;
 
+function namespaceMembershipParams(
+  membership: GroupMembershipSql,
+  namespace: string
+): { sql: string; params: Record<string, unknown> } {
+  const usedParams = new Set<string>();
+  let quote: "'" | '"' | '`' | null = null;
+  let sql = '';
+  for (let index = 0; index < membership.sql.length; index++) {
+    const character = membership.sql[index];
+    if (quote !== null) {
+      sql += character;
+      if (character === '\\' && index + 1 < membership.sql.length) {
+        sql += membership.sql[++index];
+      } else if (character === quote) {
+        if (membership.sql[index + 1] === quote) {
+          sql += membership.sql[++index];
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      sql += character;
+      continue;
+    }
+    const parameterStart = membership.sql[index + 1];
+    if (
+      character !== ':' ||
+      !parameterStart ||
+      !(parameterStart === '_' || /[A-Za-z]/.test(parameterStart))
+    ) {
+      sql += character;
+      continue;
+    }
+    let end = index + 2;
+    while (end < membership.sql.length && /\w/.test(membership.sql[end])) {
+      end++;
+    }
+    const key = membership.sql.slice(index + 1, end);
+    if (!Object.prototype.hasOwnProperty.call(membership.params, key)) {
+      throw new Error(
+        `Membership SQL for ${membership.key} contains an unbound parameter`
+      );
+    }
+    usedParams.add(key);
+    sql += `:${namespace}_${key}`;
+    index = end - 1;
+  }
+  const unusedParam = Object.keys(membership.params).find(
+    (key) => !usedParams.has(key)
+  );
+  if (unusedParam) {
+    throw new Error(
+      `Membership SQL for ${membership.key} contains an unused parameter`
+    );
+  }
+  return {
+    sql,
+    params: Object.fromEntries(
+      Object.entries(membership.params).map(([key, value]) => [
+        `${namespace}_${key}`,
+        value
+      ])
+    )
+  };
+}
+
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async findMembershipKeysOutsideContainingGroup(
     containingGroup: GroupMembershipSql,
@@ -71,30 +140,17 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->findMembershipKeysOutsideContainingGroup`;
     ctx.timer?.start(timerName);
     try {
-      const namespaceMembershipSql = (
-        membership: GroupMembershipSql,
-        namespace: string
-      ) => {
-        const params = Object.fromEntries(
-          Object.entries(membership.params).map(([key, value]) => [
-            `${namespace}_${key}`,
-            value
-          ])
-        );
-        return {
-          sql: membership.sql.replace(
-            /:([A-Za-z0-9_]+)/g,
-            (_match, key: string) => `:${namespace}_${key}`
-          ),
-          params
-        };
-      };
-
-      const containing = namespaceMembershipSql(containingGroup, 'containing');
+      // Each generated WITH block is scoped inside its own derived table, so
+      // repeated CTE names cannot collide. Bind names do share the outer
+      // statement scope and therefore must be namespaced.
+      const containing = namespaceMembershipParams(
+        containingGroup,
+        'containing'
+      );
       const params: Record<string, unknown> = { ...containing.params };
       const containedQueries = containedGroups.map((membership, index) => {
         const namespace = `contained_${index}`;
-        const namespaced = namespaceMembershipSql(membership, namespace);
+        const namespaced = namespaceMembershipParams(membership, namespace);
         const keyParam = `${namespace}_key`;
         params[keyParam] = membership.key;
         Object.assign(params, namespaced.params);

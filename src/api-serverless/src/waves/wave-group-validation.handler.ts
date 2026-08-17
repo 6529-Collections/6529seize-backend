@@ -8,7 +8,7 @@ import { ForbiddenException } from '@/exceptions';
 import { Timer } from '@/time';
 import { waveApiService } from './wave.api.service';
 
-const NullableGroupIdSchema = Joi.string().allow(null);
+const NullableGroupIdSchema = Joi.string().trim().min(1).max(200).allow(null);
 
 const WaveGroupValidationRequestSchema =
   Joi.object<ApiWaveGroupValidationRequest>({

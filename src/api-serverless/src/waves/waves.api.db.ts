@@ -3123,14 +3123,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->findWavesUsingGroupId`;
     ctx.timer?.start(timerName);
     try {
+      // Each branch uses its dedicated Wave group index. The outer lock is
+      // acquired in Wave-id order and covers exactly the rows whose invariant
+      // the group replacement must preserve. Wave updates lock one Wave and
+      // only read group rows, so there is no reverse group-row lock dependency.
       return await this.db.execute<WaveEntity>(
-        `select *
-           from ${WAVES_TABLE}
-          where visibility_group_id = :groupId
-             or participation_group_id = :groupId
-             or chat_group_id = :groupId
-             or admin_group_id = :groupId
-             or voting_group_id = :groupId
+        `select waves.*
+           from ${WAVES_TABLE} waves
+           join (
+             select id from ${WAVES_TABLE} where visibility_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where participation_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where chat_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where admin_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where voting_group_id = :groupId
+           ) referenced on referenced.id = waves.id
+          order by waves.id
           for update`,
         { groupId },
         { wrappedConnection: ctx.connection }

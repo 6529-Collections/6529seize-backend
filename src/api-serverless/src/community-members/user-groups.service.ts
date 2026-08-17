@@ -2274,6 +2274,33 @@ export class UserGroupsService {
     return await this.mapForApi(await this.getByIds(ids, ctx), ctx);
   }
 
+  async getApiGroupsVisibleToRequesterByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull[]> {
+    if (!ids.length) {
+      return [];
+    }
+    const groups = await this.getByIds(ids, ctx);
+    if (groups.every((group) => !group.is_private)) {
+      return await this.mapForApi(groups, ctx);
+    }
+    const authenticatedUserId =
+      ctx.authenticationContext?.getActingAsId() ?? null;
+    const eligibleGroupIds = authenticatedUserId
+      ? await this.getGroupsUserIsEligibleFor(authenticatedUserId, ctx.timer)
+      : [];
+    return await this.mapForApi(
+      groups.filter(
+        (group) =>
+          !group.is_private ||
+          group.created_by === authenticatedUserId ||
+          eligibleGroupIds.includes(group.id)
+      ),
+      ctx
+    );
+  }
+
   async findUserGroupsIdentityGroupIdentities(
     identityGroupId: string
   ): Promise<string[]> {

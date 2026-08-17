@@ -68,6 +68,9 @@ function createService(outsideGroupIds: readonly string[] = []) {
     getApiGroupsByIds: jest.fn(async (ids: string[]) =>
       ids.map((id) => ({ id }))
     ),
+    getApiGroupsVisibleToRequesterByIds: jest.fn(async (ids: string[]) =>
+      ids.map((id) => ({ id }))
+    ),
     findGroupIdsWithMembersOutsideContainingGroup: jest.fn(
       async (_viewGroup, containedGroups: Array<{ id: string }>) =>
         containedGroups
@@ -162,6 +165,25 @@ describe('Wave group View containment', () => {
     ).resolves.toEqual([]);
   });
 
+  it('does not disclose unavailable group ids from the preview boundary', async () => {
+    const { service, userGroupsService } = createService();
+    userGroupsService.getApiGroupsVisibleToRequesterByIds.mockResolvedValue([]);
+
+    await expect(
+      service.validateWaveGroupContainmentPreview(
+        {
+          visibility_group_id: VIEW_GROUP_ID,
+          voting_group_id: 'private-or-missing-group'
+        },
+        null,
+        { timer: undefined }
+      )
+    ).rejects.toThrow(
+      `One or more Wave groups were not found or aren't available`
+    );
+    expect(userGroupsService.getApiGroupsByIds).not.toHaveBeenCalled();
+  });
+
   it('validates the authenticated default Admin against View', async () => {
     const { service } = createService();
 
@@ -224,16 +246,21 @@ describe('Wave group View containment', () => {
       } as WaveEntity
     ]);
 
+    const connection = {} as any;
     await expect(
       service.assertGroupReplacementPreservesWaveViewAccess(
         {
           currentGroup: { id: 'candidate-group' } as any,
           replacedGroupId: 'replaced-group'
         },
-        { timer: undefined }
+        { connection, timer: undefined }
       )
     ).rejects.toThrow(
       'Wave PARTICIPATION group members must also belong to the View group'
+    );
+    expect(wavesApiDb.findWavesUsingGroupId).toHaveBeenCalledWith(
+      'replaced-group',
+      expect.objectContaining({ connection })
     );
   });
 });

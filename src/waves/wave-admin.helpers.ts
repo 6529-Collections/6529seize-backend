@@ -7,7 +7,7 @@ export function isWaveCreatorOrAdmin({
   wave: {
     readonly created_by: string;
     readonly admin_group_id: string | null;
-    readonly visibility_group_id?: string | null | undefined;
+    readonly visibility_group_id?: string | null;
   };
   groupIdsUserIsEligibleFor: readonly string[];
 }): boolean {
