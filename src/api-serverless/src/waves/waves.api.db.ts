@@ -3665,6 +3665,94 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async incrementDmUnreadStateVersionsForWave(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const timerLabel = `${this.constructor.name}->incrementDmUnreadStateVersionsForWave`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const readers = await this.db.execute<{ reader_id: string }>(
+        `select r.reader_id
+         from ${WAVE_READER_METRICS_TABLE} r
+         join ${WAVES_TABLE} w
+           on w.id = r.wave_id
+          and w.is_direct_message = true
+         where r.wave_id = :waveId`,
+        { waveId },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+      if (!readers.length) {
+        return [];
+      }
+      await this.db.execute(
+        `update ${WAVE_READER_METRICS_TABLE}
+         set unread_state_version = unread_state_version + 1
+         where wave_id = :waveId`,
+        { waveId },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+      return readers.map((reader) => reader.reader_id);
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async findDmWaveIdsForReaderWithDropsByAuthor(
+    param: {
+      readerId: string;
+      authorId: string;
+      limit: number;
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const rows = await this.db.execute<{ wave_id: string }>(
+      `select distinct r.wave_id
+       from ${WAVE_READER_METRICS_TABLE} r
+       join ${WAVES_TABLE} w
+         on w.id = r.wave_id
+        and w.is_direct_message = true
+       join ${DROPS_TABLE} d
+         on d.wave_id = r.wave_id
+        and d.author_id = :authorId
+       where r.reader_id = :readerId
+       limit :limit`,
+      param,
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
+    );
+    return rows.map((row) => row.wave_id);
+  }
+
+  async incrementDmUnreadStateVersionsForReaderWaves(
+    param: { readerId: string; waveIds: string[] },
+    ctx: RequestContext
+  ): Promise<void> {
+    const waveIds = Array.from(new Set(param.waveIds));
+    if (!waveIds.length) {
+      return;
+    }
+    await this.db.execute(
+      `update ${WAVE_READER_METRICS_TABLE}
+       set unread_state_version = unread_state_version + 1
+       where reader_id = :readerId
+         and wave_id in (:waveIds)`,
+      { readerId: param.readerId, waveIds },
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
+    );
+  }
+
   async insertMissingWaveReaderMetrics(
     param: {
       waveId: string;

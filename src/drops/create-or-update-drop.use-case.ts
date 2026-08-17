@@ -578,19 +578,24 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       );
-      const insertedDrop = await this.dropsDb.findDropById(dropId, connection);
-      if (!insertedDrop) {
-        throw new NotFoundException(`Drop ${dropId} not found after insert`);
+      if (wave.is_direct_message === true) {
+        const insertedDrop = await this.dropsDb.findDropById(
+          dropId,
+          connection
+        );
+        if (!insertedDrop) {
+          throw new NotFoundException(`Drop ${dropId} not found after insert`);
+        }
+        dmUnreadRecipientIds = await this.recordDirectMessageUnreadForNewDrop(
+          {
+            wave,
+            authorId,
+            createdAt,
+            serialNo: insertedDrop.serial_no
+          },
+          { connection, timer }
+        );
       }
-      dmUnreadRecipientIds = await this.recordDirectMessageUnreadForNewDrop(
-        {
-          wave,
-          authorId,
-          createdAt,
-          serialNo: insertedDrop.serial_no
-        },
-        { connection, timer }
-      );
       await Promise.all([
         this.metricsRecorder.recordDrop(
           {

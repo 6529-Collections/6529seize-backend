@@ -8,6 +8,7 @@ import { ForbiddenException } from '@/exceptions';
 import { Timer } from '@/time';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import * as Joi from 'joi';
+import { DbPoolName } from '@/db-query.options';
 
 const GetDmDropsUnreadQuerySchema = Joi.object<Record<string, never>>({})
   .unknown(false)
@@ -35,7 +36,8 @@ export async function handleGetDmDropsUnread(
 
   const conversations = await wavesApiDb.findDmUnreadConversationStates(
     { identityId, eligibleGroups },
-    ctx
+    ctx,
+    DbPoolName.WRITE
   );
 
   return {

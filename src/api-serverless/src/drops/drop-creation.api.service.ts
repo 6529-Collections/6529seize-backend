@@ -282,6 +282,11 @@ export class DropCreationApiService {
         deleteResponse.visibility_group_id,
         { timer, authenticationContext }
       );
+      await this.notifyDmUnreadStateChanged({
+        waveId: deleteResponse.wave_id,
+        recipientIds: deleteResponse.dm_unread_recipient_ids,
+        ctx: { timer, authenticationContext }
+      });
     }
     timer?.stop('dropCreationApiService->deleteDrop');
   }

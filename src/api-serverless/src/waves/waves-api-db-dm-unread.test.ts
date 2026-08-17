@@ -14,7 +14,8 @@ import { WavesApiDb } from './waves.api.db';
 
 function createRepo() {
   const db = {
-    oneOrNull: jest.fn()
+    oneOrNull: jest.fn(),
+    execute: jest.fn()
   };
   return {
     db,
@@ -83,6 +84,56 @@ describe('WavesApiDb DM unread drops count', () => {
         {}
       )
     ).resolves.toBe(0);
+  });
+});
+
+describe('WavesApiDb DM unread state versions', () => {
+  it('increments every reader version for a deleted DM drop', async () => {
+    const { db, repo } = createRepo();
+    const connection = {} as any;
+    db.execute
+      .mockResolvedValueOnce([
+        { reader_id: 'reader-1' },
+        { reader_id: 'reader-2' }
+      ])
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      repo.incrementDmUnreadStateVersionsForWave('wave-1', { connection })
+    ).resolves.toEqual(['reader-1', 'reader-2']);
+
+    expect(db.execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining(
+        'set unread_state_version = unread_state_version + 1'
+      ),
+      { waveId: 'wave-1' },
+      expect.objectContaining({ wrappedConnection: connection })
+    );
+  });
+
+  it('finds affected DM waves and increments only the muting reader', async () => {
+    const { db, repo } = createRepo();
+    db.execute
+      .mockResolvedValueOnce([{ wave_id: 'wave-1' }, { wave_id: 'wave-2' }])
+      .mockResolvedValueOnce(undefined);
+
+    const waveIds = await repo.findDmWaveIdsForReaderWithDropsByAuthor(
+      { readerId: 'reader-1', authorId: 'author-1', limit: 500 },
+      {}
+    );
+    await repo.incrementDmUnreadStateVersionsForReaderWaves(
+      { readerId: 'reader-1', waveIds: [...waveIds, 'wave-1'] },
+      {}
+    );
+
+    expect(waveIds).toEqual(['wave-1', 'wave-2']);
+    expect(db.execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('where reader_id = :readerId'),
+      { readerId: 'reader-1', waveIds: ['wave-1', 'wave-2'] },
+      expect.any(Object)
+    );
   });
 });
 

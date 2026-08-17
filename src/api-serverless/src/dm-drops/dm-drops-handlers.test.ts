@@ -30,6 +30,7 @@ jest.mock('@/time', () => ({
 }));
 
 import { handleGetDmDropsUnread } from './dm-drops.handlers';
+import { DbPoolName } from '@/db-query.options';
 
 describe('handleGetDmDropsUnread', () => {
   const timer = { marker: 'timer' } as any;
@@ -85,7 +86,8 @@ describe('handleGetDmDropsUnread', () => {
     );
     expect(mockFindDmUnreadConversationStates).toHaveBeenCalledWith(
       { identityId: 'profile-1', eligibleGroups: ['group-1'] },
-      { timer, authenticationContext }
+      { timer, authenticationContext },
+      DbPoolName.WRITE
     );
   });
 

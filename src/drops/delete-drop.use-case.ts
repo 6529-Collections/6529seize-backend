@@ -44,6 +44,10 @@ import {
   waveDropMetricsRefreshService,
   WaveDropMetricsDirtyRefreshReason
 } from '@/drops/wave-drop-metrics-refresh.service';
+import {
+  wavesApiDb,
+  WavesApiDb
+} from '@/api-serverless/src/waves/waves.api.db';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -54,7 +58,8 @@ export class DeleteDropUseCase {
     private readonly curationsDb: CurationsDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly dropPollsDb: DropPollsDb
+    private readonly dropPollsDb: DropPollsDb,
+    private readonly wavesApiDb: WavesApiDb
   ) {}
 
   private async resolveDeleterId(
@@ -91,6 +96,7 @@ export class DeleteDropUseCase {
     visibility_group_id: string | null;
     serial_no: number;
     wave_id: string;
+    dm_unread_recipient_ids: string[];
   } | null> {
     const isBackendDelete = model.deletion_purpose === 'SYSTEM_DELETE';
     const isPermanentDelete = model.deletion_purpose !== 'UPDATE';
@@ -187,11 +193,19 @@ export class DeleteDropUseCase {
           { timer, connection }
         );
       }
+      const dmUnreadRecipientIds =
+        isPermanentDelete && wave?.is_direct_message === true
+          ? await this.wavesApiDb.incrementDmUnreadStateVersionsForWave(
+              waveId,
+              { timer, connection }
+            )
+          : [];
       return {
         id: dropId,
         serial_no: drop.serial_no,
         visibility_group_id: wave?.visibility_group_id ?? null,
-        wave_id: drop.wave_id
+        wave_id: drop.wave_id,
+        dm_unread_recipient_ids: dmUnreadRecipientIds
       };
     }
     return null;
@@ -241,5 +255,6 @@ export const deleteDrop = new DeleteDropUseCase(
   curationsDb,
   artCurationTokenWatchService,
   attachmentsDb,
-  dropPollsDb
+  dropPollsDb,
+  wavesApiDb
 );
