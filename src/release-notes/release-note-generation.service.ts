@@ -69,7 +69,7 @@ const RELEASES_WEB_BASE_URL = 'https://6529.io/waves';
 const DESKTOP_DOWNLOAD_BASE_URL =
   'https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app';
 const HISTORICAL_FRONTEND_HEADING_PATTERN =
-  /^### Frontend Deploy \[#(\d{1,12})\]\([^)\r\n]{1,2048}\) · commit \[([a-f0-9]{8})\]\([^)\r\n]{1,2048}\) — ([A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} (?:AM|PM) UTC)$/;
+  /^### Frontend Deploy(?: \[#(\d{1,12})\]\([^)\r\n]{1,2048}\))? · commit \[([a-f0-9]{8})\]\([^)\r\n]{1,2048}\) — ([A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} (?:AM|PM) UTC)$/;
 
 export type ReleaseNoteGenerationOutcome =
   | 'published'
@@ -232,7 +232,8 @@ export function getFrontendReleaseNoteLabel(
     );
   }
   const [, runNumber, shortSha, deployedAt] = headingMatch;
-  return `Frontend Deploy #${runNumber} · commit ${shortSha} — ${deployedAt}`;
+  const runLabel = runNumber ? ` #${runNumber}` : '';
+  return `Frontend Deploy${runLabel} · commit ${shortSha} — ${deployedAt}`;
 }
 
 function getReleaseNoteMetadata(
@@ -371,7 +372,7 @@ function sanitizeContext(context: GitHubReleaseContext) {
 
 function serializeReleaseContext(context: GitHubReleaseContext): string {
   const sanitized = sanitizeContext(context);
-  const serialized = JSON.stringify(sanitized);
+  const serialized = serializeReleaseContextJson(sanitized);
   if (serialized.length <= MAX_RELEASE_CONTEXT_LENGTH) {
     return serialized;
   }
@@ -388,7 +389,7 @@ function serializeReleaseContext(context: GitHubReleaseContext): string {
       changed_files: pullRequest.changed_files.slice(0, COMPACT_CHANGED_FILES)
     }))
   };
-  const compactSerialized = JSON.stringify(compact);
+  const compactSerialized = serializeReleaseContextJson(compact);
   if (compactSerialized.length <= MAX_RELEASE_CONTEXT_LENGTH) {
     return compactSerialized;
   }
@@ -404,13 +405,19 @@ function serializeReleaseContext(context: GitHubReleaseContext): string {
       title
     }))
   };
-  const minimalSerialized = JSON.stringify(minimal);
+  const minimalSerialized = serializeReleaseContextJson(minimal);
   if (minimalSerialized.length > MAX_RELEASE_CONTEXT_LENGTH) {
     throw new Error(
       `Release context exceeds maximum of ${MAX_RELEASE_CONTEXT_LENGTH} characters after compaction`
     );
   }
   return minimalSerialized;
+}
+
+function serializeReleaseContextJson(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>]/g, (character) =>
+    character === '<' ? String.raw`\u003c` : String.raw`\u003e`
+  );
 }
 
 export class ReleaseNoteGenerationService {
