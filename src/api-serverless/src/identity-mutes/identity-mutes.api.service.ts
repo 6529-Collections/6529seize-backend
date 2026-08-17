@@ -90,10 +90,10 @@ export class IdentityMutesApiService {
       );
       await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
     } catch (error) {
-      this.logger.warn('Failed to synchronize DM unread state after mute', {
-        pair,
-        error
-      });
+      this.logger.warn(
+        'Failed to synchronize DM unread state after identity mute change',
+        { pair, error }
+      );
     }
   }
 
