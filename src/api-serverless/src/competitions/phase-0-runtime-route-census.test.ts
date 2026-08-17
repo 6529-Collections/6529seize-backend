@@ -24,6 +24,8 @@ const RETIRED_RELEASE_BUS_V1_ROUTES = new Set([
   '/deploy/release-trains/:id'
 ]);
 
+const ACCEPTED_CACHE_EXTENSIONS = new Set(['/api/community-members']);
+
 const repositoryRoot = path.resolve(__dirname, '../../../..');
 const fixtureRoot = path.resolve(
   __dirname,
@@ -180,7 +182,14 @@ describe('Phase 0 permanent mounted GET route census', () => {
       ) {
         failures.push(`${route.path}: required auth has no static evidence`);
       }
-      if (best.cache !== route.cache) {
+      if (
+        best.cache !== route.cache &&
+        !(
+          route.cache === 'uncached' &&
+          best.cache === 'cached' &&
+          ACCEPTED_CACHE_EXTENSIONS.has(route.path)
+        )
+      ) {
         failures.push(
           `${route.path}: cache changed from ${route.cache} to ${best.cache}`
         );

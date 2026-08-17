@@ -1183,13 +1183,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   }: {
     limit: number;
     handle: string;
-  }): Promise<(IdentityEntity & { ens: string })[]> {
+  }): Promise<IdentityEntity[]> {
     const sql = `
       select
-          i.*,
-          e.display as ens
+          i.*
       from ${IDENTITIES_TABLE} i
-           left join ${ENS_TABLE} e on lower(e.wallet) = i.primary_address
       where i.normalised_handle like concat('%', lower(:handle), '%')
       order by i.tdh desc
       limit :limit

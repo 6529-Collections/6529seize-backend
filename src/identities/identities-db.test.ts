@@ -73,6 +73,29 @@ describe('IdentitiesDb', () => {
     });
   });
 
+  it('searches community member handles without joining ENS', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.searchCommunityMembersWhereHandleLike({
+      handle: 'signers',
+      limit: 30
+    });
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('from identities i');
+    expect(sql).toContain(
+      "i.normalised_handle like concat('%', lower(:handle), '%')"
+    );
+    expect(sql).not.toContain('join ens');
+    expect(params).toEqual({ handle: 'signers', limit: 30 });
+  });
+
   it('restricts wave mention candidates to the supplied eligibility view', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new IdentitiesDb(
