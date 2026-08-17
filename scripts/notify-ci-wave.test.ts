@@ -65,6 +65,22 @@ async function runNotifier(
 }
 
 describe('notify-ci-wave release-note metadata', () => {
+  it('sends the alert kind and GitHub run attempt', async () => {
+    const result = await runNotifier({
+      CI_PIPELINES_ALERT_TYPE: 'deploy',
+      GITHUB_RUN_ATTEMPT: '2'
+    });
+
+    expect(result).toMatchObject({
+      code: 0,
+      stderr: '',
+      payload: {
+        alert_type: 'deploy',
+        run_attempt: 2
+      }
+    });
+  });
+
   it('sends canonical release train contributors and the deployed SHA', async () => {
     const expectedSha = 'b'.repeat(40);
     const result = await runNotifier({
