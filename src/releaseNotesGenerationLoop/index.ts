@@ -1,6 +1,9 @@
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
-import { releaseNoteGenerationService } from '@/release-notes/release-note-generation.service';
+import {
+  isDesktopRelease,
+  releaseNoteGenerationService
+} from '@/release-notes/release-note-generation.service';
 import {
   RELEASE_NOTE_DEPLOYED_AT_PATTERN,
   ReleaseNoteGenerationRequest,
@@ -10,12 +13,14 @@ import {
 import { isGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
+import { ciPipelineAlertService } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
 import type { SQSHandler } from 'aws-lambda';
 
 const logger = Logger.get('RELEASE_NOTES_GENERATION_LOOP');
 const RELEASE_NOTE_DEDUPE_TTL_SECONDS = 90 * 24 * 60 * 60;
 const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 20 * 60;
 const RELEASE_GROUP_TTL_SECONDS = RELEASE_NOTE_DEDUPE_TTL_SECONDS;
+const DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT = 4;
 type ReleaseNotesRedis = NonNullable<ReturnType<typeof getRedisClient>>;
 
 function requireString(
@@ -120,13 +125,19 @@ export function parseReleaseNoteMessage(
     const value = payload[field];
     return typeof value === 'string' && value.trim() ? value.trim() : null;
   };
+  const triggeredByGithubLogin = optionalString('triggered_by_github_login');
+  const releaseVersion = optionalString('release_version');
+  const frontendSha = optionalString('frontend_sha');
 
-  return {
+  const request: ReleaseNoteGenerationRequest = {
     repo: requireString(payload, 'repo'),
     workflow: requireString(payload, 'workflow'),
     run_id: requireString(payload, 'run_id'),
     run_number: optionalString('run_number'),
     run_url: requireString(payload, 'run_url'),
+    ...(triggeredByGithubLogin
+      ? { triggered_by_github_login: triggeredByGithubLogin }
+      : {}),
     sha: requireString(payload, 'sha'),
     branch: optionalString('branch'),
     environment: requireString(payload, 'environment'),
@@ -139,8 +150,27 @@ export function parseReleaseNoteMessage(
       payload.contributor_github_logins
     ),
     publish_release_note: parsePublishReleaseNote(payload.publish_release_note),
+    ...(releaseVersion ? { release_version: releaseVersion } : {}),
+    ...(frontendSha ? { frontend_sha: frontendSha } : {}),
     deployed_at: requireTimestamp(payload, 'deployed_at')
   };
+  const repoName = request.repo.split('/').pop()?.toLowerCase();
+  const hasDesktopFields = Boolean(
+    request.release_version || request.frontend_sha
+  );
+  if (
+    (repoName === '6529-core' || hasDesktopFields) &&
+    (repoName !== '6529-core' ||
+      !request.release_version ||
+      !/^\d+\.\d+\.\d+$/.test(request.release_version) ||
+      !request.frontend_sha ||
+      !/^[a-f0-9]{40}$/.test(request.frontend_sha))
+  ) {
+    throw new Error(
+      'Invalid release note message: release_version and frontend_sha are required for 6529-core'
+    );
+  }
+  return request;
 }
 
 export function parseReleaseValidationMessage(
@@ -518,6 +548,68 @@ export async function processRequest(
   }
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown release-note error';
+}
+
+async function postDesktopReleaseNoteFailure(
+  request: ReleaseNoteGenerationRequest,
+  error: unknown
+): Promise<void> {
+  const version = request.release_version ?? 'unknown';
+  const frontendSha = request.frontend_sha?.slice(0, 8) ?? 'unknown';
+  await ciPipelineAlertService.postAlert(
+    {
+      repo: request.repo,
+      workflow: request.workflow,
+      status: 'failure',
+      title: 'Desktop release note failed',
+      description: `Production v${version} release note could not be published after three retries. Frontend commit ${frontendSha}. ${getErrorMessage(error)}`,
+      triggered_by_github_login: request.triggered_by_github_login,
+      run_id: request.run_id,
+      run_number: request.run_number,
+      run_url: request.run_url,
+      sha: request.sha,
+      branch: request.branch,
+      environment: 'prod',
+      service: 'desktop'
+    },
+    {}
+  );
+}
+
+export async function processRequestWithRetryPolicy(
+  request: ReleaseNoteGenerationRequest,
+  receiveCount: number,
+  dependencies?: {
+    readonly process?: typeof processRequest;
+    readonly postFailure?: typeof postDesktopReleaseNoteFailure;
+  }
+): Promise<void> {
+  const process = dependencies?.process ?? processRequest;
+  const postFailure =
+    dependencies?.postFailure ?? postDesktopReleaseNoteFailure;
+  if (
+    isDesktopRelease(request) &&
+    receiveCount > DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT
+  ) {
+    throw new Error(
+      'Desktop release-note terminal alert failed and must move to the DLQ'
+    );
+  }
+  try {
+    await process(request);
+  } catch (error) {
+    if (
+      !isDesktopRelease(request) ||
+      receiveCount < DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT
+    ) {
+      throw error;
+    }
+    await postFailure(request, error);
+  }
+}
+
 const sqsHandler: SQSHandler = async (event) => {
   await doInDbContext(
     async () => {
@@ -547,7 +639,13 @@ const sqsHandler: SQSHandler = async (event) => {
         logger.info(
           `Generating release notes for ${request.repo} run ${request.run_id}`
         );
-        await processRequest(request);
+        const receiveCount = Number(record.attributes.ApproximateReceiveCount);
+        await processRequestWithRetryPolicy(
+          request,
+          Number.isSafeInteger(receiveCount) && receiveCount > 0
+            ? receiveCount
+            : 1
+        );
       }
     },
     { logger }

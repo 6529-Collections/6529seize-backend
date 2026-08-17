@@ -276,6 +276,163 @@ describe('ReleaseNoteGitHubService', () => {
     );
   });
 
+  it('uses the previous production Publish across version branches and excludes imported renderer history', async () => {
+    const previousSha = '1111111111111111111111111111111111111111';
+    const currentSha = '4444444444444444444444444444444444444444';
+    const outerMergeSha = '3333333333333333333333333333333333333333';
+    const boundaryMergeSha = '2222222222222222222222222222222222222222';
+    (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+      if (url.endsWith('/actions/runs/900')) {
+        return Promise.resolve(
+          response({
+            id: 900,
+            display_title: 'FLOW: Publish / ENV: Production - v0.3.13',
+            path: '.github/workflows/build-all-platforms.yml',
+            head_branch: 'v0.3.13',
+            head_sha: currentSha,
+            run_number: 328,
+            workflow_id: 99
+          })
+        );
+      }
+      if (url.includes('/actions/workflows/99/runs?')) {
+        return Promise.resolve(
+          response({
+            workflow_runs: [
+              {
+                id: 899,
+                display_title: 'FLOW: Build All / ENV: Production - v0.3.13',
+                path: '.github/workflows/build-all-platforms.yml',
+                head_branch: 'v0.3.13',
+                head_sha: 'ignored-build-all',
+                run_number: 327,
+                workflow_id: 99
+              },
+              {
+                id: 850,
+                display_title: 'FLOW: Publish / ENV: Production - v0.3.12',
+                path: '.github/workflows/build-all-platforms.yml',
+                head_branch: 'v0.3.12',
+                head_sha: previousSha,
+                run_number: 326,
+                workflow_id: 99
+              }
+            ]
+          })
+        );
+      }
+      if (url.includes(`/compare/${previousSha}...${currentSha}`)) {
+        return Promise.resolve(
+          response({
+            commits: [
+              {
+                sha: 'imported-frontend-commit',
+                parents: [{ sha: 'imported-parent' }],
+                commit: { message: 'Imported web-only change' }
+              },
+              {
+                sha: boundaryMergeSha,
+                parents: [{ sha: 'older-main' }, { sha: previousSha }],
+                commit: { message: 'Merge previous Desktop release' }
+              },
+              {
+                sha: outerMergeSha,
+                parents: [
+                  { sha: boundaryMergeSha },
+                  { sha: 'pull-web-branch' }
+                ],
+                commit: { message: 'Merge pull request #225 from pull-web' }
+              },
+              {
+                sha: currentSha,
+                parents: [{ sha: outerMergeSha }],
+                commit: { message: 'Improve desktop update prompts' }
+              }
+            ],
+            total_commits: 4
+          })
+        );
+      }
+      if (url.includes(`/commits/${outerMergeSha}/pulls`)) {
+        return Promise.resolve(
+          response([
+            {
+              number: 225,
+              html_url:
+                'https://github.com/6529-Collections/6529-core/pull/225',
+              title: 'Update desktop renderer',
+              body: 'Preserves Desktop wallet behavior while updating web.',
+              merged_at: '2026-08-10T10:00:00Z',
+              user: { login: 'prxt6529', type: 'User' },
+              base: { ref: 'main' }
+            }
+          ])
+        );
+      }
+      if (url.includes(`/commits/${currentSha}/pulls`)) {
+        return Promise.resolve(response([]));
+      }
+      if (url.includes('/pulls/225/files?')) {
+        return Promise.resolve(
+          response([
+            {
+              filename: 'renderer/components/update-prompt.tsx',
+              additions: 4,
+              deletions: 1,
+              changes: 5
+            }
+          ])
+        );
+      }
+      if (url.includes('/pulls/225/commits?')) {
+        return Promise.resolve(response([]));
+      }
+      throw new Error(`Unexpected GitHub URL ${url}`);
+    });
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext({
+      ...request,
+      repo: '6529-core',
+      workflow: 'Publish',
+      run_id: '900',
+      run_number: '328',
+      run_url: 'https://github.com/6529-Collections/6529-core/actions/runs/900',
+      sha: currentSha,
+      branch: 'v0.3.13',
+      service: 'desktop',
+      prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+      release_group_id: 'desktop-v0.3.13',
+      release_group_services: ['desktop'],
+      release_version: '0.3.13',
+      frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+    });
+
+    expect(context).toEqual({
+      previous_sha: previousSha,
+      current_sha: currentSha,
+      commit_messages: [
+        'Merge pull request #225 from pull-web',
+        'Improve desktop update prompts'
+      ],
+      pull_requests: [
+        expect.objectContaining({
+          number: 225,
+          title: 'Update desktop renderer'
+        })
+      ]
+    });
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?status=success&per_page=100&page=1',
+      expect.any(Object)
+    );
+    expect(
+      context?.commit_messages?.some((message) =>
+        message.includes('Imported web-only change')
+      )
+    ).toBe(false);
+  });
+
   it('rejects a frontend release from another current workflow path', async () => {
     (fetch as unknown as jest.Mock).mockResolvedValueOnce(
       response({

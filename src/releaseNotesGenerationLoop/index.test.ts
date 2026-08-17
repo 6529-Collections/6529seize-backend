@@ -1,8 +1,8 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
 import {
   parseReleaseNoteMessage,
-  parseReleaseValidationMessage,
-  processRequest
+  processRequest,
+  processRequestWithRetryPolicy
 } from './index';
 
 const request: ReleaseNoteGenerationRequest = {
@@ -105,153 +105,83 @@ describe('parseReleaseNoteMessage', () => {
       )
     ).toThrow('contributor_github_logins must be an array');
   });
+
+  it('requires exact Desktop version and Frontend source metadata', () => {
+    const desktopMessage = {
+      ...request,
+      repo: '6529-core',
+      workflow: 'Publish',
+      sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      service: 'desktop',
+      prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+      release_group_services: ['desktop'],
+      release_version: '0.3.13',
+      frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+    };
+
+    expect(parseReleaseNoteMessage(JSON.stringify(desktopMessage))).toEqual(
+      expect.objectContaining({
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+      })
+    );
+    const { frontend_sha: _frontendSha, ...missingFrontendSha } =
+      desktopMessage;
+    expect(() =>
+      parseReleaseNoteMessage(JSON.stringify(missingFrontendSha))
+    ).toThrow('release_version and frontend_sha are required for 6529-core');
+  });
 });
 
-describe('parseReleaseValidationMessage', () => {
-  it('parses a validation event for the existing release-note queue', () => {
-    expect(
-      parseReleaseValidationMessage(
-        JSON.stringify({
-          message_type: 'release_validation',
-          repo: '6529-Collections/6529seize-frontend',
-          workflow: 'Web Deploy - PROD',
-          run_id: '456',
-          run_number: '12',
-          run_url:
-            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
-          sha: 'a'.repeat(40),
-          release_group_id: 'frontend-release',
-          triggered_by_github_login: 'prxt6529',
-          status: 'failure'
-        })
-      )
-    ).toEqual({
-      message_type: 'release_validation',
-      repo: '6529-Collections/6529seize-frontend',
-      workflow: 'Web Deploy - PROD',
-      run_id: '456',
-      run_number: '12',
-      run_url:
-        'https://github.com/6529-Collections/6529seize-frontend/actions/runs/456',
-      sha: 'a'.repeat(40),
-      release_group_id: 'frontend-release',
-      pull_request_number: null,
-      status: 'failure',
-      validation_mode: undefined,
-      triggered_by_github_login: 'prxt6529'
-    });
-  });
+describe('Desktop retry policy', () => {
+  const desktopRequest: ReleaseNoteGenerationRequest = {
+    ...request,
+    repo: '6529-core',
+    workflow: 'Publish',
+    service: 'desktop',
+    release_group_services: ['desktop'],
+    release_version: '0.3.13',
+    frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+  };
 
-  it('parses manual validation mode', () => {
-    expect(
-      parseReleaseValidationMessage(
-        JSON.stringify({
-          message_type: 'release_validation',
-          repo: '6529-Collections/6529seize-frontend',
-          workflow: 'Production E2E',
-          run_id: '789',
-          run_url:
-            'https://github.com/6529-Collections/6529seize-frontend/actions/runs/789',
-          sha: 'a'.repeat(40),
-          release_group_id: 'frontend-release',
-          status: 'success',
-          validation_mode: 'manual',
-          triggered_by_github_login: 'GelatoGenesis'
-        })
-      ).validation_mode
-    ).toBe('manual');
-  });
+  it('rethrows the first three failures without posting an alert', async () => {
+    const error = new Error('Frontend release note was not found');
+    const postFailure = jest.fn();
 
-  it('accepts an already-parsed queue envelope', () => {
-    expect(
-      parseReleaseValidationMessage({
-        message_type: 'release_validation',
-        repo: '6529-Collections/6529seize-frontend',
-        workflow: 'Production E2E',
-        run_id: '789',
-        run_url: 'https://github.com/example/actions/runs/789',
-        sha: 'a'.repeat(40),
-        release_group_id: 'frontend-release',
-        triggered_by_github_login: 'prxt6529',
-        status: 'success'
-      }).run_id
-    ).toBe('789');
-  });
-
-  it('rejects validation events for a non-frontend repository', () => {
-    expect(() =>
-      parseReleaseValidationMessage({
-        message_type: 'release_validation',
-        repo: '6529-Collections/6529seize-backend',
-        workflow: 'Deploy a service',
-        run_id: '789',
-        run_url: 'https://github.com/example/actions/runs/789',
-        sha: 'a'.repeat(40),
-        release_group_id: 'backend-release',
-        triggered_by_github_login: 'prxt6529',
-        status: 'success'
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 3, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
       })
-    ).toThrow('repo must identify 6529seize-frontend');
+    ).rejects.toThrow(error);
+    expect(postFailure).not.toHaveBeenCalled();
   });
 
-  it('rejects validation events without an exact lowercase SHA', () => {
-    expect(() =>
-      parseReleaseValidationMessage({
-        message_type: 'release_validation',
-        repo: '6529-Collections/6529seize-frontend',
-        workflow: 'Production E2E',
-        run_id: '789',
-        run_url: 'https://github.com/example/actions/runs/789',
-        sha: 'ABC123',
-        release_group_id: 'frontend-release',
-        triggered_by_github_login: 'prxt6529',
-        status: 'success'
+  it('posts one terminal failure after the initial attempt and three retries', async () => {
+    const error = new Error('Frontend release note was not found');
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 4, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
       })
-    ).toThrow('sha must be a lowercase 40-character commit SHA');
+    ).resolves.toBeUndefined();
+    expect(postFailure).toHaveBeenCalledWith(desktopRequest, error);
   });
 
-  it('rejects PR-scoped validation identities', () => {
-    expect(() =>
-      parseReleaseValidationMessage({
-        message_type: 'release_validation',
-        repo: '6529-Collections/6529seize-frontend',
-        workflow: 'Production E2E',
-        run_id: '789',
-        run_url: 'https://github.com/example/actions/runs/789',
-        sha: 'a'.repeat(40),
-        release_group_id: 'frontend-release',
-        pull_request_number: 1923,
-        triggered_by_github_login: 'prxt6529',
-        status: 'success'
+  it('does not duplicate the terminal alert before moving to the DLQ', async () => {
+    const process = jest.fn();
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 5, {
+        process,
+        postFailure
       })
-    ).toThrow('pull_request_number must be null');
-  });
-
-  it('rejects an unsupported validation status', () => {
-    expect(() =>
-      parseReleaseValidationMessage(
-        JSON.stringify({
-          message_type: 'release_validation',
-          repo: '6529-Collections/6529seize-frontend',
-          sha: 'a'.repeat(40),
-          status: 'pending'
-        })
-      )
-    ).toThrow('status must be success or failure');
-  });
-
-  it('rejects an invalid workflow initiator login', () => {
-    expect(() =>
-      parseReleaseValidationMessage(
-        JSON.stringify({
-          message_type: 'release_validation',
-          repo: '6529-Collections/6529seize-frontend',
-          sha: 'a'.repeat(40),
-          status: 'success',
-          triggered_by_github_login: 'not a login'
-        })
-      )
-    ).toThrow('triggered_by_github_login must be a valid GitHub login');
+    ).rejects.toThrow('terminal alert failed and must move to the DLQ');
+    expect(process).not.toHaveBeenCalled();
+    expect(postFailure).not.toHaveBeenCalled();
   });
 });
 
@@ -468,7 +398,7 @@ describe('processRequest', () => {
     expect(generateAndPost).not.toHaveBeenCalled();
   });
 
-  it('records deduplication after publishing the no-baseline deployment record', async () => {
+  it('records deduplication after publishing a no-baseline deployment record', async () => {
     const redis = buildRedis();
 
     await processRequest(

@@ -33,7 +33,7 @@ describe('ReleaseNoteGenerationQueue', () => {
     } as unknown as SQS);
     const request = buildRequest();
 
-    await queue.enqueueBestEffort(request);
+    await expect(queue.enqueueBestEffort(request)).resolves.toBe(true);
 
     expect(sendToQueueName).toHaveBeenCalledWith({
       queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
@@ -41,14 +41,12 @@ describe('ReleaseNoteGenerationQueue', () => {
     });
   });
 
-  it('does not reject when enqueueing fails', async () => {
+  it('reports a best-effort enqueue failure without rejecting', async () => {
     const queue = new ReleaseNoteGenerationQueue({
       sendToQueueName: jest.fn().mockRejectedValue(new Error('queue down'))
     } as unknown as SQS);
 
-    await expect(
-      queue.enqueueBestEffort(buildRequest())
-    ).resolves.toBeUndefined();
+    await expect(queue.enqueueBestEffort(buildRequest())).resolves.toBe(false);
   });
 
   it('rejects a required release-note enqueue when the queue is unavailable', async () => {

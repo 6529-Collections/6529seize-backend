@@ -389,6 +389,32 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
+  it('requires Desktop version and Frontend SHA together', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    const res = makeResponse();
+
+    await expect(
+      ciPipelineAlertHandler(
+        makeAlertRequest({
+          repo: '6529-core',
+          workflow: 'Publish',
+          service: 'desktop',
+          release_notes_prompt_path:
+            'ops/release-notes/desktop-release-notes.prompt.md',
+          release_group_id: 'desktop-v0.3.13',
+          release_group_services: ['desktop'],
+          release_version: '0.3.13',
+          deployed_at: '2026-08-14T10:00:00.000Z'
+        }),
+        res
+      )
+    ).rejects.toThrow(
+      'release_version and frontend_sha must be supplied together for 6529-core'
+    );
+
+    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
+  });
+
   it('accepts a production release-validation event with exact identity', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
     (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
