@@ -41,6 +41,7 @@ function aggregateSnapshot(tokens: IndexedToken[] | undefined): TokenSnapshot {
   return (tokens ?? []).reduce<TokenSnapshot>(
     (snapshot, indexedToken) => {
       snapshot.tdh += indexedToken.token.tdh;
+      // Preserve legacy accounting by rounding each indexed entry before sum.
       snapshot.boostedTdh += Math.round(
         indexedToken.token.tdh * indexedToken.boost
       );

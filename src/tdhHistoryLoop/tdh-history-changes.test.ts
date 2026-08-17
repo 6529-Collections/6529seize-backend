@@ -28,6 +28,24 @@ function previousIndex(tokens: TokenTDH[], boost: number): TokenIndex {
 }
 
 describe('calculateTokenTdhChanges', () => {
+  it('treats undefined token arrays as empty snapshots', () => {
+    const index: TokenIndex = new Map();
+
+    addTokensToIndex(index, undefined, 1.5);
+
+    expect(index.size).toBe(0);
+    expect(calculateTokenTdhChanges(undefined, 1.5, index)).toEqual({
+      tdhCreated: 0,
+      tdhDestroyed: 0,
+      boostedTdhCreated: 0,
+      boostedTdhDestroyed: 0,
+      rawTdhCreated: 0,
+      rawTdhDestroyed: 0,
+      balanceCreated: 0,
+      balanceDestroyed: 0
+    });
+  });
+
   it('records normal daily accrual as created TDH', () => {
     const changes = calculateTokenTdhChanges(
       [token(1, 110, 11, 1)],
@@ -85,7 +103,7 @@ describe('calculateTokenTdhChanges', () => {
     });
   });
 
-  it('records a boost reduction as destroyed boosted TDH, not negative created TDH', () => {
+  it('uses each snapshot boost when recording a boost reduction', () => {
     const changes = calculateTokenTdhChanges(
       [token(1, 1010, 101, 1)],
       1.4,
