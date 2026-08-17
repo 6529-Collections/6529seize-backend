@@ -20,7 +20,7 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 
-const MAX_DM_UNREAD_SYNC_WAVES = 500;
+const DM_UNREAD_SYNC_PAGE_SIZE = 500;
 
 export class IdentityMutesApiService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -67,28 +67,35 @@ export class IdentityMutesApiService {
     ctx: RequestContext
   ): Promise<void> {
     try {
-      const waveIds =
-        await this.wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor(
-          {
-            readerId: pair.muter_id,
-            authorId: pair.muted_identity_id,
-            limit: MAX_DM_UNREAD_SYNC_WAVES
-          },
+      let afterWaveId: string | undefined;
+      let hasMore = true;
+      while (hasMore) {
+        const waveIds =
+          await this.wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor(
+            {
+              readerId: pair.muter_id,
+              authorId: pair.muted_identity_id,
+              limit: DM_UNREAD_SYNC_PAGE_SIZE,
+              ...(afterWaveId ? { afterWaveId } : {})
+            },
+            ctx
+          );
+        if (!waveIds.length) {
+          return;
+        }
+        await this.wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves(
+          { readerId: pair.muter_id, waveIds },
           ctx
         );
-      if (!waveIds.length) {
-        return;
+        const states = await this.wavesApiDb.findDmUnreadConversationStates(
+          { identityId: pair.muter_id, waveIds },
+          ctx,
+          DbPoolName.WRITE
+        );
+        await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
+        afterWaveId = waveIds[waveIds.length - 1];
+        hasMore = waveIds.length === DM_UNREAD_SYNC_PAGE_SIZE;
       }
-      await this.wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves(
-        { readerId: pair.muter_id, waveIds },
-        ctx
-      );
-      const states = await this.wavesApiDb.findDmUnreadConversationStates(
-        { identityId: pair.muter_id, waveIds },
-        ctx,
-        DbPoolName.WRITE
-      );
-      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
     } catch (error) {
       this.logger.warn(
         'Failed to synchronize DM unread state after identity mute change',

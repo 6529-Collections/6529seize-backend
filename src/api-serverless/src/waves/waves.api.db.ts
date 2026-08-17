@@ -3665,11 +3665,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  async incrementDmUnreadStateVersionsForWave(
-    waveId: string,
+  async incrementDmUnreadStateVersionsForWaveReaders(
+    param: { waveId: string; readerIds: string[] },
     ctx: RequestContext
   ): Promise<string[]> {
-    const timerLabel = `${this.constructor.name}->incrementDmUnreadStateVersionsForWave`;
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return [];
+    }
+    const timerLabel = `${this.constructor.name}->incrementDmUnreadStateVersionsForWaveReaders`;
     ctx.timer?.start(timerLabel);
     try {
       const readers = await this.db.execute<{ reader_id: string }>(
@@ -3678,8 +3682,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          join ${WAVES_TABLE} w
            on w.id = r.wave_id
           and w.is_direct_message = true
-         where r.wave_id = :waveId`,
-        { waveId },
+         where r.wave_id = :waveId
+           and r.reader_id in (:readerIds)`,
+        { waveId: param.waveId, readerIds },
         {
           wrappedConnection: ctx.connection,
           forcePool: DbPoolName.WRITE
@@ -3691,8 +3696,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `update ${WAVE_READER_METRICS_TABLE}
          set unread_state_version = unread_state_version + 1
-         where wave_id = :waveId`,
-        { waveId },
+         where wave_id = :waveId
+           and reader_id in (:readerIds)`,
+        { waveId: param.waveId, readerIds },
         {
           wrappedConnection: ctx.connection,
           forcePool: DbPoolName.WRITE
@@ -3709,21 +3715,27 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       readerId: string;
       authorId: string;
       limit: number;
+      afterWaveId?: string;
     },
     ctx: RequestContext
   ): Promise<string[]> {
     const rows = await this.db.execute<{ wave_id: string }>(
-      `select distinct r.wave_id
+      `select r.wave_id
        from ${WAVE_READER_METRICS_TABLE} r
        join ${WAVES_TABLE} w
          on w.id = r.wave_id
         and w.is_direct_message = true
-       join ${DROPS_TABLE} d
-         on d.wave_id = r.wave_id
-        and d.author_id = :authorId
        where r.reader_id = :readerId
+         and r.wave_id > :afterWaveId
+         and exists (
+           select 1
+           from ${DROPS_TABLE} d
+           where d.wave_id = r.wave_id
+             and d.author_id = :authorId
+         )
+       order by r.wave_id asc
        limit :limit`,
-      param,
+      { ...param, afterWaveId: param.afterWaveId ?? '' },
       {
         wrappedConnection: ctx.connection,
         forcePool: DbPoolName.WRITE

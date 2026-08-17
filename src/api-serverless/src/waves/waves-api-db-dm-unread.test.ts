@@ -88,7 +88,7 @@ describe('WavesApiDb DM unread drops count', () => {
 });
 
 describe('WavesApiDb DM unread state versions', () => {
-  it('increments every reader version for a deleted DM drop', async () => {
+  it('increments only currently eligible reader versions for a deleted DM drop', async () => {
     const { db, repo } = createRepo();
     const connection = {} as any;
     db.execute
@@ -99,7 +99,10 @@ describe('WavesApiDb DM unread state versions', () => {
       .mockResolvedValueOnce(undefined);
 
     await expect(
-      repo.incrementDmUnreadStateVersionsForWave('wave-1', { connection })
+      repo.incrementDmUnreadStateVersionsForWaveReaders(
+        { waveId: 'wave-1', readerIds: ['reader-1', 'reader-2'] },
+        { connection }
+      )
     ).resolves.toEqual(['reader-1', 'reader-2']);
 
     expect(db.execute).toHaveBeenNthCalledWith(
@@ -107,7 +110,7 @@ describe('WavesApiDb DM unread state versions', () => {
       expect.stringContaining(
         'set unread_state_version = unread_state_version + 1'
       ),
-      { waveId: 'wave-1' },
+      { waveId: 'wave-1', readerIds: ['reader-1', 'reader-2'] },
       expect.objectContaining({ wrappedConnection: connection })
     );
   });
@@ -128,6 +131,17 @@ describe('WavesApiDb DM unread state versions', () => {
     );
 
     expect(waveIds).toEqual(['wave-1', 'wave-2']);
+    expect(db.execute).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('order by r.wave_id asc'),
+      {
+        readerId: 'reader-1',
+        authorId: 'author-1',
+        limit: 500,
+        afterWaveId: ''
+      },
+      expect.any(Object)
+    );
     expect(db.execute).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining('where reader_id = :readerId'),

@@ -70,6 +70,12 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
         ctx
       );
       expect(
+        wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+      ).toHaveBeenCalledWith(
+        { readerId: 'muter-1', authorId: 'muted-1', limit: 500 },
+        ctx
+      );
+      expect(
         wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
       ).toHaveBeenCalledWith({ readerId: 'muter-1', waveIds: ['wave-1'] }, ctx);
       expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
@@ -82,4 +88,36 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       ).toHaveBeenCalledWith([dmUnreadState]);
     }
   );
+
+  it('continues synchronizing after the first 500 affected conversations', async () => {
+    const { ctx, service, wavesApiDb, wsListenersNotifier } = createService();
+    const firstPage = Array.from(
+      { length: 500 },
+      (_, index) => `wave-${String(index).padStart(3, '0')}`
+    );
+    wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(['wave-500']);
+
+    await service.muteIdentity('muted-handle', ctx as never);
+
+    expect(
+      wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+    ).toHaveBeenNthCalledWith(
+      2,
+      {
+        readerId: 'muter-1',
+        authorId: 'muted-1',
+        limit: 500,
+        afterWaveId: 'wave-499'
+      },
+      ctx
+    );
+    expect(
+      wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).toHaveBeenCalledTimes(2);
+  });
 });

@@ -1,6 +1,7 @@
 const mockGetAuthenticationContext = jest.fn();
 const mockGetFromRequest = jest.fn();
 const mockFindDmUnreadConversationStates = jest.fn();
+const mockCountIdentityUnreadDmDrops = jest.fn();
 const mockGetGroupsUserIsEligibleForReadContext = jest.fn();
 const mockUserGroupsService = { marker: 'user-groups-service' };
 
@@ -19,7 +20,8 @@ jest.mock('@/api/waves/wave-access.helpers', () => ({
 
 jest.mock('@/api/waves/waves.api.db', () => ({
   wavesApiDb: {
-    findDmUnreadConversationStates: mockFindDmUnreadConversationStates
+    findDmUnreadConversationStates: mockFindDmUnreadConversationStates,
+    countIdentityUnreadDmDrops: mockCountIdentityUnreadDmDrops
   }
 }));
 
@@ -29,7 +31,10 @@ jest.mock('@/time', () => ({
   }
 }));
 
-import { handleGetDmDropsUnread } from './dm-drops.handlers';
+import {
+  handleGetDmDropsUnread,
+  handleGetDmUnreadSnapshot
+} from './dm-drops.handlers';
 import { DbPoolName } from '@/db-query.options';
 
 describe('handleGetDmDropsUnread', () => {
@@ -44,6 +49,7 @@ describe('handleGetDmDropsUnread', () => {
     mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
     mockGetFromRequest.mockReturnValue(timer);
     mockGetGroupsUserIsEligibleForReadContext.mockResolvedValue(['group-1']);
+    mockCountIdentityUnreadDmDrops.mockResolvedValue(7);
     mockFindDmUnreadConversationStates.mockResolvedValue([
       {
         profile_id: 'profile-1',
@@ -66,10 +72,22 @@ describe('handleGetDmDropsUnread', () => {
     ]);
   });
 
-  it('returns the authenticated profile conversation snapshot and aggregate count', async () => {
+  it('keeps the legacy endpoint on the lightweight unread count query', async () => {
     const req = { query: {} } as any;
 
-    await expect(handleGetDmDropsUnread(req)).resolves.toEqual({
+    await expect(handleGetDmDropsUnread(req)).resolves.toEqual({ count: 7 });
+
+    expect(mockCountIdentityUnreadDmDrops).toHaveBeenCalledWith(
+      { identityId: 'profile-1', eligibleGroups: ['group-1'] },
+      { timer, authenticationContext }
+    );
+    expect(mockFindDmUnreadConversationStates).not.toHaveBeenCalled();
+  });
+
+  it('returns the authenticated profile conversation snapshot from the explicit endpoint', async () => {
+    const req = { query: {} } as any;
+
+    await expect(handleGetDmUnreadSnapshot(req)).resolves.toEqual({
       profile_id: 'profile-1',
       count: 7,
       conversations: [
@@ -100,6 +118,7 @@ describe('handleGetDmDropsUnread', () => {
     expect(mockGetAuthenticationContext).not.toHaveBeenCalled();
     expect(mockGetGroupsUserIsEligibleForReadContext).not.toHaveBeenCalled();
     expect(mockFindDmUnreadConversationStates).not.toHaveBeenCalled();
+    expect(mockCountIdentityUnreadDmDrops).not.toHaveBeenCalled();
   });
 
   it('rejects users without a profile', async () => {
@@ -111,5 +130,6 @@ describe('handleGetDmDropsUnread', () => {
     );
     expect(mockGetGroupsUserIsEligibleForReadContext).not.toHaveBeenCalled();
     expect(mockFindDmUnreadConversationStates).not.toHaveBeenCalled();
+    expect(mockCountIdentityUnreadDmDrops).not.toHaveBeenCalled();
   });
 });
