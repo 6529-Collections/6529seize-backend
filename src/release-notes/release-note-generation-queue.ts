@@ -42,16 +42,18 @@ export class ReleaseNoteGenerationQueue {
 
   public async enqueueBestEffort(
     request: ReleaseNoteGenerationRequest
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await this.sqsClient.sendToQueueName({
         queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
         message: request
       });
+      return true;
     } catch (error) {
       this.logger.error(
         `Failed to enqueue release notes for ${request.repo} run ${request.run_id}: ${error}`
       );
+      return false;
     }
   }
 }

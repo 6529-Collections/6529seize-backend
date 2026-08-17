@@ -472,7 +472,7 @@ export class CiPipelineAlertService {
       }
     }
 
-    await this.enqueueReleaseNotesIfEligible(request);
+    await this.enqueueReleaseNotesIfEligible(request, ctx);
   }
 
   private async resolveDeployTarget(
@@ -489,7 +489,8 @@ export class CiPipelineAlertService {
   }
 
   private async enqueueReleaseNotesIfEligible(
-    request: CiPipelineAlertRequest
+    request: CiPipelineAlertRequest,
+    ctx: RequestContext
   ): Promise<void> {
     const enqueueContext = getReleaseNoteEnqueueContext(request);
     if (!enqueueContext) {
@@ -517,7 +518,8 @@ export class CiPipelineAlertService {
       await this.enqueueReleaseNoteGroup(
         request,
         enqueueContext,
-        normalizedGroup
+        normalizedGroup,
+        ctx
       );
     }
   }
@@ -551,7 +553,8 @@ export class CiPipelineAlertService {
   private async enqueueReleaseNoteGroup(
     request: CiPipelineAlertRequest,
     enqueueContext: ReleaseNoteEnqueueContext,
-    normalizedGroup: NormalizedReleaseNoteGroup
+    normalizedGroup: NormalizedReleaseNoteGroup,
+    ctx: RequestContext
   ): Promise<void> {
     const contributorGithubLogins = this.getReleaseTrainContributors(request);
     const triggeredByGithubLogin = normalizeOptionalValue(
@@ -559,7 +562,7 @@ export class CiPipelineAlertService {
     );
     const releaseVersion = normalizeOptionalValue(request.release_version);
     const frontendSha = normalizeOptionalValue(request.frontend_sha);
-    await this.releaseNotesQueue.enqueueBestEffort({
+    const enqueued = await this.releaseNotesQueue.enqueueBestEffort({
       repo: request.repo,
       workflow: request.workflow,
       run_id: request.run_id,
@@ -584,6 +587,37 @@ export class CiPipelineAlertService {
       ...(frontendSha ? { frontend_sha: frontendSha } : {}),
       deployed_at: enqueueContext.deployedAt
     });
+    if (!enqueued && request.repo.split('/').pop() === '6529-core') {
+      await this.postDesktopReleaseNoteEnqueueFailure(request, ctx);
+    }
+  }
+
+  private async postDesktopReleaseNoteEnqueueFailure(
+    request: CiPipelineAlertRequest,
+    ctx: RequestContext
+  ): Promise<void> {
+    const version =
+      normalizeOptionalValue(request.release_version) ?? 'unknown';
+    const frontendSha =
+      normalizeOptionalValue(request.frontend_sha)?.slice(0, 8) ?? 'unknown';
+    await this.postAlert(
+      {
+        repo: request.repo,
+        workflow: request.workflow,
+        status: 'failure',
+        title: 'Desktop release note failed',
+        description: `Production v${version} release note could not be queued. Frontend commit ${frontendSha}.`,
+        triggered_by_github_login: request.triggered_by_github_login,
+        run_id: request.run_id,
+        run_number: request.run_number,
+        run_url: request.run_url,
+        sha: request.sha,
+        branch: request.branch,
+        environment: 'prod',
+        service: 'desktop'
+      },
+      ctx
+    );
   }
 
   private getReleaseTrainContributors(
