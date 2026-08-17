@@ -96,6 +96,14 @@ export interface AuthorWaveParticipation {
   readonly is_winner: boolean;
 }
 
+export interface ReleaseNoteDropReference {
+  readonly id: string;
+  readonly serial_no: number;
+  readonly content: string | null;
+  readonly run_number: string | null;
+  readonly deployed_at: string | null;
+}
+
 export type AuthorWaveParticipationByWave = Record<
   string,
   Record<string, AuthorWaveParticipation>
@@ -1449,6 +1457,93 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     return result[0]?.drop_id ?? null;
+  }
+
+  async findReleaseNoteDropBySourceSha(
+    {
+      waveId,
+      authorId,
+      repository,
+      sha,
+      commitUrl
+    }: {
+      waveId: string;
+      authorId: string;
+      repository: string;
+      sha: string;
+      commitUrl: string;
+    },
+    ctx: RequestContext
+  ): Promise<ReleaseNoteDropReference | null> {
+    if (
+      !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repository) ||
+      !/^[a-f0-9]{40}$/.test(sha)
+    ) {
+      throw new Error('Invalid release-note source repository or SHA');
+    }
+    const expectedCommitUrl = `https://github.com/${repository}/commit/${sha}`;
+    if (commitUrl !== expectedCommitUrl) {
+      throw new Error(
+        'Release-note source commit URL does not match its identity'
+      );
+    }
+    const escapedCommitUrl = commitUrl.replace(/[\\%_]/g, String.raw`\$&`);
+    const metadataMatch = `
+      exists (
+        select 1 from ${DROP_METADATA_TABLE} repository_metadata
+        where repository_metadata.drop_id = d.id
+          and repository_metadata.data_key = 'release_note_repository'
+          and repository_metadata.data_value = :repository
+      )
+      and exists (
+        select 1 from ${DROP_METADATA_TABLE} sha_metadata
+        where sha_metadata.drop_id = d.id
+          and sha_metadata.data_key = 'release_note_sha'
+          and sha_metadata.data_value = :sha
+      )`;
+    const result = await this.db.execute<ReleaseNoteDropReference>(
+      String.raw`select d.id,
+              d.serial_no,
+              dp.content,
+              (
+                select run_metadata.data_value
+                from ${DROP_METADATA_TABLE} run_metadata
+                where run_metadata.drop_id = d.id
+                  and run_metadata.data_key = 'release_note_run_number'
+                limit 1
+              ) as run_number,
+              (
+                select deployed_metadata.data_value
+                from ${DROP_METADATA_TABLE} deployed_metadata
+                where deployed_metadata.drop_id = d.id
+                  and deployed_metadata.data_key = 'release_note_deployed_at'
+                limit 1
+              ) as deployed_at
+       from ${DROPS_TABLE} d
+       join ${DROPS_PARTS_TABLE} dp
+         on dp.drop_id = d.id and dp.drop_part_id = 1
+       where d.wave_id = :waveId
+         and d.author_id = :authorId
+         and (
+           (${metadataMatch})
+           or (
+             dp.content like '### Frontend Deploy %'
+             and dp.content like :commitUrlPattern escape '\\'
+           )
+         )
+       order by case when ${metadataMatch} then 0 else 1 end,
+                d.serial_no desc
+       limit 1`,
+      {
+        waveId,
+        authorId,
+        repository,
+        sha,
+        commitUrlPattern: `%${escapedCommitUrl}%`
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return result[0] ?? null;
   }
 
   async findDropIdsWithMetadata(
