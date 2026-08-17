@@ -607,4 +607,60 @@ describe('DropsDb', () => {
       /order by\s+r\.vote DESC,\s+r\.timestamp ASC,\s+r\.drop_id ASC\s+limit/
     );
   });
+
+  it('scopes and escapes the historical release-note source fallback', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+    const repository = '6529-Collections/frontend_repo';
+    const sha = 'a'.repeat(40);
+    const commitUrl = `https://github.com/${repository}/commit/${sha}`;
+
+    await repo.findReleaseNoteDropBySourceSha(
+      {
+        waveId: 'releases-wave',
+        authorId: 'ci-bot',
+        repository,
+        sha,
+        commitUrl
+      },
+      { timer: undefined }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain("dp.content like '### Frontend Deploy %'");
+    expect(sql).toContain("like :commitUrlPattern escape '\\\\'");
+    expect(params.commitUrlPattern).toBe(
+      `%https://github.com/6529-Collections/frontend\\_repo/commit/${sha}%`
+    );
+  });
+
+  it('rejects a release-note commit URL that does not match its source', async () => {
+    const execute = jest.fn();
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await expect(
+      repo.findReleaseNoteDropBySourceSha(
+        {
+          waveId: 'releases-wave',
+          authorId: 'ci-bot',
+          repository: '6529-Collections/6529seize-frontend',
+          sha: 'a'.repeat(40),
+          commitUrl:
+            'https://github.com/6529-Collections/other/commit/' + 'a'.repeat(40)
+        },
+        { timer: undefined }
+      )
+    ).rejects.toThrow('commit URL does not match its identity');
+    expect(execute).not.toHaveBeenCalled();
+  });
 });

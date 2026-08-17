@@ -63,6 +63,8 @@ export interface CiPipelineAlertRequest {
   readonly pull_request_number?: number | null;
   readonly publish_release_note?: boolean;
   readonly release_note_groups?: CiPipelineReleaseNoteGroup[];
+  readonly release_version?: string | null;
+  readonly frontend_sha?: string | null;
   readonly deployed_at?: string | null;
 }
 
@@ -82,6 +84,13 @@ interface AlertMentions {
   readonly triggeredBy: MentionedProfile | null;
   readonly deployInitiator: MentionedProfile | null;
   readonly all: MentionedProfile[];
+}
+
+interface ReleaseNoteEnqueueContext {
+  readonly promptPath: string;
+  readonly sha: string;
+  readonly deployedAt: string;
+  readonly isBackendRelease: boolean;
 }
 
 const MAX_DROP_CONTENT_LENGTH = 30000;
@@ -181,6 +190,29 @@ export function normalizeContributorGithubLogins(
     logins.push(login);
   }
   return logins;
+}
+
+function getReleaseNoteEnqueueContext(
+  request: CiPipelineAlertRequest
+): ReleaseNoteEnqueueContext | null {
+  const promptPath = normalizeOptionalValue(request.release_notes_prompt_path);
+  const sha = normalizeOptionalValue(request.sha);
+  const deployedAt = normalizeOptionalValue(request.deployed_at);
+  if (
+    request.status !== 'success' ||
+    normalizeTargetEnvironment(request.environment) !== 'prod' ||
+    !promptPath ||
+    !sha ||
+    !deployedAt
+  ) {
+    return null;
+  }
+  return {
+    promptPath,
+    sha,
+    deployedAt,
+    isBackendRelease: request.repo.split('/').pop() === '6529seize-backend'
+  };
 }
 
 function formatStatusEmoji(status: CiPipelineAlertStatus): string {
@@ -440,7 +472,7 @@ export class CiPipelineAlertService {
       }
     }
 
-    await this.enqueueReleaseNotesIfEligible(request);
+    await this.enqueueReleaseNotesIfEligible(request, ctx);
   }
 
   private async resolveDeployTarget(
@@ -457,24 +489,14 @@ export class CiPipelineAlertService {
   }
 
   private async enqueueReleaseNotesIfEligible(
-    request: CiPipelineAlertRequest
+    request: CiPipelineAlertRequest,
+    ctx: RequestContext
   ): Promise<void> {
-    const promptPath = normalizeOptionalValue(
-      request.release_notes_prompt_path
-    );
-    const sha = normalizeOptionalValue(request.sha);
-    const deployedAt = normalizeOptionalValue(request.deployed_at);
-    const isBackendRelease =
-      request.repo.split('/').pop() === '6529seize-backend';
-    if (
-      request.status !== 'success' ||
-      normalizeTargetEnvironment(request.environment) !== 'prod' ||
-      !promptPath ||
-      !sha ||
-      !deployedAt
-    ) {
+    const enqueueContext = getReleaseNoteEnqueueContext(request);
+    if (!enqueueContext) {
       return;
     }
+    const { promptPath, isBackendRelease } = enqueueContext;
     if (!isAllowedReleaseNotesPrompt(request.repo, promptPath)) {
       this.logger.warn(
         `Skipping release notes for unsupported prompt path ${promptPath} in ${request.repo}`
@@ -484,44 +506,118 @@ export class CiPipelineAlertService {
 
     const structuredGroups = request.release_note_groups !== undefined;
     for (const group of requestedReleaseNoteGroups(request)) {
-      const normalizedGroup = normalizeReleaseNoteGroup(
+      const normalizedGroup = this.getNormalizedReleaseNoteGroup(
+        request,
         group,
-        request.service,
-        isBackendRelease
+        isBackendRelease,
+        structuredGroups
       );
       if (!normalizedGroup) {
-        if (structuredGroups) {
-          throw new Error(
-            `Malformed structured release-note group ${group.release_group_id || 'missing'} for ${request.repo} run ${request.run_id}`
-          );
-        }
-        this.logger.warn(
-          `Skipping malformed release-note group ${group.release_group_id || 'missing'} for ${request.repo} run ${request.run_id}`
-        );
         continue;
       }
-      const contributorGithubLogins = this.getReleaseTrainContributors(request);
-      await this.releaseNotesQueue.enqueueBestEffort({
+      await this.enqueueReleaseNoteGroup(
+        request,
+        enqueueContext,
+        normalizedGroup,
+        ctx
+      );
+    }
+  }
+
+  private getNormalizedReleaseNoteGroup(
+    request: CiPipelineAlertRequest,
+    group: CiPipelineReleaseNoteGroup,
+    isBackendRelease: boolean,
+    structuredGroups: boolean
+  ): NormalizedReleaseNoteGroup | null {
+    const normalizedGroup = normalizeReleaseNoteGroup(
+      group,
+      request.service,
+      isBackendRelease
+    );
+    if (normalizedGroup) {
+      return normalizedGroup;
+    }
+    const groupId = group.release_group_id || 'missing';
+    if (structuredGroups) {
+      throw new Error(
+        `Malformed structured release-note group ${groupId} for ${request.repo} run ${request.run_id}`
+      );
+    }
+    this.logger.warn(
+      `Skipping malformed release-note group ${groupId} for ${request.repo} run ${request.run_id}`
+    );
+    return null;
+  }
+
+  private async enqueueReleaseNoteGroup(
+    request: CiPipelineAlertRequest,
+    enqueueContext: ReleaseNoteEnqueueContext,
+    normalizedGroup: NormalizedReleaseNoteGroup,
+    ctx: RequestContext
+  ): Promise<void> {
+    const contributorGithubLogins = this.getReleaseTrainContributors(request);
+    const triggeredByGithubLogin = normalizeOptionalValue(
+      request.triggered_by_github_login
+    );
+    const releaseVersion = normalizeOptionalValue(request.release_version);
+    const frontendSha = normalizeOptionalValue(request.frontend_sha);
+    const enqueued = await this.releaseNotesQueue.enqueueBestEffort({
+      repo: request.repo,
+      workflow: request.workflow,
+      run_id: request.run_id,
+      run_number: request.run_number,
+      run_url: request.run_url,
+      ...(triggeredByGithubLogin
+        ? { triggered_by_github_login: triggeredByGithubLogin }
+        : {}),
+      sha: enqueueContext.sha,
+      branch: request.branch,
+      environment: 'prod',
+      service: request.service,
+      prompt_path: enqueueContext.promptPath,
+      release_group_id: normalizedGroup.releaseGroupId,
+      release_group_services: normalizedGroup.releaseGroupServices,
+      pull_request_number: normalizedGroup.pullRequestNumber,
+      ...(contributorGithubLogins.length
+        ? { contributor_github_logins: contributorGithubLogins }
+        : {}),
+      publish_release_note: normalizedGroup.publishReleaseNote,
+      ...(releaseVersion ? { release_version: releaseVersion } : {}),
+      ...(frontendSha ? { frontend_sha: frontendSha } : {}),
+      deployed_at: enqueueContext.deployedAt
+    });
+    if (!enqueued && request.repo.split('/').pop() === '6529-core') {
+      await this.postDesktopReleaseNoteEnqueueFailure(request, ctx);
+    }
+  }
+
+  private async postDesktopReleaseNoteEnqueueFailure(
+    request: CiPipelineAlertRequest,
+    ctx: RequestContext
+  ): Promise<void> {
+    const version =
+      normalizeOptionalValue(request.release_version) ?? 'unknown';
+    const frontendSha =
+      normalizeOptionalValue(request.frontend_sha)?.slice(0, 8) ?? 'unknown';
+    await this.postAlert(
+      {
         repo: request.repo,
         workflow: request.workflow,
+        status: 'failure',
+        title: 'Desktop release note failed',
+        description: `Production v${version} release note could not be queued. Frontend commit ${frontendSha}.`,
+        triggered_by_github_login: request.triggered_by_github_login,
         run_id: request.run_id,
         run_number: request.run_number,
         run_url: request.run_url,
-        sha,
+        sha: request.sha,
         branch: request.branch,
         environment: 'prod',
-        service: request.service,
-        prompt_path: promptPath,
-        release_group_id: normalizedGroup.releaseGroupId,
-        release_group_services: normalizedGroup.releaseGroupServices,
-        pull_request_number: normalizedGroup.pullRequestNumber,
-        ...(contributorGithubLogins.length
-          ? { contributor_github_logins: contributorGithubLogins }
-          : {}),
-        publish_release_note: normalizedGroup.publishReleaseNote,
-        deployed_at: deployedAt
-      });
-    }
+        service: 'desktop'
+      },
+      ctx
+    );
   }
 
   private getReleaseTrainContributors(
