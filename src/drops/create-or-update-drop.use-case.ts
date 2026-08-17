@@ -330,7 +330,11 @@ export class CreateOrUpdateDropUseCase {
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
     }
-  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+  ): Promise<{
+    drop_id: string;
+    pending_push_notification_ids: number[];
+    dm_unread_recipient_ids: string[];
+  }> {
     let resolvedModel = sanitizeDropStructuredFields(model);
     this.assertDropContentLimits(resolvedModel.parts);
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
@@ -450,7 +454,11 @@ export class CreateOrUpdateDropUseCase {
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
     }
-  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+  ): Promise<{
+    drop_id: string;
+    pending_push_notification_ids: number[];
+    dm_unread_recipient_ids: string[];
+  }> {
     this.assertDropContentLimits(model.parts);
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
@@ -503,6 +511,7 @@ export class CreateOrUpdateDropUseCase {
     }
     let dropId: string;
     let pendingPushNotificationIds: number[] = [];
+    let dmUnreadRecipientIds: string[] = [];
     if (preExistingDropId) {
       dropId = preExistingDropId;
       const dropBeforeUpdate = await this.dropsDb.findDropById(
@@ -569,11 +578,16 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       );
-      await this.ensureDirectMessageReaderMetricsForNewDrop(
+      const insertedDrop = await this.dropsDb.findDropById(dropId, connection);
+      if (!insertedDrop) {
+        throw new NotFoundException(`Drop ${dropId} not found after insert`);
+      }
+      dmUnreadRecipientIds = await this.recordDirectMessageUnreadForNewDrop(
         {
           wave,
           authorId,
-          createdAt
+          createdAt,
+          serialNo: insertedDrop.serial_no
         },
         { connection, timer }
       );
@@ -614,59 +628,47 @@ export class CreateOrUpdateDropUseCase {
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return {
       drop_id: dropId,
-      pending_push_notification_ids: pendingPushNotificationIds
+      pending_push_notification_ids: pendingPushNotificationIds,
+      dm_unread_recipient_ids: dmUnreadRecipientIds
     };
   }
 
-  private async ensureDirectMessageReaderMetricsForNewDrop(
+  private async recordDirectMessageUnreadForNewDrop(
     {
       wave,
       authorId,
-      createdAt
+      createdAt,
+      serialNo
     }: {
       wave: WaveEntity;
       authorId: string;
       createdAt: number;
+      serialNo: number;
     },
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
-  ) {
+  ): Promise<string[]> {
     if (wave.is_direct_message !== true) {
-      return;
+      return [];
     }
     const directMessageGroupId = wave.chat_group_id;
     if (!directMessageGroupId) {
-      return;
+      return [];
     }
     const readerIds = await this.userGroupsService.findIdentitiesInGroups(
       [directMessageGroupId],
       { timer, connection }
     );
     const recipientIds = readerIds.filter((readerId) => readerId !== authorId);
-    const existingReaderMetricIds =
-      await this.wavesApiDb.findExistingWaveReaderMetricReaderIds(
-        {
-          waveId: wave.id,
-          readerIds: recipientIds
-        },
-        { timer, connection }
-      );
-    const existingReaderMetricIdSet = new Set(existingReaderMetricIds);
-    const missingReaderMetricIds = recipientIds.filter(
-      (readerId) => !existingReaderMetricIdSet.has(readerId)
-    );
-    if (!missingReaderMetricIds.length) {
-      return;
-    }
-    // Reader metrics are part of DM write consistency: without this row the
-    // unread summary cannot distinguish current unread activity from old history.
-    await this.wavesApiDb.insertMissingWaveReaderMetrics(
+    await this.wavesApiDb.recordDirectMessageUnreadDrop(
       {
         waveId: wave.id,
-        readerIds: missingReaderMetricIds,
-        latestReadTimestamp: Math.max(0, createdAt - 1)
+        recipientIds,
+        dropSerialNo: serialNo,
+        dropCreatedAt: createdAt
       },
       { timer, connection }
     );
+    return recipientIds;
   }
 
   private async validateReferences(

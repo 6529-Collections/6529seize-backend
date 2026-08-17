@@ -17,6 +17,15 @@ const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([
   'schema ApiNotificationV2.properties.related_identity'
 ]);
 
+const ACCEPTED_REFERENCE_EXTENSIONS: Readonly<
+  Record<string, { baseline: string; current: string }>
+> = {
+  'GET /dm-drops/unread.responses.200.content.application/json.schema.$ref': {
+    baseline: '#/components/schemas/ApiDmDropsUnreadCount',
+    current: '#/components/schemas/ApiDmUnreadSnapshot'
+  }
+};
+
 const ACCEPTED_REMOVED_REQUIRED_FIELDS: Readonly<Record<string, string[]>> = {
   'schema ApiSeizeSettings.required': [
     'all_drops_notifications_subscribers_limit'
@@ -65,6 +74,14 @@ function assertSchemaCompatible(
     return;
   }
   if (baseline === null || typeof baseline !== 'object') {
+    const acceptedReferenceExtension = ACCEPTED_REFERENCE_EXTENSIONS[location];
+    if (
+      acceptedReferenceExtension &&
+      baseline === acceptedReferenceExtension.baseline
+    ) {
+      expect(current).toBe(acceptedReferenceExtension.current);
+      return;
+    }
     expect(current).toEqual(baseline);
     return;
   }
@@ -181,6 +198,19 @@ describe('Phase 0 permanent OpenAPI GET compatibility', () => {
     }
     expect(operationCount).toBe(baseline.baseline.operation_count);
     expect(operationCount).toBe(183);
+  });
+
+  it('retains the unread count contract in the extended DM unread snapshot', () => {
+    const baselineCountSchema =
+      baseline.components.schemas.ApiDmDropsUnreadCount;
+    const currentSnapshotSchema =
+      current.components.schemas.ApiDmUnreadSnapshot;
+    expect(currentSnapshotSchema.required).toContain('count');
+    assertSchemaCompatible(
+      baselineCountSchema.properties.count,
+      currentSnapshotSchema.properties.count,
+      'accepted DM unread snapshot extension.properties.count'
+    );
   });
 
   it('retains every schema reachable from the accepted snapshot', () => {

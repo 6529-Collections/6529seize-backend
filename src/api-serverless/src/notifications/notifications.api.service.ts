@@ -37,6 +37,7 @@ import {
 } from '../community-members/user-groups.service';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiDmUnreadConversationState } from '../generated/models/ApiDmUnreadConversationState';
 import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiNotification } from '../generated/models/ApiNotification';
 import { ApiNotificationCause } from '../generated/models/ApiNotificationCause';
@@ -62,6 +63,8 @@ import {
   wsListenersNotifier as defaultWsListenersNotifier,
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
+import { DbPoolName } from '@/db-query.options';
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 
 interface DropReactedNotificationAdditionalContextV2 {
   reaction: string;
@@ -148,27 +151,69 @@ export class NotificationsApiService {
   public async markWaveNotificationsAsRead(
     waveId: string,
     identityId: string,
-    ctx: RequestContext
-  ) {
+    ctx: RequestContext,
+    readThroughSerialNo?: number
+  ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
+    const wave = await this.wavesApiDb.findById(
+      waveId,
+      ctx.connection,
+      DbPoolName.WRITE
+    );
+    if (wave?.is_direct_message) {
+      const groupsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          identityId,
+          ctx.timer
+        );
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor,
+        message: `Wave ${waveId} not found.`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+    }
     await this.identityNotificationsDb.markWaveNotificationsAsRead(
       waveId,
       identityId,
       ctx
     );
-    await this.wavesApiDb.updateWaveReaderMetricLatestReadTimestamp(
-      waveId,
-      identityId,
-      ctx
-    );
+    if (wave?.is_direct_message) {
+      await this.wavesApiDb.markDirectMessageReadThroughSerial(
+        { waveId, readerId: identityId, readThroughSerialNo },
+        ctx
+      );
+    } else {
+      await this.wavesApiDb.updateWaveReaderMetricLatestReadTimestamp(
+        waveId,
+        identityId,
+        ctx
+      );
+    }
     await invalidateWaveUnreadCacheForReaderWave({
       identityId,
       waveId
     });
+    const dmUnreadState = wave?.is_direct_message
+      ? ((
+          await this.wavesApiDb.findDmUnreadConversationStates(
+            { identityId, waveIds: [waveId] },
+            ctx,
+            DbPoolName.WRITE
+          )
+        )[0] ?? null)
+      : null;
+    if (dmUnreadState) {
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged([
+        dmUnreadState
+      ]);
+    }
     await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
       identityId
     ]);
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
+    return dmUnreadState;
   }
 
   public async getNotifications(

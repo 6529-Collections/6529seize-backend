@@ -22,6 +22,7 @@ import {
   WaveType
 } from '@/entities/IWave';
 import { Time } from '@/time';
+import { DbPoolName } from '@/db-query.options';
 
 describe('WaveApiService updateWave immutability', () => {
   function createService({
@@ -1556,4 +1557,80 @@ describe('WaveApiService wave subscription group defaults', () => {
       waveGroupNotificationSubscriptionsDb.deleteForWave
     ).toHaveBeenCalledWith('profile-1', 'wave-1', connection);
   });
+});
+
+describe('WaveApiService direct-message mute synchronization', () => {
+  it.each([
+    ['muteWave', true],
+    ['unmuteWave', false]
+  ] as const)(
+    'broadcasts authoritative unread state after %s commits',
+    async (method, muted) => {
+      const connection = {} as any;
+      const dmUnreadState = {
+        profile_id: 'profile-1',
+        wave_id: 'wave-1',
+        unread_count: muted ? 0 : 2,
+        first_unread_drop_serial_no: muted ? null : 10,
+        latest_drop_serial_no: 11,
+        latest_read_serial_no: 9,
+        version: 4
+      };
+      const wavesApiDb = {
+        executeNativeQueriesInTransaction: jest.fn(async (fn) =>
+          fn(connection)
+        ),
+        setWaveMuted: jest.fn().mockResolvedValue(undefined),
+        findDmUnreadConversationStates: jest
+          .fn()
+          .mockResolvedValue([dmUnreadState])
+      };
+      const metricsRecorder = {
+        recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+      };
+      const wsListenersNotifier = {
+        notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined)
+      };
+      const service = new WaveApiService(
+        wavesApiDb as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        metricsRecorder as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        wsListenersNotifier as any
+      );
+      jest
+        .spyOn(service as any, 'assertWaveExistsForAuthenticatedUser')
+        .mockResolvedValue({ is_direct_message: true });
+      const ctx = {
+        authenticationContext: AuthenticationContext.fromProfileId('profile-1'),
+        timer: undefined
+      } as any;
+
+      await service[method]({ waveId: 'wave-1' }, ctx);
+
+      expect(wavesApiDb.setWaveMuted).toHaveBeenCalledWith(
+        { waveId: 'wave-1', readerId: 'profile-1', muted },
+        expect.objectContaining({ connection })
+      );
+      expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
+        { identityId: 'profile-1', waveIds: ['wave-1'] },
+        ctx,
+        DbPoolName.WRITE
+      );
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).toHaveBeenCalledWith([dmUnreadState]);
+    }
+  );
 });
