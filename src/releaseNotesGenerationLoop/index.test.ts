@@ -1,8 +1,10 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
 import {
   parseReleaseNoteMessage,
+  prepareReleaseNoteErrorForRetry,
   processRequest,
-  processRequestWithRetryPolicy
+  processRequestWithRetryPolicy,
+  shouldCaptureReleaseNoteError
 } from './index';
 
 const request: ReleaseNoteGenerationRequest = {
@@ -182,6 +184,26 @@ describe('Desktop retry policy', () => {
     ).rejects.toThrow('terminal alert failed and must move to the DLQ');
     expect(process).not.toHaveBeenCalled();
     expect(postFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('release-note Sentry retry policy', () => {
+  it('suppresses Sentry reporting while an SQS request will retry', () => {
+    const error = new Error('Temporary GitHub comparison failure');
+    const thrown = prepareReleaseNoteErrorForRetry(error, 4);
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(error.message);
+    expect((thrown as Error & { cause: unknown }).cause).toBe(error);
+    expect(shouldCaptureReleaseNoteError(thrown)).toBe(false);
+  });
+
+  it('reports the original error to Sentry on the final SQS attempt', () => {
+    const error = new Error('Persistent GitHub comparison failure');
+    const thrown = prepareReleaseNoteErrorForRetry(error, 5);
+
+    expect(thrown).toBe(error);
+    expect(shouldCaptureReleaseNoteError(thrown)).toBe(true);
   });
 });
 
