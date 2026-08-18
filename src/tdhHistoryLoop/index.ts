@@ -1,6 +1,7 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Readable } from 'stream';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import { consolidationTools } from '@/consolidation-tools';
 import {
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_BLOCKS_TABLE
@@ -22,9 +23,11 @@ import { sqlExecutor } from '@/sql-executor';
 import { parseTdhDataFromDB } from '@/sql_helpers';
 import { Time } from '@/time';
 import {
-  calculateConsolidationChangePlan,
-  calculateLostConsolidationChanges
-} from './tdh-history-consolidation-changes';
+  addTokensToIndex,
+  calculateLostConsolidationChanges,
+  calculateTokenTdhChanges
+} from './tdh-history-changes';
+import type { TokenIndex } from './tdh-history-changes';
 
 const csvParser = require('csv-parser');
 
@@ -240,6 +243,72 @@ async function parseCsvFromText(csvText: string): Promise<any[]> {
   });
 }
 
+interface YesterdayDataIndex {
+  byConsolidationKey: Map<string, ConsolidatedTDH[]>;
+  byWallet: Map<string, ConsolidatedTDH[]>;
+}
+
+function getNormalizedWallets(entry: ConsolidatedTDH): Set<string> {
+  const wallets = new Set(
+    entry.consolidation_key
+      .split('-')
+      .filter(Boolean)
+      .map((wallet) => wallet.toLowerCase())
+  );
+  if (Array.isArray(entry.wallets)) {
+    entry.wallets.forEach((wallet) => wallets.add(wallet.toLowerCase()));
+  }
+  return wallets;
+}
+
+function addIndexEntry(
+  index: Map<string, ConsolidatedTDH[]>,
+  key: string,
+  entry: ConsolidatedTDH
+): void {
+  const entries = index.get(key) ?? [];
+  entries.push(entry);
+  index.set(key, entries);
+}
+
+function buildYesterdayDataIndex(
+  yesterdayData: ConsolidatedTDH[]
+): YesterdayDataIndex {
+  const byConsolidationKey = new Map<string, ConsolidatedTDH[]>();
+  const byWallet = new Map<string, ConsolidatedTDH[]>();
+
+  yesterdayData.forEach((entry) => {
+    addIndexEntry(
+      byConsolidationKey,
+      entry.consolidation_key.toLowerCase(),
+      entry
+    );
+    addIndexEntry(
+      byConsolidationKey,
+      consolidationTools.buildConsolidationKey(entry.wallets).toLowerCase(),
+      entry
+    );
+    getNormalizedWallets(entry).forEach((wallet) =>
+      addIndexEntry(byWallet, wallet, entry)
+    );
+  });
+
+  return { byConsolidationKey, byWallet };
+}
+
+function findMatchingYesterdayEntries(
+  current: ConsolidatedTDH,
+  index: YesterdayDataIndex
+): ConsolidatedTDH[] {
+  const matches = new Set(
+    index.byConsolidationKey.get(current.consolidation_key.toLowerCase()) ?? []
+  );
+  getNormalizedWallets(current).forEach((wallet) => {
+    index.byWallet.get(wallet)?.forEach((entry) => matches.add(entry));
+  });
+  return Array.from(matches);
+}
+
 async function tdhHistory(date: Date) {
   const todayTime = Time.fromDate(date);
   const yesterdayTime = todayTime.minusDays(1);
@@ -265,19 +334,62 @@ async function tdhHistory(date: Date) {
 
   logger.info(`[DATE ${date.toISOString().split('T')[0]}] [MAPPING...]`);
 
-  const changePlan = calculateConsolidationChangePlan(todayData, yesterdayData);
+  const yesterdayDataIndex = buildYesterdayDataIndex(yesterdayData);
+  const matchedYesterdayEntries = new Set<ConsolidatedTDH>();
 
-  changePlan.allocations.forEach(({ current: d, changes }) => {
-    const {
-      tdhCreated,
-      tdhDestroyed,
-      rawTdhCreated,
-      rawTdhDestroyed,
-      boostedTdhCreated,
-      boostedTdhDestroyed,
-      balanceCreated,
-      balanceDestroyed
-    } = changes;
+  todayData.forEach((d) => {
+    const yesterdayTdh = findMatchingYesterdayEntries(d, yesterdayDataIndex);
+    yesterdayTdh.forEach((entry) => matchedYesterdayEntries.add(entry));
+
+    const indexedYesterdayTdh = buildTokenIndex(yesterdayTdh);
+    const memesResult = calculateTokenTdhChanges(
+      d.memes,
+      d.boost,
+      indexedYesterdayTdh.memes
+    );
+    const gradientsResult = calculateTokenTdhChanges(
+      d.gradients,
+      d.boost,
+      indexedYesterdayTdh.gradients
+    );
+    const nextgenResult = calculateTokenTdhChanges(
+      d.nextgen,
+      d.boost,
+      indexedYesterdayTdh.nextgen
+    );
+
+    const tdhCreated =
+      memesResult.tdhCreated +
+      gradientsResult.tdhCreated +
+      nextgenResult.tdhCreated;
+    const tdhDestroyed =
+      memesResult.tdhDestroyed +
+      gradientsResult.tdhDestroyed +
+      nextgenResult.tdhDestroyed;
+    const rawTdhCreated =
+      memesResult.rawTdhCreated +
+      gradientsResult.rawTdhCreated +
+      nextgenResult.rawTdhCreated;
+    const rawTdhDestroyed =
+      memesResult.rawTdhDestroyed +
+      gradientsResult.rawTdhDestroyed +
+      nextgenResult.rawTdhDestroyed;
+    const boostedTdhCreated =
+      memesResult.boostedTdhCreated +
+      gradientsResult.boostedTdhCreated +
+      nextgenResult.boostedTdhCreated;
+    const boostedTdhDestroyed =
+      memesResult.boostedTdhDestroyed +
+      gradientsResult.boostedTdhDestroyed +
+      nextgenResult.boostedTdhDestroyed;
+    const balanceCreated =
+      memesResult.balanceCreated +
+      gradientsResult.balanceCreated +
+      nextgenResult.balanceCreated;
+    const balanceDestroyed =
+      memesResult.balanceDestroyed +
+      gradientsResult.balanceDestroyed +
+      nextgenResult.balanceDestroyed;
 
     const tdhNet = tdhCreated - tdhDestroyed;
     const rawTdhNet = rawTdhCreated - rawTdhDestroyed;
@@ -309,7 +421,10 @@ async function tdhHistory(date: Date) {
     tdhHistory.push(tdhH);
   });
 
-  changePlan.lost.forEach((yd) => {
+  yesterdayData.forEach((yd) => {
+    if (matchedYesterdayEntries.has(yd)) {
+      return;
+    }
     logger.info(
       `[DATE ${date.toISOString().split('T')[0]}] [KEY LOST ${
         yd.consolidation_key
@@ -356,6 +471,28 @@ async function tdhHistory(date: Date) {
     history: tdhHistory,
     tdh: todayData
   };
+}
+
+interface IndexedPreviousTdh {
+  memes: TokenIndex;
+  gradients: TokenIndex;
+  nextgen: TokenIndex;
+}
+
+function buildTokenIndex(previous: ConsolidatedTDH[]): IndexedPreviousTdh {
+  const indexes: IndexedPreviousTdh = {
+    memes: new Map(),
+    gradients: new Map(),
+    nextgen: new Map()
+  };
+
+  previous.forEach((entry) => {
+    addTokensToIndex(indexes.memes, entry.memes, entry.boost);
+    addTokensToIndex(indexes.gradients, entry.gradients, entry.boost);
+    addTokensToIndex(indexes.nextgen, entry.nextgen, entry.boost);
+  });
+
+  return indexes;
 }
 
 async function calculateGlobalTDHHistory(

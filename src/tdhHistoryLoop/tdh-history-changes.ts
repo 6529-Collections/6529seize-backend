@@ -1,4 +1,4 @@
-import type { TokenTDH } from '@/entities/ITDH';
+import type { ConsolidatedTDH, TokenTDH } from '@/entities/ITDH';
 
 export interface IndexedToken {
   token: TokenTDH;
@@ -23,6 +23,21 @@ interface TokenSnapshot {
   boostedTdh: number;
   rawTdh: number;
   balance: number;
+}
+
+export function calculateLostConsolidationChanges(
+  previous: ConsolidatedTDH
+): TokenTdhChanges {
+  return {
+    tdhCreated: 0,
+    tdhDestroyed: previous.tdh,
+    boostedTdhCreated: 0,
+    boostedTdhDestroyed: previous.boosted_tdh,
+    rawTdhCreated: 0,
+    rawTdhDestroyed: previous.tdh__raw,
+    balanceCreated: 0,
+    balanceDestroyed: previous.balance
+  };
 }
 
 export function addTokensToIndex(
@@ -79,13 +94,6 @@ export function calculateTokenTdhChanges(
   const currentTokenIndex: TokenIndex = new Map();
   addTokensToIndex(currentTokenIndex, currentTokens, currentBoost);
 
-  return calculateTokenIndexTdhChanges(currentTokenIndex, previousTokenIndex);
-}
-
-export function calculateTokenIndexTdhChanges(
-  currentTokenIndex: TokenIndex,
-  previousTokenIndex: TokenIndex
-): TokenTdhChanges {
   const tokenIds = new Set<number>();
   currentTokenIndex.forEach((_tokens, tokenId) => tokenIds.add(tokenId));
   previousTokenIndex.forEach((_tokens, tokenId) => tokenIds.add(tokenId));
