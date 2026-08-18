@@ -127,6 +127,23 @@ describe('calculateConsolidationChangePlan', () => {
     expect(totalChanges(plan).created - totalChanges(plan).destroyed).toBe(-50);
   });
 
+  it('folds a fully lost token into the child retaining the parent key', () => {
+    const previous = [
+      consolidation('0xa', [token(1, 100, 10), token(2, 50, 5)], ['0xa', '0xb'])
+    ];
+    const current = [
+      consolidation('0xa', [token(1, 50, 5)], ['0xa']),
+      consolidation('0xb', [token(1, 50, 5)], ['0xb'])
+    ];
+
+    const plan = calculateConsolidationChangePlan(current, previous);
+
+    expect(plan.lost).toEqual([]);
+    expect(plan.allocations[0].changes.tdhDestroyed).toBe(50);
+    expect(plan.allocations[1].changes.tdhDestroyed).toBe(0);
+    expect(totalChanges(plan).created - totalChanges(plan).destroyed).toBe(-50);
+  });
+
   it('prefers an exact key match over wallet-overlap fallback', () => {
     const exact = consolidation('0xa', [token(1, 100, 10)]);
     const overlappingOnlyByWallets = consolidation(

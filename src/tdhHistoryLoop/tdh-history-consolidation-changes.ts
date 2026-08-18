@@ -130,7 +130,13 @@ function findPreviousIndexes(
 }
 
 function compareKeys(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
 }
 
 function allocateInteger(
@@ -140,6 +146,9 @@ function allocateInteger(
   current: ConsolidatedTDH[]
 ): number[] {
   const basisTotal = basis.reduce((sum, value) => sum + value, 0);
+  if (basisTotal <= 0) {
+    throw new Error('Allocation basis must be positive');
+  }
   const exact = basis.map((value) => (total * value) / basisTotal);
   const allocated = exact.map((value) => Math.floor(value));
   let remainder = total - allocated.reduce((sum, value) => sum + value, 0);
