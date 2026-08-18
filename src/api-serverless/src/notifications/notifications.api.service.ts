@@ -156,11 +156,14 @@ export class NotificationsApiService {
     requestDmUnreadState = false
   ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    const wave = requestDmUnreadState
-      ? await this.wavesApiDb.findById(waveId, ctx.connection, DbPoolName.WRITE)
-      : null;
+    const wave = await this.wavesApiDb.findById(
+      waveId,
+      ctx.connection,
+      DbPoolName.WRITE
+    );
+    let groupsUserIsEligibleFor: string[] | undefined;
     if (wave?.is_direct_message) {
-      const groupsUserIsEligibleFor =
+      groupsUserIsEligibleFor =
         await this.userGroupsService.getGroupsUserIsEligibleFor(
           identityId,
           ctx.timer
@@ -197,7 +200,11 @@ export class NotificationsApiService {
     const dmUnreadState = wave?.is_direct_message
       ? ((
           await this.wavesApiDb.findDmUnreadConversationStates(
-            { identityId, waveIds: [waveId] },
+            {
+              identityId,
+              eligibleGroups: groupsUserIsEligibleFor,
+              waveIds: [waveId]
+            },
             ctx,
             DbPoolName.WRITE
           )
@@ -212,7 +219,7 @@ export class NotificationsApiService {
       identityId
     ]);
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    return dmUnreadState;
+    return requestDmUnreadState ? dmUnreadState : null;
   }
 
   public async getNotifications(

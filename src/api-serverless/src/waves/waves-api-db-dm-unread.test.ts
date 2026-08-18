@@ -122,7 +122,12 @@ describe('WavesApiDb DM unread state versions', () => {
       .mockResolvedValueOnce(undefined);
 
     const waveIds = await repo.findDmWaveIdsForReaderWithDropsByAuthor(
-      { readerId: 'reader-1', authorId: 'author-1', limit: 500 },
+      {
+        readerId: 'reader-1',
+        authorId: 'author-1',
+        eligibleGroups: ['visible-dm-group'],
+        limit: 500
+      },
       {}
     );
     await repo.incrementDmUnreadStateVersionsForReaderWaves(
@@ -137,11 +142,15 @@ describe('WavesApiDb DM unread state versions', () => {
       {
         readerId: 'reader-1',
         authorId: 'author-1',
+        eligibleGroups: ['visible-dm-group'],
         limit: 500,
         afterWaveId: ''
       },
       expect.any(Object)
     );
+    const findWaveIdsSql = db.execute.mock.calls[0][0] as string;
+    expect(findWaveIdsSql).toContain('w.visibility_group_id is null');
+    expect(findWaveIdsSql).toContain('parent.visibility_group_id is null');
     expect(db.execute).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining('where reader_id = :readerId'),

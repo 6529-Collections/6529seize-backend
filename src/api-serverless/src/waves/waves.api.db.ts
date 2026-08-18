@@ -3714,6 +3714,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     param: {
       readerId: string;
       authorId: string;
+      eligibleGroups: string[];
       limit: number;
       afterWaveId?: string;
     },
@@ -3725,8 +3726,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
        join ${WAVES_TABLE} w
          on w.id = r.wave_id
         and w.is_direct_message = true
+       left join ${WAVES_TABLE} parent
+         on parent.id = w.parent_wave_id
        where r.reader_id = :readerId
          and r.wave_id > :afterWaveId
+         and ${this.getWaveAndParentVisibilityFilter(
+           'w',
+           'parent',
+           param.eligibleGroups,
+           'eligibleGroups'
+         )}
          and exists (
            select 1
            from ${DROPS_TABLE} d

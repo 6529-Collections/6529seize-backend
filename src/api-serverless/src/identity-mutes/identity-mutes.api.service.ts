@@ -19,6 +19,10 @@ import {
   wsListenersNotifier as defaultWsListenersNotifier,
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
+import {
+  userGroupsService as defaultUserGroupsService,
+  UserGroupsService
+} from '@/api/community-members/user-groups.service';
 
 const DM_UNREAD_SYNC_PAGE_SIZE = 500;
 
@@ -29,7 +33,8 @@ export class IdentityMutesApiService {
     private readonly identityMutesDb: IdentityMutesDb,
     private readonly identityFetcher: IdentityFetcher,
     private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
-    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier
+    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier,
+    private readonly userGroupsService: UserGroupsService = defaultUserGroupsService
   ) {}
 
   async getIdentityMuteState(
@@ -67,6 +72,11 @@ export class IdentityMutesApiService {
     ctx: RequestContext
   ): Promise<void> {
     try {
+      const eligibleGroups =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          pair.muter_id,
+          ctx.timer
+        );
       let afterWaveId: string | undefined;
       let hasMore = true;
       while (hasMore) {
@@ -75,6 +85,7 @@ export class IdentityMutesApiService {
             {
               readerId: pair.muter_id,
               authorId: pair.muted_identity_id,
+              eligibleGroups,
               limit: DM_UNREAD_SYNC_PAGE_SIZE,
               ...(afterWaveId ? { afterWaveId } : {})
             },
@@ -88,7 +99,7 @@ export class IdentityMutesApiService {
           ctx
         );
         const states = await this.wavesApiDb.findDmUnreadConversationStates(
-          { identityId: pair.muter_id, waveIds },
+          { identityId: pair.muter_id, eligibleGroups, waveIds },
           ctx,
           DbPoolName.WRITE
         );
@@ -129,5 +140,6 @@ export const identityMutesApiService = new IdentityMutesApiService(
   identityMutesDb,
   identityFetcher,
   defaultWavesApiDb,
-  defaultWsListenersNotifier
+  defaultWsListenersNotifier,
+  defaultUserGroupsService
 );

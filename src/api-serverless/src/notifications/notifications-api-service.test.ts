@@ -685,7 +685,7 @@ describe('NotificationsApiService realtime invalidation', () => {
       markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
     };
     const wavesApiDb = {
-      findById: jest.fn(),
+      findById: jest.fn().mockResolvedValue({ is_direct_message: false }),
       updateWaveReaderMetricLatestReadTimestamp: jest
         .fn()
         .mockResolvedValue(undefined)
@@ -742,7 +742,14 @@ describe('NotificationsApiService realtime invalidation', () => {
     expect(
       identityNotificationsDb.markWaveNotificationsAsRead
     ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
-    expect(wavesApiDb.findById).not.toHaveBeenCalled();
+    expect(wavesApiDb.findById).toHaveBeenCalledWith(
+      'wave-1',
+      undefined,
+      DbPoolName.WRITE
+    );
+    expect(
+      wavesApiDb.updateWaveReaderMetricLatestReadTimestamp
+    ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
     expect(
       wsListenersNotifier.notifyAboutIdentityNotificationsChanged
     ).toHaveBeenNthCalledWith(1, ['profile-1']);
@@ -757,79 +764,107 @@ describe('NotificationsApiService realtime invalidation', () => {
     ).toHaveBeenNthCalledWith(4, ['profile-1']);
   });
 
-  it('persists and broadcasts an authoritative direct-message read state', async () => {
-    const dmUnreadState = {
-      profile_id: 'profile-1',
-      wave_id: 'wave-1',
-      unread_count: 1,
-      first_unread_drop_serial_no: 44,
-      latest_drop_serial_no: 44,
-      latest_read_serial_no: 43,
-      version: 9
-    };
-    const identityNotificationsDb = {
-      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
-    };
-    const wavesApiDb = {
-      findById: jest.fn().mockResolvedValue({
-        is_direct_message: true,
-        visibility_group_id: 'dm-group',
-        parent_wave_id: null
-      }),
-      markDirectMessageReadThroughSerial: jest
-        .fn()
-        .mockResolvedValue(undefined),
-      findDmUnreadConversationStates: jest
-        .fn()
-        .mockResolvedValue([dmUnreadState])
-    };
-    const wsListenersNotifier = {
-      notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined),
-      notifyAboutIdentityNotificationsChanged: jest
-        .fn()
-        .mockResolvedValue(undefined)
-    };
-    const userGroupsService = {
-      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['dm-group'])
-    };
-    const service = new NotificationsApiService(
-      {} as any,
-      userGroupsService as any,
-      {} as any,
-      {} as any,
-      identityNotificationsDb as any,
-      {} as any,
-      wavesApiDb as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      wsListenersNotifier as any
-    );
+  it.each([
+    {
+      label: 'rich',
+      readThroughSerialNo: 43,
+      requestDmUnreadState: true,
+      expectedResponse: 'state'
+    },
+    {
+      label: 'legacy bodyless',
+      readThroughSerialNo: undefined,
+      requestDmUnreadState: false,
+      expectedResponse: 'null'
+    }
+  ] as const)(
+    'persists and broadcasts an authoritative $label direct-message read',
+    async ({ readThroughSerialNo, requestDmUnreadState, expectedResponse }) => {
+      const dmUnreadState = {
+        profile_id: 'profile-1',
+        wave_id: 'wave-1',
+        unread_count: 1,
+        first_unread_drop_serial_no: 44,
+        latest_drop_serial_no: 44,
+        latest_read_serial_no: 43,
+        version: 9
+      };
+      const identityNotificationsDb = {
+        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+      };
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue({
+          is_direct_message: true,
+          visibility_group_id: 'dm-group',
+          parent_wave_id: null
+        }),
+        markDirectMessageReadThroughSerial: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        findDmUnreadConversationStates: jest
+          .fn()
+          .mockResolvedValue([dmUnreadState])
+      };
+      const wsListenersNotifier = {
+        notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined),
+        notifyAboutIdentityNotificationsChanged: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      };
+      const userGroupsService = {
+        getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['dm-group'])
+      };
+      const service = new NotificationsApiService(
+        {} as any,
+        userGroupsService as any,
+        {} as any,
+        {} as any,
+        identityNotificationsDb as any,
+        {} as any,
+        wavesApiDb as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        wsListenersNotifier as any
+      );
 
-    await expect(
-      service.markWaveNotificationsAsRead('wave-1', 'profile-1', {}, 43, true)
-    ).resolves.toEqual(dmUnreadState);
+      await expect(
+        service.markWaveNotificationsAsRead(
+          'wave-1',
+          'profile-1',
+          {},
+          readThroughSerialNo,
+          requestDmUnreadState
+        )
+      ).resolves.toEqual(expectedResponse === 'state' ? dmUnreadState : null);
 
-    expect(wavesApiDb.markDirectMessageReadThroughSerial).toHaveBeenCalledWith(
-      {
-        waveId: 'wave-1',
-        readerId: 'profile-1',
-        readThroughSerialNo: 43
-      },
-      {}
-    );
-    expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
-      { identityId: 'profile-1', waveIds: ['wave-1'] },
-      {},
-      DbPoolName.WRITE
-    );
-    expect(
-      wsListenersNotifier.notifyAboutDmUnreadStateChanged
-    ).toHaveBeenCalledWith([dmUnreadState]);
-    expect(
-      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
-    ).toHaveBeenCalledWith(['profile-1']);
-  });
+      expect(
+        wavesApiDb.markDirectMessageReadThroughSerial
+      ).toHaveBeenCalledWith(
+        {
+          waveId: 'wave-1',
+          readerId: 'profile-1',
+          readThroughSerialNo
+        },
+        {}
+      );
+      expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
+        {
+          identityId: 'profile-1',
+          eligibleGroups: ['dm-group'],
+          waveIds: ['wave-1']
+        },
+        {},
+        DbPoolName.WRITE
+      );
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).toHaveBeenCalledWith([dmUnreadState]);
+      expect(
+        wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+      ).toHaveBeenCalledWith(['profile-1']);
+    }
+  );
 
   it('rejects a direct-message read before mutating state when the profile is not a member', async () => {
     const identityNotificationsDb = {

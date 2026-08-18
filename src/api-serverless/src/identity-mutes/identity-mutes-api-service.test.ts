@@ -31,11 +31,17 @@ function createService() {
   const wsListenersNotifier = {
     notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined)
   };
+  const userGroupsService = {
+    getGroupsUserIsEligibleFor: jest
+      .fn()
+      .mockResolvedValue(['visible-dm-group'])
+  };
   const service = new IdentityMutesApiService(
     identityMutesDb as never,
     identityFetcher as never,
     wavesApiDb as never,
-    wsListenersNotifier as never
+    wsListenersNotifier as never,
+    userGroupsService as never
   );
   const ctx = {
     authenticationContext: {
@@ -46,6 +52,7 @@ function createService() {
     ctx,
     identityMutesDb,
     service,
+    userGroupsService,
     wavesApiDb,
     wsListenersNotifier
   };
@@ -72,14 +79,23 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       expect(
         wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
       ).toHaveBeenCalledWith(
-        { readerId: 'muter-1', authorId: 'muted-1', limit: 500 },
+        {
+          readerId: 'muter-1',
+          authorId: 'muted-1',
+          eligibleGroups: ['visible-dm-group'],
+          limit: 500
+        },
         ctx
       );
       expect(
         wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
       ).toHaveBeenCalledWith({ readerId: 'muter-1', waveIds: ['wave-1'] }, ctx);
       expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
-        { identityId: 'muter-1', waveIds: ['wave-1'] },
+        {
+          identityId: 'muter-1',
+          eligibleGroups: ['visible-dm-group'],
+          waveIds: ['wave-1']
+        },
         ctx,
         DbPoolName.WRITE
       );
@@ -108,6 +124,7 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       {
         readerId: 'muter-1',
         authorId: 'muted-1',
+        eligibleGroups: ['visible-dm-group'],
         limit: 500,
         afterWaveId: 'wave-499'
       },
@@ -119,5 +136,32 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
     ).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not version or broadcast inaccessible conversations', async () => {
+    const { ctx, service, userGroupsService, wavesApiDb, wsListenersNotifier } =
+      createService();
+    userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([]);
+    wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor.mockResolvedValue([]);
+
+    await service.muteIdentity('muted-handle', ctx as never);
+
+    expect(
+      wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+    ).toHaveBeenCalledWith(
+      {
+        readerId: 'muter-1',
+        authorId: 'muted-1',
+        eligibleGroups: [],
+        limit: 500
+      },
+      ctx
+    );
+    expect(
+      wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
+    ).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).not.toHaveBeenCalled();
   });
 });
