@@ -330,8 +330,9 @@ export class WaveApiService {
 
     if (authenticatedAdminProfileId) {
       const eligibleGroupIds =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
+        await this.userGroupsService.getGroupsUserIsEligibleForByIds(
           authenticatedAdminProfileId,
+          [visibilityGroupId],
           ctx.timer
         );
       if (!eligibleGroupIds.includes(visibilityGroupId)) {

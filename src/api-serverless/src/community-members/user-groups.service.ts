@@ -964,6 +964,23 @@ export class UserGroupsService {
     });
   }
 
+  public async getGroupsUserIsEligibleForByIds(
+    profileId: string | null,
+    groupIds: readonly string[],
+    timer?: Timer | undefined
+  ): Promise<string[]> {
+    if (!profileId || !groupIds.length) {
+      return [];
+    }
+    return await this.whichOfGivenGroupsIsUserEligibleFor(
+      {
+        profileId,
+        givenGroups: collections.distinct(Array.from(groupIds))
+      },
+      timer
+    );
+  }
+
   private async getGroupsUserIsEligibleForWithCache(
     profileId: string,
     timer?: Timer | undefined

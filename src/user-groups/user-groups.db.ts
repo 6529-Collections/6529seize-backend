@@ -108,20 +108,12 @@ function namespaceMembershipParams(
     sql += `:${namespace}_${key}`;
     index = end - 1;
   }
-  const unusedParam = Object.keys(membership.params).find(
-    (key) => !usedParams.has(key)
-  );
-  if (unusedParam) {
-    throw new Error(
-      `Membership SQL for ${membership.key} contains an unused parameter`
-    );
-  }
   return {
     sql,
     params: Object.fromEntries(
-      Object.entries(membership.params).map(([key, value]) => [
+      Array.from(usedParams).map((key) => [
         `${namespace}_${key}`,
-        value
+        membership.params[key]
       ])
     )
   };

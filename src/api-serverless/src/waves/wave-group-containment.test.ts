@@ -77,7 +77,7 @@ function createService(outsideGroupIds: readonly string[] = []) {
           .map((group) => group.id)
           .filter((groupId) => outsideGroupIds.includes(groupId))
     ),
-    getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    getGroupsUserIsEligibleForByIds: jest.fn().mockResolvedValue([])
   };
   const service = new WaveApiService(
     wavesApiDb as never,
@@ -197,6 +197,28 @@ describe('Wave group View containment', () => {
         { timer: undefined }
       )
     ).resolves.toEqual([ApiWaveGroupRole.Admin]);
+  });
+
+  it('checks the authenticated default Admin against the selected View group directly', async () => {
+    const { service, userGroupsService } = createService();
+    userGroupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([
+      VIEW_GROUP_ID
+    ]);
+
+    await expect(
+      service.validateWaveGroupContainmentPreview(
+        {
+          visibility_group_id: VIEW_GROUP_ID,
+          include_authenticated_user_as_admin: true
+        },
+        'profile-1',
+        { timer: undefined }
+      )
+    ).resolves.toEqual([]);
+
+    expect(
+      userGroupsService.getGroupsUserIsEligibleForByIds
+    ).toHaveBeenCalledWith('profile-1', [VIEW_GROUP_ID], undefined);
   });
 
   it('rejects invalid privilege groups on create', async () => {

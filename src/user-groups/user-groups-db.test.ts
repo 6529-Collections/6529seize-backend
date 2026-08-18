@@ -403,6 +403,43 @@ describeWithSeed(
 );
 
 describe('UserGroupsDb membership SQL parameter validation', () => {
+  it('drops unused generated parameters while preserving referenced bindings', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new UserGroupsDb(() => ({ execute }) as any);
+    const identityGroupMembership = (key: string, profileGroupId: string) => ({
+      key,
+      sql: `with included_profile_ids as (
+              select profile_id from profile_groups
+               where profile_group_id = :profile_group_id
+            ),
+            user_groups_view as (
+              select profile_id from included_profile_ids
+            )`,
+      params: {
+        profile_group_id: profileGroupId,
+        excluded_profile_group_id: null
+      }
+    });
+
+    await expect(
+      repo.findMembershipKeysOutsideContainingGroup(
+        identityGroupMembership('view', 'view-profile-group'),
+        [identityGroupMembership('chat', 'chat-profile-group')],
+        { timer: undefined }
+      )
+    ).resolves.toEqual([]);
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining(':containing_profile_group_id'),
+      {
+        containing_profile_group_id: 'view-profile-group',
+        contained_0_key: 'chat',
+        contained_0_profile_group_id: 'chat-profile-group'
+      },
+      undefined
+    );
+  });
+
   it('fails closed before executing SQL with an unbound placeholder', async () => {
     const execute = jest.fn();
     const repo = new UserGroupsDb(() => ({ execute }) as any);
