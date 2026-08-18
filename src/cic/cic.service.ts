@@ -10,6 +10,7 @@ import {
 } from '../profiles/abusiveness-check.service';
 import { ProfileClassification } from '../entities/IProfile';
 import {
+  MAX_ART_LINK_LENGTH,
   prepareCicStatementForInsert,
   validateNftAccountStatementConstraints
 } from './cic-statement-validation';
@@ -197,12 +198,26 @@ export class CicService {
   }
 
   private validateCicStatement({
+    statement_group,
     statement_type,
     statement_value
   }: {
+    statement_group: CicStatementGroup;
     statement_type: string;
     statement_value: string;
   }) {
+    if (
+      statement_group === CicStatementGroup.NFT_ACCOUNTS &&
+      (statement_type === 'LINK' || statement_type === 'NINFA')
+    ) {
+      if (statement_value.length > MAX_ART_LINK_LENGTH) {
+        throw new BadRequestException(
+          `Statement of type ${statement_type} can not be longer than ${MAX_ART_LINK_LENGTH} characters`
+        );
+      }
+      return;
+    }
+
     const rule = this.socialsRules[statement_type];
     if (rule) {
       const regexp = rule.regexp;
@@ -231,6 +246,10 @@ export class CicService {
     this.validateCicStatement(statementToInsert);
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        await this.cicDb.lockProfileForCicStatementMutation(
+          statementToInsert.profile_id,
+          connection
+        );
         const existingStatements = await this.cicDb.getCicStatementsByProfileId(
           statementToInsert.profile_id,
           connection

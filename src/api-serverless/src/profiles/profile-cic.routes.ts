@@ -30,9 +30,9 @@ import { ApiChangeProfileCicRating } from '../generated/models/ApiChangeProfileC
 import { ApiCicContributorsPage } from '../generated/models/ApiCicContributorsPage';
 import { ApiCicOverview } from '../generated/models/ApiCicOverview';
 import { ApiRepDirection } from '../generated/models/ApiRepDirection';
-import { ApiCicStatement } from '../generated/models/ApiCicStatement';
-import { ApiCicStatementGroup } from '../generated/models/ApiCicStatementGroup';
-import { ApiCreateProfileCicStatement } from '../generated/models/ApiCreateProfileCicStatement';
+import { ApiCicStatement } from '@/api/generated/models/ApiCicStatement';
+import { ApiCicStatementGroup } from '@/api/generated/models/ApiCicStatementGroup';
+import { ApiCreateProfileCicStatement } from '@/api/generated/models/ApiCreateProfileCicStatement';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
