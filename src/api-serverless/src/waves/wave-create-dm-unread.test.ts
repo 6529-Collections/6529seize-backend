@@ -1,14 +1,13 @@
 import { AuthenticationContext } from '@/auth-context';
+import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
 import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
 import { ApiWaveType } from '@/api/generated/models/ApiWaveType';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { waveScoreService } from '@/api/waves/wave-score.service';
+import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import { DbPoolName } from '@/db-query.options';
 import { WaveApiService } from './wave.api.service';
-
-const mockInvalidateWaveUnreadCacheForWave = jest.fn();
-const mockGiveReadReplicaTimeToCatchUp = jest.fn();
-const mockSendIdentityPushNotifications = jest.fn();
 
 jest.mock('@/api/waves/wave-score.service', () => ({
   waveScoreService: {
@@ -23,16 +22,26 @@ const mockRequestWaveScoreRefreshBestEffort = jest.mocked(
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn(),
-  invalidateWaveUnreadCacheForWave: mockInvalidateWaveUnreadCacheForWave
+  invalidateWaveUnreadCacheForWave: jest.fn()
 }));
 
 jest.mock('@/api/api-helpers', () => ({
-  giveReadReplicaTimeToCatchUp: mockGiveReadReplicaTimeToCatchUp
+  giveReadReplicaTimeToCatchUp: jest.fn()
 }));
 
 jest.mock('@/api/push-notifications/push-notifications.service', () => ({
-  sendIdentityPushNotifications: mockSendIdentityPushNotifications
+  sendIdentityPushNotifications: jest.fn()
 }));
+
+const mockInvalidateWaveUnreadCacheForWave = jest.mocked(
+  invalidateWaveUnreadCacheForWave
+);
+const mockGiveReadReplicaTimeToCatchUp = jest.mocked(
+  giveReadReplicaTimeToCatchUp
+);
+const mockSendIdentityPushNotifications = jest.mocked(
+  sendIdentityPushNotifications
+);
 
 function createWaveRequest(): ApiCreateNewWave {
   return {
