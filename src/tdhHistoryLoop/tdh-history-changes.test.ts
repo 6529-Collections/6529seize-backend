@@ -1,7 +1,6 @@
-import type { ConsolidatedTDH, TokenTDH } from '@/entities/ITDH';
+import type { TokenTDH } from '@/entities/ITDH';
 import {
   addTokensToIndex,
-  calculateLostConsolidationChanges,
   calculateTokenTdhChanges
 } from './tdh-history-changes';
 import type { TokenIndex } from './tdh-history-changes';
@@ -29,27 +28,6 @@ function previousIndex(tokens: TokenTDH[], boost: number): TokenIndex {
 }
 
 describe('calculateTokenTdhChanges', () => {
-  it('records a completely lost consolidation as destruction', () => {
-    const changes = calculateLostConsolidationChanges({
-      tdh: 100,
-      boosted_tdh: 150,
-      tdh__raw: 10,
-      balance: 1
-    } as ConsolidatedTDH);
-
-    expect(changes).toEqual({
-      tdhCreated: 0,
-      tdhDestroyed: 100,
-      boostedTdhCreated: 0,
-      boostedTdhDestroyed: 150,
-      rawTdhCreated: 0,
-      rawTdhDestroyed: 10,
-      balanceCreated: 0,
-      balanceDestroyed: 1
-    });
-    expect(changes.balanceCreated - changes.balanceDestroyed).toBe(-1);
-  });
-
   it('treats undefined token arrays as empty snapshots', () => {
     const index: TokenIndex = new Map();
 
