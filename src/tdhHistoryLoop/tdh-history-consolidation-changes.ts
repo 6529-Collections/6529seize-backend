@@ -147,7 +147,7 @@ function allocateInteger(
 ): number[] {
   const basisTotal = basis.reduce((sum, value) => sum + value, 0);
   if (basisTotal <= 0) {
-    throw new Error('Allocation basis must be positive');
+    return basis.map(() => 0);
   }
   const exact = basis.map((value) => (total * value) / basisTotal);
   const allocated = exact.map((value) => Math.floor(value));
