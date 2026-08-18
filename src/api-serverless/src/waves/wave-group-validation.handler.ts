@@ -24,6 +24,8 @@ export async function handleValidateWaveGroups(
   req: ValidateWaveGroupsRequest
 ): Promise<ApiWaveGroupValidationResponse> {
   const timer = Timer.getFromRequest(req);
+  // The generated route runs maybeAuthenticatedUser first. This reads that
+  // middleware-populated req.user, matching other optional-auth handlers.
   const authenticationContext = await getAuthenticationContext(req, timer);
   const body = getValidatedByJoiOrThrow(
     req.body,

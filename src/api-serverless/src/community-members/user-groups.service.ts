@@ -964,6 +964,23 @@ export class UserGroupsService {
     });
   }
 
+  public async getGroupsUserIsEligibleForByIds(
+    profileId: string | null,
+    groupIds: readonly string[],
+    timer?: Timer | undefined
+  ): Promise<string[]> {
+    if (!profileId || !groupIds.length) {
+      return [];
+    }
+    return await this.whichOfGivenGroupsIsUserEligibleFor(
+      {
+        profileId,
+        givenGroups: collections.distinct(Array.from(groupIds))
+      },
+      timer
+    );
+  }
+
   private async getGroupsUserIsEligibleForWithCache(
     profileId: string,
     timer?: Timer | undefined
@@ -1684,6 +1701,8 @@ export class UserGroupsService {
     const buildMembershipSql = async (
       group: ApiGroupFull
     ): Promise<GroupMembershipSql> => {
+      // This is the sole source of membership SQL passed to the namespacer;
+      // group-controlled criteria remain in the returned bind parameters.
       const membership = await this.getSqlAndParams(
         structuredClone(group.group),
         group.id,
@@ -2294,6 +2313,7 @@ export class UserGroupsService {
       groups.filter(
         (group) =>
           !group.is_private ||
+          // UserGroupEntity stores the creator as an id, unlike ApiGroupFull.
           group.created_by === authenticatedUserId ||
           eligibleGroupIds.includes(group.id)
       ),

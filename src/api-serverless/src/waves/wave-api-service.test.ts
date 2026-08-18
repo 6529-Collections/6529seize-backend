@@ -31,6 +31,13 @@ jest.mock('@/profiles/profile-waves.db', () => ({
   }
 }));
 
+jest.mock('@/profiles/profile-waves.db', () => ({
+  profileWavesDb: {
+    deleteByWaveId: jest.fn().mockResolvedValue(undefined),
+    findSelectedWaveIdsByWaveIds: jest.fn().mockResolvedValue(new Set())
+  }
+}));
+
 describe('WaveApiService updateWave immutability', () => {
   function createService({
     waveBeforeUpdate,

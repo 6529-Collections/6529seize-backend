@@ -139,6 +139,13 @@ type WavePrivilegeGroup = {
   readonly groupId: string | null;
 };
 
+const WAVE_GROUP_ROLE_ORDER: readonly ApiWaveGroupRole[] = [
+  ApiWaveGroupRole.Participation,
+  ApiWaveGroupRole.Voting,
+  ApiWaveGroupRole.Chat,
+  ApiWaveGroupRole.Admin
+];
+
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
@@ -231,10 +238,7 @@ export class WaveApiService {
     return collections.distinct(
       [
         request.visibility.scope.group_id,
-        request.participation.scope.group_id,
-        request.voting.scope.group_id,
-        request.chat.scope.group_id,
-        request.wave.admin_group?.group_id ?? null
+        ...this.getActivePrivilegeGroups(request).map((group) => group.groupId)
       ].filter((id): id is string => id !== null)
     );
   }
@@ -336,17 +340,16 @@ export class WaveApiService {
 
     if (authenticatedAdminProfileId) {
       const eligibleGroupIds =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
+        await this.userGroupsService.getGroupsUserIsEligibleForByIds(
           authenticatedAdminProfileId,
+          [visibilityGroupId],
           ctx.timer
         );
       if (!eligibleGroupIds.includes(visibilityGroupId)) {
         invalidRoles.add(ApiWaveGroupRole.Admin);
       }
     }
-    return Object.values(ApiWaveGroupRole).filter((role) =>
-      invalidRoles.has(role)
-    );
+    return WAVE_GROUP_ROLE_ORDER.filter((role) => invalidRoles.has(role));
   }
 
   private assertNoInvalidWaveGroupRoles(
@@ -1404,8 +1407,8 @@ export class WaveApiService {
     }
     const activePrivilegeGroups = this.getActivePrivilegeGroups(request);
     const privilegeGroupsToValidate =
-      !waveBeforeUpdate ||
-      waveBeforeUpdate.visibility_group_id !== request.visibility.scope.group_id
+      waveBeforeUpdate?.visibility_group_id !==
+      request.visibility.scope.group_id
         ? activePrivilegeGroups
         : activePrivilegeGroups.filter(
             (group) =>

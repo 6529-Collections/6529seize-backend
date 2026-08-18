@@ -77,7 +77,7 @@ function createService(outsideGroupIds: readonly string[] = []) {
           .map((group) => group.id)
           .filter((groupId) => outsideGroupIds.includes(groupId))
     ),
-    getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    getGroupsUserIsEligibleForByIds: jest.fn().mockResolvedValue([])
   };
   const service = new WaveApiService(
     wavesApiDb as never,
@@ -199,6 +199,28 @@ describe('Wave group View containment', () => {
     ).resolves.toEqual([ApiWaveGroupRole.Admin]);
   });
 
+  it('checks the authenticated default Admin against the selected View group directly', async () => {
+    const { service, userGroupsService } = createService();
+    userGroupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([
+      VIEW_GROUP_ID
+    ]);
+
+    await expect(
+      service.validateWaveGroupContainmentPreview(
+        {
+          visibility_group_id: VIEW_GROUP_ID,
+          include_authenticated_user_as_admin: true
+        },
+        'profile-1',
+        { timer: undefined }
+      )
+    ).resolves.toEqual([]);
+
+    expect(
+      userGroupsService.getGroupsUserIsEligibleForByIds
+    ).toHaveBeenCalledWith('profile-1', [VIEW_GROUP_ID], undefined);
+  });
+
   it('rejects invalid privilege groups on create', async () => {
     const { service } = createService([VOTE_GROUP_ID]);
 
@@ -261,6 +283,44 @@ describe('Wave group View containment', () => {
     expect(wavesApiDb.findWavesUsingGroupId).toHaveBeenCalledWith(
       'replaced-group',
       expect.objectContaining({ connection })
+    );
+  });
+
+  it('rechecks active roles and skips disabled Chat when View is replaced', async () => {
+    const { service, userGroupsService, wavesApiDb } = createService([
+      DROP_GROUP_ID
+    ]);
+    wavesApiDb.findWavesUsingGroupId.mockResolvedValue([
+      {
+        type: WaveType.RANK,
+        chat_enabled: false,
+        visibility_group_id: VIEW_GROUP_ID,
+        participation_group_id: DROP_GROUP_ID,
+        voting_group_id: VOTE_GROUP_ID,
+        chat_group_id: CHAT_GROUP_ID,
+        admin_group_id: ADMIN_GROUP_ID
+      } as WaveEntity
+    ]);
+
+    await expect(
+      service.assertGroupReplacementPreservesWaveViewAccess(
+        {
+          currentGroup: { id: 'candidate-view' } as any,
+          replacedGroupId: VIEW_GROUP_ID
+        },
+        { connection: {} as any, timer: undefined }
+      )
+    ).rejects.toThrow(
+      'Wave PARTICIPATION group members must also belong to the View group'
+    );
+    expect(
+      userGroupsService.findGroupIdsWithMembersOutsideContainingGroup
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'candidate-view' }),
+      expect.not.arrayContaining([
+        expect.objectContaining({ id: CHAT_GROUP_ID })
+      ]),
+      expect.anything()
     );
   });
 });
