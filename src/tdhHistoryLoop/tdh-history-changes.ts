@@ -79,6 +79,13 @@ export function calculateTokenTdhChanges(
   const currentTokenIndex: TokenIndex = new Map();
   addTokensToIndex(currentTokenIndex, currentTokens, currentBoost);
 
+  return calculateTokenIndexTdhChanges(currentTokenIndex, previousTokenIndex);
+}
+
+export function calculateTokenIndexTdhChanges(
+  currentTokenIndex: TokenIndex,
+  previousTokenIndex: TokenIndex
+): TokenTdhChanges {
   const tokenIds = new Set<number>();
   currentTokenIndex.forEach((_tokens, tokenId) => tokenIds.add(tokenId));
   previousTokenIndex.forEach((_tokens, tokenId) => tokenIds.add(tokenId));
