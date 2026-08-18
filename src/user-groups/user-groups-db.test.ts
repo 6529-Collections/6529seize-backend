@@ -423,8 +423,8 @@ describe('UserGroupsDb membership SQL parameter validation', () => {
 
     await expect(
       repo.findMembershipKeysOutsideContainingGroup(
-        identityGroupMembership('view', 'view-profile-group'),
-        [identityGroupMembership('chat', 'chat-profile-group')],
+        identityGroupMembership('view', 'view:profile-group'),
+        [identityGroupMembership('chat', 'chat:profile-group')],
         { timer: undefined }
       )
     ).resolves.toEqual([]);
@@ -432,12 +432,72 @@ describe('UserGroupsDb membership SQL parameter validation', () => {
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining(':containing_profile_group_id'),
       {
-        containing_profile_group_id: 'view-profile-group',
+        containing_profile_group_id: 'view:profile-group',
         contained_0_key: 'chat',
-        contained_0_profile_group_id: 'chat-profile-group'
+        contained_0_profile_group_id: 'chat:profile-group'
       },
       undefined
     );
+  });
+
+  it('does not treat quoted colons or double-colon tokens as parameters', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new UserGroupsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.findMembershipKeysOutsideContainingGroup(
+        {
+          key: 'view',
+          sql: `with user_groups_view as (
+                  select :profile as profile_id,
+                         '12:00' as quoted_value,
+                         value::text as cast_value,
+                         \`label:part\` as quoted_identifier)`,
+          params: { profile: 'profile:1' }
+        },
+        [
+          {
+            key: 'chat',
+            sql: 'with user_groups_view as (select :profile as profile_id)',
+            params: { profile: 'profile:2' }
+          }
+        ],
+        { timer: undefined }
+      )
+    ).resolves.toEqual([]);
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('value::text'),
+      expect.objectContaining({
+        containing_profile: 'profile:1',
+        contained_0_profile: 'profile:2'
+      }),
+      undefined
+    );
+  });
+
+  it('fails closed on an unterminated quoted region', async () => {
+    const execute = jest.fn();
+    const repo = new UserGroupsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.findMembershipKeysOutsideContainingGroup(
+        {
+          key: 'view',
+          sql: "with user_groups_view as (select ':profile as profile_id)",
+          params: { profile: 'profile-1' }
+        },
+        [
+          {
+            key: 'chat',
+            sql: 'with user_groups_view as (select :profile as profile_id)',
+            params: { profile: 'profile-1' }
+          }
+        ],
+        { timer: undefined }
+      )
+    ).rejects.toThrow('has an open quote');
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('fails closed before executing SQL with an unbound placeholder', async () => {

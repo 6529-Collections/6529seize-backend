@@ -285,4 +285,42 @@ describe('Wave group View containment', () => {
       expect.objectContaining({ connection })
     );
   });
+
+  it('rechecks active roles and skips disabled Chat when View is replaced', async () => {
+    const { service, userGroupsService, wavesApiDb } = createService([
+      DROP_GROUP_ID
+    ]);
+    wavesApiDb.findWavesUsingGroupId.mockResolvedValue([
+      {
+        type: WaveType.RANK,
+        chat_enabled: false,
+        visibility_group_id: VIEW_GROUP_ID,
+        participation_group_id: DROP_GROUP_ID,
+        voting_group_id: VOTE_GROUP_ID,
+        chat_group_id: CHAT_GROUP_ID,
+        admin_group_id: ADMIN_GROUP_ID
+      } as WaveEntity
+    ]);
+
+    await expect(
+      service.assertGroupReplacementPreservesWaveViewAccess(
+        {
+          currentGroup: { id: 'candidate-view' } as any,
+          replacedGroupId: VIEW_GROUP_ID
+        },
+        { connection: {} as any, timer: undefined }
+      )
+    ).rejects.toThrow(
+      'Wave PARTICIPATION group members must also belong to the View group'
+    );
+    expect(
+      userGroupsService.findGroupIdsWithMembersOutsideContainingGroup
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'candidate-view' }),
+      expect.not.arrayContaining([
+        expect.objectContaining({ id: CHAT_GROUP_ID })
+      ]),
+      expect.anything()
+    );
+  });
 });

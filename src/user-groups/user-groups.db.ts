@@ -51,6 +51,7 @@ export interface IdentityGroupMembershipPage {
 
 export interface GroupMembershipSql {
   readonly key: string;
+  /** Internally generated SQL only; all group-controlled values stay bound. */
   readonly sql: string;
   readonly params: Readonly<Record<string, unknown>>;
 }
@@ -62,6 +63,9 @@ function namespaceMembershipParams(
   membership: GroupMembershipSql,
   namespace: string
 ): { sql: string; params: Record<string, unknown> } {
+  if (!/^[A-Za-z_]\w*$/.test(namespace)) {
+    throw new Error('Membership SQL namespace is invalid');
+  }
   const usedParams = new Set<string>();
   let quote: "'" | '"' | '`' | null = null;
   let sql = '';
@@ -69,7 +73,11 @@ function namespaceMembershipParams(
     const character = membership.sql[index];
     if (quote !== null) {
       sql += character;
-      if (character === '\\' && index + 1 < membership.sql.length) {
+      if (
+        quote !== '`' &&
+        character === '\\' &&
+        index + 1 < membership.sql.length
+      ) {
         sql += membership.sql[++index];
       } else if (character === quote) {
         if (membership.sql[index + 1] === quote) {
@@ -88,6 +96,7 @@ function namespaceMembershipParams(
     const parameterStart = membership.sql[index + 1];
     if (
       character !== ':' ||
+      membership.sql[index - 1] === ':' ||
       !parameterStart ||
       !(parameterStart === '_' || /[A-Za-z]/.test(parameterStart))
     ) {
@@ -107,6 +116,9 @@ function namespaceMembershipParams(
     usedParams.add(key);
     sql += `:${namespace}_${key}`;
     index = end - 1;
+  }
+  if (quote !== null) {
+    throw new Error(`Membership SQL for ${membership.key} has an open quote`);
   }
   return {
     sql,
