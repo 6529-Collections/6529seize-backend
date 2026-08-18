@@ -152,14 +152,13 @@ export class NotificationsApiService {
     waveId: string,
     identityId: string,
     ctx: RequestContext,
-    readThroughSerialNo?: number
+    readThroughSerialNo?: number,
+    requestDmUnreadState = false
   ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    const wave = await this.wavesApiDb.findById(
-      waveId,
-      ctx.connection,
-      DbPoolName.WRITE
-    );
+    const wave = requestDmUnreadState
+      ? await this.wavesApiDb.findById(waveId, ctx.connection, DbPoolName.WRITE)
+      : null;
     if (wave?.is_direct_message) {
       const groupsUserIsEligibleFor =
         await this.userGroupsService.getGroupsUserIsEligibleFor(

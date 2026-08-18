@@ -685,7 +685,7 @@ describe('NotificationsApiService realtime invalidation', () => {
       markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
     };
     const wavesApiDb = {
-      findById: jest.fn().mockResolvedValue({ is_direct_message: false }),
+      findById: jest.fn(),
       updateWaveReaderMetricLatestReadTimestamp: jest
         .fn()
         .mockResolvedValue(undefined)
@@ -718,7 +718,13 @@ describe('NotificationsApiService realtime invalidation', () => {
       identity_id: 'profile-1'
     });
     await service.markAllNotificationsAsRead('profile-1', {});
-    await service.markWaveNotificationsAsRead('wave-1', 'profile-1', {});
+    await service.markWaveNotificationsAsRead(
+      'wave-1',
+      'profile-1',
+      {},
+      43,
+      false
+    );
 
     expect(
       identityNotificationsDb.updateNotificationReadAt
@@ -736,6 +742,7 @@ describe('NotificationsApiService realtime invalidation', () => {
     expect(
       identityNotificationsDb.markWaveNotificationsAsRead
     ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
+    expect(wavesApiDb.findById).not.toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutIdentityNotificationsChanged
     ).toHaveBeenNthCalledWith(1, ['profile-1']);
@@ -800,7 +807,7 @@ describe('NotificationsApiService realtime invalidation', () => {
     );
 
     await expect(
-      service.markWaveNotificationsAsRead('wave-1', 'profile-1', {}, 43)
+      service.markWaveNotificationsAsRead('wave-1', 'profile-1', {}, 43, true)
     ).resolves.toEqual(dmUnreadState);
 
     expect(wavesApiDb.markDirectMessageReadThroughSerial).toHaveBeenCalledWith(
@@ -851,7 +858,13 @@ describe('NotificationsApiService realtime invalidation', () => {
     );
 
     await expect(
-      service.markWaveNotificationsAsRead('wave-1', 'profile-1', {})
+      service.markWaveNotificationsAsRead(
+        'wave-1',
+        'profile-1',
+        {},
+        undefined,
+        true
+      )
     ).rejects.toBeInstanceOf(NotFoundException);
 
     expect(

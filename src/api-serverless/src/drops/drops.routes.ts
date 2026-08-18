@@ -25,6 +25,7 @@ import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiMarkDropUnreadResponse } from '../generated/models/ApiMarkDropUnreadResponse';
 import { ApiToggleHideLinkPreviewRequest } from '../generated/models/ApiToggleHideLinkPreviewRequest';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { identityFetcher } from '../identities/identity.fetcher';
@@ -307,7 +308,7 @@ router.delete(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
+    res: Response<ApiResponse<ApiMarkDropUnreadResponse>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -718,7 +719,8 @@ router.post(
       return res.send({
         your_unread_drops_count: dmUnreadState?.unread_count ?? 0,
         first_unread_drop_serial_no:
-          dmUnreadState?.first_unread_drop_serial_no ?? null
+          dmUnreadState?.first_unread_drop_serial_no ?? null,
+        dm_unread_state: dmUnreadState ?? null
       });
     }
     const unreadSummaries =
@@ -730,7 +732,8 @@ router.post(
     res.send({
       your_unread_drops_count: unreadSummary?.unread_drops_count ?? 0,
       first_unread_drop_serial_no:
-        unreadSummary?.first_unread_drop_serial_no ?? null
+        unreadSummary?.first_unread_drop_serial_no ?? null,
+      dm_unread_state: null
     });
   }
 );

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
+import { Logger } from '@/logging';
 import {
   activityRecorder,
   ActivityRecorder
@@ -133,6 +134,8 @@ type RequestContextWithConnection = RequestContext & {
 };
 
 export class WaveApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly wavesApiDb: WavesApiDb,
     private readonly userGroupsService: UserGroupsService,
@@ -376,7 +379,7 @@ export class WaveApiService {
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
-    const { createdWave, pendingPushNotificationIds } =
+    const { createdWave, pendingPushNotificationIds, dmUnreadRecipientIds } =
       await this.wavesApiDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
@@ -467,11 +470,18 @@ export class WaveApiService {
               },
               authorId: actingAsId
             });
-          const { drop_id: descriptionDropId, pending_push_notification_ids } =
-            await this.createOrUpdateDrop.execute(descriptionDropModel, true, {
+          const {
+            drop_id: descriptionDropId,
+            pending_push_notification_ids,
+            dm_unread_recipient_ids
+          } = await this.createOrUpdateDrop.execute(
+            descriptionDropModel,
+            true,
+            {
               timer: ctxWithConnection.timer,
               connection: ctxWithConnection.connection
-            });
+            }
+          );
           await this.wavesApiDb.updateDescriptionDropId(
             {
               waveId: id,
@@ -573,7 +583,8 @@ export class WaveApiService {
               },
               ctxWithConnection
             ),
-            pendingPushNotificationIds: pending_push_notification_ids
+            pendingPushNotificationIds: pending_push_notification_ids,
+            dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
           };
         }
       );
@@ -583,6 +594,11 @@ export class WaveApiService {
       ctx
     );
     await invalidateWaveUnreadCacheForWave(createdWave.id);
+    await this.broadcastDmUnreadStates(
+      dmUnreadRecipientIds,
+      createdWave.id,
+      ctx
+    );
     await giveReadReplicaTimeToCatchUp();
     await this.userGroupsService.onWaveRelatedGroupsChanged(
       [
@@ -2266,15 +2282,30 @@ export class WaveApiService {
     waveId: string,
     ctx: RequestContext
   ): Promise<void> {
-    const state = (
-      await this.wavesApiDb.findDmUnreadConversationStates(
-        { identityId, waveIds: [waveId] },
-        ctx,
-        DbPoolName.WRITE
-      )
-    )[0];
-    if (state) {
-      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged([state]);
+    await this.broadcastDmUnreadStates([identityId], waveId, ctx);
+  }
+
+  private async broadcastDmUnreadStates(
+    identityIds: string[],
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!identityIds.length) {
+      return;
+    }
+    try {
+      const states =
+        await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
+          { identityIds, waveIds: [waveId] },
+          ctx,
+          DbPoolName.WRITE
+        );
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast DM unread state for wave ${waveId}`,
+        error
+      );
     }
   }
 
