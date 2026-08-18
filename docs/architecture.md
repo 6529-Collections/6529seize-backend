@@ -638,6 +638,14 @@ backend DAG frontiers run concurrently; only shared environment mutation plus
 E2E ownership is serialized. Operation keys, workflow titles, workflow
 authorization, SHA/artifact checks, row versions, and callback identity make
 retries and duplicate reconciliation idempotent.
+Automatic staging E2E reaches the baseline-adoption decision through an API
+callback dispatched by `workflow_dispatch`. When an exact adoption intent is
+active, the API reads both workflow identities from GitHub: the staging E2E
+run must be owned by `github-actions[bot]`, use the frontend repository for
+both the run and head repository, and execute `.github/workflows/staging-e2e.yml`;
+the associated deploy run remains subject to the generic trusted-actor reader.
+Only this dedicated staging E2E reader admits the GitHub Actions bot, and every
+metadata mismatch fails closed before baseline evidence is recorded.
 Operation reads normally use the read pool. When reconciliation has just
 CAS-written a dispatch reservation and must decide whether it may call GitHub,
 it rereads that immutable operation from the writer pool. An explicit

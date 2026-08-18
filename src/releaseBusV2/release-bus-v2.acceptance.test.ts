@@ -7857,7 +7857,8 @@ describe('Release Bus v2 offline acceptance harness', () => {
       'fe3933aaaa44d8b6b6f91866cf6c2cebf06daf40',
       '62286a15945df10e89faa8e19d88fcd7dd1d8585',
       '926a915a4b9c62b76f169de4e4b6b6eaa4196d35',
-      'af4314e0eff6b4110edddf8da8747216b2014b10'
+      'af4314e0eff6b4110edddf8da8747216b2014b10',
+      '7440432d304f16f13d6569f621c65af561f69f93'
     ]).toContain(pullRequestWorkflowBlob);
     if (pullRequestWorkflowBlob !== '0cc8865dbb869b5156b46cc45e8581b259052916')
       expect(pullRequestWorkflow).toContain('exact-merge-tree-pr-ci-v1');
