@@ -308,7 +308,7 @@ router.delete(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ApiMarkDropUnreadResponse>>
+    res: Response<ApiResponse<any>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -652,7 +652,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
+    res: Response<ApiResponse<ApiMarkDropUnreadResponse>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
