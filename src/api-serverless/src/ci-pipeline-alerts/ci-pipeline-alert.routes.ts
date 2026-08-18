@@ -73,6 +73,40 @@ function getE2EValidationError(value: CiPipelineAlertRequest): string | null {
     : null;
 }
 
+function validateReleaseNoteGroups(
+  value: CiPipelineAlertRequest,
+  helpers: Joi.CustomHelpers
+) {
+  const groups = value.release_note_groups;
+  if (!groups) return value;
+  const service = value.service?.trim();
+  if (!service) {
+    return helpers.message({
+      custom: 'service is required with release_note_groups'
+    });
+  }
+  if (!isDeployService(service)) {
+    return helpers.message({
+      custom: 'service must be an allowlisted backend deploy service'
+    });
+  }
+  for (const group of groups) {
+    if (!group.release_group_services.every(isDeployService)) {
+      return helpers.message({
+        custom:
+          'release_group_services must contain only allowlisted backend deploy services'
+      });
+    }
+    if (!group.release_group_services.includes(service)) {
+      return helpers.message({
+        custom:
+          'every release_note_groups entry must contain the deployed service'
+      });
+    }
+  }
+  return value;
+}
+
 // This HMAC-signed, automation-only ingress is mounted manually and is
 // intentionally excluded from the public OpenAPI surface.
 const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
@@ -245,34 +279,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       if (e2eValidationError) {
         return helpers.message({ custom: e2eValidationError });
       }
-      const groups = value.release_note_groups;
-      if (!groups) return value;
-      const service = value.service?.trim();
-      if (!service) {
-        return helpers.message({
-          custom: 'service is required with release_note_groups'
-        });
-      }
-      if (!isDeployService(service)) {
-        return helpers.message({
-          custom: 'service must be an allowlisted backend deploy service'
-        });
-      }
-      for (const group of groups) {
-        if (!group.release_group_services.every(isDeployService)) {
-          return helpers.message({
-            custom:
-              'release_group_services must contain only allowlisted backend deploy services'
-          });
-        }
-        if (!group.release_group_services.includes(service)) {
-          return helpers.message({
-            custom:
-              'every release_note_groups entry must contain the deployed service'
-          });
-        }
-      }
-      return value;
+      return validateReleaseNoteGroups(value, helpers);
     });
 
 type SignatureVerificationResult =
