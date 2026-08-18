@@ -23,6 +23,12 @@ import {
   identityMutesDb as defaultIdentityMutesDb,
   IdentityMutesDb
 } from '@/api/identity-mutes/identity-mutes.db';
+import {
+  profilePreferencesDb as defaultProfilePreferencesDb,
+  ProfilePreferencesDb
+} from '@/profile-preferences/profile-preferences.db';
+import { isNotificationEnabled } from '@/profile-preferences/profile-notification-policy';
+import { DEFAULT_PROFILE_PREFERENCES } from '@/entities/IProfilePreferences';
 
 type SerializableNotificationInsertRow = Record<string, string | number | null>;
 
@@ -45,7 +51,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
 
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly identityMutesDb: IdentityMutesDb = defaultIdentityMutesDb
+    private readonly identityMutesDb: IdentityMutesDb = defaultIdentityMutesDb,
+    private readonly profilePreferencesDb: ProfilePreferencesDb = defaultProfilePreferencesDb
   ) {
     super(dbSupplier);
   }
@@ -59,11 +66,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ) {
     if (this.isNotifierActivated()) {
-      const [filteredNotification] =
-        await this.filterMutedNotificationRowsForWrite(
-          [notification],
-          connection
-        );
+      const [filteredNotification] = await this.filterNotificationRowsForWrite(
+        [notification],
+        connection
+      );
       if (!filteredNotification) {
         return;
       }
@@ -111,7 +117,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     notifications: NewIdentityNotification[],
     connection: ConnectionWrapper<any>
   ): Promise<number[]> {
-    const unmutedNotifications = await this.filterMutedNotificationRowsForWrite(
+    const unmutedNotifications = await this.filterNotificationRowsForWrite(
       notifications,
       connection
     );
@@ -164,6 +170,37 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         error
       );
       return notifications;
+    }
+  }
+
+  private async filterNotificationRowsForWrite<
+    T extends NewIdentityNotification
+  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+    const unmuted = await this.filterMutedNotificationRowsForWrite(
+      notifications,
+      connection
+    );
+    if (!unmuted.length) return [];
+    try {
+      const preferences = await this.profilePreferencesDb.getMany(
+        Array.from(
+          new Set(unmuted.map((notification) => notification.identity_id))
+        ),
+        connection
+      );
+      return unmuted.filter((notification) =>
+        isNotificationEnabled(
+          notification.cause,
+          preferences.get(notification.identity_id) ??
+            DEFAULT_PROFILE_PREFERENCES
+        )
+      );
+    } catch (error) {
+      this.logger.error(
+        'Failed to filter notification rows by profile preferences; inserting unfiltered notifications',
+        error
+      );
+      return unmuted;
     }
   }
 

@@ -28,7 +28,11 @@ import {
   UserGroupsDb
 } from '@/user-groups/user-groups.db';
 import slugify from 'slugify';
-import { BadRequestException, NotFoundException } from '@/exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
   abusivenessCheckService,
@@ -87,6 +91,11 @@ import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 import { Logger } from '@/logging';
+import {
+  profilePreferencesDb,
+  ProfilePreferencesDb
+} from '@/profile-preferences/profile-preferences.db';
+import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -151,7 +160,8 @@ export class UserGroupsService {
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService,
-    private readonly metricsRecorder: MetricsRecorder
+    private readonly metricsRecorder: MetricsRecorder,
+    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb
   ) {}
 
   private async timeAsync<T>(
@@ -329,13 +339,30 @@ export class UserGroupsService {
     if (existingGroup) {
       return (await this.mapForApi([existingGroup], ctx))[0];
     }
-    const handles = await identitiesDb.getHandlesByPrimaryWallets(
+    const recipients = await this.profilePreferences.getDirectMessageRecipients(
       uniqueIdentityAddresses,
+      creatorProfile.id!,
       ctx.connection
     );
-    if (handles.length !== uniqueIdentityAddresses.length) {
+    if (recipients.length !== uniqueIdentityAddresses.length) {
       throw new BadRequestException(`Invalid identity addresses.`);
     }
+    const blockedRecipient = recipients.find(
+      (recipient) =>
+        recipient.direct_message_policy === ProfileDirectMessagePolicy.NOBODY ||
+        (recipient.direct_message_policy ===
+          ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW &&
+          !recipient.follows_creator)
+    );
+    if (blockedRecipient) {
+      const message =
+        blockedRecipient.direct_message_policy ===
+        ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW
+          ? `You can't start a new direct message with @${blockedRecipient.handle} because they only accept messages from people they follow.`
+          : `You can't start a new direct message with @${blockedRecipient.handle} because they don't accept new direct messages.`;
+      throw new ForbiddenException(message);
+    }
+    const handles = recipients.map((recipient) => recipient.handle);
     const name = `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
     const userGroup: Omit<
       NewUserGroupEntity,

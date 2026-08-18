@@ -51,10 +51,12 @@ import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCms
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
+import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
+import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
@@ -408,6 +410,34 @@ export type CreateProfileCmsWalletGallerySnapshotRequest = Request<
   ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>,
   ApiCreateProfileCmsWalletGallerySnapshotRequest,
   CreateProfileCmsWalletGallerySnapshotQuery,
+  Record<string, never>
+>;
+
+export type GetProfilePreferencesPathParams = Record<string, never>;
+
+export type GetProfilePreferencesQuery = Record<string, never>;
+
+export type GetProfilePreferencesResponse = ApiProfilePreferences;
+
+export type GetProfilePreferencesRequest = Request<
+  GetProfilePreferencesPathParams,
+  ApiResponse<GetProfilePreferencesResponse>,
+  never,
+  GetProfilePreferencesQuery,
+  Record<string, never>
+>;
+
+export type PutProfilePreferencesPathParams = Record<string, never>;
+
+export type PutProfilePreferencesQuery = Record<string, never>;
+
+export type PutProfilePreferencesResponse = ApiProfilePreferences;
+
+export type PutProfilePreferencesRequest = Request<
+  PutProfilePreferencesPathParams,
+  ApiResponse<PutProfilePreferencesResponse>,
+  ApiUpdateProfilePreferences,
+  PutProfilePreferencesQuery,
   Record<string, never>
 >;
 
