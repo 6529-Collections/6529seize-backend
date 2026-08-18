@@ -318,6 +318,33 @@ describe('ReleaseNoteGitHubService', () => {
     expect(compareCalls[10][0]).toContain('per_page=100&page=11');
   });
 
+  it('stops malformed comparison pagination after 100 full pages', async () => {
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({
+      sha: `commit-${index + 1}`
+    }));
+    (fetch as unknown as jest.Mock).mockResolvedValue(
+      response({ commits: fullPage })
+    );
+    const service = new ReleaseNoteGitHubService() as unknown as {
+      getComparedCommits(
+        repository: string,
+        previousSha: string,
+        currentSha: string
+      ): Promise<Array<{ readonly sha: string }>>;
+    };
+
+    await expect(
+      service.getComparedCommits(
+        '6529-Collections/6529seize-frontend',
+        'previous-sha',
+        'abc123'
+      )
+    ).rejects.toThrow(
+      'Release comparison did not complete within 10000 commits'
+    );
+    expect(fetch).toHaveBeenCalledTimes(100);
+  });
+
   it('uses the previous production Publish across version branches and excludes imported renderer history', async () => {
     const previousSha = '1111111111111111111111111111111111111111';
     const currentSha = '4444444444444444444444444444444444444444';

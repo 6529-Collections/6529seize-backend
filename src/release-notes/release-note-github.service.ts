@@ -96,6 +96,7 @@ interface BoundedGitHubCollection<T> {
   readonly incomplete: boolean;
 }
 
+const MAX_COMPARE_PAGES = 100;
 const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const MAX_FILE_PAGES = 3;
 const MAX_WORKFLOW_RUN_PAGES = 10;
@@ -597,7 +598,7 @@ export class ReleaseNoteGitHubService {
   ): Promise<GitHubCommit[]> {
     const commits: GitHubCommit[] = [];
 
-    for (let page = 1; ; page++) {
+    for (let page = 1; page <= MAX_COMPARE_PAGES; page++) {
       const payload = await this.api<GitHubCompareResponse>(
         `/repos/${repository}/compare/${encodeURIComponent(previousSha)}...${encodeURIComponent(currentSha)}?per_page=${PAGE_SIZE}&page=${page}`
       );
@@ -613,6 +614,10 @@ export class ReleaseNoteGitHubService {
         return commits;
       }
     }
+
+    throw new Error(
+      `Release comparison did not complete within ${MAX_COMPARE_PAGES * PAGE_SIZE} commits`
+    );
   }
 
   private async getPullRequests(

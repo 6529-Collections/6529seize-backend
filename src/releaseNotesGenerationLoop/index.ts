@@ -23,9 +23,12 @@ const RELEASE_NOTE_FINAL_ATTEMPT = 5;
 type ReleaseNotesRedis = NonNullable<ReturnType<typeof getRedisClient>>;
 
 class RetryableReleaseNoteError extends Error {
+  public readonly cause: unknown;
+
   public constructor(error: unknown) {
     super(getErrorMessage(error));
     this.name = 'RetryableReleaseNoteError';
+    this.cause = error;
     Object.setPrototypeOf(this, RetryableReleaseNoteError.prototype);
   }
 }
@@ -545,6 +548,7 @@ export async function processRequestWithRetryPolicy(
 }
 
 const sqsHandler: SQSHandler = async (event) => {
+  // serverless.yaml fixes this event source at batchSize: 1.
   const firstReceiveCount = Number(
     event.Records[0]?.attributes.ApproximateReceiveCount
   );

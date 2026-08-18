@@ -194,6 +194,7 @@ describe('release-note Sentry retry policy', () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe(error.message);
+    expect((thrown as Error & { cause: unknown }).cause).toBe(error);
     expect(shouldCaptureReleaseNoteError(thrown)).toBe(false);
   });
 
