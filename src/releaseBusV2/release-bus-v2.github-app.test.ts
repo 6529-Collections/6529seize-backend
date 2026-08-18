@@ -1218,6 +1218,84 @@ describe('GitHub workflow operation identity', () => {
     }
   });
 
+  it('parses the GitHub Actions actor through the exact Staging E2E reader', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 32120573187,
+          run_attempt: 1,
+          name: 'Staging E2E [automatic]',
+          path: '.github/workflows/staging-e2e.yml',
+          display_title: 'Staging E2E [automatic]',
+          status: 'in_progress',
+          conclusion: null,
+          head_branch: 'main',
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/32120573187',
+          event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-frontend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-frontend'
+          },
+          actor: { login: 'github-actions[bot]' }
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getStagingE2EWorkflowRunIdentity('frontend', '32120573187')
+      ).resolves.toMatchObject({
+        actor: 'github-actions[bot]',
+        attempt: 1,
+        conclusion: null,
+        event: 'workflow_dispatch',
+        path: '.github/workflows/staging-e2e.yml',
+        displayTitle: 'Staging E2E [automatic]',
+        status: 'in_progress'
+      });
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('rejects the GitHub Actions actor outside the Staging E2E workflow', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 32120573187,
+          run_attempt: 1,
+          name: 'Staging E2E [automatic]',
+          path: '.github/workflows/production-e2e.yml',
+          display_title: 'Staging E2E [automatic]',
+          status: 'in_progress',
+          conclusion: null,
+          head_branch: 'main',
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/32120573187',
+          event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-frontend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-frontend'
+          },
+          actor: { login: 'github-actions[bot]' }
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getStagingE2EWorkflowRunIdentity('frontend', '32120573187')
+      ).rejects.toThrow('GitHub workflow run is not a Staging E2E qualifier');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
   it('rejects the GitHub Actions actor through the shared workflow reader', async () => {
     const app = appWithCachedToken();
     const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
