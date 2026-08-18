@@ -62,12 +62,25 @@ async function getProfileId(
 function toApiPreferences(
   preferences: ProfilePreferencesData
 ): ApiProfilePreferences {
+  const directMessagePolicy = {
+    [ProfileDirectMessagePolicy.EVERYONE]:
+      ApiProfilePreferencesDirectMessagePolicyEnum.Everyone,
+    [ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW]:
+      ApiProfilePreferencesDirectMessagePolicyEnum.PeopleIFollow,
+    [ProfileDirectMessagePolicy.NOBODY]:
+      ApiProfilePreferencesDirectMessagePolicyEnum.Nobody
+  }[preferences.direct_message_policy];
+  const notificationLevel = {
+    [ProfileNotificationLevel.ALL]:
+      ApiProfilePreferencesNotificationLevelEnum.All,
+    [ProfileNotificationLevel.ESSENTIAL_ONLY]:
+      ApiProfilePreferencesNotificationLevelEnum.EssentialOnly
+  }[preferences.notification_level];
+
   return {
-    ...preferences,
-    direct_message_policy:
-      preferences.direct_message_policy as unknown as ApiProfilePreferencesDirectMessagePolicyEnum,
-    notification_level:
-      preferences.notification_level as unknown as ApiProfilePreferencesNotificationLevelEnum
+    direct_message_policy: directMessagePolicy,
+    notification_level: notificationLevel,
+    notifications: preferences.notifications
   };
 }
 

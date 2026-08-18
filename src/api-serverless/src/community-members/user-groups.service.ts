@@ -71,7 +71,6 @@ import {
 } from '@/groups/user-group-predicates';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
-import { identitiesDb } from '@/identities/identities.db';
 import { enums } from '@/enums';
 import { ids } from '@/ids';
 import { collections } from '@/collections';

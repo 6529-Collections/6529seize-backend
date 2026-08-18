@@ -23,4 +23,14 @@ describe('profile notification policy', () => {
       expect(isNotificationEnabled(cause, preferences)).toBe(false);
     }
   });
+
+  it('fails open for a notification cause unknown to this deployment', () => {
+    const unknownCause = 'FUTURE_NOTIFICATION' as IdentityNotificationCause;
+    expect(
+      isNotificationEnabled(unknownCause, {
+        ...DEFAULT_PROFILE_PREFERENCES,
+        notification_level: ProfileNotificationLevel.ESSENTIAL_ONLY
+      })
+    ).toBe(true);
+  });
 });
