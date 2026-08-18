@@ -19,7 +19,29 @@ const RELEASE_NOTE_DEDUPE_TTL_SECONDS = 90 * 24 * 60 * 60;
 const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 20 * 60;
 const RELEASE_GROUP_TTL_SECONDS = RELEASE_NOTE_DEDUPE_TTL_SECONDS;
 const DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT = 4;
+const RELEASE_NOTE_FINAL_ATTEMPT = 5;
 type ReleaseNotesRedis = NonNullable<ReturnType<typeof getRedisClient>>;
+
+class RetryableReleaseNoteError extends Error {
+  public constructor(error: unknown) {
+    super(getErrorMessage(error));
+    this.name = 'RetryableReleaseNoteError';
+    Object.setPrototypeOf(this, RetryableReleaseNoteError.prototype);
+  }
+}
+
+export function shouldCaptureReleaseNoteError(error: unknown): boolean {
+  return !(error instanceof RetryableReleaseNoteError);
+}
+
+export function prepareReleaseNoteErrorForRetry(
+  error: unknown,
+  receiveCount: number
+): unknown {
+  return receiveCount < RELEASE_NOTE_FINAL_ATTEMPT
+    ? new RetryableReleaseNoteError(error)
+    : error;
+}
 
 function requireString(
   payload: Record<string, unknown>,
@@ -523,24 +545,44 @@ export async function processRequestWithRetryPolicy(
 }
 
 const sqsHandler: SQSHandler = async (event) => {
-  await doInDbContext(
-    async () => {
-      for (const record of event.Records) {
-        const request = parseReleaseNoteMessage(record.body);
-        logger.info(
-          `Generating release notes for ${request.repo} run ${request.run_id}`
-        );
-        const receiveCount = Number(record.attributes.ApproximateReceiveCount);
-        await processRequestWithRetryPolicy(
-          request,
-          Number.isSafeInteger(receiveCount) && receiveCount > 0
-            ? receiveCount
-            : 1
-        );
-      }
-    },
-    { logger }
+  const firstReceiveCount = Number(
+    event.Records[0]?.attributes.ApproximateReceiveCount
   );
+  const invocationReceiveCount =
+    Number.isSafeInteger(firstReceiveCount) && firstReceiveCount > 0
+      ? firstReceiveCount
+      : 1;
+  try {
+    await doInDbContext(
+      async () => {
+        for (const record of event.Records) {
+          const request = parseReleaseNoteMessage(record.body);
+          logger.info(
+            `Generating release notes for ${request.repo} run ${request.run_id}`
+          );
+          const receiveCount = Number(
+            record.attributes.ApproximateReceiveCount
+          );
+          await processRequestWithRetryPolicy(
+            request,
+            Number.isSafeInteger(receiveCount) && receiveCount > 0
+              ? receiveCount
+              : 1
+          );
+        }
+      },
+      { logger }
+    );
+  } catch (error) {
+    if (invocationReceiveCount < RELEASE_NOTE_FINAL_ATTEMPT) {
+      logger.warn(
+        `Release note attempt ${invocationReceiveCount} failed and will retry: ${getErrorMessage(error)}`
+      );
+    }
+    throw prepareReleaseNoteErrorForRetry(error, invocationReceiveCount);
+  }
 };
 
-export const handler = sentryContext.wrapLambdaHandler(sqsHandler);
+export const handler = sentryContext.wrapLambdaHandler(sqsHandler, {
+  shouldCaptureException: shouldCaptureReleaseNoteError
+});
