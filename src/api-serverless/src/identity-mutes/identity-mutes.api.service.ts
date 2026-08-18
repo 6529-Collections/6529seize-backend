@@ -93,7 +93,7 @@ export class IdentityMutesApiService {
           DbPoolName.WRITE
         );
         await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
-        afterWaveId = waveIds[waveIds.length - 1];
+        afterWaveId = waveIds.at(-1);
         hasMore = waveIds.length === DM_UNREAD_SYNC_PAGE_SIZE;
       }
     } catch (error) {
