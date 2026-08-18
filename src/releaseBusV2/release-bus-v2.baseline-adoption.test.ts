@@ -522,7 +522,7 @@ function frontendE2EIdentity() {
     actor: 'github-actions[bot]',
     attempt: 1,
     conclusion: null,
-    event: 'workflow_run',
+    event: 'workflow_dispatch',
     headBranch: 'main',
     headSha: FRONTEND_SHA,
     name: 'Staging E2E [automatic]',
@@ -605,6 +605,9 @@ function harness(options?: {
     hasActiveStagingWorkflow: jest.fn(async () => false),
     refContainsCommit: jest.fn(async () => true),
     getWorkflowRunIdentity: jest.fn(
+      async (_repository: string, runId: string) => identities[runId]
+    ),
+    getStagingE2EWorkflowRunIdentity: jest.fn(
       async (_repository: string, runId: string) => identities[runId]
     )
   };
@@ -741,6 +744,9 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
       expires_at: null
     });
     expect(context.deps.getWorkflowRunIdentity).not.toHaveBeenCalled();
+    expect(
+      context.deps.getStagingE2EWorkflowRunIdentity
+    ).not.toHaveBeenCalled();
     expect(context.repository.events).toHaveLength(0);
   });
 
@@ -765,6 +771,14 @@ describe('ReleaseBusV2BaselineAdoptionService', () => {
     expect(context.repository.trains).toHaveLength(0);
     expect(context.repository.operations).toHaveLength(0);
     expect(context.operations.reconcileWorkflow).not.toHaveBeenCalled();
+    expect(context.deps.getStagingE2EWorkflowRunIdentity).toHaveBeenCalledWith(
+      'frontend',
+      FRONTEND_E2E_RUN_ID
+    );
+    expect(context.deps.getWorkflowRunIdentity).toHaveBeenCalledWith(
+      'frontend',
+      FRONTEND_DEPLOY_RUN_ID
+    );
   });
 
   it.each([

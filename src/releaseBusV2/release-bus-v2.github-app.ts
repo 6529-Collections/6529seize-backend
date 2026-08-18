@@ -59,8 +59,8 @@ export function workflowRunMatchesOperation(
 
 export function isValidGitHubWorkflowActor(actor: string): boolean {
   // The shared parser admits only operators and the Release Bus App. The
-  // GitHub Actions actor is accepted through the dedicated Production E2E
-  // reader, whose workflow and repository boundary is narrower than this one.
+  // GitHub Actions actor is accepted through dedicated E2E readers, whose
+  // workflow and repository boundaries are narrower than this one.
   return (
     /^[A-Za-z0-9-]{1,39}$/.test(actor) || isReleaseBusGitHubAppActor(actor)
   );
@@ -2189,6 +2189,29 @@ export class ReleaseBusGitHubApp {
       identity.headRepository !== expectedRepository
     )
       throw new Error('GitHub workflow run is not a Production E2E qualifier');
+    return identity;
+  }
+
+  public async getStagingE2EWorkflowRunIdentity(
+    repository: ReleaseBusV2Repository,
+    workflowRunId: string
+  ): Promise<ReleaseBusWorkflowRunIdentity> {
+    if (repository !== 'frontend')
+      throw new Error('Staging E2E identity must use the frontend repository');
+    const identity = await this.readWorkflowRunIdentity(
+      repository,
+      workflowRunId,
+      (actor) => actor === 'github-actions[bot]'
+    );
+    const expectedRepository = `${this.owner}/${REPOSITORIES.frontend}`;
+    if (
+      identity.actor !== 'github-actions[bot]' ||
+      identity.event !== 'workflow_dispatch' ||
+      identity.path !== '.github/workflows/staging-e2e.yml' ||
+      identity.repository !== expectedRepository ||
+      identity.headRepository !== expectedRepository
+    )
+      throw new Error('GitHub workflow run is not a Staging E2E qualifier');
     return identity;
   }
 
