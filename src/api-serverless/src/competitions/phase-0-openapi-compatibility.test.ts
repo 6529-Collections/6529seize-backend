@@ -17,15 +17,6 @@ const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([
   'schema ApiNotificationV2.properties.related_identity'
 ]);
 
-const ACCEPTED_REFERENCE_EXTENSIONS: Readonly<
-  Record<string, { baseline: string; current: string }>
-> = {
-  'GET /dm-drops/unread.responses.200.content.application/json.schema.$ref': {
-    baseline: '#/components/schemas/ApiDmDropsUnreadCount',
-    current: '#/components/schemas/ApiDmUnreadSnapshot'
-  }
-};
-
 const ACCEPTED_REMOVED_REQUIRED_FIELDS: Readonly<Record<string, string[]>> = {
   'schema ApiSeizeSettings.required': [
     'all_drops_notifications_subscribers_limit'
@@ -74,14 +65,6 @@ function assertSchemaCompatible(
     return;
   }
   if (baseline === null || typeof baseline !== 'object') {
-    const acceptedReferenceExtension = ACCEPTED_REFERENCE_EXTENSIONS[location];
-    if (
-      acceptedReferenceExtension &&
-      baseline === acceptedReferenceExtension.baseline
-    ) {
-      expect(current).toBe(acceptedReferenceExtension.current);
-      return;
-    }
     expect(current).toEqual(baseline);
     return;
   }
