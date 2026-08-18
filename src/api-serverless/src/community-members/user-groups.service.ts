@@ -22,6 +22,7 @@ import {
   UserGroupEntity
 } from '@/entities/IUserGroup';
 import {
+  type GroupMembershipSql,
   type IdentityGroupMembership,
   type IdentityGroupMembershipPage,
   userGroupsDb,
@@ -963,6 +964,23 @@ export class UserGroupsService {
     });
   }
 
+  public async getGroupsUserIsEligibleForByIds(
+    profileId: string | null,
+    groupIds: readonly string[],
+    timer?: Timer | undefined
+  ): Promise<string[]> {
+    if (!profileId || !groupIds.length) {
+      return [];
+    }
+    return await this.whichOfGivenGroupsIsUserEligibleFor(
+      {
+        profileId,
+        givenGroups: collections.distinct(Array.from(groupIds))
+      },
+      timer
+    );
+  }
+
   private async getGroupsUserIsEligibleForWithCache(
     profileId: string,
     timer?: Timer | undefined
@@ -1339,7 +1357,16 @@ export class UserGroupsService {
       group_id: string;
       profile_id: string;
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    beforeReplace?:
+      | ((
+          params: {
+            readonly currentGroup: ApiGroupFull;
+            readonly replacedGroupId: string;
+          },
+          ctx: RequestContext
+        ) => Promise<void>)
+      | undefined
   ): Promise<ApiGroupFull> {
     const { updatedGroup, replacedGroup } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
@@ -1349,6 +1376,11 @@ export class UserGroupsService {
             group_id,
             ctxWithConnection
           );
+          if (groupEntity.created_by?.id !== profile_id) {
+            throw new BadRequestException(
+              `You are not allowed to change group ${group_id}. You can save a new one instead.`
+            );
+          }
           let oldGroupEntity: ApiGroupFull | null = null;
           if (old_version_id) {
             if (old_version_id === groupEntity.id) {
@@ -1371,14 +1403,16 @@ export class UserGroupsService {
             ) {
               await this.doNameAbusivenessCheck(groupEntity);
             }
+            await beforeReplace?.(
+              {
+                currentGroup: groupEntity,
+                replacedGroupId: old_version_id
+              },
+              ctxWithConnection
+            );
             await this.userGroupsDb.deleteById(old_version_id, connection);
           } else {
             await this.doNameAbusivenessCheck(groupEntity);
-          }
-          if (groupEntity.created_by?.id !== profile_id) {
-            throw new BadRequestException(
-              `You are not allowed to change group ${group_id}. You can save a new one instead.`
-            );
           }
           await this.userGroupsDb.changeVisibilityAndSetId(
             {
@@ -1649,6 +1683,52 @@ export class UserGroupsService {
       return null;
     }
     return await this.getSqlAndParams(apiGroup.group, groupId, ctx);
+  }
+
+  public async findGroupIdsWithMembersOutsideContainingGroup(
+    containingGroup: ApiGroupFull,
+    containedGroups: readonly ApiGroupFull[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const distinctContainedGroups = collections.distinctBy(
+      containedGroups.filter((group) => group.id !== containingGroup.id),
+      (group) => group.id
+    );
+    if (!distinctContainedGroups.length) {
+      return [];
+    }
+
+    const buildMembershipSql = async (
+      group: ApiGroupFull
+    ): Promise<GroupMembershipSql> => {
+      // This is the sole source of membership SQL passed to the namespacer;
+      // group-controlled criteria remain in the returned bind parameters.
+      const membership = await this.getSqlAndParams(
+        structuredClone(group.group),
+        group.id,
+        ctx
+      );
+      if (!membership) {
+        throw new BadRequestException(
+          `Unable to validate membership for group ${group.id}`
+        );
+      }
+      return {
+        key: group.id,
+        sql: membership.sql,
+        params: membership.params
+      };
+    };
+
+    const [containingMembership, ...containedMemberships] = await Promise.all([
+      buildMembershipSql(containingGroup),
+      ...distinctContainedGroups.map(buildMembershipSql)
+    ]);
+    return await this.userGroupsDb.findMembershipKeysOutsideContainingGroup(
+      containingMembership,
+      containedMemberships,
+      ctx
+    );
   }
 
   private async getSqlAndParams(
@@ -2201,6 +2281,44 @@ export class UserGroupsService {
     ctx: RequestContext
   ): Promise<UserGroupEntity[]> {
     return await this.userGroupsDb.getByIds(ids, ctx);
+  }
+
+  async getApiGroupsByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return await this.mapForApi(await this.getByIds(ids, ctx), ctx);
+  }
+
+  async getApiGroupsVisibleToRequesterByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull[]> {
+    if (!ids.length) {
+      return [];
+    }
+    const groups = await this.getByIds(ids, ctx);
+    if (groups.every((group) => !group.is_private)) {
+      return await this.mapForApi(groups, ctx);
+    }
+    const authenticatedUserId =
+      ctx.authenticationContext?.getActingAsId() ?? null;
+    const eligibleGroupIds = authenticatedUserId
+      ? await this.getGroupsUserIsEligibleFor(authenticatedUserId, ctx.timer)
+      : [];
+    return await this.mapForApi(
+      groups.filter(
+        (group) =>
+          !group.is_private ||
+          // UserGroupEntity stores the creator as an id, unlike ApiGroupFull.
+          group.created_by === authenticatedUserId ||
+          eligibleGroupIds.includes(group.id)
+      ),
+      ctx
+    );
   }
 
   async findUserGroupsIdentityGroupIdentities(
