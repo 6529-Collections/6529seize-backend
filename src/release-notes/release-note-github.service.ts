@@ -35,8 +35,6 @@ interface GitHubCommit {
 }
 
 interface GitHubCompareResponse {
-  readonly commits?: GitHubCommit[];
-  readonly total_commits?: number;
   readonly status?: string;
 }
 
@@ -96,7 +94,6 @@ interface BoundedGitHubCollection<T> {
   readonly incomplete: boolean;
 }
 
-const MAX_COMPARE_PAGES = 3;
 const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const MAX_FILE_PAGES = 3;
 const MAX_WORKFLOW_RUN_PAGES = 10;
@@ -110,7 +107,7 @@ const FRONTEND_PRODUCTION_WORKFLOW_PATH =
 const CORE_PRODUCTION_WORKFLOW_PATH =
   '.github/workflows/build-all-platforms.yml';
 const CORE_PRODUCTION_RUN_PREFIX = 'FLOW: Publish / ENV: Production - v';
-const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
+const MAX_RELEASE_COMMITS = 300;
 const MAX_PULL_REQUESTS = 100;
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -211,48 +208,6 @@ function isMatchingProductionRun(
     );
   }
   return false;
-}
-
-function getFirstParentReleaseCommits(
-  commits: GitHubCommit[],
-  previousSha: string,
-  currentSha: string
-): GitHubCommit[] {
-  const commitsBySha = new Map(commits.map((commit) => [commit.sha, commit]));
-  const releaseCommits: GitHubCommit[] = [];
-  const visited = new Set<string>();
-  let cursor = currentSha;
-
-  while (cursor !== previousSha) {
-    if (visited.has(cursor)) {
-      throw new Error('Desktop release first-parent history contains a cycle');
-    }
-    visited.add(cursor);
-    const commit = commitsBySha.get(cursor);
-    if (!commit) {
-      throw new Error(
-        `Desktop release first-parent commit ${cursor} is missing from the GitHub comparison`
-      );
-    }
-    const parents = commit.parents ?? [];
-    if (parents[0]?.sha === previousSha) {
-      releaseCommits.push(commit);
-      return releaseCommits.reverse();
-    }
-    if (parents.slice(1).some((parent) => parent.sha === previousSha)) {
-      return releaseCommits.reverse();
-    }
-    releaseCommits.push(commit);
-    const firstParent = parents[0]?.sha;
-    if (!firstParent) {
-      throw new Error(
-        `Desktop release history did not reach previous production commit ${previousSha}`
-      );
-    }
-    cursor = firstParent;
-  }
-
-  return releaseCommits.reverse();
 }
 
 function mergeAssociatedPullRequests(
@@ -436,19 +391,12 @@ export class ReleaseNoteGitHubService {
       return null;
     }
 
-    const comparedCommits = await this.getComparedCommits(
+    const commits = await this.getFirstParentReleaseCommits(
       repository,
       previousRun.head_sha,
       request.sha
     );
     const desktopRelease = getRepoName(request.repo) === CORE_REPO;
-    const commits = desktopRelease
-      ? getFirstParentReleaseCommits(
-          comparedCommits,
-          previousRun.head_sha,
-          request.sha
-        )
-      : comparedCommits;
     const pullRequests = await this.getPullRequests(
       repository,
       desktopRelease ? 'main' : normalizeBranch(request.branch),
@@ -592,46 +540,56 @@ export class ReleaseNoteGitHubService {
     );
   }
 
-  private async getComparedCommits(
+  private async getFirstParentReleaseCommits(
     repository: string,
     previousSha: string,
     currentSha: string
   ): Promise<GitHubCommit[]> {
-    const commits: GitHubCommit[] = [];
+    const releaseCommits: GitHubCommit[] = [];
+    const visited = new Set<string>();
+    let cursor = currentSha;
 
-    for (let page = 1; page <= MAX_COMPARE_PAGES; page++) {
-      const payload = await this.api<GitHubCompareResponse>(
-        `/repos/${repository}/compare/${encodeURIComponent(previousSha)}...${encodeURIComponent(currentSha)}?per_page=${PAGE_SIZE}&page=${page}`
+    while (cursor !== previousSha) {
+      if (visited.has(cursor)) {
+        throw new Error(
+          `Release first-parent history for ${repository} contains a cycle at ${cursor}`
+        );
+      }
+      if (releaseCommits.length >= MAX_RELEASE_COMMITS) {
+        throw new Error(
+          `Release first-parent range for ${repository} from ${previousSha} to ${currentSha} exceeds ${MAX_RELEASE_COMMITS} commits`
+        );
+      }
+      visited.add(cursor);
+
+      const commit = await this.api<GitHubCommit>(
+        `/repos/${repository}/commits/${encodeURIComponent(cursor)}`
       );
-      const pageCommits = payload.commits ?? [];
-      const totalCommits = payload.total_commits;
-      if (typeof totalCommits === 'number' && totalCommits > MAX_COMMITS) {
+      if (commit.sha !== cursor) {
         throw new Error(
-          `Release range contains ${totalCommits} commits; maximum is ${MAX_COMMITS}`
+          `GitHub returned commit ${commit.sha} while traversing ${repository} at ${cursor}`
         );
       }
-      commits.push(...pageCommits);
-      if (commits.length > MAX_COMMITS) {
+      const parents = commit.parents ?? [];
+      if (parents[0]?.sha === previousSha) {
+        releaseCommits.push(commit);
+        return releaseCommits.reverse();
+      }
+      if (parents.slice(1).some((parent) => parent.sha === previousSha)) {
+        return releaseCommits.reverse();
+      }
+
+      releaseCommits.push(commit);
+      const firstParent = parents[0]?.sha;
+      if (!firstParent) {
         throw new Error(
-          `Release range exceeds maximum of ${MAX_COMMITS} commits`
+          `Release first-parent history for ${repository} from ${currentSha} did not reach previous production commit ${previousSha}`
         );
       }
-      if (
-        pageCommits.length < PAGE_SIZE ||
-        (typeof totalCommits === 'number' &&
-          totalCommits > 0 &&
-          commits.length >= totalCommits)
-      ) {
-        return commits;
-      }
-      if (page === MAX_COMPARE_PAGES) {
-        throw new Error(
-          `Release range exceeds pagination maximum of ${MAX_COMMITS} commits`
-        );
-      }
+      cursor = firstParent;
     }
 
-    return commits;
+    return releaseCommits.reverse();
   }
 
   private async getPullRequests(

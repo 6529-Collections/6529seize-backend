@@ -257,7 +257,10 @@ describe('ReleaseNoteGitHubService', () => {
           ]
         })
       )
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({ sha: 'abc123', parents: [{ sha: 'previous-sha' }] })
+      )
+      .mockResolvedValueOnce(response([]));
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext(
       request
@@ -268,7 +271,7 @@ describe('ReleaseNoteGitHubService', () => {
       current_sha: 'abc123',
       pull_requests: []
     });
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
       'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?status=success&branch=main&per_page=100&page=1',
@@ -276,7 +279,7 @@ describe('ReleaseNoteGitHubService', () => {
     );
   });
 
-  it('uses the previous production Publish across version branches and excludes imported renderer history', async () => {
+  it('walks the previous production Publish first-parent history without expanding imported renderer history', async () => {
     const previousSha = '1111111111111111111111111111111111111111';
     const currentSha = '4444444444444444444444444444444444444444';
     const outerMergeSha = '3333333333333333333333333333333333333333';
@@ -321,35 +324,30 @@ describe('ReleaseNoteGitHubService', () => {
           })
         );
       }
-      if (url.includes(`/compare/${previousSha}...${currentSha}`)) {
+      if (url.endsWith(`/commits/${currentSha}`)) {
         return Promise.resolve(
           response({
-            commits: [
-              {
-                sha: 'imported-frontend-commit',
-                parents: [{ sha: 'imported-parent' }],
-                commit: { message: 'Imported web-only change' }
-              },
-              {
-                sha: boundaryMergeSha,
-                parents: [{ sha: 'older-main' }, { sha: previousSha }],
-                commit: { message: 'Merge previous Desktop release' }
-              },
-              {
-                sha: outerMergeSha,
-                parents: [
-                  { sha: boundaryMergeSha },
-                  { sha: 'pull-web-branch' }
-                ],
-                commit: { message: 'Merge pull request #225 from pull-web' }
-              },
-              {
-                sha: currentSha,
-                parents: [{ sha: outerMergeSha }],
-                commit: { message: 'Improve desktop update prompts' }
-              }
-            ],
-            total_commits: 4
+            sha: currentSha,
+            parents: [{ sha: outerMergeSha }],
+            commit: { message: 'Improve desktop update prompts' }
+          })
+        );
+      }
+      if (url.endsWith(`/commits/${outerMergeSha}`)) {
+        return Promise.resolve(
+          response({
+            sha: outerMergeSha,
+            parents: [{ sha: boundaryMergeSha }, { sha: 'pull-web-branch' }],
+            commit: { message: 'Merge pull request #225 from pull-web' }
+          })
+        );
+      }
+      if (url.endsWith(`/commits/${boundaryMergeSha}`)) {
+        return Promise.resolve(
+          response({
+            sha: boundaryMergeSha,
+            parents: [{ sha: 'older-main' }, { sha: previousSha }],
+            commit: { message: 'Merge previous Desktop release' }
           })
         );
       }
@@ -429,6 +427,11 @@ describe('ReleaseNoteGitHubService', () => {
     expect(
       context?.commit_messages?.some((message) =>
         message.includes('Imported web-only change')
+      )
+    ).toBe(false);
+    expect(
+      (fetch as unknown as jest.Mock).mock.calls.some(([url]) =>
+        String(url).includes('/compare/')
       )
     ).toBe(false);
   });
@@ -592,19 +595,18 @@ describe('ReleaseNoteGitHubService', () => {
       )
       .mockResolvedValueOnce(
         response({
-          commits: [
-            {
-              sha: 'api-commit',
-              author: { login: 'simo6529' },
-              commit: { message: 'Improve API validation' }
-            },
-            {
-              sha: 'claims-commit',
-              author: { login: 'ragnep' },
-              commit: { message: 'Update claims builder' }
-            }
-          ],
-          total_commits: 2
+          sha: 'current-sha',
+          parents: [{ sha: 'api-commit' }],
+          author: { login: 'ragnep' },
+          commit: { message: 'Update claims builder' }
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          sha: 'api-commit',
+          parents: [{ sha: 'previous-sha' }],
+          author: { login: 'simo6529' },
+          commit: { message: 'Improve API validation' }
         })
       )
       .mockResolvedValueOnce(
@@ -740,13 +742,9 @@ describe('ReleaseNoteGitHubService', () => {
       )
       .mockResolvedValueOnce(
         response({
-          commits: [
-            {
-              sha: 'api-commit',
-              commit: { message: 'Improve API validation' }
-            }
-          ],
-          total_commits: 1
+          sha: 'current-sha',
+          parents: [{ sha: 'previous-sha' }],
+          commit: { message: 'Improve API validation' }
         })
       )
       .mockResolvedValueOnce(
@@ -804,20 +802,21 @@ describe('ReleaseNoteGitHubService', () => {
           })
         );
       }
-      if (url.includes('/compare/previous-sha...abc123')) {
+      if (url.endsWith('/commits/abc123')) {
         return Promise.resolve(
           response({
-            commits: [
-              {
-                sha: 'large-merge',
-                commit: { message: 'Add exact Stream public review snapshot' }
-              },
-              {
-                sha: 'normal-merge',
-                commit: { message: 'Improve navigation' }
-              }
-            ],
-            total_commits: 2
+            sha: 'abc123',
+            parents: [{ sha: 'large-merge' }],
+            commit: { message: 'Improve navigation' }
+          })
+        );
+      }
+      if (url.endsWith('/commits/large-merge')) {
+        return Promise.resolve(
+          response({
+            sha: 'large-merge',
+            parents: [{ sha: 'previous-sha' }],
+            commit: { message: 'Add exact Stream public review snapshot' }
           })
         );
       }
@@ -837,7 +836,7 @@ describe('ReleaseNoteGitHubService', () => {
           ])
         );
       }
-      if (url.includes('/commits/normal-merge/pulls')) {
+      if (url.includes('/commits/abc123/pulls')) {
         return Promise.resolve(
           response([
             {
@@ -1030,7 +1029,13 @@ describe('ReleaseNoteGitHubService', () => {
           ]
         })
       )
-      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+      .mockResolvedValueOnce(
+        response({
+          sha: 'current-sha',
+          parents: [{ sha: 'previous-sha' }]
+        })
+      )
+      .mockResolvedValueOnce(response([]));
 
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
       ...request,
