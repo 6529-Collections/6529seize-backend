@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: backend-pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build backend and API
