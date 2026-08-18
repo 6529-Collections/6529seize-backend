@@ -1355,6 +1355,23 @@ describe('GitHub workflow operation identity', () => {
     }
   });
 
+  it('rejects a non-frontend Staging E2E repository before reading GitHub metadata', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockClear();
+
+    try {
+      await expect(
+        app.getStagingE2EWorkflowRunIdentity('backend', '32120573187')
+      ).rejects.toThrow(
+        'Staging E2E identity must use the frontend repository'
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
   it('rejects the GitHub Actions actor through the shared workflow reader', async () => {
     const app = appWithCachedToken();
     const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
