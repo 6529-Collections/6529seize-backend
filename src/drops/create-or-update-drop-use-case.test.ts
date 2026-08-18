@@ -964,12 +964,13 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toBe(true);
   });
 
-  it('records the new direct-message drop for every recipient except the author', async () => {
+  it('records a new direct-message drop only for visible recipients other than the author', async () => {
     const connection = {};
     const wave = {
       ...createSlowModeWave({
         chat_slow_mode_cooldown_ms: null,
         is_direct_message: true,
+        parent_wave_id: 'parent-wave',
         visibility_group_id: 'visibility-group',
         participation_group_id: 'participation-group',
         chat_group_id: 'chat-dm-group',
@@ -980,12 +981,25 @@ describe('CreateOrUpdateDropUseCase', () => {
       next_decision_time: null
     };
     const wavesApiDb = {
+      findWaveById: jest.fn().mockResolvedValue({
+        id: 'parent-wave',
+        visibility_group_id: 'parent-visibility-group'
+      }),
       recordDirectMessageUnreadDrop: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
       findIdentitiesInGroups: jest
         .fn()
-        .mockResolvedValue(['author-profile', 'reader-profile'])
+        .mockResolvedValue([
+          'author-profile',
+          'reader-profile',
+          'child-only-profile'
+        ]),
+      findIdentityGroupMemberships: jest.fn().mockResolvedValue([
+        { groupId: 'visibility-group', profileId: 'reader-profile' },
+        { groupId: 'parent-visibility-group', profileId: 'reader-profile' },
+        { groupId: 'visibility-group', profileId: 'child-only-profile' }
+      ])
     };
     const useCase = createUseCaseWithMocks({
       wavesApiDb,
@@ -1006,6 +1020,17 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(userGroupsService.findIdentitiesInGroups).toHaveBeenCalledWith(
       ['chat-dm-group'],
+      { timer: undefined, connection }
+    );
+    expect(wavesApiDb.findWaveById).toHaveBeenCalledWith(
+      'parent-wave',
+      connection
+    );
+    expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
+      {
+        groupIds: ['visibility-group', 'parent-visibility-group'],
+        profileIds: ['reader-profile', 'child-only-profile']
+      },
       { timer: undefined, connection }
     );
     expect(wavesApiDb.recordDirectMessageUnreadDrop).toHaveBeenCalledWith(

@@ -663,7 +663,15 @@ export class CreateOrUpdateDropUseCase {
       [directMessageGroupId],
       { timer, connection }
     );
-    const recipientIds = readerIds.filter((readerId) => readerId !== authorId);
+    const candidateRecipientIds = collections.distinct(
+      readerIds.filter((readerId) => readerId !== authorId)
+    );
+    const recipientIds =
+      await this.filterDirectMessageUnreadRecipientsByVisibility(
+        wave,
+        candidateRecipientIds,
+        { timer, connection }
+      );
     await this.wavesApiDb.recordDirectMessageUnreadDrop(
       {
         waveId: wave.id,
@@ -674,6 +682,60 @@ export class CreateOrUpdateDropUseCase {
       { timer, connection }
     );
     return recipientIds;
+  }
+
+  private async filterDirectMessageUnreadRecipientsByVisibility(
+    wave: WaveEntity,
+    candidateRecipientIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string =>
+        groupId !== null && groupId !== wave.chat_group_id
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        this.logger.warn(
+          `Cannot resolve parent wave ${wave.parent_wave_id} while recording DM unread state for wave ${wave.id}`
+        );
+        return [];
+      }
+      if (
+        parentWave.visibility_group_id &&
+        parentWave.visibility_group_id !== wave.chat_group_id
+      ) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    const requiredVisibilityGroupIds = collections.distinct(visibilityGroupIds);
+    if (!candidateRecipientIds.length || !requiredVisibilityGroupIds.length) {
+      return candidateRecipientIds;
+    }
+
+    const visibilityMemberships =
+      await this.userGroupsService.findIdentityGroupMemberships(
+        {
+          groupIds: requiredVisibilityGroupIds,
+          profileIds: candidateRecipientIds
+        },
+        { timer, connection }
+      );
+    const visibleGroupsByProfileId = new Map<string, Set<string>>();
+    for (const membership of visibilityMemberships) {
+      const visibleGroupIds =
+        visibleGroupsByProfileId.get(membership.profileId) ?? new Set<string>();
+      visibleGroupIds.add(membership.groupId);
+      visibleGroupsByProfileId.set(membership.profileId, visibleGroupIds);
+    }
+    return candidateRecipientIds.filter((profileId) =>
+      requiredVisibilityGroupIds.every((groupId) =>
+        visibleGroupsByProfileId.get(profileId)?.has(groupId)
+      )
+    );
   }
 
   private async validateReferences(
