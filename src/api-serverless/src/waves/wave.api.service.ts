@@ -1401,8 +1401,8 @@ export class WaveApiService {
     }
     const activePrivilegeGroups = this.getActivePrivilegeGroups(request);
     const privilegeGroupsToValidate =
-      !waveBeforeUpdate ||
-      waveBeforeUpdate.visibility_group_id !== request.visibility.scope.group_id
+      waveBeforeUpdate?.visibility_group_id !==
+      request.visibility.scope.group_id
         ? activePrivilegeGroups
         : activePrivilegeGroups.filter(
             (group) =>
