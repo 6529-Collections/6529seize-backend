@@ -1252,6 +1252,8 @@ describe('GitHub workflow operation identity', () => {
         attempt: 1,
         conclusion: null,
         event: 'workflow_dispatch',
+        repository: '6529-Collections/6529seize-frontend',
+        headRepository: '6529-Collections/6529seize-frontend',
         path: '.github/workflows/staging-e2e.yml',
         displayTitle: 'Staging E2E [automatic]',
         status: 'in_progress'
@@ -1291,6 +1293,63 @@ describe('GitHub workflow operation identity', () => {
       await expect(
         app.getStagingE2EWorkflowRunIdentity('frontend', '32120573187')
       ).rejects.toThrow('GitHub workflow run is not a Staging E2E qualifier');
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it.each([
+    [
+      'actor',
+      { actor: { login: 'unexpected[bot]' } },
+      'GitHub workflow run has no valid actor'
+    ],
+    [
+      'event',
+      { event: 'workflow_run' },
+      'GitHub workflow run is not a Staging E2E qualifier'
+    ],
+    [
+      'repository',
+      { repository: { full_name: 'example/other-frontend' } },
+      'GitHub workflow run is not a Staging E2E qualifier'
+    ],
+    [
+      'head repository',
+      { head_repository: { full_name: 'example/other-frontend' } },
+      'GitHub workflow run is not a Staging E2E qualifier'
+    ]
+  ])('rejects a mismatched Staging E2E %s', async (_field, override, error) => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 32120573187,
+          run_attempt: 1,
+          name: 'Staging E2E [automatic]',
+          path: '.github/workflows/staging-e2e.yml',
+          display_title: 'Staging E2E [automatic]',
+          status: 'in_progress',
+          conclusion: null,
+          head_branch: 'main',
+          head_sha: 'a'.repeat(40),
+          html_url: 'https://github.com/example/actions/runs/32120573187',
+          event: 'workflow_dispatch',
+          repository: { full_name: '6529-Collections/6529seize-frontend' },
+          head_repository: {
+            full_name: '6529-Collections/6529seize-frontend'
+          },
+          actor: { login: 'github-actions[bot]' },
+          ...override
+        })
+      )
+    );
+
+    try {
+      await expect(
+        app.getStagingE2EWorkflowRunIdentity('frontend', '32120573187')
+      ).rejects.toThrow(error);
     } finally {
       fetchMock.mockReset();
     }
