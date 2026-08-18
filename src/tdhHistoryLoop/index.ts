@@ -7,7 +7,7 @@ import {
   TDH_BLOCKS_TABLE
 } from '@/constants';
 import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
-import { ConsolidatedTDH, TDHBlock, TokenTDH } from '../entities/ITDH';
+import { ConsolidatedTDH, TDHBlock } from '../entities/ITDH';
 import {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
@@ -23,6 +23,11 @@ import { sqlExecutor } from '../sql-executor';
 import { parseTdhDataFromDB } from '../sql_helpers';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
+import {
+  addTokensToIndex,
+  calculateTokenTdhChanges
+} from './tdh-history-changes';
+import type { TokenIndex } from './tdh-history-changes';
 
 const csvParser = require('csv-parser');
 
@@ -415,23 +420,20 @@ async function tdhHistory(date: Date) {
 
     const indexedYesterdayTdh = buildTokenIndex(yesterdayTdh);
 
-    const memesResult = processTokenTDHArray(
-      'memes',
-      d.boost,
+    const memesResult = calculateTokenTdhChanges(
       dMemes,
-      indexedYesterdayTdh
-    );
-    const gradientsResult = processTokenTDHArray(
-      'gradients',
       d.boost,
+      indexedYesterdayTdh.memes
+    );
+    const gradientsResult = calculateTokenTdhChanges(
       dGradients,
-      indexedYesterdayTdh
-    );
-    const nextgenResult = processTokenTDHArray(
-      'nextgen',
       d.boost,
+      indexedYesterdayTdh.gradients
+    );
+    const nextgenResult = calculateTokenTdhChanges(
       dNextgen,
-      indexedYesterdayTdh
+      d.boost,
+      indexedYesterdayTdh.nextgen
     );
 
     const tdhCreated =
@@ -658,146 +660,22 @@ async function calculateGlobalTDHHistory(
   await persistGlobalTDHHistory(globalHistory);
 }
 
-interface IndexedToken {
-  token: TokenTDH;
-  boost: number;
-}
-
 interface IndexedYesterdayTdh {
-  memes: Map<number, IndexedToken[]>;
-  gradients: Map<number, IndexedToken[]>;
-  nextgen: Map<number, IndexedToken[]>;
-}
-
-function indexTokensByType(
-  tokenMap: Map<number, IndexedToken[]>,
-  tokens: TokenTDH[] | undefined,
-  boost: number
-) {
-  if (!tokens) {
-    return;
-  }
-  for (const token of tokens) {
-    if (!tokenMap.has(token.id)) {
-      tokenMap.set(token.id, []);
-    }
-    tokenMap.get(token.id)!.push({
-      token,
-      boost
-    });
-  }
+  memes: TokenIndex;
+  gradients: TokenIndex;
+  nextgen: TokenIndex;
 }
 
 function buildTokenIndex(yesterdayTdh: ConsolidatedTDH[]): IndexedYesterdayTdh {
-  const memes = new Map<number, IndexedToken[]>();
-  const gradients = new Map<number, IndexedToken[]>();
-  const nextgen = new Map<number, IndexedToken[]>();
+  const memes: TokenIndex = new Map();
+  const gradients: TokenIndex = new Map();
+  const nextgen: TokenIndex = new Map();
 
   for (const yd of yesterdayTdh) {
-    indexTokensByType(memes, yd.memes, yd.boost);
-    indexTokensByType(gradients, yd.gradients, yd.boost);
-    indexTokensByType(nextgen, yd.nextgen, yd.boost);
+    addTokensToIndex(memes, yd.memes, yd.boost);
+    addTokensToIndex(gradients, yd.gradients, yd.boost);
+    addTokensToIndex(nextgen, yd.nextgen, yd.boost);
   }
 
   return { memes, gradients, nextgen };
-}
-
-function processTokenTDHArray(
-  type: string,
-  boost: number,
-  tokens: TokenTDH[],
-  indexedYesterdayTdh: IndexedYesterdayTdh
-) {
-  return tokens.reduce(
-    (acc, token) => {
-      const change = calculateChange(type, indexedYesterdayTdh, token, boost);
-      acc.tdhCreated += change.tdhCreated;
-      acc.tdhDestroyed += change.tdhDestroyed;
-      acc.boostedTdhCreated += change.boostedTdhCreated;
-      acc.boostedTdhDestroyed += change.boostedTdhDestroyed;
-      acc.rawTdhCreated += change.rawTdhCreated;
-      acc.rawTdhDestroyed += change.rawTdhDestroyed;
-      acc.balanceCreated += change.balanceCreated;
-      acc.balanceDestroyed += change.balanceDestroyed;
-      return acc;
-    },
-    {
-      tdhCreated: 0,
-      tdhDestroyed: 0,
-      boostedTdhCreated: 0,
-      boostedTdhDestroyed: 0,
-      rawTdhCreated: 0,
-      rawTdhDestroyed: 0,
-      balanceCreated: 0,
-      balanceDestroyed: 0
-    }
-  );
-}
-
-function calculateChange(
-  type: string,
-  indexedYesterdayTdh: IndexedYesterdayTdh,
-  m: TokenTDH,
-  boost: number
-) {
-  let tokenMap: Map<number, IndexedToken[]> | undefined;
-  if (type === 'memes') {
-    tokenMap = indexedYesterdayTdh.memes;
-  } else if (type === 'gradients') {
-    tokenMap = indexedYesterdayTdh.gradients;
-  } else if (type === 'nextgen') {
-    tokenMap = indexedYesterdayTdh.nextgen;
-  }
-
-  const previousTdh = {
-    id: m.id,
-    boosted_tdh: 0,
-    tdh: 0,
-    tdh__raw: 0,
-    balance: 0
-  };
-
-  if (tokenMap) {
-    const indexedTokens = tokenMap.get(m.id);
-    if (indexedTokens) {
-      for (const indexedToken of indexedTokens) {
-        const e = indexedToken.token;
-        previousTdh.boosted_tdh += Math.round(e.tdh * indexedToken.boost);
-        previousTdh.tdh += e.tdh;
-        previousTdh.tdh__raw += e.tdh__raw;
-        previousTdh.balance += e.balance;
-      }
-    }
-  }
-
-  const change = m.tdh - previousTdh.tdh;
-  let tdhCreated = 0;
-  let tdhDestroyed = 0;
-  let boostedTdhCreated = 0;
-  let boostedTdhDestroyed = 0;
-  let rawTdhCreated = 0;
-  let rawTdhDestroyed = 0;
-  let balanceCreated = 0;
-  let balanceDestroyed = 0;
-  if (change > 0) {
-    tdhCreated += m.tdh - previousTdh.tdh;
-    rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
-    boostedTdhCreated += Math.round(m.tdh * boost) - previousTdh.boosted_tdh;
-    balanceCreated += m.balance - previousTdh.balance;
-  } else {
-    tdhDestroyed += previousTdh.tdh - m.tdh;
-    rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
-    boostedTdhDestroyed += previousTdh.boosted_tdh - Math.round(m.tdh * boost);
-    balanceDestroyed += previousTdh.balance - m.balance;
-  }
-  return {
-    tdhCreated,
-    tdhDestroyed,
-    boostedTdhCreated,
-    boostedTdhDestroyed,
-    rawTdhCreated,
-    rawTdhDestroyed,
-    balanceCreated,
-    balanceDestroyed
-  };
 }
