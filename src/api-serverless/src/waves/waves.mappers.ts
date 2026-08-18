@@ -374,7 +374,11 @@ export class WavesMappers {
     const voteCreditor: ApiProfileMin | null = resolveProfile(
       waveEntity.voting_credit_creditor
     );
+    const authenticatedUserCanView =
+      waveEntity.visibility_group_id === null ||
+      groupIdsUserIsEligibleFor.includes(waveEntity.visibility_group_id);
     const authenticatedUserEligibleToVote =
+      authenticatedUserCanView &&
       !waveIsClosed &&
       !noRightToVote &&
       (!waveEntity.voting_group_id ||
@@ -406,6 +410,7 @@ export class WavesMappers {
       }
     };
     const authenticatedUserEligibleToParticipate =
+      authenticatedUserCanView &&
       !waveIsClosed &&
       !noRightToParticipate &&
       (!waveEntity.participation_group_id ||
@@ -434,11 +439,13 @@ export class WavesMappers {
       terms: waveEntity.participation_terms,
       submission_strategy: mapWaveFieldsToApiSubmissionStrategy(waveEntity)
     };
-    const authenticatedUserEligibleForAdmin = isWaveCreatorOrAdmin({
-      authenticatedProfileId: relatedData.authenticatedUserId,
-      wave: waveEntity,
-      groupIdsUserIsEligibleFor
-    });
+    const authenticatedUserEligibleForAdmin =
+      authenticatedUserCanView &&
+      isWaveCreatorOrAdmin({
+        authenticatedProfileId: relatedData.authenticatedUserId,
+        wave: waveEntity,
+        groupIdsUserIsEligibleFor
+      });
     const nextDropAllowed = resolveNextDropAllowed({
       wave: waveEntity,
       authenticatedProfileId: relatedData.authenticatedUserId,
@@ -446,6 +453,7 @@ export class WavesMappers {
       nextDropTimestamp: chatDropCooldowns[waveEntity.id]?.next_drop_timestamp
     });
     const authenticatedUserEligibleToChat =
+      authenticatedUserCanView &&
       (waveEntity.chat_group_id === null ||
         groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
       waveEntity.chat_enabled &&

@@ -38,6 +38,7 @@ import { WALLET_REGEX } from '@/constants';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 import { ApiGroupBeneficiaryGrantMatchMode } from '../generated/models/ApiGroupBeneficiaryGrantMatchMode';
 import { ApiGroupNftOwnershipMatchMode } from '../generated/models/ApiGroupNftOwnershipMatchMode';
+import { waveApiService } from '../waves/wave.api.service';
 
 const router = asyncRouter();
 
@@ -304,7 +305,12 @@ router.post(
     );
     const response = await userGroupsService.changeVisibility(
       request,
-      requestContext
+      requestContext,
+      async (replacement, ctx) =>
+        await waveApiService.assertGroupReplacementPreservesWaveViewAccess(
+          replacement,
+          ctx
+        )
     );
     res.send(response);
   }
