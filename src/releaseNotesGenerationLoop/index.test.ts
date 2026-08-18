@@ -1,5 +1,9 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
-import { parseReleaseNoteMessage, processRequest } from './index';
+import {
+  parseReleaseNoteMessage,
+  processRequest,
+  processRequestWithRetryPolicy
+} from './index';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529seize-backend',
@@ -100,6 +104,84 @@ describe('parseReleaseNoteMessage', () => {
         JSON.stringify({ ...request, contributor_github_logins: 'Alice' })
       )
     ).toThrow('contributor_github_logins must be an array');
+  });
+
+  it('requires exact Desktop version and Frontend source metadata', () => {
+    const desktopMessage = {
+      ...request,
+      repo: '6529-core',
+      workflow: 'Publish',
+      sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      service: 'desktop',
+      prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+      release_group_services: ['desktop'],
+      release_version: '0.3.13',
+      frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+    };
+
+    expect(parseReleaseNoteMessage(JSON.stringify(desktopMessage))).toEqual(
+      expect.objectContaining({
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+      })
+    );
+    const { frontend_sha: _frontendSha, ...missingFrontendSha } =
+      desktopMessage;
+    expect(() =>
+      parseReleaseNoteMessage(JSON.stringify(missingFrontendSha))
+    ).toThrow('release_version and frontend_sha are required for 6529-core');
+  });
+});
+
+describe('Desktop retry policy', () => {
+  const desktopRequest: ReleaseNoteGenerationRequest = {
+    ...request,
+    repo: '6529-core',
+    workflow: 'Publish',
+    service: 'desktop',
+    release_group_services: ['desktop'],
+    release_version: '0.3.13',
+    frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+  };
+
+  it('rethrows the first three failures without posting an alert', async () => {
+    const error = new Error('Frontend release note was not found');
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 3, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).rejects.toThrow(error);
+    expect(postFailure).not.toHaveBeenCalled();
+  });
+
+  it('posts one terminal failure after the initial attempt and three retries', async () => {
+    const error = new Error('Frontend release note was not found');
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 4, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).toHaveBeenCalledWith(desktopRequest, error);
+  });
+
+  it('does not duplicate the terminal alert before moving to the DLQ', async () => {
+    const process = jest.fn();
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 5, {
+        process,
+        postFailure
+      })
+    ).rejects.toThrow('terminal alert failed and must move to the DLQ');
+    expect(process).not.toHaveBeenCalled();
+    expect(postFailure).not.toHaveBeenCalled();
   });
 });
 

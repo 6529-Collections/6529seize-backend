@@ -40,7 +40,7 @@ describe('ReleaseNoteGenerationQueue', () => {
     });
   });
 
-  it('does not reject when enqueueing fails', async () => {
+  it('reports a best-effort enqueue failure without rejecting', async () => {
     const queue = new ReleaseNoteGenerationQueue({
       sendToQueueName: jest.fn().mockRejectedValue(new Error('queue down'))
     } as unknown as SQS);

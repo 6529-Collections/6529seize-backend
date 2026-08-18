@@ -880,23 +880,25 @@ describe('CiPipelineAlertService', () => {
       {}
     );
 
-    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith({
-      repo: baseRequest.repo,
-      workflow: baseRequest.workflow,
-      run_id: baseRequest.run_id,
-      run_number: baseRequest.run_number,
-      run_url: baseRequest.run_url,
-      sha: baseRequest.sha,
-      branch: baseRequest.branch,
-      environment: 'prod',
-      service: baseRequest.service,
-      prompt_path: 'ops/release-notes/release-notes.prompt.md',
-      release_group_id: 'frontend-release',
-      release_group_services: ['web'],
-      pull_request_number: null,
-      publish_release_note: false,
-      deployed_at: '2026-07-13T11:38:00.000Z'
-    });
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repo: baseRequest.repo,
+        workflow: baseRequest.workflow,
+        run_id: baseRequest.run_id,
+        run_number: baseRequest.run_number,
+        run_url: baseRequest.run_url,
+        sha: baseRequest.sha,
+        branch: baseRequest.branch,
+        environment: 'prod',
+        service: baseRequest.service,
+        prompt_path: 'ops/release-notes/release-notes.prompt.md',
+        release_group_id: 'frontend-release',
+        release_group_services: ['web'],
+        pull_request_number: null,
+        publish_release_note: false,
+        deployed_at: '2026-07-13T11:38:00.000Z'
+      })
+    );
     expect(
       dropCreationApiService.createDrop.mock.invocationCallOrder[0]
     ).toBeLessThan(
@@ -1257,5 +1259,84 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
     ).toContain('Service: Core - desktop-canary');
+  });
+
+  it('enqueues exact Desktop release metadata from the production S3 milestone', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+    const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        status: 'success',
+        release_notes_prompt_path:
+          'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: frontendSha,
+        deployed_at: '2026-08-14T10:00:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        release_version: '0.3.13',
+        frontend_sha: frontendSha,
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop']
+      })
+    );
+  });
+
+  it('posts a production failure alert when Desktop release-note enqueueing fails', async () => {
+    releaseNotesQueue.enqueueBestEffort.mockResolvedValue('failed');
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        status: 'success',
+        release_notes_prompt_path:
+          'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56',
+        deployed_at: '2026-08-14T10:00:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledTimes(1);
+    expect(dropCreationApiService.createDrop).toHaveBeenCalledTimes(2);
+    const failureContent =
+      dropCreationApiService.createDrop.mock.calls[1][0].createDropRequest
+        .parts[0].content;
+    expect(failureContent).toContain(
+      '[🚀 PRODUCTION] Desktop release note failed 🚨'
+    );
+    expect(failureContent).toContain(
+      'Production v0.3.13 release note could not be queued. Frontend commit 63630a3e.'
+    );
+    expect(failureContent).toContain('cc @devs6529');
   });
 });

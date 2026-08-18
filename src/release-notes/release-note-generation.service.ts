@@ -10,7 +10,7 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
-import { dropsDb, DropsDb } from '@/drops/drops.db';
+import { dropsDb, DropsDb, ReleaseNoteDropReference } from '@/drops/drops.db';
 import { createHash } from 'node:crypto';
 import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
 import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
@@ -32,6 +32,11 @@ interface GeneratedReleaseNote {
   readonly summary: string;
 }
 
+interface FrontendReleaseNoteReference {
+  readonly label: string;
+  readonly url: string;
+}
+
 interface MentionedProfile {
   readonly profileId: string;
   readonly handle: string;
@@ -50,8 +55,23 @@ const COMPACT_BODY_LENGTH = 2000;
 const COMPACT_COMMIT_MESSAGES = 5;
 const COMPACT_CHANGED_FILES = 50;
 const MAX_SUMMARY_LENGTH = 600;
+const MAX_DESKTOP_BULLETS = 5;
+const MAX_DESKTOP_BULLET_LENGTH = 240;
+const MAX_DESKTOP_BULLET_WORDS = 30;
 const MAX_RELEASE_CONTEXT_LENGTH = 200000;
 const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
+const RELEASE_NOTE_REPOSITORY_METADATA_KEY = 'release_note_repository';
+const RELEASE_NOTE_SHA_METADATA_KEY = 'release_note_sha';
+const RELEASE_NOTE_RUN_NUMBER_METADATA_KEY = 'release_note_run_number';
+const RELEASE_NOTE_DEPLOYED_AT_METADATA_KEY = 'release_note_deployed_at';
+const RELEASE_NOTE_VERSION_METADATA_KEY = 'release_note_version';
+const RELEASE_NOTE_FRONTEND_SHA_METADATA_KEY = 'release_note_frontend_sha';
+const FRONTEND_REPOSITORY = '6529-Collections/6529seize-frontend';
+const RELEASES_WEB_BASE_URL = 'https://6529.io/waves';
+const DESKTOP_DOWNLOAD_BASE_URL =
+  'https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app';
+const HISTORICAL_FRONTEND_HEADING_PATTERN =
+  /^### Frontend Deploy(?: \[#(\d{1,12})\]\([^)\r\n]{1,2048}\))? · commit \[([a-f0-9]{8})\]\([^)\r\n]{1,2048}\) — ([A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} (?:AM|PM) UTC)$/;
 
 export type ReleaseNoteGenerationOutcome =
   | 'published'
@@ -77,6 +97,28 @@ function normalizeSummary(value: unknown): string | null {
   return summary ? summary.slice(0, MAX_SUMMARY_LENGTH) : null;
 }
 
+function normalizeDesktopBullet(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const bullet = value
+    .replace(/^\s*[-*]\s*/, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[[\]`*_~]/g, '')
+    .trim();
+  const wordCount = bullet.split(/\s+/).filter(Boolean).length;
+  if (
+    !bullet ||
+    bullet.length > MAX_DESKTOP_BULLET_LENGTH ||
+    wordCount > MAX_DESKTOP_BULLET_WORDS ||
+    /https?:\/\/|\bPR\s*#?\d+|\bcommit\s+[a-f0-9]{7,40}\b/i.test(bullet) ||
+    /web updates through|renderer sync/i.test(bullet)
+  ) {
+    return null;
+  }
+  return bullet;
+}
+
 function parseJsonReply(reply: string): unknown {
   const trimmed = reply.trim();
   if (!trimmed.startsWith('```')) {
@@ -98,8 +140,34 @@ function getRepoName(repo: string): string {
   return repo.split('/').pop() ?? repo;
 }
 
+function normalizeRepository(repo: string): string {
+  return repo.includes('/') ? repo : `6529-Collections/${repo}`;
+}
+
 function isFrontendRelease(request: ReleaseNoteGenerationRequest): boolean {
   return getRepoName(request.repo) === '6529seize-frontend';
+}
+
+export function isDesktopRelease(
+  request: ReleaseNoteGenerationRequest
+): boolean {
+  return getRepoName(request.repo) === '6529-core';
+}
+
+function requireDesktopReleaseMetadata(request: ReleaseNoteGenerationRequest) {
+  const version = request.release_version?.trim();
+  const frontendSha = request.frontend_sha?.trim();
+  if (
+    !version ||
+    !/^\d+\.\d+\.\d+$/.test(version) ||
+    !frontendSha ||
+    !/^[a-f0-9]{40}$/.test(frontendSha)
+  ) {
+    throw new Error(
+      'Desktop release notes require a semantic release_version and full lowercase frontend_sha'
+    );
+  }
+  return { version, frontendSha };
 }
 
 function buildReleaseNotePublicationId(
@@ -115,6 +183,21 @@ function buildReleaseNotePublicationId(
     .digest('hex');
 }
 
+function formatDeployedAt(value: string): string {
+  const deployedAt = new Date(value);
+  if (Number.isNaN(deployedAt.getTime())) {
+    throw new TypeError(`Invalid release deployed_at ${value}`);
+  }
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short'
+  }).format(deployedAt);
+}
+
 function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
   const repository = request.repo.includes('/')
     ? request.repo
@@ -125,24 +208,80 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
     shortSha,
     `https://github.com/${repository}/commit/${request.sha}`
   );
-  const deployedAt = new Date(request.deployed_at);
-  if (Number.isNaN(deployedAt.getTime())) {
-    throw new TypeError(`Invalid release deployed_at ${request.deployed_at}`);
-  }
-  const formattedDate = new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: 'UTC',
-    timeZoneName: 'short'
-  }).format(deployedAt);
+  const formattedDate = formatDeployedAt(request.deployed_at);
   if (surface === 'Frontend' && request.release_group_services.length === 1) {
     const runNumber = request.run_number || request.run_id;
     const run = formatMarkdownLink(`#${runNumber}`, request.run_url);
     return `### ${surface} Deploy ${run} · commit ${commit} — ${formattedDate}`;
   }
   return `### ${surface} Deploy · commit ${commit} — ${formattedDate}`;
+}
+
+export function getFrontendReleaseNoteLabel(
+  reference: ReleaseNoteDropReference,
+  frontendSha: string
+): string {
+  if (/^\d{1,12}$/.test(reference.run_number ?? '') && reference.deployed_at) {
+    try {
+      return `Frontend Deploy #${reference.run_number} · commit ${frontendSha.slice(0, 8)} — ${formatDeployedAt(reference.deployed_at)}`;
+    } catch {
+      // Fall through to the bounded historical heading parser.
+    }
+  }
+  const firstLine = reference.content?.split('\n')[0]?.trim() ?? '';
+  const headingMatch = HISTORICAL_FRONTEND_HEADING_PATTERN.exec(firstLine);
+  if (headingMatch?.[2] !== frontendSha.slice(0, 8)) {
+    throw new Error(
+      `Frontend release note ${reference.id} has an unsupported heading`
+    );
+  }
+  const [, runNumber, shortSha, deployedAt] = headingMatch;
+  const runLabel = runNumber ? ` #${runNumber}` : '';
+  return `Frontend Deploy${runLabel} · commit ${shortSha} — ${deployedAt}`;
+}
+
+function getReleaseNoteMetadata(
+  request: ReleaseNoteGenerationRequest,
+  publicationId: string
+) {
+  const metadata = [
+    {
+      data_key: RELEASE_NOTE_ID_METADATA_KEY,
+      data_value: publicationId
+    },
+    {
+      data_key: RELEASE_NOTE_REPOSITORY_METADATA_KEY,
+      data_value: normalizeRepository(request.repo)
+    },
+    {
+      data_key: RELEASE_NOTE_SHA_METADATA_KEY,
+      data_value: request.sha
+    },
+    {
+      data_key: RELEASE_NOTE_DEPLOYED_AT_METADATA_KEY,
+      data_value: request.deployed_at
+    }
+  ];
+  if (request.run_number?.trim()) {
+    metadata.push({
+      data_key: RELEASE_NOTE_RUN_NUMBER_METADATA_KEY,
+      data_value: request.run_number.trim()
+    });
+  }
+  if (isDesktopRelease(request)) {
+    const { version, frontendSha } = requireDesktopReleaseMetadata(request);
+    metadata.push(
+      {
+        data_key: RELEASE_NOTE_VERSION_METADATA_KEY,
+        data_value: version
+      },
+      {
+        data_key: RELEASE_NOTE_FRONTEND_SHA_METADATA_KEY,
+        data_value: frontendSha
+      }
+    );
+  }
+  return metadata;
 }
 
 function getBackendRunsByService(
@@ -214,6 +353,9 @@ function sanitizeContext(context: GitHubReleaseContext) {
   return {
     previous_sha: context.previous_sha,
     current_sha: context.current_sha,
+    commit_messages: (context.commit_messages ?? [])
+      .slice(0, MAX_COMMIT_MESSAGES)
+      .map((message) => message.slice(0, MAX_COMMIT_MESSAGE_LENGTH)),
     pull_requests: context.pull_requests.map((pullRequest) => ({
       ...pullRequest,
       body: pullRequest.body?.slice(0, MAX_BODY_LENGTH) ?? null,
@@ -234,7 +376,7 @@ function sanitizeContext(context: GitHubReleaseContext) {
 
 function serializeReleaseContext(context: GitHubReleaseContext): string {
   const sanitized = sanitizeContext(context);
-  const serialized = JSON.stringify(sanitized);
+  const serialized = serializeReleaseContextJson(sanitized);
   if (serialized.length <= MAX_RELEASE_CONTEXT_LENGTH) {
     return serialized;
   }
@@ -251,7 +393,7 @@ function serializeReleaseContext(context: GitHubReleaseContext): string {
       changed_files: pullRequest.changed_files.slice(0, COMPACT_CHANGED_FILES)
     }))
   };
-  const compactSerialized = JSON.stringify(compact);
+  const compactSerialized = serializeReleaseContextJson(compact);
   if (compactSerialized.length <= MAX_RELEASE_CONTEXT_LENGTH) {
     return compactSerialized;
   }
@@ -259,18 +401,27 @@ function serializeReleaseContext(context: GitHubReleaseContext): string {
   const minimal = {
     previous_sha: context.previous_sha,
     current_sha: context.current_sha,
+    commit_messages: (context.commit_messages ?? [])
+      .slice(0, COMPACT_COMMIT_MESSAGES)
+      .map((message) => message.slice(0, MAX_COMMIT_MESSAGE_LENGTH)),
     pull_requests: context.pull_requests.map(({ number, title }) => ({
       number,
       title
     }))
   };
-  const minimalSerialized = JSON.stringify(minimal);
+  const minimalSerialized = serializeReleaseContextJson(minimal);
   if (minimalSerialized.length > MAX_RELEASE_CONTEXT_LENGTH) {
     throw new Error(
       `Release context exceeds maximum of ${MAX_RELEASE_CONTEXT_LENGTH} characters after compaction`
     );
   }
   return minimalSerialized;
+}
+
+function serializeReleaseContextJson(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>]/g, (character) =>
+    character === '<' ? String.raw`\u003c` : String.raw`\u003e`
+  );
 }
 
 export class ReleaseNoteGenerationService {
@@ -307,6 +458,15 @@ export class ReleaseNoteGenerationService {
         `Skipping release note ${publicationId}; drop ${existingDropId} already exists`
       );
       return 'already-published';
+    }
+    if (isDesktopRelease(request)) {
+      return this.generateAndPostDesktopRelease({
+        request,
+        ctx,
+        botProfileId,
+        waveId,
+        publicationId
+      });
     }
     let context: GitHubReleaseContext | null;
     try {
@@ -349,6 +509,180 @@ export class ReleaseNoteGenerationService {
       waveId
     });
 
+    await this.postDrop(createDropRequest, botProfileId, ctx);
+    return 'published';
+  }
+
+  private async generateAndPostDesktopRelease({
+    request,
+    ctx,
+    botProfileId,
+    waveId,
+    publicationId
+  }: {
+    readonly request: ReleaseNoteGenerationRequest;
+    readonly ctx: RequestContext;
+    readonly botProfileId: string;
+    readonly waveId: string;
+    readonly publicationId: string;
+  }): Promise<ReleaseNoteGenerationOutcome> {
+    const { version, frontendSha } = requireDesktopReleaseMetadata(request);
+    const frontendRelease = await this.getFrontendReleaseNoteReference({
+      frontendSha,
+      botProfileId,
+      waveId,
+      ctx
+    });
+    const context = await this.githubService.getReleaseContext(request);
+    if (!context) {
+      throw new Error(
+        `No previous successful production Desktop Publish run was found for v${version}`
+      );
+    }
+    if (!context.pull_requests.length && !context.commit_messages?.length) {
+      throw new Error(`No Core changes were found for Desktop v${version}`);
+    }
+    const bullets = await this.generateDesktopBullets(request, context);
+    const createDropRequest = this.buildDesktopCreateDropRequest({
+      request,
+      version,
+      bullets,
+      frontendRelease,
+      publicationId,
+      waveId
+    });
+    await this.postDrop(createDropRequest, botProfileId, ctx);
+    return 'published';
+  }
+
+  private async getFrontendReleaseNoteReference({
+    frontendSha,
+    botProfileId,
+    waveId,
+    ctx
+  }: {
+    readonly frontendSha: string;
+    readonly botProfileId: string;
+    readonly waveId: string;
+    readonly ctx: RequestContext;
+  }): Promise<FrontendReleaseNoteReference> {
+    const commitUrl = `https://github.com/${FRONTEND_REPOSITORY}/commit/${frontendSha}`;
+    const reference = await this.dropsRepository.findReleaseNoteDropBySourceSha(
+      {
+        waveId,
+        authorId: botProfileId,
+        repository: FRONTEND_REPOSITORY,
+        sha: frontendSha,
+        commitUrl
+      },
+      ctx
+    );
+    if (!reference) {
+      throw new Error(
+        `No Frontend release note contains commit ${frontendSha}`
+      );
+    }
+    return {
+      label: getFrontendReleaseNoteLabel(reference, frontendSha),
+      url: `${RELEASES_WEB_BASE_URL}/${waveId}?serialNo=${reference.serial_no}`
+    };
+  }
+
+  private async generateDesktopBullets(
+    request: ReleaseNoteGenerationRequest,
+    context: GitHubReleaseContext
+  ): Promise<string[]> {
+    const repositoryPrompt = await this.githubService.getReleasePrompt(request);
+    const reply = await this.aiPrompter.promptAndGetReply(
+      this.buildPrompt(repositoryPrompt, context)
+    );
+    const parsed = parseJsonReply(reply);
+    if (!isRecord(parsed) || !Array.isArray(parsed.bullets)) {
+      throw new Error('Desktop release notes response is missing bullets');
+    }
+    if (
+      parsed.bullets.length < 1 ||
+      parsed.bullets.length > MAX_DESKTOP_BULLETS
+    ) {
+      throw new Error(
+        `Desktop release notes must contain 1-${MAX_DESKTOP_BULLETS} bullets`
+      );
+    }
+    const bullets = parsed.bullets.map((value) => {
+      const bullet = normalizeDesktopBullet(value);
+      if (!bullet) {
+        throw new Error(
+          'Desktop release notes contain an invalid or overly detailed bullet'
+        );
+      }
+      return bullet;
+    });
+    const normalizedBullets = bullets.map((bullet) => bullet.toLowerCase());
+    if (new Set(normalizedBullets).size !== normalizedBullets.length) {
+      throw new Error('Desktop release notes contain duplicate bullets');
+    }
+    return bullets;
+  }
+
+  private buildDesktopCreateDropRequest({
+    request,
+    version,
+    bullets,
+    frontendRelease,
+    publicationId,
+    waveId
+  }: {
+    readonly request: ReleaseNoteGenerationRequest;
+    readonly version: string;
+    readonly bullets: string[];
+    readonly frontendRelease: FrontendReleaseNoteReference;
+    readonly publicationId: string;
+    readonly waveId: string;
+  }): ApiCreateDropRequest {
+    const releaseBullets = [
+      `- Web Updates through ${formatMarkdownLink(frontendRelease.label, frontendRelease.url)}`,
+      ...bullets.map((bullet) => `- ${bullet}`)
+    ];
+    const content = [
+      `## 🖥️ 6529 Desktop Release v${version}`,
+      '',
+      ...releaseBullets,
+      '',
+      'In-app update available, direct download links:',
+      '',
+      formatMarkdownLink(
+        `Windows v${version}`,
+        `${DESKTOP_DOWNLOAD_BASE_URL}/win/links/${version}.html`
+      ),
+      formatMarkdownLink(
+        `MacOS v${version}`,
+        `${DESKTOP_DOWNLOAD_BASE_URL}/mac/links/${version}.html`
+      ),
+      formatMarkdownLink(
+        `Linux v${version}`,
+        `${DESKTOP_DOWNLOAD_BASE_URL}/linux/links/${version}.html`
+      )
+    ].join('\n');
+
+    return {
+      title: null,
+      drop_type: ApiDropType.Chat,
+      parts: [{ content, quoted_drop: null, media: [] }],
+      mentioned_users: [],
+      mentioned_groups: [],
+      referenced_nfts: [],
+      metadata: getReleaseNoteMetadata(request, publicationId),
+      signature: null,
+      is_safe_signature: false,
+      wave_id: waveId
+    };
+  }
+
+  private async postDrop(
+    createDropRequest: ApiCreateDropRequest,
+    botProfileId: string,
+    ctx: RequestContext
+  ): Promise<void> {
     await this.dropCreationApiService.createDrop(
       {
         createDropRequest,
@@ -361,7 +695,6 @@ export class ReleaseNoteGenerationService {
         authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
       }
     );
-    return 'published';
   }
 
   private async generateReleaseNotes(
@@ -573,12 +906,7 @@ export class ReleaseNoteGenerationService {
       })),
       mentioned_groups: [],
       referenced_nfts: [],
-      metadata: [
-        {
-          data_key: RELEASE_NOTE_ID_METADATA_KEY,
-          data_value: publicationId
-        }
-      ],
+      metadata: getReleaseNoteMetadata(request, publicationId),
       signature: null,
       is_safe_signature: false,
       wave_id: waveId

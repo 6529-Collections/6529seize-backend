@@ -160,6 +160,17 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .unique('pull_request_number')
       .unique('release_group_id')
       .optional(),
+    release_version: Joi.string()
+      .trim()
+      .pattern(/^\d+\.\d+\.\d+$/)
+      .allow(null, '')
+      .optional(),
+    frontend_sha: Joi.string()
+      .trim()
+      .lowercase()
+      .pattern(/^[a-f0-9]{40}$/)
+      .allow(null, '')
+      .optional(),
     deployed_at: Joi.string()
       .isoDate()
       .pattern(RELEASE_NOTE_DEPLOYED_AT_PATTERN)
@@ -172,6 +183,23 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       // Accept the legacy train-plus-contributors shape during the ordered
       // backend-first rollout. The service deliberately ignores contributors
       // unless the new signed evidence contract is also present.
+      const repoName = value.repo.split('/').pop()?.toLowerCase();
+      const hasDesktopFields = Boolean(
+        value.release_version?.trim() || value.frontend_sha?.trim()
+      );
+      if (
+        (hasDesktopFields ||
+          (repoName === '6529-core' &&
+            value.release_notes_prompt_path?.trim())) &&
+        (repoName !== '6529-core' ||
+          !value.release_version?.trim() ||
+          !value.frontend_sha?.trim())
+      ) {
+        return helpers.message({
+          custom:
+            'release_version and frontend_sha must be supplied together for 6529-core'
+        });
+      }
       if (
         value.contributor_evidence === 'release-bus-operation' &&
         (!value.release_train_id?.trim() ||
