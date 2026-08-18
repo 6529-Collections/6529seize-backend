@@ -2,20 +2,24 @@ import { AuthenticationContext } from '@/auth-context';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
 import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
 import { ApiWaveType } from '@/api/generated/models/ApiWaveType';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 import { DbPoolName } from '@/db-query.options';
 import { WaveApiService } from './wave.api.service';
 
-const mockRequestWaveScoreRefreshBestEffort = jest.fn();
 const mockInvalidateWaveUnreadCacheForWave = jest.fn();
 const mockGiveReadReplicaTimeToCatchUp = jest.fn();
 const mockSendIdentityPushNotifications = jest.fn();
 
 jest.mock('@/api/waves/wave-score.service', () => ({
   waveScoreService: {
-    requestWaveScoreRefreshBestEffort: mockRequestWaveScoreRefreshBestEffort
+    requestWaveScoreRefreshBestEffort: jest.fn()
   },
   WaveScoreDirtyRefreshReason: { DROP_CHANGED: 'DROP_CHANGED' }
 }));
+
+const mockRequestWaveScoreRefreshBestEffort = jest.mocked(
+  waveScoreService.requestWaveScoreRefreshBestEffort
+);
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn(),
