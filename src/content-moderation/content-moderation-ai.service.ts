@@ -23,10 +23,7 @@ export const REPORTED_CONTENT_EVALUATOR_VERSION =
 export const CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV =
   'CONTENT_MODERATION_BEDROCK_MODEL_ID';
 
-const MODEL_ID = getConfiguredBedrockAnthropicModelId(
-  CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV,
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-);
+const BEDROCK_REQUEST_TIMEOUT_MS = 15_000;
 
 interface StructuredAssessment {
   readonly recommendation: ContentModerationRecommendation;
@@ -57,7 +54,12 @@ const CONTENT_MODERATION_CATEGORIES = [
 
 function buildInvokeModelInput(prompt: string): InvokeModelCommandInput {
   return {
-    modelId: MODEL_ID,
+    // Secrets are loaded after modules are imported in Lambda runtimes, so the
+    // service-specific override must be resolved at request time.
+    modelId: getConfiguredBedrockAnthropicModelId(
+      CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV,
+      DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
+    ),
     contentType: 'application/json',
     accept: 'application/json',
     body: JSON.stringify({
@@ -200,7 +202,8 @@ Untrusted submission: ${JSON.stringify(input.content)}
 
   private async prompt(prompt: string): Promise<string> {
     const response = await this.getClient().send(
-      new InvokeModelCommand(buildInvokeModelInput(prompt))
+      new InvokeModelCommand(buildInvokeModelInput(prompt)),
+      { abortSignal: AbortSignal.timeout(BEDROCK_REQUEST_TIMEOUT_MS) }
     );
     const body = new TextDecoder().decode(response.body);
     const parsed = JSON.parse(body) as {

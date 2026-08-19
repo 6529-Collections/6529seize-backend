@@ -96,7 +96,7 @@ describe('PrePublicationModerationService', () => {
     const { service, moderationDb, aiService } = createService();
     aiService.assessPrePublication.mockResolvedValue({
       outcome: PrePublicationCheckOutcome.REJECT,
-      category: 'CREDIBLE_THREAT',
+      category: 'CREDIBLE_THREAT_OF_VIOLENCE',
       confidence: 0.94,
       rationale: 'Not certain enough'
     });
@@ -120,7 +120,7 @@ describe('PrePublicationModerationService', () => {
     const { service, aiService } = createService();
     aiService.assessPrePublication.mockResolvedValue({
       outcome: PrePublicationCheckOutcome.REJECT,
-      category: 'CREDIBLE_THREAT',
+      category: 'CREDIBLE_THREAT_OF_VIOLENCE',
       confidence: 0.99,
       rationale: 'Explicit threat'
     });
@@ -172,6 +172,20 @@ describe('PrePublicationModerationService', () => {
       }),
       undefined
     );
+  });
+
+  it('routes only Luhn-valid payment card candidates to AI', async () => {
+    const { service, aiService } = createService();
+
+    await service.evaluate(input('Card 4242 4242 4242 4242'), {});
+    expect(aiService.assessPrePublication).toHaveBeenCalledWith({
+      signal: 'STRUCTURED_SENSITIVE_DATA',
+      content: 'Card 4242 4242 4242 4242'
+    });
+
+    aiService.assessPrePublication.mockClear();
+    await service.evaluate(input('Reference 4242 4242 4242 4241'), {});
+    expect(aiService.assessPrePublication).not.toHaveBeenCalled();
   });
 
   it('routes repeated identical content to AI using a private fingerprint', async () => {

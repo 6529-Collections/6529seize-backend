@@ -895,11 +895,9 @@ export class DropsMappers {
         .status as unknown as ApiDropModerationStatus,
       can_view: presentation.moderation.can_view
     };
-    if (visited.has(drop.id)) {
-      return drop;
-    }
-    const nextVisited = new Set(visited).add(drop.id);
-    if (drop.reply_to?.drop) {
+    const shouldRecurse = !visited.has(drop.id);
+    const nextVisited = shouldRecurse ? new Set(visited).add(drop.id) : visited;
+    if (shouldRecurse && drop.reply_to?.drop) {
       drop.reply_to.drop = this.applyModerationPresentation(
         drop.reply_to.drop,
         presentations,
@@ -907,7 +905,7 @@ export class DropsMappers {
       );
     }
     drop.parts = drop.parts.map((part) => {
-      if (part.quoted_drop?.drop) {
+      if (shouldRecurse && part.quoted_drop?.drop) {
         part.quoted_drop.drop = this.applyModerationPresentation(
           part.quoted_drop.drop,
           presentations,

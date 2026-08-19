@@ -32,6 +32,7 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 import {
   contentModerationDb,
   ContentModerationDb
@@ -89,6 +90,54 @@ const logDropNotificationFailure = (
     )} error=${normalizedErrorForLog(error)}`
   );
 };
+
+function applyGlobalModerationForRecipient(
+  inputDrop: ApiDrop,
+  profileId: string | null
+): ApiDrop {
+  const recipientDrop: ApiDrop = JSON.parse(JSON.stringify(inputDrop));
+  const apply = (
+    drop: ApiDrop | ApiDropWithoutWave,
+    visited: Set<string>
+  ): void => {
+    const status = drop.moderation?.status ?? ApiDropModerationStatus.Visible;
+    const canView =
+      status === ApiDropModerationStatus.Visible ||
+      (profileId !== null && drop.author.id === profileId);
+    drop.moderation = { status, can_view: canView };
+    const shouldRecurse = !visited.has(drop.id);
+    const nextVisited = shouldRecurse ? new Set(visited).add(drop.id) : visited;
+    if (shouldRecurse) {
+      for (const part of drop.parts) {
+        if (part.quoted_drop?.drop) {
+          apply(part.quoted_drop.drop, nextVisited);
+        }
+      }
+      if (drop.reply_to?.drop) {
+        apply(drop.reply_to.drop, nextVisited);
+      }
+    }
+    if (!canView) {
+      drop.title = null;
+      drop.parts = drop.parts.map((part) => ({
+        ...part,
+        content: null,
+        media: [],
+        attachments: []
+      }));
+      drop.referenced_nfts = [];
+      drop.mentioned_users = [];
+      drop.mentioned_groups = [];
+      drop.mentioned_waves = [];
+      drop.metadata = [];
+      drop.reactions = [];
+      drop.nft_links = [];
+      delete drop.poll;
+    }
+  };
+  apply(recipientDrop, new Set<string>());
+  return recipientDrop;
+}
 
 function removeDropsAuthRequestContext(
   drop: ApiDrop | ApiDropWithoutWave,
@@ -298,16 +347,17 @@ export class WsListenersNotifier {
       );
       await Promise.all(
         onlineProfiles.map(({ connectionId, profileId }) => {
-          const recipientDrop: ApiDrop = {
-            ...inputDrop,
-            viewer_context:
-              profileId === null
-                ? { author_blocked: false, drop_hidden: false }
-                : (viewerContexts[profileId] ?? {
-                    author_blocked: false,
-                    drop_hidden: false
-                  })
-          };
+          const recipientDrop = applyGlobalModerationForRecipient(
+            inputDrop,
+            profileId
+          );
+          recipientDrop.viewer_context =
+            profileId === null
+              ? { author_blocked: false, drop_hidden: false }
+              : (viewerContexts[profileId] ?? {
+                  author_blocked: false,
+                  drop_hidden: false
+                });
           return this.appWebSockets.send({
             connectionId,
             message: serializeDropUpdateForRecipient(
@@ -355,16 +405,17 @@ export class WsListenersNotifier {
       );
       await Promise.all(
         onlineProfiles.map(({ connectionId, profileId }) => {
-          const recipientDrop: ApiDrop = {
-            ...drop,
-            viewer_context:
-              profileId === null
-                ? { author_blocked: false, drop_hidden: false }
-                : (viewerContexts[profileId] ?? {
-                    author_blocked: false,
-                    drop_hidden: false
-                  })
-          };
+          const recipientDrop = applyGlobalModerationForRecipient(
+            drop,
+            profileId
+          );
+          recipientDrop.viewer_context =
+            profileId === null
+              ? { author_blocked: false, drop_hidden: false }
+              : (viewerContexts[profileId] ?? {
+                  author_blocked: false,
+                  drop_hidden: false
+                });
           return this.appWebSockets.send({
             connectionId,
             message: serializeDropRatingUpdateForRecipient(
@@ -411,16 +462,17 @@ export class WsListenersNotifier {
       );
       await Promise.all(
         onlineProfiles.map(({ connectionId, profileId }) => {
-          const recipientDrop: ApiDrop = {
-            ...drop,
-            viewer_context:
-              profileId === null
-                ? { author_blocked: false, drop_hidden: false }
-                : (viewerContexts[profileId] ?? {
-                    author_blocked: false,
-                    drop_hidden: false
-                  })
-          };
+          const recipientDrop = applyGlobalModerationForRecipient(
+            drop,
+            profileId
+          );
+          recipientDrop.viewer_context =
+            profileId === null
+              ? { author_blocked: false, drop_hidden: false }
+              : (viewerContexts[profileId] ?? {
+                  author_blocked: false,
+                  drop_hidden: false
+                });
           return this.appWebSockets.send({
             connectionId,
             message: serializeDropReactionUpdateForRecipient(

@@ -31,6 +31,10 @@ import {
 } from '@/sql-executor';
 import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
+import { env } from '@/env';
+
+const REPORT_RATE_LIMIT_WINDOW = Time.hours(1);
+const DEFAULT_REPORTS_PER_HOUR = 100;
 
 export interface DropViewerModerationContext {
   readonly author_blocked: boolean;
@@ -110,44 +114,50 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     if (blockerProfileId === blockedProfileId) {
       throw new BadRequestException(`You can't block your own profile`);
     }
-    await this.assertProfileExists(blockedProfileId, ctx.connection);
-    const existing = await this.db.oneOrNull<{ id: string }>(
-      `
-        select id
-        from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
-        where blocker_profile_id = :blockerProfileId
-          and blocked_profile_id = :blockedProfileId
-      `,
-      { blockerProfileId, blockedProfileId },
-      this.connectionOptions(ctx.connection)
-    );
-    const now = Time.currentMillis();
-    await this.db.execute(
-      `
-        insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} (
-          blocker_profile_id,
-          blocked_profile_id,
-          created_at
-        ) values (
-          :blockerProfileId,
-          :blockedProfileId,
-          :createdAt
-        )
-        on duplicate key update created_at = values(created_at)
-      `,
-      { blockerProfileId, blockedProfileId, createdAt: now },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.insertAudit(
-      {
-        actorProfileId: blockerProfileId,
-        action: 'PROFILE_BLOCKED',
-        targetProfileId: blockedProfileId,
-        previousState: existing ? 'BLOCKED' : 'UNBLOCKED',
-        newState: 'BLOCKED'
-      },
-      ctx.connection
-    );
+    await this.withTransaction(ctx.connection, async (connection) => {
+      await this.assertProfileExists(blockedProfileId, connection);
+      const existing = await this.db.oneOrNull<{ id: string }>(
+        `
+          select id
+          from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
+          where blocker_profile_id = :blockerProfileId
+            and blocked_profile_id = :blockedProfileId
+          for update
+        `,
+        { blockerProfileId, blockedProfileId },
+        this.connectionOptions(connection)
+      );
+      await this.db.execute(
+        `
+          insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} (
+            blocker_profile_id,
+            blocked_profile_id,
+            created_at
+          ) values (
+            :blockerProfileId,
+            :blockedProfileId,
+            :createdAt
+          )
+          on duplicate key update created_at = values(created_at)
+        `,
+        {
+          blockerProfileId,
+          blockedProfileId,
+          createdAt: Time.currentMillis()
+        },
+        this.connectionOptions(connection)
+      );
+      await this.insertAudit(
+        {
+          actorProfileId: blockerProfileId,
+          action: 'PROFILE_BLOCKED',
+          targetProfileId: blockedProfileId,
+          previousState: existing ? 'BLOCKED' : 'UNBLOCKED',
+          newState: 'BLOCKED'
+        },
+        connection
+      );
+    });
   }
 
   async unblockProfile(
@@ -155,35 +165,37 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     blockedProfileId: string,
     ctx: RequestContext
   ): Promise<void> {
-    const existing = await this.db.oneOrNull<{ id: string }>(
-      `
+    await this.withTransaction(ctx.connection, async (connection) => {
+      const existing = await this.db.oneOrNull<{ id: string }>(
+        `
         select id
         from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
         where blocker_profile_id = :blockerProfileId
           and blocked_profile_id = :blockedProfileId
       `,
-      { blockerProfileId, blockedProfileId },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.db.execute(
-      `
+        { blockerProfileId, blockedProfileId },
+        this.connectionOptions(connection)
+      );
+      await this.db.execute(
+        `
         delete from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
         where blocker_profile_id = :blockerProfileId
           and blocked_profile_id = :blockedProfileId
       `,
-      { blockerProfileId, blockedProfileId },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.insertAudit(
-      {
-        actorProfileId: blockerProfileId,
-        action: 'PROFILE_UNBLOCKED',
-        targetProfileId: blockedProfileId,
-        previousState: existing ? 'BLOCKED' : 'UNBLOCKED',
-        newState: 'UNBLOCKED'
-      },
-      ctx.connection
-    );
+        { blockerProfileId, blockedProfileId },
+        this.connectionOptions(connection)
+      );
+      await this.insertAudit(
+        {
+          actorProfileId: blockerProfileId,
+          action: 'PROFILE_UNBLOCKED',
+          targetProfileId: blockedProfileId,
+          previousState: existing ? 'BLOCKED' : 'UNBLOCKED',
+          newState: 'UNBLOCKED'
+        },
+        connection
+      );
+    });
   }
 
   async listBlockedProfiles(
@@ -219,19 +231,20 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     dropId: string,
     ctx: RequestContext
   ): Promise<void> {
-    await this.assertDropExists(dropId, ctx.connection);
-    const existing = await this.db.oneOrNull<{ id: string }>(
-      `
+    await this.withTransaction(ctx.connection, async (connection) => {
+      await this.assertDropExists(dropId, connection);
+      const existing = await this.db.oneOrNull<{ id: string }>(
+        `
         select id
         from ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}
         where profile_id = :profileId
           and drop_id = :dropId
       `,
-      { profileId, dropId },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.db.execute(
-      `
+        { profileId, dropId },
+        this.connectionOptions(connection)
+      );
+      await this.db.execute(
+        `
         insert into ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE} (
           profile_id,
           drop_id,
@@ -243,19 +256,20 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         )
         on duplicate key update created_at = values(created_at)
       `,
-      { profileId, dropId, createdAt: Time.currentMillis() },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.insertAudit(
-      {
-        actorProfileId: profileId,
-        action: 'DROP_HIDDEN',
-        targetDropId: dropId,
-        previousState: existing ? 'HIDDEN' : 'SHOWN',
-        newState: 'HIDDEN'
-      },
-      ctx.connection
-    );
+        { profileId, dropId, createdAt: Time.currentMillis() },
+        this.connectionOptions(connection)
+      );
+      await this.insertAudit(
+        {
+          actorProfileId: profileId,
+          action: 'DROP_HIDDEN',
+          targetDropId: dropId,
+          previousState: existing ? 'HIDDEN' : 'SHOWN',
+          newState: 'HIDDEN'
+        },
+        connection
+      );
+    });
   }
 
   async unhideDrop(
@@ -263,35 +277,37 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     dropId: string,
     ctx: RequestContext
   ): Promise<void> {
-    const existing = await this.db.oneOrNull<{ id: string }>(
-      `
+    await this.withTransaction(ctx.connection, async (connection) => {
+      const existing = await this.db.oneOrNull<{ id: string }>(
+        `
         select id
         from ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}
         where profile_id = :profileId
           and drop_id = :dropId
       `,
-      { profileId, dropId },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.db.execute(
-      `
+        { profileId, dropId },
+        this.connectionOptions(connection)
+      );
+      await this.db.execute(
+        `
         delete from ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}
         where profile_id = :profileId
           and drop_id = :dropId
       `,
-      { profileId, dropId },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.insertAudit(
-      {
-        actorProfileId: profileId,
-        action: 'DROP_UNHIDDEN',
-        targetDropId: dropId,
-        previousState: existing ? 'HIDDEN' : 'SHOWN',
-        newState: 'SHOWN'
-      },
-      ctx.connection
-    );
+        { profileId, dropId },
+        this.connectionOptions(connection)
+      );
+      await this.insertAudit(
+        {
+          actorProfileId: profileId,
+          action: 'DROP_UNHIDDEN',
+          targetDropId: dropId,
+          previousState: existing ? 'HIDDEN' : 'SHOWN',
+          newState: 'SHOWN'
+        },
+        connection
+      );
+    });
   }
 
   async getPresentations(
@@ -585,6 +601,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   ): Promise<ModerationReportRow> {
     return this.withTransaction(ctx.connection, async (connection) => {
       const transactionContext: RequestContext = { ...ctx, connection };
+      await this.assertReportAllowed(input, connection);
       const report = await this.createReport(input, transactionContext);
       if (input.blockAuthor) {
         await this.blockProfile(
@@ -656,6 +673,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         join (
           select drop_id, count(*) as report_count
           from ${CONTENT_MODERATION_REPORTS_TABLE}
+          where status = '${ContentReportStatus.OPEN}'
           group by drop_id
         ) counts on counts.drop_id = r.drop_id
         where r.status = '${ContentReportStatus.OPEN}'
@@ -934,13 +952,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    await this.assertProfileExists(input.profileId, ctx.connection);
-    const previous = await this.getProfileStatus(
-      input.profileId,
-      ctx.connection
-    );
-    await this.db.execute(
-      `
+    await this.withTransaction(ctx.connection, async (connection) => {
+      await this.assertProfileExists(input.profileId, connection);
+      const previous = await this.getProfileStatus(input.profileId, connection);
+      await this.db.execute(
+        `
         insert into ${CONTENT_MODERATION_PROFILE_STATES_TABLE} (
           profile_id,
           status,
@@ -960,23 +976,24 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           reason = values(reason),
           updated_at = values(updated_at)
       `,
-      { ...input, updatedAt: Time.currentMillis() },
-      this.connectionOptions(ctx.connection)
-    );
-    await this.insertAudit(
-      {
-        actorProfileId: input.moderatorProfileId,
-        action:
-          input.status === ModeratedProfileStatus.SUSPENDED
-            ? 'PROFILE_SUSPENDED'
-            : 'PROFILE_REINSTATED',
-        targetProfileId: input.profileId,
-        previousState: previous,
-        newState: input.status,
-        reason: input.reason
-      },
-      ctx.connection
-    );
+        { ...input, updatedAt: Time.currentMillis() },
+        this.connectionOptions(connection)
+      );
+      await this.insertAudit(
+        {
+          actorProfileId: input.moderatorProfileId,
+          action:
+            input.status === ModeratedProfileStatus.SUSPENDED
+              ? 'PROFILE_SUSPENDED'
+              : 'PROFILE_REINSTATED',
+          targetProfileId: input.profileId,
+          previousState: previous,
+          newState: input.status,
+          reason: input.reason
+        },
+        connection
+      );
+    });
   }
 
   async getProfileStatus(
@@ -1082,6 +1099,87 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       },
       this.connectionOptions(connection)
     );
+  }
+
+  async deleteExpiredPrePublicationChecks(
+    olderThan: number,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const result = await this.db.execute(
+      `
+        delete from ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE}
+        where created_at < :olderThan
+      `,
+      { olderThan },
+      this.connectionOptions(connection)
+    );
+    if (result && typeof result === 'object' && 'affectedRows' in result) {
+      return Number((result as { affectedRows?: unknown }).affectedRows ?? 0);
+    }
+    return Array.isArray(result) && typeof result[1] === 'number'
+      ? result[1]
+      : 0;
+  }
+
+  private async assertReportAllowed(
+    input: {
+      readonly dropId: string;
+      readonly reporterProfileId: string;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    const reporter = await this.db.oneOrNull<{ external_id: string }>(
+      `
+        select external_id
+        from ${PROFILES_TABLE}
+        where external_id = :reporterProfileId
+        for update
+      `,
+      { reporterProfileId: input.reporterProfileId },
+      this.connectionOptions(connection)
+    );
+    if (!reporter) {
+      throw new NotFoundException(
+        `Profile ${input.reporterProfileId} not found`
+      );
+    }
+    const existing = await this.db.oneOrNull<{ id: string }>(
+      `
+        select id
+        from ${CONTENT_MODERATION_REPORTS_TABLE}
+        where reporter_profile_id = :reporterProfileId
+          and drop_id = :dropId
+          and status = '${ContentReportStatus.OPEN}'
+        limit 1
+      `,
+      input,
+      this.connectionOptions(connection)
+    );
+    if (existing) {
+      throw new BadRequestException('You have already reported this post');
+    }
+    const configuredLimit =
+      env.getIntOrNull('CONTENT_MODERATION_REPORTS_PER_HOUR') ??
+      DEFAULT_REPORTS_PER_HOUR;
+    const reportsPerHour = Math.max(1, configuredLimit);
+    const recent = await this.db.oneOrNull<{ report_count: number }>(
+      `
+        select count(*) as report_count
+        from ${CONTENT_MODERATION_REPORTS_TABLE}
+        where reporter_profile_id = :reporterProfileId
+          and created_at >= :since
+      `,
+      {
+        reporterProfileId: input.reporterProfileId,
+        since: Time.currentMillis() - REPORT_RATE_LIMIT_WINDOW.toMillis()
+      },
+      this.connectionOptions(connection)
+    );
+    if (Number(recent?.report_count ?? 0) >= reportsPerHour) {
+      throw new BadRequestException(
+        'Too many reports were submitted. Please try again later.'
+      );
+    }
   }
 
   private async assertDropExists(

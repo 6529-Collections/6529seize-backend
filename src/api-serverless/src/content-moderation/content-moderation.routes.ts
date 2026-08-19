@@ -20,6 +20,14 @@ import { dropsService } from '@/api/drops/drops.api.service';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { AuthenticationContext } from '@/auth-context';
 import { Logger } from '@/logging';
+import { ApiBlockedProfile } from '@/api/generated/models/ApiBlockedProfile';
+import { ApiProfileBlockState } from '@/api/generated/models/ApiProfileBlockState';
+import { ApiDropHiddenState } from '@/api/generated/models/ApiDropHiddenState';
+import { ApiContentModerationReportResponse } from '@/api/generated/models/ApiContentModerationReportResponse';
+import { ApiContentModeratorAccess } from '@/api/generated/models/ApiContentModeratorAccess';
+import { ApiContentModerationQueueItem } from '@/api/generated/models/ApiContentModerationQueueItem';
+import { ApiContentModerationDropDecisionResponse } from '@/api/generated/models/ApiContentModerationDropDecisionResponse';
+import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
 
 const router = asyncRouter();
 const logger = Logger.get('ContentModerationRoutes');
@@ -90,7 +98,7 @@ const ProfileStatusSchema = Joi.object({
 router.get(
   '/blocked-profiles',
   needsAuthenticatedUser(),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response<ApiBlockedProfile[]>) => {
     const { profileId } = await getRequiredProfileId(req);
     res.send(await contentModerationDb.listBlockedProfiles(profileId));
   }
@@ -99,7 +107,10 @@ router.get(
 router.put(
   '/profiles/:profile_id/block',
   needsAuthenticatedUser(),
-  async (req: Request<{ profile_id: string }>, res: Response) => {
+  async (
+    req: Request<{ profile_id: string }>,
+    res: Response<ApiProfileBlockState>
+  ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     await contentModerationDb.blockProfile(profileId, req.params.profile_id, {
@@ -113,7 +124,10 @@ router.put(
 router.delete(
   '/profiles/:profile_id/block',
   needsAuthenticatedUser(),
-  async (req: Request<{ profile_id: string }>, res: Response) => {
+  async (
+    req: Request<{ profile_id: string }>,
+    res: Response<ApiProfileBlockState>
+  ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     await contentModerationDb.unblockProfile(profileId, req.params.profile_id, {
@@ -127,7 +141,10 @@ router.delete(
 router.put(
   '/drops/:drop_id/hide',
   needsAuthenticatedUser(),
-  async (req: Request<{ drop_id: string }>, res: Response) => {
+  async (
+    req: Request<{ drop_id: string }>,
+    res: Response<ApiDropHiddenState>
+  ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     await dropsService.findDropByIdOrThrow(
@@ -145,7 +162,10 @@ router.put(
 router.delete(
   '/drops/:drop_id/hide',
   needsAuthenticatedUser(),
-  async (req: Request<{ drop_id: string }>, res: Response) => {
+  async (
+    req: Request<{ drop_id: string }>,
+    res: Response<ApiDropHiddenState>
+  ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     await contentModerationDb.unhideDrop(profileId, req.params.drop_id, {
@@ -159,7 +179,10 @@ router.delete(
 router.post(
   '/drops/:drop_id/reports',
   needsAuthenticatedUser(),
-  async (req: Request<{ drop_id: string }>, res: Response) => {
+  async (
+    req: Request<{ drop_id: string }>,
+    res: Response<ApiContentModerationReportResponse>
+  ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     await dropsService.findDropByIdOrThrow(
@@ -181,14 +204,16 @@ router.post(
     if (result.drop_status !== DropModerationStatus.VISIBLE) {
       await broadcastDropModerationChange(req.params.drop_id, timer);
     }
-    res.status(201).send(result);
+    res
+      .status(201)
+      .send(result as unknown as ApiContentModerationReportResponse);
   }
 );
 
 router.get(
   '/moderator-access',
   needsAuthenticatedUser(),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response<ApiContentModeratorAccess>) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     res.send(
@@ -204,8 +229,13 @@ router.get(
   '/reports',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, any, { limit?: string; before?: string }>,
-    res
+    req: Request<
+      Record<string, string>,
+      unknown,
+      unknown,
+      { limit?: string; before?: string }
+    >,
+    res: Response<ApiContentModerationQueueItem[]>
   ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
@@ -214,20 +244,22 @@ router.get(
       throw new BadRequestException('Limit must be between 1 and 100');
     }
     const before = req.query.before?.trim() || undefined;
-    res.send(
-      await contentModerationService.getQueue(
-        profileId,
-        { limit, before },
-        { timer, authenticationContext }
-      )
+    const result = await contentModerationService.getQueue(
+      profileId,
+      { limit, before },
+      { timer, authenticationContext }
     );
+    res.send(result as unknown as ApiContentModerationQueueItem[]);
   }
 );
 
 router.post(
   '/drops/:drop_id/decision',
   needsAuthenticatedUser(),
-  async (req: Request<{ drop_id: string }>, res: Response) => {
+  async (
+    req: Request<{ drop_id: string }>,
+    res: Response<ApiContentModerationDropDecisionResponse>
+  ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     const body = getValidatedByJoiOrThrow(req.body, DropDecisionSchema);
@@ -237,24 +269,26 @@ router.post(
       { timer, authenticationContext }
     );
     await broadcastDropModerationChange(req.params.drop_id, timer);
-    res.send(result);
+    res.send(result as unknown as ApiContentModerationDropDecisionResponse);
   }
 );
 
 router.post(
   '/profiles/:profile_id/status',
   needsAuthenticatedUser(),
-  async (req: Request<{ profile_id: string }>, res: Response) => {
+  async (
+    req: Request<{ profile_id: string }>,
+    res: Response<ApiContentModerationProfileStatusResponse>
+  ) => {
     const { profileId, timer, authenticationContext } =
       await getRequiredProfileId(req);
     const body = getValidatedByJoiOrThrow(req.body, ProfileStatusSchema);
-    res.send(
-      await contentModerationService.setProfileStatus(
-        profileId,
-        { profileId: req.params.profile_id, ...body },
-        { timer, authenticationContext }
-      )
+    const result = await contentModerationService.setProfileStatus(
+      profileId,
+      { profileId: req.params.profile_id, ...body },
+      { timer, authenticationContext }
     );
+    res.send(result as unknown as ApiContentModerationProfileStatusResponse);
   }
 );
 

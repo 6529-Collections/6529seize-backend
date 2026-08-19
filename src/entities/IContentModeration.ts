@@ -58,7 +58,7 @@ export enum PrePublicationCheckOutcome {
 @Index(['blocker_profile_id', 'blocked_profile_id'], { unique: true })
 export class ContentModerationProfileBlockEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
-  readonly id!: bigint;
+  readonly id!: string;
 
   @Index(`${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}_blocker_idx`)
   @Column({ type: 'varchar', length: 50, nullable: false })
@@ -76,7 +76,7 @@ export class ContentModerationProfileBlockEntity {
 @Index(['profile_id', 'drop_id'], { unique: true })
 export class ContentModerationHiddenDropEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
-  readonly id!: bigint;
+  readonly id!: string;
 
   @Index(`${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}_profile_idx`)
   @Column({ type: 'varchar', length: 50, nullable: false })
@@ -207,7 +207,7 @@ export class ContentModerationProfileStateEntity {
 @Entity(CONTENT_MODERATION_AUDIT_LOG_TABLE)
 export class ContentModerationAuditLogEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
-  readonly id!: bigint;
+  readonly id!: string;
 
   @Index(`${CONTENT_MODERATION_AUDIT_LOG_TABLE}_created_idx`)
   @Column({ type: 'bigint', nullable: false })
@@ -276,6 +276,7 @@ export class ContentModerationPrePublicationCheckEntity {
   @Column({ type: 'json', nullable: true })
   readonly evaluator_result!: Record<string, unknown> | null;
 
+  @Index(`${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE}_created_idx`)
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
 }

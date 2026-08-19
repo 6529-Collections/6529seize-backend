@@ -201,12 +201,37 @@ describe('CreateOrUpdateDropUseCase', () => {
           ]
         }),
         false,
-        { connection: {} as any }
+        {
+          connection: {} as any,
+          prePublication: { trustedSystem: true }
+        }
       )
     ).rejects.toThrow(
       'drop part 1 content must be at most 25000 UTF-16 code units'
     );
     expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
+  });
+
+  it('prepares moderation before the caller opens the write transaction', async () => {
+    const moderationService = {
+      evaluate: jest.fn().mockResolvedValue(undefined)
+    };
+    const useCase = createUseCaseWithMocks({ moderationService });
+
+    const preparation = await useCase.preparePrePublication(
+      createChatDropModel({
+        author_id: 'author-1',
+        title: 'title',
+        parts: [{ content: 'content', quoted_drop: null, media: [] }]
+      }),
+      { connection: { transaction: true } as any }
+    );
+
+    expect(preparation).toMatchObject({ operation: 'CREATE' });
+    expect(moderationService.evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({ authorProfileId: 'author-1' }),
+      expect.objectContaining({ connection: undefined })
+    );
   });
 
   it('does not increment inserted-drop metrics when editing a drop', async () => {
@@ -254,7 +279,10 @@ describe('CreateOrUpdateDropUseCase', () => {
     await (useCase as any).createOrUpdateDrop(
       createChatDropModel({ drop_id: 'drop-1' }),
       false,
-      { connection: {} as any }
+      {
+        connection: {} as any,
+        prePublication: { trustedSystem: true }
+      }
     );
 
     expect(deleteDropUseCase.execute).toHaveBeenCalledWith(

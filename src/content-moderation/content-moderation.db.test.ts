@@ -7,6 +7,10 @@ import {
 } from '@/entities/IContentModeration';
 import { BadRequestException } from '@/exceptions';
 import { ContentModerationDb } from './content-moderation.db';
+import {
+  CONTENT_MODERATION_DROP_STATES_TABLE,
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE
+} from '@/constants';
 
 const REPORT_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -53,7 +57,7 @@ describe('ContentModerationDb', () => {
   it('keeps globally moderated content visible to its author only', async () => {
     const { db, executor } = createDb();
     executor.execute.mockImplementation((sql: string) => {
-      if (sql.includes('content_moderation_drop_states')) {
+      if (sql.includes(CONTENT_MODERATION_DROP_STATES_TABLE)) {
         return Promise.resolve([
           {
             drop_id: 'drop-1',
@@ -93,6 +97,9 @@ describe('ContentModerationDb', () => {
 
     const firstPage = await db.getModerationQueue({ limit: 1 });
     expect(firstPage[0]?.cursor).toBe(`0.200.${REPORT_ID}`);
+    expect(executor.execute.mock.calls[0]?.[0]).toContain(
+      `where status = '${ContentReportStatus.OPEN}'`
+    );
 
     await db.getModerationQueue({
       limit: 1,
@@ -157,6 +164,7 @@ describe('ContentModerationDb', () => {
     const createReportSpy = jest
       .spyOn(db, 'createReport')
       .mockResolvedValue(report);
+    jest.spyOn(db as any, 'assertReportAllowed').mockResolvedValue(undefined);
     const blockProfileSpy = jest
       .spyOn(db, 'blockProfile')
       .mockResolvedValue(undefined);
@@ -196,6 +204,68 @@ describe('ContentModerationDb', () => {
     );
   });
 
+  it('rejects a second open report from the same profile for a drop', async () => {
+    const { db, executor } = createDb();
+    const connection = {} as any;
+    executor.oneOrNull
+      .mockResolvedValueOnce({ external_id: 'reporter-1' })
+      .mockResolvedValueOnce({ id: 'existing-report' });
+    const createReportSpy = jest.spyOn(db, 'createReport');
+
+    await expect(
+      db.createReportWithViewerActions(
+        {
+          dropId: 'drop-1',
+          reporterProfileId: 'reporter-1',
+          authorProfileId: 'author-1',
+          reason: ContentReportReason.OTHER,
+          notes: null,
+          contentSnapshot: {},
+          hideDrop: false,
+          blockAuthor: false
+        },
+        { connection }
+      )
+    ).rejects.toThrow('already reported');
+    expect(createReportSpy).not.toHaveBeenCalled();
+    expect(executor.oneOrNull.mock.calls[0]?.[0]).toContain('for update');
+  });
+
+  it('wraps personal moderation state and audit writes in a transaction', async () => {
+    const { db, executor } = createDb();
+    const connection = {} as any;
+    const transactionSpy = jest
+      .spyOn(db as any, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (...args: unknown[]) => {
+        const executable = args[0] as (value: any) => Promise<unknown>;
+        return executable(connection);
+      });
+    executor.oneOrNull
+      .mockResolvedValueOnce({ external_id: 'blocked-1' })
+      .mockResolvedValueOnce(null);
+
+    await db.blockProfile('blocker-1', 'blocked-1', {});
+
+    expect(transactionSpy).toHaveBeenCalledTimes(1);
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(CONTENT_MODERATION_PROFILE_BLOCKS_TABLE),
+      expect.any(Object),
+      { wrappedConnection: connection }
+    );
+  });
+
+  it('deletes expired pre-publication checks by retention cutoff', async () => {
+    const { db, executor } = createDb();
+    executor.execute.mockResolvedValue({ affectedRows: 3 });
+
+    await expect(db.deleteExpiredPrePublicationChecks(1234)).resolves.toBe(3);
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('where created_at < :olderThan'),
+      { olderThan: 1234 },
+      undefined
+    );
+  });
+
   it('locks the drop row and uses an explicit idempotent state upsert', async () => {
     const { db, executor } = createDb();
     const connection = {} as any;
@@ -203,7 +273,7 @@ describe('ContentModerationDb', () => {
       if (sql.includes('from drops')) {
         return Promise.resolve({ id: 'drop-1' });
       }
-      if (sql.includes('content_moderation_drop_states')) {
+      if (sql.includes(CONTENT_MODERATION_DROP_STATES_TABLE)) {
         return Promise.resolve({ status: DropModerationStatus.VISIBLE });
       }
       return Promise.resolve(null);

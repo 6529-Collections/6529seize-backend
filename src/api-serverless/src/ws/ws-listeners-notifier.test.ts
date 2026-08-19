@@ -360,6 +360,66 @@ describe('WsListenersNotifier', () => {
     });
   });
 
+  it.each([
+    {
+      label: 'DROP_UPDATE',
+      notify: (notifier: WsListenersNotifier, drop: any) =>
+        notifier.notifyAboutDropUpdate(drop, {})
+    },
+    {
+      label: 'DROP_RATING_UPDATE',
+      notify: (notifier: WsListenersNotifier, drop: any) =>
+        notifier.notifyAboutDropRatingUpdate(drop, {})
+    },
+    {
+      label: 'DROP_REACTION_UPDATE',
+      notify: (notifier: WsListenersNotifier, drop: any) =>
+        notifier.notifyAboutDropReactionUpdate(drop, {})
+    }
+  ])(
+    'redacts globally moderated content per recipient for $label',
+    async ({ notify }) => {
+      const appWebSockets = {
+        send: jest.fn().mockResolvedValue(undefined)
+      };
+      const wsConnectionRepository = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([
+            { connectionId: 'author-connection', profileId: 'author-1' },
+            { connectionId: 'viewer-connection', profileId: 'viewer-1' }
+          ])
+      };
+      const moderationDb = {
+        getViewerContextsForDrop: jest.fn().mockResolvedValue({})
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as any,
+        wsConnectionRepository as any,
+        moderationDb as any
+      );
+      const moderatedDrop = {
+        ...createDrop('private moderated content'),
+        moderation: { status: 'AI_QUARANTINED', can_view: true }
+      };
+
+      await notify(notifier, moderatedDrop);
+
+      const sent = Object.fromEntries(
+        appWebSockets.send.mock.calls.map(([call]) => [
+          call.connectionId,
+          JSON.parse(call.message).data
+        ])
+      );
+      expect(sent['author-connection'].parts[0].content).toBe(
+        'private moderated content'
+      );
+      expect(sent['author-connection'].moderation.can_view).toBe(true);
+      expect(sent['viewer-connection'].parts[0].content).toBeNull();
+      expect(sent['viewer-connection'].moderation.can_view).toBe(false);
+    }
+  );
+
   it('does not reject the notification operation when a recipient send fails', async () => {
     const appWebSockets = {
       send: jest

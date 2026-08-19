@@ -291,7 +291,16 @@ export async function sendIdentityNotificationsBatch(
   await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
     notifications.map((notification) => notification.identity_id)
   );
-  const mutedNotificationIds = await findMutedNotificationIds(notifications);
+  let mutedNotificationIds: Set<number>;
+  try {
+    mutedNotificationIds = await findMutedNotificationIds(notifications);
+  } catch (error) {
+    logger.error(
+      'Failed to apply notification visibility filters; retrying push notifications',
+      error
+    );
+    return notifications.map((notification) => Number(notification.id));
+  }
 
   uniqueIds
     .filter((id) => !notificationsById.has(id))
@@ -354,30 +363,22 @@ async function findMutedNotificationIds(
     related_drop_id: notification.related_drop_id,
     related_drop_2_id: notification.related_drop_2_id
   }));
-  try {
-    const unmutedRows =
-      await identityMutesDb.filterMutedNotificationRows(notificationRows);
-    const deliverableRows =
-      await contentModerationDb.filterBlockedNotificationRows(unmutedRows);
-    const visibleRows =
-      await contentModerationDb.filterUnavailableDropNotificationRows(
-        deliverableRows
-      );
-    const unmutedNotificationIds = new Set(
-      visibleRows.map((row) => row.notification_id)
+  const unmutedRows =
+    await identityMutesDb.filterMutedNotificationRows(notificationRows);
+  const deliverableRows =
+    await contentModerationDb.filterBlockedNotificationRows(unmutedRows);
+  const visibleRows =
+    await contentModerationDb.filterUnavailableDropNotificationRows(
+      deliverableRows
     );
-    return new Set(
-      notificationRows
-        .filter((row) => !unmutedNotificationIds.has(row.notification_id))
-        .map((row) => row.notification_id)
-    );
-  } catch (error) {
-    logger.error(
-      'Failed to apply notification visibility filters; suppressing push notifications',
-      error
-    );
-    return new Set(notificationRows.map((row) => row.notification_id));
-  }
+  const unmutedNotificationIds = new Set(
+    visibleRows.map((row) => row.notification_id)
+  );
+  return new Set(
+    notificationRows
+      .filter((row) => !unmutedNotificationIds.has(row.notification_id))
+      .map((row) => row.notification_id)
+  );
 }
 
 async function buildIdentityNotificationMessages(

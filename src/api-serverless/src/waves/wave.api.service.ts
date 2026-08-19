@@ -547,6 +547,20 @@ export class WaveApiService {
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
+    const id = randomUUID();
+    const descriptionDropModel = this.dropsMappers.createDropApiToUseCaseModel({
+      request: {
+        ...createWaveRequest.description_drop,
+        wave_id: id,
+        drop_type: ApiDropType.Chat
+      },
+      authorId: actingAsId
+    });
+    const descriptionPrePublication =
+      await this.createOrUpdateDrop.preparePrePublication(
+        descriptionDropModel,
+        ctx
+      );
     const { createdWave, pendingPushNotificationIds } =
       await this.wavesApiDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -556,7 +570,6 @@ export class WaveApiService {
             actingAsId,
             ctx: ctxWithConnection
           });
-          const id = randomUUID();
           const waveCreationTime = Time.currentMillis();
           const newEntity = await this.waveMappers.createWaveToNewWaveEntity({
             id,
@@ -629,19 +642,11 @@ export class WaveApiService {
             distiributionItemEntities,
             ctxWithConnection
           );
-          const descriptionDropModel =
-            this.dropsMappers.createDropApiToUseCaseModel({
-              request: {
-                ...createWaveRequest.description_drop,
-                wave_id: id,
-                drop_type: ApiDropType.Chat
-              },
-              authorId: actingAsId
-            });
           const { drop_id: descriptionDropId, pending_push_notification_ids } =
             await this.createOrUpdateDrop.execute(descriptionDropModel, true, {
               timer: ctxWithConnection.timer,
-              connection: ctxWithConnection.connection
+              connection: ctxWithConnection.connection,
+              prePublication: descriptionPrePublication
             });
           await this.wavesApiDb.updateDescriptionDropId(
             {

@@ -15,6 +15,12 @@ function createService(response: Record<string, unknown>) {
 }
 
 describe('ContentModerationAiService', () => {
+  const originalModelId = process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
+
+  afterEach(() => {
+    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID = originalModelId;
+  });
+
   it('accepts only policy-defined categories from the model', async () => {
     const { service } = createService({
       recommendation: 'URGENT_QUARANTINE',
@@ -47,5 +53,24 @@ describe('ContentModerationAiService', () => {
         content: { text: 'reported content' }
       })
     ).resolves.toMatchObject({ category: 'TARGETED_HARASSMENT' });
+  });
+
+  it('resolves the configured model after runtime secrets are loaded', async () => {
+    const { send, service } = createService({
+      recommendation: 'NO_VIOLATION_DETECTED',
+      category: 'NONE',
+      confidence: 0.1,
+      rationale: 'Allowed',
+      evidence: []
+    });
+    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID = 'runtime-model-id';
+
+    await service.assessReportedContent({
+      reason: ContentReportReason.OTHER,
+      content: { text: 'ordinary content' }
+    });
+
+    expect(send.mock.calls[0]?.[0].input.modelId).toBe('runtime-model-id');
+    expect(send.mock.calls[0]?.[1]?.abortSignal).toBeInstanceOf(AbortSignal);
   });
 });

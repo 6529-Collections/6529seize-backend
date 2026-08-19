@@ -9,7 +9,8 @@ import { RequestContext } from '../../../request.context';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   createOrUpdateDrop,
-  CreateOrUpdateDropUseCase
+  CreateOrUpdateDropUseCase,
+  PrePublicationPreparation
 } from '../../../drops/create-or-update-drop.use-case';
 import {
   CreateOrUpdateDropModel,
@@ -109,11 +110,20 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
+    const prePublication = await this.createOrUpdateDrop.preparePrePublication(
+      createModel,
+      ctx
+    );
     const { drop, pendingPushNotificationIds } =
       await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           return await this.createDropWithGivenConnection(
-            { model: createModel, authorId, preResolvedIdentityNomination },
+            {
+              model: createModel,
+              authorId,
+              preResolvedIdentityNomination,
+              prePublication
+            },
             normalizeCreateDropPollRequest(createDropRequest.poll),
             { timer: ctx.timer!, connection }
           );
@@ -138,13 +148,15 @@ export class DropCreationApiService {
     {
       model,
       authorId,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      prePublication
     }: {
       model: CreateOrUpdateDropModel;
       authorId: string;
       preResolvedIdentityNomination: Awaited<
         ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
       > | null;
+      prePublication: PrePublicationPreparation;
     },
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
@@ -153,7 +165,8 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.execute(model, false, {
         timer,
         connection,
-        preResolvedIdentityNomination
+        preResolvedIdentityNomination,
+        prePublication
       });
     await this.dropPollsApiService.createPollForDrop(
       {
@@ -329,6 +342,10 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
         timer: ctx.timer
       });
+    const prePublication = await this.createOrUpdateDrop.preparePrePublication(
+      model,
+      ctx
+    );
     const { apiDrop, pendingPushNotificationIds } =
       await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -336,7 +353,8 @@ export class DropCreationApiService {
             await this.createOrUpdateDrop.execute(model, false, {
               timer: ctx.timer!,
               connection,
-              preResolvedIdentityNomination
+              preResolvedIdentityNomination,
+              prePublication
             });
           const apiDrop = await this.dropsService.findDropByIdOrThrow(
             {

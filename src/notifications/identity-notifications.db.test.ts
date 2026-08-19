@@ -190,14 +190,16 @@ describe('IdentityNotificationsDb', () => {
     expect(sendIdentityPushNotification).toHaveBeenCalledWith(401);
   });
 
-  it('fails closed when content moderation filtering fails on the write path', async () => {
+  it('retries the write when content moderation filtering fails', async () => {
     const row = notification({ related_drop_id: 'drop-1' });
     const { db, repo } = createRepo({
       filteredNotifications: [row],
       moderationFilterError: new Error('moderation tables unavailable')
     });
 
-    await repo.insertNotification(row as any, {} as any);
+    await expect(
+      repo.insertNotification(row as any, {} as any)
+    ).rejects.toThrow('moderation tables unavailable');
 
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();

@@ -297,12 +297,8 @@ export class ContentModerationService {
   }
 
   private getInitialModeratorProfileIds(): string[] {
-    const configured = env.getStringArray('CONTENT_MODERATOR_PROFILE_IDS', ',');
-    if (configured.length) {
-      return configured.map((id) => id.trim()).filter(Boolean);
-    }
     return env
-      .getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
+      .getStringArray('CONTENT_MODERATOR_PROFILE_IDS', ',')
       .map((id) => id.trim())
       .filter(Boolean);
   }

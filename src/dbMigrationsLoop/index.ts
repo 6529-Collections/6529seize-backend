@@ -4,6 +4,8 @@ import * as Entities from '../entities/entities';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
 import { competitionRepository } from '../competitions/competition.repository';
+import { contentModerationDb } from '../content-moderation/content-moderation.db';
+import { Time } from '../time';
 
 const DBMigrate = require('db-migrate');
 
@@ -24,6 +26,13 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         await competitionRepository.backfillLegacyMappings({});
       logger.info(
         `Ensured immutable legacy competition mappings; inserted ${insertedLegacyCompetitions}`
+      );
+      const deletedModerationChecks =
+        await contentModerationDb.deleteExpiredPrePublicationChecks(
+          Time.currentMillis() - Time.days(30).toMillis()
+        );
+      logger.info(
+        `Deleted ${deletedModerationChecks} expired content moderation pre-publication checks`
       );
     },
     { logger, entities: Object.values(Entities), syncEntities: true }

@@ -112,6 +112,7 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
+import { RequestContext } from '@/request.context';
 import {
   prePublicationModerationService,
   PrePublicationModerationService
@@ -126,6 +127,13 @@ interface DropRelationshipNotifications {
   readonly replyNotification: DropReplyNotificationData | null;
   readonly quoteNotifications: DropQuoteNotificationData[];
 }
+
+export type PrePublicationPreparation =
+  | {
+      readonly dropId: string;
+      readonly operation: 'CREATE' | 'UPDATE';
+    }
+  | { readonly trustedSystem: true };
 
 const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
@@ -327,13 +335,15 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      prePublication: PrePublicationPreparation;
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
     let resolvedModel = sanitizeDropStructuredFields(model);
@@ -379,8 +389,30 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     });
+  }
+
+  public async preparePrePublication(
+    model: CreateOrUpdateDropModel,
+    ctx: RequestContext
+  ): Promise<PrePublicationPreparation> {
+    const operation = model.drop_id === null ? 'CREATE' : 'UPDATE';
+    const dropId = model.drop_id ?? randomUUID();
+    await this.moderationService.evaluate(
+      {
+        dropId,
+        authorProfileId: this.getRequiredAuthorId(model),
+        operation,
+        title: model.title,
+        // File attachment contents intentionally remain in their existing
+        // asynchronous validation pipeline and are not inspected here.
+        parts: model.parts.map((part) => ({ content: part.content }))
+      },
+      { ...ctx, connection: undefined }
+    );
+    return { dropId, operation };
   }
 
   public async preResolveIdentityNomination(
@@ -447,13 +479,15 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      prePublication: PrePublicationPreparation;
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
     this.assertDropContentLimits(model.parts);
@@ -506,7 +540,18 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
     }
-    const candidateDropId = preExistingDropId ?? randomUUID();
+    const operation = preExistingDropId === null ? 'CREATE' : 'UPDATE';
+    const candidateDropId =
+      'trustedSystem' in prePublication
+        ? (preExistingDropId ?? randomUUID())
+        : prePublication.dropId;
+    if (
+      !('trustedSystem' in prePublication) &&
+      (prePublication.operation !== operation ||
+        (preExistingDropId !== null && candidateDropId !== preExistingDropId))
+    ) {
+      throw new Error('Pre-publication preparation does not match drop write');
+    }
     let dropId: string;
     let pendingPushNotificationIds: number[] = [];
     if (preExistingDropId) {
@@ -540,13 +585,6 @@ export class CreateOrUpdateDropUseCase {
           `Drop can't be edited after ${maximumTimeAllowedForEdit}`
         );
       }
-      await this.evaluatePrePublication(
-        candidateDropId,
-        authorId,
-        'UPDATE',
-        validatedModel,
-        { connection, timer }
-      );
       await this.deleteDropUseCase.execute(
         {
           drop_id: dropId,
@@ -571,13 +609,6 @@ export class CreateOrUpdateDropUseCase {
       );
     } else {
       dropId = candidateDropId;
-      await this.evaluatePrePublication(
-        candidateDropId,
-        authorId,
-        'CREATE',
-        validatedModel,
-        { connection, timer }
-      );
       const createdAt = Time.currentMillis();
       pendingPushNotificationIds = await this.insertAllDropComponents(
         {
@@ -636,27 +667,6 @@ export class CreateOrUpdateDropUseCase {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds
     };
-  }
-
-  private async evaluatePrePublication(
-    dropId: string,
-    authorProfileId: string,
-    operation: 'CREATE' | 'UPDATE',
-    model: CreateOrUpdateDropModel,
-    { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
-  ): Promise<void> {
-    await this.moderationService.evaluate(
-      {
-        dropId,
-        authorProfileId,
-        operation,
-        title: model.title,
-        // File attachment contents intentionally remain in their existing
-        // asynchronous validation pipeline and are not inspected here.
-        parts: model.parts.map((part) => ({ content: part.content }))
-      },
-      { connection, timer }
-    );
   }
 
   private async ensureDirectMessageReaderMetricsForNewDrop(

@@ -303,10 +303,35 @@ export class PrePublicationModerationService {
 
   private hasStructuredSensitiveDataSignal(content: string): boolean {
     const socialSecurityNumber = /\b\d{3}[- ]\d{2}[- ]\d{4}\b/;
-    const paymentCardNumber = /\b(?:\d[ -]*?){13,19}\b/;
-    return (
-      socialSecurityNumber.test(content) || paymentCardNumber.test(content)
+    const paymentCardNumbers = content.matchAll(
+      /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g
     );
+    return (
+      socialSecurityNumber.test(content) ||
+      Array.from(paymentCardNumbers).some(([candidate]) =>
+        this.isLuhnValid(candidate.replace(/[^\d]/g, ''))
+      )
+    );
+  }
+
+  private isLuhnValid(value: string): boolean {
+    if (value.length < 13 || value.length > 19) {
+      return false;
+    }
+    let sum = 0;
+    let doubleDigit = false;
+    for (let index = value.length - 1; index >= 0; index -= 1) {
+      let digit = Number(value[index]);
+      if (doubleDigit) {
+        digit *= 2;
+        if (digit > 9) {
+          digit -= 9;
+        }
+      }
+      sum += digit;
+      doubleDigit = !doubleDigit;
+    }
+    return sum % 10 === 0;
   }
 
   private hasExplicitThreatSignal(content: string): boolean {

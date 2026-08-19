@@ -114,6 +114,10 @@ describe('ContentModerationService', () => {
 
   it('persists reply context with the private report evidence', async () => {
     const { service, db, aiService, snapshot } = createService();
+    db.createReportWithViewerActions.mockResolvedValue({
+      ...reportRow(),
+      reason: ContentReportReason.OTHER
+    });
     const reportedReply = { ...snapshot, reply_to_drop_id: 'parent-drop' };
     const parentSnapshot = {
       ...snapshot,
@@ -147,7 +151,7 @@ describe('ContentModerationService', () => {
       {}
     );
     expect(aiService.assessReportedContent).toHaveBeenCalledWith({
-      reason: ContentReportReason.SCAM_OR_PHISHING,
+      reason: ContentReportReason.OTHER,
       content: reportedReply,
       parentContext: parentSnapshot
     });

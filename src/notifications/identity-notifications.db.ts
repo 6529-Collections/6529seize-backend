@@ -188,10 +188,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       );
     } catch (error) {
       this.logger.error(
-        'Failed to apply content moderation on notification write; suppressing notifications',
+        'Failed to apply content moderation on notification write',
         error
       );
-      return [];
+      throw error;
     }
   }
 
