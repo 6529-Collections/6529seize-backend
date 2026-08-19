@@ -202,17 +202,18 @@ export class UserGroupsService {
     createdBy: string,
     ctx: RequestContext,
     isVisible = false,
-    validateBeforeSave?: (
+    prepareNameBeforeSave?: (
       connection: ConnectionWrapper<unknown>
-    ) => Promise<void>
+    ) => Promise<string | void>
   ): Promise<ApiGroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
-          await validateBeforeSave?.(connection);
+          const preparedName = await prepareNameBeforeSave?.(connection);
+          const groupName = preparedName ?? group.name;
           const id =
-            slugify(group.name, {
+            slugify(groupName, {
               replacement: '-',
               lower: true,
               strict: true
@@ -271,7 +272,7 @@ export class UserGroupsService {
               created_at: new Date(),
               created_by: createdBy,
               visible: isVisible,
-              name: group.name,
+              name: groupName,
               profile_group_id: inclusionGroups?.profile_group_id ?? null,
               excluded_profile_group_id:
                 exclusionGroups?.profile_group_id ?? null
@@ -344,17 +345,6 @@ export class UserGroupsService {
     if (existingGroup) {
       return (await this.mapForApi([existingGroup], ctx))[0];
     }
-    const recipients = await this.profilePreferences.getDirectMessageRecipients(
-      uniqueIdentityAddresses,
-      creatorProfile.id!,
-      ctx.connection
-    );
-    this.assertDirectMessageRecipientsAllowed(
-      uniqueIdentityAddresses,
-      recipients
-    );
-    const handles = recipients.map((recipient) => recipient.handle);
-    const name = `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
     const userGroup: Omit<
       NewUserGroupEntity,
       'profile_group_id' | 'excluded_profile_group_id'
@@ -362,7 +352,7 @@ export class UserGroupsService {
       addresses: string[];
       excluded_addresses: string[];
     } = {
-      name,
+      name: `DM - ${creatorProfile.handle}`,
       cic_min: null,
       cic_max: null,
       cic_user: null,
@@ -414,6 +404,8 @@ export class UserGroupsService {
           uniqueIdentityAddresses,
           lockedRecipients
         );
+        const handles = lockedRecipients.map((recipient) => recipient.handle);
+        return `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
       }
     );
   }

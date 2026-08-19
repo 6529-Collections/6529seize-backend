@@ -7336,7 +7336,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiGlobalRepCategoryWaveContributorsPage"
-  /profiles/preferences:
+  /profile-preferences:
     get:
       tags:
         - Profiles

@@ -185,6 +185,43 @@ describe('direct message profile preferences', () => {
     ).toHaveBeenCalledWith(['0xrecipient'], creator.id, transactionConnection);
   });
 
+  it('builds the group name from recipients locked for admission', async () => {
+    const { service, profilePreferences } = createService({
+      recipients: [
+        {
+          profile_id: 'recipient-profile',
+          primary_address: '0xrecipient',
+          handle: 'locked-recipient',
+          direct_message_policy: ProfileDirectMessagePolicy.EVERYONE,
+          follows_creator: false
+        }
+      ]
+    });
+    const transactionConnection: ConnectionWrapper<unknown> = {
+      connection: { id: 'transaction' }
+    };
+    let preparedName: string | undefined;
+    jest
+      .spyOn(service, 'save')
+      .mockImplementation(
+        async (_group, _createdBy, _ctx, _visible, prepareName) => {
+          preparedName = await prepareName!(transactionConnection);
+          return { id: 'new-group' } as unknown as ApiGroupFull;
+        }
+      );
+
+    await service.findOrCreateDirectMessageGroup(
+      creator,
+      ['0xrecipient'],
+      context
+    );
+
+    expect(preparedName).toBe('DM - creator / locked-recipient');
+    expect(
+      profilePreferences.getDirectMessageRecipients
+    ).not.toHaveBeenCalled();
+  });
+
   it('applies the admission policy to every recipient of a new group DM', async () => {
     const { service } = createService({
       recipients: [
