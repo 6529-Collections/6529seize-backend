@@ -266,7 +266,7 @@ router.get(
 );
 
 router.get(
-  '/profiles/preferences',
+  '/profile-preferences',
   needsAuthenticatedUser(),
   async (
     req: GetProfilePreferencesRequest,
@@ -277,7 +277,7 @@ router.get(
 );
 
 router.put(
-  '/profiles/preferences',
+  '/profile-preferences',
   needsAuthenticatedUser(),
   async (
     req: PutProfilePreferencesRequest,
