@@ -1,7 +1,8 @@
 import {
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
-  PROFILE_PREFERENCES_TABLE
+  PROFILE_PREFERENCES_TABLE,
+  PROFILES_TABLE
 } from '@/constants';
 import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import {
@@ -59,7 +60,7 @@ function mapRow(row: ProfilePreferencesRow): ProfilePreferencesData {
 export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
   async get(
     profileId: string,
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<unknown>
   ): Promise<ProfilePreferencesData> {
     const row = await this.db.oneOrNull<ProfilePreferencesRow>(
       `select * from ${PROFILE_PREFERENCES_TABLE} where profile_id = :profileId`,
@@ -71,7 +72,7 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
 
   async getMany(
     profileIds: string[],
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<unknown>
   ): Promise<Map<string, ProfilePreferencesData>> {
     if (!profileIds.length) return new Map();
     const rows = await this.db.execute<ProfilePreferencesRow>(
@@ -148,6 +149,12 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
 
     return this.executeNativeQueriesInTransaction(async (connection) => {
       await this.db.execute(
+        `select external_id from ${PROFILES_TABLE}
+         where external_id = :profileId for update`,
+        { profileId },
+        { wrappedConnection: connection }
+      );
+      await this.db.execute(
         `insert into ${PROFILE_PREFERENCES_TABLE} (
           profile_id, direct_message_policy, notification_level,
           notify_direct_messages, notify_mentions_replies_quotes,
@@ -169,17 +176,9 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
   async getDirectMessageRecipientsForAdmission(
     addresses: string[],
     creatorProfileId: string,
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<unknown>
   ): Promise<DirectMessageRecipientPreference[]> {
     if (!addresses.length) return [];
-    await this.db.execute(
-      `insert into ${PROFILE_PREFERENCES_TABLE} (profile_id)
-       select distinct i.profile_id from ${IDENTITIES_TABLE} i
-       where i.primary_address in (:addresses) and i.profile_id is not null
-       on duplicate key update profile_id = values(profile_id)`,
-      { addresses },
-      { wrappedConnection: connection }
-    );
     return this.getDirectMessageRecipients(
       addresses,
       creatorProfileId,
@@ -191,7 +190,7 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
   async getDirectMessageRecipients(
     addresses: string[],
     creatorProfileId: string,
-    connection?: ConnectionWrapper<any>,
+    connection?: ConnectionWrapper<unknown>,
     lockForUpdate = false
   ): Promise<DirectMessageRecipientPreference[]> {
     if (!addresses.length) return [];
@@ -207,6 +206,8 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
             and s.target_id = :creatorProfileId
             and s.target_type = :targetType) as follows_creator
       from ${IDENTITIES_TABLE} i
+      join ${PROFILES_TABLE} profile_lock
+        on profile_lock.external_id = i.profile_id
       left join ${PROFILE_PREFERENCES_TABLE} p on p.profile_id = i.profile_id
       where i.primary_address in (:addresses) and i.profile_id is not null
       order by i.profile_id

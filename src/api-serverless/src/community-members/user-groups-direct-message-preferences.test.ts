@@ -1,23 +1,38 @@
 import { UserGroupsService } from './user-groups.service';
 import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
 import { ForbiddenException } from '@/exceptions';
+import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
+import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
+import { UserGroupEntity } from '@/entities/IUserGroup';
+import { RequestContext } from '@/request.context';
+import { ConnectionWrapper } from '@/sql-executor';
+import { DirectMessageRecipientPreference } from '@/profile-preferences/profile-preferences.db';
 
 const creator = {
   id: 'creator-profile',
   handle: 'creator',
   primary_wallet: '0xcreator'
-} as any;
-const context = {} as any;
+} as unknown as ApiIdentity;
+const context: RequestContext = {};
+
+type UserGroupsDbDependency = ConstructorParameters<
+  typeof UserGroupsService
+>[0];
+type AbusivenessDependency = ConstructorParameters<typeof UserGroupsService>[1];
+type MetricsDependency = ConstructorParameters<typeof UserGroupsService>[2];
+type PreferencesDependency = ConstructorParameters<typeof UserGroupsService>[3];
 
 function createService({
   existingGroup = null,
   recipients = []
 }: {
-  existingGroup?: any;
-  recipients?: any[];
+  existingGroup?: Pick<UserGroupEntity, 'id'> | null;
+  recipients?: DirectMessageRecipientPreference[];
 } = {}) {
   const userGroupsDb = {
-    findDirectMessageGroup: jest.fn().mockResolvedValue(existingGroup)
+    findDirectMessageGroup: jest
+      .fn()
+      .mockResolvedValue(existingGroup as unknown as UserGroupEntity | null)
   };
   const profilePreferences = {
     getDirectMessageRecipients: jest.fn().mockResolvedValue(recipients),
@@ -26,10 +41,10 @@ function createService({
       .mockResolvedValue(recipients)
   };
   const service = new UserGroupsService(
-    userGroupsDb as any,
-    {} as any,
-    {} as any,
-    profilePreferences as any
+    userGroupsDb as unknown as UserGroupsDbDependency,
+    {} as AbusivenessDependency,
+    {} as MetricsDependency,
+    profilePreferences as unknown as PreferencesDependency
   );
   return { service, userGroupsDb, profilePreferences };
 }
@@ -39,7 +54,12 @@ describe('direct message profile preferences', () => {
     const existingGroup = { id: 'existing-group' };
     const { service, profilePreferences } = createService({ existingGroup });
     jest
-      .spyOn(service as any, 'mapForApi')
+      .spyOn(
+        service as unknown as {
+          mapForApi: () => Promise<Array<{ id: string }>>;
+        },
+        'mapForApi'
+      )
       .mockResolvedValue([{ id: 'existing-group' }]);
 
     await expect(
@@ -77,17 +97,13 @@ describe('direct message profile preferences', () => {
         ]
       });
 
-      await expect(
-        service.findOrCreateDirectMessageGroup(
-          creator,
-          ['0xrecipient'],
-          context
-        )
-      ).rejects.toEqual(
-        expect.objectContaining<Partial<ForbiddenException>>({
-          message: expect.stringContaining(expectedMessage)
-        })
+      const result = service.findOrCreateDirectMessageGroup(
+        creator,
+        ['0xrecipient'],
+        context
       );
+      await expect(result).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(result).rejects.toThrow(expectedMessage);
     }
   );
 
@@ -110,7 +126,7 @@ describe('direct message profile preferences', () => {
       });
       const save = jest
         .spyOn(service, 'save')
-        .mockResolvedValue({ id: 'new-group' } as any);
+        .mockResolvedValue({ id: 'new-group' } as unknown as ApiGroupFull);
 
       await expect(
         service.findOrCreateDirectMessageGroup(
@@ -148,13 +164,15 @@ describe('direct message profile preferences', () => {
     profilePreferences.getDirectMessageRecipientsForAdmission.mockResolvedValue(
       [blockedRecipient]
     );
-    const transactionConnection = { id: 'transaction' } as any;
+    const transactionConnection: ConnectionWrapper<unknown> = {
+      connection: { id: 'transaction' }
+    };
     jest
       .spyOn(service, 'save')
       .mockImplementation(
         async (_group, _createdBy, _ctx, _visible, validate) => {
           await validate!(transactionConnection);
-          return { id: 'new-group' } as any;
+          return { id: 'new-group' } as unknown as ApiGroupFull;
         }
       );
 

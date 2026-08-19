@@ -49,7 +49,11 @@ describe('ProfilePreferencesDb', () => {
       }
     });
 
-    const [sql, params, options] = db.execute.mock.calls[0]!;
+    expect(db.execute.mock.calls[0]![0]).toContain(
+      'select external_id from profiles'
+    );
+    expect(db.execute.mock.calls[0]![0]).toContain('for update');
+    const [sql, params, options] = db.execute.mock.calls[1]!;
     const updateClause = sql.split('on duplicate key update')[1];
     expect(updateClause).toContain(
       'notify_subscription_coverage = :subscriptionCoverage'
@@ -65,6 +69,11 @@ describe('ProfilePreferencesDb', () => {
       })
     );
     expect(options).toEqual({ wrappedConnection: connection });
+    expect(
+      db.execute.mock.calls.every(
+        ([, , queryOptions]) => queryOptions?.wrappedConnection === connection
+      )
+    ).toBe(true);
     expect(db.oneOrNull).toHaveBeenCalledWith(
       expect.stringContaining('where profile_id = :profileId'),
       { profileId: 'profile-1' },
@@ -72,9 +81,9 @@ describe('ProfilePreferencesDb', () => {
     );
   });
 
-  it('creates and locks default recipient rows before admission', async () => {
+  it('locks stable recipient profile rows without creating preferences', async () => {
     const { connection, db, repository } = createRepository();
-    db.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([
+    db.execute.mockResolvedValueOnce([
       {
         profile_id: 'recipient-profile',
         primary_address: '0xrecipient',
@@ -98,10 +107,13 @@ describe('ProfilePreferencesDb', () => {
     ]);
 
     expect(db.execute.mock.calls[0]![0]).toContain(
+      'join profiles profile_lock'
+    );
+    expect(db.execute.mock.calls[0]![0]).toContain('for update');
+    expect(db.execute.mock.calls[0]![0]).not.toContain(
       'insert into profile_preferences'
     );
-    expect(db.execute.mock.calls[1]![0]).toContain('for update');
-    expect(db.execute.mock.calls[1]![2]).toEqual({
+    expect(db.execute.mock.calls[0]![2]).toEqual({
       wrappedConnection: connection
     });
   });
