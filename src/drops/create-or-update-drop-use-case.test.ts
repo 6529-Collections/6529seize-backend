@@ -54,7 +54,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any
+      {} as any,
+      { evaluate: jest.fn().mockResolvedValue(undefined) } as any
     );
   }
 
@@ -68,6 +69,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       deleteDropUseCase?: any;
       artCurationTokenWatchService?: any;
       attachmentsDb?: any;
+      moderationService?: any;
     } = {}
   ) {
     return new CreateOrUpdateDropUseCase(
@@ -84,7 +86,9 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       overrides.artCurationTokenWatchService ?? ({} as any),
       overrides.attachmentsDb ?? ({} as any),
-      {} as any
+      {} as any,
+      overrides.moderationService ??
+        ({ evaluate: jest.fn().mockResolvedValue(undefined) } as any)
     );
   }
 

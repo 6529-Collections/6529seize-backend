@@ -1,0 +1,303 @@
+import { env } from '@/env';
+import {
+  ContentModerationRecommendation,
+  ContentReportReason,
+  ContentReportStatus,
+  DropModerationStatus,
+  ModeratedProfileStatus
+} from '@/entities/IContentModeration';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
+import { Logger } from '@/logging';
+import { RequestContext } from '@/request.context';
+import {
+  contentModerationAiService,
+  ContentModerationAiService,
+  CONTENT_MODERATION_POLICY_VERSION
+} from './content-moderation-ai.service';
+import {
+  contentModerationDb,
+  ContentModerationDb,
+  ModerationReportRow
+} from './content-moderation.db';
+
+export interface SubmitContentReportInput {
+  readonly dropId: string;
+  readonly reporterProfileId: string;
+  readonly reason: ContentReportReason;
+  readonly notes: string | null;
+  readonly hideDrop: boolean;
+  readonly blockAuthor: boolean;
+}
+
+export class ContentModerationService {
+  private readonly logger = Logger.get(ContentModerationService.name);
+
+  constructor(
+    private readonly db: ContentModerationDb,
+    private readonly aiService: ContentModerationAiService
+  ) {}
+
+  async submitReport(
+    input: SubmitContentReportInput,
+    ctx: RequestContext
+  ): Promise<{
+    id: string;
+    status: ContentReportStatus;
+    drop_status: DropModerationStatus;
+  }> {
+    const snapshot = await this.db.getDropSnapshot(
+      input.dropId,
+      ctx.connection
+    );
+    if (snapshot.author_profile_id === input.reporterProfileId) {
+      throw new BadRequestException(`You can't report your own post`);
+    }
+    const parentContext = await this.getParentContext(snapshot, ctx);
+    const contentSnapshot = {
+      ...snapshot,
+      parent_context: parentContext
+    };
+
+    // Persist the allegation and private evidence before any optional personal
+    // action or external classifier call.
+    const report = await this.db.createReport(
+      {
+        dropId: input.dropId,
+        reporterProfileId: input.reporterProfileId,
+        authorProfileId: snapshot.author_profile_id,
+        reason: input.reason,
+        notes: input.notes,
+        contentSnapshot
+      },
+      ctx
+    );
+
+    if (input.blockAuthor) {
+      await this.db.blockProfile(
+        input.reporterProfileId,
+        snapshot.author_profile_id,
+        ctx
+      );
+    }
+    if (input.hideDrop) {
+      await this.db.hideDrop(input.reporterProfileId, input.dropId, ctx);
+    }
+
+    const assessment = await this.assessReport(report, snapshot, parentContext);
+    await this.db.saveReportAssessment(report.id, assessment, ctx.connection);
+    if (
+      assessment.recommendation ===
+        ContentModerationRecommendation.URGENT_QUARANTINE &&
+      assessment.confidence >= 0.95
+    ) {
+      await this.db.tryAiQuarantineForOpenReport(
+        {
+          reportId: report.id,
+          dropId: input.dropId,
+          reason: assessment.rationale
+        },
+        ctx
+      );
+    }
+    const currentPresentation = await this.db.getPresentations(
+      [{ id: input.dropId, author_id: snapshot.author_profile_id }],
+      null,
+      ctx.connection
+    );
+    const dropStatus =
+      currentPresentation[input.dropId]?.moderation.status ??
+      DropModerationStatus.VISIBLE;
+    return {
+      id: report.id,
+      status: ContentReportStatus.OPEN,
+      drop_status: dropStatus
+    };
+  }
+
+  async getModeratorAccess(profileId: string, ctx: RequestContext) {
+    return {
+      moderator: await this.db.isModerator(
+        profileId,
+        this.getInitialModeratorProfileIds(),
+        ctx.connection
+      )
+    };
+  }
+
+  async getQueue(
+    profileId: string,
+    input: { limit: number; before?: number | null },
+    ctx: RequestContext
+  ) {
+    await this.assertModerator(profileId, ctx);
+    const reports = await this.db.getModerationQueue(input, ctx.connection);
+    const dropIds = Array.from(
+      new Set(reports.map((report) => report.drop_id))
+    );
+    const dropAuthors = reports.map((report) => ({
+      id: report.drop_id,
+      author_id: report.author_profile_id
+    }));
+    const [presentations, history] = await Promise.all([
+      this.db.getPresentations(dropAuthors, null, ctx.connection),
+      this.db.getAuditHistoryForDrops(dropIds, ctx.connection)
+    ]);
+    return reports.map((report) => ({
+      ...report,
+      moderation: presentations[report.drop_id]?.moderation ?? {
+        status: DropModerationStatus.VISIBLE,
+        can_view: true
+      },
+      history: history[report.drop_id] ?? []
+    }));
+  }
+
+  async decideDrop(
+    moderatorProfileId: string,
+    input: {
+      dropId: string;
+      decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE';
+      reason: string;
+    },
+    ctx: RequestContext
+  ) {
+    await this.assertModerator(moderatorProfileId, ctx);
+    const target =
+      input.decision === 'ALLOW'
+        ? DropModerationStatus.VISIBLE
+        : input.decision === 'QUARANTINE'
+          ? DropModerationStatus.AI_QUARANTINED
+          : DropModerationStatus.MODERATOR_REMOVED;
+    await this.db.applyModeratorDropDecision(
+      {
+        dropId: input.dropId,
+        status: target,
+        actorProfileId: moderatorProfileId,
+        action:
+          input.decision === 'ALLOW'
+            ? 'MODERATOR_ALLOWED_OR_RESTORED'
+            : input.decision === 'QUARANTINE'
+              ? 'MODERATOR_QUARANTINED'
+              : 'MODERATOR_REMOVED',
+        reason: input.reason,
+        reportStatus:
+          input.decision === 'QUARANTINE'
+            ? null
+            : input.decision === 'ALLOW'
+              ? ContentReportStatus.RESOLVED_ALLOWED
+              : ContentReportStatus.RESOLVED_REMOVED
+      },
+      ctx
+    );
+    return { drop_id: input.dropId, status: target };
+  }
+
+  async setProfileStatus(
+    moderatorProfileId: string,
+    input: {
+      profileId: string;
+      status: ModeratedProfileStatus;
+      reason: string;
+    },
+    ctx: RequestContext
+  ) {
+    await this.assertModerator(moderatorProfileId, ctx);
+    if (moderatorProfileId === input.profileId) {
+      throw new BadRequestException(
+        `Moderators can't change their own moderation status`
+      );
+    }
+    await this.db.setProfileStatus(
+      {
+        profileId: input.profileId,
+        status: input.status,
+        moderatorProfileId,
+        reason: input.reason
+      },
+      ctx
+    );
+    return { profile_id: input.profileId, status: input.status };
+  }
+
+  private async assessReport(
+    report: ModerationReportRow,
+    snapshot: Record<string, unknown>,
+    parentContext: Record<string, unknown> | null
+  ) {
+    try {
+      const assessment = await this.aiService.assessReportedContent({
+        reason: report.reason,
+        content: snapshot,
+        parentContext
+      });
+      return {
+        ...assessment,
+        policyVersion: CONTENT_MODERATION_POLICY_VERSION
+      };
+    } catch (error) {
+      this.logger.error(
+        `Reported-content evaluator failed for report ${report.id}`,
+        error
+      );
+      return {
+        recommendation: ContentModerationRecommendation.NEEDS_HUMAN_REVIEW,
+        category: 'CLASSIFIER_UNAVAILABLE',
+        confidence: 0,
+        rationale:
+          'Automated assessment was unavailable; human review is required.',
+        evidence: [],
+        policyVersion: CONTENT_MODERATION_POLICY_VERSION
+      };
+    }
+  }
+
+  private async getParentContext(
+    snapshot: Record<string, unknown> & { reply_to_drop_id?: unknown },
+    ctx: RequestContext
+  ): Promise<Record<string, unknown> | null> {
+    if (typeof snapshot.reply_to_drop_id === 'string') {
+      try {
+        return await this.db.getDropSnapshot(
+          snapshot.reply_to_drop_id,
+          ctx.connection
+        );
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) {
+          throw error;
+        }
+      }
+    }
+    return null;
+  }
+
+  private async assertModerator(profileId: string, ctx: RequestContext) {
+    const isModerator = await this.db.isModerator(
+      profileId,
+      this.getInitialModeratorProfileIds(),
+      ctx.connection
+    );
+    if (!isModerator) {
+      throw new ForbiddenException('Moderator access is required');
+    }
+  }
+
+  private getInitialModeratorProfileIds(): string[] {
+    const configured = env.getStringArray('CONTENT_MODERATOR_PROFILE_IDS', ',');
+    if (configured.length) {
+      return configured.map((id) => id.trim()).filter(Boolean);
+    }
+    return env
+      .getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+}
+
+export const contentModerationService = new ContentModerationService(
+  contentModerationDb,
+  contentModerationAiService
+);

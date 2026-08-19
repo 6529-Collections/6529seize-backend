@@ -195,6 +195,20 @@ export const PUSH_NOTIFICATION_DEVICES_TABLE = 'push_notification_devices';
 export const PUSH_NOTIFICATION_SETTINGS_TABLE = 'push_notification_settings';
 export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';
 export const IDENTITY_MUTES_TABLE = 'identity_mutes';
+export const CONTENT_MODERATION_PROFILE_BLOCKS_TABLE =
+  'content_moderation_profile_blocks';
+export const CONTENT_MODERATION_HIDDEN_DROPS_TABLE =
+  'content_moderation_hidden_drops';
+export const CONTENT_MODERATION_REPORTS_TABLE = 'content_moderation_reports';
+export const CONTENT_MODERATION_DROP_STATES_TABLE =
+  'content_moderation_drop_states';
+export const CONTENT_MODERATION_ROLES_TABLE = 'content_moderation_roles';
+export const CONTENT_MODERATION_AUDIT_LOG_TABLE =
+  'content_moderation_audit_log';
+export const CONTENT_MODERATION_PROFILE_STATES_TABLE =
+  'content_moderation_profile_states';
+export const CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE =
+  'content_moderation_pre_publication_checks';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';

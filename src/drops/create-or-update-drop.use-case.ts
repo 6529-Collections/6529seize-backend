@@ -112,6 +112,10 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
+import {
+  prePublicationModerationService,
+  PrePublicationModerationService
+} from '@/content-moderation/pre-publication-moderation.service';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -272,7 +276,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly dropMediaUploadsDb: DropMediaUploadsDb
+    private readonly dropMediaUploadsDb: DropMediaUploadsDb,
+    private readonly moderationService: PrePublicationModerationService = prePublicationModerationService
   ) {}
 
   private assertDropContentLimits(
@@ -501,6 +506,7 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
     }
+    const candidateDropId = preExistingDropId ?? randomUUID();
     let dropId: string;
     let pendingPushNotificationIds: number[] = [];
     if (preExistingDropId) {
@@ -534,6 +540,13 @@ export class CreateOrUpdateDropUseCase {
           `Drop can't be edited after ${maximumTimeAllowedForEdit}`
         );
       }
+      await this.evaluatePrePublication(
+        candidateDropId,
+        authorId,
+        'UPDATE',
+        validatedModel,
+        { connection, timer }
+      );
       await this.deleteDropUseCase.execute(
         {
           drop_id: dropId,
@@ -557,7 +570,14 @@ export class CreateOrUpdateDropUseCase {
         { connection, timer }
       );
     } else {
-      dropId = randomUUID();
+      dropId = candidateDropId;
+      await this.evaluatePrePublication(
+        candidateDropId,
+        authorId,
+        'CREATE',
+        validatedModel,
+        { connection, timer }
+      );
       const createdAt = Time.currentMillis();
       pendingPushNotificationIds = await this.insertAllDropComponents(
         {
@@ -616,6 +636,27 @@ export class CreateOrUpdateDropUseCase {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds
     };
+  }
+
+  private async evaluatePrePublication(
+    dropId: string,
+    authorProfileId: string,
+    operation: 'CREATE' | 'UPDATE',
+    model: CreateOrUpdateDropModel,
+    { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
+  ): Promise<void> {
+    await this.moderationService.evaluate(
+      {
+        dropId,
+        authorProfileId,
+        operation,
+        title: model.title,
+        // File attachment contents intentionally remain in their existing
+        // asynchronous validation pipeline and are not inspected here.
+        parts: model.parts.map((part) => ({ content: part.content }))
+      },
+      { connection, timer }
+    );
   }
 
   private async ensureDirectMessageReaderMetricsForNewDrop(
@@ -2368,5 +2409,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   dropNftLinksDb,
   artCurationTokenWatchService,
   attachmentsDb,
-  dropMediaUploadsDb
+  dropMediaUploadsDb,
+  prePublicationModerationService
 );

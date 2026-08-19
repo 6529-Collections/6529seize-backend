@@ -32,6 +32,10 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import {
+  contentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -213,7 +217,11 @@ export class WsListenersNotifier {
 
   constructor(
     private readonly appWebSockets: AppWebSockets,
-    private readonly wsConnectionRepository: WsConnectionRepository
+    private readonly wsConnectionRepository: WsConnectionRepository,
+    private readonly moderationDb: Pick<
+      ContentModerationDb,
+      'getViewerContextsForDrop'
+    > = contentModerationDb
   ) {}
 
   async notifyAboutIdentityNotificationsChanged(
@@ -278,17 +286,37 @@ export class WsListenersNotifier {
         onlineProfiles,
         inputDrop
       );
+      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
+        {
+          dropId: inputDrop.id,
+          authorProfileId: inputDrop.author.id,
+          viewerProfileIds: onlineProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId): profileId is string => profileId !== null)
+        },
+        ctx.connection
+      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
+        onlineProfiles.map(({ connectionId, profileId }) => {
+          const recipientDrop: ApiDrop = {
+            ...inputDrop,
+            viewer_context:
+              profileId === null
+                ? { author_blocked: false, drop_hidden: false }
+                : (viewerContexts[profileId] ?? {
+                    author_blocked: false,
+                    drop_hidden: false
+                  })
+          };
+          return this.appWebSockets.send({
             connectionId,
             message: serializeDropUpdateForRecipient(
-              inputDrop,
+              recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0),
               reason
             )
-          })
-        )
+          });
+        })
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_UPDATE', inputDrop, e);
@@ -315,16 +343,36 @@ export class WsListenersNotifier {
         onlineProfiles,
         drop
       );
+      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
+        {
+          dropId: drop.id,
+          authorProfileId: drop.author.id,
+          viewerProfileIds: onlineProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId): profileId is string => profileId !== null)
+        },
+        ctx.connection
+      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
+        onlineProfiles.map(({ connectionId, profileId }) => {
+          const recipientDrop: ApiDrop = {
+            ...drop,
+            viewer_context:
+              profileId === null
+                ? { author_blocked: false, drop_hidden: false }
+                : (viewerContexts[profileId] ?? {
+                    author_blocked: false,
+                    drop_hidden: false
+                  })
+          };
+          return this.appWebSockets.send({
             connectionId,
             message: serializeDropRatingUpdateForRecipient(
-              drop,
+              recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
-          })
-        )
+          });
+        })
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_RATING_UPDATE', drop, e);
@@ -351,16 +399,36 @@ export class WsListenersNotifier {
         onlineProfiles,
         drop
       );
+      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
+        {
+          dropId: drop.id,
+          authorProfileId: drop.author.id,
+          viewerProfileIds: onlineProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId): profileId is string => profileId !== null)
+        },
+        ctx.connection
+      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
+        onlineProfiles.map(({ connectionId, profileId }) => {
+          const recipientDrop: ApiDrop = {
+            ...drop,
+            viewer_context:
+              profileId === null
+                ? { author_blocked: false, drop_hidden: false }
+                : (viewerContexts[profileId] ?? {
+                    author_blocked: false,
+                    drop_hidden: false
+                  })
+          };
+          return this.appWebSockets.send({
             connectionId,
             message: serializeDropReactionUpdateForRecipient(
-              drop,
+              recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
-          })
-        )
+          });
+        })
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_REACTION_UPDATE', drop, e);

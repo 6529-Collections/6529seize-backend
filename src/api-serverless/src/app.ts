@@ -26,6 +26,7 @@ import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
 import identitiesRoutes from './identities/identities.routes';
+import contentModerationRoutes from './content-moderation/content-moderation.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
 import mintingClaimsRoutes from './minting-claims/api.minting-claims.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
@@ -1619,6 +1620,7 @@ async function initializeApp() {
   apiRouter.use(`/identity-subscriptions`, identitySubscriptionsRoutes);
   apiRouter.use(`/waves-overview`, wavesOverviewRoutes);
   apiRouter.use(`/identities`, identitiesRoutes);
+  apiRouter.use(`/content-moderation`, contentModerationRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
   apiRouter.use(`/community-metrics`, communityMetricsRoutes);

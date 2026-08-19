@@ -28,10 +28,12 @@ function notification(overrides: Record<string, unknown> = {}) {
 
 function createRepo({
   filteredNotifications,
-  filterError
+  filterError,
+  moderationFilterError
 }: {
   readonly filteredNotifications: ReturnType<typeof notification>[];
   readonly filterError?: Error;
+  readonly moderationFilterError?: Error;
 }) {
   const db = {
     execute: jest.fn().mockResolvedValue([undefined, undefined, 101]),
@@ -44,10 +46,27 @@ function createRepo({
         : () => Promise.resolve(filteredNotifications)
     )
   };
+  const contentModerationDb = {
+    filterBlockedNotificationRows: jest
+      .fn()
+      .mockImplementation((rows) =>
+        moderationFilterError
+          ? Promise.reject(moderationFilterError)
+          : Promise.resolve(rows)
+      ),
+    filterUnavailableDropNotificationRows: jest
+      .fn()
+      .mockImplementation((rows) => Promise.resolve(rows))
+  };
   return {
     db,
     identityMutesDb,
-    repo: new IdentityNotificationsDb(() => db as any, identityMutesDb as any)
+    contentModerationDb,
+    repo: new IdentityNotificationsDb(
+      () => db as any,
+      identityMutesDb as any,
+      contentModerationDb as any
+    )
   };
 }
 
@@ -169,6 +188,19 @@ describe('IdentityNotificationsDb', () => {
       { wrappedConnection: {} }
     );
     expect(sendIdentityPushNotification).toHaveBeenCalledWith(401);
+  });
+
+  it('fails closed when content moderation filtering fails on the write path', async () => {
+    const row = notification({ related_drop_id: 'drop-1' });
+    const { db, repo } = createRepo({
+      filteredNotifications: [row],
+      moderationFilterError: new Error('moderation tables unavailable')
+    });
+
+    await repo.insertNotification(row as any, {} as any);
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
   });
 
   it('keeps actorless system notifications on the write path', async () => {
