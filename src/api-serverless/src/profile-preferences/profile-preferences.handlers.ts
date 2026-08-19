@@ -12,7 +12,8 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
   ProfileDirectMessagePolicy,
   ProfileNotificationLevel,
-  ProfilePreferencesData
+  ProfilePreferencesData,
+  ProfilePreferencesUpdate
 } from '@/entities/IProfilePreferences';
 import { ForbiddenException } from '@/exceptions';
 import { profilePreferencesDb } from '@/profile-preferences/profile-preferences.db';
@@ -98,7 +99,7 @@ export async function handlePutProfilePreferences(
   const update = getValidatedByJoiOrThrow(
     req.body,
     updateSchema
-  ) as Partial<ProfilePreferencesData>;
+  ) as ProfilePreferencesUpdate;
   return toApiPreferences(
     await profilePreferencesDb.upsert(await getProfileId(req), update)
   );

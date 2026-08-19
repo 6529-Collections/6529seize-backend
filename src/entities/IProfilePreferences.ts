@@ -27,6 +27,12 @@ export interface ProfilePreferencesData {
   readonly notifications: ProfileNotificationCategories;
 }
 
+export interface ProfilePreferencesUpdate {
+  readonly direct_message_policy?: ProfileDirectMessagePolicy;
+  readonly notification_level?: ProfileNotificationLevel;
+  readonly notifications?: Partial<ProfileNotificationCategories>;
+}
+
 export const DEFAULT_PROFILE_PREFERENCES: ProfilePreferencesData = {
   direct_message_policy: ProfileDirectMessagePolicy.EVERYONE,
   notification_level: ProfileNotificationLevel.ALL,

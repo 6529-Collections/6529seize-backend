@@ -33,4 +33,23 @@ describe('profile notification policy', () => {
       })
     ).toBe(true);
   });
+
+  it.each([
+    IdentityNotificationCause.WAVE_CREATED,
+    IdentityNotificationCause.ALL_DROPS,
+    IdentityNotificationCause.PRIORITY_ALERT
+  ])(
+    'uses the combined direct-message and wave-activity preference for %s',
+    (cause) => {
+      expect(
+        isNotificationEnabled(cause, {
+          ...DEFAULT_PROFILE_PREFERENCES,
+          notifications: {
+            ...DEFAULT_PROFILE_PREFERENCES.notifications,
+            direct_messages: false
+          }
+        })
+      ).toBe(false);
+    }
+  );
 });

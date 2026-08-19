@@ -8,7 +8,8 @@ import {
   DEFAULT_PROFILE_PREFERENCES,
   ProfileDirectMessagePolicy,
   ProfileNotificationLevel,
-  ProfilePreferencesData
+  ProfilePreferencesData,
+  ProfilePreferencesUpdate
 } from '@/entities/IProfilePreferences';
 import {
   ConnectionWrapper,
@@ -83,53 +84,115 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
 
   async upsert(
     profileId: string,
-    update: Partial<ProfilePreferencesData>
+    update: ProfilePreferencesUpdate
   ): Promise<ProfilePreferencesData> {
-    const current = await this.get(profileId);
-    const merged: ProfilePreferencesData = {
-      ...current,
-      ...update,
-      notifications: { ...current.notifications, ...update.notifications }
+    const notifications = update.notifications ?? {};
+    const assignments: string[] = [];
+    if (update.direct_message_policy !== undefined) {
+      assignments.push('direct_message_policy = :directMessagePolicy');
+    }
+    if (update.notification_level !== undefined) {
+      assignments.push('notification_level = :notificationLevel');
+    }
+    if (notifications.direct_messages !== undefined) {
+      assignments.push('notify_direct_messages = :directMessages');
+    }
+    if (notifications.mentions_replies_quotes !== undefined) {
+      assignments.push(
+        'notify_mentions_replies_quotes = :mentionsRepliesQuotes'
+      );
+    }
+    if (notifications.reactions_votes_boosts !== undefined) {
+      assignments.push('notify_reactions_votes_boosts = :reactionsVotesBoosts');
+    }
+    if (notifications.new_followers !== undefined) {
+      assignments.push('notify_new_followers = :newFollowers');
+    }
+    if (notifications.rep_and_nic !== undefined) {
+      assignments.push('notify_rep_and_nic = :repAndNic');
+    }
+    if (notifications.subscription_coverage !== undefined) {
+      assignments.push('notify_subscription_coverage = :subscriptionCoverage');
+    }
+    if (!assignments.length) {
+      assignments.push('profile_id = values(profile_id)');
+    }
+
+    const params = {
+      profileId,
+      directMessagePolicy:
+        update.direct_message_policy ??
+        DEFAULT_PROFILE_PREFERENCES.direct_message_policy,
+      notificationLevel:
+        update.notification_level ??
+        DEFAULT_PROFILE_PREFERENCES.notification_level,
+      directMessages:
+        notifications.direct_messages ??
+        DEFAULT_PROFILE_PREFERENCES.notifications.direct_messages,
+      mentionsRepliesQuotes:
+        notifications.mentions_replies_quotes ??
+        DEFAULT_PROFILE_PREFERENCES.notifications.mentions_replies_quotes,
+      reactionsVotesBoosts:
+        notifications.reactions_votes_boosts ??
+        DEFAULT_PROFILE_PREFERENCES.notifications.reactions_votes_boosts,
+      newFollowers:
+        notifications.new_followers ??
+        DEFAULT_PROFILE_PREFERENCES.notifications.new_followers,
+      repAndNic:
+        notifications.rep_and_nic ??
+        DEFAULT_PROFILE_PREFERENCES.notifications.rep_and_nic,
+      subscriptionCoverage:
+        notifications.subscription_coverage ??
+        DEFAULT_PROFILE_PREFERENCES.notifications.subscription_coverage
     };
+
+    return this.executeNativeQueriesInTransaction(async (connection) => {
+      await this.db.execute(
+        `insert into ${PROFILE_PREFERENCES_TABLE} (
+          profile_id, direct_message_policy, notification_level,
+          notify_direct_messages, notify_mentions_replies_quotes,
+          notify_reactions_votes_boosts, notify_new_followers,
+          notify_rep_and_nic, notify_subscription_coverage
+        ) values (
+          :profileId, :directMessagePolicy, :notificationLevel,
+          :directMessages, :mentionsRepliesQuotes,
+          :reactionsVotesBoosts, :newFollowers,
+          :repAndNic, :subscriptionCoverage
+        ) on duplicate key update ${assignments.join(', ')}`,
+        params,
+        { wrappedConnection: connection }
+      );
+      return this.get(profileId, connection);
+    });
+  }
+
+  async getDirectMessageRecipientsForAdmission(
+    addresses: string[],
+    creatorProfileId: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<DirectMessageRecipientPreference[]> {
+    if (!addresses.length) return [];
     await this.db.execute(
-      `insert into ${PROFILE_PREFERENCES_TABLE} (
-        profile_id, direct_message_policy, notification_level,
-        notify_direct_messages, notify_mentions_replies_quotes,
-        notify_reactions_votes_boosts, notify_new_followers,
-        notify_rep_and_nic, notify_subscription_coverage
-      ) values (
-        :profileId, :directMessagePolicy, :notificationLevel,
-        :directMessages, :mentionsRepliesQuotes,
-        :reactionsVotesBoosts, :newFollowers,
-        :repAndNic, :subscriptionCoverage
-      ) on duplicate key update
-        direct_message_policy = values(direct_message_policy),
-        notification_level = values(notification_level),
-        notify_direct_messages = values(notify_direct_messages),
-        notify_mentions_replies_quotes = values(notify_mentions_replies_quotes),
-        notify_reactions_votes_boosts = values(notify_reactions_votes_boosts),
-        notify_new_followers = values(notify_new_followers),
-        notify_rep_and_nic = values(notify_rep_and_nic),
-        notify_subscription_coverage = values(notify_subscription_coverage)`,
-      {
-        profileId,
-        directMessagePolicy: merged.direct_message_policy,
-        notificationLevel: merged.notification_level,
-        directMessages: merged.notifications.direct_messages,
-        mentionsRepliesQuotes: merged.notifications.mentions_replies_quotes,
-        reactionsVotesBoosts: merged.notifications.reactions_votes_boosts,
-        newFollowers: merged.notifications.new_followers,
-        repAndNic: merged.notifications.rep_and_nic,
-        subscriptionCoverage: merged.notifications.subscription_coverage
-      }
+      `insert into ${PROFILE_PREFERENCES_TABLE} (profile_id)
+       select distinct i.profile_id from ${IDENTITIES_TABLE} i
+       where i.primary_address in (:addresses) and i.profile_id is not null
+       on duplicate key update profile_id = values(profile_id)`,
+      { addresses },
+      { wrappedConnection: connection }
     );
-    return merged;
+    return this.getDirectMessageRecipients(
+      addresses,
+      creatorProfileId,
+      connection,
+      true
+    );
   }
 
   async getDirectMessageRecipients(
     addresses: string[],
     creatorProfileId: string,
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    lockForUpdate = false
   ): Promise<DirectMessageRecipientPreference[]> {
     if (!addresses.length) return [];
     const rows = await this.db.execute<
@@ -145,7 +208,9 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
             and s.target_type = :targetType) as follows_creator
       from ${IDENTITIES_TABLE} i
       left join ${PROFILE_PREFERENCES_TABLE} p on p.profile_id = i.profile_id
-      where i.primary_address in (:addresses) and i.profile_id is not null`,
+      where i.primary_address in (:addresses) and i.profile_id is not null
+      order by i.profile_id
+      ${lockForUpdate ? 'for update' : ''}`,
       {
         addresses,
         creatorProfileId,
