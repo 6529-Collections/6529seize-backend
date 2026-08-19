@@ -62,6 +62,8 @@ import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiV
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveGroupValidationRequest } from '@/api/generated/models/ApiWaveGroupValidationRequest';
+import { ApiWaveGroupValidationResponse } from '@/api/generated/models/ApiWaveGroupValidationResponse';
 import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentionSearchResult';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
@@ -1447,6 +1449,20 @@ export type ListCompetitionWinnersV3Request = Request<
   ApiResponse<ListCompetitionWinnersV3Response>,
   never,
   ListCompetitionWinnersV3Query,
+  Record<string, never>
+>;
+
+export type ValidateWaveGroupsPathParams = Record<string, never>;
+
+export type ValidateWaveGroupsQuery = Record<string, never>;
+
+export type ValidateWaveGroupsResponse = ApiWaveGroupValidationResponse;
+
+export type ValidateWaveGroupsRequest = Request<
+  ValidateWaveGroupsPathParams,
+  ApiResponse<ValidateWaveGroupsResponse>,
+  ApiWaveGroupValidationRequest,
+  ValidateWaveGroupsQuery,
   Record<string, never>
 >;
 
