@@ -32,7 +32,8 @@ const MarkWaveReadSchema = Joi.object<ApiMarkWaveReadRequest>({
     .integer()
     .min(0)
     .max(Number.MAX_SAFE_INTEGER)
-    .optional()
+    .optional(),
+  request_dm_unread_state: Joi.boolean().optional()
 }).unknown(false);
 
 const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
@@ -223,7 +224,8 @@ router.post(
         waveId,
         authenticationContext.getActingAsId()!,
         { timer },
-        request.read_through_serial_no
+        request.read_through_serial_no,
+        request.request_dm_unread_state === true
       );
     res.send({ dm_unread_state: dmUnreadState });
   }

@@ -1614,7 +1614,7 @@ describe('WaveApiService direct-message mute synchronization', () => {
           fn(connection)
         ),
         setWaveMuted: jest.fn().mockResolvedValue(undefined),
-        findDmUnreadConversationStates: jest
+        findDmUnreadConversationStatesForIdentities: jest
           .fn()
           .mockResolvedValue([dmUnreadState])
       };
@@ -1622,6 +1622,11 @@ describe('WaveApiService direct-message mute synchronization', () => {
         recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
       };
       const wsListenersNotifier = {
+        findConnectedNotificationRecipients: jest
+          .fn()
+          .mockResolvedValue([
+            { connectionId: 'connection-1', identityId: 'profile-1' }
+          ]),
         notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined)
       };
       const service = new WaveApiService(
@@ -1656,14 +1661,19 @@ describe('WaveApiService direct-message mute synchronization', () => {
         { waveId: 'wave-1', readerId: 'profile-1', muted },
         expect.objectContaining({ connection })
       );
-      expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
-        { identityId: 'profile-1', waveIds: ['wave-1'] },
+      expect(
+        wavesApiDb.findDmUnreadConversationStatesForIdentities
+      ).toHaveBeenCalledWith(
+        { identityIds: ['profile-1'], waveIds: ['wave-1'] },
         ctx,
         DbPoolName.WRITE
       );
       expect(
         wsListenersNotifier.notifyAboutDmUnreadStateChanged
-      ).toHaveBeenCalledWith([dmUnreadState]);
+      ).toHaveBeenCalledWith(
+        [dmUnreadState],
+        [{ connectionId: 'connection-1', identityId: 'profile-1' }]
+      );
     }
   );
 });

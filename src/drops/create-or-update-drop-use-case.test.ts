@@ -66,6 +66,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       userNotifier?: any;
       identitySubscriptionsDb?: any;
       deleteDropUseCase?: any;
+      metricsRecorder?: any;
       artCurationTokenWatchService?: any;
       attachmentsDb?: any;
     } = {}
@@ -80,7 +81,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       overrides.identitySubscriptionsDb ?? ({} as any),
       {} as any,
       overrides.deleteDropUseCase ?? ({} as any),
-      {} as any,
+      overrides.metricsRecorder ?? ({} as any),
       {} as any,
       overrides.artCurationTokenWatchService ?? ({} as any),
       overrides.attachmentsDb ?? ({} as any),
@@ -261,6 +262,49 @@ describe('CreateOrUpdateDropUseCase', () => {
       expect.any(Object)
     );
     expect(dropsDb.applyInsertedDropMetricsDelta).not.toHaveBeenCalled();
+  });
+
+  it('does not re-read newly inserted drops for ordinary waves', async () => {
+    const connection = {} as any;
+    const model = createChatDropModel();
+    const dropsDb = {
+      findDropById: jest.fn(),
+      applyInsertedDropMetricsDelta: jest.fn().mockResolvedValue(undefined)
+    };
+    const wavesApiDb = {
+      findById: jest.fn().mockResolvedValue({
+        ...createSlowModeWave({
+          chat_slow_mode_cooldown_ms: null,
+          is_direct_message: false
+        }),
+        type: WaveType.CHAT
+      })
+    };
+    const metricsRecorder = {
+      recordDrop: jest.fn().mockResolvedValue(undefined),
+      recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+    };
+    const artCurationTokenWatchService = {
+      registerDrop: jest.fn().mockResolvedValue(undefined)
+    };
+    const useCase = createUseCaseWithMocks({
+      dropsDb,
+      wavesApiDb,
+      metricsRecorder,
+      artCurationTokenWatchService
+    });
+    jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+      validatedModel: model,
+      groupIdsUserIsEligibleFor: []
+    });
+    jest
+      .spyOn(useCase as any, 'verifyChatLinksAreAllowed')
+      .mockReturnValue(undefined);
+    jest.spyOn(useCase as any, 'insertAllDropComponents').mockResolvedValue([]);
+
+    await (useCase as any).createOrUpdateDrop(model, false, { connection });
+
+    expect(dropsDb.findDropById).not.toHaveBeenCalled();
   });
 
   it('sanitizes structured drop fields without touching part content', () => {
@@ -920,12 +964,13 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toBe(true);
   });
 
-  it('records the new direct-message drop for every recipient except the author', async () => {
+  it('records a new direct-message drop only for visible recipients other than the author', async () => {
     const connection = {};
     const wave = {
       ...createSlowModeWave({
         chat_slow_mode_cooldown_ms: null,
         is_direct_message: true,
+        parent_wave_id: 'parent-wave',
         visibility_group_id: 'visibility-group',
         participation_group_id: 'participation-group',
         chat_group_id: 'chat-dm-group',
@@ -936,12 +981,25 @@ describe('CreateOrUpdateDropUseCase', () => {
       next_decision_time: null
     };
     const wavesApiDb = {
+      findWaveById: jest.fn().mockResolvedValue({
+        id: 'parent-wave',
+        visibility_group_id: 'parent-visibility-group'
+      }),
       recordDirectMessageUnreadDrop: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
       findIdentitiesInGroups: jest
         .fn()
-        .mockResolvedValue(['author-profile', 'reader-profile'])
+        .mockResolvedValue([
+          'author-profile',
+          'reader-profile',
+          'child-only-profile'
+        ]),
+      findIdentityGroupMemberships: jest.fn().mockResolvedValue([
+        { groupId: 'visibility-group', profileId: 'reader-profile' },
+        { groupId: 'parent-visibility-group', profileId: 'reader-profile' },
+        { groupId: 'visibility-group', profileId: 'child-only-profile' }
+      ])
     };
     const useCase = createUseCaseWithMocks({
       wavesApiDb,
@@ -962,6 +1020,17 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(userGroupsService.findIdentitiesInGroups).toHaveBeenCalledWith(
       ['chat-dm-group'],
+      { timer: undefined, connection }
+    );
+    expect(wavesApiDb.findWaveById).toHaveBeenCalledWith(
+      'parent-wave',
+      connection
+    );
+    expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
+      {
+        groupIds: ['visibility-group', 'parent-visibility-group'],
+        profileIds: ['reader-profile', 'child-only-profile']
+      },
       { timer: undefined, connection }
     );
     expect(wavesApiDb.recordDirectMessageUnreadDrop).toHaveBeenCalledWith(

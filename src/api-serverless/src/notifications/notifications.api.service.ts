@@ -152,7 +152,8 @@ export class NotificationsApiService {
     waveId: string,
     identityId: string,
     ctx: RequestContext,
-    readThroughSerialNo?: number
+    readThroughSerialNo?: number,
+    requestDmUnreadState = false
   ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
     const wave = await this.wavesApiDb.findById(
@@ -160,8 +161,9 @@ export class NotificationsApiService {
       ctx.connection,
       DbPoolName.WRITE
     );
+    let groupsUserIsEligibleFor: string[] | undefined;
     if (wave?.is_direct_message) {
-      const groupsUserIsEligibleFor =
+      groupsUserIsEligibleFor =
         await this.userGroupsService.getGroupsUserIsEligibleFor(
           identityId,
           ctx.timer
@@ -195,25 +197,38 @@ export class NotificationsApiService {
       identityId,
       waveId
     });
-    const dmUnreadState = wave?.is_direct_message
+    const dmRecipients = wave?.is_direct_message
+      ? await this.wsListenersNotifier.findConnectedNotificationRecipients([
+          identityId
+        ])
+      : [];
+    const shouldLoadDmUnreadState =
+      wave?.is_direct_message === true &&
+      (requestDmUnreadState || dmRecipients.length > 0);
+    const dmUnreadState = shouldLoadDmUnreadState
       ? ((
           await this.wavesApiDb.findDmUnreadConversationStates(
-            { identityId, waveIds: [waveId] },
+            {
+              identityId,
+              eligibleGroups: groupsUserIsEligibleFor,
+              waveIds: [waveId]
+            },
             ctx,
             DbPoolName.WRITE
           )
         )[0] ?? null)
       : null;
-    if (dmUnreadState) {
-      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged([
-        dmUnreadState
-      ]);
+    if (dmUnreadState && dmRecipients.length) {
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        [dmUnreadState],
+        dmRecipients
+      );
     }
     await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
       identityId
     ]);
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    return dmUnreadState;
+    return requestDmUnreadState ? dmUnreadState : null;
   }
 
   public async getNotifications(

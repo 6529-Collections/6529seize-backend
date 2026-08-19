@@ -132,6 +132,44 @@ describe('WsListenersNotifier', () => {
     ]);
   });
 
+  it('uses pre-resolved direct-message recipients without repeating the connection lookup', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      findNotificationConnectionIdsByIdentityIds: jest.fn()
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const unreadState = {
+      profile_id: 'profile-1',
+      wave_id: 'wave-1',
+      unread_count: 2,
+      first_unread_drop_serial_no: 10,
+      latest_drop_serial_no: 11,
+      latest_read_serial_no: 9,
+      version: 3
+    };
+
+    await notifier.notifyAboutDmUnreadStateChanged(
+      [unreadState],
+      [{ connectionId: 'connection-1', identityId: 'profile-1' }]
+    );
+
+    expect(
+      wsConnectionRepository.findNotificationConnectionIdsByIdentityIds
+    ).not.toHaveBeenCalled();
+    expect(appWebSockets.send).toHaveBeenCalledWith({
+      connectionId: 'connection-1',
+      message: JSON.stringify({
+        type: 'DM_UNREAD_STATE_CHANGED',
+        data: unreadState
+      })
+    });
+  });
+
   it('sends notification invalidations only to subscribed recipient connections', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)

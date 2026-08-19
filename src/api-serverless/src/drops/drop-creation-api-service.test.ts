@@ -306,6 +306,11 @@ describe('DropCreationApiService.createDrop', () => {
       notifyAboutDropUpdate: jest.fn().mockImplementation(async () => {
         order.push('drop-broadcast');
       }),
+      findConnectedNotificationRecipients: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', identityId: 'reader-profile' }
+        ]),
       notifyAboutDmUnreadStateChanged: jest
         .fn()
         .mockImplementation(async () => {
@@ -354,7 +359,10 @@ describe('DropCreationApiService.createDrop', () => {
     );
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
-    ).toHaveBeenCalledWith([dmUnreadState]);
+    ).toHaveBeenCalledWith(
+      [dmUnreadState],
+      [{ connectionId: 'connection-1', identityId: 'reader-profile' }]
+    );
     expect(order).toEqual([
       'drop-written',
       'committed',
@@ -468,7 +476,8 @@ describe('DropCreationApiService.deleteDropById', () => {
       id: 'drop-1',
       serial_no: 7,
       visibility_group_id: 'group-1',
-      wave_id: 'wave-1'
+      wave_id: 'wave-1',
+      dm_unread_recipient_ids: ['reader-1']
     };
     const dropsDb = {
       executeNativeQueriesInTransaction: jest.fn(
@@ -480,7 +489,27 @@ describe('DropCreationApiService.deleteDropById', () => {
       execute: jest.fn().mockResolvedValue(deleteResponse)
     };
     const wsListenersNotifier = {
-      notifyAboutDropDelete: jest.fn().mockResolvedValue(undefined)
+      notifyAboutDropDelete: jest.fn().mockResolvedValue(undefined),
+      findConnectedNotificationRecipients: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', identityId: 'reader-1' }
+        ]),
+      notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined)
+    };
+    const dmUnreadState = {
+      profile_id: 'reader-1',
+      wave_id: 'wave-1',
+      unread_count: 0,
+      first_unread_drop_serial_no: null,
+      latest_drop_serial_no: 6,
+      latest_read_serial_no: 0,
+      version: 2
+    };
+    const wavesApiDb = {
+      findDmUnreadConversationStatesForIdentities: jest
+        .fn()
+        .mockResolvedValue([dmUnreadState])
     };
     const service = new DropCreationApiService(
       {} as never,
@@ -491,7 +520,8 @@ describe('DropCreationApiService.deleteDropById', () => {
       wsListenersNotifier as never,
       {} as never,
       {} as never,
-      {} as never
+      {} as never,
+      wavesApiDb as never
     );
     const requestWaveDropMetricsRefreshSpy = jest
       .spyOn(
@@ -552,6 +582,21 @@ describe('DropCreationApiService.deleteDropById', () => {
         timer: ctx.timer,
         authenticationContext: ctx.authenticationContext
       }
+    );
+    expect(
+      wavesApiDb.findDmUnreadConversationStatesForIdentities
+    ).toHaveBeenCalledWith(
+      { identityIds: ['reader-1'], waveIds: ['wave-1'] },
+      expect.objectContaining({
+        authenticationContext: ctx.authenticationContext
+      }),
+      DbPoolName.WRITE
+    );
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).toHaveBeenCalledWith(
+      [dmUnreadState],
+      [{ connectionId: 'connection-1', identityId: 'reader-1' }]
     );
   });
 });
