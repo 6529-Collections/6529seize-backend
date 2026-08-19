@@ -607,7 +607,7 @@ export class CiPipelineAlertService {
         release_note_reason: 'not-a-successful-production-release'
       };
     }
-    const { promptPath, isBackendRelease } = enqueueContext;
+    const { promptPath } = enqueueContext;
     if (!isAllowedReleaseNotesPrompt(request.repo, promptPath)) {
       this.logger.warn(
         `Skipping release notes for unsupported prompt path ${promptPath} in ${request.repo}`
