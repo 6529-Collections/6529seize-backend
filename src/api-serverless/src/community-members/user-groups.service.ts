@@ -29,7 +29,11 @@ import {
   UserGroupsDb
 } from '@/user-groups/user-groups.db';
 import slugify from 'slugify';
-import { BadRequestException, NotFoundException } from '@/exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
   abusivenessCheckService,
@@ -68,7 +72,6 @@ import {
 } from '@/groups/user-group-predicates';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
-import { identitiesDb } from '@/identities/identities.db';
 import { enums } from '@/enums';
 import { ids } from '@/ids';
 import { collections } from '@/collections';
@@ -88,6 +91,12 @@ import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 import { Logger } from '@/logging';
+import {
+  profilePreferencesDb,
+  ProfilePreferencesDb
+} from '@/profile-preferences/profile-preferences.db';
+import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
+import { ConnectionWrapper } from '@/sql-executor';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -152,7 +161,8 @@ export class UserGroupsService {
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService,
-    private readonly metricsRecorder: MetricsRecorder
+    private readonly metricsRecorder: MetricsRecorder,
+    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb
   ) {}
 
   private async timeAsync<T>(
@@ -191,12 +201,16 @@ export class UserGroupsService {
     },
     createdBy: string,
     ctx: RequestContext,
-    isVisible = false
+    isVisible = false,
+    validateBeforeSave?: (
+      connection: ConnectionWrapper<unknown>
+    ) => Promise<void>
   ): Promise<ApiGroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          await validateBeforeSave?.(connection);
           const id =
             slugify(group.name, {
               replacement: '-',
@@ -330,13 +344,16 @@ export class UserGroupsService {
     if (existingGroup) {
       return (await this.mapForApi([existingGroup], ctx))[0];
     }
-    const handles = await identitiesDb.getHandlesByPrimaryWallets(
+    const recipients = await this.profilePreferences.getDirectMessageRecipients(
       uniqueIdentityAddresses,
+      creatorProfile.id!,
       ctx.connection
     );
-    if (handles.length !== uniqueIdentityAddresses.length) {
-      throw new BadRequestException(`Invalid identity addresses.`);
-    }
+    this.assertDirectMessageRecipientsAllowed(
+      uniqueIdentityAddresses,
+      recipients
+    );
+    const handles = recipients.map((recipient) => recipient.handle);
     const name = `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
     const userGroup: Omit<
       NewUserGroupEntity,
@@ -381,7 +398,49 @@ export class UserGroupsService {
       is_beneficiary_of_grant_match_mode: DEFAULT_BENEFICIARY_GRANT_MATCH_MODE
     };
 
-    return await this.save(userGroup, creatorProfile.id!, ctx, true);
+    return await this.save(
+      userGroup,
+      creatorProfile.id!,
+      ctx,
+      true,
+      async (connection) => {
+        const lockedRecipients =
+          await this.profilePreferences.getDirectMessageRecipientsForAdmission(
+            uniqueIdentityAddresses,
+            creatorProfile.id!,
+            connection
+          );
+        this.assertDirectMessageRecipientsAllowed(
+          uniqueIdentityAddresses,
+          lockedRecipients
+        );
+      }
+    );
+  }
+
+  private assertDirectMessageRecipientsAllowed(
+    identityAddresses: string[],
+    recipients: Awaited<
+      ReturnType<ProfilePreferencesDb['getDirectMessageRecipients']>
+    >
+  ): void {
+    if (recipients.length !== identityAddresses.length) {
+      throw new BadRequestException(`Invalid identity addresses.`);
+    }
+    const blockedRecipient = recipients.find(
+      (recipient) =>
+        recipient.direct_message_policy === ProfileDirectMessagePolicy.NOBODY ||
+        (recipient.direct_message_policy ===
+          ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW &&
+          !recipient.follows_creator)
+    );
+    if (!blockedRecipient) return;
+    const message =
+      blockedRecipient.direct_message_policy ===
+      ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW
+        ? `You can't start a new direct message with @${blockedRecipient.handle} because they only accept messages from people they follow.`
+        : `You can't start a new direct message with @${blockedRecipient.handle} because they don't accept new direct messages.`;
+    throw new ForbiddenException(message);
   }
 
   private async whichOfGivenGroupsIsUserEligibleFor(

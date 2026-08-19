@@ -6,6 +6,7 @@ import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
 import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
+import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
 import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetWalletDistributionAllocations } from '@/api/distributions/get-wallet-distribution-allocations.handler';
 import { handleGetDmDropsUnread } from '@/api/dm-drops/dm-drops.handlers';
@@ -17,6 +18,7 @@ import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.h
 import { handleGetOgMetadataDrop, handleGetOgMetadataProfile, handleGetOgMetadataWave } from '@/api/og-metadata/og-metadata.handlers';
 import { handleArchiveProfileCmsPackage, handleExportProfileCmsPackage, handleGetPrimaryProfileCmsPackage, handleGetProfileCmsAgentSchemaBundle, handleGetProfileCmsAgentSourcePacket, handleGetProfileCmsPackageByHash, handleGetProfileCmsPackageById, handleGetProfileCmsPackageByVersion, handleListProfileCmsPackages, handlePublishProfileCmsPackage, handleRollbackProfileCmsPackage, handleSaveProfileCmsPackageDraft, handleValidateProfileCmsAgentPatch, handleValidateProfileCmsPackage } from '@/api/profile-cms/profile-cms.handlers';
 import { handleCreateProfileCmsWalletGallerySnapshot } from '@/api/profile-cms/wallet-gallery.handlers';
+import { handleGetProfilePreferences, handlePutProfilePreferences } from '@/api/profile-preferences/profile-preferences.handlers';
 import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, handleGetGlobalRepCategoryRatings, handleGetGlobalRepCategoryRecipients, handleGetGlobalRepCategoryWaveContributors, handleGetGlobalRepCategoryWaveOverview, handleGetGlobalRepCategoryWaves } from '@/api/rep-categories/global-rep-category.handlers';
 import { handleGetSubscriptionCoverage } from '@/api/subscriptions/get-subscription-coverage.handler';
 import { handleValidateWaveGroups } from '@/api/waves/wave-group-validation.handler';
@@ -260,6 +262,28 @@ router.get(
     res: Response<ApiResponse<GetPrimaryProfileCmsPackageResponse>>
   ) => {
     res.send(await handleGetPrimaryProfileCmsPackage(req));
+  }
+);
+
+router.get(
+  '/profiles/preferences',
+  needsAuthenticatedUser(),
+  async (
+    req: GetProfilePreferencesRequest,
+    res: Response<ApiResponse<GetProfilePreferencesResponse>>
+  ) => {
+    res.send(await handleGetProfilePreferences(req));
+  }
+);
+
+router.put(
+  '/profiles/preferences',
+  needsAuthenticatedUser(),
+  async (
+    req: PutProfilePreferencesRequest,
+    res: Response<ApiResponse<PutProfilePreferencesResponse>>
+  ) => {
+    res.send(await handlePutProfilePreferences(req));
   }
 );
 
