@@ -268,12 +268,14 @@ export class PrePublicationModerationService {
     } catch {
       return null;
     }
-    const ascii = domainToASCII(
-      hostname
-        .toLocaleLowerCase()
-        .replace(/\.+$/, '')
-        .replace(/^www\./, '')
-    );
+    let normalizedHostname = hostname.toLocaleLowerCase();
+    while (normalizedHostname.endsWith('.')) {
+      normalizedHostname = normalizedHostname.slice(0, -1);
+    }
+    if (normalizedHostname.startsWith('www.')) {
+      normalizedHostname = normalizedHostname.slice(4);
+    }
+    const ascii = domainToASCII(normalizedHostname);
     return ascii || null;
   }
 
