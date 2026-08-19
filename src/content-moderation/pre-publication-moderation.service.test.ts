@@ -63,7 +63,8 @@ describe('PrePublicationModerationService', () => {
         signal: null,
         evaluatorVersion: null,
         contentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
-      })
+      }),
+      undefined
     );
   });
 
@@ -86,7 +87,8 @@ describe('PrePublicationModerationService', () => {
         outcome: PrePublicationCheckOutcome.REJECT,
         signal: 'KNOWN_MALICIOUS_DESTINATION',
         evaluatorVersion: null
-      })
+      }),
+      undefined
     );
   });
 
@@ -109,7 +111,8 @@ describe('PrePublicationModerationService', () => {
         outcome: PrePublicationCheckOutcome.ALLOW,
         signal: 'EXPLICIT_THREAT_PATTERN',
         evaluatorVersion: expect.any(String)
-      })
+      }),
+      undefined
     );
   });
 
@@ -126,8 +129,32 @@ describe('PrePublicationModerationService', () => {
 
     await expect(result).rejects.toBeInstanceOf(CustomApiCompliantException);
     await expect(result).rejects.toMatchObject({
-      message: expect.stringContaining('credible threat')
+      message: expect.stringContaining("platform's safety rules")
     });
+  });
+
+  it('normalizes scheme-less and unicode malicious hosts', async () => {
+    process.env.CONTENT_MODERATION_BLOCKED_HOSTS =
+      'https://t\u00e9st.example./';
+    const { service, aiService } = createService();
+
+    const result = service.evaluate(input('Avoid t\u00e9st.example/login'), {});
+
+    await expect(result).rejects.toBeInstanceOf(CustomApiCompliantException);
+    expect(aiService.assessPrePublication).not.toHaveBeenCalled();
+  });
+
+  it('finds a configured malicious host inside a markdown link', async () => {
+    process.env.CONTENT_MODERATION_BLOCKED_HOSTS = 'scam.example';
+    const { service, aiService } = createService();
+
+    const result = service.evaluate(
+      input('Use [this login](scam.example/connect)'),
+      {}
+    );
+
+    await expect(result).rejects.toBeInstanceOf(CustomApiCompliantException);
+    expect(aiService.assessPrePublication).not.toHaveBeenCalled();
   });
 
   it('fails open when the AI evaluator is unavailable', async () => {
@@ -142,7 +169,8 @@ describe('PrePublicationModerationService', () => {
       expect.objectContaining({
         outcome: PrePublicationCheckOutcome.ALLOW,
         evaluatorResult: expect.objectContaining({ evaluator_error: true })
-      })
+      }),
+      undefined
     );
   });
 

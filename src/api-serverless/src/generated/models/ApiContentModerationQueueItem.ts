@@ -37,6 +37,10 @@ export class ApiContentModerationQueueItem {
     'resolution_reason'?: string | null;
     'resolved_at'?: number | null;
     'report_count': number;
+    /**
+    * Opaque cursor for fetching queue items after this item.
+    */
+    'cursor': string;
     'moderation': ApiDropModeration;
     'history': Array<{ [key: string]: any; }>;
 
@@ -164,6 +168,12 @@ export class ApiContentModerationQueueItem {
             "baseName": "report_count",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "cursor",
+            "baseName": "cursor",
+            "type": "string",
+            "format": ""
         },
         {
             "name": "moderation",

@@ -69,6 +69,17 @@ export interface ModerationReportRow {
   readonly resolved_at: number | null;
 }
 
+type ModerationQueueReportRow = ModerationReportRow & {
+  readonly report_count: number;
+  readonly recommendation_rank: number;
+};
+
+type ModerationQueueCursor = {
+  readonly recommendationRank: number;
+  readonly createdAt: number;
+  readonly reportId: string;
+};
+
 export interface AiModerationAssessment {
   readonly recommendation: ContentModerationRecommendation;
   readonly category: string;
@@ -341,7 +352,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           },
           moderation: {
             status,
-            can_view: status === DropModerationStatus.VISIBLE
+            can_view:
+              status === DropModerationStatus.VISIBLE ||
+              viewerProfileId === drop.author_id
           }
         };
         return acc;
@@ -557,6 +570,40 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  async createReportWithViewerActions(
+    input: {
+      readonly dropId: string;
+      readonly reporterProfileId: string;
+      readonly authorProfileId: string;
+      readonly reason: ContentReportReason;
+      readonly notes: string | null;
+      readonly contentSnapshot: Record<string, unknown>;
+      readonly hideDrop: boolean;
+      readonly blockAuthor: boolean;
+    },
+    ctx: RequestContext
+  ): Promise<ModerationReportRow> {
+    return this.withTransaction(ctx.connection, async (connection) => {
+      const transactionContext: RequestContext = { ...ctx, connection };
+      const report = await this.createReport(input, transactionContext);
+      if (input.blockAuthor) {
+        await this.blockProfile(
+          input.reporterProfileId,
+          input.authorProfileId,
+          transactionContext
+        );
+      }
+      if (input.hideDrop) {
+        await this.hideDrop(
+          input.reporterProfileId,
+          input.dropId,
+          transactionContext
+        );
+      }
+      return report;
+    });
+  }
+
   async saveReportAssessment(
     reportId: string,
     assessment: AiModerationAssessment,
@@ -586,16 +633,25 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   }
 
   async getModerationQueue(
-    { limit, before }: { limit: number; before?: number | null },
+    { limit, before }: { limit: number; before?: string | null },
     connection?: ConnectionWrapper<any>
-  ): Promise<Array<ModerationReportRow & { report_count: number }>> {
-    const rows = await this.db.execute<
-      ModerationReportRow & { report_count: number }
-    >(
+  ): Promise<
+    Array<ModerationReportRow & { report_count: number; cursor: string }>
+  > {
+    const cursor = before ? this.decodeModerationQueueCursor(before) : null;
+    const recommendationRankSql = `
+      case r.ai_recommendation
+        when '${ContentModerationRecommendation.URGENT_QUARANTINE}' then 0
+        when '${ContentModerationRecommendation.NEEDS_HUMAN_REVIEW}' then 1
+        else 2
+      end
+    `;
+    const rows = await this.db.execute<ModerationQueueReportRow>(
       `
         select
           r.*,
-          counts.report_count
+          counts.report_count,
+          ${recommendationRankSql} as recommendation_rank
         from ${CONTENT_MODERATION_REPORTS_TABLE} r
         join (
           select drop_id, count(*) as report_count
@@ -603,20 +659,45 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           group by drop_id
         ) counts on counts.drop_id = r.drop_id
         where r.status = '${ContentReportStatus.OPEN}'
-          and (:before is null or r.created_at < :before)
+          and (
+            :beforeRank is null
+            or ${recommendationRankSql} > :beforeRank
+            or (
+              ${recommendationRankSql} = :beforeRank
+              and r.created_at < :beforeCreatedAt
+            )
+            or (
+              ${recommendationRankSql} = :beforeRank
+              and r.created_at = :beforeCreatedAt
+              and r.id < :beforeReportId
+            )
+          )
         order by
-          case r.ai_recommendation
-            when '${ContentModerationRecommendation.URGENT_QUARANTINE}' then 0
-            when '${ContentModerationRecommendation.NEEDS_HUMAN_REVIEW}' then 1
-            else 2
-          end,
-          r.created_at desc
+          recommendation_rank,
+          r.created_at desc,
+          r.id desc
         limit :limit
       `,
-      { limit, before: before ?? null },
+      {
+        limit,
+        beforeRank: cursor?.recommendationRank ?? null,
+        beforeCreatedAt: cursor?.createdAt ?? null,
+        beforeReportId: cursor?.reportId ?? null
+      },
       this.connectionOptions(connection)
     );
-    return rows.map((row) => this.parseReportJson(row));
+    return rows.map((row) => {
+      const parsed = this.parseReportJson(row);
+      const { recommendation_rank: recommendationRank, ...report } = parsed;
+      return {
+        ...report,
+        cursor: this.encodeModerationQueueCursor({
+          recommendationRank,
+          createdAt: report.created_at,
+          reportId: report.id
+        })
+      };
+    });
   }
 
   async getAuditHistoryForDrops(
@@ -657,7 +738,6 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<boolean> {
-    await this.assertDropExists(input.dropId, ctx.connection);
     return this.withTransaction(ctx.connection, async (connection) => {
       const current = await this.ensureAndLockDropState(
         input.dropId,
@@ -705,7 +785,6 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    await this.assertDropExists(input.dropId, ctx.connection);
     await this.withTransaction(ctx.connection, async (connection) => {
       const current = await this.ensureAndLockDropState(
         input.dropId,
@@ -733,9 +812,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     dropId: string,
     connection: ConnectionWrapper<any>
   ): Promise<DropModerationStatus> {
+    await this.assertDropExists(dropId, connection, true);
     await this.db.execute(
       `
-        insert ignore into ${CONTENT_MODERATION_DROP_STATES_TABLE} (
+        insert into ${CONTENT_MODERATION_DROP_STATES_TABLE} (
           drop_id,
           status,
           updated_by_profile_id,
@@ -748,6 +828,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           null,
           :updatedAt
         )
+        on duplicate key update drop_id = values(drop_id)
       `,
       { dropId, updatedAt: Time.currentMillis() },
       this.connectionOptions(connection)
@@ -920,21 +1001,6 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<boolean> {
     if (seedProfileIds.includes(profileId)) {
-      await this.db.execute(
-        `
-          insert ignore into ${CONTENT_MODERATION_ROLES_TABLE} (
-            profile_id,
-            created_at,
-            created_by_profile_id
-          ) values (
-            :profileId,
-            :createdAt,
-            null
-          )
-        `,
-        { profileId, createdAt: Time.currentMillis() },
-        this.connectionOptions(connection)
-      );
       return true;
     }
     return (
@@ -975,7 +1041,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   }
 
   async recordPrePublicationCheck(
-    input: PrePublicationCheckRecord
+    input: PrePublicationCheckRecord,
+    connection?: ConnectionWrapper<any>
   ): Promise<void> {
     await this.db.execute(
       `
@@ -1012,16 +1079,23 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           ? JSON.stringify(input.evaluatorResult)
           : null,
         createdAt: Time.currentMillis()
-      }
+      },
+      this.connectionOptions(connection)
     );
   }
 
   private async assertDropExists(
     dropId: string,
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    lockForUpdate = false
   ): Promise<void> {
     const row = await this.db.oneOrNull<{ id: string }>(
-      `select id from ${DROPS_TABLE} where id = :dropId`,
+      `
+        select id
+        from ${DROPS_TABLE}
+        where id = :dropId
+        ${lockForUpdate ? 'for update' : ''}
+      `,
       { dropId },
       this.connectionOptions(connection)
     );
@@ -1262,6 +1336,30 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       ai_confidence:
         row.ai_confidence === null ? null : Number(row.ai_confidence)
     };
+  }
+
+  private encodeModerationQueueCursor(cursor: ModerationQueueCursor): string {
+    return `${cursor.recommendationRank}.${cursor.createdAt}.${cursor.reportId}`;
+  }
+
+  private decodeModerationQueueCursor(value: string): ModerationQueueCursor {
+    const match =
+      /^([0-2])\.(\d+)\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(
+        value
+      );
+    const recommendationRank = Number(match?.[1]);
+    const createdAt = Number(match?.[2]);
+    const reportId = match?.[3];
+    if (
+      !match ||
+      !Number.isSafeInteger(recommendationRank) ||
+      !Number.isSafeInteger(createdAt) ||
+      createdAt < 0 ||
+      !reportId
+    ) {
+      throw new BadRequestException('Invalid moderation queue cursor');
+    }
+    return { recommendationRank, createdAt, reportId };
   }
 
   private connectionOptions(connection?: ConnectionWrapper<any>) {

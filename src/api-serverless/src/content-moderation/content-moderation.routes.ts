@@ -24,19 +24,23 @@ import { Logger } from '@/logging';
 const router = asyncRouter();
 const logger = Logger.get('ContentModerationRoutes');
 
-function getRequiredProfileId(req: Request): Promise<{
+async function getRequiredProfileId(req: Request): Promise<{
   profileId: string;
   timer: Timer;
   authenticationContext: Awaited<ReturnType<typeof getAuthenticationContext>>;
 }> {
   const timer = Timer.getFromRequest(req);
-  return getAuthenticationContext(req, timer).then((authenticationContext) => {
-    const profileId = authenticationContext.getActingAsId();
-    if (!profileId) {
-      throw new ForbiddenException('Please create a profile first');
-    }
-    return { profileId, timer, authenticationContext };
-  });
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  if (authenticationContext.isAuthenticatedAsProxy()) {
+    throw new ForbiddenException(
+      'Content moderation actions cannot be performed through a proxy'
+    );
+  }
+  const profileId = authenticationContext.getActingAsId();
+  if (!profileId) {
+    throw new ForbiddenException('Please create a profile first');
+  }
+  return { profileId, timer, authenticationContext };
 }
 
 async function broadcastDropModerationChange(
@@ -209,7 +213,7 @@ router.get(
     if (limit < 1 || limit > 100) {
       throw new BadRequestException('Limit must be between 1 and 100');
     }
-    const before = numbers.parseIntOrNull(req.query.before);
+    const before = req.query.before?.trim() || undefined;
     res.send(
       await contentModerationService.getQueue(
         profileId,

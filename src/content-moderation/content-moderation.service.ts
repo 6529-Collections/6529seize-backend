@@ -62,30 +62,21 @@ export class ContentModerationService {
       parent_context: parentContext
     };
 
-    // Persist the allegation and private evidence before any optional personal
-    // action or external classifier call.
-    const report = await this.db.createReport(
+    // Commit the allegation, private evidence, and requested personal actions
+    // together before any external classifier call.
+    const report = await this.db.createReportWithViewerActions(
       {
         dropId: input.dropId,
         reporterProfileId: input.reporterProfileId,
         authorProfileId: snapshot.author_profile_id,
         reason: input.reason,
         notes: input.notes,
-        contentSnapshot
+        contentSnapshot,
+        hideDrop: input.hideDrop,
+        blockAuthor: input.blockAuthor
       },
       ctx
     );
-
-    if (input.blockAuthor) {
-      await this.db.blockProfile(
-        input.reporterProfileId,
-        snapshot.author_profile_id,
-        ctx
-      );
-    }
-    if (input.hideDrop) {
-      await this.db.hideDrop(input.reporterProfileId, input.dropId, ctx);
-    }
 
     const assessment = await this.assessReport(report, snapshot, parentContext);
     await this.db.saveReportAssessment(report.id, assessment, ctx.connection);
@@ -130,7 +121,7 @@ export class ContentModerationService {
 
   async getQueue(
     profileId: string,
-    input: { limit: number; before?: number | null },
+    input: { limit: number; before?: string | null },
     ctx: RequestContext
   ) {
     await this.assertModerator(profileId, ctx);
@@ -166,30 +157,15 @@ export class ContentModerationService {
     ctx: RequestContext
   ) {
     await this.assertModerator(moderatorProfileId, ctx);
-    const target =
-      input.decision === 'ALLOW'
-        ? DropModerationStatus.VISIBLE
-        : input.decision === 'QUARANTINE'
-          ? DropModerationStatus.AI_QUARANTINED
-          : DropModerationStatus.MODERATOR_REMOVED;
+    const target = this.getDropDecisionStatus(input.decision);
     await this.db.applyModeratorDropDecision(
       {
         dropId: input.dropId,
         status: target,
         actorProfileId: moderatorProfileId,
-        action:
-          input.decision === 'ALLOW'
-            ? 'MODERATOR_ALLOWED_OR_RESTORED'
-            : input.decision === 'QUARANTINE'
-              ? 'MODERATOR_QUARANTINED'
-              : 'MODERATOR_REMOVED',
+        action: this.getDropDecisionAction(input.decision),
         reason: input.reason,
-        reportStatus:
-          input.decision === 'QUARANTINE'
-            ? null
-            : input.decision === 'ALLOW'
-              ? ContentReportStatus.RESOLVED_ALLOWED
-              : ContentReportStatus.RESOLVED_REMOVED
+        reportStatus: this.getResolvedReportStatus(input.decision)
       },
       ctx
     );
@@ -283,6 +259,41 @@ export class ContentModerationService {
     if (!isModerator) {
       throw new ForbiddenException('Moderator access is required');
     }
+  }
+
+  private getDropDecisionStatus(
+    decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE'
+  ): DropModerationStatus {
+    if (decision === 'ALLOW') {
+      return DropModerationStatus.VISIBLE;
+    }
+    if (decision === 'QUARANTINE') {
+      return DropModerationStatus.AI_QUARANTINED;
+    }
+    return DropModerationStatus.MODERATOR_REMOVED;
+  }
+
+  private getDropDecisionAction(
+    decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE'
+  ): string {
+    if (decision === 'ALLOW') {
+      return 'MODERATOR_ALLOWED_OR_RESTORED';
+    }
+    if (decision === 'QUARANTINE') {
+      return 'MODERATOR_QUARANTINED';
+    }
+    return 'MODERATOR_REMOVED';
+  }
+
+  private getResolvedReportStatus(
+    decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE'
+  ): ContentReportStatus | null {
+    if (decision === 'QUARANTINE') {
+      return null;
+    }
+    return decision === 'ALLOW'
+      ? ContentReportStatus.RESOLVED_ALLOWED
+      : ContentReportStatus.RESOLVED_REMOVED;
   }
 
   private getInitialModeratorProfileIds(): string[] {

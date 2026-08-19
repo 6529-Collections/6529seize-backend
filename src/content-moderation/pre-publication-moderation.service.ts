@@ -8,6 +8,7 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
 import { createHash } from 'node:crypto';
+import { domainToASCII } from 'node:url';
 import {
   contentModerationAiService,
   ContentModerationAiService,
@@ -66,26 +67,34 @@ export class PrePublicationModerationService {
       ctx
     );
     if (screen.directRejectionReason) {
-      await this.record(input, {
-        contentFingerprint,
-        signal: screen.signal,
-        outcome: PrePublicationCheckOutcome.REJECT,
-        aiInvoked: false,
-        evaluatorResult: {
-          rationale: screen.directRejectionReason,
-          direct_rejection: true
-        }
-      });
+      await this.record(
+        input,
+        {
+          contentFingerprint,
+          signal: screen.signal,
+          outcome: PrePublicationCheckOutcome.REJECT,
+          aiInvoked: false,
+          evaluatorResult: {
+            rationale: screen.directRejectionReason,
+            direct_rejection: true
+          }
+        },
+        ctx
+      );
       throw new CustomApiCompliantException(422, screen.directRejectionReason);
     }
     if (!screen.signal) {
-      await this.record(input, {
-        contentFingerprint,
-        signal: null,
-        outcome: PrePublicationCheckOutcome.ALLOW,
-        aiInvoked: false,
-        evaluatorResult: null
-      });
+      await this.record(
+        input,
+        {
+          contentFingerprint,
+          signal: null,
+          outcome: PrePublicationCheckOutcome.ALLOW,
+          aiInvoked: false,
+          evaluatorResult: null
+        },
+        ctx
+      );
       return;
     }
 
@@ -102,16 +111,20 @@ export class PrePublicationModerationService {
         'Pre-publication evaluator failed; allowing ambiguous content',
         error
       );
-      await this.record(input, {
-        contentFingerprint,
-        signal: screen.signal,
-        outcome: PrePublicationCheckOutcome.ALLOW,
-        aiInvoked: true,
-        evaluatorResult: {
-          evaluator_error: true,
-          fallback: 'ALLOW'
-        }
-      });
+      await this.record(
+        input,
+        {
+          contentFingerprint,
+          signal: screen.signal,
+          outcome: PrePublicationCheckOutcome.ALLOW,
+          aiInvoked: true,
+          evaluatorResult: {
+            evaluator_error: true,
+            fallback: 'ALLOW'
+          }
+        },
+        ctx
+      );
       return;
     }
 
@@ -120,17 +133,21 @@ export class PrePublicationModerationService {
       assessment.confidence >= 0.95
         ? PrePublicationCheckOutcome.REJECT
         : PrePublicationCheckOutcome.ALLOW;
-    await this.record(input, {
-      contentFingerprint,
-      signal: screen.signal,
-      outcome,
-      aiInvoked: true,
-      evaluatorResult: { ...assessment }
-    });
+    await this.record(
+      input,
+      {
+        contentFingerprint,
+        signal: screen.signal,
+        outcome,
+        aiInvoked: true,
+        evaluatorResult: { ...assessment }
+      },
+      ctx
+    );
     if (outcome === PrePublicationCheckOutcome.REJECT) {
       throw new CustomApiCompliantException(
         422,
-        `This post couldn't be submitted because it appears to contain ${assessment.category.toLowerCase().replace(/_/g, ' ')}. You can edit and try again, or contact support if you believe this is a mistake.`
+        `This post couldn't be submitted because it appears to conflict with the platform's safety rules. You can edit and try again, or contact support if you believe this is a mistake.`
       );
     }
   }
@@ -204,23 +221,24 @@ export class PrePublicationModerationService {
     const blockedHosts = new Set(
       env
         .getStringArray('CONTENT_MODERATION_BLOCKED_HOSTS', ',')
-        .map((host) =>
-          host
-            .trim()
-            .toLocaleLowerCase()
-            .replace(/^www\./, '')
-        )
-        .filter(Boolean)
+        .map((host) => this.normalizeHost(host))
+        .filter((host): host is string => host !== null)
     );
     if (!blockedHosts.size) {
       return null;
     }
-    const candidates = content.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+    const candidates = content
+      .split(/\s+/)
+      .flatMap((token) => token.split(/[()[\]{}<>"',]+/))
+      .map((token) => token.replace(/^[.!?;:]+|[.!?;:]+$/g, ''))
+      .filter((token) => token.includes('.'));
     for (const candidate of candidates) {
       try {
-        const host = new URL(candidate).hostname
-          .toLocaleLowerCase()
-          .replace(/^www\./, '');
+        const candidateUrl = this.toParseableUrl(candidate);
+        const host = this.normalizeHost(new URL(candidateUrl).hostname);
+        if (!host) {
+          continue;
+        }
         if (
           blockedHosts.has(host) ||
           Array.from(blockedHosts).some((blocked) =>
@@ -234,6 +252,38 @@ export class PrePublicationModerationService {
       }
     }
     return null;
+  }
+
+  private normalizeHost(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    let hostname = trimmed;
+    try {
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+        hostname = new URL(trimmed).hostname;
+      }
+    } catch {
+      return null;
+    }
+    const ascii = domainToASCII(
+      hostname
+        .toLocaleLowerCase()
+        .replace(/\.+$/, '')
+        .replace(/^www\./, '')
+    );
+    return ascii || null;
+  }
+
+  private toParseableUrl(candidate: string): string {
+    if (candidate.startsWith('//')) {
+      return `https:${candidate}`;
+    }
+    if (/^https?:\/\//i.test(candidate)) {
+      return candidate;
+    }
+    return `https://${candidate}`;
   }
 
   private hasStructuredSensitiveDataSignal(content: string): boolean {
@@ -264,21 +314,25 @@ export class PrePublicationModerationService {
       outcome: PrePublicationCheckOutcome;
       aiInvoked: boolean;
       evaluatorResult: Record<string, unknown> | null;
-    }
+    },
+    ctx: RequestContext
   ): Promise<void> {
-    await this.moderationDb.recordPrePublicationCheck({
-      dropId: input.dropId,
-      authorProfileId: input.authorProfileId,
-      operation: input.operation,
-      deterministicGateVersion: PRE_PUBLICATION_GATE_VERSION,
-      contentFingerprint: result.contentFingerprint,
-      signal: result.signal,
-      outcome: result.outcome,
-      evaluatorVersion: result.aiInvoked
-        ? PRE_PUBLICATION_EVALUATOR_VERSION
-        : null,
-      evaluatorResult: result.evaluatorResult
-    });
+    await this.moderationDb.recordPrePublicationCheck(
+      {
+        dropId: input.dropId,
+        authorProfileId: input.authorProfileId,
+        operation: input.operation,
+        deterministicGateVersion: PRE_PUBLICATION_GATE_VERSION,
+        contentFingerprint: result.contentFingerprint,
+        signal: result.signal,
+        outcome: result.outcome,
+        evaluatorVersion: result.aiInvoked
+          ? PRE_PUBLICATION_EVALUATOR_VERSION
+          : null,
+        evaluatorResult: result.evaluatorResult
+      },
+      ctx.connection
+    );
   }
 }
 

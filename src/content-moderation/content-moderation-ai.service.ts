@@ -43,6 +43,18 @@ interface PrePublicationAssessment {
   readonly rationale: string;
 }
 
+const CONTENT_MODERATION_CATEGORIES = [
+  'NONE',
+  'CREDIBLE_THREAT_OF_VIOLENCE',
+  'SENSITIVE_PRIVATE_INFORMATION',
+  'TARGETED_HARASSMENT',
+  'HATE_OR_DISCRIMINATION',
+  'SEXUAL_EXPLOITATION',
+  'SCAM_OR_PHISHING',
+  'COORDINATED_OR_AUTOMATED_SPAM',
+  'ILLEGAL_CONTENT'
+] as const;
+
 function buildInvokeModelInput(prompt: string): InvokeModelCommandInput {
   return {
     modelId: MODEL_ID,
@@ -82,6 +94,16 @@ function assertConfidence(value: unknown): number {
   return value;
 }
 
+function assertCategory(value: unknown): string {
+  const category = assertString(value, 'category');
+  if (
+    !(CONTENT_MODERATION_CATEGORIES as readonly string[]).includes(category)
+  ) {
+    throw new Error('AI response category is invalid');
+  }
+  return category;
+}
+
 const POLICY = `
 Platform policy ${CONTENT_MODERATION_POLICY_VERSION}:
 - Allow profanity, vulgarity, criticism, satire, political opinions, controversial ideas, and merely offensive speech.
@@ -106,7 +128,7 @@ ${POLICY}
 This content has been reported. The report is an allegation, not proof.
 Return exactly one JSON object with:
 - recommendation: NO_VIOLATION_DETECTED, NEEDS_HUMAN_REVIEW, or URGENT_QUARANTINE
-- category: one policy category or NONE
+- category: exactly one of ${CONTENT_MODERATION_CATEGORIES.join(', ')}
 - confidence: number from 0 to 1
 - rationale: concise explanation
 - evidence: JSON array of concise evidence descriptions
@@ -132,7 +154,7 @@ Parent context: ${JSON.stringify(input.parentContext ?? null)}
     }
     return {
       recommendation: recommendation as ContentModerationRecommendation,
-      category: assertString(parsed.category, 'category'),
+      category: assertCategory(parsed.category),
       confidence: assertConfidence(parsed.confidence),
       rationale: assertString(parsed.rationale, 'rationale'),
       evidence: Array.isArray(parsed.evidence) ? parsed.evidence : []
@@ -150,7 +172,7 @@ ${POLICY}
 This is a permissive pre-publication evaluation. A narrow deterministic screen produced the signal ${JSON.stringify(input.signal)}. The signal is not proof.
 Return exactly one JSON object with:
 - outcome: ALLOW or REJECT
-- category: one policy category or NONE
+- category: exactly one of ${CONTENT_MODERATION_CATEGORIES.join(', ')}
 - confidence: number from 0 to 1
 - rationale: concise explanation for the author
 
@@ -170,7 +192,7 @@ Untrusted submission: ${JSON.stringify(input.content)}
     }
     return {
       outcome: outcome as PrePublicationCheckOutcome,
-      category: assertString(parsed.category, 'category'),
+      category: assertCategory(parsed.category),
       confidence: assertConfidence(parsed.confidence),
       rationale: assertString(parsed.rationale, 'rationale')
     };
@@ -186,7 +208,7 @@ Untrusted submission: ${JSON.stringify(input.content)}
     };
     const text = parsed.content?.[0]?.text;
     if (typeof text !== 'string') {
-      throw new Error('Unexpected response from moderation evaluator');
+      throw new TypeError('Unexpected response from moderation evaluator');
     }
     return text;
   }

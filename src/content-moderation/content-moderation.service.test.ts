@@ -42,9 +42,7 @@ function createService() {
   };
   const db = {
     getDropSnapshot: jest.fn().mockResolvedValue(snapshot),
-    createReport: jest.fn().mockResolvedValue(reportRow()),
-    blockProfile: jest.fn().mockResolvedValue(undefined),
-    hideDrop: jest.fn().mockResolvedValue(undefined),
+    createReportWithViewerActions: jest.fn().mockResolvedValue(reportRow()),
     saveReportAssessment: jest.fn().mockResolvedValue(undefined),
     tryAiQuarantineForOpenReport: jest.fn().mockResolvedValue(true),
     applyModeratorDropDecision: jest.fn().mockResolvedValue(undefined),
@@ -83,7 +81,7 @@ function createService() {
 describe('ContentModerationService', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('persists the report before optional personal actions and AI assessment', async () => {
+  it('persists the report and personal actions atomically before AI assessment', async () => {
     const { service, db, aiService } = createService();
 
     await service.submitReport(
@@ -98,15 +96,20 @@ describe('ContentModerationService', () => {
       {}
     );
 
-    const reportOrder = db.createReport.mock.invocationCallOrder[0]!;
-    expect(reportOrder).toBeLessThan(
-      db.blockProfile.mock.invocationCallOrder[0]!
-    );
+    const reportOrder =
+      db.createReportWithViewerActions.mock.invocationCallOrder[0]!;
     expect(reportOrder).toBeLessThan(
       aiService.assessReportedContent.mock.invocationCallOrder[0]!
     );
-    expect(db.blockProfile).toHaveBeenCalledWith('reporter-1', 'author-1', {});
-    expect(db.hideDrop).toHaveBeenCalledWith('reporter-1', 'drop-1', {});
+    expect(db.createReportWithViewerActions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reporterProfileId: 'reporter-1',
+        authorProfileId: 'author-1',
+        hideDrop: true,
+        blockAuthor: true
+      }),
+      {}
+    );
   });
 
   it('persists reply context with the private report evidence', async () => {
@@ -134,7 +137,7 @@ describe('ContentModerationService', () => {
       {}
     );
 
-    expect(db.createReport).toHaveBeenCalledWith(
+    expect(db.createReportWithViewerActions).toHaveBeenCalledWith(
       expect.objectContaining({
         contentSnapshot: {
           ...reportedReply,

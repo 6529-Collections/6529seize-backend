@@ -228,14 +228,17 @@ malicious destinations may be rejected directly, while evaluator errors and
 uncertain classifications fail open. Drop attachment contents remain in the
 existing asynchronous attachment safety pipeline rather than this text gate.
 
-Authenticated viewers can report drops, hide individual drops, and block
-profiles through `/content-moderation`. Reports and private evidence snapshots
-are persisted before the reported-content Bedrock assessment runs. Only a
+Authenticated non-proxy viewers can report drops, hide individual drops, and
+block profiles through `/content-moderation`. Reports, private evidence
+snapshots, and requested personal hide/block actions commit atomically before
+the reported-content Bedrock assessment runs. Only a
 high-confidence urgent recommendation can temporarily quarantine a drop;
 ordinary results remain in the occasional moderator queue. Authorized
 moderators can restore, quarantine, or remove drops and suspend or reinstate
-posting profiles. There is no continuous review queue or hold-before-publish
-state.
+posting profiles. Moderator access is read from configured profile IDs or an
+explicit durable role; access checks never create roles. The prioritized queue
+uses opaque stable cursors. There is no continuous review queue or
+hold-before-publish state.
 
 MySQL stores viewer blocks and hides, reports, global drop and profile states,
 moderator roles, pre-publication decisions, and an append-only audit history.
@@ -243,8 +246,9 @@ Drop API mappers retain structural graph metadata but redact globally
 unavailable content across V1, V2, light-drop, reply, quote, and WebSocket
 surfaces. Notification writes, reads, badge counts, and push delivery suppress
 blocked authors and globally unavailable drops. Global state takes precedence
-over viewer block and hide state; clients may locally reveal personal
-tombstones but never globally quarantined or moderator-removed content.
+over viewer block and hide state; authors retain access to their own globally
+moderated content, while other clients may locally reveal personal tombstones
+but never globally quarantined or moderator-removed content.
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
