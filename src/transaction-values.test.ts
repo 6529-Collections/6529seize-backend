@@ -368,6 +368,7 @@ describe('reconcileTransactionTokenCounts', () => {
     const { send } = mockTransactionValueRpc(receipt, [
       {
         transactionHash: HASH,
+        traceAddress: [0, 0],
         action: {
           from: TO,
           to: ENTRY_POINT,
@@ -376,6 +377,7 @@ describe('reconcileTransactionTokenCounts', () => {
       },
       {
         transactionHash: HASH,
+        traceAddress: [0, 1],
         action: {
           from: TO,
           to: CLAIM_CONTRACT,
@@ -384,6 +386,7 @@ describe('reconcileTransactionTokenCounts', () => {
       },
       {
         transactionHash: HASH,
+        traceAddress: [0, 1, 0],
         action: {
           from: CLAIM_CONTRACT,
           to: MEMES_DEPLOYER,
@@ -416,6 +419,7 @@ describe('reconcileTransactionTokenCounts', () => {
     mockTransactionValueRpc(receipt, [
       {
         transactionHash: HASH,
+        traceAddress: [0, 0],
         action: {
           from: CLAIM_CONTRACT,
           to: MEMES_DEPLOYER,
@@ -429,5 +433,150 @@ describe('reconcileTransactionTokenCounts', () => {
     expect(result.value).toBe(0.06529);
     expect(result.primary_proceeds).toBe(0.06529);
     expect(result.value_usd).toBe(0.06529);
+  });
+
+  it('does not replace nonzero on-chain value with internal transfers', async () => {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    mockTransactionValueRpc(
+      receipt,
+      [
+        {
+          transactionHash: HASH,
+          traceAddress: [0],
+          action: {
+            from: TO,
+            to: CLAIM_CONTRACT,
+            value: ethers.parseEther('0.1')
+          }
+        },
+        {
+          transactionHash: HASH,
+          traceAddress: [0, 0],
+          action: {
+            from: CLAIM_CONTRACT,
+            to: MEMES_DEPLOYER,
+            value: ethers.parseEther('0.06529')
+          }
+        }
+      ],
+      ethers.parseEther('0.06579')
+    );
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.value).toBe(0.06579);
+    expect(result.primary_proceeds).toBe(0.06529);
+  });
+
+  it('prorates a bundled internal mint payment across rows', async () => {
+    const firstRow = makeTransaction(537, 1, MEMES_CONTRACT);
+    firstRow.from_address = ZERO_ADDRESS;
+    const secondRow = makeTransaction(538, 2, MEMES_CONTRACT);
+    secondRow.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        ),
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(538), BigInt(2)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    mockTransactionValueRpc(receipt, [
+      {
+        transactionHash: HASH,
+        traceAddress: [0],
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('0.3')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [0, 0],
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.27')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [1],
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('1')
+        }
+      }
+    ]);
+
+    const [firstResult, secondResult] = await findDiscoveredTransactionValues([
+      firstRow,
+      secondRow
+    ]);
+
+    expect(firstResult.value).toBe(0.1);
+    expect(firstResult.primary_proceeds).toBe(0.09);
+    expect(secondResult.value).toBe(0.2);
+    expect(secondResult.primary_proceeds).toBe(0.18);
+  });
+
+  it('rejects an internal gross payment below primary proceeds', async () => {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    mockTransactionValueRpc(receipt, [
+      {
+        transactionHash: HASH,
+        traceAddress: [0],
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('0.05')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [0, 0],
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.06529')
+        }
+      }
+    ]);
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.value).toBe(0.06529);
+    expect(result.primary_proceeds).toBe(0.06529);
   });
 });

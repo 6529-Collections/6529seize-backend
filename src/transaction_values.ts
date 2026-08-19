@@ -60,6 +60,7 @@ type RpcInternalTransfersResponse = {
     from: string;
     to?: string;
     value?: number;
+    traceAddress: number[];
   }>;
 };
 
@@ -374,7 +375,10 @@ function normalizeTraceInternalTransfers(
         hash: trace?.transactionHash ?? '',
         from: trace?.action?.from ?? '',
         to: trace?.action?.to ?? undefined,
-        value: weiToEth(valueWei)
+        value: weiToEth(valueWei),
+        traceAddress: Array.isArray(trace?.traceAddress)
+          ? trace.traceAddress
+          : []
       };
     })
     .filter((transfer): transfer is NonNullable<typeof transfer> => !!transfer)
@@ -734,13 +738,35 @@ function findGrossMintValueFromInternalTransfers(
     return 0;
   }
 
-  const proceedsSources = new Set(
-    proceedsTransfers.map((transfer) => transfer.from.toLowerCase())
+  const grossPayments = new Map<
+    string,
+    RpcInternalTransfersResponse['transfers'][number]
+  >();
+  for (const proceedsTransfer of proceedsTransfers) {
+    const grossPayment = txInternalTransfers
+      .filter(
+        (transfer) =>
+          transfer.to &&
+          equalIgnoreCase(transfer.to, proceedsTransfer.from) &&
+          transfer.traceAddress.length < proceedsTransfer.traceAddress.length &&
+          transfer.traceAddress.every(
+            (part, index) => proceedsTransfer.traceAddress[index] === part
+          ) &&
+          (transfer.value ?? 0) >= (proceedsTransfer.value ?? 0)
+      )
+      .sort(
+        (first, second) =>
+          second.traceAddress.length - first.traceAddress.length
+      )[0];
+    if (!grossPayment) {
+      return 0;
+    }
+    grossPayments.set(grossPayment.traceAddress.join('.'), grossPayment);
+  }
+
+  const grossValue = sumInternalTransferValues(
+    Array.from(grossPayments.values())
   );
-  const grossPayments = txInternalTransfers.filter(
-    (transfer) => transfer.to && proceedsSources.has(transfer.to.toLowerCase())
-  );
-  const grossValue = sumInternalTransferValues(grossPayments);
   const primaryProceeds = sumInternalTransferValues(proceedsTransfers);
 
   return grossValue >= primaryProceeds ? grossValue : 0;
@@ -782,10 +808,10 @@ async function applyMintInternalValues(
       proceedsToMemesDeployer
     );
 
-    if (grossMintTxTotal > 0) {
+    if (t.value === 0 && grossMintTxTotal > 0) {
       const attributedGrossValue =
         (grossMintTxTotal * Number(rowUnits)) / Number(mintUnits);
-      t.value = Math.max(t.value, attributedGrossValue);
+      t.value = attributedGrossValue;
     }
 
     if (primaryProceedsTxTotal > 0) {
@@ -868,16 +894,15 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
     if (!t.primary_proceeds && t.value) {
       t.primary_proceeds = t.value;
     }
-
-    if (t.primary_proceeds > t.value) {
-      logger.warn(
-        `[MINT VALUE FALLBACK] [TRANSACTION=${t.transaction}] [TOKEN=${t.contract}:${t.token_id}] [VALUE=${t.value}] [PRIMARY_PROCEEDS=${t.primary_proceeds}]`
-      );
-      t.value = t.primary_proceeds;
-    }
   }
 
   roundTransactionValues(t);
+  if (isMintLikeTransaction(t) && t.primary_proceeds > t.value) {
+    logger.warn(
+      `[MINT VALUE FALLBACK] [TRANSACTION=${t.transaction}] [TOKEN=${t.contract}:${t.token_id}] [VALUE=${t.value}] [PRIMARY_PROCEEDS=${t.primary_proceeds}]`
+    );
+    t.value = t.primary_proceeds;
+  }
   await applyUsdValues(t);
   return t;
 }

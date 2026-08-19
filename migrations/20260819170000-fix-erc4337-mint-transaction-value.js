@@ -31,7 +31,8 @@ exports.up = function (db) {
 };
 
 exports.down = function () {
-  // Intentionally irreversible: the previous zero value was incorrect.
+  // Intentionally irreversible: the prior value and value_usd were both 0,
+  // and restoring the known-wrong values would reintroduce the data defect.
   return Promise.resolve();
 };
 
