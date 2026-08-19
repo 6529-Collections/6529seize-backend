@@ -1,6 +1,7 @@
 import { Transaction } from '@/entities/ITransaction';
 import { getClosestEthUsdPrice } from '@/ethPriceLoop/db.eth_price';
 import { getRpcProvider } from '@/rpc-provider';
+import { MEMES_CONTRACT, MEMES_DEPLOYER } from '@/constants';
 import {
   ReceiptLike,
   findDiscoveredTransactionValues,
@@ -24,6 +25,8 @@ const FROM = '0x2222222222222222222222222222222222222222';
 const TO = '0x3333333333333333333333333333333333333333';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const HASH = `0x${'a'.repeat(64)}`;
+const CLAIM_CONTRACT = '0x5555555555555555555555555555555555555555';
+const ENTRY_POINT = '0x6666666666666666666666666666666666666666';
 
 const NFT_IFACE = new ethers.Interface([
   'event Transfer(address indexed from,address indexed to,uint256 indexed tokenId)',
@@ -71,6 +74,28 @@ function makeLog(
     topics: encoded.topics,
     data: encoded.data
   };
+}
+
+function mockTransactionValueRpc(
+  receipt: { gasUsed: bigint; logs: ReturnType<typeof makeLog>[] },
+  traces: unknown[],
+  transactionValue = BigInt(0)
+) {
+  const getTransaction = jest.fn().mockResolvedValue({
+    hash: HASH,
+    value: transactionValue,
+    gasPrice: BigInt(0)
+  });
+  const getTransactionReceipt = jest.fn().mockResolvedValue(receipt);
+  const send = jest.fn().mockResolvedValue(traces);
+  jest.mocked(getRpcProvider).mockReturnValue({
+    getTransaction,
+    getTransactionReceipt,
+    send
+  } as unknown as ReturnType<typeof getRpcProvider>);
+  jest.mocked(getClosestEthUsdPrice).mockResolvedValue(1);
+
+  return { getTransaction, getTransactionReceipt, send };
 }
 
 describe('reconcileTransactionTokenCounts', () => {
@@ -325,5 +350,84 @@ describe('reconcileTransactionTokenCounts', () => {
     expect(result.token_count).toBe(1);
     expect(getTransaction).toHaveBeenCalledTimes(1);
     expect(getTransactionReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves gross mint value from ERC-4337 internal transfers', async () => {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    const { send } = mockTransactionValueRpc(receipt, [
+      {
+        transactionHash: HASH,
+        action: {
+          from: TO,
+          to: ENTRY_POINT,
+          value: ethers.parseEther('0.001')
+        }
+      },
+      {
+        transactionHash: HASH,
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('0.06579')
+        }
+      },
+      {
+        transactionHash: HASH,
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.06529')
+        }
+      }
+    ]);
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.value).toBe(0.06579);
+    expect(result.primary_proceeds).toBe(0.06529);
+    expect(result.value_usd).toBe(0.06579);
+    expect(send).toHaveBeenCalledWith('trace_block', ['0x01']);
+  });
+
+  it('uses primary proceeds as the final mint value fallback', async () => {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    mockTransactionValueRpc(receipt, [
+      {
+        transactionHash: HASH,
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.06529')
+        }
+      }
+    ]);
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.value).toBe(0.06529);
+    expect(result.primary_proceeds).toBe(0.06529);
+    expect(result.value_usd).toBe(0.06529);
   });
 });

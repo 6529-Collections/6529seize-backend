@@ -720,7 +720,33 @@ async function applyReceiptValueAndRoyalties(
   }
 }
 
-async function applyMintPrimaryProceeds(
+function sumInternalTransferValues(
+  transfers: RpcInternalTransfersResponse['transfers']
+): number {
+  return transfers.reduce((acc, transfer) => acc + (transfer.value ?? 0), 0);
+}
+
+function findGrossMintValueFromInternalTransfers(
+  txInternalTransfers: RpcInternalTransfersResponse['transfers'],
+  proceedsTransfers: RpcInternalTransfersResponse['transfers']
+): number {
+  if (proceedsTransfers.length === 0) {
+    return 0;
+  }
+
+  const proceedsSources = new Set(
+    proceedsTransfers.map((transfer) => transfer.from.toLowerCase())
+  );
+  const grossPayments = txInternalTransfers.filter(
+    (transfer) => transfer.to && proceedsSources.has(transfer.to.toLowerCase())
+  );
+  const grossValue = sumInternalTransferValues(grossPayments);
+  const primaryProceeds = sumInternalTransferValues(proceedsTransfers);
+
+  return grossValue >= primaryProceeds ? grossValue : 0;
+}
+
+async function applyMintInternalValues(
   t: Transaction,
   context: ResolveValueContext,
   rowUnits: bigint,
@@ -750,10 +776,17 @@ async function applyMintPrimaryProceeds(
               (transfer.to && equalIgnoreCase(transfer.to, MEMES_DEPLOYER))
           );
 
-    const primaryProceedsTxTotal = primaryTransfers.reduce(
-      (acc, transfer) => acc + (transfer.value ?? 0),
-      0
+    const primaryProceedsTxTotal = sumInternalTransferValues(primaryTransfers);
+    const grossMintTxTotal = findGrossMintValueFromInternalTransfers(
+      txInternalTransfers,
+      proceedsToMemesDeployer
     );
+
+    if (grossMintTxTotal > 0) {
+      const attributedGrossValue =
+        (grossMintTxTotal * Number(rowUnits)) / Number(mintUnits);
+      t.value = Math.max(t.value, attributedGrossValue);
+    }
 
     if (primaryProceedsTxTotal > 0) {
       t.primary_proceeds =
@@ -825,7 +858,7 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
       t.value = weiToEth(grossMintWei);
     }
 
-    await applyMintPrimaryProceeds(
+    await applyMintInternalValues(
       t,
       context,
       groups.rowUnits,
@@ -834,6 +867,13 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
 
     if (!t.primary_proceeds && t.value) {
       t.primary_proceeds = t.value;
+    }
+
+    if (t.primary_proceeds > t.value) {
+      logger.warn(
+        `[MINT VALUE FALLBACK] [TRANSACTION=${t.transaction}] [TOKEN=${t.contract}:${t.token_id}] [VALUE=${t.value}] [PRIMARY_PROCEEDS=${t.primary_proceeds}]`
+      );
+      t.value = t.primary_proceeds;
     }
   }
 
