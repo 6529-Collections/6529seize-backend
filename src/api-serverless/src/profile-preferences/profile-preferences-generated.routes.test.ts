@@ -5,9 +5,11 @@ const mockPutProfilePreferences = jest.fn();
 
 jest.mock('@/api/auth/auth', () => ({
   maybeAuthenticatedUser:
-    () => (_req: unknown, _res: unknown, next: () => void) => next(),
+    () => (_req: unknown, _res: unknown, next: () => void) =>
+      next(),
   needsAuthenticatedUser:
-    () => (_req: unknown, _res: unknown, next: () => void) => next()
+    () => (_req: unknown, _res: unknown, next: () => void) =>
+      next()
 }));
 
 jest.mock('@/api/profile-preferences/profile-preferences.handlers', () => ({
