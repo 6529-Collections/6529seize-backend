@@ -105,7 +105,10 @@ describe('WaveApiService card-set TDH validation', () => {
         )
     };
     const userGroupsService = {
-      getByIds: jest.fn().mockResolvedValue([])
+      getApiGroupsByIds: jest.fn().mockResolvedValue([]),
+      findGroupIdsWithMembersOutsideContainingGroup: jest
+        .fn()
+        .mockResolvedValue([])
     };
     const service = new WaveApiService(
       wavesApiDb as any,

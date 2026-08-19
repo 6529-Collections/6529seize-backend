@@ -24,6 +24,13 @@ import {
 import { Time } from '@/time';
 import { DbPoolName } from '@/db-query.options';
 
+jest.mock('@/profiles/profile-waves.db', () => ({
+  profileWavesDb: {
+    deleteByWaveId: jest.fn().mockResolvedValue(undefined),
+    findSelectedWaveIdsByWaveIds: jest.fn().mockResolvedValue(new Set())
+  }
+}));
+
 describe('WaveApiService updateWave immutability', () => {
   function createService({
     waveBeforeUpdate,
@@ -51,7 +58,12 @@ describe('WaveApiService updateWave immutability', () => {
     };
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroups),
-      getByIds: jest.fn().mockResolvedValue([])
+      getApiGroupsByIds: jest.fn(async (ids: string[]) =>
+        ids.map((id) => ({ id }))
+      ),
+      findGroupIdsWithMembersOutsideContainingGroup: jest
+        .fn()
+        .mockResolvedValue([])
     };
     const waveMappers = {
       createWaveToNewWaveEntity: jest.fn().mockResolvedValue(waveBeforeUpdate),
@@ -641,7 +653,9 @@ describe('WaveApiService updateWave immutability', () => {
       waveBeforeUpdate,
       eligibleGroups: ['parent-group']
     });
-    wavesApiDb.findWaveByIdForUpdate.mockResolvedValue(parentWave);
+    wavesApiDb.findWaveByIdForUpdate
+      .mockResolvedValueOnce(waveBeforeUpdate)
+      .mockResolvedValue(parentWave);
 
     await expect(
       service.updateWave(
@@ -691,7 +705,10 @@ describe('WaveApiService validateWaveRelations', () => {
     return new WaveApiService(
       {} as any,
       {
-        getByIds: jest.fn().mockResolvedValue([])
+        getApiGroupsByIds: jest.fn().mockResolvedValue([]),
+        findGroupIdsWithMembersOutsideContainingGroup: jest
+          .fn()
+          .mockResolvedValue([])
       } as any,
       {} as any,
       {} as any,
@@ -802,7 +819,10 @@ describe('WaveApiService validateWaveRelations', () => {
     const service = new WaveApiService(
       {} as any,
       {
-        getByIds: jest.fn().mockResolvedValue([])
+        getApiGroupsByIds: jest.fn().mockResolvedValue([]),
+        findGroupIdsWithMembersOutsideContainingGroup: jest
+          .fn()
+          .mockResolvedValue([])
       } as any,
       {} as any,
       {} as any,
@@ -883,7 +903,10 @@ describe('WaveApiService validateWaveRelations', () => {
     const service = new WaveApiService(
       {} as any,
       {
-        getByIds: jest.fn().mockResolvedValue([])
+        getApiGroupsByIds: jest.fn().mockResolvedValue([]),
+        findGroupIdsWithMembersOutsideContainingGroup: jest
+          .fn()
+          .mockResolvedValue([])
       } as any,
       {} as any,
       {} as any,
@@ -966,7 +989,10 @@ describe('WaveApiService validateWaveRelations', () => {
     const service = new WaveApiService(
       {} as any,
       {
-        getByIds: jest.fn().mockResolvedValue([])
+        getApiGroupsByIds: jest.fn().mockResolvedValue([]),
+        findGroupIdsWithMembersOutsideContainingGroup: jest
+          .fn()
+          .mockResolvedValue([])
       } as any,
       {} as any,
       {} as any,
