@@ -397,9 +397,11 @@ same transaction that creates the group. Preference updates take the same
 profile-row lock before writing, which serializes first-time preference changes
 without creating default preference rows as a side effect of another user's DM;
 existing exact conversations bypass that admission check. Notification writers
-consult the same table before the in-app row is created, so suppressed
-notifications cannot reach the downstream push pipeline. The `direct_messages`
-API field intentionally represents the
+consult the same table before the in-app row is created. When preference
+filtering succeeds, suppressed notifications are not inserted and cannot reach
+the downstream push pipeline. If preference filtering fails, notification
+delivery fails open and the unfiltered notifications are inserted. The
+`direct_messages` API field intentionally represents the
 combined user-facing “Direct messages and wave activity” category, including
 new-wave, all-drops subscription, and priority-alert causes.
 
