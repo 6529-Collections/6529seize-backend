@@ -1113,8 +1113,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       { olderThan },
       this.connectionOptions(connection)
     );
-    if (result && typeof result === 'object' && 'affectedRows' in result) {
-      return Number((result as { affectedRows?: unknown }).affectedRows ?? 0);
+    const affectedRows =
+      result && typeof result === 'object' && !Array.isArray(result)
+        ? (result as { affectedRows?: unknown }).affectedRows
+        : undefined;
+    if (affectedRows !== undefined) {
+      return Number(affectedRows);
     }
     return Array.isArray(result) && typeof result[1] === 'number'
       ? result[1]

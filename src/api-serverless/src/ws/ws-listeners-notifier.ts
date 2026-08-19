@@ -95,7 +95,7 @@ function applyGlobalModerationForRecipient(
   inputDrop: ApiDrop,
   profileId: string | null
 ): ApiDrop {
-  const recipientDrop: ApiDrop = JSON.parse(JSON.stringify(inputDrop));
+  const recipientDrop = structuredClone(inputDrop);
   const apply = (
     drop: ApiDrop | ApiDropWithoutWave,
     visited: Set<string>
